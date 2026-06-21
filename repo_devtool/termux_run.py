@@ -32,6 +32,10 @@ ARCHIVE_SUFFIXES = (
     ".tar.xg",
 )
 
+TERMUX_SHARED_DOWNLOADS = Path("/sdcard/Download")
+TERMUX_SHARED_DOWNLOADS_ALT = Path("/storage/emulated/0/Download")
+TERMUX_APP_DOWNLOADS = Path.home() / "Downloads"
+
 COPY_FLAG_PATTERN = re.compile(r"(?<!\S)--copy(?:-(?:json|raw|summary))?(?!\S)")
 JSON_FLAG_PATTERN = re.compile(r"(?<!\S)(?:-j|--json)(?!\S)")
 STDOUT_PAYLOAD_PATTERN = re.compile(r"(?<!\S)--stdout-payload(?:=|\s+)(?:auto|summary|json|raw|runner-json)(?!\S)")
@@ -226,7 +230,7 @@ def confirm_clipboard_block(block: str, *, assume_yes: bool) -> None:
 def parse_clipboard_block(block: str) -> ParsedBlock:
     assignments = parse_assignments(block)
     artifact_expr = find_artifact_expression(assignments, block)
-    remote_artifact_path = expand_vars(artifact_expr, assignments)
+    remote_artifact_path = normalize_remote_artifact_path(artifact_expr, assignments)
     archive_basename = Path(remote_artifact_path).name
     if not archive_basename:
         raise TermuxRunError("Could not determine artifact basename from clipboard block.")
@@ -238,6 +242,20 @@ def parse_clipboard_block(block: str) -> ParsedBlock:
         remote_artifact_path=remote_artifact_path,
         archive_basename=archive_basename,
     )
+
+
+def normalize_remote_artifact_path(value: str, assignments: dict[str, str]) -> str:
+    expanded = expand_vars(value, assignments)
+    basename = Path(expanded).name
+    remote_home = assignments.get("HOME", "/home/mike")
+    termux_prefixes = (
+        f"{Path.home()}/Downloads/",
+        "/sdcard/Download/",
+        "/storage/emulated/0/Download/",
+    )
+    if any(expanded.startswith(prefix) for prefix in termux_prefixes):
+        return f"{remote_home}/Downloads/{basename}"
+    return expanded
 
 
 def parse_assignments(block: str) -> dict[str, str]:
@@ -292,11 +310,24 @@ def expand_vars(value: str, assignments: dict[str, str]) -> str:
 
 
 def find_local_archive(basename: str, download_dir: Path) -> Path:
-    local_path = download_dir / basename
-    if not local_path.is_file():
-        raise TermuxRunError(f"Archive not found on phone: {local_path}")
-    console.print(f"[bold green]Found local archive:[/bold green] {local_path}")
-    return local_path
+    candidates = [
+        download_dir / basename,
+        TERMUX_SHARED_DOWNLOADS / basename,
+        TERMUX_SHARED_DOWNLOADS_ALT / basename,
+        TERMUX_APP_DOWNLOADS / basename,
+    ]
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_key = str(candidate)
+        if candidate_key in seen:
+            continue
+        seen.add(candidate_key)
+        if candidate.is_file():
+            console.print(f"[bold green]Found local archive:[/bold green] {candidate}")
+            return candidate
+    raise TermuxRunError(
+        "Archive not found on phone. Tried: " + ", ".join(str(path) for path in candidates)
+    )
 
 
 def show_transfer_plan(
@@ -373,27 +404,31 @@ def delete_local_archive(local_archive: Path) -> None:
 
 
 def detect_remote_capabilities(target: str, remote_devtool: str, remote_shell: str, ssh_options: list[str]) -> RemoteCapabilities:
-    result = subprocess.run(
-        ["ssh", *ssh_options, target, remote_shell, "-lc", f"{quote_shell(remote_devtool)} --help"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        reason = (result.stderr or "").strip() or "unknown error"
-        raise TermuxRunError(f"Failed to inspect remote devtool help: {reason}")
-    help_text = (result.stdout or "") + "\n" + (result.stderr or "")
-    capabilities = RemoteCapabilities(
-        supports_stdout_payload="--stdout-payload" in help_text,
-        supports_runner_json="runner-json" in help_text,
-    )
-    table = Table(title="Remote devtool capabilities")
-    table.add_column("Capability", style="cyan")
-    table.add_column("Supported")
-    table.add_row("--stdout-payload", "yes" if capabilities.supports_stdout_payload else "no")
-    table.add_row("runner-json", "yes" if capabilities.supports_runner_json else "no")
-    console.print(table)
-    return capabilities
+    probes = [
+        ["ssh", *ssh_options, target, remote_shell, "-lc", f"\"{remote_devtool}\" --help"],
+        ["ssh", *ssh_options, target, remote_devtool, "--help"],
+    ]
+    combined_output = ""
+    for probe in probes:
+        result = subprocess.run(probe, text=True, capture_output=True, check=False)
+        output = ((result.stdout or "") + "
+" + (result.stderr or "")).strip()
+        if output:
+            combined_output = output
+        if "--stdout-payload" in output or "runner-json" in output or "usage:" in output.lower():
+            capabilities = RemoteCapabilities(
+                supports_stdout_payload="--stdout-payload" in output,
+                supports_runner_json="runner-json" in output,
+            )
+            table = Table(title="Remote devtool capabilities")
+            table.add_column("Capability", style="cyan")
+            table.add_column("Supported")
+            table.add_row("--stdout-payload", "yes" if capabilities.supports_stdout_payload else "no")
+            table.add_row("runner-json", "yes" if capabilities.supports_runner_json else "no")
+            console.print(table)
+            return capabilities
+    reason = combined_output or "unknown error"
+    raise TermuxRunError(f"Failed to inspect remote devtool help: {reason}")
 
 
 def rewrite_block_for_remote(block: str, *, remote_devtool: str, capabilities: RemoteCapabilities) -> str:
