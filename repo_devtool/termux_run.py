@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -11,15 +12,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.syntax import Syntax
 from rich.table import Table
 
-from .console_utils import create_console, syntax_line_numbers
+console = Console()
+stderr_console = Console(stderr=True)
 
-console = create_console()
-stderr_console = create_console(stderr=True)
+TERMUX_SHARED_DOWNLOADS = Path("/sdcard/Download")
+TERMUX_SHARED_DOWNLOADS_ALT = Path("/storage/emulated/0/Download")
+TERMUX_APP_DOWNLOADS = Path.home() / "Downloads"
 
 ARCHIVE_SUFFIXES = (
     ".zip",
@@ -32,13 +36,11 @@ ARCHIVE_SUFFIXES = (
     ".tar.xg",
 )
 
-TERMUX_SHARED_DOWNLOADS = Path("/sdcard/Download")
-TERMUX_SHARED_DOWNLOADS_ALT = Path("/storage/emulated/0/Download")
-TERMUX_APP_DOWNLOADS = Path.home() / "Downloads"
-
 COPY_FLAG_PATTERN = re.compile(r"(?<!\S)--copy(?:-(?:json|raw|summary))?(?!\S)")
-JSON_FLAG_PATTERN = re.compile(r"(?<!\S)(?:-j|--json)(?!\S)")
-STDOUT_PAYLOAD_PATTERN = re.compile(r"(?<!\S)--stdout-payload(?:=|\s+)(?:auto|summary|json|raw|runner-json)(?!\S)")
+STDOUT_PAYLOAD_PATTERN = re.compile(
+    r"(?<!\S)--stdout-payload(?:=|\s+)(?:auto|summary|json|raw|runner-json)(?!\S)"
+)
+JSON_FLAG_PATTERN = re.compile(r"(?<!\S)(-j|--json)(?!\S)")
 DEVTOOL_LINE_PATTERN = re.compile(r"(^|\n)(?P<indent>[ \t]*)(?P<line>devtool[^\n]*)")
 ASSIGNMENT_PATTERN = re.compile(
     r"""(?mx)
@@ -51,7 +53,7 @@ ASSIGNMENT_PATTERN = re.compile(
     $
     """
 )
-TOKEN_PATTERN = re.compile(r"""(?P<token>[/~$A-Za-z0-9_.\-{}]+(?:[/~$A-Za-z0-9_.\-{}]+|/[~$A-Za-z0-9_.\-{}]+)*)""")
+TOKEN_PATTERN = re.compile(r"""(?P<token>[/~$A-Za-z0-9_.\-{}]+(?:/[~$A-Za-z0-9_.\-{}]+)*)""")
 
 DEVTOOL_COMMANDS = {
     "restore", "rs", "build", "b", "test", "t", "validate", "v",
@@ -60,6 +62,10 @@ DEVTOOL_COMMANDS = {
     "apply-snapshot", "as", "apply-overlay-validate", "aov",
     "apply-snapshot-validate", "asv", "batch", "init-config", "ic",
     "logs", "tag", "release-notes", "completion", "config", "termux-run",
+}
+APPLY_COMMANDS = {
+    "apply-overlay", "ao", "apply-snapshot", "as",
+    "apply-overlay-validate", "aov", "apply-snapshot-validate", "asv",
 }
 
 
@@ -70,93 +76,81 @@ class TermuxRunError(RuntimeError):
 @dataclass(frozen=True)
 class ParsedBlock:
     original_text: str
-    remote_artifact_expr: str
-    remote_artifact_path: str
-    archive_basename: str
+    remote_artifact_expr: str | None
+    remote_artifact_path: str | None
+    archive_basename: str | None
+    requires_archive_upload: bool
 
 
 @dataclass(frozen=True)
-class RemoteCapabilities:
+class RemoteDevtoolCapabilities:
     supports_stdout_payload: bool
     supports_runner_json: bool
 
 
-def add_termux_run_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    cmd = subparsers.add_parser("termux-run", help="Run a clipboard block against a remote host from Termux")
-    cmd.add_argument("--ssh-user", default="", help="SSH username. Defaults to $SSH_USER")
-    cmd.add_argument("--ssh-host", default="", help="SSH host. Defaults to $SSH")
-    cmd.add_argument("--ssh-port", default="", help="SSH port. Defaults to $SSH_PORT")
-    cmd.add_argument("--ssh-key", default="", help="SSH private key path. Defaults to $SSH_KEY")
-    cmd.add_argument("--remote-devtool", default="/home/mike/.local/bin/devtool", help="Remote devtool path")
-    cmd.add_argument("--remote-shell", default="zsh", help="Remote shell executable")
-    cmd.add_argument("--download-dir", default="/sdcard/Download", help="Local archive search directory")
-    cmd.add_argument("--keep-local-archive", action="store_true", help="Do not delete the uploaded local archive")
-    cmd.add_argument("--yes", action="store_true", help="Skip clipboard and commit confirmations")
-    cmd.add_argument("--connect-timeout", type=int, default=8, help="SSH connect timeout in seconds")
+def add_termux_run_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "termux-run",
+        help="Run a clipboard devtool block against a remote machine from Termux.",
+    )
+    parser.add_argument("--ssh-user", default=os.environ.get("SSH_USER", ""))
+    parser.add_argument("--ssh-host", default=os.environ.get("SSH", ""))
+    parser.add_argument("--ssh-port", default=os.environ.get("SSH_PORT", ""))
+    parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY", ""))
+    parser.add_argument("--remote-shell", default="zsh")
+    parser.add_argument("--remote-devtool", default="/home/mike/.local/bin/devtool")
+    parser.add_argument("--download-dir", default=str(TERMUX_SHARED_DOWNLOADS))
+    parser.add_argument("--keep-local-archive", action="store_true")
+    parser.add_argument("--yes", action="store_true")
+    return parser
 
 
 def handle_termux_run(args: argparse.Namespace) -> int:
     try:
-        ssh_user = args.ssh_user.strip() or os.environ.get("SSH_USER", "").strip()
-        ssh_host = args.ssh_host.strip() or os.environ.get("SSH", "").strip()
-        ssh_port = args.ssh_port.strip() or os.environ.get("SSH_PORT", "").strip()
-        ssh_key = args.ssh_key.strip() or os.environ.get("SSH_KEY", "").strip()
-        if not ssh_user:
-            raise TermuxRunError("Missing SSH username. Set --ssh-user or SSH_USER.")
-        if not ssh_host:
-            raise TermuxRunError("Missing SSH host. Set --ssh-host or SSH.")
         ensure_commands(("ssh", "scp", "termux-clipboard-get", "termux-clipboard-set"))
-
-        target = f"{ssh_user}@{ssh_host}"
-        ssh_options = build_ssh_options(port=ssh_port, key_path=ssh_key, connect_timeout=args.connect_timeout)
-
-        check_ssh_connection(target, ssh_options)
+        target = build_target(args)
+        check_ssh_connection(target, args)
 
         clipboard_text = get_termux_clipboard()
-        confirm_clipboard_block(clipboard_text, assume_yes=args.yes)
+        if not args.yes:
+            confirm_clipboard_block(clipboard_text)
 
         parsed = parse_clipboard_block(clipboard_text)
-        download_dir = Path(args.download_dir).expanduser()
-        local_archive = find_local_archive(parsed.archive_basename, download_dir)
+        if parsed.requires_archive_upload:
+            local_archive = find_local_archive(parsed.archive_basename or "", Path(args.download_dir))
+            show_transfer_plan(target, args, local_archive, parsed.remote_artifact_path or "")
+            ensure_remote_parent_dir(target, args, parsed.remote_artifact_path or "")
+            upload_archive(target, args, local_archive, parsed.remote_artifact_path or "")
+            if not args.keep_local_archive:
+                delete_local_archive(local_archive)
+        else:
+            console.print("[cyan]No archive path detected; skipping upload step.[/cyan]")
 
-        show_transfer_plan(
-            target,
-            local_archive,
-            parsed.remote_artifact_path,
-            args.remote_devtool,
-            args.remote_shell,
-            ssh_port=ssh_port or "-",
-            ssh_key=ssh_key or "-",
-        )
-        ensure_remote_parent_dir(target, parsed.remote_artifact_path, ssh_options)
-        upload_archive(target, local_archive, parsed.remote_artifact_path, ssh_options)
-
-        if not args.keep_local_archive:
-            delete_local_archive(local_archive)
-
-        capabilities = detect_remote_capabilities(target, args.remote_devtool, args.remote_shell, ssh_options)
-        rewritten_block = rewrite_block_for_remote(
-            clipboard_text,
-            remote_devtool=args.remote_devtool,
-            capabilities=capabilities,
-        )
+        capabilities = detect_remote_capabilities(target, args)
+        rewritten_block = rewrite_block_for_remote(clipboard_text, capabilities, args.remote_devtool, parsed)
         show_rewritten_block(rewritten_block, capabilities)
 
-        if block_contains_commit(rewritten_block):
-            confirm_commit_block(assume_yes=args.yes)
+        stdout_text, returncode = run_remote_block(target, args, rewritten_block)
 
-        stdout_text = run_remote_block(target, rewritten_block, shell=args.remote_shell, ssh_options=ssh_options)
+        consumed = False
+        if stdout_text.strip():
+            if capabilities.supports_runner_json:
+                try:
+                    payload = json.loads(stdout_text)
+                except json.JSONDecodeError:
+                    payload = None
+                if isinstance(payload, dict) and payload.get("schema_version") == 1:
+                    consume_runner_json(payload)
+                    consumed = True
+            if not consumed:
+                set_termux_clipboard(stdout_text)
+                console.print("[green]Remote stdout copied to Termux clipboard.[/green]")
 
-        if capabilities.supports_runner_json:
-            payload = parse_runner_json(stdout_text)
-            copy_preferred_clipboard(payload)
-            maybe_notify(payload)
-            print_runner_result(payload)
-            console.print("[bold green]Done.[/bold green] runner-json consumed successfully.")
-        else:
-            set_termux_clipboard(stdout_text)
-            console.print("[bold green]Done.[/bold green] Remote stdout copied to Termux clipboard.")
-
+        if returncode != 0:
+            stderr_console.print(
+                f"[yellow]Remote command exited with status {returncode}.[/yellow] "
+                "Keeping execution non-fatal."
+            )
         return 0
     except KeyboardInterrupt:
         stderr_console.print("\n[bold yellow]Aborted.[/bold yellow]")
@@ -172,57 +166,67 @@ def ensure_commands(commands: Iterable[str]) -> None:
         raise TermuxRunError(f"Missing required command(s): {', '.join(missing)}")
 
 
-def build_ssh_options(*, port: str, key_path: str, connect_timeout: int) -> list[str]:
-    options = ["-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}"]
-    if port:
-        options.extend(["-p", port])
-    if key_path:
-        options.extend(["-i", str(Path(key_path).expanduser())])
-    return options
+def build_target(args: argparse.Namespace) -> str:
+    ssh_user = (args.ssh_user or "").strip()
+    ssh_host = (args.ssh_host or "").strip()
+    if not ssh_user or not ssh_host:
+        raise TermuxRunError("Missing SSH target. Set SSH_USER and SSH, or pass --ssh-user and --ssh-host.")
+    return f"{ssh_user}@{ssh_host}"
 
 
-def check_ssh_connection(target: str, ssh_options: list[str]) -> None:
+def ssh_base_command(target: str, args: argparse.Namespace) -> list[str]:
+    command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
+    if getattr(args, "ssh_port", ""):
+        command += ["-p", str(args.ssh_port)]
+    if getattr(args, "ssh_key", ""):
+        command += ["-i", str(args.ssh_key)]
+    command.append(target)
+    return command
+
+
+def scp_base_command(args: argparse.Namespace) -> list[str]:
+    command = ["scp"]
+    if getattr(args, "ssh_port", ""):
+        command += ["-P", str(args.ssh_port)]
+    if getattr(args, "ssh_key", ""):
+        command += ["-i", str(args.ssh_key)]
+    return command
+
+
+def check_ssh_connection(target: str, args: argparse.Namespace) -> None:
     console.print(f"[cyan]Checking SSH connectivity:[/cyan] {target}")
     result = subprocess.run(
-        ["ssh", *ssh_options, target, "printf", "online"],
+        [*ssh_base_command(target, args), "printf", "online"],
         text=True,
         capture_output=True,
         check=False,
     )
     if result.returncode != 0:
-        reason = (result.stderr or "").strip() or "unknown error"
-        raise TermuxRunError(f"SSH connection check failed for {target}: {reason}")
+        raise TermuxRunError(f"SSH connection check failed for {target}: {((result.stderr or '').strip() or 'unknown error')}")
     if (result.stdout or "").strip() != "online":
         raise TermuxRunError(f"SSH connection check returned unexpected output for {target}")
     console.print("[bold green]SSH connection OK.[/bold green]")
 
 
 def get_termux_clipboard() -> str:
-    result = subprocess.run(
-        ["termux-clipboard-get"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    result = subprocess.run(["termux-clipboard-get"], text=True, capture_output=True, check=False)
     if result.returncode != 0:
-        reason = (result.stderr or "").strip() or "unknown error"
-        raise TermuxRunError(f"termux-clipboard-get failed: {reason}")
-    if not result.stdout.strip():
+        raise TermuxRunError(f"termux-clipboard-get failed: {((result.stderr or '').strip() or 'unknown error')}")
+    text = result.stdout
+    if not text.strip():
         raise TermuxRunError("Clipboard is empty.")
-    return result.stdout
+    return text
 
 
-def confirm_clipboard_block(block: str, *, assume_yes: bool) -> None:
+def confirm_clipboard_block(block: str) -> None:
     console.print(
         Panel(
-            Syntax(block.rstrip(), "bash", word_wrap=True, line_numbers=syntax_line_numbers(console)),
+            Syntax(block.rstrip(), "bash", word_wrap=True, line_numbers=False),
             title="Clipboard block",
             border_style="blue",
         )
     )
-    if assume_yes:
-        return
-    answer = Prompt.ask("Use this clipboard block?", choices=["y", "n"], default="y", console=console)
+    answer = Prompt.ask("Use this clipboard block?", choices=["y", "n"], default="y")
     if answer.lower() != "y":
         raise TermuxRunError("Clipboard block not confirmed.")
 
@@ -230,32 +234,27 @@ def confirm_clipboard_block(block: str, *, assume_yes: bool) -> None:
 def parse_clipboard_block(block: str) -> ParsedBlock:
     assignments = parse_assignments(block)
     artifact_expr = find_artifact_expression(assignments, block)
+    if artifact_expr is None:
+        return ParsedBlock(
+            original_text=block,
+            remote_artifact_expr=None,
+            remote_artifact_path=None,
+            archive_basename=None,
+            requires_archive_upload=False,
+        )
+
     remote_artifact_path = normalize_remote_artifact_path(artifact_expr, assignments)
     archive_basename = Path(remote_artifact_path).name
-    if not archive_basename:
-        raise TermuxRunError("Could not determine artifact basename from clipboard block.")
-    if not has_archive_suffix(archive_basename):
+    if not archive_basename or not has_archive_suffix(archive_basename):
         raise TermuxRunError(f"Artifact path is not a supported archive: {remote_artifact_path}")
+
     return ParsedBlock(
         original_text=block,
         remote_artifact_expr=artifact_expr,
         remote_artifact_path=remote_artifact_path,
         archive_basename=archive_basename,
+        requires_archive_upload=True,
     )
-
-
-def normalize_remote_artifact_path(value: str, assignments: dict[str, str]) -> str:
-    expanded = expand_vars(value, assignments)
-    basename = Path(expanded).name
-    remote_home = assignments.get("HOME", "/home/mike")
-    termux_prefixes = (
-        f"{Path.home()}/Downloads/",
-        "/sdcard/Download/",
-        "/storage/emulated/0/Download/",
-    )
-    if any(expanded.startswith(prefix) for prefix in termux_prefixes):
-        return f"{remote_home}/Downloads/{basename}"
-    return expanded
 
 
 def parse_assignments(block: str) -> dict[str, str]:
@@ -265,33 +264,44 @@ def parse_assignments(block: str) -> dict[str, str]:
     return assignments
 
 
-def find_artifact_expression(assignments: dict[str, str], block: str) -> str:
+def find_artifact_expression(assignments: dict[str, str], block: str) -> str | None:
     for key in ("ARTIFACT_CURRENT", "ARTIFACT", "ARCHIVE_CURRENT", "ARCHIVE"):
         value = assignments.get(key)
         if value and looks_like_archive_path(value):
             return value
-    archive_tokens = find_archive_tokens(block)
-    if archive_tokens:
-        return archive_tokens[0]
-    raise TermuxRunError("Could not find an archive path in the clipboard block.")
+
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("devtool "):
+            continue
+        parts = shlex.split(stripped)
+        command_name = find_devtool_subcommand(parts[1:])
+        if command_name not in APPLY_COMMANDS:
+            continue
+        for token in reversed(parts):
+            if looks_like_archive_path(token):
+                return token
+
+    return None
 
 
-def find_archive_tokens(text: str) -> list[str]:
-    matches: list[str] = []
-    for match in TOKEN_PATTERN.finditer(text):
-        token = match.group("token").strip("'\"")
-        if looks_like_archive_path(token):
-            matches.append(token)
-    return matches
+def normalize_remote_artifact_path(value: str, assignments: dict[str, str]) -> str:
+    raw = value.strip()
+    basename = Path(raw).name
+    remote_home = assignments.get("HOME", "/home/mike")
 
-
-def looks_like_archive_path(value: str) -> bool:
-    lower = value.lower()
-    return any(lower.endswith(suffix) for suffix in ARCHIVE_SUFFIXES)
-
-
-def has_archive_suffix(filename: str) -> bool:
-    return looks_like_archive_path(filename)
+    prefixes = (
+        f"{Path.home()}/Downloads/",
+        "/sdcard/Download/",
+        "/storage/emulated/0/Download/",
+    )
+    if any(raw.startswith(prefix) for prefix in prefixes):
+        return f"{remote_home}/Downloads/{basename}"
+    if raw.startswith("$HOME/"):
+        return f"{remote_home}/{raw[len('$HOME/'):]}"
+    if raw.startswith("${HOME}/"):
+        return f"{remote_home}/{raw[len('${HOME}/'):]}"
+    return expand_vars(raw, assignments)
 
 
 def expand_vars(value: str, assignments: dict[str, str]) -> str:
@@ -309,6 +319,15 @@ def expand_vars(value: str, assignments: dict[str, str]) -> str:
     return expanded
 
 
+def looks_like_archive_path(value: str) -> bool:
+    lower = value.lower()
+    return any(lower.endswith(suffix) for suffix in ARCHIVE_SUFFIXES)
+
+
+def has_archive_suffix(filename: str) -> bool:
+    return looks_like_archive_path(filename)
+
+
 def find_local_archive(basename: str, download_dir: Path) -> Path:
     candidates = [
         download_dir / basename,
@@ -318,81 +337,54 @@ def find_local_archive(basename: str, download_dir: Path) -> Path:
     ]
     seen: set[str] = set()
     for candidate in candidates:
-        candidate_key = str(candidate)
-        if candidate_key in seen:
+        key = str(candidate)
+        if key in seen:
             continue
-        seen.add(candidate_key)
+        seen.add(key)
         if candidate.is_file():
-            console.print(f"[bold green]Found local archive:[/bold green] {candidate}")
+            console.print(f"[bold green]Found local archive:[/bold green]\n{candidate}")
             return candidate
-    raise TermuxRunError(
-        "Archive not found on phone. Tried: " + ", ".join(str(path) for path in candidates)
-    )
+    raise TermuxRunError("Archive not found on phone. Tried: " + ", ".join(str(path) for path in candidates))
 
 
-def show_transfer_plan(
-    target: str,
-    local_archive: Path,
-    remote_artifact_path: str,
-    remote_devtool: str,
-    remote_shell: str,
-    *,
-    ssh_port: str,
-    ssh_key: str,
-) -> None:
+def show_transfer_plan(target: str, args: argparse.Namespace, local_archive: Path, remote_artifact_path: str) -> None:
     table = Table(title="Transfer plan")
     table.add_column("Field", style="cyan", no_wrap=True)
     table.add_column("Value", overflow="fold")
     table.add_row("SSH target", target)
-    table.add_row("SSH port", ssh_port)
-    table.add_row("SSH key", ssh_key)
+    table.add_row("SSH port", str(args.ssh_port or "-"))
+    table.add_row("SSH key", str(args.ssh_key or "-"))
     table.add_row("Phone archive", str(local_archive))
     table.add_row("Remote archive", remote_artifact_path)
-    table.add_row("Remote devtool", remote_devtool)
-    table.add_row("Remote shell", remote_shell)
+    table.add_row("Remote devtool", str(args.remote_devtool))
+    table.add_row("Remote shell", str(args.remote_shell))
     console.print(table)
 
 
-def ensure_remote_parent_dir(target: str, remote_artifact_path: str, ssh_options: list[str]) -> None:
+def ensure_remote_parent_dir(target: str, args: argparse.Namespace, remote_artifact_path: str) -> None:
     remote_parent = str(Path(remote_artifact_path).parent)
     console.print(f"[cyan]Ensuring remote directory exists:[/cyan] {remote_parent}")
     result = subprocess.run(
-        ["ssh", *ssh_options, target, "mkdir", "-p", remote_parent],
+        [*ssh_base_command(target, args), "mkdir", "-p", remote_parent],
         text=True,
         capture_output=True,
         check=False,
     )
     if result.returncode != 0:
-        reason = (result.stderr or "").strip() or "unknown error"
-        raise TermuxRunError(f"Failed to create remote directory {remote_parent}: {reason}")
+        raise TermuxRunError(f"Failed to create remote directory {remote_parent}: {((result.stderr or '').strip() or 'unknown error')}")
 
 
-def upload_archive(target: str, local_archive: Path, remote_artifact_path: str, ssh_options: list[str]) -> None:
-    console.print(f"[cyan]Uploading archive:[/cyan] {local_archive.name}")
+def upload_archive(target: str, args: argparse.Namespace, local_archive: Path, remote_artifact_path: str) -> None:
+    console.print(f"[cyan]Uploading archive:[/cyan]\n{local_archive.name}")
     result = subprocess.run(
-        ["scp", *scp_options_from_ssh(ssh_options), str(local_archive), f"{target}:{remote_artifact_path}"],
+        [*scp_base_command(args), str(local_archive), f"{target}:{remote_artifact_path}"],
         text=True,
         capture_output=True,
         check=False,
     )
     if result.returncode != 0:
-        reason = (result.stderr or "").strip() or "unknown error"
-        raise TermuxRunError(f"Upload failed: {reason}")
+        raise TermuxRunError(f"Upload failed: {((result.stderr or '').strip() or 'unknown error')}")
     console.print("[bold green]Upload complete.[/bold green]")
-
-
-def scp_options_from_ssh(ssh_options: list[str]) -> list[str]:
-    translated: list[str] = []
-    i = 0
-    while i < len(ssh_options):
-        item = ssh_options[i]
-        if item == "-p":
-            translated.extend(["-P", ssh_options[i + 1]])
-            i += 2
-            continue
-        translated.append(item)
-        i += 1
-    return translated
 
 
 def delete_local_archive(local_archive: Path) -> None:
@@ -400,58 +392,79 @@ def delete_local_archive(local_archive: Path) -> None:
         local_archive.unlink()
     except OSError as exc:
         raise TermuxRunError(f"Uploaded successfully, but failed to delete local archive: {exc}") from exc
-    console.print(f"[bold green]Deleted phone copy:[/bold green] {local_archive}")
+    console.print(f"[bold green]Deleted phone copy:[/bold green]\n{local_archive}")
 
 
-def detect_remote_capabilities(target: str, remote_devtool: str, remote_shell: str, ssh_options: list[str]) -> RemoteCapabilities:
-    probes = [
-        ["ssh", *ssh_options, target, remote_shell, "-lc", f"\"{remote_devtool}\" --help"],
-        ["ssh", *ssh_options, target, remote_devtool, "--help"],
-    ]
-    combined_output = ""
-    for probe in probes:
-        result = subprocess.run(probe, text=True, capture_output=True, check=False)
-        output = ((result.stdout or "") + "
-" + (result.stderr or "")).strip()
-        if output:
-            combined_output = output
-        if "--stdout-payload" in output or "runner-json" in output or "usage:" in output.lower():
-            capabilities = RemoteCapabilities(
-                supports_stdout_payload="--stdout-payload" in output,
-                supports_runner_json="runner-json" in output,
-            )
-            table = Table(title="Remote devtool capabilities")
-            table.add_column("Capability", style="cyan")
-            table.add_column("Supported")
-            table.add_row("--stdout-payload", "yes" if capabilities.supports_stdout_payload else "no")
-            table.add_row("runner-json", "yes" if capabilities.supports_runner_json else "no")
-            console.print(table)
-            return capabilities
-    reason = combined_output or "unknown error"
-    raise TermuxRunError(f"Failed to inspect remote devtool help: {reason}")
+def detect_remote_capabilities(target: str, args: argparse.Namespace) -> RemoteDevtoolCapabilities:
+    command = [*ssh_base_command(target, args), args.remote_shell, "-lc", f"{quote_shell(args.remote_devtool)} --help"]
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    output = ((result.stdout or "") + "\n" + (result.stderr or ""))
+    if not output.strip():
+        raise TermuxRunError("Failed to inspect remote devtool help.")
+    supports_stdout_payload = "--stdout-payload" in output
+    supports_runner_json = "runner-json" in output
+    table = Table(title="Remote devtool capabilities")
+    table.add_column("Capability", style="cyan")
+    table.add_column("Supported")
+    table.add_row("--stdout-payload", "yes" if supports_stdout_payload else "no")
+    table.add_row("runner-json", "yes" if supports_runner_json else "no")
+    console.print(table)
+    return RemoteDevtoolCapabilities(
+        supports_stdout_payload=supports_stdout_payload,
+        supports_runner_json=supports_runner_json,
+    )
 
 
-def rewrite_block_for_remote(block: str, *, remote_devtool: str, capabilities: RemoteCapabilities) -> str:
+def rewrite_block_for_remote(block: str, capabilities: RemoteDevtoolCapabilities, remote_devtool: str, parsed: ParsedBlock) -> str:
     def replace_devtool_line(match: re.Match[str]) -> str:
         prefix = match.group(1)
         indent = match.group("indent")
-        line = match.group("line")
-
-        line = COPY_FLAG_PATTERN.sub("", line)
-        line = JSON_FLAG_PATTERN.sub("", line)
-        line = STDOUT_PAYLOAD_PATTERN.sub("", line)
-        line = collapse_spaces(line)
-
-        parts = line.split()
+        parts = shlex.split(match.group("line"))
         if not parts:
-            return f"{prefix}{indent}{line}"
+            return prefix + indent + match.group("line")
+        parts[0] = remote_devtool
 
-        if parts[0] == "devtool":
-            parts[0] = remote_devtool
+        command_index = None
+        command_name = None
+        for index, token in enumerate(parts[1:], start=1):
+            if token in DEVTOOL_COMMANDS and not token.startswith("-"):
+                command_index = index
+                command_name = token
+                break
+
+        archive_index = None
+        if parsed.requires_archive_upload and command_name in APPLY_COMMANDS and parsed.remote_artifact_expr:
+            for index in range(len(parts) - 1, (command_index or 0), -1):
+                token = parts[index]
+                if token == parsed.remote_artifact_expr or looks_like_archive_path(token):
+                    archive_index = index
+                    break
+
+        cleaned: list[str] = [remote_devtool]
+        skip_next = False
+        for idx, token in enumerate(parts[1:], start=1):
+            if skip_next:
+                skip_next = False
+                continue
+            if token == "--stdout-payload" and idx + 1 < len(parts):
+                skip_next = True
+                continue
+            if token in {"--json", "-j"}:
+                continue
+            if COPY_FLAG_PATTERN.fullmatch(token):
+                continue
+            if token.startswith("--stdout-payload="):
+                continue
+            if archive_index is not None and idx == archive_index and parsed.remote_artifact_path:
+                cleaned.append(parsed.remote_artifact_path)
+                continue
+            cleaned.append(token)
+
+        parts = cleaned
 
         insert_at = len(parts)
-        for index, part in enumerate(parts[1:], start=1):
-            if part in DEVTOOL_COMMANDS and not part.startswith("-"):
+        for index, token in enumerate(parts[1:], start=1):
+            if token in DEVTOOL_COMMANDS and not token.startswith("-"):
                 insert_at = index
                 break
 
@@ -462,17 +475,10 @@ def rewrite_block_for_remote(block: str, *, remote_devtool: str, capabilities: R
         else:
             parts[insert_at:insert_at] = ["--json"]
 
-        return f"{prefix}{indent}{' '.join(parts)}"
+        return prefix + indent + shlex.join(parts)
 
-    rewritten = DEVTOOL_LINE_PATTERN.sub(replace_devtool_line, block)
-    return rewritten.rstrip() + "\n"
-
-
-def collapse_spaces(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def show_rewritten_block(block: str, capabilities: RemoteCapabilities) -> None:
+    return DEVTOOL_LINE_PATTERN.sub(replace_devtool_line, block).rstrip() + "\n"
+def show_rewritten_block(block: str, capabilities: RemoteDevtoolCapabilities) -> None:
     if capabilities.supports_runner_json:
         mode = "--stdout-payload runner-json"
     elif capabilities.supports_stdout_payload:
@@ -481,35 +487,17 @@ def show_rewritten_block(block: str, capabilities: RemoteCapabilities) -> None:
         mode = "--json"
     console.print(
         Panel(
-            Syntax(block.rstrip(), "bash", word_wrap=True, line_numbers=syntax_line_numbers(console)),
+            Syntax(block.rstrip(), "bash", word_wrap=True, line_numbers=False),
             title=f"Rewritten remote block ({mode})",
             border_style="magenta",
         )
     )
 
 
-def block_contains_commit(block: str) -> bool:
-    patterns = (
-        r"(^|\n)\s*git\b[^\n]*\bcommit\b",
-        r"(^|\n)\s*git\b[^\n]*\badd\b[^\n]*",
-        rf"(^|\n)\s*{re.escape('devtool')}\b[^\n]*\b(commit|ci)\b",
-        rf"(^|\n)\s*{re.escape('/home/mike/.local/bin/devtool')}\b[^\n]*\b(commit|ci)\b",
-    )
-    return any(re.search(pattern, block, flags=re.MULTILINE) for pattern in patterns)
-
-
-def confirm_commit_block(*, assume_yes: bool) -> None:
-    if assume_yes:
-        return
-    answer = Prompt.ask("This block contains commit commands. Continue?", choices=["y", "n"], default="y")
-    if answer.lower() != "y":
-        raise TermuxRunError("Commit-containing block not confirmed.")
-
-
-def run_remote_block(target: str, block: str, *, shell: str, ssh_options: list[str]) -> str:
-    console.print(f"[cyan]Running remote block via {shell} on[/cyan] {target}")
+def run_remote_block(target: str, args: argparse.Namespace, block: str) -> tuple[str, int]:
+    console.print(f"[cyan]Running remote block via {args.remote_shell} on[/cyan] {target}")
     process = subprocess.Popen(
-        ["ssh", *ssh_options, target, shell, "-s"],
+        [*ssh_base_command(target, args), args.remote_shell, "-s"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -523,74 +511,49 @@ def run_remote_block(target: str, block: str, *, shell: str, ssh_options: list[s
     if stderr_text:
         sys.stderr.write(stderr_text)
         sys.stderr.flush()
-    if process.returncode != 0:
-        raise TermuxRunError(
-            f"Remote block failed with exit code {process.returncode}. "
-            "See remote stderr above for the actual command failure."
-        )
-    if stdout_text:
-        console.print(f"[bold green]Captured remote stdout:[/bold green] {len(stdout_text)} bytes")
-    else:
-        console.print("[yellow]Remote stdout was empty.[/yellow]")
-    return stdout_text
+    return stdout_text or "", int(process.returncode or 0)
 
 
-def parse_runner_json(stdout_text: str) -> dict[str, object]:
-    try:
-        payload = json.loads(stdout_text)
-    except json.JSONDecodeError as exc:
-        raise TermuxRunError(f"Failed to parse runner-json from remote stdout: {exc}") from exc
-    if payload.get("schema_version") != 1:
-        raise TermuxRunError(f"Unsupported runner-json schema_version: {payload.get('schema_version')}")
-    return payload
+def consume_runner_json(payload: dict[str, object]) -> None:
+    clipboard = payload.get("clipboard")
+    if isinstance(clipboard, dict):
+        preferred = clipboard.get("preferred", "json")
+        if preferred == "summary":
+            text = str(clipboard.get("summary", ""))
+        elif preferred == "raw":
+            text = str(clipboard.get("raw", ""))
+        else:
+            text = json.dumps(clipboard.get("json", {}), indent=2)
+        set_termux_clipboard(text)
 
+    notification = payload.get("notification")
+    if isinstance(notification, dict) and shutil.which("termux-notification"):
+        if notification.get("should_notify", False):
+            subprocess.run(
+                [
+                    "termux-notification",
+                    "--title", str(notification.get("title", "devtool")),
+                    "--content", str(notification.get("body", "")),
+                    "--id", "devtool-runner",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
 
-def copy_preferred_clipboard(payload: dict[str, object]) -> None:
-    clipboard = payload.get("clipboard", {})
-    preferred = clipboard.get("preferred", "json")
-    if preferred == "summary":
-        text = str(clipboard.get("summary", ""))
-    elif preferred == "raw":
-        text = str(clipboard.get("raw", ""))
-    else:
-        text = json.dumps(clipboard.get("json", {}), indent=2)
-    set_termux_clipboard(text)
-
-
-def maybe_notify(payload: dict[str, object]) -> None:
-    if shutil.which("termux-notification") is None:
-        return
-    notification = payload.get("notification", {})
-    if not notification.get("should_notify", False):
-        return
-    cmd = [
-        "termux-notification",
-        "--title",
-        str(notification.get("title", "devtool")),
-        "--content",
-        str(notification.get("body", "")),
-        "--id",
-        "devtool-termux-run",
-    ]
-    if notification.get("level") == "error":
-        cmd += ["--priority", "high"]
-    subprocess.run(cmd, text=True, capture_output=True, check=False)
-
-
-def print_runner_result(payload: dict[str, object]) -> None:
-    totals = payload.get("totals", {})
-    table = Table(title="Remote result")
-    table.add_column("Field", style="cyan", no_wrap=True)
-    table.add_column("Value", overflow="fold")
-    table.add_row("ok", str(payload.get("ok")))
-    table.add_row("command", str(payload.get("command")))
-    table.add_row("repo", str(payload.get("repo")))
-    table.add_row("duration_s", str(payload.get("duration_s")))
-    table.add_row("warnings", str(totals.get("warnings")))
-    table.add_row("errors", str(totals.get("errors")))
-    table.add_row("failed", str(totals.get("failed")))
-    table.add_row("skipped", str(totals.get("skipped")))
-    console.print(table)
+    totals = payload.get("totals")
+    if isinstance(totals, dict):
+        table = Table(title="Remote result")
+        table.add_column("Field", style="cyan", no_wrap=True)
+        table.add_column("Value", overflow="fold")
+        table.add_row("ok", str(payload.get("ok")))
+        table.add_row("command", str(payload.get("command")))
+        table.add_row("repo", str(payload.get("repo")))
+        table.add_row("warnings", str(totals.get("warnings")))
+        table.add_row("errors", str(totals.get("errors")))
+        table.add_row("failed", str(totals.get("failed")))
+        table.add_row("skipped", str(totals.get("skipped")))
+        console.print(table)
 
 
 def set_termux_clipboard(text: str) -> None:
@@ -602,8 +565,26 @@ def set_termux_clipboard(text: str) -> None:
         check=False,
     )
     if result.returncode != 0:
-        reason = (result.stderr or "").strip() or "unknown error"
-        raise TermuxRunError(f"termux-clipboard-set failed: {reason}")
+        raise TermuxRunError(f"termux-clipboard-set failed: {((result.stderr or '').strip() or 'unknown error')}")
+
+
+def find_devtool_subcommand(tokens: list[str]) -> str | None:
+    skip_value = False
+    options_with_value = {"-r", "--repo", "-c", "--config", "--theme", "--stdout-payload"}
+    for idx, token in enumerate(tokens):
+        if skip_value:
+            skip_value = False
+            continue
+        if token in options_with_value:
+            skip_value = True
+            continue
+        if token.startswith("--repo=") or token.startswith("--stdout-payload="):
+            continue
+        if token.startswith("-"):
+            continue
+        if token in DEVTOOL_COMMANDS:
+            return token
+    return None
 
 
 def quote_shell(value: str) -> str:
