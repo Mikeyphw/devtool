@@ -12,14 +12,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.syntax import Syntax
 from rich.table import Table
 
-console = Console()
-stderr_console = Console(stderr=True)
+from .console_utils import create_console, is_narrow_console
+
+console = create_console()
+stderr_console = create_console(stderr=True)
+
+__all__ = [
+    "ParsedBlock",
+    "RemoteCapabilities",
+    "RemoteDevtoolCapabilities",
+    "TermuxRunError",
+    "add_termux_run_parser",
+    "block_contains_commit",
+    "build_ssh_options",
+    "confirm_clipboard_block",
+    "handle_termux_run",
+    "parse_clipboard_block",
+    "rewrite_block_for_remote",
+    "scp_options_from_ssh",
+]
 
 TERMUX_SHARED_DOWNLOADS = Path("/sdcard/Download")
 TERMUX_SHARED_DOWNLOADS_ALT = Path("/storage/emulated/0/Download")
@@ -60,7 +76,7 @@ DEVTOOL_COMMANDS = {
     "wine-validate", "wv", "run", "rn", "package", "pkg", "status", "st",
     "doctor", "dr", "ai-prompt", "ap", "commit", "ci", "apply-overlay", "ao",
     "apply-snapshot", "as", "apply-overlay-validate", "aov",
-    "apply-snapshot-validate", "asv", "batch", "init-config", "ic",
+    "apply-snapshot-validate", "asv", "batch", "init-config",
     "logs", "tag", "release-notes", "completion", "config", "termux-run",
 }
 APPLY_COMMANDS = {
@@ -88,6 +104,10 @@ class RemoteDevtoolCapabilities:
     supports_runner_json: bool
 
 
+# Backward-compatible public alias used by older tests and integrations.
+RemoteCapabilities = RemoteDevtoolCapabilities
+
+
 def add_termux_run_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "termux-run",
@@ -107,7 +127,8 @@ def add_termux_run_parser(subparsers: argparse._SubParsersAction[argparse.Argume
 
 def handle_termux_run(args: argparse.Namespace) -> int:
     try:
-        ensure_commands(("ssh", "scp", "termux-clipboard-get", "termux-clipboard-set"))
+        ensure_commands(("ssh", "scp", "termux-clipboard-get"))
+        console.print("[cyan]Termux runner:[/cyan] clipboard block -> remote run")
         target = build_target(args)
         check_ssh_connection(target, args)
 
@@ -143,8 +164,7 @@ def handle_termux_run(args: argparse.Namespace) -> int:
                     consume_runner_json(payload)
                     consumed = True
             if not consumed:
-                set_termux_clipboard(stdout_text)
-                console.print("[green]Remote stdout copied to Termux clipboard.[/green]")
+                show_remote_stdout(stdout_text)
 
         if returncode != 0:
             stderr_console.print(
@@ -175,22 +195,13 @@ def build_target(args: argparse.Namespace) -> str:
 
 
 def ssh_base_command(target: str, args: argparse.Namespace) -> list[str]:
-    command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
-    if getattr(args, "ssh_port", ""):
-        command += ["-p", str(args.ssh_port)]
-    if getattr(args, "ssh_key", ""):
-        command += ["-i", str(args.ssh_key)]
+    command = ["ssh", *build_ssh_options(port=getattr(args, "ssh_port", ""), key_path=getattr(args, "ssh_key", ""))]
     command.append(target)
     return command
 
 
 def scp_base_command(args: argparse.Namespace) -> list[str]:
-    command = ["scp"]
-    if getattr(args, "ssh_port", ""):
-        command += ["-P", str(args.ssh_port)]
-    if getattr(args, "ssh_key", ""):
-        command += ["-i", str(args.ssh_key)]
-    return command
+    return scp_options_from_ssh(build_ssh_options(port=getattr(args, "ssh_port", ""), key_path=getattr(args, "ssh_key", "")))
 
 
 def check_ssh_connection(target: str, args: argparse.Namespace) -> None:
@@ -218,14 +229,19 @@ def get_termux_clipboard() -> str:
     return text
 
 
-def confirm_clipboard_block(block: str) -> None:
+def confirm_clipboard_block(block: str, assume_yes: bool = False) -> None:
+    title = "Clipboard block"
+    if is_narrow_console(console):
+        title = "Clipboard"
     console.print(
         Panel(
             Syntax(block.rstrip(), "bash", word_wrap=True, line_numbers=False),
-            title="Clipboard block",
+            title=title,
             border_style="blue",
         )
     )
+    if assume_yes:
+        return
     answer = Prompt.ask("Use this clipboard block?", choices=["y", "n"], default="y")
     if answer.lower() != "y":
         raise TermuxRunError("Clipboard block not confirmed.")
@@ -324,6 +340,49 @@ def looks_like_archive_path(value: str) -> bool:
     return any(lower.endswith(suffix) for suffix in ARCHIVE_SUFFIXES)
 
 
+def build_ssh_options(*, port: str = "", key_path: str = "", connect_timeout: int = 8) -> list[str]:
+    options = ["-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}"]
+    if port:
+        options += ["-p", str(port)]
+    if key_path:
+        options += ["-i", str(Path(key_path).expanduser())]
+    return options
+
+
+def scp_options_from_ssh(ssh_options: list[str]) -> list[str]:
+    options = ["scp"]
+    index = 0
+    while index < len(ssh_options):
+        token = ssh_options[index]
+        if token == "-p" and index + 1 < len(ssh_options):
+            options += ["-P", ssh_options[index + 1]]
+            index += 2
+            continue
+        if token == "-i" and index + 1 < len(ssh_options):
+            options += ["-i", ssh_options[index + 1]]
+            index += 2
+            continue
+        index += 1
+    return options
+
+
+def block_contains_commit(block: str) -> bool:
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            parts = shlex.split(stripped)
+        except ValueError:
+            continue
+        if not parts:
+            continue
+        command_name = Path(parts[0]).name
+        if command_name in {"git", "devtool"} and "commit" in parts[1:]:
+            return True
+    return False
+
+
 def has_archive_suffix(filename: str) -> bool:
     return looks_like_archive_path(filename)
 
@@ -415,7 +474,14 @@ def detect_remote_capabilities(target: str, args: argparse.Namespace) -> RemoteD
     )
 
 
-def rewrite_block_for_remote(block: str, capabilities: RemoteDevtoolCapabilities, remote_devtool: str, parsed: ParsedBlock) -> str:
+def rewrite_block_for_remote(
+    block: str,
+    capabilities: RemoteDevtoolCapabilities,
+    remote_devtool: str,
+    parsed: ParsedBlock | None = None,
+) -> str:
+    parsed = parsed or parse_clipboard_block(block)
+
     def replace_devtool_line(match: re.Match[str]) -> str:
         prefix = match.group(1)
         indent = match.group("indent")
@@ -488,14 +554,14 @@ def show_rewritten_block(block: str, capabilities: RemoteDevtoolCapabilities) ->
     console.print(
         Panel(
             Syntax(block.rstrip(), "bash", word_wrap=True, line_numbers=False),
-            title=f"Rewritten remote block ({mode})",
+            title=f"Remote block ({mode})",
             border_style="magenta",
         )
     )
 
 
 def run_remote_block(target: str, args: argparse.Namespace, block: str) -> tuple[str, int]:
-    console.print(f"[cyan]Running remote block via {args.remote_shell} on[/cyan] {target}")
+    console.print(f"[cyan]Remote run:[/cyan] {args.remote_shell} on {target}")
     process = subprocess.Popen(
         [*ssh_base_command(target, args), args.remote_shell, "-s"],
         stdin=subprocess.PIPE,
@@ -515,17 +581,6 @@ def run_remote_block(target: str, args: argparse.Namespace, block: str) -> tuple
 
 
 def consume_runner_json(payload: dict[str, object]) -> None:
-    clipboard = payload.get("clipboard")
-    if isinstance(clipboard, dict):
-        preferred = clipboard.get("preferred", "json")
-        if preferred == "summary":
-            text = str(clipboard.get("summary", ""))
-        elif preferred == "raw":
-            text = str(clipboard.get("raw", ""))
-        else:
-            text = json.dumps(clipboard.get("json", {}), indent=2)
-        set_termux_clipboard(text)
-
     notification = payload.get("notification")
     if isinstance(notification, dict) and shutil.which("termux-notification"):
         if notification.get("should_notify", False):
@@ -541,19 +596,48 @@ def consume_runner_json(payload: dict[str, object]) -> None:
                 text=True,
             )
 
+    show_runner_result(payload)
+
+
+def show_runner_result(payload: dict[str, object]) -> None:
     totals = payload.get("totals")
     if isinstance(totals, dict):
-        table = Table(title="Remote result")
-        table.add_column("Field", style="cyan", no_wrap=True)
-        table.add_column("Value", overflow="fold")
-        table.add_row("ok", str(payload.get("ok")))
-        table.add_row("command", str(payload.get("command")))
-        table.add_row("repo", str(payload.get("repo")))
-        table.add_row("warnings", str(totals.get("warnings")))
-        table.add_row("errors", str(totals.get("errors")))
-        table.add_row("failed", str(totals.get("failed")))
-        table.add_row("skipped", str(totals.get("skipped")))
-        console.print(table)
+        rows = [
+            ("ok", str(payload.get("ok"))),
+            ("command", str(payload.get("command"))),
+            ("repo", str(payload.get("repo"))),
+            ("warnings", str(totals.get("warnings"))),
+            ("errors", str(totals.get("errors"))),
+            ("failed", str(totals.get("failed"))),
+            ("skipped", str(totals.get("skipped"))),
+        ]
+        if is_narrow_console(console):
+            grid = Table.grid(expand=False)
+            grid.add_column(style="bold", no_wrap=True)
+            grid.add_column(overflow="fold")
+            for key, value in rows:
+                grid.add_row(key, value)
+            console.print(Panel(grid, title="Remote result", expand=False))
+        else:
+            table = Table(title="Remote result")
+            table.add_column("Field", style="cyan", no_wrap=True)
+            table.add_column("Value", overflow="fold")
+            for key, value in rows:
+                table.add_row(key, value)
+            console.print(table)
+
+
+def show_remote_stdout(stdout_text: str) -> None:
+    if not stdout_text.strip():
+        return
+    title = "Remote stdout" if not is_narrow_console(console) else "Remote output"
+    console.print(
+        Panel(
+            Syntax(stdout_text.rstrip(), "text", word_wrap=True, line_numbers=False),
+            title=title,
+            border_style="green",
+        )
+    )
 
 
 def set_termux_clipboard(text: str) -> None:

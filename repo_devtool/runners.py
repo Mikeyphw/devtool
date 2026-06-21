@@ -233,14 +233,56 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
 def _extract_archive(artifact_path: Path, target: Path) -> None:
     if artifact_path.suffix == ".zip":
         with zipfile.ZipFile(artifact_path) as zf:
-            zf.extractall(target)
+            _safe_extract_zip(zf, target)
         return
     if artifact_path.suffix == ".tar" or artifact_path.name.endswith((".tar.gz", ".tgz")):
         mode = "r:gz" if artifact_path.name.endswith((".tar.gz", ".tgz")) else "r"
         with tarfile.open(artifact_path, mode) as tf:
-            tf.extractall(target)
+            _safe_extract_tar(tf, target)
         return
     raise RuntimeError(f"Unsupported artifact type: {artifact_path}")
+
+
+def _safe_extract_zip(archive: zipfile.ZipFile, target: Path) -> None:
+    target = target.resolve()
+    for member in archive.infolist():
+        member_path = _safe_destination_path(target, Path(member.filename))
+        if member.is_dir():
+            member_path.mkdir(parents=True, exist_ok=True)
+            continue
+        member_path.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(member, "r") as source, member_path.open("wb") as dest:
+            shutil.copyfileobj(source, dest)
+
+
+def _safe_extract_tar(archive: tarfile.TarFile, target: Path) -> None:
+    target = target.resolve()
+    for member in archive.getmembers():
+        if member.islnk() or member.issym() or member.isdev():
+            raise RuntimeError(f"Unsafe tar member: {member.name}")
+        member_path = _safe_destination_path(target, Path(member.name))
+        if member.isdir():
+            member_path.mkdir(parents=True, exist_ok=True)
+            continue
+        if not member.isfile():
+            raise RuntimeError(f"Unsupported tar member type: {member.name}")
+        member_path.parent.mkdir(parents=True, exist_ok=True)
+        extracted = archive.extractfile(member)
+        if extracted is None:
+            raise RuntimeError(f"Failed to extract tar member: {member.name}")
+        with extracted, member_path.open("wb") as dest:
+            shutil.copyfileobj(extracted, dest)
+
+
+def _safe_destination_path(base: Path, member_path: Path) -> Path:
+    if member_path.is_absolute():
+        raise RuntimeError(f"Unsafe archive path: {member_path}")
+    resolved = (base / member_path).resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError as exc:
+        raise RuntimeError(f"Unsafe archive path: {member_path}") from exc
+    return resolved
 
 
 def _sync_snapshot(snapshot_root: Path, repo_root: Path) -> None:

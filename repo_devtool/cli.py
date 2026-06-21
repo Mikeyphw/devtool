@@ -46,22 +46,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-r", "--repo", default=None, help="Repository root")
     parser.add_argument("-c", "--config", default=None, help="Config file path")
     parser.add_argument("-v", "--verbose", action="store_true", help="Stream full command output")
-    parser.add_argument("-j", "--json", action="store_true", help="Emit JSON summary")
+    parser.add_argument("-j", "--json", action="store_true", help="Shortcut for --stdout-payload json")
     parser.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
     parser.add_argument("-f", "--force", action="store_true", help="Force dangerous actions")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them")
     parser.add_argument("-k", "--continue-on-error", action="store_true", help="Continue batch after errors")
     parser.add_argument("--fail-fast", action="store_true", help="Stop batch on first error")
-    parser.add_argument("-p", "--copy", action="store_true", help="Always copy raw output to clipboard")
-    parser.add_argument("--copy-summary", action="store_true", help="Always copy rendered summary to clipboard")
-    parser.add_argument("--copy-json", action="store_true", help="Always copy JSON summary to clipboard")
-    parser.add_argument("--no-clipboard", action="store_true", help="Never prompt for clipboard")
+    parser.add_argument("-p", "--copy", action="store_true", help="Copy raw output to clipboard without prompting")
+    parser.add_argument("--copy-summary", action="store_true", help="Copy rendered summary to clipboard without prompting")
+    parser.add_argument("--copy-json", action="store_true", help="Copy JSON summary to clipboard without prompting")
+    parser.add_argument("--no-clipboard", action="store_true", help="Disable clipboard prompts and copy behavior")
     parser.add_argument("-n", "--notify", action="store_true", help="Send notification when done")
     parser.add_argument("--notify-brief", action="store_true", help="Use shorter notification body")
     parser.add_argument("--notify-on-success", action="store_true", help="Only notify on success")
     parser.add_argument("--notify-on-fail", action="store_true", help="Only notify on failure")
     parser.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
-    parser.add_argument("--stdout-payload", choices=["auto", "summary", "json", "raw", "runner-json"], default="auto", help="Send selected payload to stdout and human output to stderr")
+    parser.add_argument(
+        "--stdout-payload",
+        choices=["auto", "summary", "json", "raw", "runner-json"],
+        default="auto",
+        help="Select the stdout payload; use summary/json/raw/runner-json, or auto for normal CLI output",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -106,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch = subparsers.add_parser("batch")
     batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
 
-    init_cfg = subparsers.add_parser("init-config", aliases=["ic"])
+    init_cfg = subparsers.add_parser("init-config")
     init_cfg.add_argument("repo_root", nargs="?", default=".")
     init_cfg.add_argument("--force", action="store_true")
 
@@ -128,6 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
     cfg_sub.add_parser("show")
+    cfg_sub.add_parser("defaults")
     cfg_sub.add_parser("resolve")
     cfg_sub.add_parser("doctor")
 
@@ -171,6 +177,23 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         else:
             reason = result.reason or "Clipboard copy failed."
             console.print(f"[yellow]{reason}[/yellow]")
+
+
+def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[str, str]:
+    explicit_stdout = args.stdout_payload
+    if args.json and explicit_stdout != "auto":
+        parser.error("--json cannot be combined with --stdout-payload; use --stdout-payload json instead.")
+    if args.json and explicit_stdout == "auto":
+        explicit_stdout = "json"
+
+    copy_flags = [name for name, enabled in (("raw", args.copy), ("summary", args.copy_summary), ("json", args.copy_json)) if enabled]
+    if len(copy_flags) > 1:
+        parser.error("Choose only one of --copy, --copy-summary, or --copy-json.")
+    if args.no_clipboard and copy_flags:
+        parser.error("--no-clipboard cannot be combined with --copy, --copy-summary, or --copy-json.")
+
+    copy_mode = copy_flags[0] if copy_flags else "auto"
+    return explicit_stdout, copy_mode
 
 
 def _maybe_notify(args: argparse.Namespace, *, warnings: int, errors: int, failed: int, command: str, repo_name: str, duration_seconds: float) -> None:
@@ -413,6 +436,11 @@ def _config_command(args: argparse.Namespace) -> int:
     if args.config_command == "show":
         console.print(Syntax((config.config_path.read_text(encoding="utf-8") if config.config_path else ""), "toml", word_wrap=True, line_numbers=syntax_line_numbers(console)))
         return 0
+    if args.config_command == "defaults":
+        from .config import generate_template
+
+        console.print(Syntax(generate_template(config.repo_root), "toml", word_wrap=True, line_numbers=syntax_line_numbers(console)))
+        return 0
     if args.config_command == "resolve":
         print(json.dumps(resolve_config_dict(config), indent=2))
         return 0
@@ -430,15 +458,16 @@ def _config_command(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    effective_payload = args.stdout_payload
-    if effective_payload != "auto":
-        args.json = False
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    effective_payload, copy_mode = _validate_output_flags(args, parser)
 
     if args.command == "termux-run":
         return handle_termux_run(args)
 
     if args.command in {"ai-prompt", "ap"}:
+        if copy_mode in {"summary", "json"}:
+            parser.error("ai-prompt only supports raw clipboard copy; use --copy or omit clipboard flags.")
         config = load_project_config(args.repo, args.config)
         options = resolve_ai_prompt_options(
             config,
@@ -467,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
             console.print(f"[green]Wrote[/green] {output_path}")
         else:
             print(prompt_text, end="" if prompt_text.endswith("\n") else "\n")
-        if args.copy:
+        if copy_mode == "raw":
             result = copy_text(prompt_text)
             if result.success:
                 console.print(f"[green]AI prompt copied to clipboard via {result.backend}.[/green]")
@@ -492,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
             console.print(str(path))
         return 0
 
-    if args.command in {"init-config", "ic"}:
+    if args.command == "init-config":
         target = write_template_config(Path(args.repo_root), force=args.force)
         console.print(f"[green]Wrote[/green] {target}")
         return 0
@@ -510,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
             totals, summary_text, json_text, _runner_json_text = _emit_summary(
                 results,
                 None,
-                as_json=args.json,
+                as_json=effective_payload == "json",
                 payload_mode=effective_payload,
                 raw_output=raw_output,
                 command=args.command,
@@ -540,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
             totals, summary_text, json_text, _runner_json_text = _emit_summary(
                 results,
                 config,
-                as_json=args.json,
+                as_json=effective_payload == "json",
                 payload_mode=effective_payload,
                 raw_output=raw_output,
                 command=args.command,
@@ -579,7 +608,7 @@ def main(argv: list[str] | None = None) -> int:
     totals, summary_text, json_text, _runner_json_text = _emit_summary(
         results,
         config,
-        as_json=args.json,
+        as_json=effective_payload == "json",
         payload_mode=effective_payload,
         raw_output=raw_output,
         command=args.command,

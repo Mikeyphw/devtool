@@ -14,6 +14,7 @@ It supports:
 - batch aliases
 - config template generation
 - dynamic AI prompt generation
+- safer archive extraction for overlay and snapshot apply
 
 ## Install
 
@@ -42,6 +43,14 @@ devtool init-config /path/to/repo
 ```
 
 That writes `.devtool.toml`.
+
+View the generated template without writing a file:
+
+```bash
+devtool config defaults --repo /path/to/repo
+```
+
+Use `devtool config show` to print the current repo config and `devtool config resolve` to inspect the fully resolved values.
 
 ### Environment overrides
 
@@ -74,7 +83,23 @@ By default, at the end of a run, `devtool` asks whether to copy raw command outp
 - `y` / `Y` = yes
 - `n` / `N` = no
 
-Use `--copy` to always copy without prompting.
+Use `--copy` to always copy raw output without prompting.
+Use `--copy-summary` to copy the rendered summary, or `--copy-json` to copy JSON.
+Use `--no-clipboard` to disable clipboard prompts and copy behavior.
+
+### Output payloads
+
+`--json` is a shortcut for `--stdout-payload json`.
+
+Use `--stdout-payload` when you want the command to print something other than the normal human summary:
+
+- `auto` keeps the usual human summary on stderr and prints the selected payload only when needed
+- `summary` prints the compact summary
+- `json` prints the JSON summary
+- `raw` prints the raw command output
+- `runner-json` prints the runner envelope used by Termux workflows
+
+Do not combine `--json` with `--stdout-payload`; use `--stdout-payload json` when you need explicit control.
 
 ## Notifications
 
@@ -121,3 +146,18 @@ The generated prompt is project-agnostic and includes the TOML to environment ov
 - `DEVTOOL_PROJECT_RESTORE_COMMAND`
 - `DEVTOOL_PROJECT_RUN_COMMAND`
 - `DEVTOOL_ENV_<NAME>` for values under `[env]`
+
+## Archive Safety
+
+Overlay and snapshot archives are extracted with path-safety checks.
+
+- Archive entries that try to escape the destination directory are rejected.
+- Tar archives with symlinks, hardlinks, or special device entries are rejected.
+- Snapshot apply still uses a temporary extraction directory before syncing into the repo.
+
+### Overlay Delete Manifest
+
+If an overlay removes files or directories, include a root-level `.devtool-delete` file in the overlay archive.
+
+- Put one repo-relative path per line in `.devtool-delete`, ignore blank lines and `#` comments, and avoid globbing.
+- Treat `.devtool-delete` as overlay-only metadata; snapshot delivery should continue to use full repo state.

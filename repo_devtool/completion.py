@@ -72,7 +72,7 @@ _devtool() {
       _devtool_artifact_path
       ;;
     config)
-      _values 'config subcommand' show resolve doctor
+      _values 'config subcommand' show defaults resolve doctor
       ;;
     completion)
       _values 'shell' zsh

@@ -6,6 +6,8 @@ import textwrap
 
 from .models import ProjectConfig
 
+DELETE_MANIFEST_NAME = ".devtool-delete"
+
 
 @dataclass(slots=True)
 class AiPromptOptions:
@@ -68,7 +70,11 @@ def resolve_ai_prompt_options(config: ProjectConfig, args_repo: str | None, *,
 
 
 def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
-    validation_command = 'devtool wine-validate -r "$REPO_CURRENT"' if options.prefer_wine_validation else 'devtool validate -r "$REPO_CURRENT"'
+    validation_command = (
+        f'devtool -r "{options.repo_path}" wine-validate --copy'
+        if options.prefer_wine_validation
+        else f'devtool -r "{options.repo_path}" validate --copy'
+    )
     notification_mode = "enabled (brief summary)" if options.notifications_enabled and options.notify_brief else (
         "enabled" if options.notifications_enabled else "disabled"
     )
@@ -76,7 +82,8 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
 
     return textwrap.dedent(f"""    # AI workflow prompt for {options.repo_name}
 
-    Repo path: `{options.repo_path}`
+    Target repo: `{options.repo_path}`
+    Repo guardrail: This prompt is for the target repo above. Do not infer the devtool source tree is the repo under change unless the supplied path explicitly points there.
     Project type: `{options.project_type}`
     Build target: `{options.build_target}`
     Run target: `{options.run_target}`
@@ -99,8 +106,8 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
     ## First-run config rule
     - Before using `devtool` commands for a repo, ensure the repo has a config file.
     - If the repo does not already have `.devtool.toml`, create it first with:
-      `devtool init-config "{options.repo_path}"`
-    - After that, use `devtool` for validation and repo operations.
+      `devtool -r "{options.repo_path}" init-config`
+    - After that, use `devtool` for validation, repo operations, and Git handoff.
     - Treat `.devtool.toml` as repo-local configuration and the first required setup step for a new repo.
 
     ## Working style
@@ -136,9 +143,12 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
 
     ## Artifact apply preferences
     - Assume downloaded artifacts are in `~/Downloads`.
-    - Overlay patch apply should unzip directly into the repo with overwrite enabled and remove the downloaded archive afterward.
+    - Overlay patch apply should unzip directly into the target repo with overwrite enabled and remove the downloaded archive afterward.
     - Full snapshot apply should extract into a temp dir, sync into the repo, remove the downloaded archive, then remove the temp dir.
     - Prefer deletion to be handled by the patch, not by asking me to delete files manually.
+    - If an overlay removes files or directories, include a root-level `{DELETE_MANIFEST_NAME}` file in the overlay archive.
+    - Put one repo-relative path per line in `{DELETE_MANIFEST_NAME}`, ignore blank lines and `#` comments, and avoid globbing.
+    - Treat `{DELETE_MANIFEST_NAME}` as overlay-only metadata; snapshot delivery should continue to use full repo state.
 
     ## Overlay cadence rule
     - Track successful overlay deliveries.
@@ -150,88 +160,60 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
     - When delivering a new overlay or full snapshot, delete all older overlays, patches, and superseded archives from the sandbox so only the latest relevant artifacts remain available.
     - Never keep stale overlay chains around once a newer full snapshot supersedes them.
 
-    ## Configuration override rules
-    - All `.devtool.toml` values should be considered overridable by environment variables.
-    - Project-level overrides use the `DEVTOOL_PROJECT_*` namespace.
-    - Repo environment entries use the `DEVTOOL_ENV_*` namespace.
-    - Environment variables take precedence over TOML config.
-
-    ### Environment variable override names
-    - `DEVTOOL_PROJECT_KIND`
-    - `DEVTOOL_PROJECT_BUILD_TARGET`
-    - `DEVTOOL_PROJECT_RUN_TARGET`
-    - `DEVTOOL_PROJECT_PYTHON`
-    - `DEVTOOL_PROJECT_RUN_MODULE`
-    - `DEVTOOL_PROJECT_PACKAGE_COMMAND`
-    - `DEVTOOL_PROJECT_TEST_COMMAND`
-    - `DEVTOOL_PROJECT_RESTORE_COMMAND`
-    - `DEVTOOL_PROJECT_RUN_COMMAND`
-    - `DEVTOOL_ENV_<NAME>` for any entry under `[env]`
-
     ## Use of devtool
-    - Use `devtool validate -r "$REPO_CURRENT"` for normal validation.
-    - Use `devtool wine-validate -r "$REPO_CURRENT"` when Wine parity is relevant.
-    - Use `devtool run -r "$REPO_CURRENT"` when I ask how to run the app.
-    - Use `devtool package -r "$REPO_CURRENT"` for packaging when relevant.
-    - Use `devtool config resolve -r "$REPO_CURRENT"` when config debugging is needed.
-    - Use `devtool ai-prompt -r "$REPO_CURRENT" --repo-name "{options.repo_name}"` when I want this prompt regenerated.
+    - Use `devtool -r "{options.repo_path}" validate` for normal validation.
+    - Use `devtool -r "{options.repo_path}" wine-validate` when Wine parity is relevant.
+    - Use `devtool -r "{options.repo_path}" run` when I ask how to run the app.
+    - Use `devtool -r "{options.repo_path}" package` for packaging when relevant.
+    - Use `devtool -r "{options.repo_path}" commit "{options.commit_message}"` for the Git handoff instead of raw `git add` / `git commit`.
+    - Use `devtool -r "{options.repo_path}" tag <name>` when a release tag is needed.
+    - Use `devtool -r "{options.repo_path}" release-notes --from-ref <ref> --to-ref HEAD` when changelog or release notes are needed.
+    - Use `devtool -r "{options.repo_path}" config resolve` when config debugging is needed.
+    - Use `devtool -r "{options.repo_path}" ai-prompt --repo-name "{options.repo_name}"` when I want this prompt regenerated.
 
     ## Overlay patch apply pattern
 
     ```bash
-    REPO_CURRENT="{options.repo_path}"
-    ARTIFACT_CURRENT="<downloaded artifact file>"
-    COMMIT_MESSAGE_CURRENT="{options.commit_message}"
-
     cd ~/Downloads
-    unzip -o "$ARTIFACT_CURRENT" -d "$REPO_CURRENT"
-    rm -f "$ARTIFACT_CURRENT"
+    unzip -o "<downloaded artifact file>" -d "{options.repo_path}"
+    rm -f "<downloaded artifact file>"
 
-    cd "$REPO_CURRENT"
+    cd "{options.repo_path}"
 
     if [ ! -f ".devtool.toml" ]; then
-      devtool init-config "$REPO_CURRENT"
+      devtool -r "{options.repo_path}" init-config
     fi
 
-    {validation_command} --copy
+    {validation_command}
 
-    git add -A
-    git commit -m "$COMMIT_MESSAGE_CURRENT"
+    devtool -r "{options.repo_path}" commit "{options.commit_message}"
     ```
 
     ## Full snapshot apply pattern
 
     ```bash
-    REPO_CURRENT="{options.repo_path}"
-    ARTIFACT_CURRENT="<downloaded artifact file>"
-    COMMIT_MESSAGE_CURRENT="{options.commit_message}"
-    TMP_SNAPSHOT_CURRENT="/tmp/devtool_snapshot_apply"
-
     cd ~/Downloads
-
-    rm -rf "$TMP_SNAPSHOT_CURRENT"
-    mkdir -p "$TMP_SNAPSHOT_CURRENT"
-
-    tar -xf "$ARTIFACT_CURRENT" -C "$TMP_SNAPSHOT_CURRENT"
+    rm -rf "/tmp/devtool_snapshot_apply"
+    mkdir -p "/tmp/devtool_snapshot_apply"
+    tar -xf "<downloaded artifact file>" -C "/tmp/devtool_snapshot_apply"
 
     rsync -a --delete \
       --exclude '.git' \
       --exclude '.gitignore' \
-      "$TMP_SNAPSHOT_CURRENT"/ "$REPO_CURRENT"/
+      "/tmp/devtool_snapshot_apply"/ "{options.repo_path}"/
 
-    rm -f "$ARTIFACT_CURRENT"
-    rm -rf "$TMP_SNAPSHOT_CURRENT"
+    rm -f "<downloaded artifact file>"
+    rm -rf "/tmp/devtool_snapshot_apply"
 
-    cd "$REPO_CURRENT"
+    cd "{options.repo_path}"
 
     if [ ! -f ".devtool.toml" ]; then
-      devtool init-config "$REPO_CURRENT"
+      devtool -r "{options.repo_path}" init-config
     fi
 
-    {validation_command} --copy
+    {validation_command}
 
-    git add -A
-    git commit -m "$COMMIT_MESSAGE_CURRENT"
+    devtool -r "{options.repo_path}" commit "{options.commit_message}"
     ```
 
     ## Response style
@@ -243,9 +225,15 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
 
 
 def render_ai_prompt_text(options: AiPromptOptions) -> str:
+    validation_command = (
+        f'devtool -r "{options.repo_path}" wine-validate --copy'
+        if options.prefer_wine_validation
+        else f'devtool -r "{options.repo_path}" validate --copy'
+    )
     return textwrap.dedent(f"""    AI workflow prompt for {options.repo_name}
 
-    Repo path: {options.repo_path}
+    Target repo: {options.repo_path}
+    Repo guardrail: This prompt is for the target repo above. Do not infer the devtool source tree is the repo under change unless the supplied path explicitly points there.
     Project type: {options.project_type}
     Build target: {options.build_target}
     Run target: {options.run_target}
@@ -259,17 +247,25 @@ def render_ai_prompt_text(options: AiPromptOptions) -> str:
 
     Use these as my standing preferences for the current repo and follow them unless I explicitly override them.
 
+    - Treat the target repo above as the repo under change, not the devtool source tree.
     - Treat the latest uploaded full snapshot or repo snapshot as the only source of truth.
     - If .devtool.toml does not exist, create it first with:
-      devtool init-config "{options.repo_path}"
-    - Use devtool for validation and repo operations.
-    - All .devtool.toml values are overridable by environment variables.
-    - Project overrides use DEVTOOL_PROJECT_*.
-    - Runtime env overrides use DEVTOOL_ENV_*.
+      devtool -r "{options.repo_path}" init-config
+    - Use devtool for validation, repo operations, and Git handoff.
     - Validation is always required.
+    - Prefer validation command: {validation_command}
+    - The normal Git path is `devtool -r "{options.repo_path}" commit "{options.commit_message}"`.
+    - Use `devtool -r "{options.repo_path}" tag <name>` and `devtool -r "{options.repo_path}" release-notes --from-ref <ref> --to-ref HEAD` when needed.
+    - Use `devtool -r "{options.repo_path}" ai-prompt --repo-name "{options.repo_name}"` when I want this prompt regenerated.
+    - Use `devtool -r "{options.repo_path}" config resolve` when config debugging is needed.
     - Default to overlay patch mode unless I explicitly ask for a full snapshot.
     - After 3 successful overlays, the next overlay must also include a full snapshot in a separate archive.
     - Delete older overlays, patches, and superseded archives from the sandbox when a newer delivery replaces them.
+
+    ## Overlay delete manifest
+    - If an overlay removes files or directories, include a root-level `{DELETE_MANIFEST_NAME}` file in the overlay archive.
+    - Put one repo-relative path per line in `{DELETE_MANIFEST_NAME}`, ignore blank lines and `#` comments, and avoid globbing.
+    - Treat `{DELETE_MANIFEST_NAME}` as overlay-only metadata; snapshot delivery should continue to use full repo state.
     """)
 
 
