@@ -1,0 +1,591 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from rich.prompt import Confirm
+from rich.syntax import Syntax
+
+from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
+from .clipboard import copy_text
+from .console_utils import create_console, syntax_line_numbers
+from .completion import ZSH_COMPLETION
+from .config import detect_project_kind, load_project_config, resolve_config_dict
+from .logstore import latest_log
+from .models import CommandSpec, OperationResult, ProjectConfig
+from .notify import available_notifier, send_notification
+from .runners import apply_overlay, apply_snapshot, build_specs, git_commit, run_specs, write_template_config
+from .summary import build_json_summary, build_runner_json, render_status_table, render_summary
+from .termux_run import add_termux_run_parser, handle_termux_run
+
+console = create_console()
+
+INTERACTIVE_COPY_COMMANDS = {
+    "apply-overlay",
+    "ao",
+    "apply-snapshot",
+    "as",
+    "apply-overlay-validate",
+    "aov",
+    "apply-snapshot-validate",
+    "asv",
+    "batch",
+}
+
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="devtool")
+    parser.add_argument("-r", "--repo", default=None, help="Repository root")
+    parser.add_argument("-c", "--config", default=None, help="Config file path")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Stream full command output")
+    parser.add_argument("-j", "--json", action="store_true", help="Emit JSON summary")
+    parser.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
+    parser.add_argument("-f", "--force", action="store_true", help="Force dangerous actions")
+    parser.add_argument("--dry-run", action="store_true", help="Print commands without running them")
+    parser.add_argument("-k", "--continue-on-error", action="store_true", help="Continue batch after errors")
+    parser.add_argument("--fail-fast", action="store_true", help="Stop batch on first error")
+    parser.add_argument("-p", "--copy", action="store_true", help="Always copy raw output to clipboard")
+    parser.add_argument("--copy-summary", action="store_true", help="Always copy rendered summary to clipboard")
+    parser.add_argument("--copy-json", action="store_true", help="Always copy JSON summary to clipboard")
+    parser.add_argument("--no-clipboard", action="store_true", help="Never prompt for clipboard")
+    parser.add_argument("-n", "--notify", action="store_true", help="Send notification when done")
+    parser.add_argument("--notify-brief", action="store_true", help="Use shorter notification body")
+    parser.add_argument("--notify-on-success", action="store_true", help="Only notify on success")
+    parser.add_argument("--notify-on-fail", action="store_true", help="Only notify on failure")
+    parser.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
+    parser.add_argument("--stdout-payload", choices=["auto", "summary", "json", "raw", "runner-json"], default="auto", help="Send selected payload to stdout and human output to stderr")
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    for name, aliases in [
+        ("restore", ["rs"]),
+        ("build", ["b"]),
+        ("test", ["t"]),
+        ("validate", ["v"]),
+        ("wine-validate", ["wv"]),
+        ("run", ["rn"]),
+        ("package", ["pkg"]),
+        ("status", ["st"]),
+        ("doctor", ["dr"]),
+    ]:
+        subparsers.add_parser(name, aliases=aliases)
+
+    ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
+    ai_prompt.add_argument("--repo-name", required=True, help="Human-friendly repo name for the generated prompt")
+    ai_prompt.add_argument("--project-type", choices=["auto", "dotnet", "python", "unknown"], default="auto")
+    ai_prompt.add_argument("--build-target", default="")
+    ai_prompt.add_argument("--run-target", default="")
+    ai_prompt.add_argument("--delivery-mode", choices=["overlay", "snapshot"], default="overlay")
+    ai_prompt.add_argument("--artifact-type", choices=["zip", "tar"], default="zip")
+    ai_prompt.add_argument("--overlay-count", type=int, default=0)
+    ai_prompt.add_argument("--commit-message", default="Clear commit message")
+    ai_prompt.add_argument("--wine", action="store_true", help="Prefer wine-validate wording in the generated prompt")
+    ai_prompt.add_argument("-o", "--output", default="", help="Write the generated prompt to a file")
+    ai_prompt.add_argument("--format", choices=["markdown", "text"], default="markdown")
+
+    commit = subparsers.add_parser("commit", aliases=["ci"])
+    commit.add_argument("message")
+
+    for name, aliases in [
+        ("apply-overlay", ["ao"]),
+        ("apply-snapshot", ["as"]),
+        ("apply-overlay-validate", ["aov"]),
+        ("apply-snapshot-validate", ["asv"]),
+    ]:
+        cmd = subparsers.add_parser(name, aliases=aliases)
+        cmd.add_argument("artifact")
+
+    batch = subparsers.add_parser("batch")
+    batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
+
+    init_cfg = subparsers.add_parser("init-config", aliases=["ic"])
+    init_cfg.add_argument("repo_root", nargs="?", default=".")
+    init_cfg.add_argument("--force", action="store_true")
+
+    logs_cmd = subparsers.add_parser("logs")
+    logs_cmd.add_argument("which", choices=["latest"], default="latest", nargs="?")
+    logs_cmd.add_argument("--print", action="store_true")
+
+    tag_cmd = subparsers.add_parser("tag")
+    tag_cmd.add_argument("name")
+    tag_cmd.add_argument("-m", "--message", default="")
+
+    rn = subparsers.add_parser("release-notes")
+    rn.add_argument("--from-ref", default="")
+    rn.add_argument("--to-ref", default="HEAD")
+
+    completion = subparsers.add_parser("completion")
+    completion.add_argument("shell", choices=["zsh"])
+
+    config_cmd = subparsers.add_parser("config")
+    cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
+    cfg_sub.add_parser("show")
+    cfg_sub.add_parser("resolve")
+    cfg_sub.add_parser("doctor")
+
+    add_termux_run_parser(subparsers)
+
+    return parser
+
+
+def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argparse.Namespace) -> None:
+    if args.no_clipboard:
+        return
+
+    to_copy = raw_output
+    label = "Raw command output"
+    if args.copy_json:
+        to_copy = json_text
+        label = "JSON summary"
+    elif args.copy_summary:
+        to_copy = summary_text
+        label = "Summary"
+
+    if args.copy or args.copy_summary or args.copy_json:
+        result = copy_text(to_copy)
+        if result.success:
+            console.print(f"[green]{label} copied to clipboard via {result.backend}.[/green]")
+        else:
+            reason = result.reason or "Clipboard copy failed."
+            console.print(f"[yellow]{reason}[/yellow]")
+        return
+
+    if args.command not in INTERACTIVE_COPY_COMMANDS:
+        return
+    if not console.is_interactive or not sys.stdin.isatty() or not to_copy.strip():
+        return
+
+    copy_now = Confirm.ask(f"Copy {label.lower()} to clipboard?", default=True, console=console)
+    if copy_now:
+        result = copy_text(to_copy)
+        if result.success:
+            console.print(f"[green]{label} copied to clipboard via {result.backend}.[/green]")
+        else:
+            reason = result.reason or "Clipboard copy failed."
+            console.print(f"[yellow]{reason}[/yellow]")
+
+
+def _maybe_notify(args: argparse.Namespace, *, warnings: int, errors: int, failed: int, command: str, repo_name: str, duration_seconds: float) -> None:
+    if not args.notify:
+        return
+    succeeded = failed == 0
+    if args.notify_on_success and not succeeded:
+        return
+    if args.notify_on_fail and succeeded:
+        return
+    if args.notify_brief:
+        body = f"{repo_name}: ok={failed == 0} warn={warnings} err={errors} time={duration_seconds:.1f}s"
+    else:
+        body = f"{repo_name}: '{command}' finished in {duration_seconds:.1f}s; warnings={warnings}, errors={errors}, failed={failed}"
+    send_notification("devtool", body)
+
+
+def _summary_text(results: list[OperationResult]) -> str:
+    parts: list[str] = []
+    for result in results:
+        status = "skipped" if result.skipped else ("ok" if result.returncode == 0 else "failed")
+        parts.append(f"{result.name}: {status} exit={result.returncode} time={result.duration_seconds:.2f}s")
+        for issue in result.issues:
+            location = issue.file if issue.line is None or issue.file in {"", "-"} else f"{issue.file}:{issue.line}"
+            parts.append(f"  {issue.severity} {issue.command} {location} {issue.code} {issue.message}")
+    return "\n".join(parts)
+
+
+def _json_summary_text(results: list[OperationResult], config: ProjectConfig | None) -> str:
+    data = build_json_summary(results, repo_root=str(config.repo_root if config else Path.cwd()))
+    return json.dumps(data, indent=2)
+
+
+def _select_stdout_payload(
+    payload: str,
+    *,
+    summary_text: str,
+    json_text: str,
+    raw_output: str,
+    runner_json_text: str,
+) -> str:
+    if payload == "summary":
+        return summary_text
+    if payload == "json":
+        return json_text
+    if payload == "raw":
+        return raw_output
+    if payload == "runner-json":
+        return runner_json_text
+    raise ValueError(f"Unsupported stdout payload: {payload}")
+
+
+def _emit_summary(
+    results: list[OperationResult],
+    config: ProjectConfig | None,
+    *,
+    as_json: bool,
+    payload_mode: str = "auto",
+    raw_output: str = "",
+    command: str = "",
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+) -> tuple[dict[str, int], str, str, str]:
+    repo_root = str(config.repo_root if config else Path.cwd())
+    summary_text = _summary_text(results)
+    json_data = build_json_summary(results, repo_root=repo_root)
+    json_text = json.dumps(json_data, indent=2)
+    runner_json = build_runner_json(
+        results,
+        repo_root=repo_root,
+        command=command or "devtool",
+        raw_output=raw_output,
+        summary_text=summary_text,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+    runner_json_text = json.dumps(runner_json, indent=2)
+
+    if payload_mode == "auto":
+        if as_json:
+            print(json_text)
+        else:
+            render_summary(results)
+        return {
+            "warnings": json_data["warnings"],
+            "errors": json_data["errors"],
+            "failed": json_data["failed"],
+            "skipped": json_data["skipped"],
+        }, summary_text, json_text, runner_json_text
+
+    render_summary(results, console_obj=create_console(stderr=True))
+    payload_text = _select_stdout_payload(
+        payload_mode,
+        summary_text=summary_text,
+        json_text=json_text,
+        raw_output=raw_output,
+        runner_json_text=runner_json_text,
+    )
+    print(payload_text)
+    return {
+        "warnings": json_data["warnings"],
+        "errors": json_data["errors"],
+        "failed": json_data["failed"],
+        "skipped": json_data["skipped"],
+    }, summary_text, json_text, runner_json_text
+
+
+def _resolve_batch_steps(config: ProjectConfig, steps: list[str]) -> tuple[list[CommandSpec], list[OperationResult], list[str]]:
+    specs: list[CommandSpec] = []
+    pre_results: list[OperationResult] = []
+    pre_outputs: list[str] = []
+    for step in steps:
+        if "=" in step:
+            name, value = step.split("=", 1)
+        else:
+            name, value = step, ""
+        if name in {"apply-overlay", "ao"}:
+            raise RuntimeError("batch apply steps must be executed from main runner")
+        specs.extend(build_specs(config, name))
+    return specs, pre_results, pre_outputs
+
+
+def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: str) -> tuple[list[OperationResult], str]:
+    if name.startswith("apply-overlay"):
+        result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run)
+    else:
+        result = apply_snapshot(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run)
+    text = "$ " + " ".join(result.argv) + "\n" + result.output
+    return [result], text
+
+
+def _handle_batch(config: ProjectConfig, args: argparse.Namespace) -> tuple[list[OperationResult], str]:
+    results: list[OperationResult] = []
+    raw: list[str] = []
+    continue_on_error = args.continue_on_error and not args.fail_fast
+
+    for step in args.steps:
+        if "=" in step:
+            name, value = step.split("=", 1)
+        else:
+            name, value = step, ""
+        if name in {"apply-overlay", "ao", "apply-snapshot", "as"}:
+            batch_results, raw_text = _run_apply(config, args, name, value)
+            results.extend(batch_results)
+            raw.append(raw_text)
+            if batch_results[-1].returncode != 0 and not continue_on_error:
+                break
+            continue
+        if name in {"commit", "ci"}:
+            more, text = git_commit(config.repo_root, value, verbose=args.verbose, dry_run=args.dry_run)
+            results.extend(more)
+            raw.append(text)
+            if any(r.returncode != 0 for r in more) and not continue_on_error:
+                break
+            continue
+        if name == "tag":
+            tag_spec = CommandSpec("tag", ["git", "tag", value], destructive=True)
+            more, text = run_specs(config, [tag_spec], verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+            results.extend(more)
+            raw.append(text)
+            if any(r.returncode != 0 for r in more) and not continue_on_error:
+                break
+            continue
+        if name == "release-notes":
+            text = _release_notes(config.repo_root, "", "HEAD")
+            path = latest_log()
+            results.append(OperationResult("release-notes", ["git", "log"], 0, 0.0, text, [], log_path=str(path or "")))
+            raw.append(text)
+            continue
+        specs = build_specs(config, name)
+        more, text = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+        results.extend(more)
+        raw.append(text)
+        if any(r.returncode != 0 for r in more) and not continue_on_error:
+            break
+    return results, "\n\n".join(raw)
+
+
+def _git_dirty(repo_root: Path) -> bool:
+    proc = subprocess.run(["git", "status", "--porcelain"], cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return proc.returncode == 0 and bool(proc.stdout.strip())
+
+
+def _ensure_safe_repo(repo_root: Path, *, force: bool, yes: bool, command: str) -> None:
+    if repo_root == Path("/"):
+        raise SystemExit("Refusing to operate on '/'")
+    if not (repo_root / ".git").exists() and not force:
+        raise SystemExit("Repo root does not look like a git repository. Use --force to override.")
+    if "snapshot" in command and not (yes or force):
+        if console.is_interactive and sys.stdin.isatty():
+            okay = Confirm.ask("Applying a snapshot may overwrite/delete files. Continue?", default=False, console=console)
+            if not okay:
+                raise SystemExit(1)
+        else:
+            raise SystemExit("Snapshot apply needs --yes or --force in non-interactive mode.")
+    if command.startswith("apply") and _git_dirty(repo_root) and not (yes or force):
+        if console.is_interactive and sys.stdin.isatty():
+            okay = Confirm.ask("Git tree is dirty. Continue?", default=False, console=console)
+            if not okay:
+                raise SystemExit(1)
+        else:
+            raise SystemExit("Git tree is dirty. Use --yes or --force to continue.")
+
+
+def _doctor(config: ProjectConfig) -> None:
+    rows = [
+        ("repo", str(config.repo_root)),
+        ("kind", config.kind),
+        ("git", "yes" if (config.repo_root / ".git").exists() else "no"),
+        ("config", str(config.config_path) if config.config_path else "-"),
+        ("notifier", available_notifier() or "-"),
+        ("wl-copy", "yes" if shutil.which("wl-copy") else "no"),
+        ("fzf", "yes" if shutil.which("fzf") else "no"),
+        ("dotnet", "yes" if shutil.which("dotnet") else "no"),
+        ("python", config.python_executable),
+        ("wine", config.env.get("SIMSTOOLKIT_WINE_PATH", os.environ.get("SIMSTOOLKIT_WINE_PATH", "")) or "-"),
+    ]
+    render_status_table(rows)
+
+
+def _status(config: ProjectConfig) -> None:
+    rows = [
+        ("repo", str(config.repo_root)),
+        ("kind", config.kind),
+        ("build_target", config.build_target or "-"),
+        ("run_target", config.run_target or "-"),
+        ("git_dirty", "yes" if _git_dirty(config.repo_root) else "no"),
+    ]
+    render_status_table(rows)
+
+
+def _release_notes(repo_root: Path, from_ref: str, to_ref: str) -> str:
+    range_expr = f"{from_ref}..{to_ref}" if from_ref else to_ref
+    proc = subprocess.run(["git", "log", "--oneline", "--decorate=no", range_expr], cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    return proc.stdout
+
+
+def _config_command(args: argparse.Namespace) -> int:
+    config = load_project_config(args.repo, args.config)
+    if args.config_command == "show":
+        console.print(Syntax((config.config_path.read_text(encoding="utf-8") if config.config_path else ""), "toml", word_wrap=True, line_numbers=syntax_line_numbers(console)))
+        return 0
+    if args.config_command == "resolve":
+        print(json.dumps(resolve_config_dict(config), indent=2))
+        return 0
+    if args.config_command == "doctor":
+        rows = [
+            ("config_path", str(config.config_path) if config.config_path else "-"),
+            ("repo_root", str(config.repo_root)),
+            ("kind", config.kind),
+            ("build_target", config.build_target or "-"),
+            ("run_target", config.run_target or "-"),
+        ]
+        render_status_table(rows)
+        return 0
+    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    effective_payload = args.stdout_payload
+    if effective_payload != "auto":
+        args.json = False
+
+    if args.command == "termux-run":
+        return handle_termux_run(args)
+
+    if args.command in {"ai-prompt", "ap"}:
+        config = load_project_config(args.repo, args.config)
+        options = resolve_ai_prompt_options(
+            config,
+            args.repo,
+            repo_name=args.repo_name,
+            project_type=args.project_type,
+            build_target=args.build_target,
+            run_target=args.run_target,
+            delivery_mode=args.delivery_mode,
+            artifact_type=args.artifact_type,
+            overlay_count=args.overlay_count,
+            commit_message=args.commit_message,
+            notify=args.notify,
+            notify_brief=args.notify_brief,
+            copy=args.copy,
+            no_clipboard=args.no_clipboard,
+            prefer_wine_validation=args.wine,
+        )
+        prompt_text = render_ai_prompt(options, args.format)
+        if args.output:
+            output_path = Path(args.output).expanduser()
+            if not output_path.is_absolute():
+                output_path = Path.cwd() / output_path
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(prompt_text, encoding="utf-8")
+            console.print(f"[green]Wrote[/green] {output_path}")
+        else:
+            print(prompt_text, end="" if prompt_text.endswith("\n") else "\n")
+        if args.copy:
+            result = copy_text(prompt_text)
+            if result.success:
+                console.print(f"[green]AI prompt copied to clipboard via {result.backend}.[/green]")
+            else:
+                reason = result.reason or "Clipboard copy failed."
+                console.print(f"[yellow]{reason}[/yellow]")
+        return 0
+
+    if args.command in {"completion"}:
+        if args.shell == "zsh":
+            print(ZSH_COMPLETION)
+            return 0
+
+    if args.command in {"logs"}:
+        path = latest_log()
+        if not path:
+            console.print("[yellow]No logs found.[/yellow]")
+            return 0
+        if args.print:
+            print(path.read_text(encoding="utf-8"))
+        else:
+            console.print(str(path))
+        return 0
+
+    if args.command in {"init-config", "ic"}:
+        target = write_template_config(Path(args.repo_root), force=args.force)
+        console.print(f"[green]Wrote[/green] {target}")
+        return 0
+
+    if args.command == "config":
+        return _config_command(args)
+
+    if args.command in {"doctor", "dr", "status", "st", "release-notes", "tag"} or args.command in {"commit", "ci"}:
+        repo = Path(args.repo or Path.cwd()).resolve()
+        if args.command in {"commit", "ci"}:
+            _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="commit")
+            started_at = datetime.now(timezone.utc)
+            results, raw_output = git_commit(repo, args.message, verbose=args.verbose, dry_run=args.dry_run)
+            finished_at = datetime.now(timezone.utc)
+            totals, summary_text, json_text, _runner_json_text = _emit_summary(
+                results,
+                None,
+                as_json=args.json,
+                payload_mode=effective_payload,
+                raw_output=raw_output,
+                command=args.command,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            failed = totals["failed"]
+            _maybe_copy(raw_output, summary_text, json_text, args)
+            _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=failed, command=args.command, repo_name=repo.name, duration_seconds=sum(r.duration_seconds for r in results))
+            return 0 if failed == 0 else 1
+        config = load_project_config(str(repo), args.config)
+        if args.command in {"doctor", "dr"}:
+            _doctor(config)
+            return 0
+        if args.command in {"status", "st"}:
+            _status(config)
+            return 0
+        if args.command == "release-notes":
+            print(_release_notes(config.repo_root, args.from_ref, args.to_ref))
+            return 0
+        if args.command == "tag":
+            _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="tag")
+            specs = [CommandSpec("tag", ["git", "tag"] + (["-m", args.message] if args.message else []) + [args.name], destructive=True)]
+            started_at = datetime.now(timezone.utc)
+            results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=False)
+            finished_at = datetime.now(timezone.utc)
+            totals, summary_text, json_text, _runner_json_text = _emit_summary(
+                results,
+                config,
+                as_json=args.json,
+                payload_mode=effective_payload,
+                raw_output=raw_output,
+                command=args.command,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            _maybe_copy(raw_output, summary_text, json_text, args)
+            _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=repo.name, duration_seconds=sum(r.duration_seconds for r in results))
+            return 0 if totals["failed"] == 0 else 1
+
+    config = load_project_config(args.repo, args.config)
+    continue_on_error = args.continue_on_error and not args.fail_fast
+
+    started_at = datetime.now(timezone.utc)
+
+    if args.command.startswith("apply"):
+        _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
+    if args.command == "batch":
+        destructive_batch = any(step.split("=", 1)[0] in {"apply-overlay", "ao", "apply-snapshot", "as", "commit", "ci", "tag"} for step in args.steps)
+        if destructive_batch:
+            _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
+
+    if args.command in {"apply-overlay", "ao", "apply-snapshot", "as", "apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"}:
+        results, raw_output = _run_apply(config, args, args.command, args.artifact)
+        if results[-1].returncode == 0 and args.command.endswith("validate"):
+            more_results, more_raw = run_specs(config, build_specs(config, "validate"), verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+            results.extend(more_results)
+            raw_output += "\n\n" + more_raw
+    elif args.command == "batch":
+        results, raw_output = _handle_batch(config, args)
+    else:
+        specs = build_specs(config, args.command)
+        results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+
+    finished_at = datetime.now(timezone.utc)
+    totals, summary_text, json_text, _runner_json_text = _emit_summary(
+        results,
+        config,
+        as_json=args.json,
+        payload_mode=effective_payload,
+        raw_output=raw_output,
+        command=args.command,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+    _maybe_copy(raw_output, summary_text, json_text, args)
+    _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=sum(r.duration_seconds for r in results))
+    return 0 if totals["failed"] == 0 else 1

@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+import io
+import unittest
+from unittest.mock import patch
+
+from repo_devtool.console_utils import create_console, is_narrow_console, syntax_line_numbers
+from repo_devtool.summary import render_status_table
+
+
+class ConsoleUtilsTests(unittest.TestCase):
+    def test_termux_console_uses_detected_width(self) -> None:
+        with patch.dict("os.environ", {"TERMUX_VERSION": "1", "COLUMNS": "72"}, clear=False):
+            console = create_console()
+            self.assertEqual(console.width, 72)
+            self.assertTrue(is_narrow_console(console))
+            self.assertFalse(syntax_line_numbers(console))
+
+    def test_render_status_table_compacts_on_narrow_termux(self) -> None:
+        stream = io.StringIO()
+        with patch.dict("os.environ", {"TERMUX_VERSION": "1", "COLUMNS": "72"}, clear=False):
+            console = create_console()
+            with console.capture() as capture:
+                render_status_table([("repo", "/tmp/example"), ("kind", "dotnet")], console_obj=console)
+            output = capture.get()
+        self.assertIn("Status", output)
+        self.assertIn("repo", output)
+        self.assertIn("/tmp/example", output)
+
+
+if __name__ == "__main__":
+    unittest.main()

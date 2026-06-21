@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from repo_devtool.diagnostics import parse_issues
+
+
+class DiagnosticTests(unittest.TestCase):
+    def test_parse_dotnet_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            file_path = root / "src" / "App" / "Main.cs"
+            file_path.parent.mkdir(parents=True)
+            file_path.write_text("class X {}", encoding="utf-8")
+
+            output = f"{file_path}(10,5): error CS1002: ; expected [{root / 'App.csproj'}]\n"
+            issues = parse_issues(root, "build", output)
+            self.assertEqual(len(issues), 1)
+            self.assertEqual(issues[0].severity, "error")
+            self.assertEqual(issues[0].file, "src/App/Main.cs")
+            self.assertEqual(issues[0].line, 10)
+
+    def test_parse_pytest_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = "FAILED tests/test_app.py::test_x - assert 1 == 2\n"
+            issues = parse_issues(root, "test", output)
+            self.assertEqual(len(issues), 1)
+            self.assertEqual(issues[0].code, "PYTEST")
+
+    def test_parse_flake8_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = "pkg/app.py:10:2: F401 unused import foo\n"
+            issues = parse_issues(root, "test", output)
+            self.assertEqual(issues[0].file, "pkg/app.py")
+            self.assertEqual(issues[0].code, "F401")
+
+    def test_parse_gcc_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = "src/main.c:12:3: error: boom\n"
+            issues = parse_issues(root, "build", output)
+            self.assertEqual(issues[0].code, "CC")
+
+    def test_parse_cargo_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = "error[E0425]: cannot find value `x` in this scope\n  --> src/main.rs:2:5\n"
+            issues = parse_issues(root, "build", output)
+            self.assertEqual(issues[0].file, "src/main.rs")
+
+
+    def test_parse_xunit_failure_uses_assertion_message_and_stack_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            test_file = root / "tests" / "S3oc.Tests" / "MainWindowViewModelTests.cs"
+            test_file.parent.mkdir(parents=True)
+            test_file.write_text("// test", encoding="utf-8")
+
+            output = """[xUnit.net 00:00:00.97]     S3oc.Core.Tests.MainWindowViewModelTests.TgiSearchStep_FiltersIndexedContentByTypeGroupAndInstance [FAIL]
+  Failed S3oc.Core.Tests.MainWindowViewModelTests.TgiSearchStep_FiltersIndexedContentByTypeGroupAndInstance [3 ms]
+  Error Message:
+   Assert.Single() Failure: The collection was empty
+  Stack Trace:
+     at S3oc.Core.Tests.MainWindowViewModelTests.TgiSearchStep_FiltersIndexedContentByTypeGroupAndInstance() in {test_file}:line 2630
+--- End of stack trace from previous location ---
+
+Failed!  - Failed:     1, Passed:   113, Skipped:     0, Total:   114, Duration: 847 ms - S3oc.Tests.dll (net8.0)
+""".format(test_file=test_file)
+
+            issues = parse_issues(root, "test", output)
+            self.assertEqual(len(issues), 1)
+            self.assertEqual(issues[0].code, "XUNIT")
+            self.assertEqual(issues[0].message, "Assert.Single() Failure: The collection was empty")
+            self.assertEqual(issues[0].file, "tests/S3oc.Tests/MainWindowViewModelTests.cs")
+            self.assertEqual(issues[0].line, 2630)
