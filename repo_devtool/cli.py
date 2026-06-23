@@ -7,6 +7,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,9 +17,9 @@ from rich.syntax import Syntax
 
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
 from .clipboard import copy_text
-from .console_utils import create_console, syntax_line_numbers
+from .console_utils import create_console, resolve_cli_path, syntax_line_numbers
 from .completion import ZSH_COMPLETION
-from .config import detect_project_kind, load_project_config, resolve_config_dict
+from .config import detect_project_kind, discover_dotnet_candidates, load_project_config, resolve_config_dict
 from .logstore import latest_log
 from .models import CommandSpec, OperationResult, ProjectConfig
 from .notify import available_notifier, send_notification
@@ -45,6 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="devtool")
     parser.add_argument("-r", "--repo", default=None, help="Repository root")
     parser.add_argument("-c", "--config", default=None, help="Config file path")
+    parser.add_argument("--target", default="", help="Named target/profile from .devtool.toml")
+    parser.add_argument("--solution", default="", help="Exact solution path for restore/build/test")
+    parser.add_argument("--project", default="", help="Exact project path for run/validation")
     parser.add_argument("-v", "--verbose", action="store_true", help="Stream full command output")
     parser.add_argument("-j", "--json", action="store_true", help="Shortcut for --stdout-payload json")
     parser.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
@@ -88,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
     ai_prompt.add_argument("--project-type", choices=["auto", "dotnet", "python", "unknown"], default="auto")
     ai_prompt.add_argument("--build-target", default="")
     ai_prompt.add_argument("--run-target", default="")
+    ai_prompt.add_argument("--target-name", default="", help="Named monorepo target/profile to reference")
+    ai_prompt.add_argument("--solution-target", default="", help="Exact solution target to reference")
     ai_prompt.add_argument("--delivery-mode", choices=["overlay", "snapshot"], default="overlay")
     ai_prompt.add_argument("--artifact-type", choices=["zip", "tar"], default="zip")
     ai_prompt.add_argument("--overlay-count", type=int, default=0)
@@ -107,6 +114,9 @@ def build_parser() -> argparse.ArgumentParser:
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
         cmd.add_argument("artifact")
+        if name.endswith("validate"):
+            cmd.add_argument("--no-validate", action="store_true", help="Apply the artifact but skip validation")
+            cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
 
     batch = subparsers.add_parser("batch")
     batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
@@ -136,6 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_sub.add_parser("defaults")
     cfg_sub.add_parser("resolve")
     cfg_sub.add_parser("doctor")
+
+    subparsers.add_parser("targets", aliases=["tg"])
 
     add_termux_run_parser(subparsers)
 
@@ -316,7 +328,103 @@ def _resolve_batch_steps(config: ProjectConfig, steps: list[str]) -> tuple[list[
     return specs, pre_results, pre_outputs
 
 
+
+def _read_artifact_manifest(artifact: str) -> dict[str, str]:
+    artifact_path = resolve_cli_path(artifact)
+    sidecar_candidates = [
+        artifact_path.with_name(artifact_path.name + ".devtool.json"),
+        artifact_path.with_name(artifact_path.name + ".manifest.json"),
+    ]
+    for candidate in sidecar_candidates:
+        if candidate.exists():
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return {str(k): str(v) for k, v in data.items()}
+            except Exception:
+                return {}
+
+    names = {".devtool-artifact.json", "artifact.devtool.json"}
+    try:
+        if artifact_path.suffix == ".zip":
+            with zipfile.ZipFile(artifact_path) as zf:
+                for name in zf.namelist():
+                    if Path(name).name in names:
+                        data = json.loads(zf.read(name).decode("utf-8"))
+                        if isinstance(data, dict):
+                            return {str(k): str(v) for k, v in data.items()}
+        elif artifact_path.suffix == ".tar" or artifact_path.name.endswith((".tar.gz", ".tgz")):
+            mode = "r:gz" if artifact_path.name.endswith((".tar.gz", ".tgz")) else "r"
+            with tarfile.open(artifact_path, mode) as tf:
+                for member in tf.getmembers():
+                    if Path(member.name).name in names and member.isfile():
+                        fh = tf.extractfile(member)
+                        if fh is None:
+                            continue
+                        data = json.loads(fh.read().decode("utf-8"))
+                        if isinstance(data, dict):
+                            return {str(k): str(v) for k, v in data.items()}
+    except Exception:
+        return {}
+    return {}
+
+
+def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
+    target_name = args.target
+    solution = args.solution
+    project = args.project
+
+    if args.command in {"apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"}:
+        if getattr(args, "no_validate", False) and getattr(args, "validate_only", False):
+            raise SystemExit("--no-validate and --validate-only cannot be combined.")
+        manifest = _read_artifact_manifest(args.artifact)
+        if not target_name:
+            target_name = manifest.get("validate_target", "")
+        if not solution:
+            solution = manifest.get("solution", "")
+        if not project:
+            project = manifest.get("run_project", "") or manifest.get("project", "")
+
+    return load_project_config(
+        args.repo,
+        args.config,
+        target_name=target_name,
+        solution_override=solution,
+        project_override=project,
+    )
+
+
+def _targets(config: ProjectConfig) -> None:
+    rows: list[tuple[str, str]] = []
+    if config.targets:
+        rows = [
+            (
+                name,
+                target.solution or target.build_target or target.restore_target or target.run_project or "-"
+            )
+            for name, target in sorted(config.targets.items())
+        ]
+    elif config.kind == "dotnet":
+        rows = [(candidate.stem, str(candidate.relative_to(config.repo_root))) for candidate in discover_dotnet_candidates(config.repo_root)]
+    if not rows:
+        console.print("[yellow]No targets found.[/yellow]")
+        return
+    render_status_table([("target", name) if path == "-" else (name, path) for name, path in rows])
+
 def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: str) -> tuple[list[OperationResult], str]:
+    if getattr(args, "validate_only", False) and name.endswith("validate"):
+        result = OperationResult(
+            "apply-skipped",
+            [name, artifact],
+            0,
+            0.0,
+            "Skipped artifact apply because --validate-only was requested.",
+            [],
+            skipped=True,
+        )
+        text = "$ " + " ".join(result.argv) + "\n" + result.output
+        return [result], text
+
     if name.startswith("apply-overlay"):
         result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run)
     else:
@@ -335,12 +443,18 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace) -> tuple[list
             name, value = step.split("=", 1)
         else:
             name, value = step, ""
-        if name in {"apply-overlay", "ao", "apply-snapshot", "as"}:
+        if name in {"apply-overlay", "ao", "apply-snapshot", "as", "apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"}:
             batch_results, raw_text = _run_apply(config, args, name, value)
             results.extend(batch_results)
             raw.append(raw_text)
             if batch_results[-1].returncode != 0 and not continue_on_error:
                 break
+            if name.endswith("validate") and not getattr(args, "no_validate", False):
+                more, text = run_specs(config, build_specs(config, "validate"), verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+                results.extend(more)
+                raw.append(text)
+                if any(r.returncode != 0 for r in more) and not continue_on_error:
+                    break
             continue
         if name in {"commit", "ci"}:
             more, text = git_commit(config.repo_root, value, verbose=args.verbose, dry_run=args.dry_run)
@@ -409,6 +523,12 @@ def _doctor(config: ProjectConfig) -> None:
         ("fzf", "yes" if shutil.which("fzf") else "no"),
         ("dotnet", "yes" if shutil.which("dotnet") else "no"),
         ("python", config.python_executable),
+        ("selected_target", config.selected_target or "-"),
+        ("default_target", config.default_target or "-"),
+        ("restore_target", config.restore_target or "-"),
+        ("build_target", config.build_target or "-"),
+        ("test_target", config.test_target or "-"),
+        ("run_target", config.run_target or "-"),
         ("wine", config.env.get("SIMSTOOLKIT_WINE_PATH", os.environ.get("SIMSTOOLKIT_WINE_PATH", "")) or "-"),
     ]
     render_status_table(rows)
@@ -418,7 +538,11 @@ def _status(config: ProjectConfig) -> None:
     rows = [
         ("repo", str(config.repo_root)),
         ("kind", config.kind),
+        ("selected_target", config.selected_target or "-"),
+        ("default_target", config.default_target or "-"),
+        ("restore_target", config.restore_target or "-"),
         ("build_target", config.build_target or "-"),
+        ("test_target", config.test_target or "-"),
         ("run_target", config.run_target or "-"),
         ("git_dirty", "yes" if _git_dirty(config.repo_root) else "no"),
     ]
@@ -432,14 +556,14 @@ def _release_notes(repo_root: Path, from_ref: str, to_ref: str) -> str:
 
 
 def _config_command(args: argparse.Namespace) -> int:
-    config = load_project_config(args.repo, args.config)
+    config = _load_command_config(args)
     if args.config_command == "show":
-        console.print(Syntax((config.config_path.read_text(encoding="utf-8") if config.config_path else ""), "toml", word_wrap=True, line_numbers=syntax_line_numbers(console)))
+        print(config.config_path.read_text(encoding="utf-8") if config.config_path else "")
         return 0
     if args.config_command == "defaults":
         from .config import generate_template
 
-        console.print(Syntax(generate_template(config.repo_root), "toml", word_wrap=True, line_numbers=syntax_line_numbers(console)))
+        print(generate_template(config.repo_root))
         return 0
     if args.config_command == "resolve":
         print(json.dumps(resolve_config_dict(config), indent=2))
@@ -468,7 +592,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in {"ai-prompt", "ap"}:
         if copy_mode in {"summary", "json"}:
             parser.error("ai-prompt only supports raw clipboard copy; use --copy or omit clipboard flags.")
-        config = load_project_config(args.repo, args.config)
+        config = _load_command_config(args)
         options = resolve_ai_prompt_options(
             config,
             args.repo,
@@ -476,6 +600,8 @@ def main(argv: list[str] | None = None) -> int:
             project_type=args.project_type,
             build_target=args.build_target,
             run_target=args.run_target,
+            target_name=args.target_name,
+            solution_target=args.solution_target,
             delivery_mode=args.delivery_mode,
             artifact_type=args.artifact_type,
             overlay_count=args.overlay_count,
@@ -528,6 +654,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "config":
         return _config_command(args)
+    if args.command in {"targets", "tg"}:
+        config = _load_command_config(args)
+        _targets(config)
+        return 0
 
     if args.command in {"doctor", "dr", "status", "st", "release-notes", "tag"} or args.command in {"commit", "ci"}:
         repo = Path(args.repo or Path.cwd()).resolve()
@@ -580,7 +710,7 @@ def main(argv: list[str] | None = None) -> int:
             _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=repo.name, duration_seconds=sum(r.duration_seconds for r in results))
             return 0 if totals["failed"] == 0 else 1
 
-    config = load_project_config(args.repo, args.config)
+    config = _load_command_config(args)
     continue_on_error = args.continue_on_error and not args.fail_fast
 
     started_at = datetime.now(timezone.utc)
@@ -594,7 +724,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command in {"apply-overlay", "ao", "apply-snapshot", "as", "apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"}:
         results, raw_output = _run_apply(config, args, args.command, args.artifact)
-        if results[-1].returncode == 0 and args.command.endswith("validate"):
+        should_validate = args.command.endswith("validate") and not getattr(args, "no_validate", False)
+        if results[-1].returncode == 0 and should_validate:
             more_results, more_raw = run_specs(config, build_specs(config, "validate"), verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
             results.extend(more_results)
             raw_output += "\n\n" + more_raw

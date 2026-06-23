@@ -234,3 +234,52 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(rc, 1)
             self.assertFalse(escaped.exists())
+
+
+    def test_ai_prompt_markdown_includes_named_target_details(self) -> None:
+        options = _sample_ai_prompt_options("markdown")
+        options.target_name = "s3pe"
+        options.solution_target = "s3pe_avalonia/S3pe.Modern.sln"
+        options.restore_target = "s3pe_avalonia/S3pe.Modern.sln"
+        options.test_target = "s3pe_avalonia/S3pe.Modern.sln"
+        text = render_ai_prompt(options, "markdown")
+        self.assertIn('Target name: `s3pe`', text)
+        self.assertIn('Solution target: `s3pe_avalonia/S3pe.Modern.sln`', text)
+        self.assertIn('apply-overlay-validate "<downloaded artifact file>"', text)
+        self.assertIn('--target "s3pe"', text)
+
+    def test_apply_overlay_validate_uses_artifact_manifest_target_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "apps").mkdir()
+            (root / "apps" / "S3pe.Modern.sln").write_text("", encoding="utf-8")
+            (root / "tools").mkdir()
+            (root / "tools" / "Tools.sln").write_text("", encoding="utf-8")
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='dotnet'\n"
+                "\n[targets.s3pe]\nsolution='apps/S3pe.Modern.sln'\n"
+                "\n[targets.tools]\nsolution='tools/Tools.sln'\n",
+                encoding="utf-8",
+            )
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr(".devtool-artifact.json", json.dumps({"validate_target": "s3pe"}))
+                zf.writestr("README.txt", "ok")
+
+            captured: list[list[str]] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.extend([spec.argv for spec in specs])
+                return [], ""
+
+            with (
+                patch("repo_devtool.cli._git_dirty", return_value=False),
+                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("repo_devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("repo_devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay-validate", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            self.assertTrue(any("apps/S3pe.Modern.sln" in " ".join(argv) for argv in captured))

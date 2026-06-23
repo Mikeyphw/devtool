@@ -38,11 +38,37 @@ class OperationResult:
 
 
 @dataclass(slots=True)
+class DotnetTarget:
+    name: str
+    solution: str = ""
+    restore_target: str = ""
+    build_target: str = ""
+    test_target: str = ""
+    run_project: str = ""
+    cwd: str = ""
+    env: dict[str, str] = field(default_factory=dict)
+
+    def effective_restore_target(self) -> str:
+        return self.restore_target or self.solution or self.build_target
+
+    def effective_build_target(self) -> str:
+        return self.build_target or self.solution or self.restore_target
+
+    def effective_test_target(self) -> str:
+        return self.test_target or self.solution or self.effective_build_target()
+
+    def effective_run_project(self) -> str:
+        return self.run_project or self.effective_build_target()
+
+
+@dataclass(slots=True)
 class ProjectConfig:
     repo_root: Path
     kind: str
     build_target: str = ""
     run_target: str = ""
+    restore_target: str = ""
+    test_target: str = ""
     python_executable: str = "python3"
     run_module: str = ""
     restore_command: str = ""
@@ -52,6 +78,9 @@ class ProjectConfig:
     run_command: str = ""
     env: dict[str, str] = field(default_factory=dict)
     config_path: Path | None = None
+    default_target: str = ""
+    selected_target: str = ""
+    targets: dict[str, DotnetTarget] = field(default_factory=dict)
 
     def resolve_repo_relative(self, value: str) -> str:
         if not value:
@@ -60,4 +89,3 @@ class ProjectConfig:
         if not path.is_absolute():
             return str((self.repo_root / path).resolve())
         return str(path)
-

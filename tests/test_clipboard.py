@@ -27,6 +27,26 @@ class ClipboardTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(calls, ["xclip"])
 
+    def test_copy_text_prefers_termux_clipboard_in_termux(self) -> None:
+        calls: list[str] = []
+
+        with (
+            patch.dict("os.environ", {"TERMUX_VERSION": "1"}, clear=False),
+            patch(
+                "repo_devtool.clipboard.shutil.which",
+                side_effect=lambda name: f"/usr/bin/{name}" if name == "termux-clipboard-set" else None,
+            ),
+            patch(
+                "repo_devtool.clipboard._run_clipboard_command",
+                side_effect=lambda command, text, backend: calls.append(backend) or ClipboardResult(True, backend=backend),
+            ),
+        ):
+            result = copy_text("hello")
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.backend, "termux-clipboard-set")
+        self.assertEqual(calls, ["termux-clipboard-set"])
+
     def test_copy_text_returns_last_failure_when_backends_fail(self) -> None:
         with (
             patch("repo_devtool.clipboard._can_use_x11", return_value=True),
@@ -78,3 +98,7 @@ class ClipboardTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.backend, "xclip")
         self.assertEqual(events, ["write:hello", "close"])
+
+
+if __name__ == "__main__":
+    unittest.main()

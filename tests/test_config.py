@@ -95,3 +95,37 @@ class ConfigTests(unittest.TestCase):
             config = load_project_config(str(root), None)
             data = resolve_config_dict(config)
             self.assertEqual(data["project"]["kind"], "dotnet")
+
+
+    def test_load_project_config_selects_named_dotnet_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "apps").mkdir()
+            (root / "apps" / "S3pe.Modern.sln").write_text("", encoding="utf-8")
+            (root / "apps" / "S3pe.App.csproj").write_text("", encoding="utf-8")
+            (root / "tools").mkdir()
+            (root / "tools" / "Tools.sln").write_text("", encoding="utf-8")
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='dotnet'\ndefault_target='s3pe'\n"
+                "\n[targets.s3pe]\nsolution='apps/S3pe.Modern.sln'\nrun_project='apps/S3pe.App.csproj'\n"
+                "\n[targets.tools]\nsolution='tools/Tools.sln'\n",
+                encoding="utf-8",
+            )
+
+            config = load_project_config(str(root), None)
+
+            self.assertEqual(config.selected_target, "s3pe")
+            self.assertTrue(config.build_target.endswith("apps/S3pe.Modern.sln"))
+            self.assertTrue(config.run_target.endswith("apps/S3pe.App.csproj"))
+            self.assertEqual(sorted(config.targets), ["s3pe", "tools"])
+
+    def test_load_project_config_fails_on_ambiguous_monorepo_without_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "one").mkdir()
+            (root / "two").mkdir()
+            (root / "one" / "One.sln").write_text("", encoding="utf-8")
+            (root / "two" / "Two.sln").write_text("", encoding="utf-8")
+
+            with self.assertRaises(SystemExit):
+                load_project_config(str(root), None)

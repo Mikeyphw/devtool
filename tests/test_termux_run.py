@@ -152,3 +152,27 @@ class TermuxRunTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         mock_clipboard.assert_not_called()
         mock_stdout.assert_not_called()
+
+
+    def test_rewrite_block_for_remote_preserves_target_flag(self) -> None:
+        block = 'devtool -n -r "$REPO_CURRENT" --target s3pe apply-overlay-validate "$ARTIFACT_CURRENT"\n'
+        rewritten = rewrite_block_for_remote(
+            block,
+            remote_devtool="/home/mike/.local/bin/devtool",
+            capabilities=RemoteCapabilities(supports_stdout_payload=True, supports_runner_json=True),
+        )
+        self.assertEqual(
+            shlex.split(rewritten),
+            [
+                "/home/mike/.local/bin/devtool",
+                "-n",
+                "-r",
+                "$REPO_CURRENT",
+                "--target",
+                "s3pe",
+                "--stdout-payload",
+                "runner-json",
+                "apply-overlay-validate",
+                "$ARTIFACT_CURRENT",
+            ],
+        )

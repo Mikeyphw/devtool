@@ -8,7 +8,6 @@ from .models import ProjectConfig
 
 DELETE_MANIFEST_NAME = ".devtool-delete"
 
-
 @dataclass(slots=True)
 class AiPromptOptions:
     repo_name: str
@@ -25,6 +24,10 @@ class AiPromptOptions:
     prefer_wine_validation: bool
     repo_path: str
     output_format: str
+    target_name: str = ""
+    solution_target: str = ""
+    restore_target: str = ""
+    test_target: str = ""
 
 
 def resolve_ai_prompt_options(config: ProjectConfig, args_repo: str | None, *,
@@ -32,6 +35,8 @@ def resolve_ai_prompt_options(config: ProjectConfig, args_repo: str | None, *,
                               project_type: str,
                               build_target: str,
                               run_target: str,
+                              target_name: str,
+                              solution_target: str,
                               delivery_mode: str,
                               artifact_type: str,
                               overlay_count: int,
@@ -44,6 +49,10 @@ def resolve_ai_prompt_options(config: ProjectConfig, args_repo: str | None, *,
     resolved_type = project_type if project_type and project_type != "auto" else config.kind
     resolved_build = build_target.strip() or config.build_target or "<build target>"
     resolved_run = run_target.strip() or config.run_target or "<run target if needed>"
+    resolved_target_name = target_name.strip() or config.selected_target or config.default_target
+    resolved_solution_target = solution_target.strip() or config.build_target or ""
+    resolved_restore_target = config.restore_target or resolved_solution_target or resolved_build
+    resolved_test_target = config.test_target or resolved_solution_target or resolved_build
     repo_path = str((Path(args_repo).expanduser().resolve() if args_repo else config.repo_root))
     if copy:
         clipboard_behavior = "always copy raw command output without prompting"
@@ -56,6 +65,10 @@ def resolve_ai_prompt_options(config: ProjectConfig, args_repo: str | None, *,
         project_type=resolved_type or "unknown",
         build_target=resolved_build,
         run_target=resolved_run,
+        target_name=resolved_target_name,
+        solution_target=resolved_solution_target,
+        restore_target=resolved_restore_target,
+        test_target=resolved_test_target,
         delivery_mode=delivery_mode,
         artifact_type=artifact_type,
         overlay_count=max(0, overlay_count),
@@ -70,11 +83,10 @@ def resolve_ai_prompt_options(config: ProjectConfig, args_repo: str | None, *,
 
 
 def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
-    validation_command = (
-        f'devtool -r "{options.repo_path}" wine-validate --copy'
-        if options.prefer_wine_validation
-        else f'devtool -r "{options.repo_path}" validate --copy'
-    )
+    target_flags = f' --target "{options.target_name}"' if options.target_name else ""
+    validation_base = "wine-validate" if options.prefer_wine_validation else "validate"
+    validation_command = f'devtool -r "{options.repo_path}"{target_flags} {validation_base} --copy'
+    apply_validate_command = f'devtool -r "{options.repo_path}"{target_flags} apply-overlay-validate "<downloaded artifact file>"'
     notification_mode = "enabled (brief summary)" if options.notifications_enabled and options.notify_brief else (
         "enabled" if options.notifications_enabled else "disabled"
     )
@@ -87,6 +99,10 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
     Project type: `{options.project_type}`
     Build target: `{options.build_target}`
     Run target: `{options.run_target}`
+    Target name: `{options.target_name or "-"}`
+    Solution target: `{options.solution_target or "-"}`
+    Restore target: `{options.restore_target or "-"}`
+    Test target: `{options.test_target or "-"}`
     Delivery mode: `{options.delivery_mode}`
     Artifact type: `{options.artifact_type}`
     Successful overlay count before this turn: `{options.overlay_count}`
@@ -137,6 +153,9 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
     - Use `devtool` for validation.
     - Prefer:
       - `{validation_command}`
+    - In a monorepo, always preserve the exact `--target`, `--solution`, or `--project` selector in every validate/apply command.
+    - For overlay delivery in a monorepo, prefer:
+      - `{apply_validate_command}`
     - Use `--verbose` only when needed for debugging or when I ask.
     - Default behavior should keep Rich summaries and the clipboard prompt from `devtool`.
     - Use `--copy` when you want to bypass the prompt in scripted command blocks.
@@ -174,17 +193,13 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
     ## Overlay patch apply pattern
 
     ```bash
-    cd ~/Downloads
-    unzip -o "<downloaded artifact file>" -d "{options.repo_path}"
-    rm -f "<downloaded artifact file>"
-
     cd "{options.repo_path}"
 
     if [ ! -f ".devtool.toml" ]; then
       devtool -r "{options.repo_path}" init-config
     fi
 
-    {validation_command}
+    {apply_validate_command}
 
     devtool -r "{options.repo_path}" commit "{options.commit_message}"
     ```
@@ -225,11 +240,10 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
 
 
 def render_ai_prompt_text(options: AiPromptOptions) -> str:
-    validation_command = (
-        f'devtool -r "{options.repo_path}" wine-validate --copy'
-        if options.prefer_wine_validation
-        else f'devtool -r "{options.repo_path}" validate --copy'
-    )
+    target_flags = f' --target "{options.target_name}"' if options.target_name else ""
+    validation_base = "wine-validate" if options.prefer_wine_validation else "validate"
+    validation_command = f'devtool -r "{options.repo_path}"{target_flags} {validation_base} --copy'
+    apply_validate_command = f'devtool -r "{options.repo_path}"{target_flags} apply-overlay-validate "<downloaded artifact file>"'
     return textwrap.dedent(f"""    AI workflow prompt for {options.repo_name}
 
     Target repo: {options.repo_path}
@@ -254,6 +268,7 @@ def render_ai_prompt_text(options: AiPromptOptions) -> str:
     - Use devtool for validation, repo operations, and Git handoff.
     - Validation is always required.
     - Prefer validation command: {validation_command}
+Prefer monorepo overlay command: {apply_validate_command}
     - The normal Git path is `devtool -r "{options.repo_path}" commit "{options.commit_message}"`.
     - Use `devtool -r "{options.repo_path}" tag <name>` and `devtool -r "{options.repo_path}" release-notes --from-ref <ref> --to-ref HEAD` when needed.
     - Use `devtool -r "{options.repo_path}" ai-prompt --repo-name "{options.repo_name}"` when I want this prompt regenerated.

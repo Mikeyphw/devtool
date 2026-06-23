@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 from .config import generate_template
-from .console_utils import create_console
+from .console_utils import create_console, resolve_cli_path
 from .diagnostics import parse_issues
 from .logstore import write_log
 from .models import CommandSpec, OperationResult, ProjectConfig
@@ -44,17 +44,22 @@ def _maybe_explicit(command_name: str, text: str, env: dict[str, str] | None = N
 
 def _dotnet_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
     env = config.env
-    build_target = config.build_target
+    restore_target = config.restore_target or config.build_target
+    build_target = config.build_target or restore_target
+    test_target = config.test_target or build_target
     run_target = config.resolve_repo_relative(config.run_target) if config.run_target else build_target
 
+    if not any([restore_target, build_target, test_target, run_target]) and action in {"restore", "build", "test", "wine-test", "run"}:
+        raise SystemExit("No dotnet target resolved. Use --target, --solution, --project, or configure .devtool.toml.")
+
     if action == "restore":
-        return _maybe_explicit("restore", config.restore_command, env) or [CommandSpec("restore", ["dotnet", "restore", build_target], env=env)]
+        return _maybe_explicit("restore", config.restore_command, env) or [CommandSpec("restore", ["dotnet", "restore", restore_target], env=env)]
     if action == "build":
         return _maybe_explicit("build", config.build_command, env) or [CommandSpec("build", ["dotnet", "build", build_target], env=env)]
     if action == "test":
-        return _maybe_explicit("test", config.test_command, env) or [CommandSpec("test", ["dotnet", "test", build_target], env=env)]
+        return _maybe_explicit("test", config.test_command, env) or [CommandSpec("test", ["dotnet", "test", test_target], env=env)]
     if action == "wine-test":
-        return _maybe_explicit("wine-test", config.test_command, env) or [CommandSpec("wine-test", ["dotnet", "test", build_target], env=env)]
+        return _maybe_explicit("wine-test", config.test_command, env) or [CommandSpec("wine-test", ["dotnet", "test", test_target], env=env)]
     if action == "run":
         return _maybe_explicit("run", config.run_command, env) or [CommandSpec("run", ["dotnet", "run", "--project", run_target], env=env)]
     if action == "package":
@@ -186,13 +191,13 @@ def run_specs(
 
 
 def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False) -> OperationResult:
-    artifact_path = Path(artifact).expanduser().resolve()
+    artifact_path = resolve_cli_path(artifact)
     argv = ["unzip", "-o", str(artifact_path), "-d", str(repo_root)]
     return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run)
 
 
 def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False) -> OperationResult:
-    artifact_path = Path(artifact).expanduser().resolve()
+    artifact_path = resolve_cli_path(artifact)
     return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run)
 
 

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 import shutil
+from pathlib import Path
 
 from rich.console import Console
 
 _TERMUX_PREFIX_MARKER = "/data/data/com.termux/files"
 _MIN_CONSOLE_WIDTH = 40
 _TERMUX_NARROW_WIDTH = 96
+_TERMUX_HOME_OVERRIDE_ENV = "DEVTOOL_TERMUX_HOME_OVERRIDE"
 
 
 def is_termux_environment() -> bool:
@@ -40,3 +42,28 @@ def is_narrow_console(console: Console) -> bool:
 
 def syntax_line_numbers(console: Console) -> bool:
     return not is_narrow_console(console)
+
+
+def termux_home_override() -> str:
+    return os.environ.get(_TERMUX_HOME_OVERRIDE_ENV, "").strip()
+
+
+def resolve_cli_path(path_text: str) -> Path:
+    raw = (path_text or "").strip()
+    if not raw:
+        return Path(raw).resolve()
+
+    if is_termux_environment():
+        override = termux_home_override()
+        if override:
+            if raw == "~":
+                raw = override
+            elif raw.startswith("~/"):
+                raw = f"{override}/{raw[2:]}"
+            elif raw == "$HOME":
+                raw = override
+            elif raw.startswith("$HOME/"):
+                raw = f"{override}/{raw[len('$HOME/') :]}"
+
+    expanded = os.path.expandvars(raw)
+    return Path(expanded).expanduser().resolve()

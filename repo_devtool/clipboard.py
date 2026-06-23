@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .console_utils import is_termux_environment
+
 CLIPBOARD_STARTUP_GRACE_SECONDS = 0.15
 
 
@@ -74,8 +76,15 @@ def _run_clipboard_command(command: list[str], text: str, backend: str) -> Clipb
     )
 
 
+def _can_use_termux_clipboard() -> bool:
+    return is_termux_environment() and bool(shutil.which("termux-clipboard-set"))
+
+
 def _candidate_backends() -> list[tuple[list[str], str]]:
     candidates: list[tuple[list[str], str]] = []
+
+    if _can_use_termux_clipboard():
+        candidates.append((["termux-clipboard-set"], "termux-clipboard-set"))
 
     if _can_use_x11():
         if shutil.which("xclip"):
@@ -118,6 +127,13 @@ def copy_text(text: str) -> ClipboardResult:
         return ClipboardResult(
             False,
             reason="X11 display detected but neither xclip nor xsel is installed.",
+        )
+
+
+    if is_termux_environment() and not shutil.which("termux-clipboard-set"):
+        return ClipboardResult(
+            False,
+            reason="Termux environment detected but termux-clipboard-set is not installed.",
         )
 
     if last_failure is not None:
