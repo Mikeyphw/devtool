@@ -129,3 +129,19 @@ class ConfigTests(unittest.TestCase):
 
             with self.assertRaises(SystemExit):
                 load_project_config(str(root), None)
+
+
+    def test_generate_template_uses_unique_target_names_for_duplicate_monorepo_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "apps").mkdir()
+            (root / "apps" / "One.sln").write_text("", encoding="utf-8")
+            (root / "apps" / "One.App.csproj").write_text("", encoding="utf-8")
+            (root / "apps" / "Two.sln").write_text("", encoding="utf-8")
+            (root / "apps" / "Two.App.csproj").write_text("", encoding="utf-8")
+
+            text = generate_template(root)
+
+            self.assertEqual(text.count("[targets.apps]"), 1)
+            self.assertEqual(text.count("[targets.apps_Two]"), 1)
+            self.assertIn('default_target = "apps"', text)

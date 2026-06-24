@@ -97,12 +97,12 @@ def _render_compact_results(results: list[OperationResult], target_console: Cons
         grid = Table.grid(expand=False)
         grid.add_column(style="bold", no_wrap=True)
         grid.add_column(overflow="fold")
-        grid.add_row("command", result.name)
-        grid.add_row("status", _status_text(result))
-        grid.add_row("time", f"{result.duration_seconds:.2f}s")
-        grid.add_row("exit", str(result.returncode))
+        grid.add_row(_cell("command"), _cell(result.name))
+        grid.add_row(_cell("status"), _status_text(result))
+        grid.add_row(_cell("time"), _cell(f"{result.duration_seconds:.2f}s"))
+        grid.add_row(_cell("exit"), _cell(str(result.returncode)))
         if result.log_path:
-            grid.add_row("log", result.log_path)
+            grid.add_row(_cell("log"), _cell(result.log_path))
         target_console.print(Panel(grid, title="Command Summary", expand=False))
 
 
@@ -131,11 +131,11 @@ def _render_compact_issues(issues: list[Issue], target_console: Console) -> None
         grid = Table.grid(expand=False)
         grid.add_column(style="bold", no_wrap=True)
         grid.add_column(overflow="fold")
-        grid.add_row("level", _severity_text(issue))
-        grid.add_row("command", issue.command)
-        grid.add_row("location", _format_issue_location(issue))
-        grid.add_row("code", issue.code or "-")
-        grid.add_row("message", issue.message)
+        grid.add_row(_cell("level"), _severity_text(issue))
+        grid.add_row(_cell("command"), _cell(issue.command))
+        grid.add_row(_cell("location"), _cell(_format_issue_location(issue)))
+        grid.add_row(_cell("code"), _cell(issue.code or "-"))
+        grid.add_row(_cell("message"), _cell(issue.message))
         target_console.print(Panel(grid, title="Issue", expand=False))
 
 
@@ -146,7 +146,7 @@ def render_status_table(rows: list[tuple[str, str]], *, console_obj: Console | N
             grid = Table.grid(expand=False)
             grid.add_column(style="bold", no_wrap=True)
             grid.add_column(overflow="fold")
-            grid.add_row(key, value)
+            grid.add_row(_cell(key), _cell(value))
             target_console.print(Panel(grid, title="Status", expand=False))
         return
 

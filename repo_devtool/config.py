@@ -284,13 +284,17 @@ def generate_template(repo_root: Path) -> str:
                 run_target = str(app_candidates[0].relative_to(repo_root))
         else:
             named_blocks: list[str] = []
-            for candidate in candidates:
-                target_name = _target_name_from_path(repo_root, candidate)
+            used_target_names: set[str] = set()
+            default_target = ""
+            for index, candidate in enumerate(candidates):
+                base_name = _target_name_from_path(repo_root, candidate)
+                target_name = _unique_target_name(used_target_names, base_name, candidate)
+                if index == 0:
+                    default_target = target_name
                 run_project = _pick_run_project_for_solution(repo_root, candidate, app_candidates)
                 named_blocks.append(
                     f"""\n[targets.{target_name}]\nsolution = "{candidate.relative_to(repo_root)}"\nrun_project = "{run_project}"\n"""
                 )
-            default_target = _target_name_from_path(repo_root, candidates[0])
             target_blocks = f'\ndefault_target = "{default_target}"\n' + "".join(named_blocks)
             build_target = ""
     elif kind == "python":
@@ -346,6 +350,29 @@ def _pick_run_project_for_solution(repo_root: Path, solution: Path, app_candidat
             return str(candidate.relative_to(repo_root))
     return str(app_candidates[0].relative_to(repo_root)) if app_candidates else ""
 
+
+
+
+def _unique_target_name(existing: set[str], base_name: str, path: Path) -> str:
+    candidate = base_name
+    if candidate not in existing:
+        existing.add(candidate)
+        return candidate
+
+    stem_name = path.stem.replace("-", "_").replace(".", "_")
+    if stem_name:
+        candidate = f"{base_name}_{stem_name}"
+        if candidate not in existing:
+            existing.add(candidate)
+            return candidate
+
+    index = 2
+    while True:
+        candidate = f"{base_name}_{index}"
+        if candidate not in existing:
+            existing.add(candidate)
+            return candidate
+        index += 1
 
 def _target_name_from_path(repo_root: Path, path: Path) -> str:
     parts = list(path.relative_to(repo_root).parts[:-1])
