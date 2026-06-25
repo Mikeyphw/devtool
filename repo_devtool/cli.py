@@ -208,6 +208,24 @@ def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentPa
     return explicit_stdout, copy_mode
 
 
+def _notification_style(*, warnings: int, errors: int, failed: int) -> tuple[str, str]:
+    if failed or errors:
+        return "❌", "FAIL"
+    if warnings:
+        return "⚠️", "WARN"
+    return "✅", "PASS"
+
+
+def _notification_message(*, warnings: int, errors: int, failed: int, command: str, repo_name: str, duration_seconds: float, brief: bool) -> tuple[str, str]:
+    emoji, status = _notification_style(warnings=warnings, errors=errors, failed=failed)
+    title = f"{emoji} {status}"
+    body = f"{emoji} {status}: {repo_name}: {command}"
+    if not brief:
+        body += f" in {duration_seconds:.1f}s"
+    body += f" • {errors}E {warnings}W"
+    return title, body
+
+
 def _maybe_notify(args: argparse.Namespace, *, warnings: int, errors: int, failed: int, command: str, repo_name: str, duration_seconds: float) -> None:
     if not args.notify:
         return
@@ -216,11 +234,16 @@ def _maybe_notify(args: argparse.Namespace, *, warnings: int, errors: int, faile
         return
     if args.notify_on_fail and succeeded:
         return
-    if args.notify_brief:
-        body = f"{repo_name}: ok={failed == 0} warn={warnings} err={errors} time={duration_seconds:.1f}s"
-    else:
-        body = f"{repo_name}: '{command}' finished in {duration_seconds:.1f}s; warnings={warnings}, errors={errors}, failed={failed}"
-    send_notification("devtool", body)
+    title, body = _notification_message(
+        warnings=warnings,
+        errors=errors,
+        failed=failed,
+        command=command,
+        repo_name=repo_name,
+        duration_seconds=duration_seconds,
+        brief=args.notify_brief,
+    )
+    send_notification(title, body)
 
 
 def _summary_text(results: list[OperationResult]) -> str:

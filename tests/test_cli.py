@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from repo_devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from repo_devtool import __version__
-from repo_devtool.cli import build_parser, main
+from repo_devtool.cli import _notification_message, build_parser, main
 from repo_devtool.logstore import latest_log, write_log
 from repo_devtool.summary import build_json_summary
 

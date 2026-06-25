@@ -13,12 +13,62 @@ from pathlib import Path
 
 
 from .config import generate_template
-from .console_utils import create_console, resolve_cli_path
+from .console_utils import create_console, is_termux_environment, resolve_cli_path
 from .diagnostics import parse_issues
 from .logstore import write_log
 from .models import CommandSpec, OperationResult, ProjectConfig
 
 console = create_console()
+
+
+_TERMUX_DOTNET_ENV = "DEVTOOL_TERMUX_DOTNET"
+_TERMUX_DOTNET_OS_RELEASE = """NAME=Termux
+PRETTY_NAME=Termux
+ID=termux
+VERSION_ID=1
+"""
+_TERMUX_DOTNET_FALLBACKS = (
+    "/data/data/com.termux/files/usr/bin/dotnet",
+)
+
+
+def _resolve_termux_dotnet() -> str | None:
+    override = os.environ.get(_TERMUX_DOTNET_ENV, "").strip()
+    if override:
+        return override
+
+    dotnet_path = shutil.which("dotnet")
+    if dotnet_path:
+        return dotnet_path
+
+    prefix = os.environ.get("PREFIX", "").strip()
+    if prefix:
+        candidate = Path(prefix) / "bin" / "dotnet"
+        if candidate.exists():
+            return str(candidate)
+
+    for fallback in _TERMUX_DOTNET_FALLBACKS:
+        if Path(fallback).exists():
+            return fallback
+
+    return None
+
+
+def _prepare_termux_dotnet(argv: list[str]) -> tuple[list[str], str | None]:
+    if not argv or argv[0] != "dotnet" or not is_termux_environment():
+        return argv, None
+
+    dotnet_path = _resolve_termux_dotnet()
+    if not dotnet_path or not shutil.which("proot"):
+        return argv, None
+
+    tmpdir = tempfile.mkdtemp(prefix="devtool-termux-dotnet-")
+    etc_dir = Path(tmpdir) / "etc"
+    etc_dir.mkdir(parents=True, exist_ok=True)
+    (etc_dir / "os-release").write_text(_TERMUX_DOTNET_OS_RELEASE, encoding="utf-8")
+
+    return ["proot", "-b", f"{etc_dir}:/etc", dotnet_path, *argv[1:]], tmpdir
+
 
 
 def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
@@ -137,11 +187,15 @@ def run_specs(
     raw_sections: list[str] = []
 
     for spec in specs:
+        effective_argv, cleanup_dir = _prepare_termux_dotnet(spec.argv)
+
         if dry_run:
-            output = "$ " + " ".join(spec.argv)
+            output = "$ " + " ".join(effective_argv)
             log_path = str(write_log(output))
-            results.append(OperationResult(spec.name, spec.argv, 0, 0.0, output, [], skipped=True, log_path=log_path))
+            results.append(OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_path))
             raw_sections.append(output)
+            if cleanup_dir:
+                shutil.rmtree(cleanup_dir, ignore_errors=True)
             continue
 
         env = os.environ.copy()
@@ -149,24 +203,11 @@ def run_specs(
         env.update(spec.env)
 
         started = time.perf_counter()
-        if verbose:
-            console.print(f"[cyan]$ {' '.join(shlex.quote(a) for a in spec.argv)}[/cyan]")
-            proc = subprocess.run(
-                spec.argv,
-                cwd=spec.cwd or str(config.repo_root),
-                env=env,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            output = proc.stdout
-            if output:
-                print(output, end="")
-        else:
-            with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
+        try:
+            if verbose:
+                console.print(f"[cyan]$ {' '.join(shlex.quote(a) for a in effective_argv)}[/cyan]")
                 proc = subprocess.run(
-                    spec.argv,
+                    effective_argv,
                     cwd=spec.cwd or str(config.repo_root),
                     env=env,
                     text=True,
@@ -175,12 +216,29 @@ def run_specs(
                     check=False,
                 )
                 output = proc.stdout
+                if output:
+                    print(output, end="")
+            else:
+                with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
+                    proc = subprocess.run(
+                        effective_argv,
+                        cwd=spec.cwd or str(config.repo_root),
+                        env=env,
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        check=False,
+                    )
+                    output = proc.stdout
+        finally:
+            if cleanup_dir:
+                shutil.rmtree(cleanup_dir, ignore_errors=True)
         duration = time.perf_counter() - started
         issues = parse_issues(config.repo_root, spec.name, output)
-        command_line = "$ " + " ".join(shlex.quote(a) for a in spec.argv)
+        command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         raw_text = command_line + "\n" + output
         log_path = str(write_log(raw_text))
-        result = OperationResult(spec.name, spec.argv, proc.returncode, duration, output, issues, log_path=log_path)
+        result = OperationResult(spec.name, effective_argv, proc.returncode, duration, output, issues, log_path=log_path)
         results.append(result)
         raw_sections.append(raw_text)
 

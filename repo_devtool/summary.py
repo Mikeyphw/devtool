@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
@@ -45,6 +46,20 @@ def calculate_totals(results: list[OperationResult]) -> dict[str, int]:
         "failed": sum(1 for result in results if result.returncode != 0),
         "skipped": sum(1 for result in results if result.skipped),
     }
+
+
+def _runner_notification_message(*, repo_root: str, command: str, warnings: int, errors: int, failed: int) -> tuple[str, str, str]:
+    if failed or errors:
+        emoji, level, status = "❌", "error", "FAIL"
+    elif warnings:
+        emoji, level, status = "⚠️", "warning", "WARN"
+    else:
+        emoji, level, status = "✅", "success", "PASS"
+
+    repo_name = Path(repo_root).name or repo_root
+    title = f"{emoji} {status}"
+    body = f"{emoji} {status}: {repo_name}: {command} • {errors}E {warnings}W"
+    return level, title, body
 
 
 def render_summary(results: list[OperationResult], *, console_obj: Console | None = None) -> dict[str, int]:
@@ -224,18 +239,13 @@ def build_runner_json(
             value = value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    if ok:
-        level = "success"
-        title = f"{command} succeeded"
-    elif totals["failed"] or totals["errors"]:
-        level = "error"
-        title = f"{command} failed"
-    elif totals["warnings"]:
-        level = "warning"
-        title = f"{command} completed with warnings"
-    else:
-        level = "info"
-        title = f"{command} completed"
+    level, title, body = _runner_notification_message(
+        repo_root=repo_root,
+        command=command,
+        warnings=totals["warnings"],
+        errors=totals["errors"],
+        failed=totals["failed"],
+    )
 
     return {
         "schema_version": 1,
@@ -267,9 +277,6 @@ def build_runner_json(
             "should_notify": True,
             "level": level,
             "title": title,
-            "body": (
-                f"errors={totals['errors']}  failed={totals['failed']}  "
-                f"warnings={totals['warnings']}  skipped={totals['skipped']}"
-            ),
+            "body": body,
         },
     }
