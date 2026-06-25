@@ -97,9 +97,12 @@ Use `--stdout-payload` when you want the command to print something other than t
 - `summary` prints the compact summary
 - `json` prints the JSON summary
 - `raw` prints the raw command output
-- `runner-json` prints the runner envelope used by Termux workflows
+- `machine-json` prints the runner envelope used by machine and Termux workflows
+- `runner-json` remains as a compatibility alias for the same runner envelope
 
 Do not combine `--json` with `--stdout-payload`; use `--stdout-payload json` when you need explicit control.
+
+`apply-overlay-validate` and `apply-snapshot-validate` also accept `--commit "<message>"` to run `git add -A` and `git commit -m "<message>"` after a successful apply and validation.
 
 ## Notifications
 

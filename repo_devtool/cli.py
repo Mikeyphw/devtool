@@ -68,9 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
     parser.add_argument(
         "--stdout-payload",
-        choices=["auto", "summary", "json", "raw", "runner-json"],
+        choices=["auto", "summary", "json", "raw", "machine-json", "runner-json"],
         default="auto",
-        help="Select the stdout payload; use summary/json/raw/runner-json, or auto for normal CLI output",
+        help="Select the stdout payload; use summary/json/raw/machine-json/runner-json, or auto for normal CLI output",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -117,6 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
         if name.endswith("validate"):
             cmd.add_argument("--no-validate", action="store_true", help="Apply the artifact but skip validation")
             cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
+        if name in {"apply-overlay-validate", "apply-snapshot-validate"}:
+            cmd.add_argument("--commit", default="", help="Commit with this message after a successful apply and validate")
 
     batch = subparsers.add_parser("batch")
     batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
@@ -276,7 +278,7 @@ def _select_stdout_payload(
         return json_text
     if payload == "raw":
         return raw_output
-    if payload == "runner-json":
+    if payload in {"machine-json", "runner-json"}:
         return runner_json_text
     raise ValueError(f"Unsupported stdout payload: {payload}")
 
@@ -415,6 +417,27 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
         solution_override=solution,
         project_override=project,
     )
+
+
+def _maybe_commit_after_apply_validate(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    results: list[OperationResult],
+    raw_output: str,
+) -> tuple[list[OperationResult], str]:
+    commit_message = str(getattr(args, "commit", "") or "").strip()
+    if args.command not in {"apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"} or not commit_message:
+        return results, raw_output
+    if any(result.returncode != 0 for result in results):
+        return results, raw_output
+
+    commit_results, commit_raw = git_commit(config.repo_root, commit_message, verbose=args.verbose, dry_run=args.dry_run)
+    results.extend(commit_results)
+    if raw_output:
+        raw_output = raw_output + "\n\n" + commit_raw
+    else:
+        raw_output = commit_raw
+    return results, raw_output
 
 
 def _targets(config: ProjectConfig) -> None:
@@ -752,6 +775,7 @@ def main(argv: list[str] | None = None) -> int:
             more_results, more_raw = run_specs(config, build_specs(config, "validate"), verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
             results.extend(more_results)
             raw_output += "\n\n" + more_raw
+        results, raw_output = _maybe_commit_after_apply_validate(config, args, results, raw_output)
     elif args.command == "batch":
         results, raw_output = _handle_batch(config, args)
     else:

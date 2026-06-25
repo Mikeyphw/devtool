@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import io
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import redirect_stderr
 from unittest.mock import patch
 
-from repo_devtool.config import detect_project_kind, generate_template, load_project_config, resolve_config_dict
+from repo_devtool.config import detect_project_kind, discover_dotnet_candidates, generate_template, load_project_config, resolve_config_dict
 
 
 class ConfigTests(unittest.TestCase):
@@ -21,6 +23,31 @@ class ConfigTests(unittest.TestCase):
             root = Path(tmp)
             (root / "pyproject.toml").write_text("[project]\nname='x'\nversion='0.1.0'\n", encoding="utf-8")
             self.assertEqual(detect_project_kind(root), "python")
+
+    def test_discovers_dotnet_candidates_ignoring_vendor_trees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "vendor").mkdir()
+            (root / "vendor" / "Ignored.sln").write_text("", encoding="utf-8")
+            (root / "src").mkdir()
+            (root / "src" / "Real.sln").write_text("", encoding="utf-8")
+            (root / "dist").mkdir()
+            (root / "dist" / "Ignored.csproj").write_text("", encoding="utf-8")
+
+            candidates = discover_dotnet_candidates(root)
+
+            self.assertEqual([str(path.relative_to(root)) for path in candidates], ["src/Real.sln"])
+
+    def test_detects_mixed_repo_and_emits_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "App.sln").write_text("", encoding="utf-8")
+            (root / "pyproject.toml").write_text("[project]\nname='x'\nversion='0.1.0'\n", encoding="utf-8")
+            stream = io.StringIO()
+            with redirect_stderr(stream):
+                kind = detect_project_kind(root)
+            self.assertEqual(kind, "dotnet")
+            self.assertIn("explicitly", stream.getvalue())
 
     def test_generate_template_contains_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -80,6 +107,30 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.env["SIMSTOOLKIT_WINE_PATH"], "wine-from-env")
             self.assertEqual(config.env["EXTRA_FLAG"], "1")
 
+    def test_config_paths_are_resolved_from_config_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "apps" / "foo"
+            repo.mkdir(parents=True)
+            (root / "apps" / "foo" / "Foo.sln").write_text("", encoding="utf-8")
+            (root / "apps" / "foo" / "Foo.App.csproj").write_text("", encoding="utf-8")
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='dotnet'\ndefault_target='foo'\n"
+                "\n[targets.foo]\n"
+                "solution='apps/foo/Foo.sln'\n"
+                "run_project='apps/foo/Foo.App.csproj'\n"
+                "cwd='apps/foo'\n",
+                encoding="utf-8",
+            )
+
+            config = load_project_config(str(repo), None)
+
+            self.assertEqual(config.repo_root, repo.resolve())
+            self.assertEqual(config.selected_target, "foo")
+            self.assertEqual(config.build_target, str((root / "apps" / "foo" / "Foo.sln").resolve()))
+            self.assertEqual(config.run_target, str((root / "apps" / "foo" / "Foo.App.csproj").resolve()))
+            self.assertEqual(config.targets["foo"].cwd, str((root / "apps" / "foo").resolve()))
+
     def test_bad_toml_exits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -119,6 +170,22 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue(config.run_target.endswith("apps/S3pe.App.csproj"))
             self.assertEqual(sorted(config.targets), ["s3pe", "tools"])
 
+    def test_load_project_config_resolves_project_and_run_targets_from_config_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "apps").mkdir()
+            (root / "apps" / "S3pe.Modern.sln").write_text("", encoding="utf-8")
+            (root / "apps" / "S3pe.App.csproj").write_text("", encoding="utf-8")
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='dotnet'\nsolution='apps/S3pe.Modern.sln'\nproject='apps/S3pe.App.csproj'\nrun_target='apps/S3pe.App.csproj'\n",
+                encoding="utf-8",
+            )
+
+            config = load_project_config(str(root / "apps"), None)
+
+            self.assertEqual(config.build_target, str((root / "apps" / "S3pe.Modern.sln").resolve()))
+            self.assertEqual(config.run_target, str((root / "apps" / "S3pe.App.csproj").resolve()))
+
     def test_load_project_config_fails_on_ambiguous_monorepo_without_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -142,6 +209,40 @@ class ConfigTests(unittest.TestCase):
 
             text = generate_template(root)
 
-            self.assertEqual(text.count("[targets.apps]"), 1)
+            self.assertEqual(text.count("[targets.apps_One]"), 1)
             self.assertEqual(text.count("[targets.apps_Two]"), 1)
-            self.assertIn('default_target = "apps"', text)
+            self.assertIn('default_target = "apps_One"', text)
+
+    def test_generate_template_picks_nearest_run_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "apps" / "foo").mkdir(parents=True)
+            (root / "apps" / "foo" / "Foo.sln").write_text("", encoding="utf-8")
+            (root / "apps" / "foo" / "Foo.App.csproj").write_text("", encoding="utf-8")
+            (root / "apps" / "foo" / "src").mkdir()
+            (root / "apps" / "foo" / "src" / "Foo.Host.csproj").write_text("", encoding="utf-8")
+            (root / "apps" / "bar").mkdir(parents=True)
+            (root / "apps" / "bar" / "Bar.sln").write_text("", encoding="utf-8")
+            (root / "apps" / "bar" / "Bar.App.csproj").write_text("", encoding="utf-8")
+
+            text = generate_template(root)
+
+            self.assertIn('[targets.apps_foo_Foo]', text)
+            self.assertIn('run_project = "apps/foo/Foo.App.csproj"', text)
+            self.assertIn('[targets.apps_bar_Bar]', text)
+            self.assertIn('run_project = "apps/bar/Bar.App.csproj"', text)
+
+    def test_generate_template_leaves_run_project_empty_when_no_local_app_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "apps" / "foo").mkdir(parents=True)
+            (root / "apps" / "foo" / "Foo.sln").write_text("", encoding="utf-8")
+            (root / "tools").mkdir()
+            (root / "tools" / "Tools.sln").write_text("", encoding="utf-8")
+            (root / "shared").mkdir()
+            (root / "shared" / "Shared.App.csproj").write_text("", encoding="utf-8")
+
+            text = generate_template(root)
+
+            self.assertIn('[targets.apps_foo_Foo]', text)
+            self.assertIn('run_project = ""', text)

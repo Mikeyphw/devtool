@@ -1,0 +1,31 @@
+[project]
+kind = "python" # auto | dotnet | python | unknown
+build_target = "pyproject.toml"
+run_target = ""
+python = "/home/mike/.local/share/mise/installs/python/latest/bin/python3"
+run_module = "your_package"
+restore_command = ""
+build_command = ""
+test_command = ""
+run_command = ""
+package_command = ""
+
+[env]
+# Arbitrary runtime env vars for commands:
+# SIMSTOOLKIT_WINE_PATH = "wine"
+
+# Environment override rules:
+# DEVTOOL_PROJECT_KIND=python
+# DEVTOOL_PROJECT_BUILD_TARGET=pyproject.toml
+# DEVTOOL_PROJECT_RUN_TARGET=src/app.py
+# DEVTOOL_PROJECT_TARGET=s3pe
+# DEVTOOL_PROJECT_DEFAULT_TARGET=s3pe
+# DEVTOOL_PROJECT_PYTHON=python3.12
+# DEVTOOL_PROJECT_RUN_MODULE=my_app
+# DEVTOOL_PROJECT_RESTORE_COMMAND=python3 -m pip install -e .
+# DEVTOOL_PROJECT_BUILD_COMMAND=python3 -m build
+# DEVTOOL_PROJECT_TEST_COMMAND=python3 -m pytest -q
+# DEVTOOL_PROJECT_RUN_COMMAND=python3 -m my_app
+# DEVTOOL_PROJECT_PACKAGE_COMMAND=python3 -m build
+#
+# DEVTOOL_ENV_EXAMPLE_FLAG=1

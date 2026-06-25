@@ -11,6 +11,29 @@ from .models import DotnetTarget, ProjectConfig
 CONFIG_NAME = ".devtool.toml"
 PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
 RUNTIME_ENV_PREFIX = "DEVTOOL_ENV_"
+_IGNORED_DOTNET_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".cache",
+    ".idea",
+    ".pytest_cache",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "artifacts",
+    "bin",
+    "build",
+    "dist",
+    "node_modules",
+    "obj",
+    "out",
+    "target",
+    "tmp",
+    "temp",
+    "vendor",
+    "venv",
+}
 
 
 def find_config(repo_root: Path, config_path_arg: str | None) -> Path | None:
@@ -35,6 +58,7 @@ def load_project_config(
 ) -> ProjectConfig:
     repo_root = Path(repo_root_arg or Path.cwd()).expanduser().resolve()
     config_path = find_config(repo_root, config_path_arg)
+    config_root = config_path.parent if config_path else repo_root
 
     loaded: dict[str, Any] = {}
     if config_path:
@@ -47,17 +71,21 @@ def load_project_config(
     env_section = _apply_runtime_env_overrides({str(k): str(v) for k, v in loaded.get("env", {}).items()})
 
     kind = str(project_section.get("kind", "auto")).strip().lower() or "auto"
-    detected_kind = detect_project_kind(repo_root) if kind == "auto" else kind
+    detected_kind = detect_project_kind(config_root) if kind == "auto" else kind
 
-    targets = _load_named_targets(repo_root, loaded.get("targets", {}), env_section)
+    targets = _load_named_targets(config_root, loaded.get("targets", {}), env_section)
     default_target = str(project_section.get("default_target", "")).strip()
 
     selected_target_name = target_name.strip() or str(project_section.get("target", "")).strip()
-    explicit_solution = solution_override.strip() or str(project_section.get("solution", "")).strip()
-    explicit_project = project_override.strip() or str(project_section.get("project", "")).strip()
+    explicit_solution = solution_override.strip()
+    explicit_project = project_override.strip()
+    config_solution = str(project_section.get("solution", "")).strip()
+    config_project = str(project_section.get("project", "")).strip()
+    config_run_target = str(project_section.get("run_target", "")).strip()
 
     resolved = _resolve_targets(
         repo_root,
+        config_root,
         detected_kind,
         project_section,
         targets,
@@ -65,6 +93,9 @@ def load_project_config(
         selected_target_name=selected_target_name,
         explicit_solution=explicit_solution,
         explicit_project=explicit_project,
+        config_solution=config_solution,
+        config_project=config_project,
+        config_run_target=config_run_target,
     )
 
     effective_env = dict(env_section)
@@ -94,18 +125,26 @@ def load_project_config(
 
 
 def detect_project_kind(repo_root: Path) -> str:
-    if list(repo_root.rglob("*.sln")) or list(repo_root.rglob("*.csproj")):
+    dotnet_candidates = discover_dotnet_candidates(repo_root)
+    python_markers = (repo_root / "pyproject.toml").exists() or (repo_root / "setup.py").exists()
+    if dotnet_candidates and python_markers:
+        print(
+            f"devtool: mixed dotnet/python markers found under {repo_root}. "
+            "Set [project].kind explicitly in .devtool.toml.",
+            file=sys.stderr,
+        )
+    if dotnet_candidates:
         return "dotnet"
-    if (repo_root / "pyproject.toml").exists() or (repo_root / "setup.py").exists():
+    if python_markers:
         return "python"
     return "unknown"
 
 
 def discover_dotnet_candidates(repo_root: Path) -> list[Path]:
-    solutions = sorted(repo_root.rglob("*.sln"))
+    solutions = _collect_paths_with_suffixes(repo_root, (".sln",))
     if solutions:
         return solutions
-    return sorted(repo_root.rglob("*.csproj"))
+    return _collect_paths_with_suffixes(repo_root, (".csproj",))
 
 
 def _default_build_target(repo_root: Path, kind: str, section: dict[str, Any]) -> str:
@@ -161,6 +200,7 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
 
 def _resolve_targets(
     repo_root: Path,
+    config_root: Path,
     kind: str,
     project_section: dict[str, Any],
     targets: dict[str, DotnetTarget],
@@ -169,12 +209,15 @@ def _resolve_targets(
     selected_target_name: str,
     explicit_solution: str,
     explicit_project: str,
+    config_solution: str,
+    config_project: str,
+    config_run_target: str,
 ) -> dict[str, str]:
     if kind != "dotnet":
-        build_target = _default_build_target(repo_root, kind, project_section)
-        run_target = str(project_section.get("run_target", "")).strip()
+        build_target = _default_build_target(config_root, kind, project_section)
+        run_target = config_run_target
         if run_target:
-            run_target = _resolve_path(repo_root, run_target)
+            run_target = _resolve_path(config_root, run_target)
         return {
             "selected_target": "",
             "restore_target": build_target,
@@ -186,6 +229,10 @@ def _resolve_targets(
     if explicit_solution or explicit_project:
         solution_path = _resolve_optional_path(repo_root, explicit_solution)
         project_path = _resolve_optional_path(repo_root, explicit_project)
+        if not solution_path and config_solution:
+            solution_path = _resolve_optional_path(config_root, config_solution)
+        if not project_path and config_project:
+            project_path = _resolve_optional_path(config_root, config_project)
         build_target = solution_path or project_path
         return {
             "selected_target": "",
@@ -209,18 +256,30 @@ def _resolve_targets(
             "run_target": target.effective_run_project(),
         }
 
-    explicit_build = _default_build_target(repo_root, kind, project_section)
-    explicit_run = str(project_section.get("run_target", "")).strip()
+    if config_solution or config_project:
+        solution_path = _resolve_optional_path(config_root, config_solution)
+        project_path = _resolve_optional_path(config_root, config_project)
+        build_target = solution_path or project_path
+        return {
+            "selected_target": "",
+            "restore_target": solution_path or build_target,
+            "build_target": build_target,
+            "test_target": solution_path or build_target,
+            "run_target": project_path or build_target,
+        }
+
+    explicit_build = _default_build_target(config_root, kind, project_section)
+    explicit_run = config_run_target
     if explicit_build or explicit_run:
         return {
             "selected_target": "",
             "restore_target": explicit_build,
             "build_target": explicit_build,
             "test_target": explicit_build,
-            "run_target": _resolve_optional_path(repo_root, explicit_run) or explicit_build,
+            "run_target": _resolve_optional_path(config_root, explicit_run) or explicit_build,
         }
 
-    candidates = discover_dotnet_candidates(repo_root)
+    candidates = discover_dotnet_candidates(config_root)
     if len(candidates) == 1:
         single = str(candidates[0].resolve())
         return {
@@ -278,9 +337,14 @@ def generate_template(repo_root: Path) -> str:
 
     if kind == "dotnet":
         candidates = discover_dotnet_candidates(repo_root)
-        app_candidates = sorted(p for p in repo_root.rglob("*.csproj") if "test" not in p.name.lower())
+        app_candidates = sorted(
+            p for p in _collect_paths_with_suffixes(repo_root, (".csproj",))
+            if "test" not in p.name.lower()
+        )
         if len(candidates) <= 1:
-            if app_candidates:
+            if candidates and candidates[0].suffix.lower() == ".sln":
+                run_target = _pick_run_project_for_solution(repo_root, candidates[0], app_candidates)
+            elif app_candidates:
                 run_target = str(app_candidates[0].relative_to(repo_root))
         else:
             named_blocks: list[str] = []
@@ -345,10 +409,14 @@ package_command = ""
 
 def _pick_run_project_for_solution(repo_root: Path, solution: Path, app_candidates: list[Path]) -> str:
     solution_dir = solution.parent
-    for candidate in app_candidates:
-        if solution_dir in candidate.parents:
-            return str(candidate.relative_to(repo_root))
-    return str(app_candidates[0].relative_to(repo_root)) if app_candidates else ""
+    matching = [candidate for candidate in app_candidates if solution_dir in candidate.parents]
+    if not matching:
+        return ""
+    best = min(
+        matching,
+        key=lambda candidate: (len(candidate.relative_to(solution_dir).parts), str(candidate.relative_to(repo_root))),
+    )
+    return str(best.relative_to(repo_root))
 
 
 
@@ -375,10 +443,13 @@ def _unique_target_name(existing: set[str], base_name: str, path: Path) -> str:
         index += 1
 
 def _target_name_from_path(repo_root: Path, path: Path) -> str:
-    parts = list(path.relative_to(repo_root).parts[:-1])
-    if parts:
-        return parts[0].replace("-", "_").replace(".", "_")
-    return path.stem.replace("-", "_").replace(".", "_")
+    relative = path.relative_to(repo_root)
+    name_parts = [part.replace("-", "_").replace(".", "_") for part in relative.parts[:-1]]
+    stem = relative.stem.replace("-", "_").replace(".", "_")
+    if name_parts:
+        name_parts.append(stem)
+        return "_".join(part for part in name_parts if part)
+    return stem
 
 
 def _display(repo_root: Path, value: str) -> str:
@@ -400,6 +471,19 @@ def _resolve_path(repo_root: Path, value: str) -> str:
 def _resolve_optional_path(repo_root: Path, value: Any) -> str:
     text = str(value).strip()
     return _resolve_path(repo_root, text) if text else ""
+
+
+def _collect_paths_with_suffixes(repo_root: Path, suffixes: tuple[str, ...]) -> list[Path]:
+    matches: list[Path] = []
+    suffixes_lower = tuple(suffix.lower() for suffix in suffixes)
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [name for name in dirnames if name.lower() not in _IGNORED_DOTNET_DIRS]
+        base = Path(dirpath)
+        for filename in filenames:
+            lower_name = filename.lower()
+            if lower_name.endswith(suffixes_lower):
+                matches.append(base / filename)
+    return sorted(matches)
 
 
 def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:

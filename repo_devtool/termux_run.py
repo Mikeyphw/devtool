@@ -54,7 +54,7 @@ ARCHIVE_SUFFIXES = (
 
 COPY_FLAG_PATTERN = re.compile(r"(?<!\S)--copy(?:-(?:json|raw|summary))?(?!\S)")
 STDOUT_PAYLOAD_PATTERN = re.compile(
-    r"(?<!\S)--stdout-payload(?:=|\s+)(?:auto|summary|json|raw|runner-json)(?!\S)"
+    r"(?<!\S)--stdout-payload(?:=|\s+)(?:auto|summary|json|raw|machine-json|runner-json)(?!\S)"
 )
 JSON_FLAG_PATTERN = re.compile(r"(?<!\S)(-j|--json)(?!\S)")
 DEVTOOL_LINE_PATTERN = re.compile(r"(^|\n)(?P<indent>[ \t]*)(?P<line>devtool[^\n]*)")
@@ -101,6 +101,7 @@ class ParsedBlock:
 @dataclass(frozen=True)
 class RemoteDevtoolCapabilities:
     supports_stdout_payload: bool
+    supports_machine_json: bool
     supports_runner_json: bool
 
 
@@ -461,15 +462,18 @@ def detect_remote_capabilities(target: str, args: argparse.Namespace) -> RemoteD
     if not output.strip():
         raise TermuxRunError("Failed to inspect remote devtool help.")
     supports_stdout_payload = "--stdout-payload" in output
+    supports_machine_json = "machine-json" in output
     supports_runner_json = "runner-json" in output
     table = Table(title="Remote devtool capabilities")
     table.add_column("Capability", style="cyan")
     table.add_column("Supported")
     table.add_row("--stdout-payload", "yes" if supports_stdout_payload else "no")
+    table.add_row("machine-json", "yes" if supports_machine_json else "no")
     table.add_row("runner-json", "yes" if supports_runner_json else "no")
     console.print(table)
     return RemoteDevtoolCapabilities(
         supports_stdout_payload=supports_stdout_payload,
+        supports_machine_json=supports_machine_json,
         supports_runner_json=supports_runner_json,
     )
 
@@ -534,7 +538,9 @@ def rewrite_block_for_remote(
                 insert_at = index
                 break
 
-        if capabilities.supports_runner_json:
+        if capabilities.supports_machine_json:
+            parts[insert_at:insert_at] = ["--stdout-payload", "machine-json"]
+        elif capabilities.supports_runner_json:
             parts[insert_at:insert_at] = ["--stdout-payload", "runner-json"]
         elif capabilities.supports_stdout_payload:
             parts[insert_at:insert_at] = ["--stdout-payload", "json"]
@@ -545,7 +551,9 @@ def rewrite_block_for_remote(
 
     return DEVTOOL_LINE_PATTERN.sub(replace_devtool_line, block).rstrip() + "\n"
 def show_rewritten_block(block: str, capabilities: RemoteDevtoolCapabilities) -> None:
-    if capabilities.supports_runner_json:
+    if capabilities.supports_machine_json:
+        mode = "--stdout-payload machine-json"
+    elif capabilities.supports_runner_json:
         mode = "--stdout-payload runner-json"
     elif capabilities.supports_stdout_payload:
         mode = "--stdout-payload json"

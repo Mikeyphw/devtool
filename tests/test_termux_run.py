@@ -47,7 +47,7 @@ class TermuxRunTests(unittest.TestCase):
         rewritten = rewrite_block_for_remote(
             block,
             remote_devtool="/home/mike/.local/bin/devtool",
-            capabilities=RemoteCapabilities(supports_stdout_payload=True, supports_runner_json=True),
+            capabilities=RemoteCapabilities(supports_stdout_payload=True, supports_machine_json=True, supports_runner_json=True),
         )
         self.assertEqual(
             shlex.split(rewritten),
@@ -57,7 +57,7 @@ class TermuxRunTests(unittest.TestCase):
                 "-r",
                 "$REPO_CURRENT",
                 "--stdout-payload",
-                "runner-json",
+                "machine-json",
                 "apply-overlay-validate",
                 "$ARTIFACT_CURRENT",
             ],
@@ -68,7 +68,7 @@ class TermuxRunTests(unittest.TestCase):
         rewritten = rewrite_block_for_remote(
             block,
             remote_devtool="/home/mike/.local/bin/devtool",
-            capabilities=RemoteCapabilities(supports_stdout_payload=False, supports_runner_json=False),
+            capabilities=RemoteCapabilities(supports_stdout_payload=False, supports_machine_json=False, supports_runner_json=False),
         )
         self.assertEqual(
             shlex.split(rewritten),
@@ -139,7 +139,7 @@ class TermuxRunTests(unittest.TestCase):
                 archive_basename=None,
                 requires_archive_upload=False,
             )),
-            patch("repo_devtool.termux_run.detect_remote_capabilities", return_value=RemoteCapabilities(supports_stdout_payload=True, supports_runner_json=True)),
+            patch("repo_devtool.termux_run.detect_remote_capabilities", return_value=RemoteCapabilities(supports_stdout_payload=True, supports_machine_json=True, supports_runner_json=True)),
             patch("repo_devtool.termux_run.rewrite_block_for_remote", return_value="rewritten\n"),
             patch("repo_devtool.termux_run.run_remote_block", return_value=(__import__("json").dumps(payload), 0)),
             patch("repo_devtool.termux_run.set_termux_clipboard") as mock_clipboard,
@@ -159,7 +159,7 @@ class TermuxRunTests(unittest.TestCase):
         rewritten = rewrite_block_for_remote(
             block,
             remote_devtool="/home/mike/.local/bin/devtool",
-            capabilities=RemoteCapabilities(supports_stdout_payload=True, supports_runner_json=True),
+            capabilities=RemoteCapabilities(supports_stdout_payload=True, supports_machine_json=True, supports_runner_json=True),
         )
         self.assertEqual(
             shlex.split(rewritten),
@@ -170,6 +170,26 @@ class TermuxRunTests(unittest.TestCase):
                 "$REPO_CURRENT",
                 "--target",
                 "s3pe",
+                "--stdout-payload",
+                "machine-json",
+                "apply-overlay-validate",
+                "$ARTIFACT_CURRENT",
+            ],
+        )
+
+    def test_rewrite_block_for_remote_falls_back_to_runner_json(self) -> None:
+        block = 'devtool -r "$REPO_CURRENT" apply-overlay-validate "$ARTIFACT_CURRENT"\n'
+        rewritten = rewrite_block_for_remote(
+            block,
+            remote_devtool="/home/mike/.local/bin/devtool",
+            capabilities=RemoteCapabilities(supports_stdout_payload=True, supports_machine_json=False, supports_runner_json=True),
+        )
+        self.assertEqual(
+            shlex.split(rewritten),
+            [
+                "/home/mike/.local/bin/devtool",
+                "-r",
+                "$REPO_CURRENT",
                 "--stdout-payload",
                 "runner-json",
                 "apply-overlay-validate",
