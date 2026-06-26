@@ -86,7 +86,7 @@ def render_ai_prompt_markdown(options: AiPromptOptions) -> str:
     target_flags = f' --target "{options.target_name}"' if options.target_name else ""
     validation_base = "wine-validate" if options.prefer_wine_validation else "validate"
     validation_command = f'devtool -r "{options.repo_path}"{target_flags} {validation_base} --copy'
-    apply_validate_command = f'devtool -r "{options.repo_path}"{target_flags} apply-overlay-validate "<downloaded artifact file>"'
+    apply_validate_command = f'devtool -r "{options.repo_path}"{target_flags} apply-overlay --validate "<downloaded artifact file>"'
     notification_mode = "enabled (brief summary)" if options.notifications_enabled and options.notify_brief else (
         "enabled" if options.notifications_enabled else "disabled"
     )
@@ -243,7 +243,7 @@ def render_ai_prompt_text(options: AiPromptOptions) -> str:
     target_flags = f' --target "{options.target_name}"' if options.target_name else ""
     validation_base = "wine-validate" if options.prefer_wine_validation else "validate"
     validation_command = f'devtool -r "{options.repo_path}"{target_flags} {validation_base} --copy'
-    apply_validate_command = f'devtool -r "{options.repo_path}"{target_flags} apply-overlay-validate "<downloaded artifact file>"'
+    apply_validate_command = f'devtool -r "{options.repo_path}"{target_flags} apply-overlay --validate "<downloaded artifact file>"'
     return textwrap.dedent(f"""    AI workflow prompt for {options.repo_name}
 
     Target repo: {options.repo_path}

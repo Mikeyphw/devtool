@@ -23,21 +23,19 @@ from .config import detect_project_kind, discover_dotnet_candidates, load_projec
 from .logstore import latest_log
 from .models import CommandSpec, OperationResult, ProjectConfig
 from .notify import available_notifier, send_notification
-from .runners import apply_overlay, apply_snapshot, build_specs, git_commit, run_specs, write_template_config
+from .runners import apply_overlay, apply_snapshot, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
 from .summary import build_json_summary, build_runner_json, render_status_table, render_summary
-from .termux_run import add_termux_run_parser, handle_termux_run
 
 console = create_console()
+
+APPLY_COMMANDS = {"apply-overlay", "ao", "apply-snapshot", "as"}
+LEGACY_APPLY_VALIDATE_COMMANDS = APPLY_COMMANDS | {"apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"}
 
 INTERACTIVE_COPY_COMMANDS = {
     "apply-overlay",
     "ao",
     "apply-snapshot",
     "as",
-    "apply-overlay-validate",
-    "aov",
-    "apply-snapshot-validate",
-    "asv",
     "batch",
 }
 
@@ -51,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--solution", default="", help="Exact solution path for restore/build/test")
     parser.add_argument("--project", default="", help="Exact project path for run/validation")
     parser.add_argument("-v", "--verbose", action="store_true", help="Stream full command output")
-    parser.add_argument("-j", "--json", action="store_true", help="Shortcut for --stdout-payload json")
+    parser.add_argument("-j", "--json", action="store_true", help="Shortcut for the machine envelope stdout payload")
     parser.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
     parser.add_argument("-f", "--force", action="store_true", help="Force dangerous actions")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them")
@@ -68,9 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
     parser.add_argument(
         "--stdout-payload",
-        choices=["auto", "summary", "json", "raw", "machine-json", "runner-json"],
+        choices=["auto", "summary", "json", "raw"],
         default="auto",
-        help="Select the stdout payload; use summary/json/raw/machine-json/runner-json, or auto for normal CLI output",
+        help="Select the stdout payload; use summary/json/raw, or auto for normal CLI output",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -86,7 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
         ("status", ["st"]),
         ("doctor", ["dr"]),
     ]:
-        subparsers.add_parser(name, aliases=aliases)
+        cmd = subparsers.add_parser(name, aliases=aliases)
+        if name in {"validate", "wine-validate"}:
+            _add_validation_skip_flags(cmd)
 
     ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
     ai_prompt.add_argument("--repo-name", required=True, help="Human-friendly repo name for the generated prompt")
@@ -109,16 +109,18 @@ def build_parser() -> argparse.ArgumentParser:
     for name, aliases in [
         ("apply-overlay", ["ao"]),
         ("apply-snapshot", ["as"]),
-        ("apply-overlay-validate", ["aov"]),
-        ("apply-snapshot-validate", ["asv"]),
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
         cmd.add_argument("artifact")
-        if name.endswith("validate"):
-            cmd.add_argument("--no-validate", action="store_true", help="Apply the artifact but skip validation")
-            cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
-        if name in {"apply-overlay-validate", "apply-snapshot-validate"}:
-            cmd.add_argument("--commit", default="", help="Commit with this message after a successful apply and validate")
+        cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
+        cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
+        _add_validation_skip_flags(cmd)
+        cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
+        cmd.add_argument(
+            "--commit-even-on-failure",
+            action="store_true",
+            help="Commit after a successful apply even if validation fails",
+        )
 
     batch = subparsers.add_parser("batch")
     batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
@@ -151,9 +153,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("targets", aliases=["tg"])
 
-    add_termux_run_parser(subparsers)
-
     return parser
+
+
+def _add_validation_skip_flags(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument("--skip-restore", action="store_true", help="Skip restore during validation")
+    cmd.add_argument("--skip-build", action="store_true", help="Skip build during validation")
+    cmd.add_argument("--skip-test", action="store_true", help="Skip test during validation")
 
 
 def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argparse.Namespace) -> None:
@@ -270,16 +276,14 @@ def _select_stdout_payload(
     summary_text: str,
     json_text: str,
     raw_output: str,
-    runner_json_text: str,
+    machine_json_text: str,
 ) -> str:
     if payload == "summary":
         return summary_text
     if payload == "json":
-        return json_text
+        return machine_json_text
     if payload == "raw":
         return raw_output
-    if payload in {"machine-json", "runner-json"}:
-        return runner_json_text
     raise ValueError(f"Unsupported stdout payload: {payload}")
 
 
@@ -298,7 +302,7 @@ def _emit_summary(
     summary_text = _summary_text(results)
     json_data = build_json_summary(results, repo_root=repo_root)
     json_text = json.dumps(json_data, indent=2)
-    runner_json = build_runner_json(
+    machine_json = build_runner_json(
         results,
         repo_root=repo_root,
         command=command or "devtool",
@@ -307,7 +311,7 @@ def _emit_summary(
         started_at=started_at,
         finished_at=finished_at,
     )
-    runner_json_text = json.dumps(runner_json, indent=2)
+    machine_json_text = json.dumps(machine_json, indent=2)
 
     if payload_mode == "auto":
         if as_json:
@@ -319,7 +323,7 @@ def _emit_summary(
             "errors": json_data["errors"],
             "failed": json_data["failed"],
             "skipped": json_data["skipped"],
-        }, summary_text, json_text, runner_json_text
+        }, summary_text, json_text, machine_json_text
 
     render_summary(results, console_obj=create_console(stderr=True))
     payload_text = _select_stdout_payload(
@@ -327,7 +331,7 @@ def _emit_summary(
         summary_text=summary_text,
         json_text=json_text,
         raw_output=raw_output,
-        runner_json_text=runner_json_text,
+        machine_json_text=machine_json_text,
     )
     print(payload_text)
     return {
@@ -335,7 +339,7 @@ def _emit_summary(
         "errors": json_data["errors"],
         "failed": json_data["failed"],
         "skipped": json_data["skipped"],
-    }, summary_text, json_text, runner_json_text
+    }, summary_text, json_text, machine_json_text
 
 
 def _resolve_batch_steps(config: ProjectConfig, steps: list[str]) -> tuple[list[CommandSpec], list[OperationResult], list[str]]:
@@ -399,9 +403,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
     solution = args.solution
     project = args.project
 
-    if args.command in {"apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"}:
-        if getattr(args, "no_validate", False) and getattr(args, "validate_only", False):
-            raise SystemExit("--no-validate and --validate-only cannot be combined.")
+    if args.command in LEGACY_APPLY_VALIDATE_COMMANDS and (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
         manifest = _read_artifact_manifest(args.artifact)
         if not target_name:
             target_name = manifest.get("validate_target", "")
@@ -419,16 +421,52 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
     )
 
 
-def _maybe_commit_after_apply_validate(
+def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.command not in APPLY_COMMANDS:
+        return
+    if (args.skip_restore or args.skip_build or args.skip_test) and not (args.validate or args.validate_only):
+        parser.error("--skip-restore, --skip-build, and --skip-test require --validate or --validate-only.")
+    if args.validate_only and args.validate:
+        parser.error("--validate and --validate-only cannot be combined.")
+    if args.validate_only and (args.commit or args.commit_even_on_failure):
+        parser.error("--validate-only cannot be combined with --commit or --commit-even-on-failure.")
+
+
+def _validation_skip_values(args: argparse.Namespace) -> tuple[bool, bool, bool]:
+    return (
+        bool(getattr(args, "skip_restore", False)),
+        bool(getattr(args, "skip_build", False)),
+        bool(getattr(args, "skip_test", False)),
+    )
+
+
+def _validation_specs(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
+    skip_restore, skip_build, skip_test = _validation_skip_values(args)
+    if skip_restore and skip_build and skip_test:
+        parser.error("Validation would run no commands. Clear at least one skip flag.")
+    return build_validation_specs(
+        config,
+        wine=args.command in {"wine-validate", "wv"},
+        skip_restore=skip_restore,
+        skip_build=skip_build,
+        skip_test=skip_test,
+    )
+
+
+def _maybe_commit_after_apply(
     config: ProjectConfig,
     args: argparse.Namespace,
     results: list[OperationResult],
     raw_output: str,
 ) -> tuple[list[OperationResult], str]:
     commit_message = str(getattr(args, "commit", "") or "").strip()
-    if args.command not in {"apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"} or not commit_message:
+    if args.command not in APPLY_COMMANDS or not commit_message:
         return results, raw_output
-    if any(result.returncode != 0 for result in results):
+    if not results or results[0].returncode != 0:
+        return results, raw_output
+
+    validation_failed = any(result.returncode != 0 for result in results[1:])
+    if validation_failed and not getattr(args, "commit_even_on_failure", False):
         return results, raw_output
 
     commit_results, commit_raw = git_commit(config.repo_root, commit_message, verbose=args.verbose, dry_run=args.dry_run)
@@ -458,7 +496,7 @@ def _targets(config: ProjectConfig) -> None:
     render_status_table([("target", name) if path == "-" else (name, path) for name, path in rows])
 
 def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: str) -> tuple[list[OperationResult], str]:
-    if getattr(args, "validate_only", False) and name.endswith("validate"):
+    if getattr(args, "validate_only", False):
         result = OperationResult(
             "apply-skipped",
             [name, artifact],
@@ -489,13 +527,15 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace) -> tuple[list
             name, value = step.split("=", 1)
         else:
             name, value = step, ""
-        if name in {"apply-overlay", "ao", "apply-snapshot", "as", "apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"}:
+        if name in LEGACY_APPLY_VALIDATE_COMMANDS:
+            raise RuntimeError("batch apply validation modes were removed; use apply-overlay/apply-snapshot flags instead")
+        if name in APPLY_COMMANDS:
             batch_results, raw_text = _run_apply(config, args, name, value)
             results.extend(batch_results)
             raw.append(raw_text)
             if batch_results[-1].returncode != 0 and not continue_on_error:
                 break
-            if name.endswith("validate") and not getattr(args, "no_validate", False):
+            if getattr(args, "validate", False) or getattr(args, "validate_only", False):
                 more, text = run_specs(config, build_specs(config, "validate"), verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
                 results.extend(more)
                 raw.append(text)
@@ -630,10 +670,8 @@ def _config_command(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _validate_apply_args(args, parser)
     effective_payload, copy_mode = _validate_output_flags(args, parser)
-
-    if args.command == "termux-run":
-        return handle_termux_run(args)
 
     if args.command in {"ai-prompt", "ap"}:
         if copy_mode in {"summary", "json"}:
@@ -712,7 +750,7 @@ def main(argv: list[str] | None = None) -> int:
             started_at = datetime.now(timezone.utc)
             results, raw_output = git_commit(repo, args.message, verbose=args.verbose, dry_run=args.dry_run)
             finished_at = datetime.now(timezone.utc)
-            totals, summary_text, json_text, _runner_json_text = _emit_summary(
+            totals, summary_text, json_text, _machine_json_text = _emit_summary(
                 results,
                 None,
                 as_json=effective_payload == "json",
@@ -742,7 +780,7 @@ def main(argv: list[str] | None = None) -> int:
             started_at = datetime.now(timezone.utc)
             results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=False)
             finished_at = datetime.now(timezone.utc)
-            totals, summary_text, json_text, _runner_json_text = _emit_summary(
+            totals, summary_text, json_text, _machine_json_text = _emit_summary(
                 results,
                 config,
                 as_json=effective_payload == "json",
@@ -761,21 +799,30 @@ def main(argv: list[str] | None = None) -> int:
 
     started_at = datetime.now(timezone.utc)
 
-    if args.command.startswith("apply"):
+    if args.command in APPLY_COMMANDS and not args.validate_only:
         _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
     if args.command == "batch":
         destructive_batch = any(step.split("=", 1)[0] in {"apply-overlay", "ao", "apply-snapshot", "as", "commit", "ci", "tag"} for step in args.steps)
         if destructive_batch:
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
 
-    if args.command in {"apply-overlay", "ao", "apply-snapshot", "as", "apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"}:
+    if args.command in APPLY_COMMANDS:
         results, raw_output = _run_apply(config, args, args.command, args.artifact)
-        should_validate = args.command.endswith("validate") and not getattr(args, "no_validate", False)
-        if results[-1].returncode == 0 and should_validate:
-            more_results, more_raw = run_specs(config, build_specs(config, "validate"), verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+        should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
+        if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
+            more_results, more_raw = run_specs(
+                config,
+                _validation_specs(config, args, parser),
+                verbose=args.verbose,
+                dry_run=args.dry_run,
+                continue_on_error=continue_on_error,
+            )
             results.extend(more_results)
             raw_output += "\n\n" + more_raw
-        results, raw_output = _maybe_commit_after_apply_validate(config, args, results, raw_output)
+        results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output)
+    elif args.command in {"validate", "v", "wine-validate", "wv"}:
+        specs = _validation_specs(config, args, parser)
+        results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
     elif args.command == "batch":
         results, raw_output = _handle_batch(config, args)
     else:
@@ -783,7 +830,7 @@ def main(argv: list[str] | None = None) -> int:
         results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
 
     finished_at = datetime.now(timezone.utc)
-    totals, summary_text, json_text, _runner_json_text = _emit_summary(
+    totals, summary_text, json_text, _machine_json_text = _emit_summary(
         results,
         config,
         as_json=effective_payload == "json",

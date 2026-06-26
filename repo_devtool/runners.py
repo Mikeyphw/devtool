@@ -73,9 +73,9 @@ def _prepare_termux_dotnet(argv: list[str]) -> tuple[list[str], str | None]:
 
 def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
     if action == "validate":
-        return build_specs(config, "restore") + build_specs(config, "build") + build_specs(config, "test")
+        return build_validation_specs(config)
     if action == "wine-validate":
-        return build_specs(config, "restore") + build_specs(config, "build") + build_specs(config, "wine-test")
+        return build_validation_specs(config, wine=True)
 
     if config.kind == "dotnet":
         return _dotnet_specs(config, action)
@@ -84,6 +84,26 @@ def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
 
     # unknown kind relies on explicit commands
     return _generic_specs(config, action)
+
+
+def build_validation_specs(
+    config: ProjectConfig,
+    *,
+    wine: bool = False,
+    skip_restore: bool = False,
+    skip_build: bool = False,
+    skip_test: bool = False,
+) -> list[CommandSpec]:
+    specs: list[CommandSpec] = []
+    if not skip_restore:
+        specs.extend(build_specs(config, "restore"))
+    if not skip_build:
+        specs.extend(build_specs(config, "build"))
+    if not skip_test:
+        specs.extend(build_specs(config, "wine-test" if wine else "test"))
+    if not specs:
+        raise SystemExit("Validation would run no commands. Clear at least one skip flag.")
+    return specs
 
 
 def _maybe_explicit(command_name: str, text: str, env: dict[str, str] | None = None) -> list[CommandSpec]:

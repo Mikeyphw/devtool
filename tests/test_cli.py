@@ -42,6 +42,30 @@ class CliTests(unittest.TestCase):
         args = parser.parse_args(["v"])
         self.assertEqual(args.command, "v")
 
+    def test_parser_accepts_apply_flags(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["apply-overlay", "--validate", "--commit", "msg", "artifact.zip"])
+        self.assertEqual(args.command, "apply-overlay")
+        self.assertTrue(args.validate)
+        self.assertFalse(args.validate_only)
+        self.assertEqual(args.commit, "msg")
+        self.assertFalse(args.commit_even_on_failure)
+
+    def test_parser_accepts_validation_skip_flags(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["validate", "--skip-restore", "--skip-build"])
+        self.assertEqual(args.command, "validate")
+        self.assertTrue(args.skip_restore)
+        self.assertTrue(args.skip_build)
+        self.assertFalse(args.skip_test)
+
+    def test_parser_rejects_removed_commands(self) -> None:
+        parser = build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["apply-overlay-validate", "artifact.zip"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["termux-run"])
+
     def test_ai_prompt_prints_to_stdout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -112,6 +136,26 @@ class CliTests(unittest.TestCase):
             rc = main(["--repo", str(root), "--dry-run", "batch", "validate"])
             self.assertEqual(rc, 0)
 
+    def test_validate_can_skip_restore_and_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            captured: list[str] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.extend(spec.name for spec in specs)
+                return ([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")
+
+            with (
+                patch("repo_devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("repo_devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "validate", "--skip-restore", "--skip-build"])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(captured, ["test"])
+
     def test_config_defaults_prints_template(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -181,15 +225,17 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             mock_confirm.assert_not_called()
 
-    def test_parser_accepts_stdout_payload_runner_json(self) -> None:
+    def test_parser_accepts_stdout_payload_json(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["--stdout-payload", "runner-json", "validate"])
-        self.assertEqual(args.stdout_payload, "runner-json")
+        args = parser.parse_args(["--stdout-payload", "json", "validate"])
+        self.assertEqual(args.stdout_payload, "json")
 
-    def test_parser_accepts_stdout_payload_machine_json(self) -> None:
+    def test_parser_rejects_removed_stdout_payload_aliases(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["--stdout-payload", "machine-json", "validate"])
-        self.assertEqual(args.stdout_payload, "machine-json")
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--stdout-payload", "machine-json", "validate"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--stdout-payload", "runner-json", "validate"])
 
     def test_json_cannot_be_combined_with_stdout_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -205,28 +251,14 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 main(["--repo", str(root), "--copy", "--copy-json", "validate"])
 
-    def test_stdout_payload_runner_json_prints_envelope(self) -> None:
+    def test_stdout_payload_json_prints_envelope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
             (root / "App.sln").write_text("", encoding="utf-8")
             stream = io.StringIO()
             with redirect_stdout(stream):
-                rc = main(["--repo", str(root), "--stdout-payload", "runner-json", "--dry-run", "validate"])
-            self.assertEqual(rc, 0)
-            payload = json.loads(stream.getvalue())
-            self.assertEqual(payload["schema_version"], 1)
-            self.assertIn("clipboard", payload)
-            self.assertIn("notification", payload)
-
-    def test_stdout_payload_machine_json_prints_envelope(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / ".git").mkdir()
-            (root / "App.sln").write_text("", encoding="utf-8")
-            stream = io.StringIO()
-            with redirect_stdout(stream):
-                rc = main(["--repo", str(root), "--stdout-payload", "machine-json", "--dry-run", "validate"])
+                rc = main(["--repo", str(root), "--stdout-payload", "json", "--dry-run", "validate"])
             self.assertEqual(rc, 0)
             payload = json.loads(stream.getvalue())
             self.assertEqual(payload["schema_version"], 1)
@@ -254,6 +286,52 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertFalse(escaped.exists())
 
+    def test_apply_overlay_validate_only_skips_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("README.txt", "ok")
+
+            with (
+                patch("repo_devtool.cli.apply_overlay") as mock_apply,
+                patch("repo_devtool.cli.run_specs", return_value=([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")) as mock_run_specs,
+                patch("repo_devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate-only", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            mock_apply.assert_not_called()
+            mock_run_specs.assert_called_once()
+
+    def test_apply_overlay_validate_can_skip_restore_and_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("README.txt", "ok")
+
+            captured: list[str] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.extend(spec.name for spec in specs)
+                return ([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")
+
+            with (
+                patch("repo_devtool.cli._git_dirty", return_value=False),
+                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("repo_devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("repo_devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(captured, ["test"])
+
 
     def test_ai_prompt_markdown_includes_named_target_details(self) -> None:
         options = _sample_ai_prompt_options("markdown")
@@ -264,7 +342,7 @@ class CliTests(unittest.TestCase):
         text = render_ai_prompt(options, "markdown")
         self.assertIn('Target name: `s3pe`', text)
         self.assertIn('Solution target: `s3pe_avalonia/S3pe.Modern.sln`', text)
-        self.assertIn('apply-overlay-validate "<downloaded artifact file>"', text)
+        self.assertIn('apply-overlay --validate "<downloaded artifact file>"', text)
         self.assertIn('--target "s3pe"', text)
 
     def test_apply_overlay_validate_uses_artifact_manifest_target_hint(self) -> None:
@@ -298,7 +376,7 @@ class CliTests(unittest.TestCase):
                 patch("repo_devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("repo_devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay-validate", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertTrue(any("apps/S3pe.Modern.sln" in " ".join(argv) for argv in captured))
@@ -325,7 +403,7 @@ class CliTests(unittest.TestCase):
                 patch("repo_devtool.cli.git_commit", side_effect=fake_git_commit),
                 patch("repo_devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay-validate", "--commit", "handoff commit", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--commit", "handoff commit", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["handoff commit"])
@@ -346,10 +424,37 @@ class CliTests(unittest.TestCase):
                 patch("repo_devtool.cli.git_commit") as mock_commit,
                 patch("repo_devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay-validate", "--commit", "handoff commit", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--commit", "handoff commit", str(artifact)])
 
             self.assertEqual(rc, 1)
             mock_commit.assert_not_called()
+
+    def test_apply_overlay_validate_can_commit_even_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("README.txt", "ok")
+
+            commit_calls: list[str] = []
+
+            def fake_git_commit(repo_root, message, *, verbose=False, dry_run=False):
+                commit_calls.append(message)
+                return ([__import__("repo_devtool.models").models.OperationResult("git-commit", ["git", "commit", "-m", message], 0, 0.0, "committed", [])], "commit output")
+
+            with (
+                patch("repo_devtool.cli._git_dirty", return_value=False),
+                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("repo_devtool.cli.run_specs", return_value=([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
+                patch("repo_devtool.cli.git_commit", side_effect=fake_git_commit),
+                patch("repo_devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--commit", "handoff commit", "--commit-even-on-failure", str(artifact)])
+
+            self.assertEqual(rc, 1)
+            self.assertEqual(commit_calls, ["handoff commit"])
 
     def test_apply_snapshot_validate_can_commit_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -373,7 +478,7 @@ class CliTests(unittest.TestCase):
                 patch("repo_devtool.cli.git_commit", side_effect=fake_git_commit),
                 patch("repo_devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-snapshot-validate", "--commit", "snapshot handoff", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-snapshot", "--validate", "--commit", "snapshot handoff", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["snapshot handoff"])

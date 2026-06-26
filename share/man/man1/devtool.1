@@ -13,7 +13,22 @@ copy logs to the clipboard, send notifications, and automate common repo tasks.
 Run project actions.
 .TP
 .B apply-overlay | apply-snapshot
-Apply an artifact to a repository.
+Apply an artifact to a repository. Use
+.BR --validate ,
+.BR --validate-only ,
+.BR --commit
+and
+.BR --commit-even-on-failure
+to control optional validation and commit behavior.
+.BR --skip-restore ,
+.BR --skip-build
+and
+.BR --skip-test
+can be used with
+.B validate
+and
+.B wine-validate
+to omit individual stages.
 .TP
 .B batch
 Run a sequence of steps such as validate or apply-overlay=/path/to/file.zip.

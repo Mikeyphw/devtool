@@ -48,7 +48,7 @@ _devtool() {
     '(-r --repo)'{-r,--repo}'[repository root]:repo:_devtool_repo_path' \
     '(-c --config)'{-c,--config}'[config path]:config:_files' \
     '(-v --verbose)'{-v,--verbose}'[stream full output]' \
-    '(-j --json)'{-j,--json}'[emit json summary]' \
+    '(-j --json)'{-j,--json}'[emit machine envelope]' \
     '(-y --yes)'{-y,--yes}'[assume yes for confirmations]' \
     '(-f --force)'{-f,--force}'[force dangerous actions]' \
     '(-n --notify)'{-n,--notify}'[send notification]' \
@@ -61,15 +61,29 @@ _devtool() {
     '--dry-run[print commands without running]' \
     '--continue-on-error[continue batch after errors]' \
     '--fail-fast[stop batch on first error]' \
-    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-snapshot apply-overlay-validate apply-snapshot-validate batch logs status doctor config init-config completion tag release-notes ai-prompt v wv b t ao as aov asv)' \
+    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-snapshot batch logs status doctor config init-config completion tag release-notes ai-prompt v wv b t ao as)' \
     '*::arg:->args'
 
   case $words[1] in
+    validate|v|wine-validate|wv)
+      _arguments \
+        '--skip-restore[skip restore during validation]' \
+        '--skip-build[skip build during validation]' \
+        '--skip-test[skip test during validation]'
+      ;;
+    apply-overlay|ao|apply-snapshot|as)
+      _arguments \
+        '--validate[run validation after apply]' \
+        '--validate-only[skip apply and only run validation]' \
+        '--skip-restore[skip restore during validation]' \
+        '--skip-build[skip build during validation]' \
+        '--skip-test[skip test during validation]' \
+        '--commit[commit with this message after apply and optional validation]:message:' \
+        '--commit-even-on-failure[commit after a successful apply even if validation fails]'
+      _devtool_artifact_path
+      ;;
     batch)
       _devtool_steps
-      ;;
-    apply-overlay|ao|apply-snapshot|as|apply-overlay-validate|aov|apply-snapshot-validate|asv)
-      _devtool_artifact_path
       ;;
     config)
       _values 'config subcommand' show defaults resolve doctor

@@ -29,7 +29,7 @@ cd repo-devtool
 ```bash
 devtool validate --repo /path/to/repo
 devtool wine-validate --repo /path/to/repo
-devtool apply-overlay-validate /path/to/artifact.zip --repo /path/to/repo
+devtool apply-overlay --validate /path/to/artifact.zip --repo /path/to/repo
 devtool init-config /path/to/repo
 devtool ai-prompt --repo-name my-repo
 ```
@@ -89,20 +89,20 @@ Use `--no-clipboard` to disable clipboard prompts and copy behavior.
 
 ### Output payloads
 
-`--json` is a shortcut for `--stdout-payload json`.
+`--json` is a shortcut for the machine-envelope stdout payload.
 
 Use `--stdout-payload` when you want the command to print something other than the normal human summary:
 
 - `auto` keeps the usual human summary on stderr and prints the selected payload only when needed
 - `summary` prints the compact summary
-- `json` prints the JSON summary
+- `json` prints the machine envelope used by machine and Termux workflows
 - `raw` prints the raw command output
-- `machine-json` prints the runner envelope used by machine and Termux workflows
-- `runner-json` remains as a compatibility alias for the same runner envelope
 
 Do not combine `--json` with `--stdout-payload`; use `--stdout-payload json` when you need explicit control.
 
-`apply-overlay-validate` and `apply-snapshot-validate` also accept `--commit "<message>"` to run `git add -A` and `git commit -m "<message>"` after a successful apply and validation.
+`apply-overlay` and `apply-snapshot` accept `--validate` to run validation after apply, `--validate-only` to skip apply and validate the current repo state, `--commit "<message>"` to commit after success, and `--commit-even-on-failure` to commit after apply even if validation fails.
+
+`validate` and `wine-validate` accept `--skip-restore`, `--skip-build`, and `--skip-test` so you can run only the stages you need. The same skip flags also work with `apply-overlay --validate` and `apply-snapshot --validate`.
 
 ## Notifications
 
