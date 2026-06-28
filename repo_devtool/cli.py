@@ -16,6 +16,21 @@ from rich.prompt import Confirm
 from rich.syntax import Syntax
 
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
+from .artifacts import (
+    append_history,
+    format_preview,
+    latest_commit_hash,
+    load_history,
+    make_history_entry,
+    preview_artifact,
+    read_artifact_manifest,
+    sha256_file,
+    validate_artifact,
+)
+from .detect import detect_repo, render_detect_text
+from .execution import apply_matrix, wrap_specs_for_chroot
+from .handoff import render_handoff
+from .watch import watch_loop
 from .clipboard import copy_text
 from .console_utils import create_console, resolve_cli_path, syntax_line_numbers
 from .completion import ZSH_COMPLETION
@@ -50,6 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--project", default="", help="Exact project path for run/validation")
     parser.add_argument("-v", "--verbose", action="store_true", help="Stream full command output")
     parser.add_argument("-j", "--json", action="store_true", help="Shortcut for the machine envelope stdout payload")
+    parser.add_argument("--machine", nargs="?", const="compact", choices=["compact", "pretty"], default="", help="Emit the clean machine envelope on stdout")
+    parser.add_argument("--machine-file", default="", help="Write the machine envelope to this file")
     parser.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
     parser.add_argument("-f", "--force", action="store_true", help="Force dangerous actions")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them")
@@ -59,11 +76,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--copy-summary", action="store_true", help="Copy rendered summary to clipboard without prompting")
     parser.add_argument("--copy-json", action="store_true", help="Copy JSON summary to clipboard without prompting")
     parser.add_argument("--no-clipboard", action="store_true", help="Disable clipboard prompts and copy behavior")
+    parser.add_argument("--copy-via", choices=["auto", "socket", "fifo", "termux", "x11", "wayland"], default="auto", help="Prefer a clipboard backend family")
     parser.add_argument("-n", "--notify", action="store_true", help="Send notification when done")
     parser.add_argument("--notify-brief", action="store_true", help="Use shorter notification body")
     parser.add_argument("--notify-on-success", action="store_true", help="Only notify on success")
     parser.add_argument("--notify-on-fail", action="store_true", help="Only notify on failure")
     parser.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
+    exec_group = parser.add_mutually_exclusive_group()
+    exec_group.add_argument("--host", action="store_true", help="Force commands to run on the host")
+    exec_group.add_argument("--chroot", default="", help="Run command phases inside a named chroot via chrootctl exec")
     parser.add_argument(
         "--stdout-payload",
         choices=["auto", "summary", "json", "raw"],
@@ -92,8 +113,14 @@ def build_parser() -> argparse.ArgumentParser:
         ("doctor", ["dr"]),
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
+        if name == "doctor":
+            cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
         if name in {"validate", "wine-validate"}:
             _add_validation_skip_flags(cmd)
+            cmd.add_argument("--watch", action="store_true", help="Rerun validation when files change")
+            cmd.add_argument("--watch-interval", type=float, default=1.5, help="Seconds between watch polls")
+            cmd.add_argument("--matrix", default="", help="Comma-separated runtime IDs or target names to validate")
+            cmd.add_argument("--matrix-mode", choices=["rid", "target"], default="rid")
 
     ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
     ai_prompt.add_argument("--repo-name", required=True, help="Human-friendly repo name for the generated prompt")
@@ -121,6 +148,9 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("artifact")
         cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
         cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
+        cmd.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
+        cmd.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
+        cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
         _add_validation_skip_flags(cmd)
         cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
         cmd.add_argument(
@@ -158,6 +188,19 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_sub.add_parser("resolve")
     cfg_sub.add_parser("doctor")
 
+    detect_cmd = subparsers.add_parser("detect")
+    detect_cmd.add_argument("--format", choices=["text", "json"], default="text")
+
+    handoff_cmd = subparsers.add_parser("handoff")
+    handoff_cmd.add_argument("-o", "--output", default="")
+
+    history_cmd = subparsers.add_parser("history")
+    history_cmd.add_argument("--limit", type=int, default=20)
+
+    rollback_cmd = subparsers.add_parser("rollback")
+    rollback_cmd.add_argument("commit", nargs="?", default="")
+    rollback_cmd.add_argument("--last", action="store_true")
+
     subparsers.add_parser("targets", aliases=["tg"])
 
     return parser
@@ -194,7 +237,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         label = "Summary"
 
     if args.copy or args.copy_summary or args.copy_json:
-        result = copy_text(to_copy)
+        result = copy_text(to_copy) if args.copy_via == "auto" else copy_text(to_copy, preferred=args.copy_via)
         if result.success:
             console.print(f"[green]{label} copied to clipboard via {result.backend}.[/green]")
         else:
@@ -209,7 +252,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
     copy_now = Confirm.ask(f"Copy {label.lower()} to clipboard?", default=True, console=console)
     if copy_now:
-        result = copy_text(to_copy)
+        result = copy_text(to_copy) if args.copy_via == "auto" else copy_text(to_copy, preferred=args.copy_via)
         if result.success:
             console.print(f"[green]{label} copied to clipboard via {result.backend}.[/green]")
         else:
@@ -221,7 +264,11 @@ def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentPa
     explicit_stdout = args.stdout_payload
     if args.json and explicit_stdout != "auto":
         parser.error("--json cannot be combined with --stdout-payload; use --stdout-payload json instead.")
-    if args.json and explicit_stdout == "auto":
+    if args.machine and explicit_stdout != "auto":
+        parser.error("--machine cannot be combined with --stdout-payload; use --machine-file for sidecar JSON.")
+    if args.json and args.machine:
+        parser.error("Use either --json/-j or --machine, not both.")
+    if (args.json or args.machine) and explicit_stdout == "auto":
         explicit_stdout = "json"
 
     copy_flags = [name for name, enabled in (("raw", args.copy), ("summary", args.copy_summary), ("json", args.copy_json)) if enabled]
@@ -315,6 +362,7 @@ def _emit_summary(
     command: str = "",
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
+    machine_format: str = "pretty",
 ) -> tuple[dict[str, int], str, str, str]:
     repo_root = str(config.repo_root if config else Path.cwd())
     summary_text = _summary_text(results)
@@ -329,7 +377,7 @@ def _emit_summary(
         started_at=started_at,
         finished_at=finished_at,
     )
-    machine_json_text = json.dumps(machine_json, indent=2)
+    machine_json_text = json.dumps(machine_json, indent=(2 if machine_format != "compact" else None), separators=(None if machine_format != "compact" else (",", ":")))
 
     if payload_mode == "auto":
         if as_json:
@@ -448,6 +496,8 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--validate and --validate-only cannot be combined.")
     if args.validate_only and (args.commit or args.commit_even_on_failure):
         parser.error("--validate-only cannot be combined with --commit or --commit-even-on-failure.")
+    if getattr(args, "preview", False) and (args.validate or args.validate_only or args.commit or args.commit_even_on_failure):
+        parser.error("--preview cannot be combined with validation or commit flags.")
 
 
 def _validation_skip_values(args: argparse.Namespace) -> tuple[bool, bool, bool]:
@@ -470,6 +520,128 @@ def _validation_specs(config: ProjectConfig, args: argparse.Namespace, parser: a
         skip_test=skip_test,
     )
 
+
+
+def _matrix_items(args: argparse.Namespace) -> list[str]:
+    return [item.strip() for item in str(getattr(args, "matrix", "") or "").split(",") if item.strip()]
+
+
+def _prepare_specs_for_execution(specs: list[CommandSpec], args: argparse.Namespace) -> list[CommandSpec]:
+    items = _matrix_items(args)
+    if items and getattr(args, "matrix_mode", "rid") == "rid":
+        specs = apply_matrix(specs, items, mode="rid")
+    if getattr(args, "chroot", "") and not getattr(args, "host", False):
+        specs = wrap_specs_for_chroot(specs, args.chroot)
+    return specs
+
+
+def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
+    items = _matrix_items(args)
+    if items and getattr(args, "matrix_mode", "rid") == "target":
+        specs: list[CommandSpec] = []
+        for item in items:
+            target_config = load_project_config(
+                args.repo,
+                args.config,
+                target_name=item,
+                solution_override=args.solution,
+                project_override=args.project,
+            )
+            target_specs = _validation_specs(target_config, args, parser)
+            for spec in target_specs:
+                spec.name = f"{spec.name}[{item}]"
+                spec.metadata["matrix"] = item
+                spec.metadata["matrix_mode"] = "target"
+            specs.extend(target_specs)
+        return specs
+    specs = _validation_specs(config, args, parser)
+    items = _matrix_items(args)
+    if items and getattr(args, "matrix_mode", "rid") == "rid":
+        specs = apply_matrix(specs, items, mode="rid")
+    return specs
+
+
+def _run_specs_for_args(
+    config: ProjectConfig,
+    specs: list[CommandSpec],
+    args: argparse.Namespace,
+    *,
+    continue_on_error: bool = False,
+    log_path: Path | str | None = None,
+) -> tuple[list[OperationResult], str]:
+    return run_specs(
+        config,
+        _prepare_specs_for_execution(specs, args),
+        verbose=args.verbose,
+        dry_run=args.dry_run,
+        continue_on_error=continue_on_error,
+        log_path=log_path,
+    )
+
+
+def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, results: list[OperationResult]) -> None:
+    if args.command not in APPLY_COMMANDS or getattr(args, "validate_only", False) or getattr(args, "preview", False):
+        return
+    artifact = getattr(args, "artifact", "")
+    if not artifact:
+        return
+    apply_result = results[0] if results else None
+    status = "ok" if apply_result and apply_result.returncode == 0 else "failed"
+    validation_results = [r for r in results[1:] if r.name not in {"git-add", "git-commit"}]
+    if not (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
+        validation_status = "not-run"
+    elif validation_results and any(r.returncode != 0 for r in validation_results):
+        validation_status = "failed"
+    else:
+        validation_status = "ok"
+    commit_hash = ""
+    if getattr(args, "commit", "") and any(r.name == "git-commit" and r.returncode == 0 for r in results):
+        commit_hash = latest_commit_hash(config.repo_root)
+    try:
+        entry = make_history_entry(
+            config.repo_root,
+            artifact,
+            artifact_type="snapshot" if "snapshot" in args.command else "overlay",
+            status=status,
+            validation_status=validation_status,
+            commit_message=getattr(args, "commit", "") or "",
+            commit_hash=commit_hash,
+            preview=getattr(args, "_devtool_artifact_preview", None),
+            manifest=getattr(args, "_devtool_artifact_manifest", None),
+        )
+        if getattr(args, "_devtool_artifact_sha", ""):
+            entry["sha256"] = args._devtool_artifact_sha
+        append_history(config.repo_root, entry)
+    except Exception as exc:
+        console.print(f"[yellow]Could not write artifact history: {exc}[/yellow]")
+
+
+def _print_history(config: ProjectConfig, *, limit: int) -> None:
+    entries = load_history(config.repo_root)[-max(1, limit):]
+    if not entries:
+        console.print("[yellow]No artifact history found.[/yellow]")
+        return
+    rows = []
+    for entry in entries:
+        rows.append((entry.get("artifact_name", "-"), f"{entry.get('status', '-')} validation={entry.get('validation_status', '-')} commit={entry.get('commit_hash') or '-'}"))
+    render_status_table(rows)
+
+
+def _rollback(config: ProjectConfig, args: argparse.Namespace) -> int:
+    commit = args.commit
+    if args.last:
+        entries = [e for e in load_history(config.repo_root) if e.get("commit_hash")]
+        if not entries:
+            raise SystemExit("No history entry with commit_hash is available for rollback.")
+        commit = str(entries[-1]["commit_hash"])
+    if not commit:
+        raise SystemExit("Pass a commit hash or use --last.")
+    _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command="rollback")
+    specs = [CommandSpec("rollback", ["git", "revert", "--no-edit", commit], destructive=True)]
+    results, raw = _run_specs_for_args(config, specs, args, log_path=new_log_path())
+    totals, _, _, machine = _emit_summary(results, config, as_json=False, raw_output=raw, command="rollback")
+    _write_json_payload(args.save_json_payload or args.machine_file, machine)
+    return 0 if totals["failed"] == 0 else 1
 
 
 def _git_commit_with_optional_log(repo_root: Path, message: str, *, verbose: bool, dry_run: bool, log_path: Path | str | None) -> tuple[list[OperationResult], str]:
@@ -525,6 +697,9 @@ def _targets(config: ProjectConfig) -> None:
     render_status_table([("target", name) if path == "-" else (name, path) for name, path in rows])
 
 def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: str, *, log_path: Path | str | None = None) -> tuple[list[OperationResult], str]:
+    snapshot = "snapshot" in name
+    artifact_type = "snapshot" if snapshot else "overlay"
+
     if getattr(args, "validate_only", False):
         result = OperationResult(
             "apply-skipped",
@@ -538,11 +713,76 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         text = "$ " + " ".join(result.argv) + "\n" + result.output
         return [result], text
 
-    if name.startswith("apply-overlay"):
+    started = datetime.now(timezone.utc)
+    try:
+        artifact_path = resolve_cli_path(artifact)
+        args._devtool_artifact_sha = sha256_file(artifact_path) if artifact_path.exists() else ""
+        validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
+        args._devtool_artifact_manifest = validation.manifest
+        preview = preview_artifact(config.repo_root, artifact_path, snapshot=snapshot)
+        args._devtool_artifact_preview = preview
+    except Exception as exc:
+        result = OperationResult(
+            "artifact-check",
+            [name, artifact],
+            1,
+            0.0,
+            str(exc),
+            [],
+            failure_kind="artifact_failure",
+        )
+        return [result], "$ " + " ".join(result.argv) + "\n" + result.output
+
+    if not getattr(args, "no_manifest_check", False) and not validation.ok:
+        output = "\n".join(validation.messages)
+        result = OperationResult(
+            "artifact-manifest",
+            [name, artifact],
+            1,
+            0.0,
+            output,
+            [],
+            failure_kind="artifact_failure",
+        )
+        return [result], "$ " + " ".join(result.argv) + "\n" + output
+
+    preview_text = format_preview(preview)
+    if getattr(args, "preview", False):
+        console.print(preview_text)
+        result = OperationResult(
+            "apply-preview",
+            [name, "--preview", artifact],
+            0,
+            0.0,
+            preview_text,
+            [],
+            skipped=True,
+        )
+        return [result], "$ " + " ".join(result.argv) + "\n" + preview_text
+
+    if getattr(args, "interactive", False):
+        console.print(preview_text)
+        if not Confirm.ask("Apply this artifact?", default=False, console=console):
+            result = OperationResult(
+                "apply-cancelled",
+                [name, artifact],
+                1,
+                0.0,
+                "Cancelled by user.",
+                [],
+                failure_kind="artifact_failure",
+            )
+            return [result], "$ " + " ".join(result.argv) + "\n" + result.output
+
+    if name.startswith("apply-overlay") or name == "ao":
         result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path)
     else:
         result = apply_snapshot(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path)
-    text = "$ " + " ".join(result.argv) + "\n" + result.output
+    if result.returncode != 0 and not result.failure_kind:
+        result.failure_kind = "artifact_failure"
+    manifest_note = "" if getattr(args, "no_manifest_check", False) else "\n" + "\n".join(validation.messages)
+    text = "$ " + " ".join(result.argv) + "\n" + result.output + manifest_note
+    result.output = result.output + manifest_note
     return [result], text
 
 
@@ -565,7 +805,7 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: 
             if batch_results[-1].returncode != 0 and not continue_on_error:
                 break
             if getattr(args, "validate", False) or getattr(args, "validate_only", False):
-                more, text = run_specs(config, build_specs(config, "validate"), verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
+                more, text = _run_specs_for_args(config, build_specs(config, "validate"), args, continue_on_error=continue_on_error, log_path=log_path)
                 results.extend(more)
                 raw.append(text)
                 if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -580,7 +820,7 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: 
             continue
         if name == "tag":
             tag_spec = CommandSpec("tag", ["git", "tag", value], destructive=True)
-            more, text = run_specs(config, [tag_spec], verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
+            more, text = _run_specs_for_args(config, [tag_spec], args, continue_on_error=continue_on_error, log_path=log_path)
             results.extend(more)
             raw.append(text)
             if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -593,7 +833,7 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: 
             raw.append(text)
             continue
         specs = build_specs(config, name)
-        more, text = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
+        more, text = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path)
         results.extend(more)
         raw.append(text)
         if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -627,7 +867,20 @@ def _ensure_safe_repo(repo_root: Path, *, force: bool, yes: bool, command: str) 
             raise SystemExit("Git tree is dirty. Use --yes or --force to continue.")
 
 
-def _doctor(config: ProjectConfig) -> None:
+def _doctor(config: ProjectConfig, *, fix: bool = False) -> None:
+    fixed: list[str] = []
+    if fix:
+        from .logstore import logs_dir, state_dir
+        state_dir().mkdir(parents=True, exist_ok=True)
+        logs_dir().mkdir(parents=True, exist_ok=True)
+        fixed.append("state/log directories")
+        if os.environ.get("TERMUX_VERSION"):
+            try:
+                from .runners import _termux_proot_etc_dir
+                _termux_proot_etc_dir()
+                fixed.append("Termux proot os-release cache")
+            except Exception:
+                pass
     rows = [
         ("repo", str(config.repo_root)),
         ("kind", config.kind),
@@ -645,6 +898,7 @@ def _doctor(config: ProjectConfig) -> None:
         ("test_target", config.test_target or "-"),
         ("run_target", config.run_target or "-"),
         ("wine", config.env.get("SIMSTOOLKIT_WINE_PATH", os.environ.get("SIMSTOOLKIT_WINE_PATH", "")) or "-"),
+        ("fixed", ", ".join(fixed) if fixed else "-"),
     ]
     render_status_table(rows)
 
@@ -772,6 +1026,42 @@ def main(argv: list[str] | None = None) -> int:
         _targets(config)
         return 0
 
+
+    if args.command == "detect":
+        repo = Path(args.repo or Path.cwd()).resolve()
+        info = detect_repo(repo)
+        if args.format == "json" or effective_payload == "json":
+            print(json.dumps(info, indent=(2 if args.machine != "compact" else None), separators=(None if args.machine != "compact" else (",", ":"))))
+        else:
+            print(render_detect_text(info))
+        return 0
+
+    if args.command == "handoff":
+        config = _load_command_config(args)
+        text = render_handoff(config)
+        if args.output:
+            out = Path(args.output).expanduser()
+            if not out.is_absolute():
+                out = Path.cwd() / out
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(text, encoding="utf-8")
+            console.print(f"[green]Wrote[/green] {out}")
+        else:
+            print(text)
+        return 0
+
+    if args.command == "history":
+        config = _load_command_config(args)
+        if effective_payload == "json":
+            print(json.dumps(load_history(config.repo_root)[-max(1, args.limit):], indent=(2 if args.machine != "compact" else None), separators=(None if args.machine != "compact" else (",", ":"))))
+        else:
+            _print_history(config, limit=args.limit)
+        return 0
+
+    if args.command == "rollback":
+        config = _load_command_config(args)
+        return _rollback(config, args)
+
     if args.command in {"doctor", "dr", "status", "st", "release-notes", "tag"} or args.command in {"commit", "ci"}:
         repo = Path(args.repo or Path.cwd()).resolve()
         if args.command in {"commit", "ci"}:
@@ -789,15 +1079,16 @@ def main(argv: list[str] | None = None) -> int:
                 command=args.command,
                 started_at=started_at,
                 finished_at=finished_at,
+                machine_format=args.machine or "pretty",
             )
             failed = totals["failed"]
-            _write_json_payload(args.save_json_payload, _machine_json_text)
+            _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
             _maybe_copy(raw_output, summary_text, json_text, args)
             _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=failed, command=args.command, repo_name=repo.name, duration_seconds=sum(r.duration_seconds for r in results))
             return 0 if failed == 0 else 1
         config = load_project_config(str(repo), args.config)
         if args.command in {"doctor", "dr"}:
-            _doctor(config)
+            _doctor(config, fix=getattr(args, "fix", False))
             return 0
         if args.command in {"status", "st"}:
             _status(config)
@@ -810,7 +1101,7 @@ def main(argv: list[str] | None = None) -> int:
             specs = [CommandSpec("tag", ["git", "tag"] + (["-m", args.message] if args.message else []) + [args.name], destructive=True)]
             log_path = new_log_path()
             started_at = datetime.now(timezone.utc)
-            results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=False, log_path=log_path)
+            results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=False, log_path=log_path)
             finished_at = datetime.now(timezone.utc)
             totals, summary_text, json_text, _machine_json_text = _emit_summary(
                 results,
@@ -821,8 +1112,9 @@ def main(argv: list[str] | None = None) -> int:
                 command=args.command,
                 started_at=started_at,
                 finished_at=finished_at,
+                machine_format=args.machine or "pretty",
             )
-            _write_json_payload(args.save_json_payload, _machine_json_text)
+            _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
             _maybe_copy(raw_output, summary_text, json_text, args)
             _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=repo.name, duration_seconds=sum(r.duration_seconds for r in results))
             return 0 if totals["failed"] == 0 else 1
@@ -844,25 +1136,47 @@ def main(argv: list[str] | None = None) -> int:
         results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path)
         should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
         if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
-            more_results, more_raw = run_specs(
+            more_results, more_raw = _run_specs_for_args(
                 config,
-                _validation_specs(config, args, parser),
-                verbose=args.verbose,
-                dry_run=args.dry_run,
+                _validation_specs_for_args(config, args, parser),
+                args,
                 continue_on_error=continue_on_error,
                 log_path=log_path,
             )
             results.extend(more_results)
             raw_output += "\n\n" + more_raw
         results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
+        _record_apply_history(config, args, results)
     elif args.command in {"validate", "v", "wine-validate", "wv"}:
-        specs = _validation_specs(config, args, parser)
-        results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
+        if getattr(args, "watch", False):
+            def _run_once() -> int:
+                run_log_path = new_log_path()
+                run_started = datetime.now(timezone.utc)
+                run_specs_list = _validation_specs_for_args(config, args, parser)
+                run_results, run_raw = _run_specs_for_args(config, run_specs_list, args, continue_on_error=continue_on_error, log_path=run_log_path)
+                run_finished = datetime.now(timezone.utc)
+                run_totals, run_summary, run_json, run_machine = _emit_summary(
+                    run_results,
+                    config,
+                    as_json=effective_payload == "json",
+                    payload_mode=effective_payload,
+                    raw_output=run_raw,
+                    command=args.command,
+                    started_at=run_started,
+                    finished_at=run_finished,
+                    machine_format=args.machine or "pretty",
+                )
+                _write_json_payload(args.save_json_payload or args.machine_file, run_machine)
+                _maybe_copy(run_raw, run_summary, run_json, args)
+                return 0 if run_totals["failed"] == 0 else 1
+            return watch_loop(config.repo_root, _run_once, interval=args.watch_interval)
+        specs = _validation_specs_for_args(config, args, parser)
+        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path)
     elif args.command == "batch":
         results, raw_output = _handle_batch(config, args, log_path=log_path)
     else:
         specs = build_specs(config, args.command)
-        results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
+        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path)
 
     finished_at = datetime.now(timezone.utc)
     totals, summary_text, json_text, _machine_json_text = _emit_summary(
@@ -874,8 +1188,9 @@ def main(argv: list[str] | None = None) -> int:
         command=args.command,
         started_at=started_at,
         finished_at=finished_at,
+        machine_format=args.machine or "pretty",
     )
-    _write_json_payload(args.save_json_payload, _machine_json_text)
+    _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
     _maybe_copy(raw_output, summary_text, json_text, args)
     _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=sum(r.duration_seconds for r in results))
     return 0 if totals["failed"] == 0 else 1

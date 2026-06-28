@@ -11,6 +11,7 @@ import tomllib
 from unittest.mock import patch
 
 from repo_devtool.ai_prompt import AiPromptOptions, render_ai_prompt
+from repo_devtool.artifacts import preview_artifact
 from repo_devtool import __version__
 from repo_devtool.cli import _notification_message, build_parser, main
 from repo_devtool.logstore import latest_log, write_log
@@ -285,6 +286,79 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(rc, 1)
             self.assertFalse(escaped.exists())
+
+
+    def test_apply_overlay_skips_metadata_and_honors_delete_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "old.txt").write_text("old", encoding="utf-8")
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr(".devtool-artifact.json", json.dumps({"type": "overlay"}))
+                zf.writestr(".devtool-delete", "old.txt\n")
+                zf.writestr("new.txt", "new")
+
+            rc = main(["--repo", str(root), "--yes", "apply-overlay", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual((root / "new.txt").read_text(encoding="utf-8"), "new")
+            self.assertFalse((root / "old.txt").exists())
+            self.assertFalse((root / ".devtool-artifact.json").exists())
+            self.assertFalse((root / ".devtool-delete").exists())
+
+
+    def test_apply_overlay_removes_sidecar_manifest_next_to_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            artifact = root / "artifact.zip"
+            sidecar = root / "artifact.zip.devtool.json"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("new.txt", "new")
+            sidecar.write_text(json.dumps({"type": "overlay"}), encoding="utf-8")
+
+            rc = main(["--repo", str(root), "--yes", "apply-overlay", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            self.assertFalse(artifact.exists())
+            self.assertFalse(sidecar.exists())
+            self.assertFalse((root / ".devtool-artifact.json").exists())
+            self.assertEqual((root / "new.txt").read_text(encoding="utf-8"), "new")
+
+    def test_apply_snapshot_skips_metadata_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            artifact = root / "snapshot.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr(".devtool-artifact.json", json.dumps({"type": "snapshot"}))
+                zf.writestr("README.txt", "snapshot")
+
+            rc = main(["--repo", str(root), "--yes", "apply-snapshot", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual((root / "README.txt").read_text(encoding="utf-8"), "snapshot")
+            self.assertFalse((root / ".devtool-artifact.json").exists())
+
+    def test_preview_excludes_metadata_but_shows_delete_manifest_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr(".devtool-artifact.json", json.dumps({"type": "overlay"}))
+                zf.writestr(".devtool-delete", "remove-me.txt\n")
+                zf.writestr("keep.txt", "ok")
+
+            preview = preview_artifact(root, artifact)
+
+            self.assertEqual(preview["files"], 1)
+            changes = {(item["kind"], item["path"]) for item in preview["changes"]}
+            self.assertIn(("add", "keep.txt"), changes)
+            self.assertIn(("delete", "remove-me.txt"), changes)
+            self.assertNotIn(("add", ".devtool-artifact.json"), changes)
+            self.assertNotIn(("add", ".devtool-delete"), changes)
 
     def test_apply_overlay_validate_only_skips_apply(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

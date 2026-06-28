@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -12,9 +13,10 @@ import zipfile
 from pathlib import Path
 
 
+from .artifacts import is_artifact_metadata_member, read_delete_manifest
 from .config import generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
-from .diagnostics import parse_issues
+from .diagnostics import classify_failure, parse_issues
 from .logstore import write_log
 from .models import CommandSpec, OperationResult, ProjectConfig
 
@@ -54,6 +56,20 @@ def _resolve_termux_dotnet() -> str | None:
     return None
 
 
+def _termux_proot_etc_dir() -> Path:
+    prefix = os.environ.get("PREFIX", "").strip()
+    if prefix:
+        base = Path(prefix) / "var" / "devtool" / "proot"
+    else:
+        base = Path.home() / ".local" / "state" / "devtool" / "proot"
+    etc_dir = base / "etc"
+    etc_dir.mkdir(parents=True, exist_ok=True)
+    os_release = etc_dir / "os-release"
+    if not os_release.exists() or os_release.read_text(encoding="utf-8", errors="ignore") != _TERMUX_DOTNET_OS_RELEASE:
+        os_release.write_text(_TERMUX_DOTNET_OS_RELEASE, encoding="utf-8")
+    return etc_dir
+
+
 def _prepare_termux_dotnet(argv: list[str]) -> tuple[list[str], str | None]:
     if not argv or argv[0] != "dotnet" or not is_termux_environment():
         return argv, None
@@ -62,12 +78,8 @@ def _prepare_termux_dotnet(argv: list[str]) -> tuple[list[str], str | None]:
     if not dotnet_path or not shutil.which("proot"):
         return argv, None
 
-    tmpdir = tempfile.mkdtemp(prefix="devtool-termux-dotnet-")
-    etc_dir = Path(tmpdir) / "etc"
-    etc_dir.mkdir(parents=True, exist_ok=True)
-    (etc_dir / "os-release").write_text(_TERMUX_DOTNET_OS_RELEASE, encoding="utf-8")
-
-    return ["proot", "-b", f"{etc_dir}:/etc", dotnet_path, *argv[1:]], tmpdir
+    etc_dir = _termux_proot_etc_dir()
+    return ["proot", "-b", f"{etc_dir}:/etc", dotnet_path, *argv[1:]], None
 
 
 
@@ -195,6 +207,60 @@ def _generic_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
     return [CommandSpec(action, shlex.split(text), env=config.env)]
 
 
+def _interesting_output_line(line: str) -> bool:
+    text = line.strip()
+    if not text:
+        return False
+    return bool(re.search(r"(error|warning|failed|fail|restore|build|test|pack|publish|\d+%)", text, re.IGNORECASE))
+
+
+def _run_process_live(
+    argv: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str],
+    verbose: bool,
+) -> tuple[int, str]:
+    try:
+        proc = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+        )
+    except OSError as exc:
+        # Keep live streaming as the normal path, but return a structured failure
+        # instead of crashing when the executable is unavailable.  This also keeps
+        # older tests/wrappers that monkeypatch subprocess.run working.
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=cwd,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            output = completed.stdout or ""
+            if verbose and output:
+                print(output, end="", flush=True)
+            return completed.returncode, output
+        except OSError:
+            return 127, str(exc)
+
+    output_parts: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        output_parts.append(line)
+        if verbose or _interesting_output_line(line):
+            print(line, end="", flush=True)
+    return proc.wait(), "".join(output_parts)
+
+
 def run_specs(
     config: ProjectConfig,
     specs: list[CommandSpec],
@@ -224,50 +290,42 @@ def run_specs(
         env.update(spec.env)
 
         started = time.perf_counter()
+        returncode = 1
+        output = ""
         try:
             if verbose:
                 console.print(f"[cyan]$ {' '.join(shlex.quote(a) for a in effective_argv)}[/cyan]")
-                proc = subprocess.run(
+                returncode, output = _run_process_live(
                     effective_argv,
                     cwd=spec.cwd or str(config.repo_root),
                     env=env,
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    check=False,
+                    verbose=True,
                 )
-                output = proc.stdout
-                if output:
-                    print(output, end="")
             else:
                 with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
-                    proc = subprocess.run(
+                    returncode, output = _run_process_live(
                         effective_argv,
                         cwd=spec.cwd or str(config.repo_root),
                         env=env,
-                        text=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        check=False,
+                        verbose=False,
                     )
-                    output = proc.stdout
         finally:
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
         duration = time.perf_counter() - started
         issues = parse_issues(config.repo_root, spec.name, output)
+        failure_kind = classify_failure(spec.name, output, returncode)
         command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         raw_text = command_line + "\n" + output
         log_file = str(write_log(raw_text, log_path, append=log_path is not None))
-        result = OperationResult(spec.name, effective_argv, proc.returncode, duration, output, issues, log_path=log_file)
+        result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind)
         results.append(result)
         raw_sections.append(raw_text)
 
-        if proc.returncode != 0 and not continue_on_error:
+        if returncode != 0 and not continue_on_error:
             break
 
     return results, "\n\n".join(raw_sections)
-
 
 def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None) -> OperationResult:
     artifact_path = resolve_cli_path(artifact)
@@ -293,18 +351,27 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         return OperationResult("apply-snapshot" if snapshot else "apply-overlay", argv, 1, 0.0, output, [], log_path=path)
 
     try:
+        skipped_metadata = 0
+        deleted_paths: list[str] = []
         if snapshot:
             tmpdir = Path(tempfile.mkdtemp(prefix="devtool-snapshot-"))
             try:
-                _extract_archive(artifact_path, tmpdir)
+                skipped_metadata += _extract_archive(artifact_path, tmpdir)
                 _sync_snapshot(tmpdir, repo_root)
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
         else:
-            _extract_archive(artifact_path, repo_root)
+            skipped_metadata += _extract_archive(artifact_path, repo_root)
+            deleted_paths = _apply_delete_manifest(repo_root, artifact_path)
         if delete_artifact:
             artifact_path.unlink(missing_ok=True)
+            for sidecar in _artifact_sidecars(artifact_path):
+                sidecar.unlink(missing_ok=True)
         output = f"Applied {'snapshot' if snapshot else 'overlay'} from {artifact_path}"
+        if skipped_metadata:
+            output += f"\nSkipped {skipped_metadata} devtool metadata file(s)."
+        if deleted_paths:
+            output += f"\nDeleted {len(deleted_paths)} path(s) from .devtool-delete."
         rc = 0
     except Exception as exc:
         output = str(exc)
@@ -314,22 +381,31 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
     return OperationResult("apply-snapshot" if snapshot else "apply-overlay", argv, rc, duration, output, [], log_path=path)
 
 
-def _extract_archive(artifact_path: Path, target: Path) -> None:
+
+def _artifact_sidecars(artifact_path: Path) -> list[Path]:
+    return [
+        artifact_path.with_name(artifact_path.name + ".devtool.json"),
+        artifact_path.with_name(artifact_path.name + ".manifest.json"),
+    ]
+
+def _extract_archive(artifact_path: Path, target: Path) -> int:
     if artifact_path.suffix == ".zip":
         with zipfile.ZipFile(artifact_path) as zf:
-            _safe_extract_zip(zf, target)
-        return
+            return _safe_extract_zip(zf, target)
     if artifact_path.suffix == ".tar" or artifact_path.name.endswith((".tar.gz", ".tgz")):
         mode = "r:gz" if artifact_path.name.endswith((".tar.gz", ".tgz")) else "r"
         with tarfile.open(artifact_path, mode) as tf:
-            _safe_extract_tar(tf, target)
-        return
+            return _safe_extract_tar(tf, target)
     raise RuntimeError(f"Unsupported artifact type: {artifact_path}")
 
 
-def _safe_extract_zip(archive: zipfile.ZipFile, target: Path) -> None:
+def _safe_extract_zip(archive: zipfile.ZipFile, target: Path) -> int:
     target = target.resolve()
+    skipped_metadata = 0
     for member in archive.infolist():
+        if is_artifact_metadata_member(member.filename):
+            skipped_metadata += 1
+            continue
         member_path = _safe_destination_path(target, Path(member.filename))
         if member.is_dir():
             member_path.mkdir(parents=True, exist_ok=True)
@@ -337,11 +413,16 @@ def _safe_extract_zip(archive: zipfile.ZipFile, target: Path) -> None:
         member_path.parent.mkdir(parents=True, exist_ok=True)
         with archive.open(member, "r") as source, member_path.open("wb") as dest:
             shutil.copyfileobj(source, dest)
+    return skipped_metadata
 
 
-def _safe_extract_tar(archive: tarfile.TarFile, target: Path) -> None:
+def _safe_extract_tar(archive: tarfile.TarFile, target: Path) -> int:
     target = target.resolve()
+    skipped_metadata = 0
     for member in archive.getmembers():
+        if is_artifact_metadata_member(member.name):
+            skipped_metadata += 1
+            continue
         if member.islnk() or member.issym() or member.isdev():
             raise RuntimeError(f"Unsafe tar member: {member.name}")
         member_path = _safe_destination_path(target, Path(member.name))
@@ -356,6 +437,7 @@ def _safe_extract_tar(archive: tarfile.TarFile, target: Path) -> None:
             raise RuntimeError(f"Failed to extract tar member: {member.name}")
         with extracted, member_path.open("wb") as dest:
             shutil.copyfileobj(extracted, dest)
+    return skipped_metadata
 
 
 def _safe_destination_path(base: Path, member_path: Path) -> Path:
@@ -368,6 +450,22 @@ def _safe_destination_path(base: Path, member_path: Path) -> Path:
         raise RuntimeError(f"Unsafe archive path: {member_path}") from exc
     return resolved
 
+
+
+def _apply_delete_manifest(repo_root: Path, artifact_path: Path) -> list[str]:
+    deleted: list[str] = []
+    root = repo_root.resolve()
+    for raw_entry in read_delete_manifest(artifact_path):
+        target = _safe_destination_path(root, Path(raw_entry))
+        if target == root:
+            raise RuntimeError("Refusing to delete repo root from .devtool-delete")
+        if target.is_dir():
+            shutil.rmtree(target)
+            deleted.append(raw_entry)
+        elif target.exists() or target.is_symlink():
+            target.unlink()
+            deleted.append(raw_entry)
+    return deleted
 
 def _sync_snapshot(snapshot_root: Path, repo_root: Path) -> None:
     existing = {p.relative_to(repo_root) for p in repo_root.rglob("*") if ".git" not in p.parts}

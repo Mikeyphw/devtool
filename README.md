@@ -164,3 +164,42 @@ If an overlay removes files or directories, include a root-level `.devtool-delet
 
 - Put one repo-relative path per line in `.devtool-delete`, ignore blank lines and `#` comments, and avoid globbing.
 - Treat `.devtool-delete` as overlay-only metadata; snapshot delivery should continue to use full repo state.
+
+## 0.2.5 artifact metadata safety
+
+Artifact metadata entries are now consumed by devtool and skipped during extraction. They should never land in the target repository when artifacts are applied through `devtool apply-overlay` or `devtool apply-snapshot`.
+
+Skipped metadata names:
+
+- `.devtool-artifact.json`
+- `artifact.devtool.json`
+- `devtool-artifact.json`
+- `.devtool-delete`
+
+`.devtool-delete` is also now active for overlays: devtool reads it, safely deletes the listed repo-relative paths, and does not copy the marker file into the repo.
+
+### Dirty repo handling recommendation
+
+For generated overlays/snapshots, prefer this policy:
+
+1. Default: refuse or prompt when `git status --porcelain` is non-empty.
+2. For non-interactive automation: fail fast unless the caller passes `--yes`/`--force` intentionally.
+3. Safer automation option: create a named pre-apply stash/backup commit before applying, then record the applied artifact in `.devtool/artifacts.json`.
+4. Avoid auto-popping a stash after apply; leave it for manual review because overlay changes and local edits can conflict silently.
+
+## 0.2.4 workflow upgrades
+
+This build adds the higher-friction workflow pieces around the existing runner:
+
+- `--machine [compact|pretty]` and `--machine-file` for a clean machine envelope, while normal human output stays on stdout.
+- live command streaming via `Popen`; non-verbose mode keeps the spinner and still surfaces warnings, errors, restore/build/test progress, and failures.
+- persistent Termux dotnet proot `/etc/os-release` cache under `$PREFIX/var/devtool/proot/etc`.
+- `--chroot NAME` / `--host` execution selection; apply operations stay host-side and validation/run phases can be routed through `chrootctl exec NAME -- ...`.
+- artifact manifest validation, `apply-overlay --preview`, `--interactive`, and `.devtool/artifacts.json` history tracking.
+- `devtool detect`, `devtool handoff`, `devtool history`, and `devtool rollback --last`.
+- validation matrix support with `validate --matrix linux-arm64,linux-x64` and `--matrix-mode target` for named target fan-out.
+- `validate --watch` polling watch mode.
+- safer clipboard routing through `DEVTOOL_CLIPBOARD_SOCKET`, `DEVTOOL_CLIPBOARD_FIFO`, Termux, X11, Wayland, or `--copy-via`.
+- failure classification in JSON summaries (`restore_failure`, `compile_failure`, `test_failure`, `nuget_failure`, `missing_sdk`, `wine_issue`, `arm_mismatch`, etc.).
+- `doctor --fix` creates safe state/cache directories and the Termux proot cache when applicable.
+

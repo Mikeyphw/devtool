@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import subprocess
 import time
 from dataclasses import dataclass
@@ -17,6 +18,45 @@ class ClipboardResult:
     success: bool
     backend: str | None = None
     reason: str | None = None
+
+
+def _socket_clipboard_path() -> Path | None:
+    text = os.environ.get("DEVTOOL_CLIPBOARD_SOCKET", "").strip()
+    return Path(text).expanduser() if text else None
+
+
+def _fifo_clipboard_path() -> Path | None:
+    text = os.environ.get("DEVTOOL_CLIPBOARD_FIFO", "").strip()
+    return Path(text).expanduser() if text else None
+
+
+def _copy_via_socket(text: str) -> ClipboardResult:
+    path = _socket_clipboard_path()
+    if path is None:
+        return ClipboardResult(False, backend="socket", reason="DEVTOOL_CLIPBOARD_SOCKET is not set.")
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(2.0)
+            client.connect(str(path))
+            client.sendall(text.encode("utf-8"))
+        return ClipboardResult(True, backend="socket")
+    except OSError as exc:
+        return ClipboardResult(False, backend="socket", reason=str(exc))
+
+
+def _copy_via_fifo(text: str) -> ClipboardResult:
+    path = _fifo_clipboard_path()
+    if path is None:
+        return ClipboardResult(False, backend="fifo", reason="DEVTOOL_CLIPBOARD_FIFO is not set.")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+        try:
+            os.write(fd, text.encode("utf-8"))
+        finally:
+            os.close(fd)
+        return ClipboardResult(True, backend="fifo")
+    except OSError as exc:
+        return ClipboardResult(False, backend="fifo", reason=str(exc))
 
 
 def _wayland_socket_path() -> Path | None:
@@ -80,31 +120,47 @@ def _can_use_termux_clipboard() -> bool:
     return is_termux_environment() and bool(shutil.which("termux-clipboard-set"))
 
 
-def _candidate_backends() -> list[tuple[list[str], str]]:
+def _candidate_backends(preferred: str = "auto") -> list[tuple[list[str], str]]:
     candidates: list[tuple[list[str], str]] = []
 
-    if _can_use_termux_clipboard():
+    include_termux = preferred in {"auto", "termux"}
+    include_x11 = preferred in {"auto", "x11"}
+    include_wayland = preferred in {"auto", "wayland"}
+
+    if include_termux and _can_use_termux_clipboard():
         candidates.append((["termux-clipboard-set"], "termux-clipboard-set"))
 
-    if _can_use_x11():
+    if include_x11 and _can_use_x11():
         if shutil.which("xclip"):
             candidates.append((["xclip", "-selection", "clipboard"], "xclip"))
         if shutil.which("xsel"):
             candidates.append((["xsel", "--clipboard", "--input"], "xsel"))
 
-    if _can_use_wl_copy():
+    if include_wayland and _can_use_wl_copy():
         candidates.append((["wl-copy"], "wl-copy"))
 
-    if shutil.which("pbcopy"):
+    if preferred in {"auto", "x11", "wayland"} and shutil.which("pbcopy"):
         candidates.append((["pbcopy"], "pbcopy"))
 
     return candidates
 
 
-def copy_text(text: str) -> ClipboardResult:
+def copy_text(text: str, preferred: str = "auto") -> ClipboardResult:
     last_failure: ClipboardResult | None = None
 
-    for command, backend in _candidate_backends():
+    if preferred in {"auto", "socket"} and _socket_clipboard_path() is not None:
+        result = _copy_via_socket(text)
+        if result.success or preferred == "socket":
+            return result
+        last_failure = result
+
+    if preferred in {"auto", "fifo"} and _fifo_clipboard_path() is not None:
+        result = _copy_via_fifo(text)
+        if result.success or preferred == "fifo":
+            return result
+        last_failure = result
+
+    for command, backend in _candidate_backends(preferred):
         result = _run_clipboard_command(command, text, backend=backend)
         if result.success:
             return result

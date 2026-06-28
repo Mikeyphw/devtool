@@ -240,3 +240,29 @@ def _dedupe_issues(issues: list[Issue]) -> list[Issue]:
         seen.add(key)
         unique.append(issue)
     return unique
+
+
+def classify_failure(command_name: str, output: str, returncode: int) -> str:
+    if returncode == 0:
+        return ""
+    text = output.lower()
+    name = command_name.lower()
+    if "sdk" in text and ("not found" in text or "not installed" in text or "could not execute" in text):
+        return "missing_sdk"
+    if "nuget" in text or "unable to load the service index" in text or "failed to restore" in text:
+        return "nuget_failure"
+    if "wine" in text or name.startswith("wine"):
+        return "wine_issue"
+    if "exec format error" in text or "wrong architecture" in text or "bad cpu type" in text or "arm64" in text and "x64" in text:
+        return "arm_mismatch"
+    if "restore" in name:
+        return "restore_failure"
+    if "build" in name or "compile" in text or " compilation failed" in text:
+        return "compile_failure"
+    if "test" in name or "failed!" in text or "failed " in text:
+        return "test_failure"
+    if "run" in name:
+        return "runtime_failure"
+    if "apply" in name or "artifact" in text or "archive" in text:
+        return "artifact_failure"
+    return "unknown_failure"

@@ -35,6 +35,7 @@ class OperationResult:
     issues: list[Issue]
     skipped: bool = False
     log_path: str = ""
+    failure_kind: str = ""
 
 
 @dataclass(slots=True)

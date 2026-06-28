@@ -116,6 +116,8 @@ def _render_compact_results(results: list[OperationResult], target_console: Cons
         grid.add_row(_cell("status"), _status_text(result))
         grid.add_row(_cell("time"), _cell(f"{result.duration_seconds:.2f}s"))
         grid.add_row(_cell("exit"), _cell(str(result.returncode)))
+        if result.failure_kind:
+            grid.add_row(_cell("failure"), _cell(result.failure_kind))
         if result.log_path:
             grid.add_row(_cell("log"), _cell(result.log_path))
         target_console.print(Panel(grid, title="Command Summary", expand=False))
@@ -189,6 +191,7 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
                 "duration_seconds": result.duration_seconds,
                 "log_path": result.log_path,
                 "skipped": result.skipped,
+                "failure_kind": result.failure_kind,
                 "issues": [
                     {
                         "severity": issue.severity,
@@ -264,6 +267,7 @@ def build_runner_json(
                 "time_s": result.duration_seconds,
                 "exit_code": result.returncode,
                 "log": result.log_path or None,
+                "failure_kind": result.failure_kind or None,
             }
             for result in results
         ],
