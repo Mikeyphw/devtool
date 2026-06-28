@@ -202,6 +202,7 @@ def run_specs(
     verbose: bool,
     dry_run: bool = False,
     continue_on_error: bool = False,
+    log_path: Path | str | None = None,
 ) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw_sections: list[str] = []
@@ -211,8 +212,8 @@ def run_specs(
 
         if dry_run:
             output = "$ " + " ".join(effective_argv)
-            log_path = str(write_log(output))
-            results.append(OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_path))
+            log_file = str(write_log(output, log_path, append=log_path is not None))
+            results.append(OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file))
             raw_sections.append(output)
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
@@ -257,8 +258,8 @@ def run_specs(
         issues = parse_issues(config.repo_root, spec.name, output)
         command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         raw_text = command_line + "\n" + output
-        log_path = str(write_log(raw_text))
-        result = OperationResult(spec.name, effective_argv, proc.returncode, duration, output, issues, log_path=log_path)
+        log_file = str(write_log(raw_text, log_path, append=log_path is not None))
+        result = OperationResult(spec.name, effective_argv, proc.returncode, duration, output, issues, log_path=log_file)
         results.append(result)
         raw_sections.append(raw_text)
 
@@ -268,27 +269,27 @@ def run_specs(
     return results, "\n\n".join(raw_sections)
 
 
-def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False) -> OperationResult:
+def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None) -> OperationResult:
     artifact_path = resolve_cli_path(artifact)
     argv = ["unzip", "-o", str(artifact_path), "-d", str(repo_root)]
-    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run)
+    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path)
 
 
-def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False) -> OperationResult:
+def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None) -> OperationResult:
     artifact_path = resolve_cli_path(artifact)
-    return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run)
+    return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path)
 
 
-def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool) -> OperationResult:
+def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None) -> OperationResult:
     start = time.perf_counter()
     if dry_run:
         text = "$ " + " ".join(argv)
-        path = str(write_log(text))
+        path = str(write_log(text, log_path, append=log_path is not None))
         return OperationResult("apply-snapshot" if snapshot else "apply-overlay", argv, 0, 0.0, text, [], skipped=True, log_path=path)
 
     if not artifact_path.exists():
         output = f"Artifact not found: {artifact_path}"
-        path = str(write_log(output))
+        path = str(write_log(output, log_path, append=log_path is not None))
         return OperationResult("apply-snapshot" if snapshot else "apply-overlay", argv, 1, 0.0, output, [], log_path=path)
 
     try:
@@ -309,7 +310,7 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         output = str(exc)
         rc = 1
     duration = time.perf_counter() - start
-    path = str(write_log(output))
+    path = str(write_log(output, log_path, append=log_path is not None))
     return OperationResult("apply-snapshot" if snapshot else "apply-overlay", argv, rc, duration, output, [], log_path=path)
 
 
@@ -387,13 +388,13 @@ def _sync_snapshot(snapshot_root: Path, repo_root: Path) -> None:
             shutil.copy2(path, target)
 
 
-def git_commit(repo_root: Path, message: str, *, verbose: bool = False, dry_run: bool = False) -> tuple[list[OperationResult], str]:
+def git_commit(repo_root: Path, message: str, *, verbose: bool = False, dry_run: bool = False, log_path: Path | str | None = None) -> tuple[list[OperationResult], str]:
     specs = [
         CommandSpec("git-add", ["git", "add", "-A"]),
         CommandSpec("git-commit", ["git", "commit", "-m", message]),
     ]
     config = ProjectConfig(repo_root=repo_root, kind="unknown")
-    return run_specs(config, specs, verbose=verbose, dry_run=dry_run)
+    return run_specs(config, specs, verbose=verbose, dry_run=dry_run, log_path=log_path)
 
 
 def write_template_config(repo_root: Path, *, force: bool = False) -> Path:

@@ -20,7 +20,7 @@ from .clipboard import copy_text
 from .console_utils import create_console, resolve_cli_path, syntax_line_numbers
 from .completion import ZSH_COMPLETION
 from .config import detect_project_kind, discover_dotnet_candidates, load_project_config, resolve_config_dict
-from .logstore import latest_log
+from .logstore import latest_log, new_log_path
 from .models import CommandSpec, OperationResult, ProjectConfig
 from .notify import available_notifier, send_notification
 from .runners import apply_overlay, apply_snapshot, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
@@ -69,6 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["auto", "summary", "json", "raw"],
         default="auto",
         help="Select the stdout payload; use summary/json/raw, or auto for normal CLI output",
+    )
+    parser.add_argument(
+        "--save-json-payload",
+        "--json-output",
+        dest="save_json_payload",
+        default="",
+        help="Write the machine JSON payload to this file path",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -161,6 +168,17 @@ def _add_validation_skip_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--skip-build", action="store_true", help="Skip build during validation")
     cmd.add_argument("--skip-test", action="store_true", help="Skip test during validation")
 
+
+
+def _write_json_payload(path_text: str, json_payload: str) -> None:
+    if not path_text:
+        return
+    path = Path(path_text).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json_payload + ("" if json_payload.endswith("\n") else "\n"), encoding="utf-8")
+    console.print(f"[green]Wrote JSON payload[/green] {path}")
 
 def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argparse.Namespace) -> None:
     if args.no_clipboard:
@@ -453,11 +471,22 @@ def _validation_specs(config: ProjectConfig, args: argparse.Namespace, parser: a
     )
 
 
+
+def _git_commit_with_optional_log(repo_root: Path, message: str, *, verbose: bool, dry_run: bool, log_path: Path | str | None) -> tuple[list[OperationResult], str]:
+    try:
+        return git_commit(repo_root, message, verbose=verbose, dry_run=dry_run, log_path=log_path)
+    except TypeError as exc:
+        if "log_path" not in str(exc):
+            raise
+        return git_commit(repo_root, message, verbose=verbose, dry_run=dry_run)
+
 def _maybe_commit_after_apply(
     config: ProjectConfig,
     args: argparse.Namespace,
     results: list[OperationResult],
     raw_output: str,
+    *,
+    log_path: Path | str | None = None,
 ) -> tuple[list[OperationResult], str]:
     commit_message = str(getattr(args, "commit", "") or "").strip()
     if args.command not in APPLY_COMMANDS or not commit_message:
@@ -469,7 +498,7 @@ def _maybe_commit_after_apply(
     if validation_failed and not getattr(args, "commit_even_on_failure", False):
         return results, raw_output
 
-    commit_results, commit_raw = git_commit(config.repo_root, commit_message, verbose=args.verbose, dry_run=args.dry_run)
+    commit_results, commit_raw = _git_commit_with_optional_log(config.repo_root, commit_message, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path)
     results.extend(commit_results)
     if raw_output:
         raw_output = raw_output + "\n\n" + commit_raw
@@ -495,7 +524,7 @@ def _targets(config: ProjectConfig) -> None:
         return
     render_status_table([("target", name) if path == "-" else (name, path) for name, path in rows])
 
-def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: str) -> tuple[list[OperationResult], str]:
+def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: str, *, log_path: Path | str | None = None) -> tuple[list[OperationResult], str]:
     if getattr(args, "validate_only", False):
         result = OperationResult(
             "apply-skipped",
@@ -510,14 +539,14 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         return [result], text
 
     if name.startswith("apply-overlay"):
-        result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run)
+        result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path)
     else:
-        result = apply_snapshot(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run)
+        result = apply_snapshot(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path)
     text = "$ " + " ".join(result.argv) + "\n" + result.output
     return [result], text
 
 
-def _handle_batch(config: ProjectConfig, args: argparse.Namespace) -> tuple[list[OperationResult], str]:
+def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: Path | str | None = None) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw: list[str] = []
     continue_on_error = args.continue_on_error and not args.fail_fast
@@ -530,20 +559,20 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace) -> tuple[list
         if name in LEGACY_APPLY_VALIDATE_COMMANDS:
             raise RuntimeError("batch apply validation modes were removed; use apply-overlay/apply-snapshot flags instead")
         if name in APPLY_COMMANDS:
-            batch_results, raw_text = _run_apply(config, args, name, value)
+            batch_results, raw_text = _run_apply(config, args, name, value, log_path=log_path)
             results.extend(batch_results)
             raw.append(raw_text)
             if batch_results[-1].returncode != 0 and not continue_on_error:
                 break
             if getattr(args, "validate", False) or getattr(args, "validate_only", False):
-                more, text = run_specs(config, build_specs(config, "validate"), verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+                more, text = run_specs(config, build_specs(config, "validate"), verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
                 results.extend(more)
                 raw.append(text)
                 if any(r.returncode != 0 for r in more) and not continue_on_error:
                     break
             continue
         if name in {"commit", "ci"}:
-            more, text = git_commit(config.repo_root, value, verbose=args.verbose, dry_run=args.dry_run)
+            more, text = _git_commit_with_optional_log(config.repo_root, value, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path)
             results.extend(more)
             raw.append(text)
             if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -551,7 +580,7 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace) -> tuple[list
             continue
         if name == "tag":
             tag_spec = CommandSpec("tag", ["git", "tag", value], destructive=True)
-            more, text = run_specs(config, [tag_spec], verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+            more, text = run_specs(config, [tag_spec], verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
             results.extend(more)
             raw.append(text)
             if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -564,7 +593,7 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace) -> tuple[list
             raw.append(text)
             continue
         specs = build_specs(config, name)
-        more, text = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+        more, text = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
         results.extend(more)
         raw.append(text)
         if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -747,8 +776,9 @@ def main(argv: list[str] | None = None) -> int:
         repo = Path(args.repo or Path.cwd()).resolve()
         if args.command in {"commit", "ci"}:
             _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="commit")
+            log_path = new_log_path()
             started_at = datetime.now(timezone.utc)
-            results, raw_output = git_commit(repo, args.message, verbose=args.verbose, dry_run=args.dry_run)
+            results, raw_output = _git_commit_with_optional_log(repo, args.message, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path)
             finished_at = datetime.now(timezone.utc)
             totals, summary_text, json_text, _machine_json_text = _emit_summary(
                 results,
@@ -761,6 +791,7 @@ def main(argv: list[str] | None = None) -> int:
                 finished_at=finished_at,
             )
             failed = totals["failed"]
+            _write_json_payload(args.save_json_payload, _machine_json_text)
             _maybe_copy(raw_output, summary_text, json_text, args)
             _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=failed, command=args.command, repo_name=repo.name, duration_seconds=sum(r.duration_seconds for r in results))
             return 0 if failed == 0 else 1
@@ -777,8 +808,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "tag":
             _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="tag")
             specs = [CommandSpec("tag", ["git", "tag"] + (["-m", args.message] if args.message else []) + [args.name], destructive=True)]
+            log_path = new_log_path()
             started_at = datetime.now(timezone.utc)
-            results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=False)
+            results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=False, log_path=log_path)
             finished_at = datetime.now(timezone.utc)
             totals, summary_text, json_text, _machine_json_text = _emit_summary(
                 results,
@@ -790,12 +822,14 @@ def main(argv: list[str] | None = None) -> int:
                 started_at=started_at,
                 finished_at=finished_at,
             )
+            _write_json_payload(args.save_json_payload, _machine_json_text)
             _maybe_copy(raw_output, summary_text, json_text, args)
             _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=repo.name, duration_seconds=sum(r.duration_seconds for r in results))
             return 0 if totals["failed"] == 0 else 1
 
     config = _load_command_config(args)
     continue_on_error = args.continue_on_error and not args.fail_fast
+    log_path = new_log_path()
 
     started_at = datetime.now(timezone.utc)
 
@@ -807,7 +841,7 @@ def main(argv: list[str] | None = None) -> int:
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
 
     if args.command in APPLY_COMMANDS:
-        results, raw_output = _run_apply(config, args, args.command, args.artifact)
+        results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path)
         should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
         if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
             more_results, more_raw = run_specs(
@@ -816,18 +850,19 @@ def main(argv: list[str] | None = None) -> int:
                 verbose=args.verbose,
                 dry_run=args.dry_run,
                 continue_on_error=continue_on_error,
+                log_path=log_path,
             )
             results.extend(more_results)
             raw_output += "\n\n" + more_raw
-        results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output)
+        results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
     elif args.command in {"validate", "v", "wine-validate", "wv"}:
         specs = _validation_specs(config, args, parser)
-        results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+        results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
     elif args.command == "batch":
-        results, raw_output = _handle_batch(config, args)
+        results, raw_output = _handle_batch(config, args, log_path=log_path)
     else:
         specs = build_specs(config, args.command)
-        results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error)
+        results, raw_output = run_specs(config, specs, verbose=args.verbose, dry_run=args.dry_run, continue_on_error=continue_on_error, log_path=log_path)
 
     finished_at = datetime.now(timezone.utc)
     totals, summary_text, json_text, _machine_json_text = _emit_summary(
@@ -840,6 +875,7 @@ def main(argv: list[str] | None = None) -> int:
         started_at=started_at,
         finished_at=finished_at,
     )
+    _write_json_payload(args.save_json_payload, _machine_json_text)
     _maybe_copy(raw_output, summary_text, json_text, args)
     _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=sum(r.duration_seconds for r in results))
     return 0 if totals["failed"] == 0 else 1
