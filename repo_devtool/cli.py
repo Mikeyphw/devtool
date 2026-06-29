@@ -40,6 +40,7 @@ from .models import CommandSpec, OperationResult, ProjectConfig
 from .notify import available_notifier, send_notification
 from .runners import apply_overlay, apply_snapshot, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
 from .summary import build_json_summary, build_runner_json, render_status_table, render_summary
+from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_ACTION, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink
 
 console = create_console()
 
@@ -81,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--notify-brief", action="store_true", help="Use shorter notification body")
     parser.add_argument("--notify-on-success", action="store_true", help="Only notify on success")
     parser.add_argument("--notify-on-fail", action="store_true", help="Only notify on failure")
+    parser.add_argument("--notify-progress", action="store_true", help="Update a live Termux notification while phases run")
+    parser.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for --notify-progress")
+    parser.add_argument("--tasker", action="store_true", help="Enable Tasker JSON, broadcast, and live notification integration")
+    parser.add_argument("--tasker-progress", action="store_true", help="Write live Tasker-compatible JSON status files")
+    parser.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory for Tasker JSON files")
+    parser.add_argument("--tasker-broadcast", action="store_true", help="Send an Android broadcast after Tasker event files are written")
+    parser.add_argument("--tasker-action", default=DEFAULT_TASKER_ACTION, help="Android broadcast action for Tasker events")
     parser.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
     exec_group = parser.add_mutually_exclusive_group()
     exec_group.add_argument("--host", action="store_true", help="Force commands to run on the host")
@@ -317,6 +325,58 @@ def _maybe_notify(args: argparse.Namespace, *, warnings: int, errors: int, faile
         brief=args.notify_brief,
     )
     send_notification(title, body)
+
+
+def _normalize_tasker_args(args: argparse.Namespace) -> None:
+    if getattr(args, "tasker", False):
+        args.tasker_progress = True
+        args.tasker_broadcast = True
+        args.notify_progress = True
+
+
+def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = None, repo: Path | None = None) -> TaskerProgressSink | None:
+    repo_root = (config.repo_root if config is not None else (repo or Path(args.repo or Path.cwd()))).resolve()
+    target = str(getattr(args, "target", "") or getattr(args, "solution", "") or getattr(args, "project", "") or "")
+    return build_tasker_sink(
+        enabled=bool(getattr(args, "tasker_progress", False)),
+        directory=str(getattr(args, "tasker_dir", DEFAULT_TASKER_DIR)),
+        command=str(getattr(args, "command", "devtool") or "devtool"),
+        repo_root=repo_root,
+        target=target,
+        broadcast=bool(getattr(args, "tasker_broadcast", False)),
+        broadcast_action=str(getattr(args, "tasker_action", DEFAULT_TASKER_ACTION)),
+        notify_progress=bool(getattr(args, "notify_progress", False)),
+        notification_id=str(getattr(args, "notify_id", DEFAULT_NOTIFICATION_ID)),
+    )
+
+
+def _notification_payload_from_totals(*, warnings: int, errors: int, failed: int, command: str, repo_name: str, duration_seconds: float, brief: bool) -> dict:
+    title, body = _notification_message(
+        warnings=warnings,
+        errors=errors,
+        failed=failed,
+        command=command,
+        repo_name=repo_name,
+        duration_seconds=duration_seconds,
+        brief=brief,
+    )
+    level = "error" if failed or errors else ("warning" if warnings else "success")
+    return {"level": level, "title": title, "body": body}
+
+
+def _finish_tasker(tasker_progress: TaskerProgressSink | None, *, totals: dict[str, int], results: list[OperationResult], command: str, repo_name: str, duration_seconds: float, args: argparse.Namespace) -> None:
+    if tasker_progress is None:
+        return
+    notification = _notification_payload_from_totals(
+        warnings=totals["warnings"],
+        errors=totals["errors"],
+        failed=totals["failed"],
+        command=command,
+        repo_name=repo_name,
+        duration_seconds=duration_seconds,
+        brief=getattr(args, "notify_brief", False),
+    )
+    tasker_progress.finished(ok=totals["failed"] == 0 and totals["errors"] == 0, totals=totals, results=results, notification=notification)
 
 
 def _summary_text(results: list[OperationResult]) -> str:
@@ -568,6 +628,7 @@ def _run_specs_for_args(
     *,
     continue_on_error: bool = False,
     log_path: Path | str | None = None,
+    tasker_progress: TaskerProgressSink | None = None,
 ) -> tuple[list[OperationResult], str]:
     return run_specs(
         config,
@@ -576,6 +637,7 @@ def _run_specs_for_args(
         dry_run=args.dry_run,
         continue_on_error=continue_on_error,
         log_path=log_path,
+        tasker_progress=tasker_progress,
     )
 
 
@@ -696,9 +758,34 @@ def _targets(config: ProjectConfig) -> None:
         return
     render_status_table([("target", name) if path == "-" else (name, path) for name, path in rows])
 
-def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: str, *, log_path: Path | str | None = None) -> tuple[list[OperationResult], str]:
+def _format_manifest_json(manifest: dict) -> str:
+    return json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True)
+
+
+def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict) -> None:
+    if not manifest:
+        return
+    manifest_text = _format_manifest_json(manifest)
+    console.print("[bold cyan]Artifact manifest[/bold cyan]")
+    console.print(Syntax(manifest_text, "json", line_numbers=syntax_line_numbers(console)))
+    if getattr(args, "yes", False) or getattr(args, "force", False):
+        return
+    if console.is_interactive and sys.stdin.isatty():
+        if not Confirm.ask("Continue with this artifact?", default=True, console=console):
+            raise SystemExit(1)
+        return
+    raise SystemExit("Artifact manifest confirmation requires --yes in non-interactive mode.")
+
+def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: str, *, log_path: Path | str | None = None, tasker_progress: TaskerProgressSink | None = None) -> tuple[list[OperationResult], str]:
     snapshot = "snapshot" in name
     artifact_type = "snapshot" if snapshot else "overlay"
+    if tasker_progress is not None:
+        tasker_progress.phase_started(name, index=1, total=1, argv=[name, artifact])
+
+    def _return_apply(result: OperationResult, text: str) -> tuple[list[OperationResult], str]:
+        if tasker_progress is not None:
+            tasker_progress.phase_finished(result)
+        return [result], text
 
     if getattr(args, "validate_only", False):
         result = OperationResult(
@@ -711,7 +798,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             skipped=True,
         )
         text = "$ " + " ".join(result.argv) + "\n" + result.output
-        return [result], text
+        return _return_apply(result, text)
 
     started = datetime.now(timezone.utc)
     try:
@@ -731,7 +818,24 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             [],
             failure_kind="artifact_failure",
         )
-        return [result], "$ " + " ".join(result.argv) + "\n" + result.output
+        return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
+
+    # Show manifest metadata before any destructive confirmation such as dirty-tree
+    # or snapshot overwrite prompts.  --yes/-y confirms this prompt too.
+    if not getattr(args, "preview", False):
+        try:
+            _show_and_confirm_artifact_manifest(args, validation.manifest)
+        except SystemExit as exc:
+            result = OperationResult(
+                "artifact-cancelled",
+                [name, artifact],
+                int(exc.code) if isinstance(exc.code, int) else 1,
+                0.0,
+                "Cancelled before artifact apply.",
+                [],
+                failure_kind="artifact_failure",
+            )
+            return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
     if not getattr(args, "no_manifest_check", False) and not validation.ok:
         output = "\n".join(validation.messages)
@@ -744,7 +848,21 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             [],
             failure_kind="artifact_failure",
         )
-        return [result], "$ " + " ".join(result.argv) + "\n" + output
+        return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + output)
+
+    try:
+        _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=name)
+    except SystemExit as exc:
+        result = OperationResult(
+            "apply-cancelled",
+            [name, artifact],
+            int(exc.code) if isinstance(exc.code, int) else 1,
+            0.0,
+            "Cancelled before artifact apply.",
+            [],
+            failure_kind="artifact_failure",
+        )
+        return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
     preview_text = format_preview(preview)
     if getattr(args, "preview", False):
@@ -758,21 +876,22 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             [],
             skipped=True,
         )
-        return [result], "$ " + " ".join(result.argv) + "\n" + preview_text
+        return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + preview_text)
 
     if getattr(args, "interactive", False):
         console.print(preview_text)
-        if not Confirm.ask("Apply this artifact?", default=False, console=console):
-            result = OperationResult(
-                "apply-cancelled",
-                [name, artifact],
-                1,
-                0.0,
-                "Cancelled by user.",
-                [],
-                failure_kind="artifact_failure",
-            )
-            return [result], "$ " + " ".join(result.argv) + "\n" + result.output
+        if not getattr(args, "yes", False):
+            if not Confirm.ask("Apply this artifact?", default=True, console=console):
+                result = OperationResult(
+                    "apply-cancelled",
+                    [name, artifact],
+                    1,
+                    0.0,
+                    "Cancelled by user.",
+                    [],
+                    failure_kind="artifact_failure",
+                )
+                return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
     if name.startswith("apply-overlay") or name == "ao":
         result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path)
@@ -783,10 +902,9 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     manifest_note = "" if getattr(args, "no_manifest_check", False) else "\n" + "\n".join(validation.messages)
     text = "$ " + " ".join(result.argv) + "\n" + result.output + manifest_note
     result.output = result.output + manifest_note
-    return [result], text
+    return _return_apply(result, text)
 
-
-def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: Path | str | None = None) -> tuple[list[OperationResult], str]:
+def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: Path | str | None = None, tasker_progress: TaskerProgressSink | None = None) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw: list[str] = []
     continue_on_error = args.continue_on_error and not args.fail_fast
@@ -799,13 +917,13 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: 
         if name in LEGACY_APPLY_VALIDATE_COMMANDS:
             raise RuntimeError("batch apply validation modes were removed; use apply-overlay/apply-snapshot flags instead")
         if name in APPLY_COMMANDS:
-            batch_results, raw_text = _run_apply(config, args, name, value, log_path=log_path)
+            batch_results, raw_text = _run_apply(config, args, name, value, log_path=log_path, tasker_progress=tasker_progress)
             results.extend(batch_results)
             raw.append(raw_text)
             if batch_results[-1].returncode != 0 and not continue_on_error:
                 break
             if getattr(args, "validate", False) or getattr(args, "validate_only", False):
-                more, text = _run_specs_for_args(config, build_specs(config, "validate"), args, continue_on_error=continue_on_error, log_path=log_path)
+                more, text = _run_specs_for_args(config, build_specs(config, "validate"), args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
                 results.extend(more)
                 raw.append(text)
                 if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -820,7 +938,7 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: 
             continue
         if name == "tag":
             tag_spec = CommandSpec("tag", ["git", "tag", value], destructive=True)
-            more, text = _run_specs_for_args(config, [tag_spec], args, continue_on_error=continue_on_error, log_path=log_path)
+            more, text = _run_specs_for_args(config, [tag_spec], args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
             results.extend(more)
             raw.append(text)
             if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -833,7 +951,7 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: 
             raw.append(text)
             continue
         specs = build_specs(config, name)
-        more, text = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path)
+        more, text = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
         results.extend(more)
         raw.append(text)
         if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -953,6 +1071,7 @@ def _config_command(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _normalize_tasker_args(args)
     _validate_apply_args(args, parser)
     effective_payload, copy_mode = _validate_output_flags(args, parser)
 
@@ -1122,18 +1241,19 @@ def main(argv: list[str] | None = None) -> int:
     config = _load_command_config(args)
     continue_on_error = args.continue_on_error and not args.fail_fast
     log_path = new_log_path()
+    tasker_progress = _tasker_for_args(args, config)
 
     started_at = datetime.now(timezone.utc)
+    if tasker_progress is not None:
+        tasker_progress.started()
 
-    if args.command in APPLY_COMMANDS and not args.validate_only:
-        _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
     if args.command == "batch":
         destructive_batch = any(step.split("=", 1)[0] in {"apply-overlay", "ao", "apply-snapshot", "as", "commit", "ci", "tag"} for step in args.steps)
         if destructive_batch:
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
 
     if args.command in APPLY_COMMANDS:
-        results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path)
+        results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
         should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
         if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
             more_results, more_raw = _run_specs_for_args(
@@ -1142,6 +1262,7 @@ def main(argv: list[str] | None = None) -> int:
                 args,
                 continue_on_error=continue_on_error,
                 log_path=log_path,
+                tasker_progress=tasker_progress,
             )
             results.extend(more_results)
             raw_output += "\n\n" + more_raw
@@ -1153,7 +1274,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_log_path = new_log_path()
                 run_started = datetime.now(timezone.utc)
                 run_specs_list = _validation_specs_for_args(config, args, parser)
-                run_results, run_raw = _run_specs_for_args(config, run_specs_list, args, continue_on_error=continue_on_error, log_path=run_log_path)
+                run_results, run_raw = _run_specs_for_args(config, run_specs_list, args, continue_on_error=continue_on_error, log_path=run_log_path, tasker_progress=tasker_progress)
                 run_finished = datetime.now(timezone.utc)
                 run_totals, run_summary, run_json, run_machine = _emit_summary(
                     run_results,
@@ -1171,12 +1292,12 @@ def main(argv: list[str] | None = None) -> int:
                 return 0 if run_totals["failed"] == 0 else 1
             return watch_loop(config.repo_root, _run_once, interval=args.watch_interval)
         specs = _validation_specs_for_args(config, args, parser)
-        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path)
+        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
     elif args.command == "batch":
-        results, raw_output = _handle_batch(config, args, log_path=log_path)
+        results, raw_output = _handle_batch(config, args, log_path=log_path, tasker_progress=tasker_progress)
     else:
         specs = build_specs(config, args.command)
-        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path)
+        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
 
     finished_at = datetime.now(timezone.utc)
     totals, summary_text, json_text, _machine_json_text = _emit_summary(
@@ -1190,7 +1311,9 @@ def main(argv: list[str] | None = None) -> int:
         finished_at=finished_at,
         machine_format=args.machine or "pretty",
     )
+    duration_seconds = sum(r.duration_seconds for r in results)
     _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
     _maybe_copy(raw_output, summary_text, json_text, args)
-    _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=sum(r.duration_seconds for r in results))
+    _finish_tasker(tasker_progress, totals=totals, results=results, command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds, args=args)
+    _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds)
     return 0 if totals["failed"] == 0 else 1

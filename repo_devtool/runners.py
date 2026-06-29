@@ -17,8 +17,10 @@ from .artifacts import is_artifact_metadata_member, read_delete_manifest
 from .config import generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
 from .diagnostics import classify_failure, parse_issues
+from .dotnet_progress import DotnetProgressTracker, dotnet_progress_plan
 from .logstore import write_log
 from .models import CommandSpec, OperationResult, ProjectConfig
+from .tasker import TaskerProgressSink
 
 console = create_console()
 
@@ -220,6 +222,8 @@ def _run_process_live(
     cwd: str,
     env: dict[str, str],
     verbose: bool,
+    command_name: str = "",
+    tasker_progress: TaskerProgressSink | None = None,
 ) -> tuple[int, str]:
     try:
         proc = subprocess.Popen(
@@ -254,11 +258,32 @@ def _run_process_live(
 
     output_parts: list[str] = []
     assert proc.stdout is not None
-    for line in proc.stdout:
-        output_parts.append(line)
-        if verbose or _interesting_output_line(line):
+    tracker = DotnetProgressTracker(argv, cwd, command_name, console) if not verbose else None
+    if tracker is not None and tasker_progress is not None:
+        def _tasker_update(snapshot: dict) -> None:
+            tasker_progress.progress(
+                detail=str(snapshot.get("detail") or ""),
+                completed=snapshot.get("completed"),
+                total=snapshot.get("total"),
+                percent=snapshot.get("percent"),
+            )
+        tracker.update_callback = _tasker_update
+    if tracker is None:
+        for line in proc.stdout:
+            output_parts.append(line)
             print(line, end="", flush=True)
-    return proc.wait(), "".join(output_parts)
+        return proc.wait(), "".join(output_parts)
+
+    with tracker:
+        for line in proc.stdout:
+            output_parts.append(line)
+            # Non-verbose mode intentionally keeps command stdout/stderr captured only.
+            # Dotnet commands get a parsed Rich progress display instead of raw output.
+            # Use --verbose when the full restore/build/test stream is needed live.
+            tracker.update_from_line(line)
+        returncode = proc.wait()
+        tracker.finish(returncode)
+    return returncode, "".join(output_parts)
 
 
 def run_specs(
@@ -269,12 +294,15 @@ def run_specs(
     dry_run: bool = False,
     continue_on_error: bool = False,
     log_path: Path | str | None = None,
+    tasker_progress: TaskerProgressSink | None = None,
 ) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw_sections: list[str] = []
 
-    for spec in specs:
+    for spec_index, spec in enumerate(specs, start=1):
         effective_argv, cleanup_dir = _prepare_termux_dotnet(spec.argv)
+        if tasker_progress is not None and not dry_run:
+            tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=effective_argv)
 
         if dry_run:
             output = "$ " + " ".join(effective_argv)
@@ -300,15 +328,30 @@ def run_specs(
                     cwd=spec.cwd or str(config.repo_root),
                     env=env,
                     verbose=True,
+                    command_name=spec.name,
+                    tasker_progress=tasker_progress,
                 )
             else:
-                with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
+                cwd = spec.cwd or str(config.repo_root)
+                if dotnet_progress_plan(effective_argv, cwd):
                     returncode, output = _run_process_live(
                         effective_argv,
-                        cwd=spec.cwd or str(config.repo_root),
+                        cwd=cwd,
                         env=env,
                         verbose=False,
+                        command_name=spec.name,
+                        tasker_progress=tasker_progress,
                     )
+                else:
+                    with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
+                        returncode, output = _run_process_live(
+                            effective_argv,
+                            cwd=cwd,
+                            env=env,
+                            verbose=False,
+                            command_name=spec.name,
+                            tasker_progress=tasker_progress,
+                        )
         finally:
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
@@ -320,6 +363,8 @@ def run_specs(
         log_file = str(write_log(raw_text, log_path, append=log_path is not None))
         result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind)
         results.append(result)
+        if tasker_progress is not None and not dry_run:
+            tasker_progress.phase_finished(result)
         raw_sections.append(raw_text)
 
         if returncode != 0 and not continue_on_error:

@@ -10,6 +10,7 @@ It supports:
 - restore/build/test parsing
 - clipboard prompt with default **yes**
 - desktop notifications
+- Tasker-compatible live progress JSON under `/sdcard/Tasker/devtool`
 - overlay/full snapshot apply
 - batch aliases
 - config template generation
@@ -165,6 +166,79 @@ If an overlay removes files or directories, include a root-level `.devtool-delet
 - Put one repo-relative path per line in `.devtool-delete`, ignore blank lines and `#` comments, and avoid globbing.
 - Treat `.devtool-delete` as overlay-only metadata; snapshot delivery should continue to use full repo state.
 
+## 0.2.8 Tasker live progress
+
+This build adds a Tasker-friendly live progress channel. Use:
+
+```bash
+devtool --tasker validate
+```
+
+`--tasker` is a shortcut for:
+
+- `--tasker-progress`
+- `--tasker-broadcast`
+- `--notify-progress`
+
+By default, devtool writes JSON under:
+
+```text
+/sdcard/Tasker/devtool
+```
+
+Files:
+
+- `state.json` — current run state, overwritten atomically as progress changes
+- `latest_event.json` — latest event payload, overwritten atomically
+- `events/*.json` — append-only event history for each run
+- `runs/<run_id>.json` — latest state for the run id
+
+Useful flags:
+
+- `--tasker-dir /path` to change the JSON directory
+- `--tasker-progress` to write JSON without enabling the shortcut
+- `--tasker-broadcast` to send Android broadcasts after event files are written
+- `--tasker-action net.mph.devtool.EVENT` to change the broadcast action
+- `--notify-progress` to update a stable live Termux notification; this can be used by itself or through `--tasker`
+- `--notify-id 7771` to change the notification id
+
+Tasker can react either by watching `latest_event.json` / `state.json`, or by listening for the broadcast action. The broadcast includes extras named `devtool_event`, `devtool_run_id`, `devtool_event_file`, and `devtool_state_file`.
+
+Example event shape:
+
+```json
+{
+  "schema_version": 1,
+  "producer": "devtool",
+  "run_id": "...",
+  "event_type": "progress",
+  "status": "running",
+  "command": "validate",
+  "repo_name": "sims3tools",
+  "phase": {"name": "build", "index": 2, "total": 3},
+  "progress": {"percent": 67.0, "completed": 2, "total": 3, "detail": "S3pe.Core"},
+  "notification": {"title": "devtool RUN", "body": "sims3tools • validate • build • 67%"}
+}
+```
+
+Normal human output remains on stdout. Tasker data is side-channel JSON, so wrappers can react without parsing terminal output.
+
+## 0.2.7 dotnet progress bars
+
+Non-verbose `dotnet restore`, `dotnet build`, `dotnet test`, `dotnet publish`, and `dotnet pack` now show a parsed Rich progress display instead of raw command output. The progress view tracks solution/project counts when it can infer them from `.sln`, `.csproj`, `.fsproj`, `.vbproj`, or directory targets, and shows the current phase/project/test summary while still capturing full logs for diagnostics.
+
+Use `--verbose` when you want the original raw dotnet stream.
+
+## 0.2.6 confirmation and quiet-run fixes
+
+This build tightens apply and validation UX:
+
+- non-verbose restore/build/test no longer streams routine command output; it shows the Rich spinner, captures logs, and still parses diagnostics for the final summary.
+- if an overlay/snapshot manifest is present, devtool prints the JSON before any destructive confirmation prompt.
+- manifest confirmation defaults to yes (`Y/n`).
+- `--yes` / `-y` confirms all destructive prompts, including artifact-manifest confirmation, dirty repo continuation, snapshot overwrite confirmation, and `--interactive` apply confirmation.
+- `--verbose` is the explicit way to see raw restore/build/test output live.
+
 ## 0.2.5 artifact metadata safety
 
 Artifact metadata entries are now consumed by devtool and skipped during extraction. They should never land in the target repository when artifacts are applied through `devtool apply-overlay` or `devtool apply-snapshot`.
@@ -192,7 +266,7 @@ For generated overlays/snapshots, prefer this policy:
 This build adds the higher-friction workflow pieces around the existing runner:
 
 - `--machine [compact|pretty]` and `--machine-file` for a clean machine envelope, while normal human output stays on stdout.
-- live command streaming via `Popen`; non-verbose mode keeps the spinner and still surfaces warnings, errors, restore/build/test progress, and failures.
+- live command execution via `Popen`; non-verbose mode keeps the spinner while capturing restore/build/test output silently for logs, summaries, and parsed diagnostics. Use `--verbose` for the raw live stream.
 - persistent Termux dotnet proot `/etc/os-release` cache under `$PREFIX/var/devtool/proot/etc`.
 - `--chroot NAME` / `--host` execution selection; apply operations stay host-side and validation/run phases can be routed through `chrootctl exec NAME -- ...`.
 - artifact manifest validation, `apply-overlay --preview`, `--interactive`, and `.devtool/artifacts.json` history tracking.

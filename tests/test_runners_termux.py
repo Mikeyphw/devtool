@@ -71,5 +71,26 @@ class RunnersTermuxTests(unittest.TestCase):
             self.assertEqual(results[0].returncode, 0)
 
 
+class RunnersQuietModeTests(unittest.TestCase):
+    def test_non_verbose_captures_process_output_without_streaming(self) -> None:
+        import io
+        import sys
+        from contextlib import redirect_stdout
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            config = ProjectConfig(repo_root=repo_root, kind="unknown")
+            spec = CommandSpec("build", [sys.executable, "-c", "print('Determining projects to restore...')"])
+
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                results, raw = run_specs(config, [spec], verbose=False)
+
+            self.assertEqual(results[0].returncode, 0)
+            self.assertIn("Determining projects to restore...", results[0].output)
+            self.assertIn("Determining projects to restore...", raw)
+            self.assertNotIn("Determining projects to restore...", stream.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

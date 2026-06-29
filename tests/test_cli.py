@@ -360,6 +360,52 @@ class CliTests(unittest.TestCase):
             self.assertNotIn(("add", ".devtool-artifact.json"), changes)
             self.assertNotIn(("add", ".devtool-delete"), changes)
 
+    def test_apply_overlay_manifest_prompt_precedes_dirty_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr(".devtool-artifact.json", json.dumps({"type": "overlay", "repo_name": root.name}))
+                zf.writestr("README.txt", "ok")
+
+            with (
+                patch.object(__import__("repo_devtool.cli").cli.console, "is_interactive", True),
+                patch("repo_devtool.cli.sys.stdin.isatty", return_value=True),
+                patch("repo_devtool.cli._git_dirty", return_value=True),
+                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("repo_devtool.cli.Confirm.ask", side_effect=[True, True]) as mock_confirm,
+                patch("repo_devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--no-clipboard", "apply-overlay", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            prompts = [call.args[0] for call in mock_confirm.call_args_list]
+            self.assertGreaterEqual(len(prompts), 2)
+            self.assertEqual(prompts[0], "Continue with this artifact?")
+            self.assertEqual(prompts[1], "Git tree is dirty. Continue?")
+            self.assertTrue(mock_confirm.call_args_list[0].kwargs.get("default"))
+
+    def test_yes_bypasses_manifest_dirty_and_interactive_apply_prompts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr(".devtool-artifact.json", json.dumps({"type": "overlay"}))
+                zf.writestr("README.txt", "ok")
+
+            with (
+                patch("repo_devtool.cli._git_dirty", return_value=True),
+                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("repo_devtool.cli.Confirm.ask") as mock_confirm,
+                patch("repo_devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--interactive", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            mock_confirm.assert_not_called()
+
     def test_apply_overlay_validate_only_skips_apply(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
