@@ -79,3 +79,22 @@ class DotnetProgressTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DotnetProgressRelativePathTests(unittest.TestCase):
+    def test_tracker_uses_repo_relative_project_detail(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "src" / "App" / "App.csproj"
+            project.parent.mkdir(parents=True)
+            project.write_text("<Project />", encoding="utf-8")
+            console = Console(force_terminal=False, width=60)
+            tracker = DotnetProgressTracker(["dotnet", "restore", str(project)], str(root), "restore", console)
+            tracker.update_callback = lambda snapshot: None
+            tracker.update_from_line(f"  Restored {project} (in 10 ms).")
+            self.assertIn("src/App/App.csproj", tracker.detail)
+            self.assertNotIn(str(root), tracker.detail)

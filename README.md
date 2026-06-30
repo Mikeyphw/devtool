@@ -166,6 +166,19 @@ If an overlay removes files or directories, include a root-level `.devtool-delet
 - Put one repo-relative path per line in `.devtool-delete`, ignore blank lines and `#` comments, and avoid globbing.
 - Treat `.devtool-delete` as overlay-only metadata; snapshot delivery should continue to use full repo state.
 
+
+## 0.2.9 Termux UX and interrupt fixes
+
+This build focuses on the Android/Termux workflow:
+
+- global flags such as `--yes`, `-y`, `--repo`, `--machine`, and `--tasker` can be placed before or after the subcommand.
+- artifact manifests are rendered as parsed Rich tables, not opened in `$EDITOR` or printed as unformatted text.
+- Rich output uses detected terminal width everywhere, so narrow Termux sessions fold tables and progress text more safely.
+- clipboard copy commands have timeout-aware handling for Termux/pbcopy and prompt-return handling for long-lived X11/Wayland clipboard owners.
+- Ctrl+C and other keyboard interrupts return exit code `130` and terminate the active child process before leaving.
+- non-verbose dotnet progress uses a single progress-bar line with status/details underneath it.
+- dotnet progress normalizes absolute project/output paths to repo-relative paths where possible.
+
 ## 0.2.8 Tasker live progress
 
 This build adds a Tasker-friendly live progress channel. Use:

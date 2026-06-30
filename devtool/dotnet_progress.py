@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -16,16 +17,19 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
+from rich.text import Text
 
 _DOTNET_COMMANDS = {"restore", "build", "test", "publish", "pack"}
 _PROJECT_EXTENSIONS = {".csproj", ".fsproj", ".vbproj"}
 _SOLUTION_PROJECT_RE = re.compile(r'Project\("[^"\r\n]+"\)\s*=\s*"[^"]+"\s*,\s*"([^"]+\.(?:csproj|fsproj|vbproj))"', re.IGNORECASE)
 _RESTORED_RE = re.compile(r"\bRestored\s+(.+?\.(?:csproj|fsproj|vbproj))\b", re.IGNORECASE)
+_RESTORE_UPTODATE_RE = re.compile(r"\b(?:All projects are up-to-date for restore|Skipping project .* because it was not found)\b", re.IGNORECASE)
 _BUILD_OUTPUT_RE = re.compile(r"^\s*(.+?)(?:\s+\(.*?\))?\s+->\s+(.+)$")
 _TEST_RESULT_RE = re.compile(
     r"\b(?P<status>Passed|Failed)!\s+-\s+Failed:\s*(?P<failed>\d+),\s*Passed:\s*(?P<passed>\d+),\s*Skipped:\s*(?P<skipped>\d+),\s*Total:\s*(?P<total>\d+)",
     re.IGNORECASE,
 )
+_TEST_RUN_FOR_RE = re.compile(r"\bTest run for\s+(.+?)(?:\s+\(|$)", re.IGNORECASE)
 _ERROR_RE = re.compile(r"\b(error|failed|fail)\b", re.IGNORECASE)
 _WARNING_RE = re.compile(r"\bwarning\b", re.IGNORECASE)
 
@@ -45,6 +49,7 @@ class DotnetProgressTracker:
     console: Console
     plan: DotnetProgressPlan | None = field(init=False, default=None)
     progress: Progress | None = field(init=False, default=None)
+    live: Live | None = field(init=False, default=None)
     task_id: TaskID | None = field(init=False, default=None)
     seen_units: set[str] = field(init=False, default_factory=set)
     errors: int = field(init=False, default=0)
@@ -63,25 +68,27 @@ class DotnetProgressTracker:
     def __enter__(self) -> "DotnetProgressTracker":
         if not self.enabled or self.plan is None:
             return self
-        self.progress = Progress(
+        bar_width = max(10, min(34, self.console.width - 42))
+        columns: list[Any] = [
             SpinnerColumn(),
             TextColumn("[bold cyan]{task.description}"),
-            BarColumn(),
+            BarColumn(bar_width=bar_width),
             MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            TextColumn("{task.fields[detail]}"),
-            console=self.console,
-            transient=True,
-        )
-        self.progress.start()
+        ]
+        if self.console.width >= 72:
+            columns.append(TimeElapsedColumn())
+        self.progress = Progress(*columns, console=self.console, expand=True)
         description = f"dotnet {self.plan.command}"
-        target = _shorten(self.plan.target)
-        self.task_id = self.progress.add_task(description, total=self.plan.total, detail=target)
+        target = _display_path(self.plan.target, self.cwd, self._detail_limit())
+        self.detail = f"target: {target}"
+        self.task_id = self.progress.add_task(description, total=self.plan.total)
+        self.live = Live(self._render_group(), console=self.console, transient=True, refresh_per_second=8)
+        self.live.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-        if self.progress is not None:
-            self.progress.stop()
+        if self.live is not None:
+            self.live.stop()
 
     def update_from_line(self, line: str) -> None:
         if self.plan is None or (not self.enabled and self.update_callback is None):
@@ -103,12 +110,12 @@ class DotnetProgressTracker:
             total = self.plan.total
             if total is not None:
                 completed = min(completed, total)
-            self._set_progress(completed=completed, total=self.plan.total, detail=detail)
+            action = self._unit_action()
+            self._set_progress(completed=completed, total=self.plan.total, detail=detail or f"{action}: {unit}")
             return
 
         test_match = _TEST_RESULT_RE.search(text)
         if test_match:
-            total_tests = int(test_match.group("total"))
             passed = int(test_match.group("passed"))
             failed = int(test_match.group("failed"))
             skipped = int(test_match.group("skipped"))
@@ -117,7 +124,7 @@ class DotnetProgressTracker:
             self._set_progress(completed=completed, total=self.plan.total, detail=detail)
             return
 
-        if "All projects are up-to-date" in text and self.plan.total:
+        if _RESTORE_UPTODATE_RE.search(text) and self.plan.total:
             self._set_progress(completed=self.plan.total, total=self.plan.total, detail="all projects up-to-date")
             return
 
@@ -140,7 +147,7 @@ class DotnetProgressTracker:
             percent = max(0.0, min(100.0, self.completed / self.total * 100.0))
         return {
             "command": self.plan.command if self.plan else "",
-            "target": self.plan.target if self.plan else "",
+            "target": _display_path(self.plan.target, self.cwd, self._detail_limit()) if self.plan else "",
             "detail": self.detail,
             "completed": self.completed,
             "total": self.total,
@@ -155,17 +162,16 @@ class DotnetProgressTracker:
         if total is not None:
             self.total = total
         if detail is not None:
-            self.detail = detail
+            self.detail = _shorten(detail, self._detail_limit())
         if self.progress is not None and self.task_id is not None:
             kwargs: dict[str, Any] = {}
             if completed is not None:
                 kwargs["completed"] = completed
             if total is not None:
                 kwargs["total"] = total
-            if detail is not None:
-                kwargs["detail"] = detail
             if kwargs:
                 self.progress.update(self.task_id, **kwargs)
+        self._refresh_live()
         if self.update_callback is not None and (force_callback or completed is not None or detail):
             self.update_callback(self.snapshot())
 
@@ -179,12 +185,19 @@ class DotnetProgressTracker:
             return "restore completed"
         if text.startswith("MSBuild version"):
             return "msbuild starting"
-        if "test run for" in lowered:
-            return _shorten(text)
+        if lowered.startswith("build succeeded"):
+            return "build succeeded"
+        if lowered.startswith("build failed"):
+            return "build failed"
+        test_run = _TEST_RUN_FOR_RE.search(text)
+        if test_run:
+            return f"test: {_display_path(test_run.group(1), self.cwd, self._detail_limit())}"
         if "starting test execution" in lowered:
             return "starting tests"
+        if "test files matched" in lowered:
+            return _shorten(text, self._detail_limit())
         if _ERROR_RE.search(text) or _WARNING_RE.search(text):
-            return _shorten(text)
+            return _shorten(_pathish_text_to_relative(text, self.cwd), self._detail_limit())
         return ""
 
     def _unit_for_line(self, text: str) -> str:
@@ -197,12 +210,34 @@ class DotnetProgressTracker:
             left = built.group(1).strip()
             right = built.group(2).strip()
             if not left.lower().startswith(("warning", "error")):
-                return _normalize_project_unit(left or right, self.cwd)
+                return _normalize_project_unit(left if left else right, self.cwd)
 
         if self.plan and self.plan.command == "test" and text.lower().startswith(("passed!", "failed!")):
             return f"test-result:{len(self.seen_units) + 1}"
 
         return ""
+
+    def _unit_action(self) -> str:
+        if self.plan is None:
+            return "current"
+        return {
+            "restore": "restored",
+            "build": "built",
+            "test": "tested",
+            "publish": "published",
+            "pack": "packed",
+        }.get(self.plan.command, "current")
+
+    def _detail_limit(self) -> int:
+        return max(28, self.console.width - 4)
+
+    def _render_group(self) -> Group:
+        detail_text = Text(self.detail or "", overflow="fold", no_wrap=False)
+        return Group(self.progress or Text(""), detail_text)
+
+    def _refresh_live(self) -> None:
+        if self.live is not None:
+            self.live.update(self._render_group())
 
 
 def dotnet_progress_plan(argv: list[str], cwd: str) -> DotnetProgressPlan | None:
@@ -229,7 +264,7 @@ def _find_dotnet_command_index(argv: list[str]) -> int | None:
 
 def _first_dotnet_target(args: Iterable[str]) -> str:
     skip_next = False
-    value_options = {"--framework", "-f", "--runtime", "-r", "--configuration", "-c", "--output", "-o", "--logger", "-l"}
+    value_options = {"--framework", "-f", "--runtime", "-r", "--configuration", "-c", "--output", "-o", "--logger", "-l", "--filter", "--settings"}
     for arg in args:
         if skip_next:
             skip_next = False
@@ -284,19 +319,41 @@ def _projects_from_solution(solution: Path) -> list[Path]:
 
 def _normalize_project_unit(value: str, cwd: str) -> str:
     cleaned = value.strip().strip('"')
-    if cleaned.endswith(('.dll', '.exe')):
-        return Path(cleaned).stem
     path = Path(cleaned)
-    if not path.is_absolute():
-        path = Path(cwd) / path
+    if not path.is_absolute() and (os.sep in cleaned or "/" in cleaned or "\\" in cleaned):
+        path = Path(cwd) / cleaned
     suffix = path.suffix.lower()
-    if suffix in _PROJECT_EXTENSIONS:
-        return path.stem
+    if suffix in _PROJECT_EXTENSIONS or suffix in {".dll", ".exe"} or path.is_absolute():
+        return _display_path(str(path), cwd, 10_000)
     return cleaned
+
+
+def _display_path(value: str, cwd: str, limit: int = 70) -> str:
+    text = value.strip().strip('"')
+    if not text:
+        return ""
+    path = Path(text)
+    looks_pathish = path.is_absolute() or os.sep in text or "/" in text or "\\" in text or bool(path.suffix)
+    if looks_pathish:
+        if not path.is_absolute():
+            path = Path(cwd) / path
+        try:
+            rel = path.resolve().relative_to(Path(cwd).resolve())
+            text = rel.as_posix()
+        except (OSError, ValueError):
+            text = path.as_posix()
+    return _shorten(text, limit)
+
+
+def _pathish_text_to_relative(text: str, cwd: str) -> str:
+    cwd_path = Path(cwd).resolve()
+    return text.replace(str(cwd_path) + os.sep, "").replace(str(cwd_path) + "/", "")
 
 
 def _shorten(value: str, limit: int = 70) -> str:
     text = value.strip()
     if len(text) <= limit:
         return text
+    if limit <= 1:
+        return "…"
     return "…" + text[-(limit - 1) :]

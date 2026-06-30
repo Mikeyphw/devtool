@@ -12,8 +12,11 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from rich import box
+from rich.panel import Panel
 from rich.prompt import Confirm
-from rich.syntax import Syntax
+from rich.table import Table
+from rich.text import Text
 
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
 from .artifacts import (
@@ -32,7 +35,7 @@ from .execution import apply_matrix, wrap_specs_for_chroot
 from .handoff import render_handoff
 from .watch import watch_loop
 from .clipboard import copy_text
-from .console_utils import create_console, resolve_cli_path, syntax_line_numbers
+from .console_utils import create_console, is_narrow_console, resolve_cli_path
 from .completion import ZSH_COMPLETION
 from .config import detect_project_kind, discover_dotnet_candidates, load_project_config, resolve_config_dict
 from .logstore import latest_log, new_log_path
@@ -55,6 +58,70 @@ INTERACTIVE_COPY_COMMANDS = {
     "batch",
 }
 
+_GLOBAL_FLAGS_NO_VALUE = {
+    "-v", "--verbose",
+    "-j", "--json",
+    "-y", "--yes",
+    "-f", "--force",
+    "--dry-run",
+    "-k", "--continue-on-error",
+    "--fail-fast",
+    "-p", "--copy",
+    "--copy-summary", "--copy-json", "--no-clipboard",
+    "-n", "--notify",
+    "--notify-brief", "--notify-on-success", "--notify-on-fail", "--notify-progress",
+    "--tasker", "--tasker-progress", "--tasker-broadcast",
+    "--host",
+}
+_GLOBAL_FLAGS_REQUIRE_VALUE = {
+    "-r", "--repo",
+    "-c", "--config",
+    "--target", "--solution", "--project",
+    "--machine-file", "--copy-via", "--notify-id",
+    "--tasker-dir", "--tasker-action",
+    "--theme", "--chroot", "--stdout-payload",
+    "--save-json-payload", "--json-output",
+}
+_GLOBAL_FLAGS_OPTIONAL_VALUE = {"--machine": {"compact", "pretty"}}
+
+
+def _normalize_global_flag_placement(argv: list[str] | None) -> list[str]:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    moved: list[str] = []
+    rest: list[str] = []
+    i = 0
+    while i < len(raw):
+        token = raw[i]
+        option_name = token.split("=", 1)[0] if token.startswith("--") else token
+
+        if option_name in _GLOBAL_FLAGS_NO_VALUE:
+            moved.append(token)
+            i += 1
+            continue
+
+        if option_name in _GLOBAL_FLAGS_REQUIRE_VALUE:
+            moved.append(token)
+            if "=" not in token and i + 1 < len(raw):
+                moved.append(raw[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+
+        if option_name in _GLOBAL_FLAGS_OPTIONAL_VALUE:
+            moved.append(token)
+            allowed = _GLOBAL_FLAGS_OPTIONAL_VALUE[option_name]
+            if "=" not in token and i + 1 < len(raw) and raw[i + 1] in allowed:
+                moved.append(raw[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+
+        rest.append(token)
+        i += 1
+
+    return moved + rest
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -758,16 +825,32 @@ def _targets(config: ProjectConfig) -> None:
         return
     render_status_table([("target", name) if path == "-" else (name, path) for name, path in rows])
 
-def _format_manifest_json(manifest: dict) -> str:
-    return json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True)
+def _format_manifest_value(value: object) -> str:
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True)
+    if value is None:
+        return "null"
+    return str(value)
+
+
+def _render_artifact_manifest(manifest: dict) -> None:
+    table = Table(
+        title="Artifact manifest",
+        box=box.SIMPLE if is_narrow_console(console) else box.SIMPLE_HEAVY,
+        show_lines=not is_narrow_console(console),
+        expand=True,
+    )
+    table.add_column("Field", style="bold cyan", no_wrap=True, ratio=1)
+    table.add_column("Value", overflow="fold", no_wrap=False, ratio=3)
+    for key in sorted(manifest):
+        table.add_row(Text(str(key), overflow="fold"), Text(_format_manifest_value(manifest[key]), overflow="fold", no_wrap=False))
+    console.print(Panel(table, title="Parsed artifact metadata", expand=True))
 
 
 def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict) -> None:
     if not manifest:
         return
-    manifest_text = _format_manifest_json(manifest)
-    console.print("[bold cyan]Artifact manifest[/bold cyan]")
-    console.print(Syntax(manifest_text, "json", line_numbers=syntax_line_numbers(console)))
+    _render_artifact_manifest(manifest)
     if getattr(args, "yes", False) or getattr(args, "force", False):
         return
     if console.is_interactive and sys.stdin.isatty():
@@ -1068,9 +1151,9 @@ def _config_command(args: argparse.Namespace) -> int:
     return 1
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(_normalize_global_flag_placement(argv))
     _normalize_tasker_args(args)
     _validate_apply_args(args, parser)
     effective_payload, copy_mode = _validate_output_flags(args, parser)
@@ -1317,3 +1400,11 @@ def main(argv: list[str] | None = None) -> int:
     _finish_tasker(tasker_progress, totals=totals, results=results, command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds, args=args)
     _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds)
     return 0 if totals["failed"] == 0 else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted by user.[/yellow]")
+        return 130

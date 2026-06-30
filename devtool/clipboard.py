@@ -11,6 +11,7 @@ from pathlib import Path
 from .console_utils import is_termux_environment
 
 CLIPBOARD_STARTUP_GRACE_SECONDS = 0.15
+CLIPBOARD_COMMAND_TIMEOUT_SECONDS = float(os.environ.get("DEVTOOL_CLIPBOARD_TIMEOUT", "4.0"))
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,30 @@ def _can_use_x11() -> bool:
 
 
 def _run_clipboard_command(command: list[str], text: str, backend: str) -> ClipboardResult:
+    # Termux and pbcopy should consume stdin and exit.  Use communicate() with a
+    # timeout so devtool never appears to hang after setting the clipboard.
+    if backend in {"termux-clipboard-set", "pbcopy"}:
+        try:
+            completed = subprocess.run(
+                command,
+                input=text,
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=CLIPBOARD_COMMAND_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return ClipboardResult(False, backend=backend, reason=f"{backend} timed out after {CLIPBOARD_COMMAND_TIMEOUT_SECONDS:.1f}s")
+        except OSError as exc:
+            return ClipboardResult(False, backend=backend, reason=str(exc))
+        if completed.returncode == 0:
+            return ClipboardResult(True, backend=backend)
+        return ClipboardResult(False, backend=backend, reason=f"{backend} exited with status {completed.returncode}")
+
+    # X11/Wayland clipboard owners may intentionally stay alive.  Start them in
+    # a new session, close stdin, and return promptly instead of waiting for the
+    # long-lived owner process.
     try:
         process = subprocess.Popen(
             command,
@@ -106,7 +131,9 @@ def _run_clipboard_command(command: list[str], text: str, backend: str) -> Clipb
 
     time.sleep(CLIPBOARD_STARTUP_GRACE_SECONDS)
     returncode = process.poll()
-    if returncode is None or returncode == 0:
+    if returncode is None:
+        return ClipboardResult(True, backend=backend)
+    if returncode == 0:
         return ClipboardResult(True, backend=backend)
 
     return ClipboardResult(

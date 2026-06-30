@@ -602,3 +602,22 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["snapshot handoff"])
+
+class GlobalFlagPlacementTests(unittest.TestCase):
+    def test_yes_after_subcommand_is_treated_as_global(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            with patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("restore", ["dotnet", "restore"], 0, 0.0, "ok", [])], "ok")):
+                rc = main(["--repo", str(root), "validate", "--yes"])
+            self.assertEqual(rc, 0)
+
+    def test_repo_after_subcommand_is_treated_as_global(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            with patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("restore", ["dotnet", "restore"], 0, 0.0, "ok", [])], "ok")):
+                rc = main(["validate", "--repo", str(root)])
+            self.assertEqual(rc, 0)

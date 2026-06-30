@@ -216,6 +216,25 @@ def _interesting_output_line(line: str) -> bool:
     return bool(re.search(r"(error|warning|failed|fail|restore|build|test|pack|publish|\d+%)", text, re.IGNORECASE))
 
 
+
+
+def _terminate_process(proc: subprocess.Popen[str]) -> None:
+    try:
+        proc.terminate()
+        proc.wait(timeout=2.0)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except OSError:
+        return
+    try:
+        proc.kill()
+        proc.wait(timeout=2.0)
+    except OSError:
+        pass
+    except subprocess.TimeoutExpired:
+        pass
+
 def _run_process_live(
     argv: list[str],
     *,
@@ -268,22 +287,30 @@ def _run_process_live(
                 percent=snapshot.get("percent"),
             )
         tracker.update_callback = _tasker_update
-    if tracker is None:
-        for line in proc.stdout:
-            output_parts.append(line)
-            print(line, end="", flush=True)
-        return proc.wait(), "".join(output_parts)
+    try:
+        if tracker is None:
+            for line in proc.stdout:
+                output_parts.append(line)
+                if verbose:
+                    print(line, end="", flush=True)
+            return proc.wait(), "".join(output_parts)
 
-    with tracker:
-        for line in proc.stdout:
-            output_parts.append(line)
-            # Non-verbose mode intentionally keeps command stdout/stderr captured only.
-            # Dotnet commands get a parsed Rich progress display instead of raw output.
-            # Use --verbose when the full restore/build/test stream is needed live.
-            tracker.update_from_line(line)
-        returncode = proc.wait()
-        tracker.finish(returncode)
-    return returncode, "".join(output_parts)
+        with tracker:
+            for line in proc.stdout:
+                output_parts.append(line)
+                # Non-verbose mode intentionally keeps command stdout/stderr captured only.
+                # Dotnet commands get a parsed Rich progress display instead of raw output.
+                # Use --verbose when the full restore/build/test stream is needed live.
+                tracker.update_from_line(line)
+            returncode = proc.wait()
+            tracker.finish(returncode)
+        return returncode, "".join(output_parts)
+    except KeyboardInterrupt:
+        _terminate_process(proc)
+        output_parts.append("\nInterrupted by user.\n")
+        if tracker is not None:
+            tracker.finish(130)
+        return 130, "".join(output_parts)
 
 
 def run_specs(

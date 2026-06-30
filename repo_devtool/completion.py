@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+ZSH_COMPLETION = r"""#compdef devtool
+
+_devtool_steps() {
+  local -a steps
+  steps=(
+    'restore:restore dependencies'
+    'build:build project'
+    'test:run tests'
+    'validate:restore+build+test'
+    'wine-validate:validate with wine env'
+    'run:run project'
+    'package:package project'
+    'apply-overlay=:apply overlay artifact'
+    'apply-snapshot=:apply snapshot artifact'
+    'commit=:git commit message'
+    'tag=:create git tag'
+  )
+  _describe -t steps 'batch step' steps
+}
+
+_devtool_repo_path() {
+  if (( $+commands[fzf] )); then
+    local selected
+    selected=$(find . -maxdepth 4 -type d 2>/dev/null | fzf --prompt='repo> ' --height=40% --reverse) || return 1
+    compadd -- "$selected"
+  else
+    _files -/
+  fi
+}
+
+_devtool_artifact_path() {
+  if (( $+commands[fzf] )); then
+    local selected
+    selected=$(find ~/Downloads . -maxdepth 4 \( -name '*.zip' -o -name '*.tar' -o -name '*.tar.gz' -o -name '*.tgz' \) 2>/dev/null | fzf --prompt='artifact> ' --height=40% --reverse) || return 1
+    compadd -- "$selected"
+  else
+    _files
+  fi
+}
+
+_devtool() {
+  local context state line
+  typeset -A opt_args
+
+  _arguments -C \
+    '(-r --repo)'{-r,--repo}'[repository root]:repo:_devtool_repo_path' \
+    '(-c --config)'{-c,--config}'[config path]:config:_files' \
+    '(-v --verbose)'{-v,--verbose}'[stream full output]' \
+    '(-j --json)'{-j,--json}'[emit machine envelope]' \
+    '(-y --yes)'{-y,--yes}'[assume yes for confirmations]' \
+    '(-f --force)'{-f,--force}'[force dangerous actions]' \
+    '(-n --notify)'{-n,--notify}'[send notification]' \
+    '--notify-brief[send brief notification]' \
+    '--notify-on-success[only notify on success]' \
+    '--notify-on-fail[only notify on failure]' \
+    '--copy[always copy raw output]' \
+    '--copy-summary[always copy rendered summary]' \
+    '--no-clipboard[never prompt for clipboard]' \
+    '--dry-run[print commands without running]' \
+    '--continue-on-error[continue batch after errors]' \
+    '--fail-fast[stop batch on first error]' \
+    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-snapshot batch logs status doctor config init-config completion tag release-notes ai-prompt v wv b t ao as)' \
+    '*::arg:->args'
+
+  case $words[1] in
+    validate|v|wine-validate|wv)
+      _arguments \
+        '--skip-restore[skip restore during validation]' \
+        '--skip-build[skip build during validation]' \
+        '--skip-test[skip test during validation]'
+      ;;
+    apply-overlay|ao|apply-snapshot|as)
+      _arguments \
+        '--validate[run validation after apply]' \
+        '--validate-only[skip apply and only run validation]' \
+        '--skip-restore[skip restore during validation]' \
+        '--skip-build[skip build during validation]' \
+        '--skip-test[skip test during validation]' \
+        '--commit[commit with this message after apply and optional validation]:message:' \
+        '--commit-even-on-failure[commit after a successful apply even if validation fails]'
+      _devtool_artifact_path
+      ;;
+    batch)
+      _devtool_steps
+      ;;
+    config)
+      _values 'config subcommand' show defaults resolve doctor
+      ;;
+    completion)
+      _values 'shell' zsh
+      ;;
+    *)
+      ;;
+  esac
+}
+
+_devtool "$@"
+"""
