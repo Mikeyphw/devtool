@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from io import StringIO
 
-from repo_devtool.models import Issue, OperationResult
-from repo_devtool.summary import build_runner_json, render_status_table, render_summary
+from devtool.models import Issue, OperationResult
+from devtool.summary import build_runner_json, render_status_table, render_summary
 from rich.console import Console
 
 

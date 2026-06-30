@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from repo_devtool.diagnostics import parse_issues
+from devtool.diagnostics import parse_issues
 
 
 class DiagnosticTests(unittest.TestCase):

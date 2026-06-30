@@ -4,7 +4,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from repo_devtool.notify import available_notifier, send_notification
+from devtool.notify import available_notifier, send_notification
 
 
 class NotifyTests(unittest.TestCase):
@@ -12,7 +12,7 @@ class NotifyTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {"TERMUX_VERSION": "1"}, clear=False),
             patch(
-                "repo_devtool.notify.shutil.which",
+                "devtool.notify.shutil.which",
                 side_effect=lambda name: {
                     "termux-notification": "/data/data/com.termux/files/usr/bin/termux-notification",
                     "notify-send": "/data/data/com.termux/files/usr/bin/notify-send",
@@ -25,7 +25,7 @@ class NotifyTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {"TERMUX_VERSION": "1"}, clear=True),
             patch(
-                "repo_devtool.notify.shutil.which",
+                "devtool.notify.shutil.which",
                 side_effect=lambda name: "/data/data/com.termux/files/usr/bin/notify-send" if name == "notify-send" else None,
             ),
         ):
@@ -33,8 +33,8 @@ class NotifyTests(unittest.TestCase):
 
     def test_send_notification_uses_termux_notification(self) -> None:
         with (
-            patch("repo_devtool.notify.available_notifier", return_value="termux-notification"),
-            patch("repo_devtool.notify.subprocess.run") as run_mock,
+            patch("devtool.notify.available_notifier", return_value="termux-notification"),
+            patch("devtool.notify.subprocess.run") as run_mock,
         ):
             self.assertTrue(send_notification("Done", "PASS"))
         run_mock.assert_called_once_with(

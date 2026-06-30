@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from repo_devtool.console_utils import create_console, is_narrow_console, resolve_cli_path, syntax_line_numbers
-from repo_devtool.summary import render_status_table
+from devtool.console_utils import create_console, is_narrow_console, resolve_cli_path, syntax_line_numbers
+from devtool.summary import render_status_table
 
 
 class ConsoleUtilsTests(unittest.TestCase):

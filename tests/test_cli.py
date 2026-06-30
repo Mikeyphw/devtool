@@ -10,12 +10,12 @@ from zipfile import ZipFile
 import tomllib
 from unittest.mock import patch
 
-from repo_devtool.ai_prompt import AiPromptOptions, render_ai_prompt
-from repo_devtool.artifacts import preview_artifact
-from repo_devtool import __version__
-from repo_devtool.cli import _notification_message, build_parser, main
-from repo_devtool.logstore import latest_log, write_log
-from repo_devtool.summary import build_json_summary
+from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
+from devtool.artifacts import preview_artifact
+from devtool import __version__
+from devtool.cli import _notification_message, build_parser, main
+from devtool.logstore import latest_log, write_log
+from devtool.summary import build_json_summary
 
 
 def _sample_ai_prompt_options(output_format: str = "markdown") -> AiPromptOptions:
@@ -146,11 +146,11 @@ class CliTests(unittest.TestCase):
 
             def fake_run_specs(config, specs, **kwargs):
                 captured.extend(spec.name for spec in specs)
-                return ([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")
+                return ([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")
 
             with (
-                patch("repo_devtool.cli.run_specs", side_effect=fake_run_specs),
-                patch("repo_devtool.cli.render_summary"),
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "validate", "--skip-restore", "--skip-build"])
 
@@ -183,8 +183,8 @@ class CliTests(unittest.TestCase):
             copied: list[str] = []
 
             with (
-                patch("repo_devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or __import__("repo_devtool.clipboard").clipboard.ClipboardResult(True, backend="xclip")),
-                patch("repo_devtool.cli.console.print"),
+                patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or __import__("devtool.clipboard").clipboard.ClipboardResult(True, backend="xclip")),
+                patch("devtool.cli.console.print"),
             ):
                 rc = main(["--repo", str(root), "--copy-json", "--dry-run", "validate"])
 
@@ -203,8 +203,8 @@ class CliTests(unittest.TestCase):
             (root / "App.sln").write_text("", encoding="utf-8")
 
             with (
-                patch("repo_devtool.cli.copy_text", return_value=__import__("repo_devtool.clipboard").clipboard.ClipboardResult(False, backend="xclip", reason="nope")),
-                patch("repo_devtool.cli.console.print") as mock_print,
+                patch("devtool.cli.copy_text", return_value=__import__("devtool.clipboard").clipboard.ClipboardResult(False, backend="xclip", reason="nope")),
+                patch("devtool.cli.console.print") as mock_print,
             ):
                 rc = main(["--repo", str(root), "--copy", "--dry-run", "validate"])
 
@@ -218,8 +218,8 @@ class CliTests(unittest.TestCase):
             (root / ".git").mkdir()
 
             with (
-                patch("repo_devtool.cli.Confirm.ask") as mock_confirm,
-                patch("repo_devtool.cli.console.print"),
+                patch("devtool.cli.Confirm.ask") as mock_confirm,
+                patch("devtool.cli.console.print"),
             ):
                 rc = main(["--repo", str(root), "--dry-run", "commit", "example commit"])
 
@@ -370,12 +370,12 @@ class CliTests(unittest.TestCase):
                 zf.writestr("README.txt", "ok")
 
             with (
-                patch.object(__import__("repo_devtool.cli").cli.console, "is_interactive", True),
-                patch("repo_devtool.cli.sys.stdin.isatty", return_value=True),
-                patch("repo_devtool.cli._git_dirty", return_value=True),
-                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
-                patch("repo_devtool.cli.Confirm.ask", side_effect=[True, True]) as mock_confirm,
-                patch("repo_devtool.cli.render_summary"),
+                patch.object(__import__("devtool.cli").cli.console, "is_interactive", True),
+                patch("devtool.cli.sys.stdin.isatty", return_value=True),
+                patch("devtool.cli._git_dirty", return_value=True),
+                patch("devtool.cli.apply_overlay", return_value=__import__("devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("devtool.cli.Confirm.ask", side_effect=[True, True]) as mock_confirm,
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "--no-clipboard", "apply-overlay", str(artifact)])
 
@@ -396,10 +396,10 @@ class CliTests(unittest.TestCase):
                 zf.writestr("README.txt", "ok")
 
             with (
-                patch("repo_devtool.cli._git_dirty", return_value=True),
-                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
-                patch("repo_devtool.cli.Confirm.ask") as mock_confirm,
-                patch("repo_devtool.cli.render_summary"),
+                patch("devtool.cli._git_dirty", return_value=True),
+                patch("devtool.cli.apply_overlay", return_value=__import__("devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("devtool.cli.Confirm.ask") as mock_confirm,
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", "--interactive", str(artifact)])
 
@@ -416,9 +416,9 @@ class CliTests(unittest.TestCase):
                 zf.writestr("README.txt", "ok")
 
             with (
-                patch("repo_devtool.cli.apply_overlay") as mock_apply,
-                patch("repo_devtool.cli.run_specs", return_value=([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")) as mock_run_specs,
-                patch("repo_devtool.cli.render_summary"),
+                patch("devtool.cli.apply_overlay") as mock_apply,
+                patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")) as mock_run_specs,
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate-only", str(artifact)])
 
@@ -439,13 +439,13 @@ class CliTests(unittest.TestCase):
 
             def fake_run_specs(config, specs, **kwargs):
                 captured.extend(spec.name for spec in specs)
-                return ([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")
+                return ([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")
 
             with (
-                patch("repo_devtool.cli._git_dirty", return_value=False),
-                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
-                patch("repo_devtool.cli.run_specs", side_effect=fake_run_specs),
-                patch("repo_devtool.cli.render_summary"),
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.apply_overlay", return_value=__import__("devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", str(artifact)])
 
@@ -491,10 +491,10 @@ class CliTests(unittest.TestCase):
                 return [], ""
 
             with (
-                patch("repo_devtool.cli._git_dirty", return_value=False),
-                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
-                patch("repo_devtool.cli.run_specs", side_effect=fake_run_specs),
-                patch("repo_devtool.cli.render_summary"),
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.apply_overlay", return_value=__import__("devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", str(artifact)])
 
@@ -514,14 +514,14 @@ class CliTests(unittest.TestCase):
 
             def fake_git_commit(repo_root, message, *, verbose=False, dry_run=False):
                 commit_calls.append(message)
-                return ([__import__("repo_devtool.models").models.OperationResult("git-commit", ["git", "commit", "-m", message], 0, 0.0, "committed", [])], "commit output")
+                return ([__import__("devtool.models").models.OperationResult("git-commit", ["git", "commit", "-m", message], 0, 0.0, "committed", [])], "commit output")
 
             with (
-                patch("repo_devtool.cli._git_dirty", return_value=False),
-                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
-                patch("repo_devtool.cli.run_specs", return_value=([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")),
-                patch("repo_devtool.cli.git_commit", side_effect=fake_git_commit),
-                patch("repo_devtool.cli.render_summary"),
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.apply_overlay", return_value=__import__("devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")),
+                patch("devtool.cli.git_commit", side_effect=fake_git_commit),
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--commit", "handoff commit", str(artifact)])
 
@@ -538,11 +538,11 @@ class CliTests(unittest.TestCase):
                 zf.writestr("README.txt", "ok")
 
             with (
-                patch("repo_devtool.cli._git_dirty", return_value=False),
-                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
-                patch("repo_devtool.cli.run_specs", return_value=([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
-                patch("repo_devtool.cli.git_commit") as mock_commit,
-                patch("repo_devtool.cli.render_summary"),
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.apply_overlay", return_value=__import__("devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
+                patch("devtool.cli.git_commit") as mock_commit,
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--commit", "handoff commit", str(artifact)])
 
@@ -562,14 +562,14 @@ class CliTests(unittest.TestCase):
 
             def fake_git_commit(repo_root, message, *, verbose=False, dry_run=False):
                 commit_calls.append(message)
-                return ([__import__("repo_devtool.models").models.OperationResult("git-commit", ["git", "commit", "-m", message], 0, 0.0, "committed", [])], "commit output")
+                return ([__import__("devtool.models").models.OperationResult("git-commit", ["git", "commit", "-m", message], 0, 0.0, "committed", [])], "commit output")
 
             with (
-                patch("repo_devtool.cli._git_dirty", return_value=False),
-                patch("repo_devtool.cli.apply_overlay", return_value=__import__("repo_devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
-                patch("repo_devtool.cli.run_specs", return_value=([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
-                patch("repo_devtool.cli.git_commit", side_effect=fake_git_commit),
-                patch("repo_devtool.cli.render_summary"),
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.apply_overlay", return_value=__import__("devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
+                patch("devtool.cli.git_commit", side_effect=fake_git_commit),
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--commit", "handoff commit", "--commit-even-on-failure", str(artifact)])
 
@@ -589,14 +589,14 @@ class CliTests(unittest.TestCase):
 
             def fake_git_commit(repo_root, message, *, verbose=False, dry_run=False):
                 commit_calls.append(message)
-                return ([__import__("repo_devtool.models").models.OperationResult("git-commit", ["git", "commit", "-m", message], 0, 0.0, "committed", [])], "commit output")
+                return ([__import__("devtool.models").models.OperationResult("git-commit", ["git", "commit", "-m", message], 0, 0.0, "committed", [])], "commit output")
 
             with (
-                patch("repo_devtool.cli._git_dirty", return_value=False),
-                patch("repo_devtool.cli.apply_snapshot", return_value=__import__("repo_devtool.models").models.OperationResult("apply-snapshot", ["unzip"], 0, 0.0, "ok", [])),
-                patch("repo_devtool.cli.run_specs", return_value=([__import__("repo_devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")),
-                patch("repo_devtool.cli.git_commit", side_effect=fake_git_commit),
-                patch("repo_devtool.cli.render_summary"),
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.apply_snapshot", return_value=__import__("devtool.models").models.OperationResult("apply-snapshot", ["unzip"], 0, 0.0, "ok", [])),
+                patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")),
+                patch("devtool.cli.git_commit", side_effect=fake_git_commit),
+                patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "--yes", "apply-snapshot", "--validate", "--commit", "snapshot handoff", str(artifact)])
 

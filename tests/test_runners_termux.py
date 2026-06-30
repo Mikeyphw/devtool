@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from repo_devtool.models import CommandSpec, ProjectConfig
-from repo_devtool.runners import run_specs
+from devtool.models import CommandSpec, ProjectConfig
+from devtool.runners import run_specs
 
 
 class RunnersTermuxTests(unittest.TestCase):
@@ -34,11 +34,11 @@ class RunnersTermuxTests(unittest.TestCase):
 
             with (
                 patch.dict("os.environ", {"TERMUX_VERSION": "1"}, clear=False),
-                patch("repo_devtool.runners.shutil.which", side_effect=lambda name: {
+                patch("devtool.runners.shutil.which", side_effect=lambda name: {
                     "proot": "/data/data/com.termux/files/usr/bin/proot",
                     "dotnet": "/data/data/com.termux/files/usr/bin/dotnet",
                 }.get(name)),
-                patch("repo_devtool.runners.subprocess.run", side_effect=fake_run),
+                patch("devtool.runners.subprocess.run", side_effect=fake_run),
             ):
                 results, _ = run_specs(config, [spec], verbose=False)
 
@@ -60,11 +60,11 @@ class RunnersTermuxTests(unittest.TestCase):
 
             with (
                 patch.dict("os.environ", {"TERMUX_VERSION": "1", "DEVTOOL_TERMUX_DOTNET": "/custom/dotnet"}, clear=False),
-                patch("repo_devtool.runners.shutil.which", side_effect=lambda name: {
+                patch("devtool.runners.shutil.which", side_effect=lambda name: {
                     "proot": "/data/data/com.termux/files/usr/bin/proot",
                     "dotnet": "/data/data/com.termux/files/usr/bin/dotnet",
                 }.get(name)),
-                patch("repo_devtool.runners.subprocess.run", side_effect=fake_run),
+                patch("devtool.runners.subprocess.run", side_effect=fake_run),
             ):
                 results, _ = run_specs(config, [spec], verbose=False)
 

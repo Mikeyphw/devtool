@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from repo_devtool.clipboard import ClipboardResult, copy_text
+from devtool.clipboard import ClipboardResult, copy_text
 
 
 class ClipboardTests(unittest.TestCase):
@@ -11,14 +11,14 @@ class ClipboardTests(unittest.TestCase):
         calls: list[str] = []
 
         with (
-            patch("repo_devtool.clipboard._can_use_x11", return_value=True),
-            patch("repo_devtool.clipboard._can_use_wl_copy", return_value=True),
+            patch("devtool.clipboard._can_use_x11", return_value=True),
+            patch("devtool.clipboard._can_use_wl_copy", return_value=True),
             patch(
-                "repo_devtool.clipboard.shutil.which",
+                "devtool.clipboard.shutil.which",
                 side_effect=lambda name: f"/usr/bin/{name}" if name in {"xclip", "xsel", "wl-copy"} else None,
             ),
             patch(
-                "repo_devtool.clipboard._run_clipboard_command",
+                "devtool.clipboard._run_clipboard_command",
                 side_effect=lambda command, text, backend: calls.append(backend) or ClipboardResult(True, backend=backend),
             ),
         ):
@@ -33,11 +33,11 @@ class ClipboardTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {"TERMUX_VERSION": "1"}, clear=False),
             patch(
-                "repo_devtool.clipboard.shutil.which",
+                "devtool.clipboard.shutil.which",
                 side_effect=lambda name: f"/usr/bin/{name}" if name == "termux-clipboard-set" else None,
             ),
             patch(
-                "repo_devtool.clipboard._run_clipboard_command",
+                "devtool.clipboard._run_clipboard_command",
                 side_effect=lambda command, text, backend: calls.append(backend) or ClipboardResult(True, backend=backend),
             ),
         ):
@@ -49,14 +49,14 @@ class ClipboardTests(unittest.TestCase):
 
     def test_copy_text_returns_last_failure_when_backends_fail(self) -> None:
         with (
-            patch("repo_devtool.clipboard._can_use_x11", return_value=True),
-            patch("repo_devtool.clipboard._can_use_wl_copy", return_value=False),
+            patch("devtool.clipboard._can_use_x11", return_value=True),
+            patch("devtool.clipboard._can_use_wl_copy", return_value=False),
             patch(
-                "repo_devtool.clipboard.shutil.which",
+                "devtool.clipboard.shutil.which",
                 side_effect=lambda name: f"/usr/bin/{name}" if name in {"xclip", "xsel"} else None,
             ),
             patch(
-                "repo_devtool.clipboard._run_clipboard_command",
+                "devtool.clipboard._run_clipboard_command",
                 side_effect=[
                     ClipboardResult(False, backend="xclip", reason="xclip failed"),
                     ClipboardResult(False, backend="xsel", reason="xsel failed"),
@@ -88,10 +88,10 @@ class ClipboardTests(unittest.TestCase):
                 return None
 
         with (
-            patch("repo_devtool.clipboard.subprocess.Popen", return_value=FakeProcess()),
-            patch("repo_devtool.clipboard.time.sleep", return_value=None),
+            patch("devtool.clipboard.subprocess.Popen", return_value=FakeProcess()),
+            patch("devtool.clipboard.time.sleep", return_value=None),
         ):
-            from repo_devtool.clipboard import _run_clipboard_command
+            from devtool.clipboard import _run_clipboard_command
 
             result = _run_clipboard_command(["xclip", "-selection", "clipboard"], "hello", "xclip")
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from contextlib import redirect_stderr
 from unittest.mock import patch
 
-from repo_devtool.config import detect_project_kind, discover_dotnet_candidates, generate_template, load_project_config, resolve_config_dict
+from devtool.config import detect_project_kind, discover_dotnet_candidates, generate_template, load_project_config, resolve_config_dict
 
 
 class ConfigTests(unittest.TestCase):

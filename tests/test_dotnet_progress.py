@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from repo_devtool.dotnet_progress import dotnet_progress_plan
+from devtool.dotnet_progress import dotnet_progress_plan
 
 
 class DotnetProgressTests(unittest.TestCase):
@@ -64,7 +64,7 @@ class DotnetProgressTests(unittest.TestCase):
     def test_tracker_can_render_a_progress_line(self) -> None:
         from io import StringIO
         from rich.console import Console
-        from repo_devtool.dotnet_progress import DotnetProgressTracker
+        from devtool.dotnet_progress import DotnetProgressTracker
 
         buffer = StringIO()
         console = Console(file=buffer, force_terminal=True, width=100)

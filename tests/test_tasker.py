@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from repo_devtool.models import OperationResult
-from repo_devtool.tasker import TaskerProgressSink, send_progress_notification, send_tasker_broadcast
+from devtool.models import OperationResult
+from devtool.tasker import TaskerProgressSink, send_progress_notification, send_tasker_broadcast
 
 
 class TaskerProgressTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertEqual(len(runs), 1)
 
     def test_send_tasker_broadcast_uses_event_and_state_paths(self) -> None:
-        with patch("repo_devtool.tasker.shutil.which", return_value="/system/bin/am"), patch("repo_devtool.tasker.subprocess.run") as run_mock:
+        with patch("devtool.tasker.shutil.which", return_value="/system/bin/am"), patch("devtool.tasker.subprocess.run") as run_mock:
             run_mock.return_value.returncode = 0
             ok = send_tasker_broadcast("net.mph.devtool.EVENT", Path("/tmp/event.json"), Path("/tmp/state.json"), "progress", "rid")
         self.assertTrue(ok)
@@ -50,7 +50,7 @@ class TaskerProgressTests(unittest.TestCase):
         self.assertIn("/tmp/state.json", argv)
 
     def test_send_progress_notification_uses_stable_id(self) -> None:
-        with patch("repo_devtool.tasker.shutil.which", return_value="/usr/bin/termux-notification"), patch("repo_devtool.tasker.subprocess.run") as run_mock:
+        with patch("devtool.tasker.shutil.which", return_value="/usr/bin/termux-notification"), patch("devtool.tasker.subprocess.run") as run_mock:
             run_mock.return_value.returncode = 0
             ok = send_progress_notification(notification_id="7771", title="devtool", body="running", ongoing=True)
         self.assertTrue(ok)
