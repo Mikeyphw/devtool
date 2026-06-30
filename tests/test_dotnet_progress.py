@@ -80,21 +80,71 @@ class DotnetProgressTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-class DotnetProgressRelativePathTests(unittest.TestCase):
-    def test_tracker_uses_repo_relative_project_detail(self) -> None:
-        import tempfile
-        from pathlib import Path
+class DotnetProgressDynamicTests(unittest.TestCase):
+    def test_tracker_expands_total_when_msbuild_reports_more_outputs_than_estimate(self) -> None:
+        from io import StringIO
         from rich.console import Console
         from devtool.dotnet_progress import DotnetProgressTracker
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            project = root / "src" / "App" / "App.csproj"
-            project.parent.mkdir(parents=True)
-            project.write_text("<Project />", encoding="utf-8")
-            console = Console(force_terminal=False, width=60)
-            tracker = DotnetProgressTracker(["dotnet", "restore", str(project)], str(root), "restore", console)
-            tracker.update_callback = lambda snapshot: None
-            tracker.update_from_line(f"  Restored {project} (in 10 ms).")
-            self.assertIn("src/App/App.csproj", tracker.detail)
-            self.assertNotIn(str(root), tracker.detail)
+            (root / "src").mkdir()
+            (root / "src" / "App.csproj").write_text("", encoding="utf-8")
+            buffer = StringIO()
+            console = Console(file=buffer, force_terminal=True, width=80)
+            tracker = DotnetProgressTracker(["dotnet", "build", "src/App.csproj"], str(root), "build", console)
+
+            with tracker:
+                tracker.update_from_line(f"  App -> {root}/src/bin/Debug/net8.0/App.dll")
+                tracker.update_from_line(f"  Lib -> {root}/src/bin/Debug/net8.0/Lib.dll")
+                tracker.finish(0)
+
+            snap = tracker.snapshot()
+            self.assertEqual(snap["completed"], 2)
+            self.assertEqual(snap["total"], 2)
+            self.assertIn("src/bin/Debug/net8.0/Lib.dll", snap["detail"])
+            self.assertNotIn(str(root), snap["detail"])
+
+    def test_tracker_reports_restored_project_relative_path(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            project = root / "src" / "App.csproj"
+            project.write_text("", encoding="utf-8")
+            buffer = StringIO()
+            console = Console(file=buffer, force_terminal=True, width=80)
+            tracker = DotnetProgressTracker(["dotnet", "restore", "src/App.csproj"], str(root), "restore", console)
+
+            with tracker:
+                tracker.update_from_line(f"  Restored {project} (in 123 ms).")
+                tracker.finish(0)
+
+            snap = tracker.snapshot()
+            self.assertIn("restored src/App.csproj", snap["detail"])
+            self.assertNotIn(str(root), snap["detail"])
+
+    def test_tracker_reports_test_assembly_relative_path(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dll = root / "tests" / "App.Tests" / "bin" / "Debug" / "net8.0" / "App.Tests.dll"
+            dll.parent.mkdir(parents=True)
+            dll.write_text("", encoding="utf-8")
+            buffer = StringIO()
+            console = Console(file=buffer, force_terminal=True, width=80)
+            tracker = DotnetProgressTracker(["dotnet", "test", "tests/App.Tests/App.Tests.csproj"], str(root), "test", console)
+
+            with tracker:
+                tracker.update_from_line(f"Test run for {dll} (.NETCoreApp,Version=v8.0)")
+                tracker.finish(0)
+
+            snap = tracker.snapshot()
+            self.assertIn("testing tests/App.Tests/bin/Debug/net8.0/App.Tests.dll", snap["detail"])
+            self.assertNotIn(str(root), snap["detail"])

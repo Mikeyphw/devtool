@@ -31,10 +31,8 @@ def detect_console_width(default: int = 100) -> int:
 
 def create_console(*, stderr: bool = False) -> Console:
     kwargs: dict[str, object] = {"stderr": stderr}
-    # Always pass an explicit width so Rich renderables respect narrow Termux
-    # sessions, SSH panes, and Tasker-driven terminals.  Raw machine payloads
-    # still use print() and are not wrapped through Rich.
-    kwargs["width"] = detect_console_width()
+    if is_termux_environment():
+        kwargs["width"] = detect_console_width()
     return Console(**kwargs)
 
 
@@ -69,7 +67,3 @@ def resolve_cli_path(path_text: str) -> Path:
 
     expanded = os.path.expandvars(raw)
     return Path(expanded).expanduser().resolve()
-
-
-def terminal_width(default: int = 100) -> int:
-    return detect_console_width(default=default)

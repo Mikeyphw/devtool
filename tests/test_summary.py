@@ -4,7 +4,7 @@ import unittest
 from io import StringIO
 
 from devtool.models import Issue, OperationResult
-from devtool.summary import build_runner_json, render_status_table, render_summary
+from devtool.summary import build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from rich.console import Console
 
 
@@ -49,6 +49,27 @@ class SummaryRenderingTests(unittest.TestCase):
         self.assertIn("[repo]", output)
         self.assertIn("solution", output)
 
+
+
+    def test_render_artifact_manifest_uses_semantic_sections(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=80)
+        render_artifact_manifest(
+            {
+                "type": "overlay",
+                "repo_name": "sims3tools",
+                "target": "s3ow_avalonia_TextureTweaker3_Modern",
+                "files": ["a.cs", "b.cs"],
+                "validation": {"dotnet_available_in_authoring_environment": False, "recommended_commands": ["dotnet test App.sln --no-build"]},
+            },
+            console_obj=console,
+        )
+        output = stream.getvalue()
+        self.assertIn("Parsed artifact metadata", output)
+        self.assertIn("Summary", output)
+        self.assertIn("Files", output)
+        self.assertIn("Recommended commands", output)
+        self.assertIn("dotnet test App.sln --no-build", output)
 
     def test_build_runner_json_uses_concise_notification_format(self) -> None:
         result = OperationResult(

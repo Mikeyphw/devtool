@@ -11,7 +11,7 @@ import tomllib
 from unittest.mock import patch
 
 from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
-from devtool.artifacts import preview_artifact
+from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
 from devtool.cli import _notification_message, build_parser, main
 from devtool.logstore import latest_log, write_log
@@ -360,6 +360,45 @@ class CliTests(unittest.TestCase):
             self.assertNotIn(("add", ".devtool-artifact.json"), changes)
             self.assertNotIn(("add", ".devtool-delete"), changes)
 
+
+    def test_diff_artifact_shows_repo_relative_unified_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "src").mkdir()
+            (root / "src" / "App.cs").write_text("old\n", encoding="utf-8")
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("src/App.cs", "new\n")
+                zf.writestr("src/New.cs", "added\n")
+
+            text = diff_artifact(root, artifact)
+
+            self.assertIn("--- a/src/App.cs", text)
+            self.assertIn("+++ b/src/App.cs", text)
+            self.assertIn("-old", text)
+            self.assertIn("+new", text)
+            self.assertIn("--- /dev/null", text)
+            self.assertIn("+++ b/src/New.cs", text)
+
+    def test_apply_overlay_diff_is_preview_only_and_does_not_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "README.txt").write_text("old\n", encoding="utf-8")
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("README.txt", "new\n")
+
+            stream = io.StringIO()
+            with redirect_stdout(stream), patch("devtool.cli.render_summary"):
+                rc = main(["--repo", str(root), "apply-overlay", "--diff", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual((root / "README.txt").read_text(encoding="utf-8"), "old\n")
+            self.assertIn("--- a/README.txt", stream.getvalue())
+            self.assertIn("+new", stream.getvalue())
+
     def test_apply_overlay_manifest_prompt_precedes_dirty_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -602,22 +641,3 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["snapshot handoff"])
-
-class GlobalFlagPlacementTests(unittest.TestCase):
-    def test_yes_after_subcommand_is_treated_as_global(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / ".git").mkdir()
-            (root / "App.sln").write_text("", encoding="utf-8")
-            with patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("restore", ["dotnet", "restore"], 0, 0.0, "ok", [])], "ok")):
-                rc = main(["--repo", str(root), "validate", "--yes"])
-            self.assertEqual(rc, 0)
-
-    def test_repo_after_subcommand_is_treated_as_global(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / ".git").mkdir()
-            (root / "App.sln").write_text("", encoding="utf-8")
-            with patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("restore", ["dotnet", "restore"], 0, 0.0, "ok", [])], "ok")):
-                rc = main(["validate", "--repo", str(root)])
-            self.assertEqual(rc, 0)

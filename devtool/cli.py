@@ -12,15 +12,12 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from rich import box
-from rich.panel import Panel
 from rich.prompt import Confirm
-from rich.table import Table
-from rich.text import Text
 
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
 from .artifacts import (
     append_history,
+    diff_artifact,
     format_preview,
     latest_commit_hash,
     load_history,
@@ -35,14 +32,14 @@ from .execution import apply_matrix, wrap_specs_for_chroot
 from .handoff import render_handoff
 from .watch import watch_loop
 from .clipboard import copy_text
-from .console_utils import create_console, is_narrow_console, resolve_cli_path
+from .console_utils import create_console, resolve_cli_path
 from .completion import ZSH_COMPLETION
 from .config import detect_project_kind, discover_dotnet_candidates, load_project_config, resolve_config_dict
 from .logstore import latest_log, new_log_path
 from .models import CommandSpec, OperationResult, ProjectConfig
 from .notify import available_notifier, send_notification
 from .runners import apply_overlay, apply_snapshot, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
-from .summary import build_json_summary, build_runner_json, render_status_table, render_summary
+from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_ACTION, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink
 
 console = create_console()
@@ -58,70 +55,6 @@ INTERACTIVE_COPY_COMMANDS = {
     "batch",
 }
 
-_GLOBAL_FLAGS_NO_VALUE = {
-    "-v", "--verbose",
-    "-j", "--json",
-    "-y", "--yes",
-    "-f", "--force",
-    "--dry-run",
-    "-k", "--continue-on-error",
-    "--fail-fast",
-    "-p", "--copy",
-    "--copy-summary", "--copy-json", "--no-clipboard",
-    "-n", "--notify",
-    "--notify-brief", "--notify-on-success", "--notify-on-fail", "--notify-progress",
-    "--tasker", "--tasker-progress", "--tasker-broadcast",
-    "--host",
-}
-_GLOBAL_FLAGS_REQUIRE_VALUE = {
-    "-r", "--repo",
-    "-c", "--config",
-    "--target", "--solution", "--project",
-    "--machine-file", "--copy-via", "--notify-id",
-    "--tasker-dir", "--tasker-action",
-    "--theme", "--chroot", "--stdout-payload",
-    "--save-json-payload", "--json-output",
-}
-_GLOBAL_FLAGS_OPTIONAL_VALUE = {"--machine": {"compact", "pretty"}}
-
-
-def _normalize_global_flag_placement(argv: list[str] | None) -> list[str]:
-    raw = list(sys.argv[1:] if argv is None else argv)
-    moved: list[str] = []
-    rest: list[str] = []
-    i = 0
-    while i < len(raw):
-        token = raw[i]
-        option_name = token.split("=", 1)[0] if token.startswith("--") else token
-
-        if option_name in _GLOBAL_FLAGS_NO_VALUE:
-            moved.append(token)
-            i += 1
-            continue
-
-        if option_name in _GLOBAL_FLAGS_REQUIRE_VALUE:
-            moved.append(token)
-            if "=" not in token and i + 1 < len(raw):
-                moved.append(raw[i + 1])
-                i += 2
-            else:
-                i += 1
-            continue
-
-        if option_name in _GLOBAL_FLAGS_OPTIONAL_VALUE:
-            moved.append(token)
-            allowed = _GLOBAL_FLAGS_OPTIONAL_VALUE[option_name]
-            if "=" not in token and i + 1 < len(raw) and raw[i + 1] in allowed:
-                moved.append(raw[i + 1])
-                i += 2
-            else:
-                i += 1
-            continue
-
-        rest.append(token)
-        i += 1
-
-    return moved + rest
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -224,6 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
         cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
         cmd.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
+        cmd.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
         cmd.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
         cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
         _add_validation_skip_flags(cmd)
@@ -623,8 +557,9 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--validate and --validate-only cannot be combined.")
     if args.validate_only and (args.commit or args.commit_even_on_failure):
         parser.error("--validate-only cannot be combined with --commit or --commit-even-on-failure.")
-    if getattr(args, "preview", False) and (args.validate or args.validate_only or args.commit or args.commit_even_on_failure):
-        parser.error("--preview cannot be combined with validation or commit flags.")
+    preview_only = getattr(args, "preview", False) or (getattr(args, "diff", False) and not getattr(args, "interactive", False))
+    if preview_only and (args.validate or args.validate_only or args.commit or args.commit_even_on_failure):
+        parser.error("--preview/--diff cannot be combined with validation or commit flags unless --interactive is used with --diff.")
 
 
 def _validation_skip_values(args: argparse.Namespace) -> tuple[bool, bool, bool]:
@@ -825,32 +760,12 @@ def _targets(config: ProjectConfig) -> None:
         return
     render_status_table([("target", name) if path == "-" else (name, path) for name, path in rows])
 
-def _format_manifest_value(value: object) -> str:
-    if isinstance(value, (dict, list, tuple)):
-        return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True)
-    if value is None:
-        return "null"
-    return str(value)
-
-
-def _render_artifact_manifest(manifest: dict) -> None:
-    table = Table(
-        title="Artifact manifest",
-        box=box.SIMPLE if is_narrow_console(console) else box.SIMPLE_HEAVY,
-        show_lines=not is_narrow_console(console),
-        expand=True,
-    )
-    table.add_column("Field", style="bold cyan", no_wrap=True, ratio=1)
-    table.add_column("Value", overflow="fold", no_wrap=False, ratio=3)
-    for key in sorted(manifest):
-        table.add_row(Text(str(key), overflow="fold"), Text(_format_manifest_value(manifest[key]), overflow="fold", no_wrap=False))
-    console.print(Panel(table, title="Parsed artifact metadata", expand=True))
-
-
-def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict) -> None:
+def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict, *, confirm: bool = True) -> None:
     if not manifest:
         return
-    _render_artifact_manifest(manifest)
+    render_artifact_manifest(manifest, console_obj=console)
+    if not confirm:
+        return
     if getattr(args, "yes", False) or getattr(args, "force", False):
         return
     if console.is_interactive and sys.stdin.isatty():
@@ -905,20 +820,20 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
 
     # Show manifest metadata before any destructive confirmation such as dirty-tree
     # or snapshot overwrite prompts.  --yes/-y confirms this prompt too.
-    if not getattr(args, "preview", False):
-        try:
-            _show_and_confirm_artifact_manifest(args, validation.manifest)
-        except SystemExit as exc:
-            result = OperationResult(
-                "artifact-cancelled",
-                [name, artifact],
-                int(exc.code) if isinstance(exc.code, int) else 1,
-                0.0,
-                "Cancelled before artifact apply.",
-                [],
-                failure_kind="artifact_failure",
-            )
-            return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
+    preview_only = getattr(args, "preview", False) or (getattr(args, "diff", False) and not getattr(args, "interactive", False))
+    try:
+        _show_and_confirm_artifact_manifest(args, validation.manifest, confirm=not preview_only)
+    except SystemExit as exc:
+        result = OperationResult(
+            "artifact-cancelled",
+            [name, artifact],
+            int(exc.code) if isinstance(exc.code, int) else 1,
+            0.0,
+            "Cancelled before artifact apply.",
+            [],
+            failure_kind="artifact_failure",
+        )
+        return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
     if not getattr(args, "no_manifest_check", False) and not validation.ok:
         output = "\n".join(validation.messages)
@@ -948,21 +863,34 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
     preview_text = format_preview(preview)
-    if getattr(args, "preview", False):
-        console.print(preview_text)
+    diff_text = ""
+    if getattr(args, "diff", False):
+        diff_text = diff_artifact(config.repo_root, artifact_path, snapshot=snapshot)
+
+    if getattr(args, "preview", False) or (getattr(args, "diff", False) and not getattr(args, "interactive", False)):
+        output_parts = []
+        if getattr(args, "preview", False):
+            output_parts.append(preview_text)
+            console.print(preview_text)
+        if getattr(args, "diff", False):
+            output_parts.append(diff_text)
+            console.print(diff_text.rstrip())
+        output = "\n".join(part for part in output_parts if part)
         result = OperationResult(
-            "apply-preview",
-            [name, "--preview", artifact],
+            "apply-diff" if getattr(args, "diff", False) else "apply-preview",
+            [name, "--diff" if getattr(args, "diff", False) else "--preview", artifact],
             0,
             0.0,
-            preview_text,
+            output,
             [],
             skipped=True,
         )
-        return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + preview_text)
+        return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + output)
 
     if getattr(args, "interactive", False):
         console.print(preview_text)
+        if getattr(args, "diff", False) and diff_text:
+            console.print(diff_text.rstrip())
         if not getattr(args, "yes", False):
             if not Confirm.ask("Apply this artifact?", default=True, console=console):
                 result = OperationResult(
@@ -1151,9 +1079,9 @@ def _config_command(args: argparse.Namespace) -> int:
     return 1
 
 
-def _main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(_normalize_global_flag_placement(argv))
+    args = parser.parse_args(argv)
     _normalize_tasker_args(args)
     _validate_apply_args(args, parser)
     effective_payload, copy_mode = _validate_output_flags(args, parser)
@@ -1400,11 +1328,3 @@ def _main(argv: list[str] | None = None) -> int:
     _finish_tasker(tasker_progress, totals=totals, results=results, command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds, args=args)
     _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds)
     return 0 if totals["failed"] == 0 else 1
-
-
-def main(argv: list[str] | None = None) -> int:
-    try:
-        return _main(argv)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted by user.[/yellow]")
-        return 130

@@ -114,7 +114,10 @@ def build_validation_specs(
     if not skip_build:
         specs.extend(build_specs(config, "build"))
     if not skip_test:
-        specs.extend(build_specs(config, "wine-test" if wine else "test"))
+        test_specs = build_specs(config, "wine-test" if wine else "test")
+        if config.kind == "dotnet" and not skip_build:
+            test_specs = [_add_no_build_to_dotnet_test_spec(spec) for spec in test_specs]
+        specs.extend(test_specs)
     if not specs:
         raise SystemExit("Validation would run no commands. Clear at least one skip flag.")
     return specs
@@ -122,8 +125,30 @@ def build_validation_specs(
 
 def _maybe_explicit(command_name: str, text: str, env: dict[str, str] | None = None) -> list[CommandSpec]:
     if text:
-        return [CommandSpec(command_name, shlex.split(text), env=env or {})]
+        return [CommandSpec(command_name, shlex.split(text), env=env or {}, metadata={"explicit": True})]
     return []
+
+
+def _is_dotnet_test_argv(argv: list[str]) -> bool:
+    for index, value in enumerate(argv):
+        if Path(value).name == "dotnet" and index + 1 < len(argv):
+            return argv[index + 1] == "test"
+    return False
+
+
+def _add_no_build_to_dotnet_test_spec(spec: CommandSpec) -> CommandSpec:
+    if spec.metadata.get("explicit") or not _is_dotnet_test_argv(spec.argv):
+        return spec
+    if "--no-build" in spec.argv:
+        return spec
+    argv = list(spec.argv)
+    for index, value in enumerate(argv):
+        if Path(value).name == "dotnet" and index + 1 < len(argv) and argv[index + 1] == "test":
+            argv.insert(index + 2, "--no-build")
+            metadata = dict(spec.metadata)
+            metadata["validation_no_build"] = True
+            return CommandSpec(spec.name, argv, env=spec.env, cwd=spec.cwd, destructive=spec.destructive, metadata=metadata)
+    return spec
 
 
 def _dotnet_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
@@ -216,25 +241,6 @@ def _interesting_output_line(line: str) -> bool:
     return bool(re.search(r"(error|warning|failed|fail|restore|build|test|pack|publish|\d+%)", text, re.IGNORECASE))
 
 
-
-
-def _terminate_process(proc: subprocess.Popen[str]) -> None:
-    try:
-        proc.terminate()
-        proc.wait(timeout=2.0)
-        return
-    except subprocess.TimeoutExpired:
-        pass
-    except OSError:
-        return
-    try:
-        proc.kill()
-        proc.wait(timeout=2.0)
-    except OSError:
-        pass
-    except subprocess.TimeoutExpired:
-        pass
-
 def _run_process_live(
     argv: list[str],
     *,
@@ -287,30 +293,22 @@ def _run_process_live(
                 percent=snapshot.get("percent"),
             )
         tracker.update_callback = _tasker_update
-    try:
-        if tracker is None:
-            for line in proc.stdout:
-                output_parts.append(line)
-                if verbose:
-                    print(line, end="", flush=True)
-            return proc.wait(), "".join(output_parts)
+    if tracker is None:
+        for line in proc.stdout:
+            output_parts.append(line)
+            print(line, end="", flush=True)
+        return proc.wait(), "".join(output_parts)
 
-        with tracker:
-            for line in proc.stdout:
-                output_parts.append(line)
-                # Non-verbose mode intentionally keeps command stdout/stderr captured only.
-                # Dotnet commands get a parsed Rich progress display instead of raw output.
-                # Use --verbose when the full restore/build/test stream is needed live.
-                tracker.update_from_line(line)
-            returncode = proc.wait()
-            tracker.finish(returncode)
-        return returncode, "".join(output_parts)
-    except KeyboardInterrupt:
-        _terminate_process(proc)
-        output_parts.append("\nInterrupted by user.\n")
-        if tracker is not None:
-            tracker.finish(130)
-        return 130, "".join(output_parts)
+    with tracker:
+        for line in proc.stdout:
+            output_parts.append(line)
+            # Non-verbose mode intentionally keeps command stdout/stderr captured only.
+            # Dotnet commands get a parsed Rich progress display instead of raw output.
+            # Use --verbose when the full restore/build/test stream is needed live.
+            tracker.update_from_line(line)
+        returncode = proc.wait()
+        tracker.finish(returncode)
+    return returncode, "".join(output_parts)
 
 
 def run_specs(

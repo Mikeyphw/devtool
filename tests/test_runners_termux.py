@@ -94,3 +94,67 @@ class RunnersQuietModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DotnetValidationNoBuildTests(unittest.TestCase):
+    def test_validation_adds_no_build_to_implicit_dotnet_test_after_build(self) -> None:
+        from devtool.runners import build_validation_specs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="dotnet",
+                restore_target="Demo.sln",
+                build_target="Demo.sln",
+                test_target="Demo.sln",
+            )
+
+            specs = build_validation_specs(config)
+
+        test_specs = [spec for spec in specs if spec.name == "test"]
+        self.assertEqual(len(test_specs), 1)
+        self.assertIn("--no-build", test_specs[0].argv)
+
+    def test_validation_does_not_add_no_build_when_build_is_skipped(self) -> None:
+        from devtool.runners import build_validation_specs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(repo_root=root, kind="dotnet", build_target="Demo.sln", test_target="Demo.sln")
+
+            specs = build_validation_specs(config, skip_build=True)
+
+        test_specs = [spec for spec in specs if spec.name == "test"]
+        self.assertEqual(len(test_specs), 1)
+        self.assertNotIn("--no-build", test_specs[0].argv)
+
+    def test_standalone_dotnet_test_does_not_get_no_build(self) -> None:
+        from devtool.runners import build_specs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(repo_root=root, kind="dotnet", build_target="Demo.sln", test_target="Demo.sln")
+
+            specs = build_specs(config, "test")
+
+        self.assertEqual(len(specs), 1)
+        self.assertNotIn("--no-build", specs[0].argv)
+
+    def test_explicit_test_command_is_not_modified(self) -> None:
+        from devtool.runners import build_validation_specs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="dotnet",
+                build_target="Demo.sln",
+                test_target="Demo.sln",
+                test_command="dotnet test Demo.sln --logger trx",
+            )
+
+            specs = build_validation_specs(config)
+
+        test_specs = [spec for spec in specs if spec.name == "test"]
+        self.assertEqual(len(test_specs), 1)
+        self.assertNotIn("--no-build", test_specs[0].argv)

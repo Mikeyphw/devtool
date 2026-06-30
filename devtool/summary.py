@@ -4,9 +4,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
+from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.tree import Tree
 
 from .console_utils import create_console, is_narrow_console
 from .models import Issue, OperationResult
@@ -284,3 +286,129 @@ def build_runner_json(
             "body": body,
         },
     }
+
+
+def _human_json_key(key: str) -> str:
+    return key.replace("_", " ").replace("-", " ").title()
+
+
+def _json_scalar(value: object) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _tree_from_json(label: str, value: object) -> Tree:
+    tree = Tree(str(label), guide_style="dim")
+    _add_json_to_tree(tree, value)
+    return tree
+
+
+def _add_json_to_tree(tree: Tree, value: object) -> None:
+    if isinstance(value, dict):
+        if not value:
+            tree.add("{}")
+            return
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                child = tree.add(f"[bold]{key}[/bold]")
+                _add_json_to_tree(child, item)
+            else:
+                tree.add(f"[bold]{key}[/bold]: {_json_scalar(item)}")
+        return
+    if isinstance(value, list):
+        if not value:
+            tree.add("[]")
+            return
+        for index, item in enumerate(value, start=1):
+            if isinstance(item, (dict, list)):
+                child = tree.add(f"[{index}]")
+                _add_json_to_tree(child, item)
+            else:
+                tree.add(f"{index}. {_json_scalar(item)}")
+        return
+    tree.add(_json_scalar(value))
+
+
+def _manifest_summary_table(manifest: dict) -> Table:
+    table = Table(title="Summary", show_header=False, expand=False, box=None)
+    table.add_column("Field", style="bold", no_wrap=True)
+    table.add_column("Value", overflow="fold")
+    scalar_keys = [
+        "type",
+        "repo_name",
+        "repo",
+        "target",
+        "validate_target",
+        "description",
+        "expected_solution",
+        "solution",
+        "project",
+    ]
+    seen: set[str] = set()
+    for key in scalar_keys:
+        if key not in manifest or isinstance(manifest.get(key), (dict, list)):
+            continue
+        table.add_row(_human_json_key(key), Text(_json_scalar(manifest.get(key)), overflow="fold"))
+        seen.add(key)
+    if not seen:
+        table.add_row("Fields", str(len(manifest)))
+    return table
+
+
+def _manifest_list_table(title: str, values: list[object]) -> Table:
+    table = Table(title=title, show_lines=False, expand=False)
+    table.add_column("#", justify="right", style="dim", no_wrap=True)
+    table.add_column("Value", overflow="fold")
+    for index, value in enumerate(values, start=1):
+        if isinstance(value, (dict, list)):
+            table.add_row(str(index), Text(str(value), overflow="fold"))
+        else:
+            table.add_row(str(index), Text(_json_scalar(value), overflow="fold"))
+    return table
+
+
+def render_artifact_manifest(manifest: dict, *, console_obj: Console | None = None) -> None:
+    """Render a devtool artifact manifest as semantic Rich sections instead of raw JSON."""
+    if not manifest:
+        return
+    target_console = console_obj or console
+    scalar_summary = _manifest_summary_table(manifest)
+    renderables: list[object] = [scalar_summary]
+
+    for key, title in [
+        ("compat", "Compatibility"),
+        ("files", "Files"),
+        ("mutates", "Mutates"),
+        ("deletes", "Deletes"),
+    ]:
+        value = manifest.get(key)
+        if isinstance(value, list):
+            renderables.append(_manifest_list_table(title, value))
+
+    validation = manifest.get("validation")
+    if isinstance(validation, dict):
+        validation_summary = Table(title="Validation", show_header=False, expand=False, box=None)
+        validation_summary.add_column("Field", style="bold", no_wrap=True)
+        validation_summary.add_column("Value", overflow="fold")
+        for key, value in validation.items():
+            if isinstance(value, list):
+                continue
+            validation_summary.add_row(_human_json_key(key), Text(_json_scalar(value), overflow="fold"))
+        renderables.append(validation_summary)
+        commands = validation.get("recommended_commands")
+        if isinstance(commands, list):
+            renderables.append(_manifest_list_table("Recommended commands", commands))
+
+    known = {
+        "type", "repo", "repo_name", "target", "validate_target", "description", "expected_solution", "solution", "project",
+        "compat", "files", "mutates", "deletes", "validation",
+    }
+    extras = {key: value for key, value in manifest.items() if key not in known}
+    if extras:
+        renderables.append(_tree_from_json("Additional metadata", extras))
+
+    target_console.print(Panel(Group(*renderables), title="Parsed artifact metadata", expand=not is_narrow_console(target_console)))
+

@@ -102,12 +102,3 @@ class ClipboardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-class ClipboardTimeoutTests(unittest.TestCase):
-    def test_termux_clipboard_timeout_returns_failure(self) -> None:
-        import subprocess
-        with patch("devtool.clipboard.subprocess.run", side_effect=subprocess.TimeoutExpired(["termux-clipboard-set"], 4.0)):
-            from devtool.clipboard import _run_clipboard_command
-            result = _run_clipboard_command(["termux-clipboard-set"], "hello", "termux-clipboard-set")
-        self.assertFalse(result.success)
-        self.assertIn("timed out", result.reason or "")

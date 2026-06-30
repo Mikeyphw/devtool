@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -226,6 +227,104 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
             for kind in sorted({change["kind"] for change in changes})
         },
     }
+
+
+def _is_binary_data(data: bytes) -> bool:
+    if b"\0" in data:
+        return True
+    try:
+        data.decode("utf-8")
+        return False
+    except UnicodeDecodeError:
+        return True
+
+
+def _decode_text_lines(data: bytes) -> list[str]:
+    return data.decode("utf-8").splitlines(keepends=True)
+
+
+def diff_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = False, context: int = 3, max_lines: int = 4000) -> str:
+    """Return a repo-relative unified diff for the payload changes in an artifact."""
+    members = list_archive_members(artifact, include_data=True)
+    file_members = [m for m in members if not m.is_dir]
+    incoming_files = {Path(m.name): m for m in file_members if not is_artifact_metadata_member(m.name)}
+    hunks: list[str] = []
+    truncated = False
+
+    def append_line(line: str) -> None:
+        nonlocal truncated
+        if len(hunks) >= max_lines:
+            truncated = True
+            return
+        hunks.append(line.rstrip("\n"))
+
+    def append_binary_notice(path: Path, kind: str) -> None:
+        append_line(f"diff --git a/{path} b/{path}")
+        append_line(f"Binary files differ ({kind}): {path}")
+        append_line("")
+
+    def append_text_diff(path: Path, before: bytes, after: bytes, *, fromfile: str | None = None, tofile: str | None = None) -> None:
+        if _is_binary_data(before) or _is_binary_data(after):
+            append_binary_notice(path, "modified" if before and after else ("added" if after else "deleted"))
+            return
+        diff_lines = difflib.unified_diff(
+            _decode_text_lines(before),
+            _decode_text_lines(after),
+            fromfile=fromfile or f"a/{path}",
+            tofile=tofile or f"b/{path}",
+            n=context,
+        )
+        emitted = False
+        for line in diff_lines:
+            emitted = True
+            append_line(line)
+            if truncated:
+                return
+        if emitted:
+            append_line("")
+
+    delete_paths: list[Path] = []
+    if snapshot:
+        existing_files = {
+            p.relative_to(repo_root)
+            for p in repo_root.rglob("*")
+            if p.is_file() and ".git" not in p.parts and HISTORY_PATH.parts[0] not in p.parts
+        }
+        delete_paths = sorted(existing_files - set(incoming_files))
+    else:
+        delete_paths = sorted(_safe_rel(path) for path in read_delete_manifest(artifact))
+
+    for rel in delete_paths:
+        target = repo_root / rel
+        if not target.exists() or not target.is_file():
+            continue
+        append_text_diff(rel, target.read_bytes(), b"", fromfile=f"a/{rel}", tofile="/dev/null")
+        if truncated:
+            break
+
+    if not truncated:
+        for rel, member in sorted(incoming_files.items(), key=lambda item: str(item[0])):
+            target = repo_root / rel
+            after = member.data or b""
+            if target.exists() and target.is_file():
+                before = target.read_bytes()
+                if _bytes_sha(before) == _bytes_sha(after):
+                    continue
+                append_text_diff(rel, before, after)
+            elif target.exists() and target.is_dir():
+                append_line(f"diff --git a/{rel} b/{rel}")
+                append_line(f"Cannot diff directory replacement: {rel}")
+                append_line("")
+            else:
+                append_text_diff(rel, b"", after, fromfile="/dev/null", tofile=f"b/{rel}")
+            if truncated:
+                break
+
+    if truncated:
+        hunks.append(f"... diff truncated after {max_lines} line(s)")
+    if not hunks:
+        return "Artifact diff: no textual changes."
+    return "\n".join(hunks).rstrip() + "\n"
 
 
 def format_preview(preview: dict[str, Any], *, limit: int = 200) -> str:
