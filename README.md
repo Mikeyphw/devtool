@@ -1,6 +1,6 @@
-# repo-devtool
+# devtool
 
-`repo-devtool` is a standalone Unix-oriented helper CLI for working on repositories.
+`devtool` is a standalone Unix-oriented helper CLI for working on repositories.
 
 It supports:
 
@@ -20,8 +20,8 @@ It supports:
 ## Install
 
 ```bash
-tar -xf repo-devtool.tar
-cd repo-devtool
+tar -xf devtool.tar
+cd devtool
 ./install.sh
 ```
 
