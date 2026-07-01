@@ -172,3 +172,92 @@ class DotnetProgressLiveSafetyTests(unittest.TestCase):
         self.assertEqual(snap["completed"], 1)
         self.assertEqual(snap["total"], 1)
         self.assertIn("App.dll", snap["detail"])
+
+class DotnetProgressSeparateCommandTests(unittest.TestCase):
+    def test_tracker_description_includes_phase_index_for_validate_batches(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        buffer = StringIO()
+        console = Console(file=buffer, force_terminal=True, width=90)
+        tracker = DotnetProgressTracker(
+            ["dotnet", "restore", "App.sln"],
+            "/tmp",
+            "restore",
+            console,
+            phase_index=1,
+            phase_total=3,
+        )
+
+        with tracker:
+            tracker.update_from_line("  Restored /tmp/App.csproj (in 1 ms).")
+            tracker.finish(0)
+
+        output = buffer.getvalue()
+        self.assertIn("restore 1/3", output)
+        self.assertIn("dotnet restore", output)
+        self.assertIn("restore ok", tracker.snapshot()["detail"])
+
+    def test_tracker_leaves_render_non_transient_for_separate_completed_bars(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        buffer = StringIO()
+        console = Console(file=buffer, force_terminal=True, width=90)
+        restore = DotnetProgressTracker(["dotnet", "restore", "App.csproj"], "/tmp", "restore", console, phase_index=1, phase_total=2)
+        build = DotnetProgressTracker(["dotnet", "build", "App.csproj"], "/tmp", "build", console, phase_index=2, phase_total=2)
+
+        with restore:
+            restore.update_from_line("  Restored /tmp/App.csproj (in 1 ms).")
+            restore.finish(0)
+        with build:
+            build.update_from_line("  App -> /tmp/bin/Debug/net8.0/App.dll")
+            build.finish(0)
+
+        output = buffer.getvalue()
+        self.assertIn("restore 1/2", output)
+        self.assertIn("build 2/2", output)
+        self.assertIn("dotnet restore", output)
+        self.assertIn("dotnet build", output)
+
+class DotnetProgressFalseIssueCountTests(unittest.TestCase):
+    def test_successful_build_summary_does_not_count_zero_error_warning_lines_as_issues(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        buffer = StringIO()
+        console = Console(file=buffer, force_terminal=True, width=100)
+        tracker = DotnetProgressTracker(["dotnet", "build", "App.csproj"], "/tmp", "build", console)
+
+        with tracker:
+            tracker.update_from_line("Build succeeded.")
+            tracker.update_from_line("    0 Warning(s)")
+            tracker.update_from_line("    0 Error(s)")
+            tracker.finish(0)
+
+        snap = tracker.snapshot()
+        self.assertEqual(snap["warnings"], 0)
+        self.assertEqual(snap["errors"], 0)
+        self.assertIn("build ok", snap["detail"])
+        self.assertNotIn("errors", snap["detail"])
+
+    def test_successful_test_result_failed_zero_does_not_count_as_error(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        buffer = StringIO()
+        console = Console(file=buffer, force_terminal=True, width=100)
+        tracker = DotnetProgressTracker(["dotnet", "test", "App.Tests.csproj"], "/tmp", "test", console)
+
+        with tracker:
+            tracker.update_from_line("Passed!  - Failed:     0, Passed:    27, Skipped:     0, Total:    27, Duration: 9 s - App.Tests.dll (net8.0)")
+            tracker.finish(0)
+
+        snap = tracker.snapshot()
+        self.assertEqual(snap["errors"], 0)
+        self.assertIn("test ok", snap["detail"])
+        self.assertNotIn("diagnostics", snap["detail"])

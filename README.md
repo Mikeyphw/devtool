@@ -284,7 +284,9 @@ This build adds the higher-friction workflow pieces around the existing runner:
 - Non-verbose dotnet output is parsed into a one-line progress bar plus a detail line below it, which keeps narrow Termux terminals readable.
 - Restore/build/test details are normalized to repo-relative paths so long absolute Termux paths do not flood the terminal.
 - Progress totals expand dynamically when MSBuild reports more project outputs than the initial solution/project estimate.
+- During `validate`, implicit dotnet build commands get `--no-restore` when the restore phase already ran, so build does not repeat restore output/work.
 - During `validate`, implicit dotnet test commands get `--no-build` when the build phase already ran. Standalone `devtool test`, skipped-build validation, and explicit `test_command` values are left unchanged.
+- The progress detail parses MSBuild/vstest summaries and avoids false issue counts from lines such as `0 Error(s)` or `Failed: 0`.
 
 ### Artifact metadata and diffs
 
@@ -304,3 +306,8 @@ This build adds the higher-friction workflow pieces around the existing runner:
 - Rollback is emitted like any other command result: stdout, Rich summary, notifications, clipboard output, Tasker event JSON, and machine JSON are all still respected.
 
 `--commit-even-on-failure` has been removed. Failed applies and failed validation are never committed.
+
+
+### Dotnet progress bars
+
+In non-verbose mode, dotnet restore/build/test each render as a separate Rich progress bar. Each command leaves its own completed line and a parsed repo-relative detail line below it, while raw command output remains captured for summaries and logs. Use `--verbose` to stream raw dotnet output.

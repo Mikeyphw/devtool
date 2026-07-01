@@ -110,10 +110,15 @@ def build_validation_specs(
     skip_test: bool = False,
 ) -> list[CommandSpec]:
     specs: list[CommandSpec] = []
+    ran_restore = False
     if not skip_restore:
         specs.extend(build_specs(config, "restore"))
+        ran_restore = True
     if not skip_build:
-        specs.extend(build_specs(config, "build"))
+        build_phase_specs = build_specs(config, "build")
+        if config.kind == "dotnet" and ran_restore:
+            build_phase_specs = [_add_no_restore_to_dotnet_build_spec(spec) for spec in build_phase_specs]
+        specs.extend(build_phase_specs)
     if not skip_test:
         test_specs = build_specs(config, "wine-test" if wine else "test")
         if config.kind == "dotnet" and not skip_build:
@@ -129,6 +134,29 @@ def _maybe_explicit(command_name: str, text: str, env: dict[str, str] | None = N
         return [CommandSpec(command_name, shlex.split(text), env=env or {}, metadata={"explicit": True})]
     return []
 
+
+
+
+def _is_dotnet_build_argv(argv: list[str]) -> bool:
+    for index, value in enumerate(argv):
+        if Path(value).name == "dotnet" and index + 1 < len(argv):
+            return argv[index + 1] == "build"
+    return False
+
+
+def _add_no_restore_to_dotnet_build_spec(spec: CommandSpec) -> CommandSpec:
+    if spec.metadata.get("explicit"):
+        return spec
+    if not _is_dotnet_build_argv(spec.argv) or "--no-restore" in spec.argv:
+        return spec
+    argv = list(spec.argv)
+    for index, value in enumerate(argv):
+        if Path(value).name == "dotnet" and index + 1 < len(argv) and argv[index + 1] == "build":
+            argv.insert(index + 2, "--no-restore")
+            metadata = dict(spec.metadata)
+            metadata["validation_no_restore"] = True
+            return CommandSpec(spec.name, argv, env=spec.env, cwd=spec.cwd, destructive=spec.destructive, metadata=metadata)
+    return spec
 
 def _is_dotnet_test_argv(argv: list[str]) -> bool:
     for index, value in enumerate(argv):
@@ -273,6 +301,8 @@ def _run_process_live(
     verbose: bool,
     command_name: str = "",
     tasker_progress: TaskerProgressSink | None = None,
+    phase_index: int | None = None,
+    phase_total: int | None = None,
 ) -> tuple[int, str]:
     try:
         proc = subprocess.Popen(
@@ -308,7 +338,7 @@ def _run_process_live(
 
     output_parts: list[str] = []
     assert proc.stdout is not None
-    tracker = DotnetProgressTracker(argv, cwd, command_name, console) if not verbose else None
+    tracker = DotnetProgressTracker(argv, cwd, command_name, console, phase_index=phase_index, phase_total=phase_total) if not verbose else None
     if tracker is not None and tasker_progress is not None:
         def _tasker_update(snapshot: dict) -> None:
             tasker_progress.progress(
@@ -416,6 +446,8 @@ def run_specs(
                     verbose=True,
                     command_name=spec.name,
                     tasker_progress=tasker_progress,
+                    phase_index=spec_index,
+                    phase_total=len(specs),
                 )
             else:
                 cwd = spec.cwd or str(config.repo_root)
@@ -427,6 +459,8 @@ def run_specs(
                         verbose=False,
                         command_name=spec.name,
                         tasker_progress=tasker_progress,
+                        phase_index=spec_index,
+                        phase_total=len(specs),
                     )
                 else:
                     with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
@@ -437,6 +471,8 @@ def run_specs(
                             verbose=False,
                             command_name=spec.name,
                             tasker_progress=tasker_progress,
+                            phase_index=spec_index,
+                            phase_total=len(specs),
                         )
         finally:
             if cleanup_dir:

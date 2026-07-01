@@ -660,3 +660,33 @@ class TestNoBuildParserTests(unittest.TestCase):
         args = parser.parse_args(["--no-build", "test"])
         self.assertEqual(args.command, "test")
         self.assertTrue(args.no_build)
+
+class ValidationDotnetFlagTests(unittest.TestCase):
+    def test_dotnet_validate_adds_no_restore_to_build_after_restore(self) -> None:
+        from devtool.config import ProjectConfig
+        from devtool.runners import build_validation_specs
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(repo_root=root, kind="dotnet", build_target="App.sln")
+            specs = build_validation_specs(config)
+
+        self.assertEqual(specs[0].argv, ["dotnet", "restore", "App.sln"])
+        self.assertEqual(specs[1].argv, ["dotnet", "build", "--no-restore", "App.sln"])
+        self.assertEqual(specs[2].argv, ["dotnet", "test", "--no-build", "App.sln"])
+
+    def test_dotnet_validate_skip_restore_does_not_add_no_restore_to_build(self) -> None:
+        from devtool.config import ProjectConfig
+        from devtool.runners import build_validation_specs
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(repo_root=root, kind="dotnet", build_target="App.sln")
+            specs = build_validation_specs(config, skip_restore=True)
+
+        self.assertEqual(specs[0].argv, ["dotnet", "build", "App.sln"])
+        self.assertEqual(specs[1].argv, ["dotnet", "test", "--no-build", "App.sln"])

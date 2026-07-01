@@ -34,8 +34,15 @@ _TEST_RESULT_RE = re.compile(
     re.IGNORECASE,
 )
 _MSBUILD_SUMMARY_RE = re.compile(r"\bBuild\s+(?P<status>succeeded|FAILED)\b", re.IGNORECASE)
-_ERROR_RE = re.compile(r"\b(error|failed|fail)\b", re.IGNORECASE)
+_MSBUILD_WARNING_SUMMARY_RE = re.compile(r"^\s*(?P<count>\d+)\s+Warning\(s\)\b", re.IGNORECASE)
+_MSBUILD_ERROR_SUMMARY_RE = re.compile(r"^\s*(?P<count>\d+)\s+Error\(s\)\b", re.IGNORECASE)
+# Match actual diagnostic lines, not summary text such as ``0 Error(s)`` or
+# vstest text such as ``Failed: 0``.  The progress detail is only a live hint;
+# final pass/fail still comes from the process exit code and parsed issues.
+_DIAGNOSTIC_WARNING_RE = re.compile(r"(?:^|[:\s])warning\s+[A-Z]{1,8}\d{3,}\b|\bNU\d{4}\b.*\bwarning\b", re.IGNORECASE)
+_DIAGNOSTIC_ERROR_RE = re.compile(r"(?:^|[:\s])error\s+[A-Z]{1,8}\d{3,}\b|\bNU\d{4}\b.*\berror\b", re.IGNORECASE)
 _WARNING_RE = re.compile(r"\bwarning\b", re.IGNORECASE)
+_ERROR_RE = re.compile(r"\berror\b|\bfailed\b", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -52,6 +59,8 @@ class DotnetProgressTracker:
     cwd: str
     command_name: str
     console: Console
+    phase_index: int | None = None
+    phase_total: int | None = None
     plan: DotnetProgressPlan | None = field(init=False, default=None)
     progress: Progress | None = field(init=False, default=None)
     live: Live | None = field(init=False, default=None)
@@ -82,16 +91,16 @@ class DotnetProgressTracker:
             TimeElapsedColumn(),
             console=self.console,
             expand=True,
-            transient=True,
+            transient=False,
         )
-        description = f"dotnet {self.plan.command}"
+        description = self._progress_description()
         self.detail_text = Text(self._format_initial_detail(), overflow="fold")
         self.task_id = self.progress.add_task(description, total=self.plan.total)
         self.live = Live(
             Group(self.progress, self.detail_text),
             console=self.console,
             refresh_per_second=8,
-            transient=True,
+            transient=False,
             vertical_overflow="visible",
         )
         try:
@@ -122,10 +131,7 @@ class DotnetProgressTracker:
         if not text:
             return
 
-        if _WARNING_RE.search(text):
-            self.warnings += 1
-        if _ERROR_RE.search(text):
-            self.errors += 1
+        self._update_issue_counts(text)
 
         event = self._event_for_line(text)
         if event:
@@ -160,13 +166,34 @@ class DotnetProgressTracker:
                 self._set_progress(completed=completed, total=self.total)
             elif self.completed is not None:
                 self._set_progress(total=max(1, self.completed))
-        status = "ok" if returncode == 0 else f"failed rc={returncode}"
+        command = self.plan.command if self.plan else (self.command_name or "dotnet")
+        status = f"{command} ok" if returncode == 0 else f"{command} failed rc={returncode}"
         if self.errors or self.warnings:
-            status += f" • {self.errors} errors, {self.warnings} warnings"
+            status += f" • diagnostics: {self.errors} errors, {self.warnings} warnings"
         final_detail = status
         if self.detail and self.detail != status:
             final_detail = f"{status} • {self.detail}"
         self._set_progress(detail=final_detail, force_callback=True)
+
+    def _update_issue_counts(self, text: str) -> None:
+        warning_summary = _MSBUILD_WARNING_SUMMARY_RE.match(text)
+        if warning_summary:
+            self.warnings = int(warning_summary.group("count"))
+            return
+        error_summary = _MSBUILD_ERROR_SUMMARY_RE.match(text)
+        if error_summary:
+            self.errors = int(error_summary.group("count"))
+            return
+        test_match = _TEST_RESULT_RE.search(text)
+        if test_match:
+            failed = int(test_match.group("failed"))
+            if failed > 0:
+                self.errors += failed
+            return
+        if _DIAGNOSTIC_WARNING_RE.search(text):
+            self.warnings += 1
+        if _DIAGNOSTIC_ERROR_RE.search(text):
+            self.errors += 1
 
     def snapshot(self) -> dict[str, Any]:
         percent = None
@@ -204,6 +231,14 @@ class DotnetProgressTracker:
                 self.live.update(Group(self.progress, self.detail_text))
         if self.update_callback is not None and (force_callback or completed is not None or detail):
             self.update_callback(self.snapshot())
+
+    def _progress_description(self) -> str:
+        if self.plan is None:
+            return self.command_name or "dotnet"
+        prefix = self.command_name or self.plan.command
+        if self.phase_index is not None and self.phase_total:
+            prefix = f"{prefix} {self.phase_index}/{self.phase_total}"
+        return f"{prefix} · dotnet {self.plan.command}"
 
     def _format_initial_detail(self) -> str:
         if self.plan is None:
@@ -281,7 +316,7 @@ class DotnetProgressTracker:
             return "test: starting execution"
         if "a total of" in lowered and "test files matched" in lowered:
             return _shorten(text, self.console.width)
-        if _ERROR_RE.search(text) or _WARNING_RE.search(text):
+        if _DIAGNOSTIC_ERROR_RE.search(text) or _DIAGNOSTIC_WARNING_RE.search(text):
             return _shorten(_repo_relative_paths_in_text(text, self.cwd), self.console.width)
         return ""
 

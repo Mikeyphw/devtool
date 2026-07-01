@@ -1,4 +1,4 @@
-.TH DEVTOOL 1 "2026-07-01" "devtool 0.2.16" "User Commands"
+.TH DEVTOOL 1 "2026-07-01" "devtool 0.2.18" "User Commands"
 .SH NAME
 devtool \- generic Unix developer helper CLI
 .SH SYNOPSIS
@@ -136,3 +136,6 @@ Overrides [project] values from .devtool.toml.
 Overrides or injects runtime env vars from [env].
 .SH AUTHOR
 OpenAI
+
+.PP
+Dotnet restore, build, and test commands render as separate Rich progress bars in non-verbose mode. Each completed command leaves its own summary line, with parsed repo-relative detail below the bar.
