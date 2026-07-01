@@ -1,43 +1,64 @@
-.TH DEVTOOL 1 "2026-06-20" "devtool 0.2.0" "User Commands"
+.TH DEVTOOL 1 "2026-07-01" "devtool 0.2.16" "User Commands"
 .SH NAME
-devtool \- generic unix developer helper CLI
+devtool \- generic Unix developer helper CLI
 .SH SYNOPSIS
 .B devtool
 .RI [ global-options ] command " [command-options]"
 .SH DESCRIPTION
-devtool helps apply artifacts, validate repositories, summarize restore/build/test output,
-copy logs to the clipboard, send notifications, and automate common repo tasks.
+devtool applies artifacts, validates repositories, summarizes restore/build/test output,
+copies logs to the clipboard, sends notifications, writes Tasker JSON events, and automates
+common repository tasks.
+.PP
+Global options are placement-tolerant where possible, so options such as
+.BR --yes ,
+.BR --repo ,
+.BR --copy ,
+and
+.B --machine-file
+may be placed before or after the subcommand.
 .SH COMMANDS
 .TP
 .B restore | build | test | validate | wine-validate | run | package
-Run project actions.
+Run project actions from .devtool.toml or detected project defaults.
+.TP
+.B test --no-build
+Run tests while passing
+.B --no-build
+to
+.B dotnet test
+when the resolved test command is a dotnet test command.
+.TP
+.B validate
+Run restore, build, and test. When validation has already built the target, implicit dotnet test commands use
+.B --no-build
+so the test phase does not rebuild the same target.
 .TP
 .B apply-overlay | apply-snapshot
-Apply an artifact to a repository. Use
+Apply an artifact to a repository. Options include
 .BR --validate ,
 .BR --validate-only ,
-.BR --commit
-and
-.BR --commit-even-on-failure
-to control optional validation and commit behavior.
+.BR --preview ,
+.BR --diff ,
+.BR --interactive ,
+.BR --commit ,
 .BR --skip-restore ,
-.BR --skip-build
+.BR --skip-build ,
 and
-.BR --skip-test
-can be used with
-.B validate
-and
-.B wine-validate
-to omit individual stages.
+.BR --skip-test .
 .TP
 .B batch
 Run a sequence of steps such as validate or apply-overlay=/path/to/file.zip.
 .TP
-.B config show | resolve | doctor
+.B config show | defaults | resolve | doctor
 Inspect configuration.
 .TP
 .B status | doctor
-Show repo and tool status.
+Show repo and tool status. Use
+.B doctor --fix
+to create safe state/cache/XDG data directories.
+.TP
+.B detect | handoff | history | rollback | targets
+Inspect repository shape, generate handoff notes, show artifact history, revert a recorded commit, or list configured targets.
 .TP
 .B logs latest
 Show or print the latest saved raw log.
@@ -46,21 +67,67 @@ Show or print the latest saved raw log.
 Print zsh completion.
 .TP
 .B init-config
-Write a .devtool.toml template into a repo root.
+Write a .devtool.toml template into a repository root.
 .TP
 .B tag | release-notes | commit
 Git helper commands.
 .TP
 .B ai-prompt
-Generate a fully resolved AI workflow prompt for the current repo.
+Generate a fully resolved AI workflow prompt for the current repository.
+.SH TRANSACTIONAL ARTIFACT APPLY
+Before mutating files for
+.B apply-overlay
+or
+.BR apply-snapshot ,
+devtool creates an rsync backup of only the paths the artifact will touch. For overlays this includes changed archive members and paths listed in
+.BR .devtool-delete .
+Unchanged archive members and devtool metadata files are not backed up.
+.PP
+If extraction, delete handling, restore, build, test, or an interruption fails after the transaction begins, devtool rolls the touched paths back from the backup. Rollback is a normal devtool result: stdout summaries, notifications, clipboard output, Tasker progress/events, and machine JSON are still emitted.
+.PP
+If the process is force-closed and leaves an active transaction marker, the next devtool command for that repository detects the stale transaction, rolls it back, emits normal output/JSON/notifications, and exits non-zero so the original command can be rerun.
+.PP
+Successful applies and successful rollbacks remove the transaction backup directory. The original overlay/snapshot artifact and sidecar manifest are deleted only after the complete apply/validate/commit flow succeeds without rollback. If rollback happens, the artifact is preserved for debugging or retry.
+.SH OPTIONS
+.TP
+.BR -y , " --yes"
+Assume yes for confirmations, including dirty repository and artifact prompts.
+.TP
+.BR --force
+Force dangerous actions such as non-git repository operation.
+.TP
+.BR --machine "[=compact|pretty]"
+Emit the machine JSON envelope on stdout.
+.TP
+.BR --machine-file " FILE"
+Write the machine JSON envelope to FILE without changing normal stdout.
+.TP
+.BR --copy , " --copy-summary" , " --copy-json"
+Copy raw output, rendered summary, or JSON summary.
+.TP
+.BR --tasker , " --tasker-progress" , " --tasker-dir" , " --tasker-broadcast"
+Write Tasker-compatible state/event JSON under the configured Tasker directory and optionally broadcast Android intents.
+.TP
+.BR --notify-progress
+Update a live Termux notification while command phases run.
 .SH FILES
 .TP
 .I ~/.local/state/devtool/logs
 Saved raw command logs.
 .TP
+.I ${XDG_DATA_HOME:-~/.local/share}/devtool
+XDG devtool data directory. Transaction state and rsync backups are stored under
+.I transactions/<repo-key>/
+while active. Set
+.B DEVTOOL_XDG_DIR
+to override this location.
+.TP
 .I .devtool.toml
-Per-repo configuration.
+Per-repository configuration.
 .SH ENVIRONMENT
+.TP
+.B DEVTOOL_XDG_DIR
+Override the XDG devtool data directory for transaction state and backups.
 .TP
 .B DEVTOOL_PROJECT_*
 Overrides [project] values from .devtool.toml.
@@ -69,14 +136,3 @@ Overrides [project] values from .devtool.toml.
 Overrides or injects runtime env vars from [env].
 .SH AUTHOR
 OpenAI
-
-.SH AI PROMPT
-.TP
-.B devtool ai-prompt --repo-name NAME
-Print the generated prompt to standard output.
-.TP
-.B devtool ai-prompt --repo-name NAME --output prompt.md
-Write the generated prompt to a markdown file.
-.TP
-.B devtool ai-prompt --project-type TYPE --build-target PATH --run-target PATH
-Override detected project settings in the generated prompt.

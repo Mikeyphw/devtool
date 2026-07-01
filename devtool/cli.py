@@ -36,11 +36,12 @@ from .console_utils import create_console, resolve_cli_path
 from .completion import ZSH_COMPLETION
 from .config import detect_project_kind, discover_dotnet_candidates, load_project_config, resolve_config_dict
 from .logstore import latest_log, new_log_path
-from .models import CommandSpec, OperationResult, ProjectConfig
+from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .notify import available_notifier, send_notification
-from .runners import apply_overlay, apply_snapshot, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
+from .runners import apply_overlay, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_ACTION, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink
+from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
 
 console = create_console()
 
@@ -71,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
     parser.add_argument("-f", "--force", action="store_true", help="Force dangerous actions")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them")
+    parser.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="For test: pass --no-build to dotnet test")
     parser.add_argument("-k", "--continue-on-error", action="store_true", help="Continue batch after errors")
     parser.add_argument("--fail-fast", action="store_true", help="Stop batch on first error")
     parser.add_argument("-p", "--copy", action="store_true", help="Copy raw output to clipboard without prompting")
@@ -123,6 +125,8 @@ def build_parser() -> argparse.ArgumentParser:
         cmd = subparsers.add_parser(name, aliases=aliases)
         if name == "doctor":
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
+        if name == "test":
+            cmd.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="Pass --no-build to dotnet test")
         if name in {"validate", "wine-validate"}:
             _add_validation_skip_flags(cmd)
             cmd.add_argument("--watch", action="store_true", help="Rerun validation when files change")
@@ -162,11 +166,6 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
         _add_validation_skip_flags(cmd)
         cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
-        cmd.add_argument(
-            "--commit-even-on-failure",
-            action="store_true",
-            help="Commit after a successful apply even if validation fails",
-        )
 
     batch = subparsers.add_parser("batch")
     batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
@@ -555,10 +554,10 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--skip-restore, --skip-build, and --skip-test require --validate or --validate-only.")
     if args.validate_only and args.validate:
         parser.error("--validate and --validate-only cannot be combined.")
-    if args.validate_only and (args.commit or args.commit_even_on_failure):
-        parser.error("--validate-only cannot be combined with --commit or --commit-even-on-failure.")
+    if args.validate_only and args.commit:
+        parser.error("--validate-only cannot be combined with --commit.")
     preview_only = getattr(args, "preview", False) or (getattr(args, "diff", False) and not getattr(args, "interactive", False))
-    if preview_only and (args.validate or args.validate_only or args.commit or args.commit_even_on_failure):
+    if preview_only and (args.validate or args.validate_only or args.commit):
         parser.error("--preview/--diff cannot be combined with validation or commit flags unless --interactive is used with --diff.")
 
 
@@ -623,6 +622,15 @@ def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, 
     return specs
 
 
+def _maybe_apply_test_no_build_flag(specs: list[CommandSpec], args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
+    if args.command not in {"test", "t"} or not bool(getattr(args, "no_build", False)):
+        return specs
+    updated, changed = add_no_build_to_dotnet_test_specs(specs, allow_explicit=True)
+    if changed == 0:
+        parser.error("--no-build is only supported for dotnet test commands.")
+    return updated
+
+
 def _run_specs_for_args(
     config: ProjectConfig,
     specs: list[CommandSpec],
@@ -651,7 +659,9 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         return
     apply_result = results[0] if results else None
     status = "ok" if apply_result and apply_result.returncode == 0 else "failed"
-    validation_results = [r for r in results[1:] if r.name not in {"git-add", "git-commit"}]
+    if any(r.name == "apply-rollback" and r.returncode == 0 for r in results):
+        status = "rolled-back"
+    validation_results = [r for r in results[1:] if r.name not in {"git-add", "git-commit", "apply-rollback"}]
     if not (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
         validation_status = "not-run"
     elif validation_results and any(r.returncode != 0 for r in validation_results):
@@ -727,11 +737,8 @@ def _maybe_commit_after_apply(
     commit_message = str(getattr(args, "commit", "") or "").strip()
     if args.command not in APPLY_COMMANDS or not commit_message:
         return results, raw_output
-    if not results or results[0].returncode != 0:
-        return results, raw_output
-
-    validation_failed = any(result.returncode != 0 for result in results[1:])
-    if validation_failed and not getattr(args, "commit_even_on_failure", False):
+    # Failed applies or failed validation are never committed.
+    if not results or any(result.returncode != 0 for result in results):
         return results, raw_output
 
     commit_results, commit_raw = _git_commit_with_optional_log(config.repo_root, commit_message, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path)
@@ -759,6 +766,20 @@ def _targets(config: ProjectConfig) -> None:
         console.print("[yellow]No targets found.[/yellow]")
         return
     render_status_table([("target", name) if path == "-" else (name, path) for name, path in rows])
+
+def _format_artifact_exception(exc: BaseException, *, artifact: str, artifact_type: str) -> str:
+    message = str(exc).strip()
+    exc_name = type(exc).__name__
+    if not message:
+        message = "No detail message was provided by the exception."
+    return (
+        f"Artifact check failed before apply.\n"
+        f"artifact_type: {artifact_type}\n"
+        f"artifact: {artifact}\n"
+        f"error_type: {exc_name}\n"
+        f"error: {message}"
+    )
+
 
 def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict, *, confirm: bool = True) -> None:
     if not manifest:
@@ -807,13 +828,14 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         preview = preview_artifact(config.repo_root, artifact_path, snapshot=snapshot)
         args._devtool_artifact_preview = preview
     except Exception as exc:
+        detail = _format_artifact_exception(exc, artifact=artifact, artifact_type=artifact_type)
         result = OperationResult(
             "artifact-check",
             [name, artifact],
             1,
             0.0,
-            str(exc),
-            [],
+            detail,
+            [Issue("error", "artifact-check", str(artifact), type(exc).__name__, str(exc).strip() or "Artifact check failed without a detail message.")],
             failure_kind="artifact_failure",
         )
         return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
@@ -905,15 +927,125 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
     if name.startswith("apply-overlay") or name == "ao":
-        result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path)
+        result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
     else:
-        result = apply_snapshot(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path)
+        result = apply_snapshot(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
     if result.returncode != 0 and not result.failure_kind:
         result.failure_kind = "artifact_failure"
     manifest_note = "" if getattr(args, "no_manifest_check", False) else "\n" + "\n".join(validation.messages)
     text = "$ " + " ".join(result.argv) + "\n" + result.output + manifest_note
     result.output = result.output + manifest_note
     return _return_apply(result, text)
+
+
+
+def _apply_transaction_path(results: list[OperationResult]) -> str:
+    for result in results:
+        path = result.metadata.get("transaction_path") if getattr(result, "metadata", None) else ""
+        if path:
+            return str(path)
+    return ""
+
+
+def _apply_artifact_path(results: list[OperationResult]) -> str:
+    for result in results:
+        path = result.metadata.get("artifact_path") if getattr(result, "metadata", None) else ""
+        if path and result.metadata.get("delete_artifact_on_success"):
+            return str(path)
+    return ""
+
+
+def _artifact_sidecars_for_cleanup(artifact_path: Path) -> list[Path]:
+    return [
+        artifact_path.with_name(artifact_path.name + ".devtool.json"),
+        artifact_path.with_name(artifact_path.name + ".manifest.json"),
+    ]
+
+
+def _delete_original_artifact_after_success(results: list[OperationResult]) -> OperationResult | None:
+    """Delete the source artifact only after a fully successful apply run.
+
+    Rollback can happen after extraction, during validation, or after a later
+    post-apply step.  Keeping cleanup here means the original overlay/snapshot
+    remains available whenever rollback occurred or any result failed.
+    """
+    if any(result.returncode != 0 for result in results):
+        return None
+    if any(result.name == "apply-rollback" or result.metadata.get("rolled_back_during_apply") for result in results if getattr(result, "metadata", None) is not None):
+        return None
+    artifact = _apply_artifact_path(results)
+    if not artifact:
+        return None
+    started = datetime.now(timezone.utc)
+    start_ts = started.timestamp()
+    path = Path(artifact)
+    removed: list[str] = []
+    errors: list[str] = []
+    try:
+        for candidate in [path, *_artifact_sidecars_for_cleanup(path)]:
+            try:
+                if candidate.exists() or candidate.is_symlink():
+                    candidate.unlink()
+                    removed.append(str(candidate))
+            except Exception as exc:
+                errors.append(f"{candidate}: {type(exc).__name__}: {exc}")
+        if errors:
+            return OperationResult(
+                "artifact-cleanup",
+                ["delete", str(path)],
+                1,
+                datetime.now(timezone.utc).timestamp() - start_ts,
+                "Failed to delete original artifact after successful apply.\n" + "\n".join(errors),
+                [],
+                failure_kind="artifact_cleanup_failure",
+            )
+        if not removed:
+            output = "Original artifact cleanup skipped; artifact was already absent."
+        else:
+            output = "Deleted original artifact after successful apply.\n" + "\n".join(f"removed: {item}" for item in removed)
+        return OperationResult("artifact-cleanup", ["delete", str(path)], 0, datetime.now(timezone.utc).timestamp() - start_ts, output, [])
+    except BaseException as exc:
+        return OperationResult(
+            "artifact-cleanup",
+            ["delete", str(path)],
+            1,
+            datetime.now(timezone.utc).timestamp() - start_ts,
+            f"Failed to delete original artifact after successful apply.\n{type(exc).__name__}: {exc}",
+            [],
+            failure_kind="artifact_cleanup_failure",
+        )
+
+
+def _run_transaction_rollback(
+    transaction_path: str | Path,
+    *,
+    reason: str,
+    tasker_progress: TaskerProgressSink | None = None,
+    log_path: Path | str | None = None,
+) -> tuple[OperationResult, str]:
+    if tasker_progress is not None:
+        tasker_progress.phase_started("apply-rollback", index=1, total=1, argv=["rsync", "rollback", str(transaction_path)])
+    result = rollback_transaction(transaction_path, reason=reason)
+    if log_path is not None:
+        try:
+            from .logstore import write_log
+            result.log_path = str(write_log("$ " + " ".join(result.argv) + "\n" + result.output, log_path, append=True))
+        except Exception:
+            pass
+    if tasker_progress is not None:
+        tasker_progress.phase_finished(result)
+    raw = "$ " + " ".join(result.argv) + "\n" + result.output
+    return result, raw
+
+
+def _has_failed_after_apply(results: list[OperationResult]) -> bool:
+    if not results:
+        return False
+    # Ignore preview/cancelled-only flows; real apply results carry transaction metadata.
+    tx_path = _apply_transaction_path(results)
+    if not tx_path:
+        return False
+    return any(result.returncode != 0 for result in results)
 
 def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: Path | str | None = None, tasker_progress: TaskerProgressSink | None = None) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
@@ -1002,7 +1134,8 @@ def _doctor(config: ProjectConfig, *, fix: bool = False) -> None:
         from .logstore import logs_dir, state_dir
         state_dir().mkdir(parents=True, exist_ok=True)
         logs_dir().mkdir(parents=True, exist_ok=True)
-        fixed.append("state/log directories")
+        devtool_xdg_dir().mkdir(parents=True, exist_ok=True)
+        fixed.append("state/log/XDG data directories")
         if os.environ.get("TERMUX_VERSION"):
             try:
                 from .runners import _termux_proot_etc_dir
@@ -1019,6 +1152,7 @@ def _doctor(config: ProjectConfig, *, fix: bool = False) -> None:
         ("wl-copy", "yes" if shutil.which("wl-copy") else "no"),
         ("fzf", "yes" if shutil.which("fzf") else "no"),
         ("dotnet", "yes" if shutil.which("dotnet") else "no"),
+        ("xdg_data", str(devtool_xdg_dir())),
         ("python", config.python_executable),
         ("selected_target", config.selected_target or "-"),
         ("default_target", config.default_target or "-"),
@@ -1043,6 +1177,7 @@ def _status(config: ProjectConfig) -> None:
         ("test_target", config.test_target or "-"),
         ("run_target", config.run_target or "-"),
         ("git_dirty", "yes" if _git_dirty(config.repo_root) else "no"),
+        ("transaction_root", str(transaction_root(config.repo_root))),
     ]
     render_status_table(rows)
 
@@ -1258,6 +1393,43 @@ def main(argv: list[str] | None = None) -> int:
     if tasker_progress is not None:
         tasker_progress.started()
 
+    stale_transaction = find_active_transaction(config.repo_root)
+    if stale_transaction is not None and args.command not in {"history"}:
+        results = []
+        raw_output = ""
+        rollback_result, rollback_raw = _run_transaction_rollback(
+            stale_transaction,
+            reason="previous devtool apply appears to have been interrupted or killed",
+            tasker_progress=tasker_progress,
+            log_path=log_path,
+        )
+        # Force a failed command result even when rollback succeeds so callers know
+        # their requested command was not executed and must be rerun.
+        if rollback_result.returncode == 0:
+            rollback_result.returncode = 1
+            rollback_result.failure_kind = "stale_apply_rolled_back"
+            rollback_result.output += "\nRequested command was not executed. Re-run it after reviewing the rollback."
+        results.append(rollback_result)
+        raw_output = rollback_raw
+        finished_at = datetime.now(timezone.utc)
+        totals, summary_text, json_text, _machine_json_text = _emit_summary(
+            results,
+            config,
+            as_json=effective_payload == "json",
+            payload_mode=effective_payload,
+            raw_output=raw_output,
+            command=args.command,
+            started_at=started_at,
+            finished_at=finished_at,
+            machine_format=args.machine or "pretty",
+        )
+        duration_seconds = sum(r.duration_seconds for r in results)
+        _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
+        _maybe_copy(raw_output, summary_text, json_text, args)
+        _finish_tasker(tasker_progress, totals=totals, results=results, command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds, args=args)
+        _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds)
+        return 1
+
     if args.command == "batch":
         destructive_batch = any(step.split("=", 1)[0] in {"apply-overlay", "ao", "apply-snapshot", "as", "commit", "ci", "tag"} for step in args.steps)
         if destructive_batch:
@@ -1265,6 +1437,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command in APPLY_COMMANDS:
         results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
+        transaction_path = _apply_transaction_path(results)
         should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
         if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
             more_results, more_raw = _run_specs_for_args(
@@ -1277,7 +1450,34 @@ def main(argv: list[str] | None = None) -> int:
             )
             results.extend(more_results)
             raw_output += "\n\n" + more_raw
+        if transaction_path and _has_failed_after_apply(results):
+            rollback_result, rollback_raw = _run_transaction_rollback(
+                transaction_path,
+                reason="validation/build/test failed after artifact apply",
+                tasker_progress=tasker_progress,
+                log_path=log_path,
+            )
+            results.append(rollback_result)
+            raw_output += "\n\n" + rollback_raw
         results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
+        if transaction_path:
+            if any(result.returncode != 0 for result in results):
+                # A commit failure after validation still means the apply transaction is unsafe.
+                if not any(result.name == "apply-rollback" for result in results):
+                    rollback_result, rollback_raw = _run_transaction_rollback(
+                        transaction_path,
+                        reason="post-apply command failed",
+                        tasker_progress=tasker_progress,
+                        log_path=log_path,
+                    )
+                    results.append(rollback_result)
+                    raw_output += "\n\n" + rollback_raw
+            else:
+                mark_transaction_completed(transaction_path)
+                cleanup_result = _delete_original_artifact_after_success(results)
+                if cleanup_result is not None:
+                    results.append(cleanup_result)
+                    raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
         _record_apply_history(config, args, results)
     elif args.command in {"validate", "v", "wine-validate", "wv"}:
         if getattr(args, "watch", False):
@@ -1308,6 +1508,7 @@ def main(argv: list[str] | None = None) -> int:
         results, raw_output = _handle_batch(config, args, log_path=log_path, tasker_progress=tasker_progress)
     else:
         specs = build_specs(config, args.command)
+        specs = _maybe_apply_test_no_build_flag(specs, args, parser)
         results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
 
     finished_at = datetime.now(timezone.utc)

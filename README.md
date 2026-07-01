@@ -101,7 +101,7 @@ Use `--stdout-payload` when you want the command to print something other than t
 
 Do not combine `--json` with `--stdout-payload`; use `--stdout-payload json` when you need explicit control.
 
-`apply-overlay` and `apply-snapshot` accept `--validate` to run validation after apply, `--validate-only` to skip apply and validate the current repo state, `--commit "<message>"` to commit after success, and `--commit-even-on-failure` to commit after apply even if validation fails.
+`apply-overlay` and `apply-snapshot` accept `--validate` to run validation after apply, `--validate-only` to skip apply and validate the current repo state, `--commit "<message>"` to commit after success.
 
 `validate` and `wine-validate` accept `--skip-restore`, `--skip-build`, and `--skip-test` so you can run only the stages you need. The same skip flags also work with `apply-overlay --validate` and `apply-snapshot --validate`.
 
@@ -289,3 +289,18 @@ This build adds the higher-friction workflow pieces around the existing runner:
 ### Artifact metadata and diffs
 
 `apply-overlay` and `apply-snapshot` render artifact manifests as parsed Rich sections instead of raw JSON. Use `--diff` to preview a repo-relative unified diff of artifact file changes without applying; combine `--interactive --diff` to review the diff before confirming apply.
+
+## Transactional artifact apply
+
+`apply-overlay` and `apply-snapshot` now create an rsync transaction backup before mutating files.
+
+- Transaction data is stored under `${DEVTOOL_XDG_DIR:-${XDG_DATA_HOME:-~/.local/share}/devtool}/transactions/<repo-key>/`.
+- Nothing is written to `.devtool/transactions` inside the repository.
+- Only touched paths are backed up and restored. For overlays this includes changed archive members and paths listed in `.devtool-delete`.
+- If extraction, delete handling, restore, build, test, or interruption fails after the transaction starts, devtool rolls back the touched files.
+- If devtool is force-closed and leaves an active transaction, the next devtool command for that repo detects and rolls it back before doing anything else.
+- Successful applies and successful rollbacks remove the backup directory.
+- The original overlay/snapshot artifact and sidecar manifest are deleted only after the whole apply/validate/commit flow succeeds with no rollback. If rollback happens, the original artifact is preserved for debugging or retry.
+- Rollback is emitted like any other command result: stdout, Rich summary, notifications, clipboard output, Tasker event JSON, and machine JSON are all still respected.
+
+`--commit-even-on-failure` has been removed. Failed applies and failed validation are never committed.

@@ -13,11 +13,12 @@ import zipfile
 from pathlib import Path
 
 
-from .artifacts import is_artifact_metadata_member, read_delete_manifest
+from .artifacts import is_artifact_metadata_member, read_delete_manifest, preview_artifact
 from .config import generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
 from .diagnostics import classify_failure, parse_issues
 from .dotnet_progress import DotnetProgressTracker, dotnet_progress_plan
+from .transactions import create_apply_transaction, rollback_transaction
 from .logstore import write_log
 from .models import CommandSpec, OperationResult, ProjectConfig
 from .tasker import TaskerProgressSink
@@ -136,8 +137,10 @@ def _is_dotnet_test_argv(argv: list[str]) -> bool:
     return False
 
 
-def _add_no_build_to_dotnet_test_spec(spec: CommandSpec) -> CommandSpec:
-    if spec.metadata.get("explicit") or not _is_dotnet_test_argv(spec.argv):
+def _add_no_build_to_dotnet_test_spec(spec: CommandSpec, *, allow_explicit: bool = False) -> CommandSpec:
+    if spec.metadata.get("explicit") and not allow_explicit:
+        return spec
+    if not _is_dotnet_test_argv(spec.argv):
         return spec
     if "--no-build" in spec.argv:
         return spec
@@ -149,6 +152,27 @@ def _add_no_build_to_dotnet_test_spec(spec: CommandSpec) -> CommandSpec:
             metadata["validation_no_build"] = True
             return CommandSpec(spec.name, argv, env=spec.env, cwd=spec.cwd, destructive=spec.destructive, metadata=metadata)
     return spec
+
+
+def add_no_build_to_dotnet_test_specs(specs: list[CommandSpec], *, allow_explicit: bool = True) -> tuple[list[CommandSpec], int]:
+    """Return specs with --no-build added to dotnet test commands.
+
+    This is used by the public ``devtool test --no-build`` flag, so explicit
+    dotnet test commands are eligible too. Non-dotnet test commands are left
+    unchanged and reported via the returned count.
+    """
+
+    updated: list[CommandSpec] = []
+    changed = 0
+    for spec in specs:
+        new_spec = _add_no_build_to_dotnet_test_spec(spec, allow_explicit=allow_explicit)
+        if new_spec.argv != spec.argv:
+            changed += 1
+            metadata = dict(new_spec.metadata)
+            metadata["user_no_build"] = True
+            new_spec = CommandSpec(new_spec.name, new_spec.argv, env=new_spec.env, cwd=new_spec.cwd, destructive=new_spec.destructive, metadata=metadata)
+        updated.append(new_spec)
+    return updated, changed
 
 
 def _dotnet_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
@@ -259,6 +283,7 @@ def _run_process_live(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=1,
+            start_new_session=(os.name == "posix"),
         )
     except OSError as exc:
         # Keep live streaming as the normal path, but return a structured failure
@@ -293,22 +318,58 @@ def _run_process_live(
                 percent=snapshot.get("percent"),
             )
         tracker.update_callback = _tasker_update
-    if tracker is None:
-        for line in proc.stdout:
-            output_parts.append(line)
-            print(line, end="", flush=True)
-        return proc.wait(), "".join(output_parts)
+    def _interrupt_process() -> None:
+        try:
+            if os.name == "posix":
+                os.killpg(proc.pid, 2)
+            else:
+                proc.terminate()
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                if os.name == "posix":
+                    os.killpg(proc.pid, 9)
+                else:
+                    proc.kill()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
 
-    with tracker:
-        for line in proc.stdout:
-            output_parts.append(line)
-            # Non-verbose mode intentionally keeps command stdout/stderr captured only.
-            # Dotnet commands get a parsed Rich progress display instead of raw output.
-            # Use --verbose when the full restore/build/test stream is needed live.
-            tracker.update_from_line(line)
-        returncode = proc.wait()
-        tracker.finish(returncode)
-    return returncode, "".join(output_parts)
+    try:
+        if tracker is None:
+            for line in proc.stdout:
+                output_parts.append(line)
+                print(line, end="", flush=True)
+            return proc.wait(), "".join(output_parts)
+
+        with tracker:
+            for line in proc.stdout:
+                output_parts.append(line)
+                # Non-verbose mode intentionally keeps command stdout/stderr captured only.
+                # Dotnet commands get a parsed Rich progress display instead of raw output.
+                # Use --verbose when the full restore/build/test stream is needed live.
+                tracker.update_from_line(line)
+            returncode = proc.wait()
+            tracker.finish(returncode)
+        return returncode, "".join(output_parts)
+    except KeyboardInterrupt:
+        _interrupt_process()
+        output_parts.append("\nInterrupted by user. Child process was terminated.\n")
+        if tracker is not None:
+            try:
+                tracker.finish(130)
+            except Exception:
+                pass
+        return 130, "".join(output_parts)
 
 
 def run_specs(
@@ -397,18 +458,18 @@ def run_specs(
 
     return results, "\n\n".join(raw_sections)
 
-def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None) -> OperationResult:
+def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
     artifact_path = resolve_cli_path(artifact)
     argv = ["unzip", "-o", str(artifact_path), "-d", str(repo_root)]
-    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path)
+    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
 
 
-def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None) -> OperationResult:
+def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
     artifact_path = resolve_cli_path(artifact)
-    return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path)
+    return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
 
 
-def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None) -> OperationResult:
+def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
     start = time.perf_counter()
     if dry_run:
         text = "$ " + " ".join(argv)
@@ -420,7 +481,16 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         path = str(write_log(output, log_path, append=log_path is not None))
         return OperationResult("apply-snapshot" if snapshot else "apply-overlay", argv, 1, 0.0, output, [], log_path=path)
 
+    transaction: dict | None = None
+    rollback_result: OperationResult | None = None
     try:
+        preview_data = preview or preview_artifact(repo_root, artifact_path, snapshot=snapshot)
+        transaction = create_apply_transaction(
+            repo_root,
+            artifact_path,
+            artifact_type="snapshot" if snapshot else "overlay",
+            preview=preview_data,
+        )
         skipped_metadata = 0
         deleted_paths: list[str] = []
         if snapshot:
@@ -433,22 +503,46 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         else:
             skipped_metadata += _extract_archive(artifact_path, repo_root)
             deleted_paths = _apply_delete_manifest(repo_root, artifact_path)
-        if delete_artifact:
-            artifact_path.unlink(missing_ok=True)
-            for sidecar in _artifact_sidecars(artifact_path):
-                sidecar.unlink(missing_ok=True)
+        # The original artifact is intentionally not deleted here.  Apply is now
+        # transactional across extraction plus any later validation/commit steps,
+        # so cleanup is deferred until the CLI knows no rollback happened.
         output = f"Applied {'snapshot' if snapshot else 'overlay'} from {artifact_path}"
+        output += f"\nTransaction backup: {transaction.get('transaction_id')}"
         if skipped_metadata:
             output += f"\nSkipped {skipped_metadata} devtool metadata file(s)."
         if deleted_paths:
             output += f"\nDeleted {len(deleted_paths)} path(s) from .devtool-delete."
         rc = 0
-    except Exception as exc:
-        output = str(exc)
+    except KeyboardInterrupt as exc:
+        rc = 130
+        output = "Interrupted during artifact apply."
+        if transaction:
+            rollback_result = rollback_transaction(transaction.get("path"), reason="interrupted during artifact apply")
+            output += "\n" + rollback_result.output
+    except BaseException as exc:
+        output = f"{type(exc).__name__}: {exc}"
         rc = 1
+        if transaction:
+            rollback_result = rollback_transaction(transaction.get("path"), reason="error during artifact apply")
+            output += "\n" + rollback_result.output
+            if rollback_result.returncode != 0:
+                output += "\nRollback failed; manual intervention may be required."
     duration = time.perf_counter() - start
     path = str(write_log(output, log_path, append=log_path is not None))
-    return OperationResult("apply-snapshot" if snapshot else "apply-overlay", argv, rc, duration, output, [], log_path=path)
+    metadata = {}
+    if transaction:
+        tx_id = str(transaction.get("transaction_id") or "")
+        tx_path = str(transaction.get("path") or "") if tx_id else ""
+        metadata = {
+            "transaction_id": tx_id,
+            "transaction_path": tx_path,
+            "artifact_path": str(artifact_path),
+            "delete_artifact_on_success": bool(delete_artifact),
+        }
+        if rollback_result is not None:
+            metadata["rollback_returncode"] = rollback_result.returncode
+            metadata["rolled_back_during_apply"] = True
+    return OperationResult("apply-snapshot" if snapshot else "apply-overlay", argv, rc, duration, output, [], log_path=path, metadata=metadata)
 
 
 

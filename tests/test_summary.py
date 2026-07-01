@@ -4,7 +4,7 @@ import unittest
 from io import StringIO
 
 from devtool.models import Issue, OperationResult
-from devtool.summary import build_runner_json, render_artifact_manifest, render_status_table, render_summary
+from devtool.summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from rich.console import Console
 
 
@@ -95,3 +95,35 @@ class SummaryRenderingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class FailureDetailRenderingTests(unittest.TestCase):
+    def test_render_summary_shows_failed_output_details(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=80)
+        result = OperationResult(
+            name="artifact-check",
+            argv=["apply-overlay", "bad.zip"],
+            returncode=1,
+            duration_seconds=0.0,
+            output="Artifact check failed before apply.\nerror_type: RuntimeError\nerror: boom",
+            issues=[],
+            failure_kind="artifact_failure",
+        )
+        render_summary([result], console_obj=console)
+        output = stream.getvalue()
+        self.assertIn("Failure details", output)
+        self.assertIn("RuntimeError", output)
+        self.assertIn("boom", output)
+
+    def test_build_json_summary_includes_output(self) -> None:
+        result = OperationResult(
+            name="artifact-check",
+            argv=["apply-overlay", "bad.zip"],
+            returncode=1,
+            duration_seconds=0.0,
+            output='{"error":"boom"}',
+            issues=[],
+            failure_kind="artifact_failure",
+        )
+        data = build_json_summary([result], repo_root="/tmp/repo")
+        self.assertEqual(data["results"][0]["output"], '{"error":"boom"}')

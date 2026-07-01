@@ -54,6 +54,7 @@ def _result_to_json(result: OperationResult) -> dict[str, Any]:
         "duration_s": result.duration_seconds,
         "log_path": result.log_path or None,
         "failure_kind": result.failure_kind or None,
+        "metadata": result.metadata or {},
         "warnings": sum(1 for issue in result.issues if issue.severity == "warning"),
         "errors": sum(1 for issue in result.issues if issue.severity == "error"),
     }

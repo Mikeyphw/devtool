@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -9,6 +10,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
+from rich.syntax import Syntax
+from rich.pretty import Pretty
 
 from .console_utils import create_console, is_narrow_console
 from .models import Issue, OperationResult
@@ -31,6 +34,61 @@ def _severity_text(issue: Issue) -> Text:
 
 def _cell(value: str | None) -> Text:
     return Text(value or "-", overflow="fold", no_wrap=False)
+
+
+def _strip_command_echo(output: str) -> str:
+    text = (output or "").strip()
+    if text.startswith("$ ") and "\n" in text:
+        return text.split("\n", 1)[1].strip()
+    return text
+
+
+def _try_parse_json_text(text: str) -> object | None:
+    stripped = _strip_command_echo(text)
+    if not stripped:
+        return None
+    candidates = [stripped]
+    first_obj = min([idx for idx in [stripped.find("{"), stripped.find("[")] if idx >= 0], default=-1)
+    if first_obj > 0:
+        candidates.append(stripped[first_obj:])
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            continue
+    return None
+
+
+def _shorten_output(text: str, *, max_lines: int = 12, max_chars: int = 3000) -> str:
+    stripped = _strip_command_echo(text)
+    if len(stripped) > max_chars:
+        stripped = stripped[:max_chars].rstrip() + "\n… output truncated …"
+    lines = stripped.splitlines()
+    if len(lines) > max_lines:
+        return "\n".join(lines[:max_lines] + [f"… {len(lines) - max_lines} more line(s) …"])
+    return stripped
+
+
+def _render_failed_output_details(results: list[OperationResult], target_console: Console) -> None:
+    failed = [result for result in results if result.returncode != 0 and (result.output or "").strip()]
+    if not failed:
+        return
+    renderables: list[object] = []
+    for result in failed:
+        parsed = _try_parse_json_text(result.output)
+        if parsed is not None:
+            renderables.append(_tree_from_json(f"{result.name} parsed output", parsed))
+            continue
+        table = Table(title=result.name, show_header=False, expand=not is_narrow_console(target_console), box=None)
+        table.add_column("Field", style="bold", no_wrap=True)
+        table.add_column("Value", overflow="fold")
+        table.add_row("failure", result.failure_kind or "-")
+        table.add_row("exit", str(result.returncode))
+        if result.log_path:
+            table.add_row("log", result.log_path)
+        table.add_row("details", Text(_shorten_output(result.output), overflow="fold"))
+        renderables.append(table)
+    target_console.print(Panel(Group(*renderables), title="Failure details", expand=not is_narrow_console(target_console)))
 
 
 def _format_issue_location(issue: Issue) -> str:
@@ -74,6 +132,8 @@ def render_summary(results: list[OperationResult], *, console_obj: Console | Non
     else:
         _render_wide_results(results, target_console)
         _render_wide_issues([issue for result in results for issue in result.issues], target_console)
+
+    _render_failed_output_details(results, target_console)
 
     summary = Text()
     summary.append("warnings=", style="yellow")
@@ -194,6 +254,8 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
                 "log_path": result.log_path,
                 "skipped": result.skipped,
                 "failure_kind": result.failure_kind,
+                "metadata": result.metadata,
+                "output": result.output,
                 "issues": [
                     {
                         "severity": issue.severity,
@@ -270,6 +332,7 @@ def build_runner_json(
                 "exit_code": result.returncode,
                 "log": result.log_path or None,
                 "failure_kind": result.failure_kind or None,
+                "metadata": result.metadata or {},
             }
             for result in results
         ],

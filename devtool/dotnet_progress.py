@@ -8,6 +8,7 @@ from typing import Any, Callable, Iterable
 
 from rich.console import Console, Group
 from rich.live import Live
+from rich.errors import LiveError
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -93,15 +94,26 @@ class DotnetProgressTracker:
             transient=True,
             vertical_overflow="visible",
         )
-        self.progress.start()
-        self.live.start()
+        try:
+            # Do not call ``Progress.start()`` here. ``Progress.start()`` owns
+            # its own Rich Live display, and this tracker already renders the
+            # Progress inside a parent Live so the detail line can stay below
+            # the one-line progress bar.  Starting both creates nested Live
+            # displays and crashes on Termux with:
+            # ``rich.errors.LiveError: Only one live display may be active``.
+            self.live.start()
+        except LiveError:
+            # Another Rich status/progress display is already active.  Keep
+            # parsing dotnet output for Tasker/final snapshots, but gracefully
+            # disable the terminal render instead of crashing the devtool run.
+            self.live = None
+            self.progress = None
+            self.task_id = None
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
         if self.live is not None:
             self.live.stop()
-        if self.progress is not None:
-            self.progress.stop()
 
     def update_from_line(self, line: str) -> None:
         if self.plan is None or (not self.enabled and self.update_callback is None):

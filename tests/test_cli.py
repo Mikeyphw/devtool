@@ -50,7 +50,11 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.validate)
         self.assertFalse(args.validate_only)
         self.assertEqual(args.commit, "msg")
-        self.assertFalse(args.commit_even_on_failure)
+
+    def test_parser_rejects_commit_even_on_failure_flag(self) -> None:
+        parser = build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["apply-overlay", "--commit-even-on-failure", "artifact.zip"])
 
     def test_parser_accepts_validation_skip_flags(self) -> None:
         parser = build_parser()
@@ -308,23 +312,52 @@ class CliTests(unittest.TestCase):
             self.assertFalse((root / ".devtool-delete").exists())
 
 
-    def test_apply_overlay_removes_sidecar_manifest_next_to_artifact(self) -> None:
+    def test_apply_overlay_removes_sidecar_manifest_next_to_artifact_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
+            (root / ".devtool.toml").write_text('[project]\ntest_command = "echo test"\n', encoding="utf-8")
             artifact = root / "artifact.zip"
             sidecar = root / "artifact.zip.devtool.json"
             with ZipFile(artifact, "w") as zf:
                 zf.writestr("new.txt", "new")
             sidecar.write_text(json.dumps({"type": "overlay"}), encoding="utf-8")
 
-            rc = main(["--repo", str(root), "--yes", "apply-overlay", str(artifact)])
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertFalse(artifact.exists())
             self.assertFalse(sidecar.exists())
             self.assertFalse((root / ".devtool-artifact.json").exists())
             self.assertEqual((root / "new.txt").read_text(encoding="utf-8"), "new")
+
+    def test_apply_overlay_keeps_original_artifact_when_validation_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "existing.txt").write_text("before", encoding="utf-8")
+            (root / ".devtool.toml").write_text('[project]\ntest_command = "echo test"\n', encoding="utf-8")
+            artifact = root / "artifact.zip"
+            sidecar = root / "artifact.zip.devtool.json"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("existing.txt", "after")
+                zf.writestr("new.txt", "new")
+            sidecar.write_text(json.dumps({"type": "overlay"}), encoding="utf-8")
+
+            with (
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}),
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", str(artifact)])
+
+            self.assertEqual(rc, 1)
+            self.assertTrue(artifact.exists())
+            self.assertTrue(sidecar.exists())
+            self.assertEqual((root / "existing.txt").read_text(encoding="utf-8"), "before")
+            self.assertFalse((root / "new.txt").exists())
 
     def test_apply_snapshot_skips_metadata_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -535,7 +568,7 @@ class CliTests(unittest.TestCase):
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertTrue(any("apps/S3pe.Modern.sln" in " ".join(argv) for argv in captured))
@@ -588,33 +621,6 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rc, 1)
             mock_commit.assert_not_called()
 
-    def test_apply_overlay_validate_can_commit_even_on_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / ".git").mkdir()
-            (root / "App.sln").write_text("", encoding="utf-8")
-            artifact = root / "artifact.zip"
-            with ZipFile(artifact, "w") as zf:
-                zf.writestr("README.txt", "ok")
-
-            commit_calls: list[str] = []
-
-            def fake_git_commit(repo_root, message, *, verbose=False, dry_run=False):
-                commit_calls.append(message)
-                return ([__import__("devtool.models").models.OperationResult("git-commit", ["git", "commit", "-m", message], 0, 0.0, "committed", [])], "commit output")
-
-            with (
-                patch("devtool.cli._git_dirty", return_value=False),
-                patch("devtool.cli.apply_overlay", return_value=__import__("devtool.models").models.OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
-                patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
-                patch("devtool.cli.git_commit", side_effect=fake_git_commit),
-                patch("devtool.cli.render_summary"),
-            ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--commit", "handoff commit", "--commit-even-on-failure", str(artifact)])
-
-            self.assertEqual(rc, 1)
-            self.assertEqual(commit_calls, ["handoff commit"])
-
     def test_apply_snapshot_validate_can_commit_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -641,3 +647,16 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["snapshot handoff"])
+
+class TestNoBuildParserTests(unittest.TestCase):
+    def test_parser_accepts_test_no_build_after_subcommand(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["test", "--no-build"])
+        self.assertEqual(args.command, "test")
+        self.assertTrue(args.no_build)
+
+    def test_parser_accepts_test_no_build_before_subcommand(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--no-build", "test"])
+        self.assertEqual(args.command, "test")
+        self.assertTrue(args.no_build)

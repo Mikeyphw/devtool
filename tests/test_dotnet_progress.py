@@ -148,3 +148,27 @@ class DotnetProgressDynamicTests(unittest.TestCase):
             snap = tracker.snapshot()
             self.assertIn("testing tests/App.Tests/bin/Debug/net8.0/App.Tests.dll", snap["detail"])
             self.assertNotIn(str(root), snap["detail"])
+
+class DotnetProgressLiveSafetyTests(unittest.TestCase):
+    def test_tracker_does_not_crash_when_another_rich_live_is_active(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from rich.live import Live
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        buffer = StringIO()
+        console = Console(file=buffer, force_terminal=True, width=80)
+        outer = Live("outer", console=console, transient=True)
+        outer.start()
+        try:
+            tracker = DotnetProgressTracker(["dotnet", "build", "App.csproj"], "/tmp", "build", console)
+            with tracker:
+                tracker.update_from_line("  App -> /tmp/bin/App.dll")
+                tracker.finish(0)
+        finally:
+            outer.stop()
+
+        snap = tracker.snapshot()
+        self.assertEqual(snap["completed"], 1)
+        self.assertEqual(snap["total"], 1)
+        self.assertIn("App.dll", snap["detail"])

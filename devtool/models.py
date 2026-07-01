@@ -36,6 +36,7 @@ class OperationResult:
     skipped: bool = False
     log_path: str = ""
     failure_kind: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

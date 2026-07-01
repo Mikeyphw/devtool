@@ -158,3 +158,34 @@ class DotnetValidationNoBuildTests(unittest.TestCase):
         test_specs = [spec for spec in specs if spec.name == "test"]
         self.assertEqual(len(test_specs), 1)
         self.assertNotIn("--no-build", test_specs[0].argv)
+
+class DotnetTestNoBuildFlagTests(unittest.TestCase):
+    def test_user_no_build_adds_flag_to_implicit_dotnet_test(self) -> None:
+        from devtool.runners import add_no_build_to_dotnet_test_specs, build_specs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(repo_root=Path(tmp), kind="dotnet", build_target="Demo.sln", test_target="Demo.sln")
+            specs = build_specs(config, "test")
+
+        updated, changed = add_no_build_to_dotnet_test_specs(specs)
+        self.assertEqual(changed, 1)
+        self.assertEqual(updated[0].argv[:3], ["dotnet", "test", "--no-build"])
+        self.assertIn("Demo.sln", updated[0].argv)
+
+    def test_user_no_build_adds_flag_to_explicit_dotnet_test(self) -> None:
+        from devtool.runners import add_no_build_to_dotnet_test_specs, build_specs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="dotnet",
+                build_target="Demo.sln",
+                test_target="Demo.sln",
+                test_command="dotnet test Demo.sln --logger trx",
+            )
+            specs = build_specs(config, "test")
+
+        updated, changed = add_no_build_to_dotnet_test_specs(specs, allow_explicit=True)
+        self.assertEqual(changed, 1)
+        self.assertEqual(updated[0].argv[:3], ["dotnet", "test", "--no-build"])
+        self.assertIn("--logger", updated[0].argv)
