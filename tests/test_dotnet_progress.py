@@ -261,3 +261,46 @@ class DotnetProgressFalseIssueCountTests(unittest.TestCase):
         self.assertEqual(snap["errors"], 0)
         self.assertIn("test ok", snap["detail"])
         self.assertNotIn("diagnostics", snap["detail"])
+
+class DotnetProgressStableTotalTests(unittest.TestCase):
+    def test_tracker_does_not_chase_underestimated_total_before_finish(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src" / "App.csproj").write_text("", encoding="utf-8")
+            tracker = DotnetProgressTracker(["dotnet", "build", "src/App.csproj"], str(root), "build", Console(file=StringIO(), force_terminal=True, width=80))
+
+            with tracker:
+                tracker.update_from_line(f"  App -> {root}/src/bin/Debug/net8.0/App.dll")
+                tracker.update_from_line(f"  Lib -> {root}/src/bin/Debug/net8.0/Lib.dll")
+                running = tracker.snapshot()
+                tracker.finish(0)
+
+            finished = tracker.snapshot()
+            self.assertEqual(running["completed"], 2)
+            self.assertIsNone(running["total"])
+            self.assertEqual(finished["completed"], 2)
+            self.assertEqual(finished["total"], 2)
+
+    def test_build_total_includes_transitive_project_references(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = root / "src" / "App" / "App.csproj"
+            lib = root / "src" / "Lib" / "Lib.csproj"
+            core = root / "shared" / "Core" / "Core.csproj"
+            app.parent.mkdir(parents=True)
+            lib.parent.mkdir(parents=True)
+            core.parent.mkdir(parents=True)
+            app.write_text('<Project><ItemGroup><ProjectReference Include="../Lib/Lib.csproj" /></ItemGroup></Project>', encoding="utf-8")
+            lib.write_text('<Project><ItemGroup><ProjectReference Include="../../shared/Core/Core.csproj" /></ItemGroup></Project>', encoding="utf-8")
+            core.write_text('<Project />', encoding="utf-8")
+
+            plan = dotnet_progress_plan(["dotnet", "build", "src/App/App.csproj"], str(root))
+
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            self.assertEqual(plan.total, 3)

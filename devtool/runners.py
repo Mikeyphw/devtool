@@ -293,6 +293,172 @@ def _interesting_output_line(line: str) -> bool:
     return bool(re.search(r"(error|warning|failed|fail|restore|build|test|pack|publish|\d+%)", text, re.IGNORECASE))
 
 
+
+def _idle_timeout_for(argv: list[str], command_name: str) -> float | None:
+    """Return a safe idle timeout for commands known to hang after output ends.
+
+    Dotnet/vstest can print all visible summaries but keep a process alive with
+    no further output.  That makes the Rich progress bar look complete while
+    devtool waits forever.  Keep this narrow by defaulting only test commands to
+    an idle timeout; users can override or disable it with environment vars.
+    """
+    raw = os.environ.get("DEVTOOL_COMMAND_IDLE_TIMEOUT", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+            return value if value > 0 else None
+        except ValueError:
+            pass
+    test_raw = os.environ.get("DEVTOOL_TEST_IDLE_TIMEOUT", "").strip()
+    if test_raw:
+        try:
+            value = float(test_raw)
+            return value if value > 0 else None
+        except ValueError:
+            pass
+    # Do not auto-kill quiet test commands by default. Some test assemblies are
+    # legitimately silent for more than a few seconds, and killing them can turn
+    # a passing validation into exit 130. If a local environment really has a
+    # dotnet/vstest hang, opt in explicitly with DEVTOOL_TEST_IDLE_TIMEOUT or
+    # DEVTOOL_COMMAND_IDLE_TIMEOUT.
+    return None
+
+
+def _iter_process_output_lines(proc: subprocess.Popen, *, drain_seconds: float = 0.75, idle_timeout: float | None = None):
+    """Yield child output without waiting forever for pipe EOF.
+
+    This implementation avoids ``TextIOWrapper.readline()`` on a pipe after
+    ``select`` because it can still block waiting for a newline.  It reads the
+    pipe in non-blocking byte chunks, yields complete lines promptly, and stops
+    shortly after the real child exits even if descendants inherited stdout.
+
+    If ``idle_timeout`` is set and the main process stays alive with no output
+    for that many seconds, the process group is terminated.  This is used for
+    dotnet test/vstest hangs where all summaries have printed but the process
+    never exits.
+    """
+    stdout = proc.stdout
+    if stdout is None:
+        return
+    if os.name != "posix":
+        for line in stdout:
+            yield line
+        return
+
+    import codecs
+    import fcntl
+    import select
+
+    fd = stdout.fileno()
+    old_flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    pending = ""
+    last_output_at = time.monotonic()
+    timed_out = False
+
+    def emit_text(text: str):
+        nonlocal pending
+        pending += text
+        while "\n" in pending:
+            line, pending = pending.split("\n", 1)
+            yield line + "\n"
+
+    try:
+        while True:
+            ready, _, _ = select.select([fd], [], [], 0.1)
+            if ready:
+                try:
+                    chunk = os.read(fd, 65536)
+                except BlockingIOError:
+                    chunk = b""
+                if chunk:
+                    last_output_at = time.monotonic()
+                    for line in emit_text(decoder.decode(chunk)):
+                        yield line
+                    continue
+                if proc.poll() is not None:
+                    break
+
+            if proc.poll() is not None:
+                deadline = time.monotonic() + max(0.0, drain_seconds)
+                while time.monotonic() < deadline:
+                    ready, _, _ = select.select([fd], [], [], 0.05)
+                    if not ready:
+                        break
+                    try:
+                        chunk = os.read(fd, 65536)
+                    except BlockingIOError:
+                        chunk = b""
+                    if not chunk:
+                        break
+                    for line in emit_text(decoder.decode(chunk)):
+                        yield line
+                break
+
+            if idle_timeout is not None and idle_timeout > 0 and (time.monotonic() - last_output_at) >= idle_timeout:
+                timed_out = True
+                message = f"\nDevtool stopped a quiet child process after {idle_timeout:g}s without output.\n"
+                for line in emit_text(message):
+                    yield line
+                try:
+                    os.killpg(proc.pid, 15)
+                except Exception:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                try:
+                    proc.wait(timeout=2.0)
+                except Exception:
+                    try:
+                        os.killpg(proc.pid, 9)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                break
+
+        tail = decoder.decode(b"", final=True)
+        if tail:
+            for line in emit_text(tail):
+                yield line
+        if pending:
+            yield pending
+    finally:
+        try:
+            fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
+        except Exception:
+            pass
+
+
+def _wait_process_returncode(proc: subprocess.Popen, *, timeout: float = 5.0) -> int:
+    try:
+        return proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name == "posix":
+                os.killpg(proc.pid, 15)
+            else:
+                proc.terminate()
+        except Exception:
+            pass
+        try:
+            return proc.wait(timeout=2.0)
+        except Exception:
+            try:
+                if os.name == "posix":
+                    os.killpg(proc.pid, 9)
+                else:
+                    proc.kill()
+            except Exception:
+                pass
+            try:
+                return proc.wait(timeout=1.0)
+            except Exception:
+                return 124
+
 def _run_process_live(
     argv: list[str],
     *,
@@ -338,7 +504,12 @@ def _run_process_live(
 
     output_parts: list[str] = []
     assert proc.stdout is not None
-    tracker = DotnetProgressTracker(argv, cwd, command_name, console, phase_index=phase_index, phase_total=phase_total) if not verbose else None
+    tracker = DotnetProgressTracker(argv, cwd, command_name, console, phase_index=phase_index, phase_total=phase_total) if (not verbose or tasker_progress is not None) else None
+    if tracker is not None and verbose:
+        # In verbose mode stdout is already streamed as raw text. Keep the
+        # dotnet parser active only for Tasker/logcat progress events; do not
+        # render a second Rich progress bar over the raw output.
+        tracker.enabled = False
     if tracker is not None and tasker_progress is not None:
         def _tasker_update(snapshot: dict) -> None:
             tasker_progress.progress(
@@ -346,6 +517,7 @@ def _run_process_live(
                 completed=snapshot.get("completed"),
                 total=snapshot.get("total"),
                 percent=snapshot.get("percent"),
+                force=True,
             )
         tracker.update_callback = _tasker_update
     def _interrupt_process() -> None:
@@ -375,20 +547,23 @@ def _run_process_live(
                 pass
 
     try:
+        idle_timeout = _idle_timeout_for(effective_argv if False else argv, command_name)
         if tracker is None:
-            for line in proc.stdout:
+            for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout):
                 output_parts.append(line)
                 print(line, end="", flush=True)
-            return proc.wait(), "".join(output_parts)
+            return _wait_process_returncode(proc), "".join(output_parts)
 
         with tracker:
-            for line in proc.stdout:
+            for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout):
                 output_parts.append(line)
                 # Non-verbose mode intentionally keeps command stdout/stderr captured only.
                 # Dotnet commands get a parsed Rich progress display instead of raw output.
                 # Use --verbose when the full restore/build/test stream is needed live.
+                if verbose:
+                    print(line, end="", flush=True)
                 tracker.update_from_line(line)
-            returncode = proc.wait()
+            returncode = _wait_process_returncode(proc)
             tracker.finish(returncode)
         return returncode, "".join(output_parts)
     except KeyboardInterrupt:

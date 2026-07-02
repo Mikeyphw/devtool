@@ -9,7 +9,7 @@ from typing import Any
 
 from .config import discover_dotnet_candidates, detect_project_kind, find_config
 
-IGNORED_DIRS = {".git", "bin", "obj", "node_modules", "venv", ".venv", "dist", "build", "__pycache__"}
+IGNORED_DIRS = {".git", ".devtool", "bin", "obj", "node_modules", "venv", ".venv", "dist", "build", "__pycache__"}
 
 
 def _collect(repo_root: Path, suffixes: tuple[str, ...]) -> list[Path]:
@@ -30,13 +30,29 @@ def _rel(repo_root: Path, path: Path) -> str:
         return str(path)
 
 
+def _is_devtool_dirty_path(path_text: str) -> bool:
+    """Return True when a git status path is inside the repo-local .devtool dir."""
+    path_text = path_text.strip().strip('"')
+    return path_text == ".devtool" or path_text.startswith(".devtool/")
+
+
+def _status_line_ignored(line: str) -> bool:
+    if not line.strip():
+        return True
+    # Porcelain v1 is usually ``XY path``. Rename/copy lines are
+    # ``XY old -> new``; ignore only when every touched path is under .devtool.
+    paths_text = line[3:] if len(line) > 3 else line.strip()
+    paths = [part.strip() for part in paths_text.split(" -> ")]
+    return bool(paths) and all(_is_devtool_dirty_path(path) for path in paths)
+
+
 def _git_dirty(repo_root: Path) -> bool | None:
     if not (repo_root / ".git").exists():
         return None
     proc = subprocess.run(["git", "status", "--porcelain"], cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     if proc.returncode != 0:
         return None
-    return bool(proc.stdout.strip())
+    return any(not _status_line_ignored(line) for line in proc.stdout.splitlines())
 
 
 def detect_repo(repo_root: Path) -> dict[str, Any]:

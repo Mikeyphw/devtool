@@ -80,7 +80,7 @@ _devtool() {
     '--chroot[run command phases inside chroot via chrootctl]:name:' \
     '--stdout-payload[select stdout payload]:(auto summary json raw)' \
     '--save-json-payload[write machine JSON payload]:file:_files' \
-    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-snapshot batch logs status doctor config init-config completion tag release-notes ai-prompt detect handoff history rollback targets v wv b t ao as)' \
+    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-snapshot batch logs status doctor config init-config completion tag release-notes ai-prompt detect handoff hud history rollback targets v wv b t ao as)' \
     '*::arg:->args'
 
   case $words[1] in
@@ -125,6 +125,17 @@ _devtool() {
       ;;
     handoff)
       _arguments '(-o --output)'{-o,--output}'[write handoff to file]:file:_files'
+      ;;
+    hud)
+      _arguments \
+        '--mode[HUD renderer]:(auto termux-gui terminal notification web studio v3 v4 v5 console dashboard all)' \
+        '--host[host/IP for web/studio modes]:host:' \
+        '--port[port for web/studio modes]:port:' \
+        '--poll-interval[seconds between refreshes]:seconds:' \
+        '--recent-events[number of recent events]:count:' \
+        '--notify-id[notification id]:id:' \
+        '--studio-notify[also mirror studio mode to termux-notification]' \
+        '--once[render/update once and exit]'
       ;;
     history)
       _arguments '--limit[number of entries]:limit:'

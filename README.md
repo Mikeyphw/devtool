@@ -311,3 +311,107 @@ This build adds the higher-friction workflow pieces around the existing runner:
 ### Dotnet progress bars
 
 In non-verbose mode, dotnet restore/build/test each render as a separate Rich progress bar. Each command leaves its own completed line and a parsed repo-relative detail line below it, while raw command output remains captured for summaries and logs. Use `--verbose` to stream raw dotnet output.
+
+## Devtool HUD v3/v4/v5
+
+`devtool hud` renders the live progress emitted by `--tasker-progress` / `--tasker` from
+`/sdcard/Tasker/devtool/notification.json` and `/sdcard/Tasker/devtool/events.jsonl`.
+
+Examples:
+
+```bash
+devtool --tasker validate
+# in another Termux session
+devtool hud --mode v3
+```
+
+Modes:
+
+- `--mode v3` / `--mode terminal`: Rich local console HUD with progress, current/total, state, and recent events.
+- `--mode v4` / `--mode web`: dependency-free HTTP dashboard with `/`, `/api/state`, `/api/events`, `/events.jsonl`, `/health`, and `/stream` Server-Sent Events.
+- `--mode v5` / `--mode studio`: starts the HTTP dashboard and a local Rich console HUD together; add `--studio-notify` to mirror state into Termux notifications too.
+- `--mode termux-gui`: native Termux:GUI Activity using the optional `termuxgui` Python binding.
+- `--mode notification`: updates one ongoing Termux notification.
+- `--mode auto`: Termux:GUI when available, then notification, then terminal.
+
+Useful commands:
+
+```bash
+# local terminal HUD
+devtool hud --mode v3
+
+# browser dashboard on the phone only
+devtool hud --mode v4 --host 127.0.0.1 --port 8765
+
+# browser dashboard reachable from another device on the LAN
+devtool hud --mode v4 --host 0.0.0.0 --port 8765
+
+# studio: web dashboard + terminal HUD + optional notification mirror
+devtool hud --mode v5 --host 0.0.0.0 --port 8765 --studio-notify
+
+# print the current HUD snapshot once and exit
+devtool hud --mode v5 --once
+```
+
+Install Termux:GUI support on the device with:
+
+```bash
+pkg install termux-gui-package
+pip install termuxgui
+```
+
+Tasker progress bars only need the top-level `current` and `total` fields from
+`notification.json`; HUD v3/v4/v5 use the same fields.
+
+
+## HUD v6: Unix desktop / Ubuntu GNOME
+
+The HUD command now supports desktop modes in addition to the Android/Tasker paths:
+
+```bash
+devtool hud --mode desktop
+```
+
+On Ubuntu GNOME this auto-selects the best available desktop renderer:
+
+1. `desktop-window` when GTK/PyGObject is available
+2. `desktop-notify` when `notify-send` is available
+3. terminal HUD fallback
+
+Install optional GNOME desktop dependencies:
+
+```bash
+sudo apt install python3-gi gir1.2-gtk-3.0 libnotify-bin
+```
+
+Run explicit modes:
+
+```bash
+devtool hud --mode desktop-window
+devtool hud --mode desktop-notify
+devtool hud --mode v6
+```
+
+On Unix desktops, devtool defaults its event directory to:
+
+```text
+$XDG_STATE_HOME/devtool
+```
+
+or, if `XDG_STATE_HOME` is not set:
+
+```text
+~/.local/state/devtool
+```
+
+Android/Termux keeps using:
+
+```text
+/sdcard/Tasker/devtool
+```
+
+Override either platform with:
+
+```bash
+export DEVTOOL_TASKER_DIR=/path/to/devtool-state
+```

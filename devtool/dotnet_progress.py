@@ -23,6 +23,7 @@ from rich.text import Text
 _DOTNET_COMMANDS = {"restore", "build", "test", "publish", "pack"}
 _PROJECT_EXTENSIONS = {".csproj", ".fsproj", ".vbproj"}
 _SOLUTION_PROJECT_RE = re.compile(r'Project\("[^"\r\n]+"\)\s*=\s*"[^"]+"\s*,\s*"([^"]+\.(?:csproj|fsproj|vbproj))"', re.IGNORECASE)
+_PROJECT_REFERENCE_RE = re.compile(r'<ProjectReference\b[^>]*\bInclude=["\']([^"\']+\.(?:csproj|fsproj|vbproj))["\']', re.IGNORECASE)
 _RESTORED_RE = re.compile(r"\bRestored\s+(.+?\.(?:csproj|fsproj|vbproj))\b(?:\s+\((?P<duration>.*?)\))?", re.IGNORECASE)
 _RESTORE_UPTODATE_RE = re.compile(r"\b(?:Skipping project|Project)\s+(.+?\.(?:csproj|fsproj|vbproj))\b.*?up-to-date", re.IGNORECASE)
 _RESTORE_ASSETS_RE = re.compile(r"\bAssets file has not changed\. Skipping assets file writing\. Path:\s+(.+?obj[\\/](?:project\.assets\.json|packages\.lock\.json))\b", re.IGNORECASE)
@@ -142,9 +143,18 @@ class DotnetProgressTracker:
                 self.seen_units.add(unit)
                 completed = len(self.seen_units)
                 current_total = self.total if self.total is not None else self.plan.total
+                # When the initial estimate is too low, do not chase the
+                # completed count by reporting 8/8, 9/9, 10/10.  That makes
+                # external HUDs look complete while the command is still
+                # running.  Switch to indeterminate total until the command
+                # finishes; finish() will then publish the final exact total.
                 if current_total is not None and completed > current_total:
-                    current_total = completed
-                self._set_progress(completed=completed, total=current_total, detail=detail)
+                    self.total = None
+                    if self.progress is not None and self.task_id is not None:
+                        self.progress.update(self.task_id, total=None)
+                    self._set_progress(completed=completed, detail=detail, force_callback=True)
+                else:
+                    self._set_progress(completed=completed, total=current_total, detail=detail)
             else:
                 self._set_progress(total=total if isinstance(total, int) else None, detail=detail)
             return
@@ -315,7 +325,8 @@ class DotnetProgressTracker:
         if "starting test execution" in lowered:
             return "test: starting execution"
         if "a total of" in lowered and "test files matched" in lowered:
-            return _shorten(text, self.console.width)
+            # VSTest boilerplate is not progress and should not refresh HUD/terminal.
+            return ""
         if _DIAGNOSTIC_ERROR_RE.search(text) or _DIAGNOSTIC_WARNING_RE.search(text):
             return _shorten(_repo_relative_paths_in_text(text, self.cwd), self.console.width)
         return ""
@@ -375,17 +386,55 @@ def _estimate_dotnet_total(command: str, target_text: str, cwd: str) -> int | No
     elif path.suffix.lower() == ".sln" and path.exists():
         projects = _projects_from_solution(path)
     elif path.is_dir():
-        projects = sorted(p for p in path.rglob("*proj") if p.suffix.lower() in _PROJECT_EXTENSIONS)
+        projects = sorted(
+            p
+            for p in path.rglob("*proj")
+            if p.suffix.lower() in _PROJECT_EXTENSIONS
+            and not _is_under_build_output(p)
+        )
 
     if command == "test":
-        test_projects = [p for p in projects if "test" in p.stem.lower() or any("test" in part.lower() for part in p.parts)]
-        if test_projects:
-            return len(test_projects)
+        # For `dotnet test`, progress units are runnable test assemblies, not
+        # every transitive library built underneath them.  Expanding
+        # ProjectReference dependencies made desktop/terminal HUDs show totals
+        # such as 31 when only a handful of test DLLs actually run.
+        test_projects = [p for p in projects if _looks_like_test_project(p)]
+        projects = test_projects or projects
+        if projects:
+            return len(_dedupe_paths(projects))
+        return None
 
+    projects = _expand_project_references(projects)
     if projects:
         return len(projects)
     return None
 
+
+def _is_under_build_output(path: Path) -> bool:
+    lowered = {part.lower() for part in path.parts}
+    return "bin" in lowered or "obj" in lowered
+
+
+def _looks_like_test_project(path: Path) -> bool:
+    lowered_name = path.stem.lower()
+    if "test" in lowered_name or "spec" in lowered_name:
+        return True
+    return any(part.lower() in {"test", "tests"} or "tests" in part.lower() for part in path.parts)
+
+
+def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        try:
+            normalized = path.resolve()
+        except OSError:
+            normalized = path.absolute()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
 
 def _projects_from_solution(solution: Path) -> list[Path]:
     try:
@@ -397,6 +446,46 @@ def _projects_from_solution(solution: Path) -> list[Path]:
         rel = match.group(1).replace("\\", os.sep)
         projects.append((solution.parent / rel).resolve())
     return projects
+
+
+def _expand_project_references(projects: Iterable[Path]) -> list[Path]:
+    """Return projects plus transitive ProjectReference dependencies.
+
+    MSBuild can build referenced projects even when they are not listed in the
+    solution or when the CLI target is a single csproj.  Counting those refs up
+    front prevents HUD totals from looking complete early and then growing as
+    output lines arrive.
+    """
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+
+    def visit(project: Path) -> None:
+        try:
+            normalized = project.resolve()
+        except OSError:
+            normalized = project.absolute()
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        ordered.append(normalized)
+        for ref in _project_references(normalized):
+            visit(ref)
+
+    for project in projects:
+        visit(project)
+    return ordered
+
+
+def _project_references(project: Path) -> list[Path]:
+    try:
+        text = project.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    refs: list[Path] = []
+    for match in _PROJECT_REFERENCE_RE.finditer(text):
+        rel = match.group(1).replace("\\", os.sep)
+        refs.append((project.parent / rel).resolve())
+    return refs
 
 
 def _normalize_project_unit(value: str, cwd: str) -> str:

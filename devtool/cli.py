@@ -40,7 +40,7 @@ from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .notify import available_notifier, send_notification
 from .runners import apply_overlay, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
-from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_ACTION, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink
+from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_ACTION, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, start_auto_hud
 from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
 
 console = create_console()
@@ -54,6 +54,13 @@ INTERACTIVE_COPY_COMMANDS = {
     "apply-snapshot",
     "as",
     "batch",
+}
+
+
+PROGRESS_CAPABLE_COMMANDS = {
+    "restore", "rs", "build", "b", "test", "t", "validate", "v",
+    "wine-validate", "wv", "run", "rn", "package", "pkg",
+    "apply-overlay", "ao", "apply-snapshot", "as", "batch", "commit", "ci", "tag",
 }
 
 
@@ -87,10 +94,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--notify-progress", action="store_true", help="Update a live Termux notification while phases run")
     parser.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for --notify-progress")
     parser.add_argument("--tasker", action="store_true", help="Enable Tasker JSON, broadcast, and live notification integration")
-    parser.add_argument("--tasker-progress", action="store_true", help="Write live Tasker-compatible JSON status files")
-    parser.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory for Tasker JSON files")
+    parser.add_argument("--tasker-progress", "--progress", dest="tasker_progress", action="store_true", default=None, help="Write live HUD/Tasker-compatible JSON progress files (default for build/test/validate/apply commands)")
+    parser.add_argument("--no-tasker-progress", "--no-progress", dest="tasker_progress", action="store_false", help="Disable live HUD/Tasker progress files")
+    parser.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory for HUD/Tasker JSON files (default: platform state dir, usually ~/.local/state/devtool on Linux)")
     parser.add_argument("--tasker-broadcast", action="store_true", help="Send an Android broadcast after Tasker event files are written")
     parser.add_argument("--tasker-action", default=DEFAULT_TASKER_ACTION, help="Android broadcast action for Tasker events")
+    parser.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start/reuse the HUD when progress is emitted (default)")
+    parser.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not auto-start the HUD for this command")
+    parser.add_argument("--hud-mode", default="desktop", help="HUD mode to auto-start, e.g. desktop, desktop-window, desktop-notify, v5, terminal")
     parser.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
     exec_group = parser.add_mutually_exclusive_group()
     exec_group.add_argument("--host", action="store_true", help="Force commands to run on the host")
@@ -164,6 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
         cmd.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
         cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
+        cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Delete the source artifact and sidecars even if apply, validation, or commit fails")
         _add_validation_skip_flags(cmd)
         cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
 
@@ -201,6 +213,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     handoff_cmd = subparsers.add_parser("handoff")
     handoff_cmd.add_argument("-o", "--output", default="")
+
+    hud_cmd = subparsers.add_parser("hud")
+    hud_cmd.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool HUD/Tasker JSON files (default: platform state dir)")
+    hud_cmd.add_argument("--mode", choices=["auto", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: terminal/v3, web/v4, studio/v5, or Unix desktop/v6")
+    hud_cmd.add_argument("--host", default="127.0.0.1", help="Host/IP for HUD web/studio modes")
+    hud_cmd.add_argument("--port", type=int, default=8765, help="Port for HUD web/studio modes")
+    hud_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
+    hud_cmd.add_argument("--recent-events", type=int, default=8, help="Recent JSONL events to show/serve")
+    hud_cmd.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for HUD notification/studio mode")
+    hud_cmd.add_argument("--studio-notify", action="store_true", help="In studio/v5 mode, also mirror state into termux-notification when available")
+    hud_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
 
     history_cmd = subparsers.add_parser("history")
     history_cmd.add_argument("--limit", type=int, default=20)
@@ -328,24 +351,37 @@ def _maybe_notify(args: argparse.Namespace, *, warnings: int, errors: int, faile
 
 
 def _normalize_tasker_args(args: argparse.Namespace) -> None:
+    command = str(getattr(args, "command", "") or "")
     if getattr(args, "tasker", False):
         args.tasker_progress = True
         args.tasker_broadcast = True
         args.notify_progress = True
+    elif getattr(args, "tasker_progress", None) is None:
+        # Progress is useful by default for commands that run external phases.
+        # Keep introspection/config/HUD commands quiet unless the user opts in.
+        args.tasker_progress = command in PROGRESS_CAPABLE_COMMANDS
+
+    if getattr(args, "auto_hud", None) is None:
+        args.auto_hud = bool(getattr(args, "tasker_progress", False)) and command != "hud"
 
 
 def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = None, repo: Path | None = None) -> TaskerProgressSink | None:
     repo_root = (config.repo_root if config is not None else (repo or Path(args.repo or Path.cwd()))).resolve()
     target = str(getattr(args, "target", "") or getattr(args, "solution", "") or getattr(args, "project", "") or "")
+    directory = resolve_cli_path(str(getattr(args, "tasker_dir", DEFAULT_TASKER_DIR)))
+    enabled = bool(getattr(args, "tasker_progress", False))
+    notify_progress = bool(getattr(args, "notify_progress", False))
+    if enabled and bool(getattr(args, "auto_hud", False)):
+        start_auto_hud(directory, mode=str(getattr(args, "hud_mode", "desktop") or "desktop"), poll_interval=0.1)
     return build_tasker_sink(
-        enabled=bool(getattr(args, "tasker_progress", False)),
-        directory=str(getattr(args, "tasker_dir", DEFAULT_TASKER_DIR)),
+        enabled=enabled,
+        directory=str(directory),
         command=str(getattr(args, "command", "devtool") or "devtool"),
         repo_root=repo_root,
         target=target,
         broadcast=bool(getattr(args, "tasker_broadcast", False)),
         broadcast_action=str(getattr(args, "tasker_action", DEFAULT_TASKER_ACTION)),
-        notify_progress=bool(getattr(args, "notify_progress", False)),
+        notify_progress=notify_progress,
         notification_id=str(getattr(args, "notify_id", DEFAULT_NOTIFICATION_ID)),
     )
 
@@ -361,7 +397,7 @@ def _notification_payload_from_totals(*, warnings: int, errors: int, failed: int
         brief=brief,
     )
     level = "error" if failed or errors else ("warning" if warnings else "success")
-    return {"level": level, "title": title, "body": body}
+    return {"level": level, "title": title, "text": body, "expanded_title": title, "expanded_text": body, "body": body}
 
 
 def _finish_tasker(tasker_progress: TaskerProgressSink | None, *, totals: dict[str, int], results: list[OperationResult], command: str, repo_name: str, duration_seconds: float, args: argparse.Namespace) -> None:
@@ -962,25 +998,34 @@ def _artifact_sidecars_for_cleanup(artifact_path: Path) -> list[Path]:
     ]
 
 
-def _delete_original_artifact_after_success(results: list[OperationResult]) -> OperationResult | None:
-    """Delete the source artifact only after a fully successful apply run.
+def _delete_original_artifact_after_apply(
+    results: list[OperationResult],
+    *,
+    artifact: str = "",
+    delete_on_failure: bool = False,
+) -> OperationResult | None:
+    """Delete the source artifact after success, or after failure when requested."""
+    failed = any(result.returncode != 0 for result in results)
+    rolled_back = any(
+        result.name == "apply-rollback" or result.metadata.get("rolled_back_during_apply")
+        for result in results
+        if getattr(result, "metadata", None) is not None
+    )
+    if (failed or rolled_back) and not delete_on_failure:
+        return None
 
-    Rollback can happen after extraction, during validation, or after a later
-    post-apply step.  Keeping cleanup here means the original overlay/snapshot
-    remains available whenever rollback occurred or any result failed.
-    """
-    if any(result.returncode != 0 for result in results):
+    artifact_path = _apply_artifact_path(results)
+    if not artifact_path and artifact:
+        artifact_path = str(resolve_cli_path(artifact))
+    if not artifact_path:
         return None
-    if any(result.name == "apply-rollback" or result.metadata.get("rolled_back_during_apply") for result in results if getattr(result, "metadata", None) is not None):
-        return None
-    artifact = _apply_artifact_path(results)
-    if not artifact:
-        return None
+
     started = datetime.now(timezone.utc)
     start_ts = started.timestamp()
-    path = Path(artifact)
+    path = Path(artifact_path)
     removed: list[str] = []
     errors: list[str] = []
+    reason = "after failed apply" if failed or rolled_back else "after successful apply"
     try:
         for candidate in [path, *_artifact_sidecars_for_cleanup(path)]:
             try:
@@ -995,14 +1040,14 @@ def _delete_original_artifact_after_success(results: list[OperationResult]) -> O
                 ["delete", str(path)],
                 1,
                 datetime.now(timezone.utc).timestamp() - start_ts,
-                "Failed to delete original artifact after successful apply.\n" + "\n".join(errors),
+                f"Failed to delete original artifact {reason}.\n" + "\n".join(errors),
                 [],
                 failure_kind="artifact_cleanup_failure",
             )
         if not removed:
             output = "Original artifact cleanup skipped; artifact was already absent."
         else:
-            output = "Deleted original artifact after successful apply.\n" + "\n".join(f"removed: {item}" for item in removed)
+            output = f"Deleted original artifact {reason}.\n" + "\n".join(f"removed: {item}" for item in removed)
         return OperationResult("artifact-cleanup", ["delete", str(path)], 0, datetime.now(timezone.utc).timestamp() - start_ts, output, [])
     except BaseException as exc:
         return OperationResult(
@@ -1010,10 +1055,14 @@ def _delete_original_artifact_after_success(results: list[OperationResult]) -> O
             ["delete", str(path)],
             1,
             datetime.now(timezone.utc).timestamp() - start_ts,
-            f"Failed to delete original artifact after successful apply.\n{type(exc).__name__}: {exc}",
+            f"Failed to delete original artifact {reason}.\n{type(exc).__name__}: {exc}",
             [],
             failure_kind="artifact_cleanup_failure",
         )
+
+
+def _delete_original_artifact_after_success(results: list[OperationResult]) -> OperationResult | None:
+    return _delete_original_artifact_after_apply(results, delete_on_failure=False)
 
 
 def _run_transaction_rollback(
@@ -1102,9 +1151,24 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: 
     return results, "\n\n".join(raw)
 
 
+def _is_devtool_dirty_path(path_text: str) -> bool:
+    path_text = path_text.strip().strip('"')
+    return path_text == ".devtool" or path_text.startswith(".devtool/")
+
+
+def _status_line_ignored(line: str) -> bool:
+    if not line.strip():
+        return True
+    paths_text = line[3:] if len(line) > 3 else line.strip()
+    paths = [part.strip() for part in paths_text.split(" -> ")]
+    return bool(paths) and all(_is_devtool_dirty_path(path) for path in paths)
+
+
 def _git_dirty(repo_root: Path) -> bool:
     proc = subprocess.run(["git", "status", "--porcelain"], cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    return proc.returncode == 0 and bool(proc.stdout.strip())
+    if proc.returncode != 0:
+        return False
+    return any(not _status_line_ignored(line) for line in proc.stdout.splitlines())
 
 
 def _ensure_safe_repo(repo_root: Path, *, force: bool, yes: bool, command: str) -> None:
@@ -1315,6 +1379,11 @@ def main(argv: list[str] | None = None) -> int:
             print(text)
         return 0
 
+    if args.command == "hud":
+        from .hud import run_hud
+
+        return run_hud(args)
+
     if args.command == "history":
         config = _load_command_config(args)
         if effective_payload == "json":
@@ -1474,10 +1543,15 @@ def main(argv: list[str] | None = None) -> int:
                     raw_output += "\n\n" + rollback_raw
             else:
                 mark_transaction_completed(transaction_path)
-                cleanup_result = _delete_original_artifact_after_success(results)
-                if cleanup_result is not None:
-                    results.append(cleanup_result)
-                    raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
+        if not getattr(args, "dry_run", False):
+            cleanup_result = _delete_original_artifact_after_apply(
+                results,
+                artifact=getattr(args, "artifact", ""),
+                delete_on_failure=bool(getattr(args, "delete_artifact_on_failure", False)),
+            )
+            if cleanup_result is not None:
+                results.append(cleanup_result)
+                raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
         _record_apply_history(config, args, results)
     elif args.command in {"validate", "v", "wine-validate", "wv"}:
         if getattr(args, "watch", False):

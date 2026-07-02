@@ -281,7 +281,35 @@ def rollback_transaction(transaction_path: str | Path, *, reason: str = "rollbac
         backup_dir = Path(str(tx.get("backup_dir") or path.parent / "backup")).resolve()
         entries = list(tx.get("affected_paths") or [])
         if not entries:
-            raise RuntimeError("Transaction has no affected_paths; nothing safe to restore.")
+            # Older/interrupted apply transactions may have been created before
+            # any affected path snapshot was recorded.  There is nothing safe or
+            # useful to restore, but leaving active.json in place blocks every
+            # future apply command.  Treat this as a successful stale-transaction
+            # cleanup: mark it cleared, remove active.json if it points here, and
+            # remove the empty transaction directory.
+            tx["status"] = "cleared-empty"
+            tx["rollback_reason"] = reason
+            tx["rolled_back_at"] = _utc_now()
+            tx["updated_at"] = _utc_now()
+            _atomic_write_json(path, tx)
+            active = _active_file(repo_root)
+            if active.exists():
+                try:
+                    active_data = _read_json(active)
+                    if str(active_data.get("path")) == str(path):
+                        active.unlink(missing_ok=True)
+                except Exception:
+                    active.unlink(missing_ok=True)
+            output = (
+                "Cleared stale devtool apply transaction.\n"
+                f"reason: {reason}\n"
+                f"transaction: {_relative_to_repo(repo_root, path)}\n"
+                "restored: 0\n"
+                "removed_added_paths: 0\n"
+                "note: transaction had no affected paths recorded, so there was nothing to restore."
+            )
+            _cleanup_transaction_dir(path)
+            return OperationResult("apply-rollback", argv, 0, time.perf_counter() - start, output, [], failure_kind="rollback")
 
         restored: list[str] = []
         removed: list[str] = []

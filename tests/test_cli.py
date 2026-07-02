@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -50,6 +51,11 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.validate)
         self.assertFalse(args.validate_only)
         self.assertEqual(args.commit, "msg")
+
+    def test_parser_accepts_delete_artifact_on_failure_for_apply(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["apply-overlay", "--delete-artifact-on-failure", "artifact.zip"])
+        self.assertTrue(args.delete_artifact_on_failure)
 
     def test_parser_rejects_commit_even_on_failure_flag(self) -> None:
         parser = build_parser()
@@ -275,6 +281,23 @@ class CliTests(unittest.TestCase):
         self.assertIn("failed", payload)
         self.assertNotIn("failures", payload)
 
+    def test_git_dirty_ignores_repo_local_devtool_dir(self) -> None:
+        from devtool.cli import _git_dirty as cli_git_dirty
+        from devtool.detect import _git_dirty as detect_git_dirty
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            (root / ".devtool").mkdir()
+            (root / ".devtool" / "state.json").write_text("{}", encoding="utf-8")
+
+            self.assertFalse(cli_git_dirty(root))
+            self.assertFalse(detect_git_dirty(root))
+
+            (root / "real.txt").write_text("dirty", encoding="utf-8")
+            self.assertTrue(cli_git_dirty(root))
+            self.assertTrue(detect_git_dirty(root))
+
     def test_apply_overlay_rejects_path_traversal_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -356,6 +379,33 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertTrue(artifact.exists())
             self.assertTrue(sidecar.exists())
+            self.assertEqual((root / "existing.txt").read_text(encoding="utf-8"), "before")
+            self.assertFalse((root / "new.txt").exists())
+
+    def test_apply_overlay_delete_artifact_on_failure_removes_original_after_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "existing.txt").write_text("before", encoding="utf-8")
+            (root / ".devtool.toml").write_text('[project]\ntest_command = "echo test"\n', encoding="utf-8")
+            artifact = root / "artifact.zip"
+            sidecar = root / "artifact.zip.devtool.json"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("existing.txt", "after")
+                zf.writestr("new.txt", "new")
+            sidecar.write_text(json.dumps({"type": "overlay"}), encoding="utf-8")
+
+            with (
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}),
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", "--delete-artifact-on-failure", str(artifact)])
+
+            self.assertEqual(rc, 1)
+            self.assertFalse(artifact.exists())
+            self.assertFalse(sidecar.exists())
             self.assertEqual((root / "existing.txt").read_text(encoding="utf-8"), "before")
             self.assertFalse((root / "new.txt").exists())
 
