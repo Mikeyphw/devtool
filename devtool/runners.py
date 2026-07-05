@@ -507,7 +507,7 @@ def _run_process_live(
     tracker = DotnetProgressTracker(argv, cwd, command_name, console, phase_index=phase_index, phase_total=phase_total) if (not verbose or tasker_progress is not None) else None
     if tracker is not None and verbose:
         # In verbose mode stdout is already streamed as raw text. Keep the
-        # dotnet parser active only for Tasker/logcat progress events; do not
+        # dotnet parser active only for Tasker/progress events; do not
         # render a second Rich progress bar over the raw output.
         tracker.enabled = False
     if tracker is not None and tasker_progress is not None:

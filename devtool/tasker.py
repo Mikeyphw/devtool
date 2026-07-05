@@ -7,6 +7,8 @@ import shlex
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -60,7 +62,8 @@ def default_tasker_dir() -> str:
 DEFAULT_TASKER_DIR = default_tasker_dir()
 DEFAULT_TASKER_ACTION = "net.mph.devtool.EVENT"
 DEFAULT_NOTIFICATION_ID = "7771"
-DEFAULT_LOGCAT_TAG = "DEVTOOL"
+DEFAULT_EVENT_HTTP_URL = os.environ.get("DEVTOOL_EVENT_HTTP_URL", "http://127.0.0.1:1821/")
+DEFAULT_EVENT_HTTP_TIMEOUT_S = 0.5
 
 
 def utc_now_iso() -> str:
@@ -128,14 +131,48 @@ def _simple_notification_payload(notification: dict[str, Any], *, message: str, 
     }
 
 
-def send_logcat_event(tag: str, payload: dict[str, Any]) -> bool:
-    if not shutil.which("log"):
+def send_local_http_event(
+    payload: dict[str, Any],
+    *,
+    url: str = DEFAULT_EVENT_HTTP_URL,
+    timeout_s: float = DEFAULT_EVENT_HTTP_TIMEOUT_S,
+) -> bool:
+    """Best-effort POST of a full progress event to a local receiver.
+
+    This replaces the old Android ``log -t DEVTOOL <json>`` side channel.
+    Toybox ``log`` truncates argv messages at 1024 bytes, which can cut JSON
+    in the middle of a token. Posting the UTF-8 JSON body to a localhost
+    listener preserves the complete payload without adding a third-party
+    dependency or making devtool fail when the listener is absent.
+    """
+    endpoint = (url or "").strip()
+    if not endpoint:
         return False
     try:
-        message = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     except Exception:
-        message = str(payload)
-    return _run_quiet(["log", "-t", tag, message])
+        body = json.dumps({"message": str(payload)}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Content-Length": str(len(body)),
+            "User-Agent": "devtool",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=max(0.05, float(timeout_s))) as response:
+            return 200 <= int(getattr(response, "status", 200)) < 300
+    except (OSError, ValueError, urllib.error.URLError):
+        return False
+
+
+def send_logcat_event(tag: str, payload: dict[str, Any]) -> bool:
+    """Backward-compatible wrapper for callers using the old function name."""
+    return send_local_http_event(payload)
 
 
 def _safe_name(value: str) -> str:
@@ -391,7 +428,7 @@ class TaskerProgressSink:
     broadcast_action: str = DEFAULT_TASKER_ACTION
     notify_progress: bool = False
     notification_id: str = DEFAULT_NOTIFICATION_ID
-    logcat_tag: str = DEFAULT_LOGCAT_TAG
+    event_http_url: str = DEFAULT_EVENT_HTTP_URL
     update_interval_s: float = 0.10
     notification_interval_s: float = 0.75
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -595,7 +632,7 @@ class TaskerProgressSink:
                 _atomic_write_json(self.notification_file, simple_notification)
                 _atomic_write_json(event_file, event)
                 _append_jsonl(self.events_jsonl_file, event)
-                send_logcat_event(self.logcat_tag, event)
+                send_local_http_event(event, url=self.event_http_url)
                 _atomic_write_json(self.runs_dir / f"{self.run_id}.json", state)
                 self._last_state = state
                 if self.broadcast and (force or event_type != "progress"):

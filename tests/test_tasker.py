@@ -4,10 +4,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from devtool.models import OperationResult
-from devtool.tasker import ANDROID_TASKER_DIR, TaskerProgressSink, default_tasker_dir, send_logcat_event, send_progress_notification, send_tasker_broadcast, start_auto_hud
+from devtool.tasker import ANDROID_TASKER_DIR, DEFAULT_EVENT_HTTP_URL, TaskerProgressSink, default_tasker_dir, send_local_http_event, send_progress_notification, send_tasker_broadcast, start_auto_hud
 
 
 class TaskerProgressTests(unittest.TestCase):
@@ -68,14 +68,23 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertEqual(latest["total"], 5)
             self.assertEqual(latest["progress"]["current"], 2)
 
-    def test_send_logcat_event_uses_android_log_tag(self) -> None:
-        with patch("devtool.tasker.shutil.which", return_value="/system/bin/log"), patch("devtool.tasker.subprocess.run") as run_mock:
-            run_mock.return_value.returncode = 0
-            ok = send_logcat_event("DEVTOOL", {"type": "progress", "current": 1, "total": 2})
+    def test_send_local_http_event_posts_full_json_to_localhost(self) -> None:
+        response = Mock()
+        response.status = 204
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        large_detail = "x" * 2048
+        with patch("devtool.tasker.urllib.request.urlopen", return_value=response) as urlopen_mock:
+            ok = send_local_http_event({"type": "progress", "current": 1, "total": 2, "detail": large_detail})
+
         self.assertTrue(ok)
-        argv = run_mock.call_args.args[0]
-        self.assertEqual(argv[:3], ["log", "-t", "DEVTOOL"])
-        self.assertIn('"current":1', argv[3])
+        request = urlopen_mock.call_args.args[0]
+        self.assertEqual(request.full_url, DEFAULT_EVENT_HTTP_URL)
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.headers["Content-type"], "application/json; charset=utf-8")
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["current"], 1)
+        self.assertEqual(body["detail"], large_detail)
 
     def test_send_tasker_broadcast_uses_event_and_state_paths(self) -> None:
         with patch("devtool.tasker.shutil.which", return_value="/system/bin/am"), patch("devtool.tasker.subprocess.run") as run_mock:
