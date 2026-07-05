@@ -39,7 +39,7 @@ _PATH_SUFFIXES = (
 @dataclass(slots=True)
 class RunnerConfig:
     chroot_name: str = "androidos"
-    tool: str = "devtool"
+    tool: str = "/home/mike/.local/bin/devtool"
     chrootctl: str = "chrootctl"
     sudo: str = "sudo"
     translate_paths: bool = True
@@ -206,7 +206,7 @@ def _consume_value(argv: list[str], index: int) -> tuple[str, str | None, int]:
 def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerConfig, list[str]]:
     config = RunnerConfig(
         chroot_name=env.get("DEVTOOL_TERMUX_CHROOT", "androidos").strip() or "androidos",
-        tool=env.get("DEVTOOL_TERMUX_CHROOT_TOOL", "devtool").strip() or "devtool",
+        tool=env.get("DEVTOOL_TERMUX_CHROOT_TOOL", "/home/mike/.local/bin/devtool").strip() or "/home/mike/.local/bin/devtool",
         chrootctl=env.get("DEVTOOL_CHROOTCTL", "chrootctl").strip() or "chrootctl",
         sudo=env.get("DEVTOOL_CHROOT_SUDO", "sudo"),
         path_map=default_path_map(env),
@@ -345,6 +345,30 @@ def build_runner_command(config: RunnerConfig, forwarded: list[str]) -> list[str
 
 
 
+
+def _insert_global_flags_before_command(argv: list[str], flags: list[str]) -> list[str]:
+    """Insert devtool global flags before the subcommand.
+
+    argparse only accepts --machine-file / --no-clipboard before commands like
+    apply-overlay, so host-copy runner flags must not be appended at the end.
+    """
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            break
+        if token.startswith("--") and "=" in token:
+            index += 1
+            continue
+        if token in _FLAGS_WITH_VALUES:
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        break
+    return [*argv[:index], *flags, *argv[index:]]
+
 def prepare_host_clipboard_run(config: RunnerConfig, forwarded: list[str]) -> tuple[list[str], Path | None, bool]:
     """Augment forwarded args so host runner can copy after chroot execution.
 
@@ -371,10 +395,10 @@ def prepare_host_clipboard_run(config: RunnerConfig, forwarded: list[str]) -> tu
         host_machine_path = Path(handle.name)
         chroot_machine_path = _translate_path(str(host_machine_path), config.path_map, cwd=os.getcwd()) if config.translate_paths else str(host_machine_path)
         cleanup = True
-        forwarded = [*forwarded, "--machine-file", chroot_machine_path]
+        forwarded = _insert_global_flags_before_command(forwarded, ["--machine-file", chroot_machine_path])
 
     if "--no-clipboard" not in forwarded:
-        forwarded = [*forwarded, "--no-clipboard"]
+        forwarded = _insert_global_flags_before_command(forwarded, ["--no-clipboard"])
     return forwarded, host_machine_path, cleanup
 
 

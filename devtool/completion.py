@@ -77,7 +77,7 @@ _devtool() {
     '--continue-on-error[continue batch after errors]' \
     '--fail-fast[stop batch on first error]' \
     '--host[force host execution]' \
-    '--chroot[run command phases inside chroot via sudo chrootctl --name NAME exec --zsh -lc]:name:' \
+    '--chroot[run command phases inside chroot via sudo chrootctl --name NAME exec -- zsh -lc]:name:' \
     '--stdout-payload[select stdout payload]:(auto summary json raw)' \
     '--save-json-payload[write machine JSON payload]:file:_files' \
     '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-snapshot batch logs status doctor config init-config completion tag release-notes ai-prompt detect handoff hud history rollback targets v wv b t ao as)' \

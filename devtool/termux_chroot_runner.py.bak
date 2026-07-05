@@ -1,0 +1,434 @@
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable, Mapping
+
+from .clipboard import copy_text
+from .execution import build_chroot_exec_argv
+
+_PATH_VALUE_FLAGS = {
+    "-r", "--repo", "-c", "--config", "--solution", "--project",
+    "--machine-file", "--save-json-payload", "--json-output", "--tasker-dir",
+    "-o", "--output",
+}
+
+_FLAGS_WITH_VALUES = _PATH_VALUE_FLAGS | {
+    "--target", "--machine", "--notify-id", "--tasker-action", "--hud-mode",
+    "--theme", "--stdout-payload", "--copy-via", "--commit", "--watch-interval",
+    "--matrix", "--matrix-mode", "--format", "--repo-name", "--project-type",
+    "--build-target", "--run-target", "--target-name", "--solution-target",
+    "--delivery-mode", "--artifact-type", "--port", "--poll-interval",
+    "--recent-events", "--from-ref", "--to-ref", "-m",
+}
+
+_APPLY_COMMANDS = {"apply-overlay", "ao", "apply-snapshot", "as"}
+_BATCH_APPLY_PREFIXES = ("apply-overlay=", "ao=", "apply-snapshot=", "as=")
+_PATH_SUFFIXES = (
+    ".zip", ".tar", ".tar.gz", ".tgz", ".sln", ".csproj", ".fsproj",
+    ".vbproj", ".py", ".toml", ".json", ".md", ".txt", ".log",
+)
+
+
+@dataclass(slots=True)
+class RunnerConfig:
+    chroot_name: str = "androidos"
+    tool: str = "/home/mike/.local/bin/devtool"
+    chrootctl: str = "chrootctl"
+    sudo: str = "sudo"
+    translate_paths: bool = True
+    host: bool = False
+    print_command: bool = False
+    cwd: str = ""
+    copy_mode: str = ""
+    copy_via: str = "auto"
+    no_clipboard: bool = False
+    path_map: list[tuple[str, str]] = field(default_factory=list)
+
+
+def _split_path_map(raw: str) -> list[tuple[str, str]]:
+    mappings: list[tuple[str, str]] = []
+    for chunk in raw.replace(";", ",").split(","):
+        item = chunk.strip()
+        if not item or "=" not in item:
+            continue
+        host, chroot = item.split("=", 1)
+        host = os.path.expanduser(host.strip()).rstrip("/")
+        chroot = chroot.strip().rstrip("/") or "/"
+        if host:
+            mappings.append((host, chroot))
+    mappings.sort(key=lambda pair: len(pair[0]), reverse=True)
+    return mappings
+
+
+def default_path_map(env: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
+    env = env or os.environ
+    mappings: list[tuple[str, str]] = []
+    mappings.extend(_split_path_map(env.get("DEVTOOL_TERMUX_CHROOT_PATH_MAP", "")))
+
+    termux_home = env.get("HOME", "").strip()
+    chroot_home = env.get("DEVTOOL_TERMUX_CHROOT_HOME", "").strip()
+    if not chroot_home:
+        chroot_user = env.get("DEVTOOL_TERMUX_CHROOT_USER", "mike").strip() or "mike"
+        chroot_home = f"/home/{chroot_user}"
+    if termux_home and chroot_home:
+        mappings.append((os.path.expanduser(termux_home).rstrip("/"), chroot_home.rstrip("/")))
+
+    for identity in ("/sdcard", "/storage", "/mnt", "/tmp"):
+        mappings.append((identity, identity))
+
+    seen: set[str] = set()
+    unique: list[tuple[str, str]] = []
+    for host, chroot in sorted(mappings, key=lambda pair: len(pair[0]), reverse=True):
+        if host in seen:
+            continue
+        seen.add(host)
+        unique.append((host, chroot))
+    return unique
+
+
+def _translate_path(value: str, mappings: Iterable[tuple[str, str]], *, cwd: str | None = None) -> str:
+    if not value:
+        return value
+    original = value
+    expanded = os.path.expanduser(value)
+    if not os.path.isabs(expanded):
+        base = cwd or os.getcwd()
+        expanded = os.path.abspath(os.path.join(base, expanded))
+    for host_prefix, chroot_prefix in mappings:
+        if expanded == host_prefix:
+            return chroot_prefix or "/"
+        if expanded.startswith(host_prefix + "/"):
+            suffix = expanded[len(host_prefix):]
+            return (chroot_prefix.rstrip("/") or "/") + suffix
+    if os.path.isabs(original):
+        return expanded
+    return expanded
+
+
+def _translate_chroot_path_to_host(value: str, mappings: Iterable[tuple[str, str]]) -> str | None:
+    if not value:
+        return None
+    for host_prefix, chroot_prefix in sorted(mappings, key=lambda pair: len(pair[1]), reverse=True):
+        host_prefix = host_prefix.rstrip("/") or "/"
+        chroot_prefix = chroot_prefix.rstrip("/") or "/"
+        if value == chroot_prefix:
+            return host_prefix
+        if value.startswith(chroot_prefix + "/"):
+            suffix = value[len(chroot_prefix):]
+            return (host_prefix.rstrip("/") or "/") + suffix
+    return None
+
+
+def _strip_flag_value(argv: list[str], flag: str) -> tuple[list[str], str]:
+    stripped: list[str] = []
+    last_value = ""
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == flag:
+            if index + 1 < len(argv):
+                last_value = argv[index + 1]
+                index += 2
+            else:
+                index += 1
+            continue
+        if token.startswith(flag + "="):
+            last_value = token.split("=", 1)[1]
+            index += 1
+            continue
+        stripped.append(token)
+        index += 1
+    return stripped, last_value
+
+
+def _find_flag_value(argv: list[str], flags: set[str]) -> str:
+    index = 0
+    last_value = ""
+    while index < len(argv):
+        token = argv[index]
+        matched = next((flag for flag in flags if token == flag or token.startswith(flag + "=")), "")
+        if matched:
+            if token == matched and index + 1 < len(argv):
+                last_value = argv[index + 1]
+                index += 2
+                continue
+            if token.startswith(matched + "="):
+                last_value = token.split("=", 1)[1]
+        index += 1
+    return last_value
+
+
+def _copy_label(copy_mode: str) -> str:
+    if copy_mode == "summary":
+        return "Summary"
+    if copy_mode == "json":
+        return "JSON summary"
+    return "Raw command output"
+
+
+def _clipboard_text_from_machine_payload(payload: dict, copy_mode: str) -> str:
+    clipboard = payload.get("clipboard", {}) if isinstance(payload, dict) else {}
+    if copy_mode == "summary":
+        return str(clipboard.get("summary", "") or "")
+    if copy_mode == "json":
+        value = clipboard.get("json", {})
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    return str(clipboard.get("raw", "") or "")
+
+
+def _looks_like_path(value: str) -> bool:
+    if not value or value == "-":
+        return False
+    if value.startswith(("/", "~/", "./", "../")):
+        return True
+    if any(value.endswith(suffix) for suffix in _PATH_SUFFIXES):
+        return True
+    return "/" in value
+
+
+def _consume_value(argv: list[str], index: int) -> tuple[str, str | None, int]:
+    token = argv[index]
+    if "=" in token and token.startswith("--"):
+        flag, value = token.split("=", 1)
+        return flag, value, index
+    if token in _FLAGS_WITH_VALUES and index + 1 < len(argv):
+        return token, argv[index + 1], index + 1
+    return token, None, index
+
+
+def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerConfig, list[str]]:
+    config = RunnerConfig(
+        chroot_name=env.get("DEVTOOL_TERMUX_CHROOT", "androidos").strip() or "androidos",
+        tool=env.get("DEVTOOL_TERMUX_CHROOT_TOOL", "/home/mike/.local/bin/devtool").strip() or "/home/mike/.local/bin/devtool",
+        chrootctl=env.get("DEVTOOL_CHROOTCTL", "chrootctl").strip() or "chrootctl",
+        sudo=env.get("DEVTOOL_CHROOT_SUDO", "sudo"),
+        path_map=default_path_map(env),
+    )
+    forwarded: list[str] = []
+    copy_flags_seen: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        def _take_value(default: str = "") -> str:
+            nonlocal index
+            if "=" in token:
+                return token.split("=", 1)[1]
+            if index + 1 < len(argv):
+                index += 1
+                return argv[index]
+            return default
+        if token == "--runner-chroot" or token.startswith("--runner-chroot="):
+            config.chroot_name = _take_value(config.chroot_name).strip() or config.chroot_name
+        elif token == "--runner-tool" or token.startswith("--runner-tool="):
+            config.tool = _take_value(config.tool).strip() or config.tool
+        elif token == "--runner-chrootctl" or token.startswith("--runner-chrootctl="):
+            config.chrootctl = _take_value(config.chrootctl).strip() or config.chrootctl
+        elif token == "--runner-sudo" or token.startswith("--runner-sudo="):
+            config.sudo = _take_value(config.sudo)
+        elif token == "--runner-map" or token.startswith("--runner-map="):
+            config.path_map = _split_path_map(_take_value("")) + config.path_map
+        elif token == "--runner-no-path-translate":
+            config.translate_paths = False
+        elif token == "--runner-print-command":
+            config.print_command = True
+        elif token == "--host":
+            config.host = True
+            forwarded.append(token)
+        elif token == "--chroot" or token.startswith("--chroot="):
+            config.chroot_name = _take_value(config.chroot_name).strip() or config.chroot_name
+        elif token in {"-p", "--copy"}:
+            config.copy_mode = "raw"
+            copy_flags_seen.append(token)
+        elif token == "--copy-summary":
+            config.copy_mode = "summary"
+            copy_flags_seen.append(token)
+        elif token == "--copy-json":
+            config.copy_mode = "json"
+            copy_flags_seen.append(token)
+        elif token == "--copy-via" or token.startswith("--copy-via="):
+            value = _take_value(config.copy_via).strip() or config.copy_via
+            config.copy_via = value
+            forwarded.append(token if "=" in token else "--copy-via")
+            if "=" not in token:
+                forwarded.append(value)
+        elif token == "--no-clipboard":
+            config.no_clipboard = True
+            forwarded.append(token)
+        else:
+            forwarded.append(token)
+        index += 1
+    if len(copy_flags_seen) > 1:
+        raise ValueError("Choose only one of --copy, --copy-summary, or --copy-json.")
+    if config.no_clipboard and config.copy_mode:
+        raise ValueError("--no-clipboard cannot be combined with --copy, --copy-summary, or --copy-json.")
+    if config.copy_mode:
+        forwarded, _ = _strip_flag_value(forwarded, "--copy-via")
+    return config, forwarded
+
+def translate_devtool_args(argv: list[str], *, env: Mapping[str, str] | None = None, cwd: str | None = None) -> tuple[RunnerConfig, list[str]]:
+    env = env or os.environ
+    cwd = cwd or os.getcwd()
+    config, forwarded = _parse_runner_args(list(argv), env)
+    config.cwd = _translate_path(cwd, config.path_map, cwd=cwd) if config.translate_paths else cwd
+    if not config.translate_paths:
+        return config, forwarded
+    translated: list[str] = []
+    command = ""
+    apply_artifact_seen = False
+    index = 0
+    while index < len(forwarded):
+        token = forwarded[index]
+        flag, value, value_index = _consume_value(forwarded, index)
+        if value is not None and flag in _PATH_VALUE_FLAGS:
+            translated_value = _translate_path(value, config.path_map, cwd=cwd)
+            if "=" in token and token.startswith("--"):
+                translated.append(f"{flag}={translated_value}")
+            else:
+                translated.append(token)
+                translated.append(translated_value)
+            index = value_index + 1
+            continue
+        if value is not None and value_index != index:
+            translated.append(token)
+            translated.append(value)
+            index = value_index + 1
+            continue
+        if not command and not token.startswith("-"):
+            command = token
+            translated.append(token)
+            index += 1
+            continue
+        if command in _APPLY_COMMANDS and not apply_artifact_seen and not token.startswith("-"):
+            translated.append(_translate_path(token, config.path_map, cwd=cwd))
+            apply_artifact_seen = True
+        elif command == "batch" and any(token.startswith(prefix) for prefix in _BATCH_APPLY_PREFIXES):
+            prefix, value = token.split("=", 1)
+            translated.append(f"{prefix}={_translate_path(value, config.path_map, cwd=cwd)}")
+        elif command == "init-config" and _looks_like_path(token):
+            translated.append(_translate_path(token, config.path_map, cwd=cwd))
+        elif _looks_like_path(token) and token.startswith(("/", "~/", "./", "../")):
+            translated.append(_translate_path(token, config.path_map, cwd=cwd))
+        else:
+            translated.append(token)
+        index += 1
+    return config, translated
+
+
+def build_inner_command(config: RunnerConfig, forwarded: list[str]) -> str:
+    devtool_argv = [config.tool, *forwarded]
+    return "cd " + shlex.quote(config.cwd or "/") + " && exec " + shlex.join(devtool_argv)
+
+
+def build_runner_command(config: RunnerConfig, forwarded: list[str]) -> list[str]:
+    old_chrootctl = os.environ.get("DEVTOOL_CHROOTCTL")
+    old_sudo = os.environ.get("DEVTOOL_CHROOT_SUDO")
+    try:
+        os.environ["DEVTOOL_CHROOTCTL"] = config.chrootctl
+        os.environ["DEVTOOL_CHROOT_SUDO"] = config.sudo
+        return build_chroot_exec_argv(build_inner_command(config, forwarded), config.chroot_name)
+    finally:
+        if old_chrootctl is None:
+            os.environ.pop("DEVTOOL_CHROOTCTL", None)
+        else:
+            os.environ["DEVTOOL_CHROOTCTL"] = old_chrootctl
+        if old_sudo is None:
+            os.environ.pop("DEVTOOL_CHROOT_SUDO", None)
+        else:
+            os.environ["DEVTOOL_CHROOT_SUDO"] = old_sudo
+
+
+
+def prepare_host_clipboard_run(config: RunnerConfig, forwarded: list[str]) -> tuple[list[str], Path | None, bool]:
+    """Augment forwarded args so host runner can copy after chroot execution.
+
+    The chrooted devtool writes its machine envelope to a host-readable file.
+    The Termux-side runner reads that file and performs the clipboard write on
+    the host, which avoids relying on clipboard binaries/sockets inside chroot.
+    """
+    if not config.copy_mode:
+        return forwarded, None, False
+
+    machine_path = _find_flag_value(forwarded, {"--machine-file", "--save-json-payload", "--json-output"})
+    cleanup = False
+    host_machine_path: Path | None = None
+    chroot_machine_path = ""
+    if machine_path:
+        chroot_machine_path = machine_path
+        translated_back = _translate_chroot_path_to_host(machine_path, config.path_map) if config.translate_paths else machine_path
+        host_machine_path = Path(translated_back).expanduser() if translated_back else None
+    else:
+        host_root = Path(os.environ.get("DEVTOOL_TERMUX_CHROOT_RUNNER_STATE", "~/.cache/devtool/termux-chroot-runner")).expanduser()
+        host_root.mkdir(parents=True, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(prefix="machine-", suffix=".json", dir=host_root, delete=False)
+        handle.close()
+        host_machine_path = Path(handle.name)
+        chroot_machine_path = _translate_path(str(host_machine_path), config.path_map, cwd=os.getcwd()) if config.translate_paths else str(host_machine_path)
+        cleanup = True
+        forwarded = [*forwarded, "--machine-file", chroot_machine_path]
+
+    if "--no-clipboard" not in forwarded:
+        forwarded = [*forwarded, "--no-clipboard"]
+    return forwarded, host_machine_path, cleanup
+
+
+def copy_from_machine_file(path: Path | None, copy_mode: str, copy_via: str = "auto") -> bool:
+    if path is None:
+        print("Host clipboard copy skipped: machine JSON path is not host-readable.", file=sys.stderr)
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Host clipboard copy failed: could not read machine JSON from {path}: {exc}", file=sys.stderr)
+        return False
+    text = _clipboard_text_from_machine_payload(payload, copy_mode)
+    result = copy_text(text) if copy_via == "auto" else copy_text(text, preferred=copy_via)
+    label = _copy_label(copy_mode)
+    if result.success:
+        print(f"{label} copied to clipboard via {result.backend}.")
+        return True
+    print(result.reason or "Clipboard copy failed.", file=sys.stderr)
+    return False
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        config, forwarded = translate_devtool_args(argv)
+    except ValueError as exc:
+        print(f"devtool-termux-chroot: {exc}", file=sys.stderr)
+        return 2
+    if config.host:
+        cmd = [config.tool, *forwarded]
+        if config.print_command:
+            print(shlex.join(cmd))
+            return 0
+        return subprocess.run(cmd).returncode
+
+    machine_path: Path | None = None
+    cleanup_machine_path = False
+    forwarded, machine_path, cleanup_machine_path = prepare_host_clipboard_run(config, forwarded)
+    cmd = build_runner_command(config, forwarded)
+    if config.print_command:
+        print(shlex.join(cmd))
+        return 0
+    try:
+        completed = subprocess.run(cmd)
+        if config.copy_mode:
+            copy_from_machine_file(machine_path, config.copy_mode, config.copy_via)
+        return completed.returncode
+    finally:
+        if cleanup_machine_path and machine_path is not None:
+            try:
+                machine_path.unlink()
+            except OSError:
+                pass
+
+if __name__ == "__main__":
+    raise SystemExit(main())

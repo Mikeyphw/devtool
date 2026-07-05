@@ -12,7 +12,7 @@ def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | N
 
     The runner intentionally uses the Android chroot workflow:
 
-        sudo chrootctl --name <name> exec --zsh -lc '<command>'
+        sudo chrootctl --name <name> exec -- zsh -lc '<command>'
 
     Environment overrides keep this testable and let non-root setups customize
     the launcher without changing project config:
@@ -35,7 +35,7 @@ def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | N
     argv: list[str] = []
     if sudo.strip():
         argv.append(sudo.strip())
-    argv.extend([chrootctl, "--name", name, "exec", "--zsh", "-lc", command])
+    argv.extend([chrootctl, "--name", name, "exec", "--", "zsh", "-lc", command])
     return argv
 
 
