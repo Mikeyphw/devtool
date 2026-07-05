@@ -52,8 +52,10 @@ class CliTests(unittest.TestCase):
         self.assertFalse(args.validate_only)
         self.assertEqual(args.commit, "msg")
 
-    def test_parser_accepts_delete_artifact_on_failure_for_apply(self) -> None:
+    def test_parser_accepts_artifact_cleanup_flags_for_apply(self) -> None:
         parser = build_parser()
+        args = parser.parse_args(["apply-overlay", "--keep-artifact", "artifact.zip"])
+        self.assertTrue(args.keep_artifact)
         args = parser.parse_args(["apply-overlay", "--delete-artifact-on-failure", "artifact.zip"])
         self.assertTrue(args.delete_artifact_on_failure)
 
@@ -355,7 +357,7 @@ class CliTests(unittest.TestCase):
             self.assertFalse((root / ".devtool-artifact.json").exists())
             self.assertEqual((root / "new.txt").read_text(encoding="utf-8"), "new")
 
-    def test_apply_overlay_keeps_original_artifact_when_validation_rolls_back(self) -> None:
+    def test_apply_overlay_removes_original_artifact_when_validation_rolls_back_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
@@ -377,12 +379,12 @@ class CliTests(unittest.TestCase):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", str(artifact)])
 
             self.assertEqual(rc, 1)
-            self.assertTrue(artifact.exists())
-            self.assertTrue(sidecar.exists())
+            self.assertFalse(artifact.exists())
+            self.assertFalse(sidecar.exists())
             self.assertEqual((root / "existing.txt").read_text(encoding="utf-8"), "before")
             self.assertFalse((root / "new.txt").exists())
 
-    def test_apply_overlay_delete_artifact_on_failure_removes_original_after_rollback(self) -> None:
+    def test_apply_overlay_keep_artifact_preserves_original_after_rollback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
@@ -401,11 +403,11 @@ class CliTests(unittest.TestCase):
                 patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", "--delete-artifact-on-failure", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", "--keep-artifact", str(artifact)])
 
             self.assertEqual(rc, 1)
-            self.assertFalse(artifact.exists())
-            self.assertFalse(sidecar.exists())
+            self.assertTrue(artifact.exists())
+            self.assertTrue(sidecar.exists())
             self.assertEqual((root / "existing.txt").read_text(encoding="utf-8"), "before")
             self.assertFalse((root / "new.txt").exists())
 

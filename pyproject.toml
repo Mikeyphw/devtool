@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "devtool"
-version = "0.2.21"
+version = "0.2.24"
 description = "Generic Unix developer helper CLI with Rich summaries, validation batches, clipboard prompts, notifications, and repo automation."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,6 +16,8 @@ dependencies = [
 
 [project.scripts]
 devtool = "devtool.cli:main"
+devtool-termux-chroot = "devtool.termux_chroot_runner:main"
+devtool-androidos = "devtool.termux_chroot_runner:main"
 
 [tool.setuptools]
 include-package-data = true

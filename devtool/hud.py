@@ -24,7 +24,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR
+from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, read_active_hud_directory
 
 
 DEFAULT_HUD_POLL_INTERVAL = 0.10
@@ -46,6 +46,8 @@ class HudState:
     phase_name: str = ""
     command: str = ""
     repo_name: str = ""
+    repo_root: str = ""
+    target: str = ""
     updated_at: str = ""
     seq: int | None = None
     raw: dict[str, Any] = field(default_factory=dict)
@@ -96,6 +98,8 @@ class HudState:
             "phase_name": self.phase_name,
             "command": self.command,
             "repo_name": self.repo_name,
+            "repo_root": self.repo_root,
+            "target": self.target,
             "updated_at": self.updated_at,
             "seq": self.seq,
             "display_title": self.display_title,
@@ -217,6 +221,8 @@ def parse_hud_state(payload: dict[str, Any] | None) -> HudState:
         phase_name=str(phase.get("name") or payload.get("phase_name") or ""),
         command=str(payload.get("command") or ""),
         repo_name=str(payload.get("repo_name") or ""),
+        repo_root=str(payload.get("repo_root") or ""),
+        target=str(payload.get("target") or ""),
         updated_at=str(payload.get("updated_at") or payload.get("seq") or ""),
         seq=seq,
         raw=payload,
@@ -420,6 +426,84 @@ def friendly_event_line(event: dict[str, Any]) -> str | None:
         return detail
     return human_event_type(event_type)
 
+
+
+def compact_operation_title(state: HudState) -> str:
+    """Return the one-line headline for the compact GTK HUD."""
+    phase = human_phase_name(state.phase_name or state.command or state.event_type)
+    status = (state.status or "").strip().lower()
+    if status == "failed":
+        return f"Failed during {phase}" if phase else "Devtool failed"
+    if status == "ok":
+        return "Devtool finished"
+    if phase and phase.lower() not in {"progress", "idle"}:
+        return f"Finished {phase}" if state.event_type in {"phase_finished", "phase-finished"} else f"Running {phase}"
+    title = human_detail(state.title)
+    return title if title and title.lower() != "devtool" else "Devtool is running"
+
+
+def compact_detail_text(state: HudState) -> str:
+    bits: list[str] = []
+    detail = human_detail(state.text or state.expanded_text)
+    if detail and detail.lower() not in {"devtool", "progress"}:
+        bits.append(detail)
+    if state.repo_name:
+        bits.append(state.repo_name)
+    if state.target:
+        bits.append(state.target)
+    return " • ".join(bits) or "Waiting for progress"
+
+
+def _phase_highlight_from_event(event: dict[str, Any]) -> tuple[str, str] | None:
+    phase_key = _phase_from_event(event).lower().replace("_", "-")
+    key = {"rs":"restore", "restore":"restore", "b":"build", "build":"build", "t":"test", "test":"test", "tests":"test"}.get(phase_key)
+    if not key:
+        return None
+    event_type = _coerce_str(event.get("event_type") or event.get("type")).lower().replace("_", "-")
+    message = _event_message(event)
+    if event_type == "progress" and _is_noisy_test_line(message):
+        return None
+    if _is_test_summary(message):
+        parsed = _parse_test_summary(message)
+        if parsed:
+            return key, parsed
+    detail = human_detail(message)
+    if detail and detail.lower() not in {"started", "running", "progress"}:
+        return key, detail
+    if event_type == "phase-finished":
+        status = _result_status_from_event(event).lower()
+        if status in {"ok", "complete", "completed", "success"}:
+            return key, f"{human_phase_name(key)} completed"
+        if status == "failed":
+            return key, f"{human_phase_name(key)} failed"
+        if status == "skipped":
+            return key, f"{human_phase_name(key)} skipped"
+    return None
+
+
+def last_phase_highlights(events: Iterable[dict[str, Any]]) -> dict[str, str]:
+    """Return the last useful restore/build/test detail for the HUD."""
+    highlights: dict[str, str] = {}
+    for event in events:
+        parsed = _phase_highlight_from_event(event)
+        if parsed is not None:
+            highlights[parsed[0]] = parsed[1]
+    return highlights
+
+
+def latest_log_path(events: Iterable[dict[str, Any]]) -> str:
+    """Find the newest log_path embedded in Tasker/HUD events."""
+    latest = ""
+    for event in events:
+        result = event.get("result") if isinstance(event.get("result"), dict) else {}
+        if result.get("log_path"):
+            latest = str(result.get("log_path"))
+        results = event.get("results") if isinstance(event.get("results"), list) else []
+        for item in results:
+            if isinstance(item, dict) and item.get("log_path"):
+                latest = str(item.get("log_path"))
+    return latest
+
 def _newest_existing(paths: list[Path]) -> Path | None:
     existing = []
     for path in paths:
@@ -430,6 +514,20 @@ def _newest_existing(paths: list[Path]) -> Path | None:
     if not existing:
         return None
     return max(existing, key=lambda item: item[0])[1]
+
+
+def resolve_hud_directory(directory: Path, *, follow_active: bool = False) -> Path:
+    if not follow_active:
+        return directory
+    return read_active_hud_directory(directory) or directory
+
+
+def snapshot_from_runtime_directory(directory: Path, *, follow_active: bool = False, recent_events: int = DEFAULT_RECENT_EVENTS) -> dict[str, Any]:
+    current = resolve_hud_directory(directory, follow_active=follow_active)
+    snapshot = snapshot_from_directory(current, recent_events=recent_events)
+    snapshot["active_directory"] = str(current)
+    snapshot["follow_active"] = bool(follow_active)
+    return snapshot
 
 
 def state_from_directory(directory: Path) -> HudState:
@@ -702,20 +800,17 @@ class DesktopNotificationHud:
         except OSError:
             return
 
-    def run(self, *, directory: Path, interval_s: float, once: bool = False) -> int:
+    def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
         while True:
-            self.update(state_from_directory(directory))
+            current_dir = resolve_hud_directory(directory, follow_active=follow_active)
+            self.update(state_from_directory(current_dir))
             if once:
                 return 0
             time.sleep(interval_s)
 
 
 class GtkDesktopHud:
-    """GTK floating desktop HUD for GNOME/Unix desktops.
-
-    This is optional and dependency-free at install time. It activates only when
-    PyGObject (`gi`) and GTK 3 are available from the host distribution.
-    """
+    """Compact GTK floating desktop HUD for GNOME/Unix desktops."""
 
     def __init__(self, *, recent_events: int = DEFAULT_RECENT_EVENTS) -> None:
         self.recent_events = recent_events
@@ -724,99 +819,113 @@ class GtkDesktopHud:
     def available() -> bool:
         return importlib.util.find_spec("gi") is not None and bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
-    def run(self, *, directory: Path, interval_s: float, once: bool = False) -> int:
+    def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
         if once:
-            state = state_from_directory(directory)
-            events = _last_jsonl_events(directory / "events.jsonl", self.recent_events)
-            print(json.dumps({"state": state.to_dict(), "events": events}, ensure_ascii=False, indent=2))
+            snapshot = snapshot_from_runtime_directory(directory, follow_active=follow_active, recent_events=self.recent_events)
+            print(json.dumps({"state": snapshot["state"], "events": snapshot["events"], "phase_highlights": last_phase_highlights(snapshot["events"])}, ensure_ascii=False, indent=2))
             return 0
         try:
             import gi  # type: ignore[import-not-found]
             gi.require_version("Gtk", "3.0")
-            from gi.repository import GLib, Gtk  # type: ignore[import-not-found]
+            from gi.repository import Gdk, GLib, Gtk, Pango  # type: ignore[import-not-found]
         except Exception as exc:
             raise RuntimeError("GTK HUD requires PyGObject/GTK 3. On Ubuntu: sudo apt install python3-gi gir1.2-gtk-3.0") from exc
 
         window = Gtk.Window(title="devtool HUD")
-        window.set_default_size(460, 260)
+        window.set_default_size(440, 330)
         window.set_keep_above(True)
         window.set_resizable(True)
         window.connect("destroy", Gtk.main_quit)
 
+        css = b"""
+        .hud-root { background: #111318; color: #f3f4f6; }
+        .hud-header { color: #9ca3af; font-size: 11px; letter-spacing: 0.04em; }
+        .hud-title { color: #f9fafb; font-size: 18px; font-weight: 700; }
+        .hud-muted { color: #a7b0bd; }
+        .hud-meta { color: #d1d5db; font-size: 12px; }
+        .hud-event { color: #d1d5db; font-size: 12px; }
+        .hud-debug { color: #9ca3af; font-family: monospace; font-size: 11px; }
+        .hud-ok { color: #5ee49b; }
+        .hud-failed { color: #ff6978; }
+        .hud-running { color: #ffd166; }
+        button { border-radius: 8px; padding: 5px 9px; }
+        """
+        provider = Gtk.CssProvider(); provider.load_from_data(css)
+        screen = Gdk.Screen.get_default()
+        if screen is not None:
+            Gtk.StyleContext.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        outer.set_margin_top(12)
-        outer.set_margin_bottom(12)
-        outer.set_margin_start(12)
-        outer.set_margin_end(12)
+        outer.get_style_context().add_class("hud-root")
+        outer.set_margin_top(12); outer.set_margin_bottom(12); outer.set_margin_start(12); outer.set_margin_end(12)
         window.add(outer)
 
-        title = Gtk.Label(label="devtool HUD")
-        title.set_xalign(0)
-        title.set_markup("<b>devtool HUD</b>")
-        outer.pack_start(title, False, False, 0)
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); outer.pack_start(header, False, False, 0)
+        header_label = Gtk.Label(label="devtool HUD Lite"); header_label.set_xalign(0); header_label.get_style_context().add_class("hud-header"); header.pack_start(header_label, True, True, 0)
+        percent_label = Gtk.Label(label="● waiting"); percent_label.set_xalign(1); percent_label.get_style_context().add_class("hud-header"); header.pack_end(percent_label, False, False, 0)
+        title = Gtk.Label(label="Waiting for progress"); title.set_xalign(0); title.set_line_wrap(True); title.get_style_context().add_class("hud-title"); outer.pack_start(title, False, False, 0)
+        detail = Gtk.Label(label="No devtool task has reported progress yet."); detail.set_xalign(0); detail.set_line_wrap(True); detail.get_style_context().add_class("hud-muted"); outer.pack_start(detail, False, False, 0)
+        progress = Gtk.ProgressBar(); progress.set_show_text(True); outer.pack_start(progress, False, False, 0)
+        meta = Gtk.Label(label="Phase: waiting  ·  Repo: -  ·  Target: -"); meta.set_xalign(0); meta.set_line_wrap(True); meta.get_style_context().add_class("hud-meta"); outer.pack_start(meta, False, False, 0)
+        phase_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2); outer.pack_start(phase_box, False, False, 0)
+        restore_label = Gtk.Label(label="Restore: -"); build_label = Gtk.Label(label="Build: -"); test_label = Gtk.Label(label="Test: -")
+        for label in (restore_label, build_label, test_label):
+            label.set_xalign(0); label.set_ellipsize(Pango.EllipsizeMode.END); label.get_style_context().add_class("hud-meta"); phase_box.pack_start(label, False, False, 0)
+        events_label = Gtk.Label(label="No events yet"); events_label.set_xalign(0); events_label.set_yalign(0); events_label.set_selectable(True); events_label.set_line_wrap(True); events_label.get_style_context().add_class("hud-event"); outer.pack_start(events_label, True, True, 0)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6); outer.pack_start(actions, False, False, 0)
+        copy_button = Gtk.Button(label="Copy summary"); log_button = Gtk.Button(label="Open log"); close_button = Gtk.Button(label="Close HUD")
+        actions.pack_start(copy_button, False, False, 0); actions.pack_start(log_button, False, False, 0); actions.pack_end(close_button, False, False, 0)
+        debug = Gtk.Expander(label="Debug"); debug.set_expanded(False)
+        debug_label = Gtk.Label(label=""); debug_label.set_xalign(0); debug_label.set_yalign(0); debug_label.set_selectable(True); debug_label.set_line_wrap(True); debug_label.get_style_context().add_class("hud-debug"); debug.add(debug_label); outer.pack_start(debug, False, False, 0)
+        last_summary = {"text": "devtool HUD Lite: waiting", "log_path": ""}
 
-        detail = Gtk.Label(label="waiting")
-        detail.set_xalign(0)
-        detail.set_line_wrap(True)
-        outer.pack_start(detail, False, False, 0)
-
-        progress = Gtk.ProgressBar()
-        progress.set_show_text(True)
-        outer.pack_start(progress, False, False, 0)
-
-        meta = Gtk.Label(label="idle")
-        meta.set_xalign(0)
-        outer.pack_start(meta, False, False, 0)
-
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        events_label = Gtk.Label(label="")
-        events_label.set_xalign(0)
-        events_label.set_yalign(0)
-        events_label.set_selectable(True)
-        events_label.set_line_wrap(True)
-        scroller.add(events_label)
-        outer.pack_start(scroller, True, True, 0)
+        def _set_status_classes(widget: Any, status: str) -> None:
+            ctx = widget.get_style_context()
+            for cls in ("hud-ok", "hud-failed", "hud-running"):
+                ctx.remove_class(cls)
+            ctx.add_class("hud-failed" if status == "failed" else "hud-ok" if status == "ok" else "hud-running")
+        def _copy_summary(_button: Any) -> None:
+            clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD); clipboard.set_text(str(last_summary.get("text") or ""), -1); clipboard.store()
+        def _open_log(_button: Any) -> None:
+            log_path = str(last_summary.get("log_path") or "")
+            if log_path:
+                with contextlib.suppress(Exception):
+                    subprocess.Popen(["xdg-open", log_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        copy_button.connect("clicked", _copy_summary); log_button.connect("clicked", _open_log); close_button.connect("clicked", lambda _button: Gtk.main_quit())
 
         def refresh() -> bool:
-            state = state_from_directory(directory)
-            events = _last_jsonl_events(directory / "events.jsonl", self.recent_events)
-            title.set_markup(f"<b>{html.escape(state.display_title)}</b>")
-            detail.set_text(state.display_text)
+            current_dir = resolve_hud_directory(directory, follow_active=follow_active)
+            snapshot = snapshot_from_directory(current_dir, recent_events=max(self.recent_events, 12))
+            state = state_from_directory(current_dir)
+            events = snapshot.get("events") if isinstance(snapshot.get("events"), list) else []
+            highlights = last_phase_highlights(events)
+            operation = compact_operation_title(state)
+            title.set_text(operation); detail.set_text(compact_detail_text(state))
+            percent_text = f"● {human_status(state.status).lower()}" + (f"  {state.percent}%" if state.percent is not None else "")
+            percent_label.set_text(percent_text); _set_status_classes(percent_label, state.status)
             if state.current is not None and state.total is not None and state.total > 0:
-                fraction = max(0.0, min(1.0, state.current / state.total))
-                progress.set_fraction(fraction)
-                progress.set_text(f"{state.current}/{state.total}  {state.percent or 0}%")
+                progress.set_fraction(max(0.0, min(1.0, state.current / state.total))); progress.set_text(f"{state.current}/{state.total}  {state.percent or 0}%")
             elif state.current is not None:
-                progress.pulse()
-                progress.set_text(f"{state.current} completed — still building")
+                progress.pulse(); progress.set_text(f"{state.current} done")
             else:
-                progress.pulse()
-                progress.set_text("waiting")
-            meta_bits = [human_status(state.status)]
-            if state.phase_name:
-                meta_bits.append(human_phase_name(state.phase_name))
-            if state.repo_name:
-                meta_bits.append(state.repo_name)
-            meta.set_text(" • ".join(meta_bits) or "Waiting")
-            lines = []
-            for event in events[-self.recent_events:]:
-                event_type, message, current, total = _event_summary(event)
-                if current is not None and total is not None:
-                    suffix = f" {current}/{total}"
-                elif current is not None:
-                    suffix = f" {current} done"
-                else:
-                    suffix = ""
-                lines.append(f"• {human_event_type(event_type)}{suffix} {human_detail(message)}".strip())
-            events_label.set_text("\n".join(lines) or "No events yet")
+                progress.pulse(); progress.set_text("waiting")
+            meta_bits = []
+            if state.phase_name: meta_bits.append(f"Phase: {human_phase_name(state.phase_name)}")
+            elif state.command: meta_bits.append(f"Command: {human_phase_name(state.command)}")
+            if state.repo_name: meta_bits.append(f"Repo: {state.repo_name}")
+            if state.target: meta_bits.append(f"Target: {state.target}")
+            if follow_active: meta_bits.append("following active HUD")
+            meta.set_text("  ·  ".join(meta_bits) or "Waiting")
+            restore_label.set_text("Restore: " + highlights.get("restore", "-")); build_label.set_text("Build: " + highlights.get("build", "-")); test_label.set_text("Test: " + highlights.get("test", "-"))
+            lines = [line for event in events if (line := friendly_event_line(event))]
+            shown = lines[-5:]
+            events_label.set_text("\n".join(f"• {line}" for line in shown) or "No events yet")
+            log_path = latest_log_path(events); log_button.set_sensitive(bool(log_path) and shutil.which("xdg-open") is not None)
+            summary_lines = [operation, compact_detail_text(state), meta.get_text(), restore_label.get_text(), build_label.get_text(), test_label.get_text(), *shown]
+            last_summary["text"] = "\n".join(line for line in summary_lines if line); last_summary["log_path"] = log_path or ""
+            debug_label.set_text("\n".join([f"active_dir={current_dir}", f"state={current_dir / 'state.json'}", f"events={current_dir / 'events.jsonl'}", f"seq={state.seq if state.seq is not None else '-'} status={state.status} event={state.event_type}", f"command={state.command or '-'} phase={state.phase_name or '-'}", f"log={log_path or '-'}"]))
             return True
-
-        GLib.timeout_add(max(100, int(interval_s * 1000)), refresh)
-        refresh()
-        window.show_all()
-        Gtk.main()
-        return 0
+        GLib.timeout_add(max(100, int(interval_s * 1000)), refresh); refresh(); window.show_all(); Gtk.main(); return 0
 
 
 DASHBOARD_HTML = r"""<!doctype html>
@@ -851,11 +960,12 @@ if (!!window.EventSource){const es=new EventSource('/stream'); es.onmessage=ev=>
 
 
 class WebDashboardHud:
-    def __init__(self, *, host: str = DEFAULT_HUD_HOST, port: int = DEFAULT_HUD_PORT, recent_events: int = DEFAULT_RECENT_EVENTS, interval_s: float = DEFAULT_HUD_POLL_INTERVAL) -> None:
+    def __init__(self, *, host: str = DEFAULT_HUD_HOST, port: int = DEFAULT_HUD_PORT, recent_events: int = DEFAULT_RECENT_EVENTS, interval_s: float = DEFAULT_HUD_POLL_INTERVAL, follow_active: bool = False) -> None:
         self.host = host
         self.port = int(port)
         self.recent_events = recent_events
         self.interval_s = interval_s
+        self.follow_active = follow_active
         self.httpd: ThreadingHTTPServer | None = None
 
     @staticmethod
@@ -890,13 +1000,13 @@ class WebDashboardHud:
                     self.wfile.write(data)
                     return
                 if path in {"/api/state", "/state.json"}:
-                    WebDashboardHud._json_response(self, snapshot_from_directory(directory, recent_events=dashboard.recent_events))
+                    WebDashboardHud._json_response(self, snapshot_from_runtime_directory(directory, follow_active=dashboard.follow_active, recent_events=dashboard.recent_events))
                     return
                 if path in {"/api/events"}:
-                    WebDashboardHud._json_response(self, _last_jsonl_events(directory / "events.jsonl", dashboard.recent_events))
+                    WebDashboardHud._json_response(self, _last_jsonl_events(resolve_hud_directory(directory, follow_active=dashboard.follow_active) / "events.jsonl", dashboard.recent_events))
                     return
                 if path == "/events.jsonl":
-                    text = "\n".join(_tail_lines(directory / "events.jsonl", dashboard.recent_events)) + "\n"
+                    text = "\n".join(_tail_lines(resolve_hud_directory(directory, follow_active=dashboard.follow_active) / "events.jsonl", dashboard.recent_events)) + "\n"
                     data = text.encode("utf-8")
                     self.send_response(HTTPStatus.OK)
                     self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -916,7 +1026,7 @@ class WebDashboardHud:
                     self.end_headers()
                     last_signature = ""
                     while True:
-                        snapshot = snapshot_from_directory(directory, recent_events=dashboard.recent_events)
+                        snapshot = snapshot_from_runtime_directory(directory, follow_active=dashboard.follow_active, recent_events=dashboard.recent_events)
                         signature = json.dumps(snapshot.get("state", {}), sort_keys=True, separators=(",", ":"))
                         if signature != last_signature:
                             payload = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
@@ -966,11 +1076,11 @@ class StudioHud:
         self.notification_id = notification_id
         self.notify = notify
 
-    def run(self, *, directory: Path, interval_s: float, once: bool = False, console: Console | None = None) -> int:
+    def run(self, *, directory: Path, interval_s: float, once: bool = False, console: Console | None = None, follow_active: bool = False) -> int:
         console = console or Console()
-        web = WebDashboardHud(host=self.host, port=self.port, recent_events=self.recent_events, interval_s=interval_s)
+        web = WebDashboardHud(host=self.host, port=self.port, recent_events=self.recent_events, interval_s=interval_s, follow_active=follow_active)
         if once:
-            snapshot = snapshot_from_directory(directory, recent_events=self.recent_events)
+            snapshot = snapshot_from_runtime_directory(directory, follow_active=follow_active, recent_events=self.recent_events)
             print(json.dumps(snapshot, ensure_ascii=False, indent=2))
             return 0
         httpd, _thread = web.start_background(directory=directory)
@@ -978,12 +1088,13 @@ class StudioHud:
         console.print(f"[green]devtool HUD v5 studio[/green] web=http://{host}:{port} dir={directory}")
         notifier = TermuxNotificationHud(notification_id=self.notification_id) if self.notify else None
         terminal = TerminalHud(console=console, recent_events=self.recent_events, title="devtool HUD v5 studio")
-        events_path = directory / "events.jsonl"
         refresh = max(1, min(20, int(1 / max(interval_s, 0.05))))
-        with Live(terminal.render(state_from_directory(directory), _last_jsonl_events(events_path, self.recent_events)), console=console, refresh_per_second=refresh) as live:
+        current_dir = resolve_hud_directory(directory, follow_active=follow_active)
+        with Live(terminal.render(state_from_directory(current_dir), _last_jsonl_events(current_dir / "events.jsonl", self.recent_events)), console=console, refresh_per_second=refresh) as live:
             while True:
-                state = state_from_directory(directory)
-                events = _last_jsonl_events(events_path, self.recent_events)
+                current_dir = resolve_hud_directory(directory, follow_active=follow_active)
+                state = state_from_directory(current_dir)
+                events = _last_jsonl_events(current_dir / "events.jsonl", self.recent_events)
                 live.update(terminal.render(state, events))
                 if notifier is not None:
                     notifier.update(state)
@@ -1047,6 +1158,7 @@ def build_hud_parser() -> argparse.ArgumentParser:
     parser.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for notification/studio modes")
     parser.add_argument("--studio-notify", action="store_true", help="In studio/v5 mode, also mirror state into termux-notification when available")
     parser.add_argument("--once", action="store_true", help="Render/update once and exit")
+    parser.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory written by auto-HUD")
     return parser
 
 
@@ -1059,14 +1171,15 @@ def run_hud(args: argparse.Namespace) -> int:
         return TermuxGuiHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once))
     if mode == "notification":
         return TermuxNotificationHud(notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once))
+    follow_active = bool(getattr(args, "follow_active", False))
     if mode == "web":
-        return WebDashboardHud(host=str(args.host), port=int(args.port), recent_events=recent_events, interval_s=interval_s).run(directory=directory, once=bool(args.once))
+        return WebDashboardHud(host=str(args.host), port=int(args.port), recent_events=recent_events, interval_s=interval_s, follow_active=follow_active).run(directory=directory, once=bool(args.once))
     if mode == "studio":
-        return StudioHud(host=str(args.host), port=int(args.port), recent_events=recent_events, notification_id=str(args.notify_id), notify=bool(args.studio_notify)).run(directory=directory, interval_s=interval_s, once=bool(args.once))
+        return StudioHud(host=str(args.host), port=int(args.port), recent_events=recent_events, notification_id=str(args.notify_id), notify=bool(args.studio_notify)).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     if mode == "desktop-window":
-        return GtkDesktopHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once))
+        return GtkDesktopHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     if mode == "desktop-notify":
-        return DesktopNotificationHud(notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once))
+        return DesktopNotificationHud(notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     return TerminalHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once))
 
 

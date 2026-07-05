@@ -1,22 +1,56 @@
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import replace
 
 from .models import CommandSpec
+
+
+def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | None = None) -> list[str]:
+    """Build the Termux chrootctl command used to execute a shell command.
+
+    The runner intentionally uses the Android chroot workflow:
+
+        sudo chrootctl --name <name> exec --zsh -lc '<command>'
+
+    Environment overrides keep this testable and let non-root setups customize
+    the launcher without changing project config:
+
+    - DEVTOOL_CHROOTCTL: chrootctl executable, default ``chrootctl``
+    - DEVTOOL_CHROOT_SUDO: sudo executable. Set to an empty string to skip sudo.
+    """
+
+    name = chroot_name.strip()
+    if not name:
+        raise ValueError("chroot_name must not be empty")
+
+    chrootctl = os.environ.get("DEVTOOL_CHROOTCTL", "chrootctl").strip() or "chrootctl"
+    sudo = os.environ.get("DEVTOOL_CHROOT_SUDO", "sudo")
+    if use_sudo is False:
+        sudo = ""
+    elif use_sudo is True and not sudo.strip():
+        sudo = "sudo"
+
+    argv: list[str] = []
+    if sudo.strip():
+        argv.append(sudo.strip())
+    argv.extend([chrootctl, "--name", name, "exec", "--zsh", "-lc", command])
+    return argv
 
 
 def wrap_specs_for_chroot(specs: list[CommandSpec], chroot_name: str) -> list[CommandSpec]:
     name = chroot_name.strip()
     if not name:
         return specs
-    chrootctl = os.environ.get("DEVTOOL_CHROOTCTL", "chrootctl")
     wrapped: list[CommandSpec] = []
     for spec in specs:
         metadata = dict(spec.metadata)
         metadata["execution_mode"] = "chroot"
         metadata["chroot"] = name
-        wrapped.append(replace(spec, argv=[chrootctl, "exec", name, "--", *spec.argv], metadata=metadata))
+        metadata["chroot_runner"] = "termux-chrootctl-zsh"
+        command = shlex.join(spec.argv)
+        wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, name), metadata=metadata))
     return wrapped
 
 

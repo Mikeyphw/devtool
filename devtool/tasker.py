@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -64,6 +65,70 @@ DEFAULT_TASKER_ACTION = "net.mph.devtool.EVENT"
 DEFAULT_NOTIFICATION_ID = "7771"
 DEFAULT_EVENT_HTTP_URL = os.environ.get("DEVTOOL_EVENT_HTTP_URL", "http://127.0.0.1:1821/")
 DEFAULT_EVENT_HTTP_TIMEOUT_S = 0.5
+DEFAULT_HUD_SINGLETON_MODE = os.environ.get("DEVTOOL_HUD_SINGLETON", "reuse").strip().lower() or "reuse"
+
+
+def hud_registry_dir() -> Path:
+    override = os.environ.get("DEVTOOL_HUD_REGISTRY_DIR")
+    if override:
+        return tasker_dir_from_text(override)
+    return tasker_dir_from_text(DEFAULT_TASKER_DIR)
+
+
+def hud_active_file() -> Path:
+    return hud_registry_dir() / "hud-active.json"
+
+
+def hud_singleton_file() -> Path:
+    return hud_registry_dir() / "hud-singleton.json"
+
+
+def _read_json_path(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def write_active_hud_directory(directory: Path, *, mode: str = "desktop") -> None:
+    payload = {"directory": str(directory), "mode": mode, "updated_at": utc_now_iso(), "pid": os.getpid()}
+    _atomic_write_json(hud_active_file(), payload)
+
+
+def read_active_hud_directory(default: Path | None = None) -> Path | None:
+    payload = _read_json_path(hud_active_file())
+    directory = str((payload or {}).get("directory") or "").strip()
+    if directory:
+        return tasker_dir_from_text(directory)
+    return default
+
+
+def _read_hud_singleton() -> dict[str, Any]:
+    return _read_json_path(hud_singleton_file()) or {}
+
+
+def _write_hud_singleton(*, pid: int, mode: str, directory: Path, follow_active: bool) -> None:
+    payload = {"pid": int(pid), "mode": mode, "directory": str(directory), "follow_active": bool(follow_active), "started_at": utc_now_iso()}
+    _atomic_write_json(hud_singleton_file(), payload)
+
+
+def _terminate_pid(pid: int, *, timeout_s: float = 1.5) -> bool:
+    if not _pid_is_alive(pid):
+        return True
+    try:
+        os.kill(pid, 15)
+    except OSError:
+        return not _pid_is_alive(pid)
+    deadline = time.monotonic() + max(0.1, timeout_s)
+    while time.monotonic() < deadline:
+        if not _pid_is_alive(pid):
+            return True
+        time.sleep(0.05)
+    with contextlib.suppress(OSError):
+        os.kill(pid, 9)
+    return not _pid_is_alive(pid)
+
 
 
 def utc_now_iso() -> str:
@@ -199,11 +264,12 @@ def _pid_is_alive(pid: int) -> bool:
 
 
 def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: float = 0.1) -> bool:
-    """Start or reuse a detached HUD process for live progress.
+    """Start, reuse, or replace the global live HUD process.
 
-    This is intentionally best-effort.  The command that emits progress must
-    never fail just because the desktop/Termux HUD could not be started.
-    A small pid file prevents spawning a new window for every devtool phase.
+    Auto-HUD is a singleton by default. Each new devtool task writes the active
+    event directory to hud-active.json; a GTK/web/studio HUD spawned by this
+    helper follows that pointer, so one already-open window can switch to the
+    newest task instead of spawning duplicate windows.
     """
     if os.environ.get("DEVTOOL_AUTO_HUD_CHILD") == "1" or os.environ.get("DEVTOOL_NO_AUTO_HUD") == "1":
         return False
@@ -212,58 +278,75 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
         directory.mkdir(parents=True, exist_ok=True)
     except OSError:
         return False
-    pid_file = directory / "hud.pid"
-    try:
-        old_pid = int(pid_file.read_text(encoding="utf-8").strip())
-    except Exception:
-        old_pid = 0
-    if _pid_is_alive(old_pid):
-        return True
 
-    # Do not detach a terminal HUD with no terminal to draw on.  Desktop/auto
-    # mode can choose GTK/notifications/Termux GUI as available.
     chosen_mode = (mode or "desktop").strip() or "desktop"
     if chosen_mode in {"terminal", "console", "v3"} and not sys.stdout.isatty():
         chosen_mode = "desktop"
 
+    singleton_mode = (os.environ.get("DEVTOOL_HUD_SINGLETON") or DEFAULT_HUD_SINGLETON_MODE or "reuse").strip().lower()
+    singleton_mode = {"true": "reuse", "1": "reuse", "yes": "reuse", "replace": "kill"}.get(singleton_mode, singleton_mode)
+    follow_active = singleton_mode not in {"off", "false", "0", "no", "legacy"}
+
+    try:
+        if follow_active:
+            write_active_hud_directory(directory, mode=chosen_mode)
+    except OSError:
+        follow_active = False
+
+    registry = hud_registry_dir() if follow_active else directory
+    try:
+        registry.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+
+    legacy_pid_file = directory / "hud.pid"
+    singleton = _read_hud_singleton() if follow_active else {}
+    try:
+        old_pid = int((singleton.get("pid") if singleton else legacy_pid_file.read_text(encoding="utf-8").strip()) or 0)
+    except Exception:
+        old_pid = 0
+
+    if _pid_is_alive(old_pid):
+        if follow_active and singleton_mode == "kill":
+            _terminate_pid(old_pid)
+        elif follow_active and bool(singleton.get("follow_active")):
+            return True
+        elif follow_active:
+            _terminate_pid(old_pid)
+        else:
+            return True
+
+    if follow_active:
+        try:
+            legacy_pid = int(legacy_pid_file.read_text(encoding="utf-8").strip() or "0")
+        except Exception:
+            legacy_pid = 0
+        if legacy_pid and legacy_pid != old_pid and _pid_is_alive(legacy_pid):
+            _terminate_pid(legacy_pid)
+
     argv = [
-        sys.executable,
-        "-m",
-        "devtool",
-        "hud",
-        "--mode",
-        chosen_mode,
-        "--tasker-dir",
-        str(directory),
-        "--poll-interval",
-        str(max(0.05, float(poll_interval))),
+        sys.executable, "-m", "devtool", "hud",
+        "--mode", chosen_mode,
+        "--tasker-dir", str(directory),
+        "--poll-interval", str(max(0.05, float(poll_interval))),
     ]
+    if follow_active:
+        argv.append("--follow-active")
+
     try:
         env = os.environ.copy()
         env["DEVTOOL_AUTO_HUD_CHILD"] = "1"
         env["DEVTOOL_NO_AUTO_HUD"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
-
-        # Start the HUD through a detached shell trampoline. This avoids keeping
-        # any pipe/session handle from the apply/build/test command alive, which
-        # previously made the main devtool command appear to finish only after
-        # closing the HUD window. The small launcher exits immediately; the HUD
-        # is re-parented to the user session/init.
         quoted = " ".join(shlex.quote(part) for part in argv)
         launcher = f"exec </dev/null >/dev/null 2>&1; setsid {quoted} </dev/null >/dev/null 2>&1 & echo $!"
-        completed = subprocess.run(
-            ["/bin/sh", "-c", launcher],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=False,
-            close_fds=True,
-            env=env,
-        )
+        completed = subprocess.run(["/bin/sh", "-c", launcher], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False, close_fds=True, env=env)
         pid_text = (completed.stdout or "").strip().splitlines()[-1:]
         if pid_text:
-            pid_file.write_text(pid_text[0].strip(), encoding="utf-8")
+            pid = int(pid_text[0].strip())
+            legacy_pid_file.write_text(str(pid), encoding="utf-8")
+            if follow_active:
+                _write_hud_singleton(pid=pid, mode=chosen_mode, directory=directory, follow_active=True)
         return completed.returncode == 0
     except Exception:
         return False

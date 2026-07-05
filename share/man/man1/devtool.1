@@ -1,4 +1,4 @@
-.TH DEVTOOL 1 "2026-07-01" "devtool 0.2.18" "User Commands"
+.TH DEVTOOL 1 "2026-07-01" "devtool 0.2.23" "User Commands"
 .SH NAME
 devtool \- generic Unix developer helper CLI
 .SH SYNOPSIS
@@ -74,6 +74,38 @@ Git helper commands.
 .TP
 .B ai-prompt
 Generate a fully resolved AI workflow prompt for the current repository.
+.SH TERMUX CHROOT RUNNER
+The optional host-side commands
+.B devtool-androidos
+and
+.B devtool-termux-chroot
+forward devtool invocations into a named Android/Termux chroot. The default outer command shape is:
+.PP
+.B sudo chrootctl --name androidos exec --zsh -lc 'cd <translated-cwd> && exec devtool <translated-flags>'
+.PP
+The runner consumes
+.B --chroot
+as the outer chroot name, honors
+.B --host
+by bypassing the chroot, and translates path-bearing flags such as
+.BR --repo ,
+.BR --config ,
+.BR --solution ,
+.BR --project ,
+.BR --machine-file ,
+.BR --save-json-payload ,
+.BR --tasker-dir ,
+and artifact paths for apply-overlay/apply-snapshot.
+.PP
+Environment overrides include
+.BR DEVTOOL_TERMUX_CHROOT ,
+.BR DEVTOOL_TERMUX_CHROOT_HOME ,
+.BR DEVTOOL_TERMUX_CHROOT_USER ,
+.BR DEVTOOL_TERMUX_CHROOT_PATH_MAP ,
+.BR DEVTOOL_CHROOTCTL ,
+and
+.BR DEVTOOL_CHROOT_SUDO .
+
 .SH TRANSACTIONAL ARTIFACT APPLY
 Before mutating files for
 .B apply-overlay

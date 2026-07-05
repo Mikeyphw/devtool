@@ -175,7 +175,8 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
         cmd.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
         cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
-        cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Delete the source artifact and sidecars even if apply, validation, or commit fails")
+        cmd.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after apply (default: delete after success or failure)")
+        cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Deprecated: artifacts are deleted after failure by default unless --keep-artifact is used")
         _add_validation_skip_flags(cmd)
         cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
 
@@ -224,6 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     hud_cmd.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for HUD notification/studio mode")
     hud_cmd.add_argument("--studio-notify", action="store_true", help="In studio/v5 mode, also mirror state into termux-notification when available")
     hud_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
+    hud_cmd.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory written by auto-HUD")
 
     history_cmd = subparsers.add_parser("history")
     history_cmd.add_argument("--limit", type=int, default=20)
@@ -1185,7 +1187,7 @@ def _ensure_safe_repo(repo_root: Path, *, force: bool, yes: bool, command: str) 
             raise SystemExit("Snapshot apply needs --yes or --force in non-interactive mode.")
     if command.startswith("apply") and _git_dirty(repo_root) and not (yes or force):
         if console.is_interactive and sys.stdin.isatty():
-            okay = Confirm.ask("Git tree is dirty. Continue?", default=False, console=console)
+            okay = Confirm.ask("Git tree is dirty. Continue?", default=True, console=console)
             if not okay:
                 raise SystemExit(1)
         else:
@@ -1543,11 +1545,11 @@ def main(argv: list[str] | None = None) -> int:
                     raw_output += "\n\n" + rollback_raw
             else:
                 mark_transaction_completed(transaction_path)
-        if not getattr(args, "dry_run", False):
+        if not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
             cleanup_result = _delete_original_artifact_after_apply(
                 results,
                 artifact=getattr(args, "artifact", ""),
-                delete_on_failure=bool(getattr(args, "delete_artifact_on_failure", False)),
+                delete_on_failure=True,
             )
             if cleanup_result is not None:
                 results.append(cleanup_result)

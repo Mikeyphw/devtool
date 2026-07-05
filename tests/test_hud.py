@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from devtool.hud import HudState, TermuxNotificationHud, choose_hud_mode, parse_hud_state, render_ascii_bar, state_from_directory
+from devtool.hud import HudState, TermuxNotificationHud, choose_hud_mode, last_phase_highlights, latest_log_path, parse_hud_state, render_ascii_bar, state_from_directory
 from devtool.cli import build_parser
 
 
@@ -69,6 +69,26 @@ class HudTests(unittest.TestCase):
         self.assertIn("42", argv)
         self.assertIn("Build (50%)", argv)
         self.assertIn("Compiling", argv)
+
+
+    def test_last_phase_highlights_keep_restore_build_test_details(self) -> None:
+        events = [
+            {"event_type": "progress", "phase": {"name": "restore"}, "message": "restored App.Core", "progress": {"detail": "restored App.Core"}},
+            {"event_type": "progress", "phase": {"name": "build"}, "message": "built App.UI -> bin/Debug/App.UI.dll"},
+            {"event_type": "progress", "phase": {"name": "test"}, "message": "Starting test execution, please wait..."},
+            {"event_type": "progress", "phase": {"name": "test"}, "message": "tests: 6 passed, 0 failed, 0 skipped"},
+        ]
+        highlights = last_phase_highlights(events)
+        self.assertEqual(highlights["restore"], "Restored App.Core")
+        self.assertEqual(highlights["build"], "Built App.UI")
+        self.assertEqual(highlights["test"], "Tests passing: 6 passed")
+
+    def test_latest_log_path_reads_result_and_final_results(self) -> None:
+        events = [
+            {"event_type": "phase_finished", "result": {"log_path": "/tmp/restore.log"}},
+            {"event_type": "finished", "results": [{"log_path": "/tmp/build.log"}, {"log_path": "/tmp/test.log"}]},
+        ]
+        self.assertEqual(latest_log_path(events), "/tmp/test.log")
 
     def test_cli_accepts_hud_command(self) -> None:
         parser = build_parser()

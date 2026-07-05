@@ -268,7 +268,7 @@ This build adds the higher-friction workflow pieces around the existing runner:
 - `--machine [compact|pretty]` and `--machine-file` for a clean machine envelope, while normal human output stays on stdout.
 - live command execution via `Popen`; non-verbose mode keeps the spinner while capturing restore/build/test output silently for logs, summaries, and parsed diagnostics. Use `--verbose` for the raw live stream.
 - persistent Termux dotnet proot `/etc/os-release` cache under `$PREFIX/var/devtool/proot/etc`.
-- `--chroot NAME` / `--host` execution selection; apply operations stay host-side and validation/run phases can be routed through `chrootctl exec NAME -- ...`.
+- `--chroot NAME` / `--host` execution selection; apply operations stay host-side and validation/run phases can be routed through `sudo chrootctl --name NAME exec --zsh -lc '<command>'`.
 - artifact manifest validation, `apply-overlay --preview`, `--interactive`, and `.devtool/artifacts.json` history tracking.
 - `devtool detect`, `devtool handoff`, `devtool history`, and `devtool rollback --last`.
 - validation matrix support with `validate --matrix linux-arm64,linux-x64` and `--matrix-mode target` for named target fan-out.
@@ -276,6 +276,31 @@ This build adds the higher-friction workflow pieces around the existing runner:
 - safer clipboard routing through `DEVTOOL_CLIPBOARD_SOCKET`, `DEVTOOL_CLIPBOARD_FIFO`, Termux, X11, Wayland, or `--copy-via`.
 - failure classification in JSON summaries (`restore_failure`, `compile_failure`, `test_failure`, `nuget_failure`, `missing_sdk`, `wine_issue`, `arm_mismatch`, etc.).
 - `doctor --fix` creates safe state/cache directories and the Termux proot cache when applicable.
+
+### Termux chroot runner
+
+For Android/Termux setups where the full tool is installed inside the chroot, this build also installs two host-side runner aliases:
+
+```sh
+devtool-androidos validate --repo ~/Code/myrepo
+devtool-termux-chroot apply-overlay --validate ~/Downloads/fix.zip --repo ~/Code/myrepo
+```
+
+The runner executes the installed chroot copy of the tool with this outer command shape:
+
+```sh
+sudo chrootctl --name androidos exec --zsh -lc 'cd <translated-cwd> && exec devtool <translated-flags>'
+```
+
+Runner behavior:
+
+- The default chroot is `androidos`. Override it with `--chroot NAME`, `--runner-chroot NAME`, or `DEVTOOL_TERMUX_CHROOT`.
+- `--host` bypasses the runner and executes the host `devtool`, preserving the normal host-execution escape hatch.
+- Path-bearing flags are translated before forwarding: `--repo`, `--config`, `--solution`, `--project`, `--machine-file`, `--save-json-payload` / `--json-output`, `--tasker-dir`, and `-o` / `--output`.
+- Artifact paths for `apply-overlay`, `apply-snapshot`, and `batch` steps such as `apply-overlay=/path/to/file.zip` are translated too.
+- By default, Termux `$HOME` maps to `/home/${DEVTOOL_TERMUX_CHROOT_USER:-mike}`. Override with `DEVTOOL_TERMUX_CHROOT_HOME=/home/name` or explicit maps like `DEVTOOL_TERMUX_CHROOT_PATH_MAP="$HOME=/home/mike,/sdcard=/sdcard"`.
+- Explicit clipboard flags are host-handled by the runner: `--copy`, `--copy-summary`, and `--copy-json` are removed from the chroot command, the chrooted tool writes a machine JSON envelope, and the Termux host copies the selected payload with `--copy-via` respected.
+- Use `--runner-print-command` to print the exact outer command without execution, and `--runner-no-path-translate` to forward flags unchanged.
 
 
 ### Dotnet validation progress
