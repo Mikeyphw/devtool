@@ -11,17 +11,18 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 
 from .artifacts import (
     archive_suffix,
     is_artifact_metadata_member,
     is_overlay_bundle,
-    materialize_overlay_bundle,
+    materialize_overlay_bundle_entries,
     open_tar_archive,
     preview_artifact,
     preview_overlay_bundle,
+    create_overlay_bundle,
     read_delete_manifest,
     resolve_artifact_path,
 )
@@ -797,78 +798,109 @@ def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: b
     return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
 
 
-def apply_overlay_bundle(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
-    artifact_path = resolve_artifact_path(artifact)
-    argv = ["devtool", "apply-overlays", str(artifact_path), "-C", str(repo_root)]
-    start = time.perf_counter()
-    if dry_run:
-        text = "$ " + " ".join(argv)
-        path = str(write_log(text, log_path, append=log_path is not None))
-        return OperationResult("apply-overlays", argv, 0, 0.0, text, [], skipped=True, log_path=path)
-    if not artifact_path.exists():
-        output = f"Artifact not found: {artifact_path}"
+def apply_overlay_bundle(
+    repo_root: Path,
+    artifact: str | Path | Sequence[str | Path],
+    *,
+    force: bool = False,
+    yes: bool = False,
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+    preview: dict | None = None,
+    source_artifacts: Sequence[str | Path] | None = None,
+) -> OperationResult:
+    raw_artifacts = [artifact] if isinstance(artifact, (str, Path)) else list(artifact)
+    if not raw_artifacts:
+        output = "No overlay artifacts were provided."
         path = str(write_log(output, log_path, append=log_path is not None))
-        return OperationResult("apply-overlays", argv, 1, 0.0, output, [], log_path=path)
+        return OperationResult("apply-overlays", ["devtool", "apply-overlays"], 1, 0.0, output, [], log_path=path)
 
-    transaction: dict | None = None
-    rollback_result: OperationResult | None = None
+    temp_dir: tempfile.TemporaryDirectory[str] | None = None
     try:
-        preview_data = preview or preview_overlay_bundle(repo_root, artifact_path)
-        transaction = create_apply_transaction(
-            repo_root,
-            artifact_path,
-            artifact_type="overlay_bundle",
-            preview=preview_data,
-        )
-        skipped_metadata = 0
-        deleted_paths: list[str] = []
-        applied: list[str] = []
-        with tempfile.TemporaryDirectory(prefix="devtool-bundle-apply-") as tmp:
-            _manifest, overlays = materialize_overlay_bundle(artifact_path, tmp)
-            for index, overlay in enumerate(overlays, 1):
-                skipped_metadata += _extract_archive(overlay, repo_root)
-                deleted_paths.extend(_apply_delete_manifest(repo_root, overlay))
-                applied.append(f"[{index}/{len(overlays)}] {overlay.name}")
-        output = f"Applied overlay bundle from {artifact_path}"
-        output += f"\nTransaction backup: {transaction.get('transaction_id')}"
-        if applied:
-            output += "\nApplied overlays:\n" + "\n".join(applied)
-        if skipped_metadata:
-            output += f"\nSkipped {skipped_metadata} devtool metadata file(s)."
-        if deleted_paths:
-            output += f"\nDeleted {len(deleted_paths)} path(s) from nested .devtool-delete file(s)."
-        rc = 0
-    except KeyboardInterrupt:
-        rc = 130
-        output = "Interrupted during overlay bundle apply."
+        if len(raw_artifacts) == 1:
+            artifact_path = resolve_artifact_path(raw_artifacts[0])
+            original_paths = [artifact_path]
+        else:
+            temp_dir = tempfile.TemporaryDirectory(prefix="devtool-adhoc-overlays-")
+            original_paths = [resolve_artifact_path(item) for item in raw_artifacts]
+            artifact_path = create_overlay_bundle(Path(temp_dir.name) / "adhoc_overlay_bundle.zip", original_paths, name="adhoc_overlay_bundle")
+        argv = ["devtool", "apply-overlays", *(str(item) for item in original_paths), "-C", str(repo_root)]
+        start = time.perf_counter()
+        if dry_run:
+            text = "$ " + " ".join(argv)
+            path = str(write_log(text, log_path, append=log_path is not None))
+            return OperationResult("apply-overlays", argv, 0, 0.0, text, [], skipped=True, log_path=path)
+        if not artifact_path.exists():
+            output = f"Artifact not found: {artifact_path}"
+            path = str(write_log(output, log_path, append=log_path is not None))
+            return OperationResult("apply-overlays", argv, 1, 0.0, output, [], log_path=path)
+
+        transaction: dict | None = None
+        rollback_result: OperationResult | None = None
+        try:
+            preview_data = preview or preview_overlay_bundle(repo_root, artifact_path)
+            transaction = create_apply_transaction(
+                repo_root,
+                artifact_path,
+                artifact_type="overlay_bundle",
+                preview=preview_data,
+            )
+            skipped_metadata = 0
+            deleted_paths: list[str] = []
+            applied: list[str] = []
+            with tempfile.TemporaryDirectory(prefix="devtool-bundle-apply-") as tmp:
+                _manifest, entries = materialize_overlay_bundle_entries(artifact_path, tmp)
+                for entry in entries:
+                    skipped_metadata += _extract_archive(entry.path, repo_root)
+                    deleted_paths.extend(_apply_delete_manifest(repo_root, entry.path))
+                    label = entry.label or Path(entry.bundle_path).name
+                    target_note = f" target={entry.target}" if entry.target else ""
+                    applied.append(f"[{entry.index}/{len(entries)}] {label}{target_note}")
+            output = f"Applied overlay bundle from {artifact_path}"
+            output += f"\nTransaction backup: {transaction.get('transaction_id')}"
+            if applied:
+                output += "\nApplied overlays:\n" + "\n".join(applied)
+            if skipped_metadata:
+                output += f"\nSkipped {skipped_metadata} devtool metadata file(s)."
+            if deleted_paths:
+                output += f"\nDeleted {len(deleted_paths)} path(s) from nested .devtool-delete file(s)."
+            rc = 0
+        except KeyboardInterrupt:
+            rc = 130
+            output = "Interrupted during overlay bundle apply."
+            if transaction:
+                rollback_result = rollback_transaction(transaction.get("path"), reason="interrupted during overlay bundle apply")
+                output += "\n" + rollback_result.output
+        except BaseException as exc:
+            output = f"{type(exc).__name__}: {exc}"
+            rc = 1
+            if transaction:
+                rollback_result = rollback_transaction(transaction.get("path"), reason="error during overlay bundle apply")
+                output += "\n" + rollback_result.output
+                if rollback_result.returncode != 0:
+                    output += "\nRollback failed; manual intervention may be required."
+        duration = time.perf_counter() - start
+        path = str(write_log(output, log_path, append=log_path is not None))
+        metadata = {}
         if transaction:
-            rollback_result = rollback_transaction(transaction.get("path"), reason="interrupted during overlay bundle apply")
-            output += "\n" + rollback_result.output
-    except BaseException as exc:
-        output = f"{type(exc).__name__}: {exc}"
-        rc = 1
-        if transaction:
-            rollback_result = rollback_transaction(transaction.get("path"), reason="error during overlay bundle apply")
-            output += "\n" + rollback_result.output
-            if rollback_result.returncode != 0:
-                output += "\nRollback failed; manual intervention may be required."
-    duration = time.perf_counter() - start
-    path = str(write_log(output, log_path, append=log_path is not None))
-    metadata = {}
-    if transaction:
-        tx_id = str(transaction.get("transaction_id") or "")
-        tx_path = str(transaction.get("path") or "") if tx_id else ""
-        metadata = {
-            "transaction_id": tx_id,
-            "transaction_path": tx_path,
-            "artifact_path": str(artifact_path),
-            "delete_artifact_on_success": True,
-            "artifact_type": "overlay_bundle",
-        }
-        if rollback_result is not None:
-            metadata["rollback_returncode"] = rollback_result.returncode
-            metadata["rolled_back_during_apply"] = True
-    return OperationResult("apply-overlays", argv, rc, duration, output, [], log_path=path, metadata=metadata)
+            tx_id = str(transaction.get("transaction_id") or "")
+            tx_path = str(transaction.get("path") or "") if tx_id else ""
+            cleanup_sources = [str(resolve_artifact_path(item)) for item in (source_artifacts or original_paths)]
+            metadata = {
+                "transaction_id": tx_id,
+                "transaction_path": tx_path,
+                "artifact_path": str(cleanup_sources[0] if len(cleanup_sources) == 1 else artifact_path),
+                "artifact_paths": cleanup_sources,
+                "delete_artifact_on_success": True,
+                "artifact_type": "overlay_bundle",
+            }
+            if rollback_result is not None:
+                metadata["rollback_returncode"] = rollback_result.returncode
+                metadata["rolled_back_during_apply"] = True
+        return OperationResult("apply-overlays", argv, rc, duration, output, [], log_path=path, metadata=metadata)
+    finally:
+        if temp_dir is not None:
+            temp_dir.cleanup()
 
 
 def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:

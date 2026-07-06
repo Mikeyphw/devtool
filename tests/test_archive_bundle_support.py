@@ -11,6 +11,8 @@ from zipfile import ZipFile
 from devtool.artifacts import (
     create_overlay_bundle,
     list_archive_members,
+    materialize_overlay_bundle_entries,
+    overlay_bundle_targets,
     read_artifact_manifest,
     validate_artifact,
     write_archive_entries,
@@ -71,7 +73,7 @@ class ArchiveBundleSupportTests(unittest.TestCase):
         from devtool.cli import _normalize_command_aliases
         _normalize_command_aliases(args)
         self.assertEqual(args.command, "apply-overlays")
-        self.assertEqual(args.artifact, "bundle.zip")
+        self.assertEqual(args.artifact, ["bundle.zip"])
 
     def test_bundle_command_creates_tar_gz_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -83,6 +85,49 @@ class ArchiveBundleSupportTests(unittest.TestCase):
             manifest = read_artifact_manifest(out)
             self.assertEqual(manifest.get("type"), "overlay_bundle")
             self.assertEqual(manifest.get("kind"), "devtool.overlay_bundle")
+
+    def test_bundle_manifest_supports_per_overlay_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            first = self._zip_overlay(root / "001.zip", "a.txt", "one")
+            second = self._zip_overlay(root / "002.zip", "b.txt", "two")
+            out = create_overlay_bundle(root / "bundle.zip", [first, second], targets=["core", "s3mo"], name="bundle")
+
+            manifest = read_artifact_manifest(out)
+            self.assertEqual(manifest.get("target_mode"), "per_overlay")
+            self.assertEqual(manifest["apply_order"][0]["target"], "core")
+            self.assertEqual(manifest["apply_order"][1]["target"], "s3mo")
+            self.assertEqual(overlay_bundle_targets(out), ["core", "s3mo"])
+
+            with tempfile.TemporaryDirectory() as mat_tmp:
+                _manifest, entries = materialize_overlay_bundle_entries(out, mat_tmp)
+                self.assertEqual([entry.target for entry in entries], ["core", "s3mo"])
+
+    def test_validate_overlays_accepts_multiple_overlay_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            first = self._zip_overlay(root / "001.zip", "a.txt", "one")
+            second = self._zip_overlay(root / "002.zip", "b.txt", "two")
+            rc = main(["-r", str(repo), "validate-overlays", str(first), str(second)])
+            self.assertEqual(rc, 0)
+
+    def test_apply_overlays_accepts_multiple_overlay_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            first = self._zip_overlay(root / "001.zip", "a.txt", "one")
+            second = self._zip_overlay(root / "002.zip", "b.txt", "two")
+            rc = main(["-r", str(repo), "--yes", "apply-overlays", str(first), str(second), "--keep-artifact"])
+            self.assertEqual(rc, 0)
+            self.assertEqual((repo / "a.txt").read_text(encoding="utf-8"), "one")
+            self.assertEqual((repo / "b.txt").read_text(encoding="utf-8"), "two")
 
 
 if __name__ == "__main__":

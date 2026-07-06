@@ -316,6 +316,12 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
             return value
 
     chosen_mode = _resolve_mode_for_detached_child(requested_mode)
+    if chosen_mode == "android-bridge":
+        _append_hud_log(
+            "android bridge mode: not starting a local detached HUD child; "
+            "run `devtool android-hud-bridge` from the Termux host to display the shared state."
+        )
+        return True
     if chosen_mode in {"terminal", "console", "v3"}:
         _append_hud_log(
             "not starting auto-HUD because the requested/resolved mode is terminal, "

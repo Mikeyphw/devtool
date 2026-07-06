@@ -39,7 +39,7 @@ _PATH_SUFFIXES = (
 @dataclass(slots=True)
 class RunnerConfig:
     chroot_name: str = "androidos"
-    tool: str = "/home/mike/.local/bin/devtool"
+    tool: str = "devtool"
     chrootctl: str = "chrootctl"
     sudo: str = "sudo"
     translate_paths: bool = True
@@ -206,7 +206,7 @@ def _consume_value(argv: list[str], index: int) -> tuple[str, str | None, int]:
 def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerConfig, list[str]]:
     config = RunnerConfig(
         chroot_name=env.get("DEVTOOL_TERMUX_CHROOT", "androidos").strip() or "androidos",
-        tool=env.get("DEVTOOL_TERMUX_CHROOT_TOOL", "/home/mike/.local/bin/devtool").strip() or "/home/mike/.local/bin/devtool",
+        tool=env.get("DEVTOOL_TERMUX_CHROOT_TOOL", "devtool").strip() or "devtool",
         chrootctl=env.get("DEVTOOL_CHROOTCTL", "chrootctl").strip() or "chrootctl",
         sudo=env.get("DEVTOOL_CHROOT_SUDO", "sudo"),
         path_map=default_path_map(env),

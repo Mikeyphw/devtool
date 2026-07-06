@@ -6,6 +6,7 @@ import html
 import importlib.util
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -34,6 +35,59 @@ DEFAULT_HUD_PORT = 8765
 DESKTOP_HUD_APP_ID = "net.mph.devtool.HUD"
 DESKTOP_HUD_ICON_NAME = "devtool-hud"
 DESKTOP_HUD_WM_CLASS = "devtool-hud"
+
+
+def _is_termux_android() -> bool:
+    """Return True when running in the Android Termux userspace."""
+    prefix = os.environ.get("PREFIX", "")
+    return bool(
+        os.environ.get("TERMUX_VERSION")
+        or "/com.termux/" in prefix
+        or prefix.startswith("/data/data/com.termux/")
+        or (os.environ.get("ANDROID_ROOT") and os.environ.get("ANDROID_DATA"))
+    )
+
+
+def default_android_bridge_dir() -> Path:
+    """Return the shared HUD bridge directory visible to Termux and chroots.
+
+    Direct Termux runs use the Termux home. Ubuntu chroots that expose the
+    Termux home as /home/termux use that path. DEVTOOL_HUD_BRIDGE_DIR wins for
+    custom bind mounts.
+    """
+    override = os.environ.get("DEVTOOL_HUD_BRIDGE_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    if _is_termux_android():
+        return Path.home() / ".local" / "state" / "devtool-android-hud"
+    termux_home = Path(os.environ.get("DEVTOOL_TERMUX_HOME", "/home/termux")).expanduser()
+    if termux_home.exists():
+        return termux_home / ".local" / "state" / "devtool-android-hud"
+    return Path.home() / ".local" / "state" / "devtool-android-hud"
+
+
+def _is_termux_chroot_bridge() -> bool:
+    """Return True for a Linux/chroot process that can see Termux home."""
+    if os.environ.get("DEVTOOL_ANDROID_BRIDGE", "").strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    if _is_termux_android():
+        return False
+    if os.environ.get("DEVTOOL_HUD_BRIDGE_DIR", "").strip():
+        return True
+    return Path(os.environ.get("DEVTOOL_TERMUX_HOME", "/home/termux")).expanduser().exists()
+
+
+def _atomic_write_bridge_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _android_argb(value: int) -> int:
+    """Return a signed Android ARGB color integer."""
+    value &= 0xFFFFFFFF
+    return value - 0x100000000 if value > 0x7FFFFFFF else value
 
 
 @dataclass(slots=True)
@@ -357,18 +411,43 @@ def _is_noisy_test_line(text: str) -> bool:
     )
 
 
+_DEVTOOL_TEST_SUMMARY_RE = re.compile(r"(\d+)\s+passed,\s*(\d+)\s+failed,\s*(\d+)\s+skipped", re.I)
+_VSTEST_RESULT_RE = re.compile(
+    r"\b(?P<status>Passed|Failed)!\s+-\s+Failed:\s*(?P<failed>\d+),\s*Passed:\s*(?P<passed>\d+),\s*Skipped:\s*(?P<skipped>\d+)",
+    re.I,
+)
+_TEST_RUN_SUCCESS_RE = re.compile(r"\bTest Run Successful\b", re.I)
+_TEST_RUN_FAILED_RE = re.compile(r"\bTest Run Failed\b", re.I)
+
+
+def _parse_test_counts(text: str) -> tuple[int, int, int] | None:
+    """Return ``(passed, failed, skipped)`` for known .NET/devtool test summaries."""
+    clean = text.strip()
+    if not clean:
+        return None
+    match = _DEVTOOL_TEST_SUMMARY_RE.search(clean)
+    if match:
+        return tuple(map(int, match.groups()))  # type: ignore[return-value]
+    match = _VSTEST_RESULT_RE.search(clean)
+    if match:
+        return (int(match.group("passed")), int(match.group("failed")), int(match.group("skipped")))
+    return None
+
+
 def _is_test_summary(text: str) -> bool:
-    lower = text.strip().lower()
-    return lower.startswith("tests:") and "passed" in lower and "failed" in lower
+    clean = text.strip()
+    return bool(_parse_test_counts(clean) or _TEST_RUN_SUCCESS_RE.search(clean) or _TEST_RUN_FAILED_RE.search(clean))
 
 
 def _parse_test_summary(text: str) -> str | None:
-    # Accept lines like: tests: 6 passed, 0 failed, 0 skipped
-    import re
-    match = re.search(r"(\d+)\s+passed,\s*(\d+)\s+failed,\s*(\d+)\s+skipped", text, re.I)
-    if not match:
+    counts = _parse_test_counts(text)
+    if counts is None:
+        if _TEST_RUN_SUCCESS_RE.search(text):
+            return "Tests passing"
+        if _TEST_RUN_FAILED_RE.search(text):
+            return "Tests failing"
         return None
-    passed, failed, skipped = map(int, match.groups())
+    passed, failed, skipped = counts
     parts = [f"{passed} passed"]
     if failed:
         parts.append(f"{failed} failed")
@@ -377,6 +456,13 @@ def _parse_test_summary(text: str) -> str | None:
     if failed:
         return "Tests failing: " + ", ".join(parts)
     return "Tests passing: " + ", ".join(parts)
+
+
+def _test_summary_failed(text: str) -> bool:
+    counts = _parse_test_counts(text)
+    if counts is not None:
+        return counts[1] > 0
+    return bool(_TEST_RUN_FAILED_RE.search(text))
 
 
 def friendly_event_line(event: dict[str, Any]) -> str | None:
@@ -433,6 +519,11 @@ def friendly_event_line(event: dict[str, Any]) -> str | None:
 
 
 def event_is_error(event: dict[str, Any]) -> bool:
+    message = _event_message(event).lower()
+    # Test summaries must win over generic status/substring checks.  VSTest
+    # success lines intentionally contain text like ``Failed: 0``.
+    if _is_test_summary(message):
+        return _test_summary_failed(message)
     status = _result_status_from_event(event).lower()
     if status in {"failed", "error"}:
         return True
@@ -442,11 +533,6 @@ def event_is_error(event: dict[str, Any]) -> bool:
     totals = event.get("totals") if isinstance(event.get("totals"), dict) else {}
     if _coerce_int(totals.get("errors")) or _coerce_int(totals.get("failed")):
         return True
-    message = _event_message(event).lower()
-    # Avoid highlighting successful summaries such as "0 failed".
-    if _is_test_summary(message):
-        parsed = _parse_test_summary(message)
-        return bool(parsed and parsed.lower().startswith("tests failing"))
     return bool(message and (" error " in f" {message} " or " failed" in message or message.startswith("failed")))
 
 
@@ -459,6 +545,109 @@ def recent_error_lines(events: Iterable[dict[str, Any]], *, limit: int = 3) -> l
         if line and line not in lines:
             lines.append(line)
     return lines[-limit:]
+
+
+def event_is_warning(event: dict[str, Any]) -> bool:
+    if event_is_error(event):
+        return False
+    notification = event.get("notification") if isinstance(event.get("notification"), dict) else {}
+    if str(notification.get("level") or "").lower() == "warning":
+        return True
+    totals = event.get("totals") if isinstance(event.get("totals"), dict) else {}
+    if _coerce_int(totals.get("warnings")):
+        return True
+    message = _event_message(event).lower()
+    return bool(message and (" warning " in f" {message} " or " warning:" in message or " warning(" in message))
+
+
+def event_severity(event: dict[str, Any]) -> str:
+    if event_is_error(event):
+        return "error"
+    if event_is_warning(event):
+        return "warning"
+    status = _result_status_from_event(event).lower()
+    message = _event_message(event)
+    if status in {"ok", "complete", "completed", "success"}:
+        return "success"
+    if _is_test_summary(message) and not _test_summary_failed(message):
+        return "success"
+    event_type = _coerce_str(event.get("event_type") or event.get("type")).lower().replace("_", "-")
+    if event_type in {"phase-finished", "finished"} and status != "failed":
+        return "success"
+    if event_type in {"phase-started", "progress"}:
+        return "running"
+    return "neutral"
+
+
+def event_icon(event: dict[str, Any]) -> str:
+    return {
+        "error": "❌",
+        "warning": "⚠",
+        "success": "✓",
+        "running": "→",
+        "neutral": "•",
+    }.get(event_severity(event), "•")
+
+
+def hud_event_summary(events: Iterable[dict[str, Any]]) -> dict[str, int]:
+    summary = {"errors": 0, "warnings": 0, "success": 0, "running": 0, "events": 0}
+    for event in events:
+        if friendly_event_line(event) is None:
+            continue
+        summary["events"] += 1
+        severity = event_severity(event)
+        if severity in summary:
+            summary[severity] += 1
+    return summary
+
+
+def pipeline_label(state: HudState, highlights: dict[str, str]) -> str:
+    phase_key = (state.phase_name or state.command or "").strip().lower().replace("_", "-")
+    steps = [("validate", "Validate"), ("apply", "Apply"), ("test", "Test"), ("commit", "Commit")]
+    pieces: list[str] = []
+    for key, label in steps:
+        active = key in phase_key or (key == "apply" and "overlay" in phase_key)
+        done = key in highlights and key != "validate"
+        if active:
+            pieces.append(f"● {label}")
+        elif done:
+            pieces.append(f"✓ {label}")
+        else:
+            pieces.append(label)
+    return " → ".join(pieces)
+
+
+def state_context_label(state: HudState) -> str:
+    bits: list[str] = []
+    if state.repo_name:
+        bits.append(state.repo_name)
+    elif state.repo_root:
+        bits.append(Path(state.repo_root).name)
+    if state.target:
+        bits.append(state.target)
+    return " · ".join(bits) if bits else "Waiting for target"
+
+
+def state_metric_text(state: HudState, events: Iterable[dict[str, Any]]) -> str:
+    summary = hud_event_summary(events)
+    errors = summary.get("errors", 0)
+    warnings = summary.get("warnings", 0)
+    if state.status == "failed" and errors == 0:
+        errors = 1
+    parts = [f"{errors} errors", f"{warnings} warnings"]
+    if state.percent is not None:
+        parts.append(f"{state.percent}%")
+    elif summary.get("events", 0):
+        parts.append(f"{summary['events']} events")
+    return " · ".join(parts)
+
+
+def state_window_title(state: HudState) -> str:
+    pieces = ["Devtool HUD", human_status(state.status)]
+    target = state.target or state.repo_name or (Path(state.repo_root).name if state.repo_root else "")
+    if target:
+        pieces.append(target)
+    return " — ".join(pieces)
 
 
 def state_target_label(state: HudState) -> str:
@@ -752,63 +941,296 @@ class TermuxNotificationHud:
 
 
 class TermuxGuiHud:
-    def __init__(self, *, recent_events: int = DEFAULT_RECENT_EVENTS) -> None:
+    """Android-native floating/dashboard HUD through the Termux:GUI plugin.
+
+    Termux:GUI supports Android Activity overlays via Activity(..., overlay=True)
+    and setposition().  Overlay mode requires the Termux:GUI Android app to
+    have the system "Display over other apps" permission.  When overlay creation
+    fails, this backend falls back to a normal Termux:GUI Activity unless the
+    user explicitly disables fallback with DEVTOOL_ANDROID_GUI_FALLBACK=0.
+    """
+
+    def __init__(self, *, recent_events: int = DEFAULT_RECENT_EVENTS, overlay: bool = True, notification_id: str = DEFAULT_NOTIFICATION_ID) -> None:
         self.recent_events = recent_events
+        self.overlay = overlay
+        self.notification_id = str(notification_id)
 
     @staticmethod
     def available() -> bool:
         return importlib.util.find_spec("termuxgui") is not None
 
-    def run(self, *, directory: Path, interval_s: float, once: bool = False) -> int:
+    @staticmethod
+    def install_hint() -> str:
+        return (
+            "Termux:GUI HUD requires the Termux:GUI Android app and Python bindings. "
+            "Install the app, then run: pip install termuxgui. "
+            "For a floating HUD, enable Android Settings → Apps → Termux:GUI → Display over other apps."
+        )
+
+    @staticmethod
+    def _safe_call(obj: Any, method: str, *args: Any) -> Any:
+        fn = getattr(obj, method, None)
+        if fn is None:
+            return None
+        with contextlib.suppress(Exception):
+            return fn(*args)
+        return None
+
+    @staticmethod
+    def _make_activity(tg: Any, connection: Any, *, overlay: bool) -> tuple[Any, bool, str]:
+        fallback_enabled = os.environ.get("DEVTOOL_ANDROID_GUI_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
+        if overlay:
+            try:
+                activity = tg.Activity(connection, overlay=True, intercept=True)
+                with contextlib.suppress(Exception):
+                    activity.sendoverlayevents(True)
+                x = int(os.environ.get("DEVTOOL_ANDROID_HUD_X", "12"))
+                y = int(os.environ.get("DEVTOOL_ANDROID_HUD_Y", "56"))
+                with contextlib.suppress(Exception):
+                    activity.setposition(x, y)
+                return activity, True, "floating overlay"
+            except Exception as exc:
+                if not fallback_enabled:
+                    raise RuntimeError(
+                        "Could not start Termux:GUI overlay HUD. Enable Android 'Display over other apps' for Termux:GUI, "
+                        "or set DEVTOOL_ANDROID_GUI_OVERLAY=0 to use a normal Activity."
+                    ) from exc
+                with contextlib.suppress(Exception):
+                    connection.toast("Devtool HUD: overlay permission missing; using normal window", True)
+        activity = tg.Activity(connection, intercept=True)
+        return activity, False, "normal activity"
+
+    def _format_recent_lines(self, events: list[dict[str, Any]]) -> str:
+        pairs = [(event, line) for event in events if (line := friendly_event_line(event))]
+        lines = [f"{event_icon(event)} {line}" for event, line in pairs[-self.recent_events :]]
+        return "\n".join(lines) or "No events yet"
+
+    def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
         try:
             import termuxgui as tg  # type: ignore[import-not-found]
         except ModuleNotFoundError:
-            raise RuntimeError("termuxgui is not installed. Install it with: pip install termuxgui") from None
+            raise RuntimeError(self.install_hint()) from None
 
+        if once:
+            snapshot = snapshot_from_runtime_directory(directory, follow_active=follow_active, recent_events=self.recent_events)
+            print(json.dumps({"state": snapshot["state"], "events": snapshot["events"], "mode": "android-gui"}, ensure_ascii=False, indent=2))
+            return 0
+
+        overlay_requested = self.overlay and os.environ.get("DEVTOOL_ANDROID_GUI_OVERLAY", "1").strip().lower() not in {"0", "false", "no"}
         events_path = directory / "events.jsonl"
+        poll_ms = max(100, int(interval_s * 1000))
+
         with tg.Connection() as connection:
-            activity = tg.Activity(connection)
+            activity, overlay_active, presentation = self._make_activity(tg, connection, overlay=overlay_requested)
+            with contextlib.suppress(Exception):
+                activity.settaskdescription("Devtool HUD", "")
+            with contextlib.suppress(Exception):
+                activity.settheme(
+                    _android_argb(0xFF0B0F14),
+                    _android_argb(0xFF121923),
+                    _android_argb(0xFF0B0F14),
+                    _android_argb(0xFFE8EEF6),
+                    _android_argb(0xFF5EE49B),
+                )
+            with contextlib.suppress(Exception):
+                activity.keepscreenon(False)
+            with contextlib.suppress(Exception):
+                activity.interceptbackbutton(True)
+
             root = tg.LinearLayout(activity)
-            title = tg.TextView(activity, "devtool HUD v3", root)
-            with contextlib.suppress(Exception):
-                title.settextsize(20)
-            progress = tg.TextView(activity, "░" * 28, root)
-            with contextlib.suppress(Exception):
-                progress.settextsize(22)
-            counts = tg.TextView(activity, "waiting", root)
-            detail = tg.TextView(activity, "waiting for progress", root)
-            recent = tg.TextView(activity, "", root)
+            self._safe_call(root, "setbackgroundcolor", _android_argb(0xFF0B0F14))
+            self._safe_call(root, "setdimensions", 380 if overlay_active else getattr(tg.View, "MATCH_PARENT", "MATCH_PARENT"), getattr(tg.View, "WRAP_CONTENT", "WRAP_CONTENT"))
+            self._safe_call(root, "setmargin", 8)
 
-            while True:
-                state = state_from_directory(directory)
-                events = _last_jsonl_events(events_path, self.recent_events)
-                bar = render_ascii_bar(state.current, state.total, width=26)
-                progress_text = "unknown"
-                if state.current is not None and state.total is not None:
-                    progress_text = f"{state.current}/{state.total}"
-                    if state.percent is not None:
-                        progress_text += f"  {state.percent}%"
-                elif state.current is not None:
-                    progress_text = f"{state.current} done"
-                title.settext(state.display_title)
-                progress.settext(bar)
-                counts.settext(progress_text)
-                detail.settext(state.display_text)
-                recent_lines = []
-                for event in events[-self.recent_events :]:
-                    event_type, message, current, total = _event_summary(event)
-                    if current is not None and total is not None:
-                        suffix = f" {current}/{total}"
-                    elif current is not None:
-                        suffix = f" {current} done"
-                    else:
-                        suffix = ""
-                    recent_lines.append(f"• {human_event_type(event_type)}{suffix} {human_detail(message)}".strip())
-                recent.settext("\n".join(recent_lines[-self.recent_events :]))
-                if once:
-                    return 0
-                time.sleep(interval_s)
+            header = tg.LinearLayout(activity, root, False)
+            self._safe_call(header, "setlinearlayoutparams", 0)
+            app_label = tg.TextView(activity, "DEVTOOL", header)
+            status_badge = tg.TextView(activity, "WAITING", header)
+            title = tg.TextView(activity, "Waiting for progress", root)
+            context_label = tg.TextView(activity, "Waiting for target", root)
+            detail = tg.TextView(activity, "No devtool task has reported progress yet.", root)
+            error_label = tg.TextView(activity, "", root)
+            warning_label = tg.TextView(activity, "", root)
+            pipeline = tg.TextView(activity, "Validate → Apply → Test → Commit", root)
+            progress_bar = tg.ProgressBar(activity, root) if hasattr(tg, "ProgressBar") else None
+            progress_text = tg.TextView(activity, "waiting", root)
+            metrics = tg.TextView(activity, "0 errors · 0 warnings", root)
+            recent_heading = tg.TextView(activity, "RECENT", root)
+            recent = tg.TextView(activity, "No events yet", root)
+            footer = tg.TextView(activity, f"android-gui · {presentation}", root)
 
+            labels = [app_label, status_badge, title, context_label, detail, error_label, warning_label, pipeline, progress_text, metrics, recent_heading, recent, footer]
+            for widget in labels:
+                self._safe_call(widget, "setheight", getattr(tg.View, "WRAP_CONTENT", "WRAP_CONTENT"))
+                self._safe_call(widget, "setmargin", 3)
+            for widget, size in ((app_label, 11), (status_badge, 11), (title, 20), (context_label, 14), (detail, 12), (error_label, 14), (warning_label, 13), (pipeline, 13), (progress_text, 13), (metrics, 16), (recent_heading, 11), (recent, 12), (footer, 10)):
+                self._safe_call(widget, "settextsize", size)
+            color_map = {
+                app_label: 0xFF8EA0B4,
+                status_badge: 0xFFFFD166,
+                title: 0xFFF8FBFF,
+                context_label: 0xFFCFE0F5,
+                detail: 0xFF91A3B8,
+                error_label: 0xFFFF6978,
+                warning_label: 0xFFFFD166,
+                pipeline: 0xFFD8E5F6,
+                progress_text: 0xFF5EE49B,
+                metrics: 0xFFF6F8FB,
+                recent_heading: 0xFF8EA0B4,
+                recent: 0xFFD6E2F0,
+                footer: 0xFF64748B,
+            }
+            for widget, color in color_map.items():
+                self._safe_call(widget, "settextcolor", _android_argb(color))
+            for widget in (error_label, warning_label):
+                self._safe_call(widget, "setvisibility", getattr(tg.View, "GONE", 0))
+            if progress_bar is not None:
+                self._safe_call(progress_bar, "setheight", 14)
+                self._safe_call(progress_bar, "setprogress", 0)
+
+            last_signature: tuple[Any, ...] | None = None
+            running = True
+
+            def pump_events() -> None:
+                nonlocal running
+                checkevent = getattr(connection, "checkevent", None)
+                if checkevent is None:
+                    return
+                while True:
+                    try:
+                        event = checkevent()
+                    except Exception:
+                        return
+                    if event is None:
+                        return
+                    event_type = str(getattr(event, "type", ""))
+                    value = getattr(event, "value", {}) if isinstance(getattr(event, "value", {}), dict) else {}
+                    if event_type in {getattr(tg.Event, "destroy", "destroy"), getattr(tg.Event, "back", "back")}:
+                        if event_type != getattr(tg.Event, "destroy", "destroy") or value.get("finishing", True):
+                            running = False
+                            return
+
+            def refresh() -> None:
+                nonlocal last_signature
+                current_dir = resolve_hud_directory(directory, follow_active=follow_active)
+                current_events_path = current_dir / "events.jsonl"
+                state = state_from_directory(current_dir)
+                events = _last_jsonl_events(current_events_path, max(self.recent_events, 14))
+                highlights = last_phase_highlights(events)
+                errors = recent_error_lines(events, limit=2)
+                if state.status == "failed" and not errors:
+                    errors = [compact_detail_text(state)]
+                warnings: list[str] = []
+                for event in events:
+                    if event_is_warning(event):
+                        line = friendly_event_line(event)
+                        if line and line not in warnings:
+                            warnings.append(line)
+                warnings = warnings[-2:]
+                summary = hud_event_summary(events)
+                error_count = max(summary.get("errors", 0), 1 if state.status == "failed" else 0)
+                warning_count = summary.get("warnings", 0)
+                progress_label = f"{state.current}/{state.total}  {state.percent or 0}%" if state.current is not None and state.total is not None and state.total > 0 else human_status(state.status).lower()
+                if state.current is not None and (state.total is None or state.total <= 0):
+                    progress_label = f"{state.current} done"
+                signature = (state.seq, state.status, state.current, state.total, state.text, state.target, len(events), error_count, warning_count)
+                if signature == last_signature:
+                    return
+                last_signature = signature
+                status = human_status(state.status).upper()
+                self._safe_call(status_badge, "settext", status)
+                self._safe_call(title, "settext", compact_operation_title(state))
+                self._safe_call(context_label, "settext", state_context_label(state))
+                self._safe_call(detail, "settext", compact_detail_text(state))
+                self._safe_call(pipeline, "settext", pipeline_label(state, highlights))
+                self._safe_call(progress_text, "settext", progress_label)
+                if progress_bar is not None:
+                    self._safe_call(progress_bar, "setprogress", state.percent or 0)
+                self._safe_call(metrics, "settext", f"{error_count} errors · {warning_count} warnings" + (f" · {state.percent}%" if state.percent is not None else ""))
+                if errors:
+                    self._safe_call(error_label, "settext", "❌ " + "\n❌ ".join(errors))
+                    self._safe_call(error_label, "setvisibility", getattr(tg.View, "VISIBLE", 2))
+                else:
+                    self._safe_call(error_label, "setvisibility", getattr(tg.View, "GONE", 0))
+                if warnings and not errors:
+                    self._safe_call(warning_label, "settext", "⚠ " + "\n⚠ ".join(warnings))
+                    self._safe_call(warning_label, "setvisibility", getattr(tg.View, "VISIBLE", 2))
+                else:
+                    self._safe_call(warning_label, "setvisibility", getattr(tg.View, "GONE", 0))
+                self._safe_call(recent, "settext", self._format_recent_lines(events))
+                self._safe_call(footer, "settext", f"android-gui · {presentation} · {current_dir}")
+
+            while running:
+                pump_events()
+                refresh()
+                time.sleep(poll_ms / 1000)
+        return 0
+
+
+class AndroidBridgeHud:
+    """Chroot/proot-safe Android HUD bridge writer.
+
+    This backend does not import Termux:GUI. It mirrors the current HUD state
+    into a shared directory, normally /home/termux/.local/state/devtool-android-hud
+    inside an Ubuntu chroot. A Termux host helper can then render that directory
+    using the android-gui or android-notify backend.
+    """
+
+    def __init__(self, *, recent_events: int = DEFAULT_RECENT_EVENTS, bridge_dir: Path | None = None) -> None:
+        self.recent_events = recent_events
+        self.bridge_dir = (bridge_dir or default_android_bridge_dir()).expanduser()
+        self.last_signature: tuple[Any, ...] | None = None
+
+    def _mirror_once(self, source_dir: Path, *, follow_active: bool = False) -> dict[str, Any]:
+        current_dir = resolve_hud_directory(source_dir, follow_active=follow_active)
+        snapshot = snapshot_from_directory(current_dir, recent_events=max(self.recent_events, 1))
+        snapshot["active_directory"] = str(current_dir)
+        snapshot["bridge_directory"] = str(self.bridge_dir)
+        snapshot["mode"] = "android-bridge"
+        state = snapshot.get("state") if isinstance(snapshot.get("state"), dict) else {}
+        events = snapshot.get("events") if isinstance(snapshot.get("events"), list) else []
+        self.bridge_dir.mkdir(parents=True, exist_ok=True)
+        _atomic_write_bridge_json(self.bridge_dir / "state.json", dict(state))
+        notification = {
+            "title": str(state.get("display_title") or state.get("title") or "devtool"),
+            "text": str(state.get("display_text") or state.get("text") or "Waiting for progress"),
+            "expanded_title": str(state.get("expanded_title") or state.get("title") or "devtool"),
+            "expanded_text": str(state.get("expanded_text") or state.get("text") or "Waiting for progress"),
+            "current": state.get("current"),
+            "total": state.get("total"),
+            "target": state.get("target") or "",
+        }
+        _atomic_write_bridge_json(self.bridge_dir / "notification.json", notification)
+        if events:
+            events_text = "\n".join(json.dumps(event, ensure_ascii=False) for event in events if isinstance(event, dict)) + "\n"
+            (self.bridge_dir / "events.jsonl").write_text(events_text, encoding="utf-8")
+            if isinstance(events[-1], dict):
+                _atomic_write_bridge_json(self.bridge_dir / "latest_event.json", events[-1])
+        _atomic_write_bridge_json(
+            self.bridge_dir / "bridge-status.json",
+            {
+                "mode": "android-bridge",
+                "source_directory": str(current_dir),
+                "bridge_directory": str(self.bridge_dir),
+                "updated_at": time.time(),
+                "pid": os.getpid(),
+            },
+        )
+        return snapshot
+
+    def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
+        while True:
+            snapshot = self._mirror_once(directory, follow_active=follow_active)
+            signature = (
+                snapshot.get("generated_at"),
+                (snapshot.get("state") or {}).get("seq") if isinstance(snapshot.get("state"), dict) else None,
+            )
+            if once:
+                print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+                return 0
+            if signature != self.last_signature:
+                self.last_signature = signature
+            time.sleep(interval_s)
 
 
 
@@ -975,59 +1397,87 @@ class GtkDesktopHud:
         window.connect("destroy", Gtk.main_quit)
 
         css = b"""
-        .hud-root { background: #111318; color: #f3f4f6; }
-        .hud-header { color: #9ca3af; font-size: 12px; letter-spacing: 0.04em; font-weight: 700; }
-        .hud-title { color: #f9fafb; font-size: 22px; font-weight: 800; }
-        .hud-target { color: #e5e7eb; font-size: 15px; font-weight: 700; }
-        .hud-muted { color: #c4ccd8; font-size: 14px; }
-        .hud-meta { color: #d1d5db; font-size: 13px; }
-        .hud-event { color: #d1d5db; font-size: 13px; }
-        .hud-error-banner { color: #ff6978; font-size: 15px; font-weight: 800; }
-        .hud-debug { color: #9ca3af; font-family: monospace; font-size: 11px; }
+        .hud-root { background: #0b0f14; color: #eef4ff; }
+        .hud-card { background: #121923; border-radius: 18px; padding: 14px; }
+        .hud-header { color: #8ea0b4; font-size: 11px; letter-spacing: 0.08em; font-weight: 800; }
+        .hud-badge { color: #10151d; background: #ffd166; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 900; }
+        .hud-title { color: #f8fbff; font-size: 21px; font-weight: 900; }
+        .hud-context { color: #cfe0f5; font-size: 14px; font-weight: 700; }
+        .hud-muted { color: #91a3b8; font-size: 12px; }
+        .hud-pipeline { color: #d8e5f6; font-size: 13px; font-weight: 700; }
+        .hud-metric { color: #f6f8fb; font-size: 17px; font-weight: 900; }
+        .hud-metric-label { color: #8ea0b4; font-size: 10px; letter-spacing: 0.05em; font-weight: 800; }
+        .hud-event { color: #d6e2f0; font-size: 13px; font-weight: 600; }
+        .hud-error-banner { color: #ffffff; background: #3b1219; border-radius: 14px; padding: 10px; font-size: 14px; font-weight: 900; }
+        .hud-warning-banner { color: #fff4c2; background: #30240c; border-radius: 14px; padding: 10px; font-size: 13px; font-weight: 800; }
+        .hud-debug { color: #8ea0b4; font-family: monospace; font-size: 11px; }
         .hud-ok { color: #5ee49b; }
-        .hud-failed { color: #ff6978; font-weight: 800; }
-        .hud-running { color: #ffd166; font-weight: 700; }
-        progressbar trough { min-height: 16px; border-radius: 999px; }
-        progressbar progress { min-height: 16px; border-radius: 999px; }
-        button { border-radius: 8px; padding: 5px 9px; }
+        .hud-failed { color: #ff6978; font-weight: 900; }
+        .hud-running { color: #ffd166; font-weight: 800; }
+        .hud-neutral { color: #91a3b8; }
+        progressbar trough { min-height: 14px; border-radius: 999px; background: #071018; }
+        progressbar progress { min-height: 14px; border-radius: 999px; background: #5ee49b; }
+        button { border-radius: 10px; padding: 5px 9px; background: #1b2634; color: #e8eef6; }
+        expander { color: #91a3b8; }
         """
         provider = Gtk.CssProvider(); provider.load_from_data(css)
         screen = Gdk.Screen.get_default()
         if screen is not None:
             Gtk.StyleContext.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        def _label(text: str = "", css_class: str = "", *, xalign: float = 0.0, wrap: bool = False, selectable: bool = False) -> Any:
+            label = Gtk.Label(label=text)
+            label.set_xalign(xalign)
+            label.set_yalign(0)
+            label.set_line_wrap(wrap)
+            label.set_selectable(selectable)
+            if css_class:
+                label.get_style_context().add_class(css_class)
+            return label
+
+        window.set_default_size(500, 430)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         outer.get_style_context().add_class("hud-root")
         outer.set_margin_top(10); outer.set_margin_bottom(10); outer.set_margin_start(10); outer.set_margin_end(10)
         window.add(outer)
 
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); outer.pack_start(header, False, False, 0)
-        header_label = Gtk.Label(label="DEVTOOL HUD"); header_label.set_xalign(0); header_label.get_style_context().add_class("hud-header"); header.pack_start(header_label, True, True, 0)
-        percent_label = Gtk.Label(label="● waiting"); percent_label.set_xalign(1); percent_label.get_style_context().add_class("hud-header"); header.pack_end(percent_label, False, False, 0)
-        title = Gtk.Label(label="Waiting for progress"); title.set_xalign(0); title.set_line_wrap(True); title.get_style_context().add_class("hud-title"); outer.pack_start(title, False, False, 0)
-        target_label = Gtk.Label(label="Target: waiting"); target_label.set_xalign(0); target_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE); target_label.get_style_context().add_class("hud-target"); outer.pack_start(target_label, False, False, 0)
-        detail = Gtk.Label(label="No devtool task has reported progress yet."); detail.set_xalign(0); detail.set_line_wrap(True); detail.get_style_context().add_class("hud-muted"); outer.pack_start(detail, False, False, 0)
-        error_label = Gtk.Label(label=""); error_label.set_xalign(0); error_label.set_line_wrap(True); error_label.get_style_context().add_class("hud-error-banner"); error_label.set_no_show_all(True); outer.pack_start(error_label, False, False, 0)
-        progress = Gtk.ProgressBar(); progress.set_show_text(True); outer.pack_start(progress, False, False, 0)
-        meta = Gtk.Label(label="Phase: waiting  ·  Repo: -"); meta.set_xalign(0); meta.set_line_wrap(True); meta.get_style_context().add_class("hud-meta"); outer.pack_start(meta, False, False, 0)
-        phase_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2); outer.pack_start(phase_box, False, False, 0)
-        restore_label = Gtk.Label(label="Restore: -"); build_label = Gtk.Label(label="Build: -"); test_label = Gtk.Label(label="Test: -")
-        for label in (restore_label, build_label, test_label):
-            label.set_xalign(0); label.set_ellipsize(Pango.EllipsizeMode.END); label.get_style_context().add_class("hud-meta"); phase_box.pack_start(label, False, False, 0)
-        events_scroller = Gtk.ScrolledWindow(); events_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); events_scroller.set_min_content_height(150)
-        events_label = Gtk.Label(label="No events yet"); events_label.set_xalign(0); events_label.set_yalign(0); events_label.set_selectable(True); events_label.set_line_wrap(True); events_label.get_style_context().add_class("hud-event"); events_scroller.add(events_label); outer.pack_start(events_scroller, True, True, 0)
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6); outer.pack_start(actions, False, False, 0)
-        copy_button = Gtk.Button(label="Copy summary"); log_button = Gtk.Button(label="Open log"); close_button = Gtk.Button(label="Close HUD")
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
+        card.get_style_context().add_class("hud-card")
+        outer.pack_start(card, True, True, 0)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); card.pack_start(header, False, False, 0)
+        header_label = _label("DEVTOOL", "hud-header"); header.pack_start(header_label, True, True, 0)
+        status_badge = _label("WAITING", "hud-badge", xalign=1.0); header.pack_end(status_badge, False, False, 0)
+
+        title = _label("Waiting for progress", "hud-title", wrap=True); card.pack_start(title, False, False, 0)
+        context_label = _label("Waiting for target", "hud-context"); context_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE); card.pack_start(context_label, False, False, 0)
+        detail = _label("No devtool task has reported progress yet.", "hud-muted", wrap=True); card.pack_start(detail, False, False, 0)
+
+        error_label = _label("", "hud-error-banner", wrap=True); error_label.set_no_show_all(True); card.pack_start(error_label, False, False, 0)
+        warning_label = _label("", "hud-warning-banner", wrap=True); warning_label.set_no_show_all(True); card.pack_start(warning_label, False, False, 0)
+
+        pipeline = _label("Validate → Apply → Test → Commit", "hud-pipeline"); pipeline.set_ellipsize(Pango.EllipsizeMode.END); card.pack_start(pipeline, False, False, 0)
+        progress = Gtk.ProgressBar(); progress.set_show_text(True); card.pack_start(progress, False, False, 0)
+
+        metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); card.pack_start(metrics, False, False, 0)
+        error_metric = _label("0\nERRORS", "hud-metric", wrap=True)
+        warning_metric = _label("0\nWARNINGS", "hud-metric", wrap=True)
+        progress_metric = _label("WAITING\nSTATUS", "hud-metric", wrap=True)
+        for metric in (error_metric, warning_metric, progress_metric):
+            metric.set_justify(Gtk.Justification.CENTER)
+            metrics.pack_start(metric, True, True, 0)
+
+        recent_heading = _label("RECENT", "hud-header"); card.pack_start(recent_heading, False, False, 0)
+        events_scroller = Gtk.ScrolledWindow(); events_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); events_scroller.set_min_content_height(118)
+        events_label = _label("No events yet", "hud-event", wrap=True, selectable=True); events_scroller.add(events_label); card.pack_start(events_scroller, True, True, 0)
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6); card.pack_start(actions, False, False, 0)
+        copy_button = Gtk.Button(label="Copy summary"); log_button = Gtk.Button(label="Open log"); close_button = Gtk.Button(label="Close")
         actions.pack_start(copy_button, False, False, 0); actions.pack_start(log_button, False, False, 0); actions.pack_end(close_button, False, False, 0)
-        debug = Gtk.Expander(label="Debug"); debug.set_expanded(False)
-        debug_label = Gtk.Label(label=""); debug_label.set_xalign(0); debug_label.set_yalign(0); debug_label.set_selectable(True); debug_label.set_line_wrap(True); debug_label.get_style_context().add_class("hud-debug"); debug.add(debug_label); outer.pack_start(debug, False, False, 0)
+        debug = Gtk.Expander(label="Details"); debug.set_expanded(False)
+        debug_label = _label("", "hud-debug", wrap=True, selectable=True); debug.add(debug_label); card.pack_start(debug, False, False, 0)
         last_summary = {"text": "Devtool HUD: waiting", "log_path": ""}
 
-        def _set_status_classes(widget: Any, status: str) -> None:
-            ctx = widget.get_style_context()
-            for cls in ("hud-ok", "hud-failed", "hud-running"):
-                ctx.remove_class(cls)
-            ctx.add_class("hud-failed" if status == "failed" else "hud-ok" if status == "ok" else "hud-running")
         def _copy_summary(_button: Any) -> None:
             clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD); clipboard.set_text(str(last_summary.get("text") or ""), -1); clipboard.store()
         def _open_log(_button: Any) -> None:
@@ -1037,54 +1487,111 @@ class GtkDesktopHud:
                     subprocess.Popen(["xdg-open", log_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         copy_button.connect("clicked", _copy_summary); log_button.connect("clicked", _open_log); close_button.connect("clicked", lambda _button: Gtk.main_quit())
 
+        def _set_status_classes(widget: Any, status: str) -> None:
+            ctx = widget.get_style_context()
+            for cls in ("hud-ok", "hud-failed", "hud-running", "hud-neutral"):
+                ctx.remove_class(cls)
+            if status == "failed":
+                ctx.add_class("hud-failed")
+            elif status == "ok":
+                ctx.add_class("hud-ok")
+            elif status == "running":
+                ctx.add_class("hud-running")
+            else:
+                ctx.add_class("hud-neutral")
+
         def refresh() -> bool:
             current_dir = resolve_hud_directory(directory, follow_active=follow_active)
-            snapshot = snapshot_from_directory(current_dir, recent_events=max(self.recent_events, 12))
+            snapshot = snapshot_from_directory(current_dir, recent_events=max(self.recent_events, 14))
             state = state_from_directory(current_dir)
             events = snapshot.get("events") if isinstance(snapshot.get("events"), list) else []
             highlights = last_phase_highlights(events)
             operation = compact_operation_title(state)
-            title.set_text(operation); target_label.set_text(state_target_label(state)); detail.set_text(compact_detail_text(state))
-            title_bits = ["Devtool HUD"]
-            if state.status:
-                title_bits.append(human_status(state.status))
-            if state.target or state.repo_name:
-                title_bits.append(state.target or state.repo_name)
-            window.set_title(" — ".join(title_bits))
-            percent_text = f"● {human_status(state.status).lower()}" + (f"  {state.percent}%" if state.percent is not None else "")
-            percent_label.set_text(percent_text); _set_status_classes(percent_label, state.status)
+            errors = recent_error_lines(events, limit=3)
+            if state.status == "failed" and not errors:
+                errors = [compact_detail_text(state)]
+            warnings = []
+            for event in events:
+                if event_is_warning(event):
+                    line = friendly_event_line(event)
+                    if line and line not in warnings:
+                        warnings.append(line)
+            warnings = warnings[-2:]
+            summary = hud_event_summary(events)
+            error_count = max(summary.get("errors", 0), 1 if state.status == "failed" else 0)
+            warning_count = summary.get("warnings", 0)
+
+            title.set_text(operation)
+            context_label.set_text(state_context_label(state))
+            detail.set_text(compact_detail_text(state))
+            window.set_title(state_window_title(state))
+            status_badge.set_text(human_status(state.status).upper())
+            _set_status_classes(status_badge, state.status)
+            pipeline.set_text(pipeline_label(state, highlights))
+
             if state.current is not None and state.total is not None and state.total > 0:
-                progress.set_fraction(max(0.0, min(1.0, state.current / state.total))); progress.set_text(f"{state.current}/{state.total}  {state.percent or 0}%")
+                progress.set_fraction(max(0.0, min(1.0, state.current / state.total)))
+                progress.set_text(f"{state.current}/{state.total}  {state.percent or 0}%")
             elif state.current is not None:
                 progress.pulse(); progress.set_text(f"{state.current} done")
             else:
-                progress.pulse(); progress.set_text("waiting")
-            meta_bits = []
-            if state.phase_name: meta_bits.append(f"Phase: {human_phase_name(state.phase_name)}")
-            elif state.command: meta_bits.append(f"Command: {human_phase_name(state.command)}")
-            if state.repo_name: meta_bits.append(f"Repo: {state.repo_name}")
-            if follow_active: meta_bits.append("following active HUD")
-            meta.set_text("  ·  ".join(meta_bits) or "Waiting")
-            restore_label.set_text("Restore: " + highlights.get("restore", "-")); build_label.set_text("Build: " + highlights.get("build", "-")); test_label.set_text("Test: " + highlights.get("test", "-"))
-            error_lines = recent_error_lines(events, limit=3)
-            if state.status == "failed" and not error_lines:
-                error_lines = [compact_detail_text(state)]
-            if error_lines:
-                error_label.set_text("⚠ " + "\n⚠ ".join(error_lines))
+                progress.pulse(); progress.set_text(human_status(state.status).lower())
+
+            error_metric.set_text(f"{error_count}\nERRORS")
+            warning_metric.set_text(f"{warning_count}\nWARNINGS")
+            progress_metric.set_text((f"{state.percent}%\nPROGRESS" if state.percent is not None else f"{human_status(state.status).upper()}\nSTATUS"))
+            _set_status_classes(error_metric, "failed" if error_count else "ok")
+            _set_status_classes(warning_metric, "running" if warning_count else "ok")
+            _set_status_classes(progress_metric, state.status)
+
+            if errors:
+                error_label.set_text("❌ " + "\n❌ ".join(errors))
                 error_label.show()
             else:
                 error_label.hide()
-            lines = [line for event in events if (line := friendly_event_line(event))]
-            shown = lines[-8:]
-            formatted_lines = []
-            for line in shown:
-                is_error = any(line == err or line in err or err in line for err in error_lines)
-                formatted_lines.append(("❌ " if is_error else "• ") + line)
+            if warnings and not errors:
+                warning_label.set_text("⚠ " + "\n⚠ ".join(warnings))
+                warning_label.show()
+            else:
+                warning_label.hide()
+
+            event_pairs = [(event, line) for event in events if (line := friendly_event_line(event))]
+            shown = event_pairs[-7:]
+            formatted_lines = [f"{event_icon(event)} {line}" for event, line in shown]
             events_label.set_text("\n".join(formatted_lines) or "No events yet")
-            log_path = latest_log_path(events); log_button.set_sensitive(bool(log_path) and shutil.which("xdg-open") is not None)
-            summary_lines = [operation, state_target_label(state), compact_detail_text(state), *(error_lines or []), meta.get_text(), restore_label.get_text(), build_label.get_text(), test_label.get_text(), *shown]
-            last_summary["text"] = "\n".join(line for line in summary_lines if line); last_summary["log_path"] = log_path or ""
-            debug_label.set_text("\n".join([f"active_dir={current_dir}", f"state={current_dir / 'state.json'}", f"events={current_dir / 'events.jsonl'}", f"seq={state.seq if state.seq is not None else '-'} status={state.status} event={state.event_type}", f"command={state.command or '-'} phase={state.phase_name or '-'}", f"log={log_path or '-'}"]))
+
+            phase_lines = []
+            for key in ("restore", "build", "test"):
+                if key in highlights:
+                    phase_lines.append(f"{human_phase_name(key)}: {highlights[key]}")
+            meta_lines = []
+            if state.phase_name:
+                meta_lines.append(f"Phase: {human_phase_name(state.phase_name)}")
+            elif state.command:
+                meta_lines.append(f"Command: {human_phase_name(state.command)}")
+            if state.repo_name:
+                meta_lines.append(f"Repo: {state.repo_name}")
+            if state.target:
+                meta_lines.append(f"Target: {state.target}")
+            if follow_active:
+                meta_lines.append("Following active HUD")
+
+            log_path = latest_log_path(events)
+            log_button.set_sensitive(bool(log_path) and shutil.which("xdg-open") is not None)
+            summary_lines = [
+                operation,
+                state_context_label(state),
+                compact_detail_text(state),
+                state_metric_text(state, events),
+                pipeline.get_text(),
+                *(errors or []),
+                *(warnings or []),
+                *phase_lines,
+                *[line for _event, line in shown],
+            ]
+            last_summary["text"] = "\n".join(line for line in summary_lines if line)
+            last_summary["log_path"] = log_path or ""
+            debug_label.set_text("\n".join([f"active_dir={current_dir}", f"state={current_dir / 'state.json'}", f"events={current_dir / 'events.jsonl'}", f"seq={state.seq if state.seq is not None else '-'} status={state.status} event={state.event_type}", *meta_lines, f"log={log_path or '-'}"]))
             return True
         GLib.timeout_add(max(100, int(interval_s * 1000)), refresh); refresh(); window.show_all(); Gtk.main(); return 0
 
@@ -1263,7 +1770,7 @@ class StudioHud:
 
 
 def choose_hud_mode(requested: str) -> str:
-    requested = requested.lower()
+    requested = requested.lower().strip()
     aliases = {
         "v3": "terminal",
         "console": "terminal",
@@ -1281,9 +1788,28 @@ def choose_hud_mode(requested: str) -> str:
         "gtk": "desktop-window",
         "notify-send": "desktop-notify",
         "libnotify": "desktop-notify",
+        "termux-gui": "android-gui",
+        "termuxgui": "android-gui",
+        "android": "android-gui",
+        "android-overlay": "android-gui",
+        "android-chroot": "android-bridge",
+        "termux-bridge": "android-bridge",
+        "termux-chroot": "android-bridge",
+        "android-hud-bridge": "android-bridge",
+        "termux-notification": "android-notify",
+        "termux-notify": "android-notify",
+        "android-notification": "android-notify",
+        "notification": "android-notify" if _is_termux_android() else "notification",
     }
     requested = aliases.get(requested, requested)
     if requested == "desktop":
+        if _is_termux_android():
+            if TermuxGuiHud.available():
+                return "android-gui"
+            if shutil.which("termux-notification"):
+                return "android-notify"
+        if _is_termux_chroot_bridge():
+            return "android-bridge"
         if GtkDesktopHud.available():
             return "desktop-window"
         if DesktopNotificationHud.available():
@@ -1291,15 +1817,22 @@ def choose_hud_mode(requested: str) -> str:
         return "terminal"
     if requested != "auto":
         return requested
-    if TermuxGuiHud.available():
-        return "termux-gui"
-    if shutil.which("termux-notification"):
-        return "notification"
+    if _is_termux_android():
+        if TermuxGuiHud.available():
+            return "android-gui"
+        if shutil.which("termux-notification"):
+            return "android-notify"
+    if _is_termux_chroot_bridge():
+        return "android-bridge"
     if os.name == "posix" and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         if GtkDesktopHud.available():
             return "desktop-window"
         if DesktopNotificationHud.available():
             return "desktop-notify"
+    if TermuxGuiHud.available():
+        return "android-gui"
+    if shutil.which("termux-notification"):
+        return "android-notify"
     return "terminal"
 
 
@@ -1308,9 +1841,9 @@ def build_hud_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool HUD/Tasker JSON files (default: platform state dir)")
     parser.add_argument(
         "--mode",
-        choices=["auto", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
+        choices=["auto", "android-gui", "android-bridge", "android-notify", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
         default="auto",
-        help="HUD renderer: terminal/v3, web/v4, studio/v5, or Unix desktop/v6",
+        help="HUD renderer: android-gui/android-bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6",
     )
     parser.add_argument("--host", default=DEFAULT_HUD_HOST, help="Host/IP for HUD web/studio modes")
     parser.add_argument("--port", type=int, default=DEFAULT_HUD_PORT, help="Port for HUD web/studio modes")
@@ -1328,11 +1861,13 @@ def run_hud(args: argparse.Namespace) -> int:
     mode = choose_hud_mode(str(args.mode))
     interval_s = max(0.05, float(args.poll_interval))
     recent_events = max(0, int(args.recent_events))
-    if mode == "termux-gui":
-        return TermuxGuiHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once))
-    if mode == "notification":
-        return TermuxNotificationHud(notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once))
     follow_active = bool(getattr(args, "follow_active", False))
+    if mode == "android-gui":
+        return TermuxGuiHud(recent_events=recent_events, overlay=True, notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
+    if mode == "android-bridge":
+        return AndroidBridgeHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
+    if mode in {"android-notify", "notification"}:
+        return TermuxNotificationHud(notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once))
     if mode == "web":
         return WebDashboardHud(host=str(args.host), port=int(args.port), recent_events=recent_events, interval_s=interval_s, follow_active=follow_active).run(directory=directory, once=bool(args.once))
     if mode == "studio":

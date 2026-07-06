@@ -15,16 +15,17 @@ class ChrootExecutionWrapperTests(unittest.TestCase):
     def test_wrap_specs_uses_termux_chrootctl_zsh_shape(self) -> None:
         spec = CommandSpec("build", ["dotnet", "build", "Demo.sln", "/p:DefineConstants=A B"])
         wrapped = wrap_specs_for_chroot([spec], "androidos")
-        self.assertEqual(wrapped[0].argv[:6], ["sudo", "chrootctl", "--name", "androidos", "exec", "--zsh"])
-        self.assertEqual(wrapped[0].argv[6], "-lc")
-        self.assertEqual(wrapped[0].argv[7], "dotnet build Demo.sln '/p:DefineConstants=A B'")
+        self.assertEqual(wrapped[0].argv[:6], ["sudo", "chrootctl", "--name", "androidos", "exec", "--"])
+        self.assertEqual(wrapped[0].argv[6], "zsh")
+        self.assertEqual(wrapped[0].argv[7], "-lc")
+        self.assertEqual(wrapped[0].argv[8], "dotnet build Demo.sln '/p:DefineConstants=A B'")
         self.assertEqual(wrapped[0].metadata["execution_mode"], "chroot")
         self.assertEqual(wrapped[0].metadata["chroot"], "androidos")
 
     def test_chroot_exec_can_skip_sudo_with_env(self) -> None:
         with patch.dict("os.environ", {"DEVTOOL_CHROOT_SUDO": ""}, clear=False):
             argv = build_chroot_exec_argv("echo ok", "androidos")
-        self.assertEqual(argv, ["chrootctl", "--name", "androidos", "exec", "--zsh", "-lc", "echo ok"])
+        self.assertEqual(argv, ["chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc", "echo ok"])
 
 
 class TermuxChrootRunnerTests(unittest.TestCase):
@@ -116,9 +117,9 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             cwd="/data/data/com.termux/files/home/Code/demo",
         )
         outer = build_runner_command(config, forwarded)
-        self.assertEqual(outer[:7], ["sudo", "chrootctl", "--name", "androidos", "exec", "--zsh", "-lc"])
-        self.assertEqual(outer[7], "cd /home/mike/Code/demo && exec devtool validate --skip-test")
-        self.assertEqual(build_inner_command(config, forwarded), outer[7])
+        self.assertEqual(outer[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
+        self.assertEqual(outer[8], "cd /home/mike/Code/demo && exec devtool validate --skip-test")
+        self.assertEqual(build_inner_command(config, forwarded), outer[8])
 
 
 if __name__ == "__main__":

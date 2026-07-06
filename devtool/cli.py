@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from .artifacts import (
     diff_artifact,
     format_preview,
     is_overlay_bundle,
+    overlay_bundle_targets,
     latest_commit_hash,
     load_history,
     make_history_entry,
@@ -109,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tasker-action", default=DEFAULT_TASKER_ACTION, help="Android broadcast action for Tasker events")
     parser.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start/reuse the HUD when progress is emitted (default)")
     parser.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not auto-start the HUD for this command")
-    parser.add_argument("--hud-mode", default="desktop", help="HUD mode to auto-start, e.g. desktop, desktop-window, desktop-notify, v5, terminal")
+    parser.add_argument("--hud-mode", default="desktop", help="HUD mode to auto-start, e.g. desktop, android-gui, android-bridge, android-notify, desktop-window, desktop-notify, v5, terminal")
     parser.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
     exec_group = parser.add_mutually_exclusive_group()
     exec_group.add_argument("--host", action="store_true", help="Force commands to run on the host")
@@ -181,7 +183,10 @@ def build_parser() -> argparse.ArgumentParser:
         ("apply-snapshot", ["as"]),
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
-        cmd.add_argument("artifact")
+        if name == "apply-overlays":
+            cmd.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to bundle/apply transactionally")
+        else:
+            cmd.add_argument("artifact")
         cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
         cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
         cmd.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
@@ -198,7 +203,10 @@ def build_parser() -> argparse.ArgumentParser:
     for sub_name, command_name in [("overlay", "apply-overlay"), ("overlays", "apply-overlays"), ("snapshot", "apply-snapshot")]:
         sub = apply_sub.add_parser(sub_name)
         sub.set_defaults(normalized_command=command_name)
-        sub.add_argument("artifact")
+        if command_name == "apply-overlays":
+            sub.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to bundle/apply transactionally")
+        else:
+            sub.add_argument("artifact")
         sub.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
         sub.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
         sub.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
@@ -214,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_overlay_cmd.add_argument("artifact")
     validate_overlay_cmd.add_argument("--fail-on-conflict", action="store_true", help="For bundles, fail if multiple nested overlays write the same file")
     validate_overlays_cmd = subparsers.add_parser("validate-overlays", aliases=["vos"])
-    validate_overlays_cmd.add_argument("artifact")
+    validate_overlays_cmd.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to validate as a bundle")
     validate_overlays_cmd.add_argument("--fail-on-conflict", action="store_true", help="Fail if multiple nested overlays write the same file")
 
     bundle_cmd = subparsers.add_parser("bundle")
@@ -223,6 +231,8 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_overlays.add_argument("overlays", nargs="+")
     bundle_overlays.add_argument("--name", default="")
     bundle_overlays.add_argument("--description", default="")
+    bundle_overlays.add_argument("--default-target", default="", help="Default target for entries that do not declare one")
+    bundle_overlays.add_argument("--targets", default="", help="Comma-separated targets aligned with the overlay arguments; use '-' to infer")
     bundle_overlays.add_argument("-o", "--out", required=True, help="Output bundle archive; extension selects format")
 
     batch = subparsers.add_parser("batch")
@@ -262,7 +272,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     hud_cmd = subparsers.add_parser("hud")
     hud_cmd.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool HUD/Tasker JSON files (default: platform state dir)")
-    hud_cmd.add_argument("--mode", choices=["auto", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: terminal/v3, web/v4, studio/v5, or Unix desktop/v6")
+    hud_cmd.add_argument("--mode", choices=["auto", "android-gui", "android-bridge", "android-notify", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: android-gui/android-bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6")
     hud_cmd.add_argument("--host", default="127.0.0.1", help="Host/IP for HUD web/studio modes")
     hud_cmd.add_argument("--port", type=int, default=8765, help="Port for HUD web/studio modes")
     hud_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
@@ -271,6 +281,16 @@ def build_parser() -> argparse.ArgumentParser:
     hud_cmd.add_argument("--studio-notify", action="store_true", help="In studio/v5 mode, also mirror state into termux-notification when available")
     hud_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
     hud_cmd.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory written by auto-HUD")
+
+    android_bridge_cmd = subparsers.add_parser("android-hud-bridge", aliases=["termux-hud-bridge"], help="Display chroot/proot Android HUD bridge state from the Termux host")
+    android_bridge_cmd.add_argument("--state-dir", default="", help="Shared bridge state directory; defaults to ~/.local/state/devtool-android-hud on Termux or /home/termux/.local/state/devtool-android-hud in a chroot")
+    android_bridge_cmd.add_argument("--mode", choices=["android-gui", "android-notify", "terminal"], default="android-gui", help="Renderer used by the Termux host helper")
+    android_bridge_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
+    android_bridge_cmd.add_argument("--recent-events", type=int, default=8, help="Recent events to show")
+    android_bridge_cmd.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for android-notify mode")
+    android_bridge_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
+    android_bridge_cmd.add_argument("--follow-active", action="store_true", default=True, help="Follow active HUD pointer in the shared bridge directory")
+    android_bridge_cmd.add_argument("--no-follow-active", dest="follow_active", action="store_false", help="Read the shared bridge directory directly")
 
     history_cmd = subparsers.add_parser("history")
     history_cmd.add_argument("--limit", type=int, default=20)
@@ -415,11 +435,21 @@ def _normalize_tasker_args(args: argparse.Namespace) -> None:
 def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = None, repo: Path | None = None) -> TaskerProgressSink | None:
     repo_root = (config.repo_root if config is not None else (repo or Path(args.repo or Path.cwd()))).resolve()
     target = str(getattr(args, "target", "") or getattr(args, "solution", "") or getattr(args, "project", "") or "")
-    directory = resolve_cli_path(str(getattr(args, "tasker_dir", DEFAULT_TASKER_DIR)))
+    tasker_dir_text = str(getattr(args, "tasker_dir", DEFAULT_TASKER_DIR))
+    directory = resolve_cli_path(tasker_dir_text)
     enabled = bool(getattr(args, "tasker_progress", False))
     notify_progress = bool(getattr(args, "notify_progress", False))
+    hud_mode = str(getattr(args, "hud_mode", "desktop") or "desktop")
     if enabled and bool(getattr(args, "auto_hud", False)):
-        start_auto_hud(directory, mode=str(getattr(args, "hud_mode", "desktop") or "desktop"), poll_interval=0.1)
+        try:
+            from .hud import choose_hud_mode, default_android_bridge_dir
+            chosen_hud_mode = choose_hud_mode(hud_mode)
+            tasker_dir_is_default = tasker_dir_text == DEFAULT_TASKER_DIR
+            if chosen_hud_mode == "android-bridge" and (tasker_dir_is_default or os.environ.get("DEVTOOL_HUD_BRIDGE_DIR")):
+                directory = default_android_bridge_dir()
+        except Exception:
+            chosen_hud_mode = hud_mode
+        start_auto_hud(directory, mode=hud_mode, poll_interval=0.1)
     return build_tasker_sink(
         enabled=enabled,
         directory=str(directory),
@@ -575,13 +605,32 @@ def _read_artifact_manifest(artifact: str) -> dict[str, str]:
         return {}
 
 
+def _artifact_arg_list(value: object) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if str(item).strip()]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _single_artifact_arg(value: object) -> str:
+    items = _artifact_arg_list(value)
+    return items[0] if items else ""
+
+
+def _make_ad_hoc_overlay_bundle(artifacts: list[str], *, name: str = "adhoc_overlay_bundle") -> tuple[tempfile.TemporaryDirectory[str], Path, list[Path]]:
+    tmp = tempfile.TemporaryDirectory(prefix="devtool-adhoc-overlays-")
+    paths = [resolve_artifact_path(item) for item in artifacts]
+    bundle = create_overlay_bundle(Path(tmp.name) / f"{name}.zip", paths, name=name)
+    return tmp, bundle, paths
+
+
 def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
     target_name = args.target
     solution = args.solution
     project = args.project
 
     if args.command in LEGACY_APPLY_VALIDATE_COMMANDS and (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
-        manifest = _read_artifact_manifest(args.artifact)
+        manifest = _read_artifact_manifest(_single_artifact_arg(getattr(args, "artifact", "")))
         if not target_name:
             target_name = manifest.get("validate_target", "")
         if not solution:
@@ -609,10 +658,14 @@ def _is_artifact_validation_args(args: argparse.Namespace) -> bool:
     return args.command in {"validate", "v"} and str(getattr(args, "validate_scope", "") or "") in {"overlay", "overlays"}
 
 
-def _artifact_validation_path(args: argparse.Namespace) -> str:
+def _artifact_validation_paths(args: argparse.Namespace) -> list[str]:
     if args.command in {"validate-overlay", "vo", "validate-overlays", "vos"}:
-        return str(getattr(args, "artifact", "") or "")
-    return str(getattr(args, "validate_artifact", "") or "")
+        return _artifact_arg_list(getattr(args, "artifact", ""))
+    return _artifact_arg_list(getattr(args, "validate_artifact", ""))
+
+
+def _artifact_validation_path(args: argparse.Namespace) -> str:
+    return _single_artifact_arg(_artifact_validation_paths(args))
 
 
 def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -671,7 +724,25 @@ def _prepare_specs_for_execution(specs: list[CommandSpec], args: argparse.Namesp
 
 
 def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
+    bundle_targets = [str(item).strip() for item in getattr(args, "_devtool_bundle_targets", []) if str(item).strip()]
     items = _matrix_items(args)
+    if bundle_targets and args.command in APPLY_COMMANDS and not items:
+        specs: list[CommandSpec] = []
+        for item in dict.fromkeys(bundle_targets):
+            target_config = load_project_config(
+                args.repo,
+                args.config,
+                target_name=item,
+                solution_override=args.solution,
+                project_override=args.project,
+            )
+            target_specs = _validation_specs(target_config, args, parser)
+            for spec in target_specs:
+                spec.name = f"{spec.name}[{item}]"
+                spec.metadata["bundle_target"] = item
+                spec.metadata["matrix_mode"] = "target"
+            specs.extend(target_specs)
+        return specs
     if items and getattr(args, "matrix_mode", "rid") == "target":
         specs: list[CommandSpec] = []
         for item in items:
@@ -855,18 +926,24 @@ def _git_commit_with_optional_log(
     if paths is not None:
         kwargs["paths"] = paths
 
-    try:
-        return git_commit(repo_root, message, **kwargs)
-    except TypeError as exc:
-        # Compatibility with older tests/mocks or installed builds.
-        message_text = str(exc)
-        if "paths" in message_text:
-            kwargs.pop("paths", None)
+    # git_commit grew optional log_path/paths kwargs over time. Some tests and
+    # external callers monkeypatch the older signature, so peel unsupported
+    # kwargs one by one instead of failing after the first compatibility retry.
+    unsupported: set[str] = set()
+    while True:
+        try:
             return git_commit(repo_root, message, **kwargs)
-        if "log_path" in message_text:
-            kwargs.pop("log_path", None)
-            return git_commit(repo_root, message, **kwargs)
-        raise
+        except TypeError as exc:
+            message_text = str(exc)
+            removed = False
+            for key in ("log_path", "paths"):
+                if key in kwargs and key in message_text and key not in unsupported:
+                    kwargs.pop(key, None)
+                    unsupported.add(key)
+                    removed = True
+                    break
+            if not removed:
+                raise
 
 def _maybe_commit_after_apply(
     config: ProjectConfig,
@@ -945,21 +1022,32 @@ def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict
         return
     raise SystemExit("Artifact manifest confirmation requires --yes in non-interactive mode.")
 
-def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: str, *, log_path: Path | str | None = None, tasker_progress: TaskerProgressSink | None = None) -> tuple[list[OperationResult], str]:
+def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: object, *, log_path: Path | str | None = None, tasker_progress: TaskerProgressSink | None = None) -> tuple[list[OperationResult], str]:
     snapshot = "snapshot" in name
     artifact_type = "snapshot" if snapshot else "overlay"
+    artifact_items = _artifact_arg_list(artifact)
+    display_artifact = " ".join(artifact_items) if artifact_items else ""
+    temp_bundle: tempfile.TemporaryDirectory[str] | None = None
+    source_artifacts: list[Path] = []
+    if name in {"apply-overlays", "aos"} and len(artifact_items) > 1:
+        temp_bundle, temp_path, source_artifacts = _make_ad_hoc_overlay_bundle(artifact_items, name="adhoc_overlay_bundle")
+        artifact = str(temp_path)
+    else:
+        artifact = _single_artifact_arg(artifact)
     if tasker_progress is not None:
-        tasker_progress.phase_started(name, index=1, total=1, argv=[name, artifact])
+        tasker_progress.phase_started(name, index=1, total=1, argv=[name, display_artifact or str(artifact)])
 
     def _return_apply(result: OperationResult, text: str) -> tuple[list[OperationResult], str]:
         if tasker_progress is not None:
             tasker_progress.phase_finished(result)
+        if temp_bundle is not None:
+            temp_bundle.cleanup()
         return [result], text
 
     if getattr(args, "validate_only", False):
         result = OperationResult(
             "apply-skipped",
-            [name, artifact],
+            [name, display_artifact or str(artifact)],
             0,
             0.0,
             "Skipped artifact apply because --validate-only was requested.",
@@ -979,6 +1067,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         args._devtool_artifact_sha = sha256_file(artifact_path) if artifact_path.exists() else ""
         validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
         args._devtool_artifact_manifest = validation.manifest
+        args._devtool_bundle_targets = overlay_bundle_targets(artifact_path) if artifact_type == "overlay_bundle" else []
         preview = preview_artifact(config.repo_root, artifact_path, snapshot=snapshot)
         args._devtool_artifact_preview = preview
     except Exception as exc:
@@ -1081,7 +1170,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
     if name in {"apply-overlays", "aos"}:
-        result = apply_overlay_bundle(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
+        result = apply_overlay_bundle(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview, source_artifacts=source_artifacts or None)
     elif name.startswith("apply-overlay") or name == "ao":
         result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
     else:
@@ -1103,12 +1192,29 @@ def _apply_transaction_path(results: list[OperationResult]) -> str:
     return ""
 
 
-def _apply_artifact_path(results: list[OperationResult]) -> str:
+def _apply_artifact_paths(results: list[OperationResult]) -> list[str]:
+    paths: list[str] = []
     for result in results:
-        path = result.metadata.get("artifact_path") if getattr(result, "metadata", None) else ""
-        if path and result.metadata.get("delete_artifact_on_success"):
-            return str(path)
-    return ""
+        metadata = result.metadata if getattr(result, "metadata", None) else {}
+        if not metadata.get("delete_artifact_on_success"):
+            continue
+        raw_paths = metadata.get("artifact_paths")
+        if isinstance(raw_paths, list):
+            for item in raw_paths:
+                text = str(item)
+                if text and text not in paths:
+                    paths.append(text)
+        else:
+            path = metadata.get("artifact_path")
+            text = str(path or "")
+            if text and text not in paths:
+                paths.append(text)
+    return paths
+
+
+def _apply_artifact_path(results: list[OperationResult]) -> str:
+    paths = _apply_artifact_paths(results)
+    return paths[0] if paths else ""
 
 
 def _artifact_paths_for_cleanup(artifact_path: Path) -> list[Path]:
@@ -1131,48 +1237,49 @@ def _delete_original_artifact_after_apply(
     if (failed or rolled_back) and not delete_on_failure:
         return None
 
-    artifact_path = _apply_artifact_path(results)
-    if not artifact_path and artifact:
-        artifact_path = str(resolve_artifact_path(artifact))
-    if not artifact_path:
+    artifact_paths = _apply_artifact_paths(results)
+    if not artifact_paths and artifact:
+        artifact_paths = [str(resolve_artifact_path(item)) for item in _artifact_arg_list(artifact)]
+    if not artifact_paths:
         return None
 
     started = datetime.now(timezone.utc)
     start_ts = started.timestamp()
-    path = Path(artifact_path)
     removed: list[str] = []
     errors: list[str] = []
     reason = "after failed apply" if failed or rolled_back else "after successful apply"
     try:
-        for candidate in _artifact_paths_for_cleanup(path):
-            try:
-                if candidate.exists() or candidate.is_symlink():
-                    candidate.unlink()
-                    removed.append(str(candidate))
-            except Exception as exc:
-                errors.append(f"{candidate}: {type(exc).__name__}: {exc}")
+        for raw_path in artifact_paths:
+            path = Path(raw_path)
+            for candidate in _artifact_paths_for_cleanup(path):
+                try:
+                    if candidate.exists() or candidate.is_symlink():
+                        candidate.unlink()
+                        removed.append(str(candidate))
+                except Exception as exc:
+                    errors.append(f"{candidate}: {type(exc).__name__}: {exc}")
         if errors:
             return OperationResult(
                 "artifact-cleanup",
-                ["delete", str(path)],
+                ["delete", *artifact_paths],
                 1,
                 datetime.now(timezone.utc).timestamp() - start_ts,
-                f"Failed to delete original artifact {reason}.\n" + "\n".join(errors),
+                f"Failed to delete original artifact(s) {reason}.\n" + "\n".join(errors),
                 [],
                 failure_kind="artifact_cleanup_failure",
             )
         if not removed:
-            output = "Original artifact cleanup skipped; artifact was already absent."
+            output = "Original artifact cleanup skipped; artifact(s) were already absent."
         else:
-            output = f"Deleted original artifact {reason}.\n" + "\n".join(f"removed: {item}" for item in removed)
-        return OperationResult("artifact-cleanup", ["delete", str(path)], 0, datetime.now(timezone.utc).timestamp() - start_ts, output, [])
+            output = f"Deleted original artifact(s) {reason}.\n" + "\n".join(f"removed: {item}" for item in removed)
+        return OperationResult("artifact-cleanup", ["delete", *artifact_paths], 0, datetime.now(timezone.utc).timestamp() - start_ts, output, [])
     except BaseException as exc:
         return OperationResult(
             "artifact-cleanup",
             ["delete", str(path)],
             1,
             datetime.now(timezone.utc).timestamp() - start_ts,
-            f"Failed to delete original artifact {reason}.\n{type(exc).__name__}: {exc}",
+            f"Failed to delete original artifact(s) {reason}.\n{type(exc).__name__}: {exc}",
             [],
             failure_kind="artifact_cleanup_failure",
         )
@@ -1370,34 +1477,52 @@ def _release_notes(repo_root: Path, from_ref: str, to_ref: str) -> str:
 
 
 def _run_artifact_validation_command(config: ProjectConfig, args: argparse.Namespace, *, as_json: bool = False) -> int:
-    artifact = _artifact_validation_path(args)
-    if not artifact:
+    artifacts = _artifact_validation_paths(args)
+    if not artifacts:
         raise SystemExit("Artifact archive is required.")
-    artifact_path = resolve_artifact_path(artifact)
     explicit_bundle = args.command in {"validate-overlays", "vos"} or str(getattr(args, "validate_scope", "") or "") == "overlays"
-    artifact_type = "overlay_bundle" if explicit_bundle or is_overlay_bundle(artifact_path) else "overlay"
-    if artifact_type == "overlay_bundle":
-        validation = validate_overlay_bundle(config.repo_root, artifact_path, fail_on_conflict=bool(getattr(args, "fail_on_conflict", False)))
-    else:
-        validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
-    if as_json:
-        print(json.dumps({
-            "ok": validation.ok,
-            "artifact": str(artifact_path),
-            "artifact_type": artifact_type,
-            "messages": validation.messages,
-            "manifest": validation.manifest,
-        }, indent=(2 if not getattr(args, "machine", "") == "compact" else None), separators=(None if not getattr(args, "machine", "") == "compact" else (",", ":"))))
-    else:
-        for message in validation.messages:
-            console.print(message)
-    return 0 if validation.ok else 1
+    temp_bundle: tempfile.TemporaryDirectory[str] | None = None
+    try:
+        if explicit_bundle and len(artifacts) > 1:
+            temp_bundle, artifact_path, _paths = _make_ad_hoc_overlay_bundle(artifacts, name="adhoc_validate_overlay_bundle")
+            artifact_type = "overlay_bundle"
+        else:
+            artifact_path = resolve_artifact_path(artifacts[0])
+            artifact_type = "overlay_bundle" if explicit_bundle or is_overlay_bundle(artifact_path) else "overlay"
+        if artifact_type == "overlay_bundle":
+            validation = validate_overlay_bundle(config.repo_root, artifact_path, fail_on_conflict=bool(getattr(args, "fail_on_conflict", False)))
+        else:
+            validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
+        if as_json:
+            print(json.dumps({
+                "ok": validation.ok,
+                "artifact": str(artifact_path),
+                "artifacts": artifacts,
+                "artifact_type": artifact_type,
+                "messages": validation.messages,
+                "manifest": validation.manifest,
+            }, indent=(2 if not getattr(args, "machine", "") == "compact" else None), separators=(None if not getattr(args, "machine", "") == "compact" else (",", ":"))))
+        else:
+            for message in validation.messages:
+                console.print(message)
+        return 0 if validation.ok else 1
+    finally:
+        if temp_bundle is not None:
+            temp_bundle.cleanup()
 
 
 def _run_bundle_command(args: argparse.Namespace) -> int:
     if args.bundle_command != "overlays":
         raise SystemExit(f"Unknown bundle command: {args.bundle_command}")
-    out = create_overlay_bundle(args.out, list(args.overlays), name=args.name, description=args.description)
+    targets = [item.strip() for item in str(getattr(args, "targets", "") or "").split(",") if item.strip()]
+    out = create_overlay_bundle(
+        args.out,
+        list(args.overlays),
+        name=args.name,
+        description=args.description,
+        targets=targets or None,
+        default_target=getattr(args, "default_target", "") or "",
+    )
     console.print(f"[green]Created overlay bundle[/green] {out}")
     return 0
 
@@ -1541,6 +1666,24 @@ def main(argv: list[str] | None = None) -> int:
         from .hud import run_hud
 
         return run_hud(args)
+
+    if args.command in {"android-hud-bridge", "termux-hud-bridge"}:
+        from .hud import default_android_bridge_dir, run_hud
+
+        state_dir = Path(args.state_dir).expanduser() if args.state_dir else default_android_bridge_dir()
+        hud_args = argparse.Namespace(
+            tasker_dir=str(state_dir),
+            mode=str(args.mode),
+            host="127.0.0.1",
+            port=8765,
+            poll_interval=float(args.poll_interval),
+            recent_events=int(args.recent_events),
+            notify_id=str(args.notify_id),
+            studio_notify=False,
+            once=bool(args.once),
+            follow_active=bool(args.follow_active),
+        )
+        return run_hud(hud_args)
 
     if args.command == "history":
         config = _load_command_config(args)

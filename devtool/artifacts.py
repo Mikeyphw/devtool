@@ -223,6 +223,23 @@ class ArtifactValidation:
     manifest: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class BundleOverlaySpec:
+    path: str
+    target: str = ""
+    label: str = ""
+    index: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializedBundleOverlay:
+    path: Path
+    bundle_path: str
+    target: str = ""
+    label: str = ""
+    index: int = 0
+
+
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as handle:
@@ -402,60 +419,131 @@ def is_overlay_bundle(artifact: str | Path) -> bool:
     return kind in BUNDLE_KINDS or isinstance(manifest.get("apply_order"), list)
 
 
-def _bundle_apply_order(bundle: str | Path, manifest: dict[str, Any] | None = None) -> list[str]:
+def _bundle_overlay_spec_from_item(item: Any, index: int, *, default_target: str = "") -> BundleOverlaySpec:
+    """Normalize a bundle apply_order entry.
+
+    Backward-compatible string entries are accepted as simple overlay paths.
+    Preferred object entries may specify path, target, and label:
+    {"path": "overlays/001.zip", "target": "s3mo", "label": "S3MO"}
+    """
+    if isinstance(item, str):
+        name = item.strip()
+        target = default_target.strip()
+        label = ""
+    elif isinstance(item, dict):
+        name = str(item.get("path") or item.get("artifact") or item.get("overlay") or "").strip()
+        target = str(item.get("target") or item.get("validate_target") or default_target or "").strip()
+        label = str(item.get("label") or item.get("name") or item.get("description") or "").strip()
+    else:
+        raise RuntimeError(f"Overlay bundle apply_order item #{index} must be a string path or object.")
+    if not name:
+        raise RuntimeError(f"Overlay bundle apply_order item #{index} is missing a path.")
+    _safe_rel(name)
+    if not archive_suffix(name):
+        raise RuntimeError(f"Bundle member is not a supported archive: {name}")
+    return BundleOverlaySpec(path=name, target=target, label=label, index=index)
+
+
+def _bundle_overlay_specs(bundle: str | Path, manifest: dict[str, Any] | None = None) -> list[BundleOverlaySpec]:
     manifest = manifest or read_overlay_bundle_manifest(bundle)
     raw_order = manifest.get("apply_order") or manifest.get("overlays")
     if not isinstance(raw_order, list):
         raise RuntimeError("Overlay bundle manifest must contain an apply_order list.")
-    order: list[str] = []
-    for item in raw_order:
-        name = str(item).strip()
-        if not name:
-            continue
-        _safe_rel(name)
-        if not archive_suffix(name):
-            raise RuntimeError(f"Bundle member is not a supported archive: {name}")
-        order.append(name)
-    if not order:
+    default_target = str(manifest.get("default_target") or manifest.get("target") or "").strip()
+    specs: list[BundleOverlaySpec] = []
+    for index, item in enumerate(raw_order, 1):
+        spec = _bundle_overlay_spec_from_item(item, index, default_target=default_target)
+        specs.append(spec)
+    if not specs:
         raise RuntimeError("Overlay bundle apply_order is empty.")
-    return order
+    return specs
+
+
+def _bundle_apply_order(bundle: str | Path, manifest: dict[str, Any] | None = None) -> list[str]:
+    return [spec.path for spec in _bundle_overlay_specs(bundle, manifest)]
+
+
+def _target_from_nested_overlay_manifest(overlay: Path) -> str:
+    try:
+        manifest = read_artifact_manifest(overlay)
+    except Exception:
+        return ""
+    for key in ("validate_target", "target", "default_target"):
+        value = str(manifest.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def materialize_overlay_bundle_entries(bundle: str | Path, target_dir: str | Path) -> tuple[dict[str, Any], list[MaterializedBundleOverlay]]:
+    """Extract nested overlay archives listed by a bundle manifest into target_dir.
+
+    Returns structured entries that preserve per-overlay target/label metadata.
+    Target fallback order is: entry.target -> bundle.default_target -> nested overlay
+    validate_target/target -> blank (caller may use the CLI target).
+    """
+    manifest = read_overlay_bundle_manifest(bundle)
+    if not manifest:
+        raise RuntimeError("Archive is not an overlay bundle: missing devtool-bundle.json")
+    specs = _bundle_overlay_specs(bundle, manifest)
+    files = _archive_file_data(bundle)
+    target = Path(target_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    materialized: list[MaterializedBundleOverlay] = []
+    for spec in specs:
+        data = files.get(spec.path)
+        if data is None:
+            raise RuntimeError(f"Overlay bundle lists missing member: {spec.path}")
+        out = target / spec.path
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+        resolved_target = spec.target or _target_from_nested_overlay_manifest(out)
+        materialized.append(
+            MaterializedBundleOverlay(
+                path=out,
+                bundle_path=spec.path,
+                target=resolved_target,
+                label=spec.label,
+                index=spec.index,
+            )
+        )
+    return manifest, materialized
 
 
 def materialize_overlay_bundle(bundle: str | Path, target_dir: str | Path) -> tuple[dict[str, Any], list[Path]]:
     """Extract nested overlay archives listed by a bundle manifest into target_dir."""
-    manifest = read_overlay_bundle_manifest(bundle)
-    if not manifest:
-        raise RuntimeError("Archive is not an overlay bundle: missing devtool-bundle.json")
-    order = _bundle_apply_order(bundle, manifest)
-    files = _archive_file_data(bundle)
-    target = Path(target_dir)
-    target.mkdir(parents=True, exist_ok=True)
-    materialized: list[Path] = []
-    for name in order:
-        data = files.get(name)
-        if data is None:
-            raise RuntimeError(f"Overlay bundle lists missing member: {name}")
-        out = target / name
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(data)
-        materialized.append(out)
-    return manifest, materialized
+    manifest, entries = materialize_overlay_bundle_entries(bundle, target_dir)
+    return manifest, [entry.path for entry in entries]
 
+
+def overlay_bundle_targets(bundle: str | Path) -> list[str]:
+    """Return distinct per-overlay validation targets declared by a bundle."""
+    targets: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="devtool-bundle-targets-") as tmp:
+        _manifest, entries = materialize_overlay_bundle_entries(bundle, tmp)
+        for entry in entries:
+            target = entry.target.strip()
+            if target and target not in targets:
+                targets.append(target)
+    return targets
 
 def overlay_bundle_conflicts(bundle: str | Path) -> dict[str, list[str]]:
     """Return payload files written by more than one nested overlay in apply order."""
     writers: dict[str, list[str]] = {}
     with tempfile.TemporaryDirectory(prefix="devtool-bundle-conflicts-") as tmp:
-        _manifest, overlays = materialize_overlay_bundle(bundle, tmp)
-        for overlay in overlays:
+        _manifest, entries = materialize_overlay_bundle_entries(bundle, tmp)
+        for entry in entries:
             try:
-                members = list_archive_members(overlay, include_data=False)
+                members = list_archive_members(entry.path, include_data=False)
             except Exception:
                 continue
+            name = entry.label or Path(entry.bundle_path).name
+            if entry.target:
+                name = f"{name} [{entry.target}]"
             for member in members:
                 if member.is_dir or is_artifact_metadata_member(member.name):
                     continue
-                writers.setdefault(member.name, []).append(overlay.name)
+                writers.setdefault(member.name, []).append(name)
     return {path: names for path, names in writers.items() if len(names) > 1}
 
 
@@ -483,12 +571,14 @@ def validate_overlay_bundle(repo_root: Path, bundle: str | Path, *, fail_on_conf
         messages.append("Bundle apply_order lists missing overlays: " + ", ".join(missing[:10]))
     with tempfile.TemporaryDirectory(prefix="devtool-bundle-validate-") as tmp:
         try:
-            _manifest, overlays = materialize_overlay_bundle(bundle, tmp)
+            _manifest, entries = materialize_overlay_bundle_entries(bundle, tmp)
         except Exception as exc:
             return ArtifactValidation(False, [str(exc)], manifest)
-        for index, overlay in enumerate(overlays, 1):
-            validation = validate_artifact(repo_root, overlay, artifact_type="overlay")
-            prefix = f"[{index}/{len(overlays)}] {overlay.name}"
+        for entry in entries:
+            validation = validate_artifact(repo_root, entry.path, artifact_type="overlay")
+            label = entry.label or Path(entry.bundle_path).name
+            target_note = f" target={entry.target}" if entry.target else ""
+            prefix = f"[{entry.index}/{len(entries)}] {label}{target_note}"
             if validation.ok:
                 messages.append(f"{prefix}: valid")
             else:
@@ -516,16 +606,21 @@ def preview_overlay_bundle(repo_root: Path, bundle: str | Path) -> dict[str, Any
     total_files = 0
     manifest: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="devtool-bundle-preview-") as tmp:
-        manifest, overlays = materialize_overlay_bundle(bundle, tmp)
-        for index, overlay in enumerate(overlays, 1):
-            preview = preview_artifact(repo_root, overlay, snapshot=False)
+        manifest, entries = materialize_overlay_bundle_entries(bundle, tmp)
+        for entry in entries:
+            preview = preview_artifact(repo_root, entry.path, snapshot=False)
             total_files += int(preview.get("files", 0))
             for change in preview.get("changes", []):
                 if not isinstance(change, dict):
                     continue
                 updated = {str(k): str(v) for k, v in change.items()}
-                updated["overlay"] = overlay.name
-                updated["overlay_index"] = str(index)
+                updated["overlay"] = Path(entry.bundle_path).name
+                updated["overlay_path"] = entry.bundle_path
+                updated["overlay_index"] = str(entry.index)
+                if entry.target:
+                    updated["target"] = entry.target
+                if entry.label:
+                    updated["label"] = entry.label
                 changes.append(updated)
     return {
         "artifact": str(resolve_artifact_path(bundle)),
@@ -545,24 +640,37 @@ def diff_overlay_bundle(repo_root: Path, bundle: str | Path, *, context: int = 3
     sections: list[str] = []
     remaining = max_lines
     with tempfile.TemporaryDirectory(prefix="devtool-bundle-diff-") as tmp:
-        _manifest, overlays = materialize_overlay_bundle(bundle, tmp)
-        for index, overlay in enumerate(overlays, 1):
+        _manifest, entries = materialize_overlay_bundle_entries(bundle, tmp)
+        for entry in entries:
             if remaining <= 0:
                 sections.append("... bundle diff truncated")
                 break
-            text = diff_artifact(repo_root, overlay, snapshot=False, context=context, max_lines=remaining)
+            text = diff_artifact(repo_root, entry.path, snapshot=False, context=context, max_lines=remaining)
             lines = text.splitlines()
             remaining -= len(lines)
-            sections.append(f"# [{index}/{len(overlays)}] {overlay.name}\n" + text.rstrip())
+            label = entry.label or Path(entry.bundle_path).name
+            target_note = f" target={entry.target}" if entry.target else ""
+            sections.append(f"# [{entry.index}/{len(entries)}] {label}{target_note}\n" + text.rstrip())
     return "\n\n".join(section for section in sections if section).rstrip() + "\n"
 
 
-def create_overlay_bundle(output: str | Path, overlays: list[str | Path], *, name: str = "", description: str = "") -> Path:
+def create_overlay_bundle(
+    output: str | Path,
+    overlays: list[str | Path],
+    *,
+    name: str = "",
+    description: str = "",
+    targets: list[str] | None = None,
+    default_target: str = "",
+) -> Path:
     if not overlays:
         raise RuntimeError("No overlays were provided for the bundle.")
     entries: dict[str, bytes] = {}
-    apply_order: list[str] = []
+    apply_order: list[dict[str, str]] = []
     used_names: set[str] = set()
+    normalized_targets = list(targets or [])
+    if normalized_targets and len(normalized_targets) != len(overlays):
+        raise RuntimeError("--targets must provide exactly one target per overlay, or be omitted.")
     for index, raw in enumerate(overlays, 1):
         path = resolve_artifact_path(raw)
         if not path.exists():
@@ -574,17 +682,29 @@ def create_overlay_bundle(output: str | Path, overlays: list[str | Path], *, nam
             arcname = f"overlays/{index:03d}_{len(used_names)}_{path.name}"
         used_names.add(arcname)
         entries[arcname] = path.read_bytes()
-        apply_order.append(arcname)
-    bundle_manifest = {
+        item: dict[str, str] = {"path": arcname, "label": path.stem}
+        if normalized_targets:
+            target = normalized_targets[index - 1].strip()
+            if target and target != "-":
+                item["target"] = target
+        else:
+            inferred = _target_from_nested_overlay_manifest(path)
+            if inferred:
+                item["target"] = inferred
+        apply_order.append(item)
+    bundle_manifest: dict[str, Any] = {
         "kind": "devtool.overlay_bundle",
         "version": 1,
         "name": name or Path(output).name,
         "description": description,
+        "target_mode": "per_overlay",
         "apply_order": apply_order,
         "stop_on_failure": True,
         "validate_each": True,
         "validate_final": True,
     }
+    if default_target.strip():
+        bundle_manifest["default_target"] = default_target.strip()
     entries["devtool-bundle.json"] = (json.dumps(bundle_manifest, indent=2) + "\n").encode("utf-8")
     return write_archive_entries(output, entries)
 
