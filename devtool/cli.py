@@ -16,10 +16,13 @@ from rich.prompt import Confirm
 
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
 from .artifacts import (
+    SUPPORTED_ARCHIVE_SUFFIXES,
     append_history,
     artifact_cleanup_paths,
+    create_overlay_bundle,
     diff_artifact,
     format_preview,
+    is_overlay_bundle,
     latest_commit_hash,
     load_history,
     make_history_entry,
@@ -28,6 +31,7 @@ from .artifacts import (
     resolve_artifact_path,
     sha256_file,
     validate_artifact,
+    validate_overlay_bundle,
 )
 from .detect import detect_repo, render_detect_text
 from .execution import apply_matrix, wrap_specs_for_chroot
@@ -40,19 +44,21 @@ from .config import detect_project_kind, discover_dotnet_candidates, load_projec
 from .logstore import latest_log, new_log_path
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .notify import available_notifier, send_notification
-from .runners import apply_overlay, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
+from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_ACTION, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, start_auto_hud
 from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
 
 console = create_console()
 
-APPLY_COMMANDS = {"apply-overlay", "ao", "apply-snapshot", "as"}
+APPLY_COMMANDS = {"apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as"}
 LEGACY_APPLY_VALIDATE_COMMANDS = APPLY_COMMANDS | {"apply-overlay-validate", "aov", "apply-snapshot-validate", "asv"}
 
 INTERACTIVE_COPY_COMMANDS = {
     "apply-overlay",
     "ao",
+    "apply-overlays",
+    "aos",
     "apply-snapshot",
     "as",
     "batch",
@@ -62,7 +68,7 @@ INTERACTIVE_COPY_COMMANDS = {
 PROGRESS_CAPABLE_COMMANDS = {
     "restore", "rs", "build", "b", "test", "t", "validate", "v",
     "wine-validate", "wv", "run", "rn", "package", "pkg",
-    "apply-overlay", "ao", "apply-snapshot", "as", "batch", "commit", "ci", "tag",
+    "apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as", "batch", "commit", "ci", "tag",
 }
 
 
@@ -142,6 +148,10 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="Pass --no-build to dotnet test")
         if name in {"validate", "wine-validate"}:
             _add_validation_skip_flags(cmd)
+            if name == "validate":
+                cmd.add_argument("validate_scope", nargs="?", help="Optional artifact validation scope: overlay or overlays")
+                cmd.add_argument("validate_artifact", nargs="?", help="Artifact archive to validate when scope is overlay/overlays")
+                cmd.add_argument("--fail-on-conflict", action="store_true", help="For overlay bundles, fail if multiple nested overlays write the same file")
             cmd.add_argument("--watch", action="store_true", help="Rerun validation when files change")
             cmd.add_argument("--watch-interval", type=float, default=1.5, help="Seconds between watch polls")
             cmd.add_argument("--matrix", default="", help="Comma-separated runtime IDs or target names to validate")
@@ -155,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     ai_prompt.add_argument("--target-name", default="", help="Named monorepo target/profile to reference")
     ai_prompt.add_argument("--solution-target", default="", help="Exact solution target to reference")
     ai_prompt.add_argument("--delivery-mode", choices=["overlay", "snapshot"], default="overlay")
-    ai_prompt.add_argument("--artifact-type", choices=["zip", "tar"], default="zip")
+    ai_prompt.add_argument("--artifact-type", choices=["zip", "tar", "tar.gz", "tgz", "tar.xz", "txz", "tar.bz2", "tbz2", "tar.zst", "tzst"], default="zip")
     ai_prompt.add_argument("--overlay-count", type=int, default=0)
     ai_prompt.add_argument("--commit-message", default="Clear commit message")
     ai_prompt.add_argument("--wine", action="store_true", help="Prefer wine-validate wording in the generated prompt")
@@ -167,6 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, aliases in [
         ("apply-overlay", ["ao"]),
+        ("apply-overlays", ["aos"]),
         ("apply-snapshot", ["as"]),
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
@@ -181,6 +192,38 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Deprecated: artifacts are deleted after failure by default unless --keep-artifact is used")
         _add_validation_skip_flags(cmd)
         cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
+
+    apply_cmd = subparsers.add_parser("apply", help="Apply an overlay, overlay bundle, or snapshot")
+    apply_sub = apply_cmd.add_subparsers(dest="apply_command", required=True)
+    for sub_name, command_name in [("overlay", "apply-overlay"), ("overlays", "apply-overlays"), ("snapshot", "apply-snapshot")]:
+        sub = apply_sub.add_parser(sub_name)
+        sub.set_defaults(normalized_command=command_name)
+        sub.add_argument("artifact")
+        sub.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
+        sub.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
+        sub.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
+        sub.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
+        sub.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
+        sub.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
+        sub.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after apply (default: delete after success or failure)")
+        sub.add_argument("--delete-artifact-on-failure", action="store_true", help="Deprecated: artifacts are deleted after failure by default unless --keep-artifact is used")
+        _add_validation_skip_flags(sub)
+        sub.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
+
+    validate_overlay_cmd = subparsers.add_parser("validate-overlay", aliases=["vo"])
+    validate_overlay_cmd.add_argument("artifact")
+    validate_overlay_cmd.add_argument("--fail-on-conflict", action="store_true", help="For bundles, fail if multiple nested overlays write the same file")
+    validate_overlays_cmd = subparsers.add_parser("validate-overlays", aliases=["vos"])
+    validate_overlays_cmd.add_argument("artifact")
+    validate_overlays_cmd.add_argument("--fail-on-conflict", action="store_true", help="Fail if multiple nested overlays write the same file")
+
+    bundle_cmd = subparsers.add_parser("bundle")
+    bundle_sub = bundle_cmd.add_subparsers(dest="bundle_command", required=True)
+    bundle_overlays = bundle_sub.add_parser("overlays")
+    bundle_overlays.add_argument("overlays", nargs="+")
+    bundle_overlays.add_argument("--name", default="")
+    bundle_overlays.add_argument("--description", default="")
+    bundle_overlays.add_argument("-o", "--out", required=True, help="Output bundle archive; extension selects format")
 
     batch = subparsers.add_parser("batch")
     batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
@@ -517,7 +560,7 @@ def _resolve_batch_steps(config: ProjectConfig, steps: list[str]) -> tuple[list[
             name, value = step.split("=", 1)
         else:
             name, value = step, ""
-        if name in {"apply-overlay", "ao"}:
+        if name in APPLY_COMMANDS:
             raise RuntimeError("batch apply steps must be executed from main runner")
         specs.extend(build_specs(config, name))
     return specs, pre_results, pre_outputs
@@ -525,43 +568,11 @@ def _resolve_batch_steps(config: ProjectConfig, steps: list[str]) -> tuple[list[
 
 
 def _read_artifact_manifest(artifact: str) -> dict[str, str]:
-    artifact_path = resolve_artifact_path(artifact)
-    sidecar_candidates = [
-        artifact_path.with_name(artifact_path.name + ".devtool.json"),
-        artifact_path.with_name(artifact_path.name + ".manifest.json"),
-    ]
-    for candidate in sidecar_candidates:
-        if candidate.exists():
-            try:
-                data = json.loads(candidate.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    return {str(k): str(v) for k, v in data.items()}
-            except Exception:
-                return {}
-
-    names = {".devtool-artifact.json", "artifact.devtool.json"}
     try:
-        if artifact_path.suffix == ".zip":
-            with zipfile.ZipFile(artifact_path) as zf:
-                for name in zf.namelist():
-                    if Path(name).name in names:
-                        data = json.loads(zf.read(name).decode("utf-8"))
-                        if isinstance(data, dict):
-                            return {str(k): str(v) for k, v in data.items()}
-        elif artifact_path.suffix == ".tar" or artifact_path.name.endswith((".tar.gz", ".tgz")):
-            mode = "r:gz" if artifact_path.name.endswith((".tar.gz", ".tgz")) else "r"
-            with tarfile.open(artifact_path, mode) as tf:
-                for member in tf.getmembers():
-                    if Path(member.name).name in names and member.isfile():
-                        fh = tf.extractfile(member)
-                        if fh is None:
-                            continue
-                        data = json.loads(fh.read().decode("utf-8"))
-                        if isinstance(data, dict):
-                            return {str(k): str(v) for k, v in data.items()}
+        data = read_artifact_manifest(artifact)
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
     except Exception:
         return {}
-    return {}
 
 
 def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
@@ -587,7 +598,30 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
     )
 
 
+def _normalize_command_aliases(args: argparse.Namespace) -> None:
+    if getattr(args, "command", "") == "apply":
+        args.command = str(getattr(args, "normalized_command", "") or "apply-overlay")
+
+
+def _is_artifact_validation_args(args: argparse.Namespace) -> bool:
+    if args.command in {"validate-overlay", "vo", "validate-overlays", "vos"}:
+        return True
+    return args.command in {"validate", "v"} and str(getattr(args, "validate_scope", "") or "") in {"overlay", "overlays"}
+
+
+def _artifact_validation_path(args: argparse.Namespace) -> str:
+    if args.command in {"validate-overlay", "vo", "validate-overlays", "vos"}:
+        return str(getattr(args, "artifact", "") or "")
+    return str(getattr(args, "validate_artifact", "") or "")
+
+
 def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.command in {"validate", "v"}:
+        scope = str(getattr(args, "validate_scope", "") or "")
+        if scope and scope not in {"overlay", "overlays"}:
+            parser.error("validate positional form is only supported as: validate overlay <archive> or validate overlays <bundle>")
+        if scope in {"overlay", "overlays"} and not getattr(args, "validate_artifact", ""):
+            parser.error(f"validate {scope} requires an artifact archive")
     if args.command not in APPLY_COMMANDS:
         return
     if (args.skip_restore or args.skip_build or args.skip_test) and not (args.validate or args.validate_only):
@@ -715,7 +749,7 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         entry = make_history_entry(
             config.repo_root,
             artifact,
-            artifact_type="snapshot" if "snapshot" in args.command else "overlay",
+            artifact_type=getattr(args, "_devtool_artifact_type", "snapshot" if "snapshot" in args.command else "overlay"),
             status=status,
             validation_status=validation_status,
             commit_message=getattr(args, "commit", "") or "",
@@ -938,6 +972,9 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     started = datetime.now(timezone.utc)
     try:
         artifact_path = resolve_artifact_path(artifact)
+        is_bundle = (not snapshot) and (name in {"apply-overlays", "aos"} or is_overlay_bundle(artifact_path))
+        artifact_type = "overlay_bundle" if is_bundle else artifact_type
+        args._devtool_artifact_type = artifact_type
         args._devtool_artifact_path = str(artifact_path)
         args._devtool_artifact_sha = sha256_file(artifact_path) if artifact_path.exists() else ""
         validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
@@ -1043,7 +1080,9 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 )
                 return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
-    if name.startswith("apply-overlay") or name == "ao":
+    if name in {"apply-overlays", "aos"}:
+        result = apply_overlay_bundle(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
+    elif name.startswith("apply-overlay") or name == "ao":
         result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
     else:
         result = apply_snapshot(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
@@ -1330,6 +1369,39 @@ def _release_notes(repo_root: Path, from_ref: str, to_ref: str) -> str:
     return proc.stdout
 
 
+def _run_artifact_validation_command(config: ProjectConfig, args: argparse.Namespace, *, as_json: bool = False) -> int:
+    artifact = _artifact_validation_path(args)
+    if not artifact:
+        raise SystemExit("Artifact archive is required.")
+    artifact_path = resolve_artifact_path(artifact)
+    explicit_bundle = args.command in {"validate-overlays", "vos"} or str(getattr(args, "validate_scope", "") or "") == "overlays"
+    artifact_type = "overlay_bundle" if explicit_bundle or is_overlay_bundle(artifact_path) else "overlay"
+    if artifact_type == "overlay_bundle":
+        validation = validate_overlay_bundle(config.repo_root, artifact_path, fail_on_conflict=bool(getattr(args, "fail_on_conflict", False)))
+    else:
+        validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
+    if as_json:
+        print(json.dumps({
+            "ok": validation.ok,
+            "artifact": str(artifact_path),
+            "artifact_type": artifact_type,
+            "messages": validation.messages,
+            "manifest": validation.manifest,
+        }, indent=(2 if not getattr(args, "machine", "") == "compact" else None), separators=(None if not getattr(args, "machine", "") == "compact" else (",", ":"))))
+    else:
+        for message in validation.messages:
+            console.print(message)
+    return 0 if validation.ok else 1
+
+
+def _run_bundle_command(args: argparse.Namespace) -> int:
+    if args.bundle_command != "overlays":
+        raise SystemExit(f"Unknown bundle command: {args.bundle_command}")
+    out = create_overlay_bundle(args.out, list(args.overlays), name=args.name, description=args.description)
+    console.print(f"[green]Created overlay bundle[/green] {out}")
+    return 0
+
+
 def _config_command(args: argparse.Namespace) -> int:
     config = _load_command_config(args)
     if args.config_command == "show":
@@ -1359,6 +1431,7 @@ def _config_command(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _normalize_command_aliases(args)
     _normalize_tasker_args(args)
     _validate_apply_args(args, parser)
     effective_payload, copy_mode = _validate_output_flags(args, parser)
@@ -1425,6 +1498,13 @@ def main(argv: list[str] | None = None) -> int:
         target = write_template_config(Path(args.repo_root), force=args.force)
         console.print(f"[green]Wrote[/green] {target}")
         return 0
+
+    if args.command == "bundle":
+        return _run_bundle_command(args)
+
+    if _is_artifact_validation_args(args):
+        config = _load_command_config(args)
+        return _run_artifact_validation_command(config, args, as_json=effective_payload == "json")
 
     if args.command == "config":
         return _config_command(args)
@@ -1578,7 +1658,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.command == "batch":
-        destructive_batch = any(step.split("=", 1)[0] in {"apply-overlay", "ao", "apply-snapshot", "as", "commit", "ci", "tag"} for step in args.steps)
+        destructive_batch = any(step.split("=", 1)[0] in {"apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as", "commit", "ci", "tag"} for step in args.steps)
         if destructive_batch:
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
 

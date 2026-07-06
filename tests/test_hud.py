@@ -48,6 +48,27 @@ class HudTests(unittest.TestCase):
         self.assertEqual(state.current, 4)
         self.assertEqual(state.total, 8)
 
+
+    def test_state_from_directory_preserves_target_when_notification_is_primary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "state.json").write_text(json.dumps({"repo_name": "demo", "command": "validate", "target": "Demo.sln", "phase": {"name": "test"}, "current": 1, "total": 2}), encoding="utf-8")
+            (root / "notification.json").write_text(json.dumps({"title": "Tests", "text": "running", "current": 4, "total": 8, "target": "Demo.Tests.csproj"}), encoding="utf-8")
+            state = state_from_directory(root)
+        self.assertEqual(state.repo_name, "demo")
+        self.assertEqual(state.phase_name, "test")
+        self.assertEqual(state.target, "Demo.Tests.csproj")
+        self.assertEqual(state.current, 4)
+        self.assertEqual(state.total, 8)
+
+    def test_recent_error_lines_highlight_failures_without_zero_failed_noise(self) -> None:
+        from devtool.hud import recent_error_lines
+        events = [
+            {"event_type": "progress", "message": "tests: 6 passed, 0 failed, 0 skipped"},
+            {"event_type": "phase_finished", "phase": {"name": "build"}, "result": {"status": "failed"}, "message": "Build failed"},
+        ]
+        self.assertEqual(recent_error_lines(events), ["Build failed"])
+
     def test_render_ascii_bar_clamps_progress(self) -> None:
         self.assertEqual(render_ascii_bar(5, 10, width=10), "█████░░░░░")
         self.assertEqual(render_ascii_bar(20, 10, width=10), "██████████")

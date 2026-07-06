@@ -1,14 +1,21 @@
 {
   "type": "overlay",
-  "name": "devtool graceful artifact duplicate matching",
-  "description": "Adds duplicate-download artifact matching for (N), _N, bare N and -N suffixes; applies the selected newest/highest artifact consistently; and cleans up every artifact variant plus sidecars after apply. Preserves the GNOME HUD GTK/GDK fixes.",
+  "name": "devtool overlay bundle and archive-format support with HUD fix",
+  "description": "Adds native multi-overlay bundle support: bundle overlays creation, validate overlay(s), apply-overlays plus nested apply overlays, auto-detection from apply-overlay, ordered transactional application with one backup, conflict reporting, preview/diff, and history/cleanup compatibility. Extends archive support across artifact matching, validation, preview/diff, extraction, apply, bundle creation, completion, and Termux chroot path translation to zip, tar, tar.gz/tgz, tar.xz/txz, tar.bz2/tbz2, and tar.zst/tzst. Folds in the GNOME HUD identity/target/error-emphasis improvements and post-test hang guard.",
   "files": [
     "devtool/artifacts.py",
     "devtool/cli.py",
     "devtool/runners.py",
     "devtool/hud.py",
     "devtool/tasker.py",
+    "devtool/completion.py",
+    "devtool/termux_chroot_runner.py",
+    "devtool/termux_chroot_runner.py.bak",
+    "completions/_devtool",
+    "tests/test_archive_bundle_support.py",
     "tests/test_artifact_matching.py",
-    "tests/test_hud.py"
+    "tests/test_hud.py",
+    "tests/test_process_hang.py",
+    "tests/test_tasker.py"
   ]
 }

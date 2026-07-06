@@ -13,6 +13,7 @@ _devtool_steps() {
     'run:run project'
     'package:package project'
     'apply-overlay=:apply overlay artifact'
+    'apply-overlays=:apply overlay bundle artifact'
     'apply-snapshot=:apply snapshot artifact'
     'commit=:git commit message'
     'tag=:create git tag'
@@ -33,7 +34,7 @@ _devtool_repo_path() {
 _devtool_artifact_path() {
   if (( $+commands[fzf] )); then
     local selected
-    selected=$(find ~/Downloads . -maxdepth 4 \( -name '*.zip' -o -name '*.tar' -o -name '*.tar.gz' -o -name '*.tgz' \) 2>/dev/null | fzf --prompt='artifact> ' --height=40% --reverse) || return 1
+    selected=$(find ~/Downloads . -maxdepth 4 \( -name '*.zip' -o -name '*.tar' -o -name '*.tar.gz' -o -name '*.tgz' -o -name '*.tar.xz' -o -name '*.txz' -o -name '*.tar.zst' -o -name '*.tzst' -o -name '*.tar.bz2' -o -name '*.tbz2' \) 2>/dev/null | fzf --prompt='artifact> ' --height=40% --reverse) || return 1
     compadd -- "$selected"
   else
     _files

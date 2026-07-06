@@ -11,9 +11,20 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
+from typing import Callable
 
 
-from .artifacts import is_artifact_metadata_member, preview_artifact, read_delete_manifest, resolve_artifact_path
+from .artifacts import (
+    archive_suffix,
+    is_artifact_metadata_member,
+    is_overlay_bundle,
+    materialize_overlay_bundle,
+    open_tar_archive,
+    preview_artifact,
+    preview_overlay_bundle,
+    read_delete_manifest,
+    resolve_artifact_path,
+)
 from .config import generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
 from .diagnostics import classify_failure, parse_issues
@@ -293,6 +304,52 @@ def _interesting_output_line(line: str) -> bool:
     return bool(re.search(r"(error|warning|failed|fail|restore|build|test|pack|publish|\d+%)", text, re.IGNORECASE))
 
 
+_DOTNET_TEST_RESULT_LINE_RE = re.compile(
+    r"\b(?P<status>Passed|Failed)!\s+-\s+Failed:\s*(?P<failed>\d+),\s*Passed:\s*(?P<passed>\d+),\s*Skipped:\s*(?P<skipped>\d+),\s*Total:\s*(?P<total>\d+)",
+    re.IGNORECASE,
+)
+_TEST_RUN_SUCCESS_RE = re.compile(r"\bTest Run Successful\b", re.IGNORECASE)
+_TEST_RUN_FAILED_RE = re.compile(r"\bTest Run Failed\b", re.IGNORECASE)
+
+
+def _dotnet_test_completion_status(line: str) -> int | None:
+    text = line.strip()
+    if not text:
+        return None
+    match = _DOTNET_TEST_RESULT_LINE_RE.search(text)
+    if match:
+        return 1 if int(match.group("failed")) > 0 or match.group("status").lower() == "failed" else 0
+    if _TEST_RUN_SUCCESS_RE.search(text):
+        return 0
+    if _TEST_RUN_FAILED_RE.search(text):
+        return 1
+    return None
+
+
+def _is_dotnet_test_command(argv: list[str], command_name: str = "") -> bool:
+    lowered_name = (command_name or "").strip().lower()
+    if lowered_name in {"test", "tests", "wine-test"}:
+        return True
+    for index, value in enumerate(argv[:-1]):
+        if Path(value).name == "dotnet" and str(argv[index + 1]).lower() == "test":
+            return True
+    return False
+
+
+def _test_completion_grace_for(argv: list[str], command_name: str) -> float | None:
+    if not _is_dotnet_test_command(argv, command_name):
+        return None
+    raw = os.environ.get("DEVTOOL_TEST_COMPLETION_GRACE", os.environ.get("DEVTOOL_TEST_COMPLETION_GRACE_SECONDS", "")).strip()
+    if raw:
+        try:
+            value = float(raw)
+            return value if value > 0 else None
+        except ValueError:
+            pass
+    # Only applies after a final test summary has already printed, so this does
+    # not kill legitimately quiet tests that are still running.
+    return 8.0
+
 
 def _idle_timeout_for(argv: list[str], command_name: str) -> float | None:
     """Return a safe idle timeout for commands known to hang after output ends.
@@ -324,7 +381,14 @@ def _idle_timeout_for(argv: list[str], command_name: str) -> float | None:
     return None
 
 
-def _iter_process_output_lines(proc: subprocess.Popen, *, drain_seconds: float = 0.75, idle_timeout: float | None = None):
+def _iter_process_output_lines(
+    proc: subprocess.Popen,
+    *,
+    drain_seconds: float = 0.75,
+    idle_timeout: float | None = None,
+    completion_idle_grace: float | None = None,
+    completion_status_detector: Callable[[str], int | None] | None = None,
+):
     """Yield child output without waiting forever for pipe EOF.
 
     This implementation avoids ``TextIOWrapper.readline()`` on a pipe after
@@ -355,7 +419,8 @@ def _iter_process_output_lines(proc: subprocess.Popen, *, drain_seconds: float =
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
     pending = ""
     last_output_at = time.monotonic()
-    timed_out = False
+    completion_seen_at: float | None = None
+    completion_assumed_returncode: int | None = None
 
     def emit_text(text: str):
         nonlocal pending
@@ -363,6 +428,16 @@ def _iter_process_output_lines(proc: subprocess.Popen, *, drain_seconds: float =
         while "\n" in pending:
             line, pending = pending.split("\n", 1)
             yield line + "\n"
+
+    def emit_and_track(text: str):
+        nonlocal completion_seen_at, completion_assumed_returncode
+        for line in emit_text(text):
+            if completion_status_detector is not None:
+                status = completion_status_detector(line)
+                if status is not None:
+                    completion_seen_at = time.monotonic()
+                    completion_assumed_returncode = int(status)
+            yield line
 
     try:
         while True:
@@ -374,7 +449,7 @@ def _iter_process_output_lines(proc: subprocess.Popen, *, drain_seconds: float =
                     chunk = b""
                 if chunk:
                     last_output_at = time.monotonic()
-                    for line in emit_text(decoder.decode(chunk)):
+                    for line in emit_and_track(decoder.decode(chunk)):
                         yield line
                     continue
                 if proc.poll() is not None:
@@ -392,14 +467,46 @@ def _iter_process_output_lines(proc: subprocess.Popen, *, drain_seconds: float =
                         chunk = b""
                     if not chunk:
                         break
-                    for line in emit_text(decoder.decode(chunk)):
+                    for line in emit_and_track(decoder.decode(chunk)):
                         yield line
                 break
 
+            if (
+                completion_idle_grace is not None
+                and completion_idle_grace > 0
+                and completion_seen_at is not None
+                and (time.monotonic() - last_output_at) >= completion_idle_grace
+            ):
+                assumed = 1 if completion_assumed_returncode is None else completion_assumed_returncode
+                setattr(proc, "_devtool_assumed_returncode", assumed)
+                message = (
+                    f"\nDevtool stopped a quiet test process {completion_idle_grace:g}s after the final test summary. "
+                    f"Assuming exit code {assumed}.\n"
+                )
+                for line in emit_and_track(message):
+                    yield line
+                try:
+                    os.killpg(proc.pid, 15)
+                except Exception:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                try:
+                    proc.wait(timeout=2.0)
+                except Exception:
+                    try:
+                        os.killpg(proc.pid, 9)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                break
+
             if idle_timeout is not None and idle_timeout > 0 and (time.monotonic() - last_output_at) >= idle_timeout:
-                timed_out = True
                 message = f"\nDevtool stopped a quiet child process after {idle_timeout:g}s without output.\n"
-                for line in emit_text(message):
+                for line in emit_and_track(message):
                     yield line
                 try:
                     os.killpg(proc.pid, 15)
@@ -422,7 +529,7 @@ def _iter_process_output_lines(proc: subprocess.Popen, *, drain_seconds: float =
 
         tail = decoder.decode(b"", final=True)
         if tail:
-            for line in emit_text(tail):
+            for line in emit_and_track(tail):
                 yield line
         if pending:
             yield pending
@@ -434,8 +541,12 @@ def _iter_process_output_lines(proc: subprocess.Popen, *, drain_seconds: float =
 
 
 def _wait_process_returncode(proc: subprocess.Popen, *, timeout: float = 5.0) -> int:
+    assumed = getattr(proc, "_devtool_assumed_returncode", None)
     try:
-        return proc.wait(timeout=timeout)
+        code = proc.wait(timeout=timeout)
+        if assumed is not None and code != 0:
+            return int(assumed)
+        return code
     except subprocess.TimeoutExpired:
         try:
             if os.name == "posix":
@@ -445,7 +556,10 @@ def _wait_process_returncode(proc: subprocess.Popen, *, timeout: float = 5.0) ->
         except Exception:
             pass
         try:
-            return proc.wait(timeout=2.0)
+            code = proc.wait(timeout=2.0)
+            if assumed is not None and code != 0:
+                return int(assumed)
+            return code
         except Exception:
             try:
                 if os.name == "posix":
@@ -455,9 +569,12 @@ def _wait_process_returncode(proc: subprocess.Popen, *, timeout: float = 5.0) ->
             except Exception:
                 pass
             try:
-                return proc.wait(timeout=1.0)
+                code = proc.wait(timeout=1.0)
+                if assumed is not None and code != 0:
+                    return int(assumed)
+                return code
             except Exception:
-                return 124
+                return int(assumed) if assumed is not None else 124
 
 def _run_process_live(
     argv: list[str],
@@ -517,6 +634,7 @@ def _run_process_live(
                 completed=snapshot.get("completed"),
                 total=snapshot.get("total"),
                 percent=snapshot.get("percent"),
+                target=str(snapshot.get("target") or ""),
                 force=True,
             )
         tracker.update_callback = _tasker_update
@@ -547,15 +665,17 @@ def _run_process_live(
                 pass
 
     try:
-        idle_timeout = _idle_timeout_for(effective_argv if False else argv, command_name)
+        idle_timeout = _idle_timeout_for(argv, command_name)
+        completion_idle_grace = _test_completion_grace_for(argv, command_name)
+        completion_detector = _dotnet_test_completion_status if completion_idle_grace is not None else None
         if tracker is None:
-            for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout):
+            for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout, completion_idle_grace=completion_idle_grace, completion_status_detector=completion_detector):
                 output_parts.append(line)
                 print(line, end="", flush=True)
             return _wait_process_returncode(proc), "".join(output_parts)
 
         with tracker:
-            for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout):
+            for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout, completion_idle_grace=completion_idle_grace, completion_status_detector=completion_detector):
                 output_parts.append(line)
                 # Non-verbose mode intentionally keeps command stdout/stderr captured only.
                 # Dotnet commands get a parsed Rich progress display instead of raw output.
@@ -671,8 +791,84 @@ def run_specs(
 
 def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
-    argv = ["unzip", "-o", str(artifact_path), "-d", str(repo_root)]
+    if is_overlay_bundle(artifact_path):
+        return apply_overlay_bundle(repo_root, artifact, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
+    argv = ["devtool", "extract-overlay", str(artifact_path), "-C", str(repo_root)]
     return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
+
+
+def apply_overlay_bundle(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
+    artifact_path = resolve_artifact_path(artifact)
+    argv = ["devtool", "apply-overlays", str(artifact_path), "-C", str(repo_root)]
+    start = time.perf_counter()
+    if dry_run:
+        text = "$ " + " ".join(argv)
+        path = str(write_log(text, log_path, append=log_path is not None))
+        return OperationResult("apply-overlays", argv, 0, 0.0, text, [], skipped=True, log_path=path)
+    if not artifact_path.exists():
+        output = f"Artifact not found: {artifact_path}"
+        path = str(write_log(output, log_path, append=log_path is not None))
+        return OperationResult("apply-overlays", argv, 1, 0.0, output, [], log_path=path)
+
+    transaction: dict | None = None
+    rollback_result: OperationResult | None = None
+    try:
+        preview_data = preview or preview_overlay_bundle(repo_root, artifact_path)
+        transaction = create_apply_transaction(
+            repo_root,
+            artifact_path,
+            artifact_type="overlay_bundle",
+            preview=preview_data,
+        )
+        skipped_metadata = 0
+        deleted_paths: list[str] = []
+        applied: list[str] = []
+        with tempfile.TemporaryDirectory(prefix="devtool-bundle-apply-") as tmp:
+            _manifest, overlays = materialize_overlay_bundle(artifact_path, tmp)
+            for index, overlay in enumerate(overlays, 1):
+                skipped_metadata += _extract_archive(overlay, repo_root)
+                deleted_paths.extend(_apply_delete_manifest(repo_root, overlay))
+                applied.append(f"[{index}/{len(overlays)}] {overlay.name}")
+        output = f"Applied overlay bundle from {artifact_path}"
+        output += f"\nTransaction backup: {transaction.get('transaction_id')}"
+        if applied:
+            output += "\nApplied overlays:\n" + "\n".join(applied)
+        if skipped_metadata:
+            output += f"\nSkipped {skipped_metadata} devtool metadata file(s)."
+        if deleted_paths:
+            output += f"\nDeleted {len(deleted_paths)} path(s) from nested .devtool-delete file(s)."
+        rc = 0
+    except KeyboardInterrupt:
+        rc = 130
+        output = "Interrupted during overlay bundle apply."
+        if transaction:
+            rollback_result = rollback_transaction(transaction.get("path"), reason="interrupted during overlay bundle apply")
+            output += "\n" + rollback_result.output
+    except BaseException as exc:
+        output = f"{type(exc).__name__}: {exc}"
+        rc = 1
+        if transaction:
+            rollback_result = rollback_transaction(transaction.get("path"), reason="error during overlay bundle apply")
+            output += "\n" + rollback_result.output
+            if rollback_result.returncode != 0:
+                output += "\nRollback failed; manual intervention may be required."
+    duration = time.perf_counter() - start
+    path = str(write_log(output, log_path, append=log_path is not None))
+    metadata = {}
+    if transaction:
+        tx_id = str(transaction.get("transaction_id") or "")
+        tx_path = str(transaction.get("path") or "") if tx_id else ""
+        metadata = {
+            "transaction_id": tx_id,
+            "transaction_path": tx_path,
+            "artifact_path": str(artifact_path),
+            "delete_artifact_on_success": True,
+            "artifact_type": "overlay_bundle",
+        }
+        if rollback_result is not None:
+            metadata["rollback_returncode"] = rollback_result.returncode
+            metadata["rolled_back_during_apply"] = True
+    return OperationResult("apply-overlays", argv, rc, duration, output, [], log_path=path, metadata=metadata)
 
 
 def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
@@ -764,12 +960,12 @@ def _artifact_sidecars(artifact_path: Path) -> list[Path]:
     ]
 
 def _extract_archive(artifact_path: Path, target: Path) -> int:
-    if artifact_path.suffix == ".zip":
+    suffix = archive_suffix(artifact_path)
+    if suffix == ".zip":
         with zipfile.ZipFile(artifact_path) as zf:
             return _safe_extract_zip(zf, target)
-    if artifact_path.suffix == ".tar" or artifact_path.name.endswith((".tar.gz", ".tgz")):
-        mode = "r:gz" if artifact_path.name.endswith((".tar.gz", ".tgz")) else "r"
-        with tarfile.open(artifact_path, mode) as tf:
+    if suffix and suffix != ".zip":
+        with open_tar_archive(artifact_path) as tf:
             return _safe_extract_tar(tf, target)
     raise RuntimeError(f"Unsupported artifact type: {artifact_path}")
 

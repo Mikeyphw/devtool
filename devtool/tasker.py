@@ -628,7 +628,7 @@ class TaskerProgressSink:
         }
         self.emit("phase_started", status="running", phase=self.current_phase, progress={"percent": None, "current": 0, "completed": 0, "total": None}, message=_human_event_message("phase_started", phase_name=name), force=True, notify=True)
 
-    def progress(self, *, detail: str = "", completed: int | None = None, total: int | None = None, percent: float | None = None, force: bool = False) -> None:
+    def progress(self, *, detail: str = "", completed: int | None = None, total: int | None = None, percent: float | None = None, target: str = "", force: bool = False) -> None:
         now = time.monotonic()
         if not force and now - self._last_update_at < self.update_interval_s:
             return
@@ -642,6 +642,8 @@ class TaskerProgressSink:
             "total": total,
             "detail": detail,
         }
+        if target:
+            payload["target"] = target
         self.emit("progress", status="running", phase=self.current_phase, progress=payload, message=detail, notify=True)
 
     def phase_finished(self, result: OperationResult) -> None:
@@ -703,8 +705,12 @@ class TaskerProgressSink:
                 total = self._last_state.get("total")
         if event_type == "finished" and status == "ok" and total is not None:
             current = total
+        progress_target = str((progress or {}).get("target") or "").strip()
+        display_target = progress_target or self.target or None
         notification_payload = notification or self._notification_payload(status, message, progress)
         simple_notification = _simple_notification_payload(notification_payload, message=message, current=current, total=total)
+        if display_target:
+            simple_notification["target"] = display_target
         state = {
             "schema_version": 1,
             "producer": "devtool",
@@ -715,7 +721,7 @@ class TaskerProgressSink:
             "command": self.command,
             "repo_root": self.repo_root,
             "repo_name": self.repo_name,
-            "target": self.target or None,
+            "target": display_target,
             "started_at": self.started_at,
             "updated_at": timestamp,
             "finished_at": timestamp if event_type == "finished" else None,
@@ -786,6 +792,9 @@ class TaskerProgressSink:
         bits = []
         if self.repo_name:
             bits.append(self.repo_name)
+        progress_target = str((progress or {}).get("target") or self.target or "").strip()
+        if progress_target:
+            bits.append(progress_target)
         if progress_text:
             bits.append(progress_text)
         if detail:

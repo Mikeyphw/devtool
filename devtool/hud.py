@@ -31,6 +31,9 @@ DEFAULT_HUD_POLL_INTERVAL = 0.10
 DEFAULT_RECENT_EVENTS = 8
 DEFAULT_HUD_HOST = "127.0.0.1"
 DEFAULT_HUD_PORT = 8765
+DESKTOP_HUD_APP_ID = "net.mph.devtool.HUD"
+DESKTOP_HUD_ICON_NAME = "devtool-hud"
+DESKTOP_HUD_WM_CLASS = "devtool-hud"
 
 
 @dataclass(slots=True)
@@ -209,6 +212,8 @@ def parse_hud_state(payload: dict[str, Any] | None) -> HudState:
     expanded_title = str(notification.get("expanded_title") or title)
     expanded_text = str(notification.get("expanded_text") or notification.get("body") or text)
 
+    target = str(payload.get("target") or progress.get("target") or notification.get("target") or "")
+
     return HudState(
         title=title,
         text=text,
@@ -222,7 +227,7 @@ def parse_hud_state(payload: dict[str, Any] | None) -> HudState:
         command=str(payload.get("command") or ""),
         repo_name=str(payload.get("repo_name") or ""),
         repo_root=str(payload.get("repo_root") or ""),
-        target=str(payload.get("target") or ""),
+        target=target,
         updated_at=str(payload.get("updated_at") or payload.get("seq") or ""),
         seq=seq,
         raw=payload,
@@ -427,6 +432,44 @@ def friendly_event_line(event: dict[str, Any]) -> str | None:
     return human_event_type(event_type)
 
 
+def event_is_error(event: dict[str, Any]) -> bool:
+    status = _result_status_from_event(event).lower()
+    if status in {"failed", "error"}:
+        return True
+    notification = event.get("notification") if isinstance(event.get("notification"), dict) else {}
+    if str(notification.get("level") or "").lower() == "error":
+        return True
+    totals = event.get("totals") if isinstance(event.get("totals"), dict) else {}
+    if _coerce_int(totals.get("errors")) or _coerce_int(totals.get("failed")):
+        return True
+    message = _event_message(event).lower()
+    # Avoid highlighting successful summaries such as "0 failed".
+    if _is_test_summary(message):
+        parsed = _parse_test_summary(message)
+        return bool(parsed and parsed.lower().startswith("tests failing"))
+    return bool(message and (" error " in f" {message} " or " failed" in message or message.startswith("failed")))
+
+
+def recent_error_lines(events: Iterable[dict[str, Any]], *, limit: int = 3) -> list[str]:
+    lines: list[str] = []
+    for event in events:
+        if not event_is_error(event):
+            continue
+        line = friendly_event_line(event)
+        if line and line not in lines:
+            lines.append(line)
+    return lines[-limit:]
+
+
+def state_target_label(state: HudState) -> str:
+    target = (state.target or "").strip()
+    if target:
+        return f"Target: {target}"
+    repo = (state.repo_name or "").strip()
+    if repo:
+        return f"Target: {repo}"
+    return "Target: waiting"
+
 
 def compact_operation_title(state: HudState) -> str:
     """Return the one-line headline for the compact GTK HUD."""
@@ -545,6 +588,17 @@ def state_from_directory(directory: Path) -> HudState:
             events_mtime = 0
             notification_mtime = 0
         if events_mtime <= notification_mtime + 250_000_000:
+            # Preserve the richer repo/phase/target fields from state.json while
+            # still letting notification.json win for title/text/progress.
+            rich_payload = _read_json_file(directory / "state.json") or _read_json_file(directory / "latest_event.json") or {}
+            if rich_payload:
+                merged = dict(rich_payload)
+                merged["notification"] = notification
+                merged["tasker_notification"] = notification
+                for key in ("title", "text", "expanded_title", "expanded_text", "current", "total", "target"):
+                    if key in notification:
+                        merged[key] = notification[key]
+                return parse_hud_state(merged)
             return parse_hud_state(notification)
 
     candidates = [directory / "latest_event.json", directory / "state.json"]
@@ -809,6 +863,48 @@ class DesktopNotificationHud:
             time.sleep(interval_s)
 
 
+def _xdg_data_home() -> Path:
+    raw = os.environ.get("XDG_DATA_HOME", "").strip()
+    return Path(raw).expanduser() if raw else Path.home() / ".local" / "share"
+
+
+def _install_desktop_hud_identity() -> Path | None:
+    """Install a lightweight desktop/icon identity so GNOME can group the HUD."""
+    data_home = _xdg_data_home()
+    icon_path = data_home / "icons" / "hicolor" / "scalable" / "apps" / f"{DESKTOP_HUD_ICON_NAME}.svg"
+    desktop_path = data_home / "applications" / f"{DESKTOP_HUD_WM_CLASS}.desktop"
+    appid_desktop_path = data_home / "applications" / f"{DESKTOP_HUD_APP_ID}.desktop"
+    icon_svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="28" fill="#111827"/>
+  <path d="M24 78h80" stroke="#5ee49b" stroke-width="12" stroke-linecap="round"/>
+  <path d="M24 52h48" stroke="#68d8ff" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="94" cy="52" r="10" fill="#ffd166"/>
+</svg>
+"""
+    desktop_text = f"""[Desktop Entry]
+Type=Application
+Name=Devtool HUD
+Comment=Live devtool progress HUD
+Exec=devtool hud --mode desktop-window --follow-active
+Icon={DESKTOP_HUD_ICON_NAME}
+Terminal=false
+NoDisplay=true
+Categories=Development;Utility;
+StartupWMClass={DESKTOP_HUD_WM_CLASS}
+"""
+    try:
+        icon_path.parent.mkdir(parents=True, exist_ok=True)
+        desktop_path.parent.mkdir(parents=True, exist_ok=True)
+        if not icon_path.exists() or icon_path.read_text(encoding="utf-8", errors="ignore") != icon_svg:
+            icon_path.write_text(icon_svg, encoding="utf-8")
+        for path in (desktop_path, appid_desktop_path):
+            if not path.exists() or path.read_text(encoding="utf-8", errors="ignore") != desktop_text:
+                path.write_text(desktop_text, encoding="utf-8")
+        return icon_path
+    except OSError:
+        return None
+
+
 class GtkDesktopHud:
     """Compact GTK floating desktop HUD for GNOME/Unix desktops."""
 
@@ -826,9 +922,9 @@ class GtkDesktopHud:
         gi.require_version("Gtk", "3.0")
         gi.require_version("Gdk", "3.0")
         gi.require_version("Pango", "1.0")
-        from gi.repository import Gdk, GLib, Gtk, Pango  # type: ignore[import-not-found]
+        from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # type: ignore[import-not-found]
 
-        return Gdk, GLib, Gtk, Pango
+        return Gdk, Gio, GLib, Gtk, Pango
 
     @staticmethod
     def available() -> bool:
@@ -848,27 +944,51 @@ class GtkDesktopHud:
             print(json.dumps({"state": snapshot["state"], "events": snapshot["events"], "phase_highlights": last_phase_highlights(snapshot["events"])}, ensure_ascii=False, indent=2))
             return 0
         try:
-            Gdk, GLib, Gtk, Pango = self._require_gtk3()
+            Gdk, Gio, GLib, Gtk, Pango = self._require_gtk3()
         except Exception as exc:
             raise RuntimeError("GTK HUD requires PyGObject/GTK 3. On Ubuntu: sudo apt install python3-gi gir1.2-gtk-3.0") from exc
 
-        window = Gtk.Window(title="devtool HUD")
-        window.set_default_size(440, 330)
+        icon_path = _install_desktop_hud_identity()
+        with contextlib.suppress(Exception):
+            GLib.set_application_name("Devtool HUD")
+        with contextlib.suppress(Exception):
+            GLib.set_prgname(DESKTOP_HUD_WM_CLASS)
+        with contextlib.suppress(Exception):
+            Gdk.set_program_class(DESKTOP_HUD_WM_CLASS)
+        with contextlib.suppress(Exception):
+            Gtk.Window.set_default_icon_name(DESKTOP_HUD_ICON_NAME)
+
+        window = Gtk.Window(title="Devtool HUD")
+        window.set_name(DESKTOP_HUD_WM_CLASS)
+        window.set_default_size(520, 460)
         window.set_keep_above(True)
         window.set_resizable(True)
+        with contextlib.suppress(Exception):
+            window.set_wmclass(DESKTOP_HUD_WM_CLASS, DESKTOP_HUD_WM_CLASS)
+        with contextlib.suppress(Exception):
+            window.set_role(DESKTOP_HUD_WM_CLASS)
+        with contextlib.suppress(Exception):
+            window.set_icon_name(DESKTOP_HUD_ICON_NAME)
+        if icon_path is not None:
+            with contextlib.suppress(Exception):
+                window.set_icon_from_file(str(icon_path))
         window.connect("destroy", Gtk.main_quit)
 
         css = b"""
         .hud-root { background: #111318; color: #f3f4f6; }
-        .hud-header { color: #9ca3af; font-size: 11px; letter-spacing: 0.04em; }
-        .hud-title { color: #f9fafb; font-size: 18px; font-weight: 700; }
-        .hud-muted { color: #a7b0bd; }
-        .hud-meta { color: #d1d5db; font-size: 12px; }
-        .hud-event { color: #d1d5db; font-size: 12px; }
+        .hud-header { color: #9ca3af; font-size: 12px; letter-spacing: 0.04em; font-weight: 700; }
+        .hud-title { color: #f9fafb; font-size: 22px; font-weight: 800; }
+        .hud-target { color: #e5e7eb; font-size: 15px; font-weight: 700; }
+        .hud-muted { color: #c4ccd8; font-size: 14px; }
+        .hud-meta { color: #d1d5db; font-size: 13px; }
+        .hud-event { color: #d1d5db; font-size: 13px; }
+        .hud-error-banner { color: #ff6978; font-size: 15px; font-weight: 800; }
         .hud-debug { color: #9ca3af; font-family: monospace; font-size: 11px; }
         .hud-ok { color: #5ee49b; }
-        .hud-failed { color: #ff6978; }
-        .hud-running { color: #ffd166; }
+        .hud-failed { color: #ff6978; font-weight: 800; }
+        .hud-running { color: #ffd166; font-weight: 700; }
+        progressbar trough { min-height: 16px; border-radius: 999px; }
+        progressbar progress { min-height: 16px; border-radius: 999px; }
         button { border-radius: 8px; padding: 5px 9px; }
         """
         provider = Gtk.CssProvider(); provider.load_from_data(css)
@@ -876,29 +996,32 @@ class GtkDesktopHud:
         if screen is not None:
             Gtk.StyleContext.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         outer.get_style_context().add_class("hud-root")
-        outer.set_margin_top(12); outer.set_margin_bottom(12); outer.set_margin_start(12); outer.set_margin_end(12)
+        outer.set_margin_top(10); outer.set_margin_bottom(10); outer.set_margin_start(10); outer.set_margin_end(10)
         window.add(outer)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); outer.pack_start(header, False, False, 0)
-        header_label = Gtk.Label(label="devtool HUD Lite"); header_label.set_xalign(0); header_label.get_style_context().add_class("hud-header"); header.pack_start(header_label, True, True, 0)
+        header_label = Gtk.Label(label="DEVTOOL HUD"); header_label.set_xalign(0); header_label.get_style_context().add_class("hud-header"); header.pack_start(header_label, True, True, 0)
         percent_label = Gtk.Label(label="● waiting"); percent_label.set_xalign(1); percent_label.get_style_context().add_class("hud-header"); header.pack_end(percent_label, False, False, 0)
         title = Gtk.Label(label="Waiting for progress"); title.set_xalign(0); title.set_line_wrap(True); title.get_style_context().add_class("hud-title"); outer.pack_start(title, False, False, 0)
+        target_label = Gtk.Label(label="Target: waiting"); target_label.set_xalign(0); target_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE); target_label.get_style_context().add_class("hud-target"); outer.pack_start(target_label, False, False, 0)
         detail = Gtk.Label(label="No devtool task has reported progress yet."); detail.set_xalign(0); detail.set_line_wrap(True); detail.get_style_context().add_class("hud-muted"); outer.pack_start(detail, False, False, 0)
+        error_label = Gtk.Label(label=""); error_label.set_xalign(0); error_label.set_line_wrap(True); error_label.get_style_context().add_class("hud-error-banner"); error_label.set_no_show_all(True); outer.pack_start(error_label, False, False, 0)
         progress = Gtk.ProgressBar(); progress.set_show_text(True); outer.pack_start(progress, False, False, 0)
-        meta = Gtk.Label(label="Phase: waiting  ·  Repo: -  ·  Target: -"); meta.set_xalign(0); meta.set_line_wrap(True); meta.get_style_context().add_class("hud-meta"); outer.pack_start(meta, False, False, 0)
+        meta = Gtk.Label(label="Phase: waiting  ·  Repo: -"); meta.set_xalign(0); meta.set_line_wrap(True); meta.get_style_context().add_class("hud-meta"); outer.pack_start(meta, False, False, 0)
         phase_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2); outer.pack_start(phase_box, False, False, 0)
         restore_label = Gtk.Label(label="Restore: -"); build_label = Gtk.Label(label="Build: -"); test_label = Gtk.Label(label="Test: -")
         for label in (restore_label, build_label, test_label):
             label.set_xalign(0); label.set_ellipsize(Pango.EllipsizeMode.END); label.get_style_context().add_class("hud-meta"); phase_box.pack_start(label, False, False, 0)
-        events_label = Gtk.Label(label="No events yet"); events_label.set_xalign(0); events_label.set_yalign(0); events_label.set_selectable(True); events_label.set_line_wrap(True); events_label.get_style_context().add_class("hud-event"); outer.pack_start(events_label, True, True, 0)
+        events_scroller = Gtk.ScrolledWindow(); events_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); events_scroller.set_min_content_height(150)
+        events_label = Gtk.Label(label="No events yet"); events_label.set_xalign(0); events_label.set_yalign(0); events_label.set_selectable(True); events_label.set_line_wrap(True); events_label.get_style_context().add_class("hud-event"); events_scroller.add(events_label); outer.pack_start(events_scroller, True, True, 0)
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6); outer.pack_start(actions, False, False, 0)
         copy_button = Gtk.Button(label="Copy summary"); log_button = Gtk.Button(label="Open log"); close_button = Gtk.Button(label="Close HUD")
         actions.pack_start(copy_button, False, False, 0); actions.pack_start(log_button, False, False, 0); actions.pack_end(close_button, False, False, 0)
         debug = Gtk.Expander(label="Debug"); debug.set_expanded(False)
         debug_label = Gtk.Label(label=""); debug_label.set_xalign(0); debug_label.set_yalign(0); debug_label.set_selectable(True); debug_label.set_line_wrap(True); debug_label.get_style_context().add_class("hud-debug"); debug.add(debug_label); outer.pack_start(debug, False, False, 0)
-        last_summary = {"text": "devtool HUD Lite: waiting", "log_path": ""}
+        last_summary = {"text": "Devtool HUD: waiting", "log_path": ""}
 
         def _set_status_classes(widget: Any, status: str) -> None:
             ctx = widget.get_style_context()
@@ -921,7 +1044,13 @@ class GtkDesktopHud:
             events = snapshot.get("events") if isinstance(snapshot.get("events"), list) else []
             highlights = last_phase_highlights(events)
             operation = compact_operation_title(state)
-            title.set_text(operation); detail.set_text(compact_detail_text(state))
+            title.set_text(operation); target_label.set_text(state_target_label(state)); detail.set_text(compact_detail_text(state))
+            title_bits = ["Devtool HUD"]
+            if state.status:
+                title_bits.append(human_status(state.status))
+            if state.target or state.repo_name:
+                title_bits.append(state.target or state.repo_name)
+            window.set_title(" — ".join(title_bits))
             percent_text = f"● {human_status(state.status).lower()}" + (f"  {state.percent}%" if state.percent is not None else "")
             percent_label.set_text(percent_text); _set_status_classes(percent_label, state.status)
             if state.current is not None and state.total is not None and state.total > 0:
@@ -934,15 +1063,26 @@ class GtkDesktopHud:
             if state.phase_name: meta_bits.append(f"Phase: {human_phase_name(state.phase_name)}")
             elif state.command: meta_bits.append(f"Command: {human_phase_name(state.command)}")
             if state.repo_name: meta_bits.append(f"Repo: {state.repo_name}")
-            if state.target: meta_bits.append(f"Target: {state.target}")
             if follow_active: meta_bits.append("following active HUD")
             meta.set_text("  ·  ".join(meta_bits) or "Waiting")
             restore_label.set_text("Restore: " + highlights.get("restore", "-")); build_label.set_text("Build: " + highlights.get("build", "-")); test_label.set_text("Test: " + highlights.get("test", "-"))
+            error_lines = recent_error_lines(events, limit=3)
+            if state.status == "failed" and not error_lines:
+                error_lines = [compact_detail_text(state)]
+            if error_lines:
+                error_label.set_text("⚠ " + "\n⚠ ".join(error_lines))
+                error_label.show()
+            else:
+                error_label.hide()
             lines = [line for event in events if (line := friendly_event_line(event))]
-            shown = lines[-5:]
-            events_label.set_text("\n".join(f"• {line}" for line in shown) or "No events yet")
+            shown = lines[-8:]
+            formatted_lines = []
+            for line in shown:
+                is_error = any(line == err or line in err or err in line for err in error_lines)
+                formatted_lines.append(("❌ " if is_error else "• ") + line)
+            events_label.set_text("\n".join(formatted_lines) or "No events yet")
             log_path = latest_log_path(events); log_button.set_sensitive(bool(log_path) and shutil.which("xdg-open") is not None)
-            summary_lines = [operation, compact_detail_text(state), meta.get_text(), restore_label.get_text(), build_label.get_text(), test_label.get_text(), *shown]
+            summary_lines = [operation, state_target_label(state), compact_detail_text(state), *(error_lines or []), meta.get_text(), restore_label.get_text(), build_label.get_text(), test_label.get_text(), *shown]
             last_summary["text"] = "\n".join(line for line in summary_lines if line); last_summary["log_path"] = log_path or ""
             debug_label.set_text("\n".join([f"active_dir={current_dir}", f"state={current_dir / 'state.json'}", f"events={current_dir / 'events.jsonl'}", f"seq={state.seq if state.seq is not None else '-'} status={state.status} event={state.event_type}", f"command={state.command or '-'} phase={state.phase_name or '-'}", f"log={log_path or '-'}"]))
             return True

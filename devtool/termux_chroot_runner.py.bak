@@ -28,10 +28,10 @@ _FLAGS_WITH_VALUES = _PATH_VALUE_FLAGS | {
     "--recent-events", "--from-ref", "--to-ref", "-m",
 }
 
-_APPLY_COMMANDS = {"apply-overlay", "ao", "apply-snapshot", "as"}
-_BATCH_APPLY_PREFIXES = ("apply-overlay=", "ao=", "apply-snapshot=", "as=")
+_APPLY_COMMANDS = {"apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as"}
+_BATCH_APPLY_PREFIXES = ("apply-overlay=", "ao=", "apply-overlays=", "aos=", "apply-snapshot=", "as=")
 _PATH_SUFFIXES = (
-    ".zip", ".tar", ".tar.gz", ".tgz", ".sln", ".csproj", ".fsproj",
+    ".zip", ".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.bz2", ".tbz2", ".sln", ".csproj", ".fsproj",
     ".vbproj", ".py", ".toml", ".json", ".md", ".txt", ".log",
 )
 
