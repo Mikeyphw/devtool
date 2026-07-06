@@ -17,6 +17,7 @@ from rich.prompt import Confirm
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
 from .artifacts import (
     append_history,
+    artifact_cleanup_paths,
     diff_artifact,
     format_preview,
     latest_commit_hash,
@@ -24,6 +25,7 @@ from .artifacts import (
     make_history_entry,
     preview_artifact,
     read_artifact_manifest,
+    resolve_artifact_path,
     sha256_file,
     validate_artifact,
 )
@@ -523,7 +525,7 @@ def _resolve_batch_steps(config: ProjectConfig, steps: list[str]) -> tuple[list[
 
 
 def _read_artifact_manifest(artifact: str) -> dict[str, str]:
-    artifact_path = resolve_cli_path(artifact)
+    artifact_path = resolve_artifact_path(artifact)
     sidecar_candidates = [
         artifact_path.with_name(artifact_path.name + ".devtool.json"),
         artifact_path.with_name(artifact_path.name + ".manifest.json"),
@@ -935,7 +937,8 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
 
     started = datetime.now(timezone.utc)
     try:
-        artifact_path = resolve_cli_path(artifact)
+        artifact_path = resolve_artifact_path(artifact)
+        args._devtool_artifact_path = str(artifact_path)
         args._devtool_artifact_sha = sha256_file(artifact_path) if artifact_path.exists() else ""
         validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
         args._devtool_artifact_manifest = validation.manifest
@@ -1069,11 +1072,8 @@ def _apply_artifact_path(results: list[OperationResult]) -> str:
     return ""
 
 
-def _artifact_sidecars_for_cleanup(artifact_path: Path) -> list[Path]:
-    return [
-        artifact_path.with_name(artifact_path.name + ".devtool.json"),
-        artifact_path.with_name(artifact_path.name + ".manifest.json"),
-    ]
+def _artifact_paths_for_cleanup(artifact_path: Path) -> list[Path]:
+    return artifact_cleanup_paths(artifact_path)
 
 
 def _delete_original_artifact_after_apply(
@@ -1094,7 +1094,7 @@ def _delete_original_artifact_after_apply(
 
     artifact_path = _apply_artifact_path(results)
     if not artifact_path and artifact:
-        artifact_path = str(resolve_cli_path(artifact))
+        artifact_path = str(resolve_artifact_path(artifact))
     if not artifact_path:
         return None
 
@@ -1105,7 +1105,7 @@ def _delete_original_artifact_after_apply(
     errors: list[str] = []
     reason = "after failed apply" if failed or rolled_back else "after successful apply"
     try:
-        for candidate in [path, *_artifact_sidecars_for_cleanup(path)]:
+        for candidate in _artifact_paths_for_cleanup(path):
             try:
                 if candidate.exists() or candidate.is_symlink():
                     candidate.unlink()

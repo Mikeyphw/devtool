@@ -170,6 +170,14 @@ class HudV345Tests(unittest.TestCase):
         args = parser.parse_args(["hud", "--mode", "v6", "--once"])
         self.assertEqual(args.mode, "v6")
 
+    def test_gtk_desktop_hud_pins_gdk3_before_import(self) -> None:
+        import inspect
+        import devtool.hud as hud_module
+
+        source = inspect.getsource(hud_module.GtkDesktopHud._require_gtk3)
+        self.assertLess(source.index('gi.require_version("Gdk", "3.0")'), source.index("from gi.repository import Gdk"))
+        self.assertLess(source.index('gi.require_version("Gtk", "3.0")'), source.index("from gi.repository import Gdk"))
+
 
 if __name__ == "__main__":
     unittest.main()

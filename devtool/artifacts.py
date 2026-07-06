@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import tarfile
 import zipfile
 from dataclasses import dataclass
@@ -17,6 +18,177 @@ MANIFEST_NAMES = {".devtool-artifact.json", "artifact.devtool.json", "devtool-ar
 DELETE_MANIFEST_NAME = ".devtool-delete"
 ARTIFACT_METADATA_NAMES = MANIFEST_NAMES | {DELETE_MANIFEST_NAME}
 HISTORY_PATH = Path(".devtool") / "artifacts.json"
+
+SUPPORTED_ARTIFACT_SUFFIXES = (".tar.gz", ".tgz", ".tar", ".zip")
+_SUFFIX_VARIANT_RE = re.compile(r"^(?P<root>.+?)(?:\((?P<paren>\d+)\)|[_-](?P<sep>\d+)|(?P<bare>\d+))$")
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactVariant:
+    path: Path
+    root: str
+    suffix: str
+    number: int
+
+
+def _split_artifact_archive_name(name: str) -> tuple[str, str] | None:
+    """Return archive stem plus supported archive suffix, preserving filename case."""
+    lower = name.lower()
+    for suffix in SUPPORTED_ARTIFACT_SUFFIXES:
+        if lower.endswith(suffix):
+            return name[: -len(suffix)], name[-len(suffix) :]
+    return None
+
+
+def _artifact_variant_number(stem: str, root: str) -> int | None:
+    if stem == root:
+        return 0
+    match = _SUFFIX_VARIANT_RE.fullmatch(stem)
+    if not match or match.group("root") != root:
+        return None
+    value = match.group("paren") or match.group("sep") or match.group("bare")
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _artifact_family_root_candidates(path: Path, stem: str, suffix: str) -> list[str]:
+    """Return possible unsuffixed artifact stems for a requested archive path.
+
+    Browser/download-manager duplicates often add ``(1)``, ``_1``, ``-1`` or a
+    bare trailing number before the archive suffix.  Separator and parenthesized
+    forms are unambiguous. Bare trailing digits are only treated as a duplicate
+    suffix when the unsuffixed sibling/family exists, so a legitimate artifact
+    such as ``schema_v2.zip`` keeps resolving as itself.
+    """
+    roots = [stem]
+    match = _SUFFIX_VARIANT_RE.fullmatch(stem)
+    if not match:
+        return roots
+
+    root = match.group("root")
+    if not root or root == stem:
+        return roots
+
+    is_bare = match.group("bare") is not None and match.group("paren") is None and match.group("sep") is None
+    if not is_bare:
+        return [root]
+
+    directory = path.parent
+    canonical = directory / f"{root}{suffix}"
+    if canonical.exists():
+        return [root]
+    # Bare trailing digits are ambiguous with real artifact names.  Only treat
+    # them as a duplicate suffix when another less-ambiguous family member
+    # exists, e.g. ``overlay-2.zip`` or ``overlay(2).zip``.
+    for entry in directory.iterdir():
+        if entry.resolve() == path.resolve() or not entry.name.lower().endswith(suffix.lower()):
+            continue
+        entry_stem = entry.name[: -len(suffix)]
+        variant_match = _SUFFIX_VARIANT_RE.fullmatch(entry_stem)
+        if not variant_match or variant_match.group("root") != root:
+            continue
+        if variant_match.group("paren") is not None or variant_match.group("sep") is not None:
+            return [root]
+    return roots
+
+
+def _artifact_family_variants(path: Path) -> list[ArtifactVariant]:
+    split = _split_artifact_archive_name(path.name)
+    if split is None or not path.parent.exists():
+        return [ArtifactVariant(path, path.stem, path.suffix, 0)] if path.exists() else []
+
+    stem, suffix = split
+    roots = _artifact_family_root_candidates(path, stem, suffix)
+    variants: list[ArtifactVariant] = []
+    seen: set[Path] = set()
+    lower_suffix = suffix.lower()
+    for root in roots:
+        for entry in path.parent.iterdir():
+            if not entry.is_file() and not entry.is_symlink():
+                continue
+            if not entry.name.lower().endswith(lower_suffix):
+                continue
+            entry_stem = entry.name[: -len(suffix)]
+            number = _artifact_variant_number(entry_stem, root)
+            if number is None:
+                continue
+            resolved = entry.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            variants.append(ArtifactVariant(resolved, root, entry.name[-len(suffix) :], number))
+    return variants
+
+
+def _artifact_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _select_artifact_variant(path: Path, variants: list[ArtifactVariant]) -> Path:
+    if not variants:
+        return path
+
+    split = _split_artifact_archive_name(path.name)
+    requested_stem = split[0] if split else path.stem
+    root_order = {root: index for index, root in enumerate(dict.fromkeys([requested_stem, *(variant.root for variant in variants)]))}
+
+    selected_by_root: list[ArtifactVariant] = []
+    for root in dict.fromkeys(variant.root for variant in variants):
+        family = [variant for variant in variants if variant.root == root]
+        unsuffixed = [variant for variant in family if variant.number == 0]
+        suffixed = [variant for variant in family if variant.number > 0]
+        if suffixed:
+            highest_number = max(variant.number for variant in suffixed)
+            highest = max((variant for variant in suffixed if variant.number == highest_number), key=lambda variant: _artifact_mtime(variant.path))
+            if unsuffixed:
+                plain = max(unsuffixed, key=lambda variant: _artifact_mtime(variant.path))
+                selected_by_root.append(plain if _artifact_mtime(plain.path) > _artifact_mtime(highest.path) else highest)
+            else:
+                selected_by_root.append(highest)
+        elif unsuffixed:
+            selected_by_root.append(max(unsuffixed, key=lambda variant: _artifact_mtime(variant.path)))
+
+    exact = path.resolve()
+    for selected in selected_by_root:
+        if selected.path == exact:
+            return selected.path
+    selected_by_root.sort(key=lambda variant: (root_order.get(variant.root, 999), -variant.number, -_artifact_mtime(variant.path)))
+    return selected_by_root[0].path if selected_by_root else path
+
+
+def resolve_artifact_path(artifact: str | Path) -> Path:
+    """Resolve a CLI artifact path, accepting common duplicate-download suffixes.
+
+    ``overlay.zip`` may resolve to ``overlay(1).zip``, ``overlay_1.zip``,
+    ``overlay1.zip`` or ``overlay-1.zip``.  The highest numeric duplicate suffix
+    wins, unless the unsuffixed archive exists and has a newer modification time.
+    """
+    path = resolve_cli_path(str(artifact))
+    return _select_artifact_variant(path, _artifact_family_variants(path))
+
+
+def artifact_cleanup_paths(artifact: str | Path) -> list[Path]:
+    """Return every archive variant and sidecar that belongs to an artifact family."""
+    path = resolve_artifact_path(artifact)
+    variants = _artifact_family_variants(path) or ([ArtifactVariant(path, path.stem, path.suffix, 0)] if path.exists() else [])
+    cleanup: list[Path] = []
+    seen: set[Path] = set()
+    for variant in sorted(variants, key=lambda item: (item.number, str(item.path))):
+        for candidate in [variant.path, variant.path.with_name(variant.path.name + ".devtool.json"), variant.path.with_name(variant.path.name + ".manifest.json")]:
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            cleanup.append(candidate)
+    return cleanup
+
 
 
 def is_artifact_metadata_member(name: str) -> bool:
@@ -54,7 +226,7 @@ def _safe_rel(name: str) -> Path:
 
 
 def list_archive_members(artifact: str | Path, *, include_data: bool = False) -> list[ArchiveMember]:
-    path = resolve_cli_path(str(artifact))
+    path = resolve_artifact_path(artifact)
     members: list[ArchiveMember] = []
     if path.suffix == ".zip":
         with zipfile.ZipFile(path) as zf:
@@ -82,7 +254,7 @@ def list_archive_members(artifact: str | Path, *, include_data: bool = False) ->
 
 
 def read_artifact_manifest(artifact: str | Path) -> dict[str, Any]:
-    artifact_path = resolve_cli_path(str(artifact))
+    artifact_path = resolve_artifact_path(artifact)
     sidecars = [
         artifact_path.with_name(artifact_path.name + ".devtool.json"),
         artifact_path.with_name(artifact_path.name + ".manifest.json"),
@@ -218,7 +390,7 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
             changes.append({"kind": "unchanged", "path": str(rel)})
 
     return {
-        "artifact": str(resolve_cli_path(str(artifact))),
+        "artifact": str(resolve_artifact_path(artifact)),
         "snapshot": snapshot,
         "files": len(incoming_files),
         "changes": changes,
@@ -392,7 +564,7 @@ def make_history_entry(
     preview: dict[str, Any] | None = None,
     manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    path = resolve_cli_path(str(artifact))
+    path = resolve_artifact_path(artifact)
     digest = sha256_file(path) if path.exists() else ""
     return {
         "applied_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),

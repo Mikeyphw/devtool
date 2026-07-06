@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path
 
 
-from .artifacts import is_artifact_metadata_member, read_delete_manifest, preview_artifact
+from .artifacts import is_artifact_metadata_member, preview_artifact, read_delete_manifest, resolve_artifact_path
 from .config import generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
 from .diagnostics import classify_failure, parse_issues
@@ -670,13 +670,13 @@ def run_specs(
     return results, "\n\n".join(raw_sections)
 
 def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
-    artifact_path = resolve_cli_path(artifact)
+    artifact_path = resolve_artifact_path(artifact)
     argv = ["unzip", "-o", str(artifact_path), "-d", str(repo_root)]
     return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
 
 
 def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
-    artifact_path = resolve_cli_path(artifact)
+    artifact_path = resolve_artifact_path(artifact)
     return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
 
 

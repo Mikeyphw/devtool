@@ -816,15 +816,28 @@ class GtkDesktopHud:
         self.recent_events = recent_events
 
     @staticmethod
+    def _require_gtk3() -> Any:
+        import gi  # type: ignore[import-not-found]
+
+        # Pin every GTK namespace before importing from gi.repository.
+        # On GNOME systems with GTK 4 installed, importing Gdk without this
+        # can load Gdk 4 first; Gtk 3 then crashes with:
+        # "Requiring namespace 'Gdk' version '3.0', but '4.0' is already loaded".
+        gi.require_version("Gtk", "3.0")
+        gi.require_version("Gdk", "3.0")
+        gi.require_version("Pango", "1.0")
+        from gi.repository import Gdk, GLib, Gtk, Pango  # type: ignore[import-not-found]
+
+        return Gdk, GLib, Gtk, Pango
+
+    @staticmethod
     def available() -> bool:
         if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
             return False
         if importlib.util.find_spec("gi") is None:
             return False
         try:
-            import gi  # type: ignore[import-not-found]
-            gi.require_version("Gtk", "3.0")
-            from gi.repository import Gtk  # type: ignore[import-not-found]  # noqa: F401
+            GtkDesktopHud._require_gtk3()
         except Exception:
             return False
         return True
@@ -835,9 +848,7 @@ class GtkDesktopHud:
             print(json.dumps({"state": snapshot["state"], "events": snapshot["events"], "phase_highlights": last_phase_highlights(snapshot["events"])}, ensure_ascii=False, indent=2))
             return 0
         try:
-            import gi  # type: ignore[import-not-found]
-            gi.require_version("Gtk", "3.0")
-            from gi.repository import Gdk, GLib, Gtk, Pango  # type: ignore[import-not-found]
+            Gdk, GLib, Gtk, Pango = self._require_gtk3()
         except Exception as exc:
             raise RuntimeError("GTK HUD requires PyGObject/GTK 3. On Ubuntu: sudo apt install python3-gi gir1.2-gtk-3.0") from exc
 

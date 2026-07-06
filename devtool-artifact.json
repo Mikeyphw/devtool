@@ -1,0 +1,14 @@
+{
+  "type": "overlay",
+  "name": "devtool graceful artifact duplicate matching",
+  "description": "Adds duplicate-download artifact matching for (N), _N, bare N and -N suffixes; applies the selected newest/highest artifact consistently; and cleans up every artifact variant plus sidecars after apply. Preserves the GNOME HUD GTK/GDK fixes.",
+  "files": [
+    "devtool/artifacts.py",
+    "devtool/cli.py",
+    "devtool/runners.py",
+    "devtool/hud.py",
+    "devtool/tasker.py",
+    "tests/test_artifact_matching.py",
+    "tests/test_hud.py"
+  ]
+}
