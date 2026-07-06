@@ -756,13 +756,81 @@ def _rollback(config: ProjectConfig, args: argparse.Namespace) -> int:
     return 0 if totals["failed"] == 0 else 1
 
 
-def _git_commit_with_optional_log(repo_root: Path, message: str, *, verbose: bool, dry_run: bool, log_path: Path | str | None) -> tuple[list[OperationResult], str]:
+def _artifact_commit_paths(args: argparse.Namespace) -> list[str]:
+    """Return repo-relative paths that belong to the current applied artifact.
+
+    The preview is computed before apply, so it contains exactly the paths the
+    artifact is expected to add/modify/delete. This prevents unrelated dirty repo
+    files from being included in the automatic handoff commit.
+    """
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    def add_path(value: object) -> None:
+        text = str(value or "").strip().replace("\\", "/")
+        if not text or text == ".":
+            return
+        if text.startswith("/") or text.startswith("../") or "/../" in text:
+            return
+        if text in seen:
+            return
+        seen.add(text)
+        paths.append(text)
+
+    preview = getattr(args, "_devtool_artifact_preview", None)
+    if isinstance(preview, dict):
+        changes = preview.get("changes")
+        if isinstance(changes, list):
+            for change in changes:
+                if not isinstance(change, dict):
+                    continue
+                kind = str(change.get("kind") or "").strip()
+                if kind == "unchanged":
+                    continue
+                add_path(change.get("path"))
+
+    # Fallback for tests/older apply paths where preview was not attached.
+    if not paths:
+        manifest = getattr(args, "_devtool_artifact_manifest", None)
+        if isinstance(manifest, dict):
+            changes = manifest.get("changes")
+            if isinstance(changes, dict):
+                for key in ("addedFiles", "modifiedFiles", "deletedPaths"):
+                    values = changes.get(key)
+                    if isinstance(values, list):
+                        for value in values:
+                            add_path(value)
+
+    return paths
+
+
+def _git_commit_with_optional_log(
+    repo_root: Path,
+    message: str,
+    *,
+    verbose: bool,
+    dry_run: bool,
+    log_path: Path | str | None,
+    paths: list[str] | None = None,
+) -> tuple[list[OperationResult], str]:
+    kwargs = {"verbose": verbose, "dry_run": dry_run}
+    if log_path is not None:
+        kwargs["log_path"] = log_path
+    if paths is not None:
+        kwargs["paths"] = paths
+
     try:
-        return git_commit(repo_root, message, verbose=verbose, dry_run=dry_run, log_path=log_path)
+        return git_commit(repo_root, message, **kwargs)
     except TypeError as exc:
-        if "log_path" not in str(exc):
-            raise
-        return git_commit(repo_root, message, verbose=verbose, dry_run=dry_run)
+        # Compatibility with older tests/mocks or installed builds.
+        message_text = str(exc)
+        if "paths" in message_text:
+            kwargs.pop("paths", None)
+            return git_commit(repo_root, message, **kwargs)
+        if "log_path" in message_text:
+            kwargs.pop("log_path", None)
+            return git_commit(repo_root, message, **kwargs)
+        raise
 
 def _maybe_commit_after_apply(
     config: ProjectConfig,
@@ -779,7 +847,15 @@ def _maybe_commit_after_apply(
     if not results or any(result.returncode != 0 for result in results):
         return results, raw_output
 
-    commit_results, commit_raw = _git_commit_with_optional_log(config.repo_root, commit_message, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path)
+    commit_paths = _artifact_commit_paths(args)
+    commit_results, commit_raw = _git_commit_with_optional_log(
+        config.repo_root,
+        commit_message,
+        verbose=args.verbose,
+        dry_run=args.dry_run,
+        log_path=log_path,
+        paths=commit_paths,
+    )
     results.extend(commit_results)
     if raw_output:
         raw_output = raw_output + "\n\n" + commit_raw

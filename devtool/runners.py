@@ -861,9 +861,55 @@ def _sync_snapshot(snapshot_root: Path, repo_root: Path) -> None:
             shutil.copy2(path, target)
 
 
-def git_commit(repo_root: Path, message: str, *, verbose: bool = False, dry_run: bool = False, log_path: Path | str | None = None) -> tuple[list[OperationResult], str]:
+def _normalize_git_pathspecs(paths: list[str] | tuple[str, ...] | None) -> list[str] | None:
+    """Return safe repo-relative pathspecs for artifact-scoped commits.
+
+    ``None`` preserves the old behavior for the explicit ``devtool commit`` command:
+    stage the whole worktree. A concrete list means "only stage these paths".
+    """
+    if paths is None:
+        return None
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in paths:
+        value = str(raw).strip().replace("\\", "/")
+        if not value or value == ".":
+            continue
+        if value.startswith("/") or value.startswith("../") or "/../" in value:
+            raise ValueError(f"Refusing unsafe git pathspec: {raw!r}")
+        if value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def git_commit(
+    repo_root: Path,
+    message: str,
+    *,
+    verbose: bool = False,
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+    paths: list[str] | tuple[str, ...] | None = None,
+) -> tuple[list[OperationResult], str]:
+    pathspecs = _normalize_git_pathspecs(paths)
+
+    if pathspecs is None:
+        add_argv = ["git", "add", "-A"]
+    elif pathspecs:
+        add_argv = ["git", "add", "-A", "--", *pathspecs]
+    else:
+        output = "No artifact paths changed; skipped git add and git commit."
+        results = [
+            OperationResult("git-add-skipped", ["git", "add", "-A", "--"], 0, 0.0, output, [], skipped=True),
+            OperationResult("git-commit-skipped", ["git", "commit", "-m", message], 0, 0.0, output, [], skipped=True),
+        ]
+        return results, output
+
     specs = [
-        CommandSpec("git-add", ["git", "add", "-A"]),
+        CommandSpec("git-add", add_argv),
         CommandSpec("git-commit", ["git", "commit", "-m", message]),
     ]
     config = ProjectConfig(repo_root=repo_root, kind="unknown")
