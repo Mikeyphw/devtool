@@ -279,9 +279,9 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     except OSError:
         return False
 
-    chosen_mode = (mode or "desktop").strip() or "desktop"
-    if chosen_mode in {"terminal", "console", "v3"} and not sys.stdout.isatty():
-        chosen_mode = "desktop"
+    requested_mode = (mode or "desktop").strip() or "desktop"
+    if requested_mode in {"terminal", "console", "v3"} and not sys.stdout.isatty():
+        requested_mode = "desktop"
 
     singleton_mode = (os.environ.get("DEVTOOL_HUD_SINGLETON") or DEFAULT_HUD_SINGLETON_MODE or "reuse").strip().lower()
     singleton_mode = {"true": "reuse", "1": "reuse", "yes": "reuse", "replace": "kill"}.get(singleton_mode, singleton_mode)
@@ -289,7 +289,7 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
 
     try:
         if follow_active:
-            write_active_hud_directory(directory, mode=chosen_mode)
+            write_active_hud_directory(directory, mode=requested_mode)
     except OSError:
         follow_active = False
 
@@ -297,6 +297,31 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     try:
         registry.mkdir(parents=True, exist_ok=True)
     except OSError:
+        return False
+
+    log_path = registry / "hud-child.log"
+
+    def _append_hud_log(message: str) -> None:
+        with contextlib.suppress(OSError):
+            registry.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{utc_now_iso()} | {message}\n")
+
+    def _resolve_mode_for_detached_child(value: str) -> str:
+        try:
+            from .hud import choose_hud_mode
+            return choose_hud_mode(value)
+        except Exception as exc:
+            _append_hud_log(f"failed to resolve HUD mode {value!r}: {exc}")
+            return value
+
+    chosen_mode = _resolve_mode_for_detached_child(requested_mode)
+    if chosen_mode in {"terminal", "console", "v3"}:
+        _append_hud_log(
+            "not starting auto-HUD because the requested/resolved mode is terminal, "
+            "which would be invisible when detached. Install python3-gi + gir1.2-gtk-3.0 "
+            "or libnotify-bin, then retry desktop/desktop-window/desktop-notify."
+        )
         return False
 
     legacy_pid_file = directory / "hud.pid"
@@ -307,7 +332,13 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
         old_pid = 0
 
     if _pid_is_alive(old_pid):
-        if follow_active and singleton_mode == "kill":
+        old_mode = str((singleton or {}).get("mode") or "")
+        should_replace = (
+            (follow_active and singleton_mode == "kill")
+            or (follow_active and old_mode and old_mode != chosen_mode)
+        )
+        if should_replace:
+            _append_hud_log(f"replacing existing HUD pid={old_pid} mode={old_mode or '-'} with mode={chosen_mode}")
             _terminate_pid(old_pid)
         elif follow_active and bool(singleton.get("follow_active")):
             return True
@@ -339,19 +370,22 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
         env["DEVTOOL_NO_AUTO_HUD"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
         quoted = " ".join(shlex.quote(part) for part in argv)
-        launcher = f"exec </dev/null >/dev/null 2>&1; setsid {quoted} </dev/null >/dev/null 2>&1 & echo $!"
+        log_quoted = shlex.quote(str(log_path))
+        _append_hud_log(f"starting auto-HUD requested={requested_mode} resolved={chosen_mode} dir={directory}")
+        launcher = f"setsid {quoted} </dev/null >>{log_quoted} 2>&1 & echo $!"
         completed = subprocess.run(["/bin/sh", "-c", launcher], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False, close_fds=True, env=env)
         pid_text = (completed.stdout or "").strip().splitlines()[-1:]
         if pid_text:
             pid = int(pid_text[0].strip())
+            legacy_pid_file.parent.mkdir(parents=True, exist_ok=True)
             legacy_pid_file.write_text(str(pid), encoding="utf-8")
             if follow_active:
                 _write_hud_singleton(pid=pid, mode=chosen_mode, directory=directory, follow_active=True)
+            _append_hud_log(f"spawned auto-HUD pid={pid} mode={chosen_mode}")
         return completed.returncode == 0
-    except Exception:
+    except Exception as exc:
+        _append_hud_log(f"failed to start auto-HUD: {exc}")
         return False
-
-
 
 def _result_status(result: OperationResult) -> str:
     if result.skipped:

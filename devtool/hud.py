@@ -817,7 +817,17 @@ class GtkDesktopHud:
 
     @staticmethod
     def available() -> bool:
-        return importlib.util.find_spec("gi") is not None and bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            return False
+        if importlib.util.find_spec("gi") is None:
+            return False
+        try:
+            import gi  # type: ignore[import-not-found]
+            gi.require_version("Gtk", "3.0")
+            from gi.repository import Gtk  # type: ignore[import-not-found]  # noqa: F401
+        except Exception:
+            return False
+        return True
 
     def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
         if once:
