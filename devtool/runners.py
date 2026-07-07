@@ -349,7 +349,7 @@ def _test_completion_grace_for(argv: list[str], command_name: str) -> float | No
             pass
     # Only applies after a final test summary has already printed, so this does
     # not kill legitimately quiet tests that are still running.
-    return 8.0
+    return 30.0
 
 
 def _idle_timeout_for(argv: list[str], command_name: str) -> float | None:

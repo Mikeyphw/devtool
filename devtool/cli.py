@@ -92,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="For test: pass --no-build to dotnet test")
     parser.add_argument("-k", "--continue-on-error", action="store_true", help="Continue batch after errors")
     parser.add_argument("--fail-fast", action="store_true", help="Stop batch on first error")
-    parser.add_argument("-p", "--copy", action="store_true", help="Copy raw output to clipboard without prompting")
+    parser.add_argument("-p", "--copy", action="store_true", help="Copy a concise summary on success, or verbose output on failure")
     parser.add_argument("--copy-summary", action="store_true", help="Copy rendered summary to clipboard without prompting")
     parser.add_argument("--copy-json", action="store_true", help="Copy JSON summary to clipboard without prompting")
     parser.add_argument("--no-clipboard", action="store_true", help="Disable clipboard prompts and copy behavior")
@@ -326,22 +326,307 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     if args.no_clipboard:
         return
 
-    to_copy = raw_output
-    label = "Raw command output"
+    import re as _re
+
+    try:
+        payload = json.loads(json_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+
+    warnings = int(payload.get("warnings", 0) or 0)
+    errors = int(payload.get("errors", 0) or 0)
+    failed = int(payload.get("failed", 0) or 0)
+    skipped = int(payload.get("skipped", 0) or 0)
+    succeeded = errors == 0 and failed == 0
+
+    def _test_totals() -> tuple[int, int, int, int] | None:
+        """Extract and aggregate test totals from captured command output."""
+
+        # Modern dotnet test:
+        # Passed! - Failed: 0, Passed: 16, Skipped: 0, Total: 16
+        dotnet_matches = list(
+            _re.finditer(
+                r"\b(?:Passed|Failed)!\s*-\s*"
+                r"Failed:\s*(\d+),\s*"
+                r"Passed:\s*(\d+),\s*"
+                r"Skipped:\s*(\d+),\s*"
+                r"Total:\s*(\d+)",
+                raw_output,
+                _re.IGNORECASE,
+            )
+        )
+
+        if dotnet_matches:
+            test_failed = sum(int(match.group(1)) for match in dotnet_matches)
+            test_passed = sum(int(match.group(2)) for match in dotnet_matches)
+            test_skipped = sum(int(match.group(3)) for match in dotnet_matches)
+            test_total = sum(int(match.group(4)) for match in dotnet_matches)
+            return test_passed, test_failed, test_skipped, test_total
+
+        # Older VSTest summary:
+        # Total tests: 16. Passed: 16. Failed: 0. Skipped: 0.
+        vstest_matches = list(
+            _re.finditer(
+                r"Total tests:\s*(\d+).*?"
+                r"Passed:\s*(\d+).*?"
+                r"Failed:\s*(\d+).*?"
+                r"Skipped:\s*(\d+)",
+                raw_output,
+                _re.IGNORECASE,
+            )
+        )
+
+        if vstest_matches:
+            test_total = sum(int(match.group(1)) for match in vstest_matches)
+            test_passed = sum(int(match.group(2)) for match in vstest_matches)
+            test_failed = sum(int(match.group(3)) for match in vstest_matches)
+            test_skipped = sum(int(match.group(4)) for match in vstest_matches)
+            return test_passed, test_failed, test_skipped, test_total
+
+        # Pytest fallback, for validating devtool itself.
+        pytest_match = _re.search(
+            r"(?:(\d+)\s+failed(?:,\s*)?)?"
+            r"(?:(\d+)\s+passed)"
+            r"(?:,\s*(\d+)\s+skipped)?",
+            raw_output,
+            _re.IGNORECASE,
+        )
+        if pytest_match:
+            test_failed = int(pytest_match.group(1) or 0)
+            test_passed = int(pytest_match.group(2) or 0)
+            test_skipped = int(pytest_match.group(3) or 0)
+            return (
+                test_passed,
+                test_failed,
+                test_skipped,
+                test_passed + test_failed + test_skipped,
+            )
+
+        # Use structured JSON values when available.
+        json_passed = payload.get("passed")
+        json_total = payload.get("total")
+
+        if json_passed is not None or json_total is not None:
+            test_passed = int(json_passed or 0)
+            test_failed = int(payload.get("failed", 0) or 0)
+            test_skipped = int(payload.get("skipped", 0) or 0)
+            test_total = int(
+                json_total
+                if json_total is not None
+                else test_passed + test_failed + test_skipped
+            )
+            return test_passed, test_failed, test_skipped, test_total
+
+        return None
+
+    def _warning_details(limit: int = 10) -> tuple[list[str], int]:
+        """Extract useful, deduplicated warnings from captured output."""
+
+        warning_lines: list[str] = []
+        seen: set[str] = set()
+
+        warning_patterns = (
+            # MSBuild/compiler warnings:
+            # file.cs(1,2): warning CS1234: Message [project.csproj]
+            r"^(.*?\bwarning\s+[A-Z]{1,5}\d+\s*:\s*.+)$",
+
+            # NuGet warnings such as NU1603 and NU1903.
+            r"^(.*?\bwarning\s+NU\d+\s*:\s*.+)$",
+
+            # Generic command warnings.
+            r"^(.*?\bwarning\s*:\s*.+)$",
+
+            # Common Python warning forms.
+            r"^(.+Warning:\s*.+)$",
+        )
+
+        combined = _re.compile(
+            "|".join(f"(?:{pattern})" for pattern in warning_patterns),
+            _re.IGNORECASE,
+        )
+
+        for raw_line in raw_output.splitlines():
+            line = raw_line.strip()
+            if not line or "0 Warning(s)" in line or "warnings=0" in line:
+                continue
+            if not combined.search(line):
+                continue
+
+            # Remove repeated whitespace while preserving the useful message.
+            cleaned = _re.sub(r"\s+", " ", line).strip()
+
+            # Omit redundant project suffixes when they make the copied summary
+            # excessively noisy, while retaining file, code, and message.
+            cleaned = _re.sub(
+                r"\s+\[[^\[\]]+\.(?:csproj|fsproj|vbproj)\]\s*$",
+                "",
+                cleaned,
+                flags=_re.IGNORECASE,
+            )
+
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+
+            seen.add(key)
+            warning_lines.append(cleaned)
+
+        total_unique = len(warning_lines)
+        return warning_lines[:limit], total_unique
+
+    def _commit_hash() -> str:
+        patterns = (
+            # Standard git commit output: [main abc1234] Message
+            r"^\[[^\]\n]*?\s([0-9a-f]{7,40})\]\s",
+            # Detached HEAD output.
+            r"^\[detached HEAD\s+([0-9a-f]{7,40})\]\s",
+            # Other explicit commit output.
+            r"\bcommit(?:ted)?(?:\s+as)?\s+([0-9a-f]{7,40})\b",
+        )
+
+        for pattern in patterns:
+            match = _re.search(pattern, raw_output, _re.IGNORECASE | _re.MULTILINE)
+            if match:
+                return match.group(1)
+
+        return ""
+
+    action_pattern = _re.compile(
+        r"^([a-z0-9_-]+):\s+"
+        r"(ok|failed|skipped)\s+"
+        r"exit=(\d+)\s+"
+        r"time=([0-9.]+)s",
+        _re.IGNORECASE | _re.MULTILINE,
+    )
+
+    action_names = {
+        "apply-overlay": "Applied overlay",
+        "apply-overlays": "Applied overlay bundle",
+        "apply-snapshot": "Applied snapshot",
+        "restore": "Restored dependencies",
+        "build": "Built project",
+        "test": "Ran test suite",
+        "wine-test": "Ran Wine test suite",
+        "package": "Created package",
+        "run": "Ran project",
+        "git-commit": "Committed repository changes",
+        "artifact-cleanup": "Cleaned applied artifact",
+        "rollback": "Rolled back changes",
+    }
+
+    action_lines: list[str] = []
+    total_duration = 0.0
+
+    for match in action_pattern.finditer(summary_text):
+        name = match.group(1).lower()
+        status = match.group(2).lower()
+        duration = float(match.group(4))
+        total_duration += duration
+
+        # git-add is an implementation detail; git-commit conveys the useful action.
+        if name == "git-add":
+            continue
+
+        description = action_names.get(
+            name,
+            name.replace("-", " ").replace("_", " ").capitalize(),
+        )
+
+        if status == "ok":
+            action_lines.append(f"- {description} ({duration:.2f}s)")
+        elif status == "skipped":
+            action_lines.append(f"- {description}: skipped")
+        else:
+            action_lines.append(f"- {description}: failed ({duration:.2f}s)")
+
+    test_totals = _test_totals()
+    commit_hash = _commit_hash()
+
+    success_lines = [
+        "Devtool completed successfully.",
+        "",
+        "Actions completed:",
+        *action_lines,
+        "",
+    ]
+
+    if test_totals is not None:
+        test_passed, test_failed, test_skipped, test_total = test_totals
+        success_lines.append(
+            "Tests: "
+            f"{test_passed} passed, "
+            f"{test_failed} failed, "
+            f"{test_skipped} skipped "
+            f"({test_total} total)"
+        )
+    else:
+        success_lines.append("Tests: completed successfully")
+
+    success_lines.append(
+        f"Diagnostics: {warnings} warnings, {errors} errors"
+    )
+
+    warning_details, unique_warning_count = _warning_details()
+
+    if warnings > 0 or warning_details:
+        success_lines.extend(("", "Warnings:"))
+
+        if warning_details:
+            success_lines.extend(f"- {warning}" for warning in warning_details)
+
+            hidden_warning_count = max(0, unique_warning_count - len(warning_details))
+            if hidden_warning_count:
+                success_lines.append(
+                    f"- …and {hidden_warning_count} more unique warning"
+                    f"{'s' if hidden_warning_count != 1 else ''}; see the full log."
+                )
+        else:
+            success_lines.append(
+                f"- {warnings} warning{'s' if warnings != 1 else ''} reported; "
+                "individual warning text was not available in captured output."
+            )
+
+    if commit_hash:
+        success_lines.append(f"Git commit: {commit_hash}")
+
+    if total_duration > 0:
+        success_lines.append(f"Total action time: {total_duration:.2f}s")
+
+    success_summary = "\n".join(success_lines).strip()
+    failure_output = raw_output.strip() or summary_text.strip() or json_text.strip()
+
+    # Automatic behavior:
+    # - successful run: descriptive concise summary
+    # - failed run: verbose output for troubleshooting
+    if succeeded:
+        to_copy = success_summary
+        label = "Successful run summary"
+    else:
+        to_copy = failure_output
+        label = "Failure output"
+
+    # Explicit clipboard modes retain their override behavior.
     if args.copy_json:
         to_copy = json_text
         label = "JSON summary"
     elif args.copy_summary:
-        to_copy = summary_text
+        to_copy = success_summary if succeeded else summary_text
         label = "Summary"
 
     if args.copy or args.copy_summary or args.copy_json:
-        result = copy_text(to_copy) if args.copy_via == "auto" else copy_text(to_copy, preferred=args.copy_via)
+        result = (
+            copy_text(to_copy)
+            if args.copy_via == "auto"
+            else copy_text(to_copy, preferred=args.copy_via)
+        )
         if result.success:
-            console.print(f"[green]{label} copied to clipboard via {result.backend}.[/green]")
+            console.print(
+                f"[green]{label} copied to clipboard via {result.backend}.[/green]"
+            )
         else:
-            reason = result.reason or "Clipboard copy failed."
-            console.print(f"[yellow]{reason}[/yellow]")
+            console.print(
+                f"[yellow]{result.reason or 'Clipboard copy failed.'}[/yellow]"
+            )
         return
 
     if args.command not in INTERACTIVE_COPY_COMMANDS:
@@ -349,15 +634,25 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     if not console.is_interactive or not sys.stdin.isatty() or not to_copy.strip():
         return
 
-    copy_now = Confirm.ask(f"Copy {label.lower()} to clipboard?", default=True, console=console)
+    copy_now = Confirm.ask(
+        f"Copy {label.lower()} to clipboard?",
+        default=True,
+        console=console,
+    )
     if copy_now:
-        result = copy_text(to_copy) if args.copy_via == "auto" else copy_text(to_copy, preferred=args.copy_via)
+        result = (
+            copy_text(to_copy)
+            if args.copy_via == "auto"
+            else copy_text(to_copy, preferred=args.copy_via)
+        )
         if result.success:
-            console.print(f"[green]{label} copied to clipboard via {result.backend}.[/green]")
+            console.print(
+                f"[green]{label} copied to clipboard via {result.backend}.[/green]"
+            )
         else:
-            reason = result.reason or "Clipboard copy failed."
-            console.print(f"[yellow]{reason}[/yellow]")
-
+            console.print(
+                f"[yellow]{result.reason or 'Clipboard copy failed.'}[/yellow]"
+            )
 
 def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[str, str]:
     explicit_stdout = args.stdout_payload
