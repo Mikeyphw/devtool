@@ -437,7 +437,14 @@ def _iter_process_output_lines(
                 status = completion_status_detector(line)
                 if status is not None:
                     completion_seen_at = time.monotonic()
-                    completion_assumed_returncode = int(status)
+                    # Multiple dotnet test projects can print separate summaries.
+                    # Preserve the worst result so a later passing project cannot
+                    # erase an earlier failed project when the post-summary hang
+                    # guard has to assume an exit status.
+                    if completion_assumed_returncode is None:
+                        completion_assumed_returncode = int(status)
+                    else:
+                        completion_assumed_returncode = max(completion_assumed_returncode, int(status))
             yield line
 
     try:
@@ -775,6 +782,12 @@ def run_specs(
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
         duration = time.perf_counter() - started
         issues = parse_issues(config.repo_root, spec.name, output)
+        if returncode == 0 and any(issue.severity == "error" for issue in issues):
+            output = (output.rstrip() + "\n" if output else "") + (
+                "Devtool detected error diagnostics even though the process exited 0; "
+                "treating this command as failed.\n"
+            )
+            returncode = 1
         failure_kind = classify_failure(spec.name, output, returncode)
         command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         raw_text = command_line + "\n" + output

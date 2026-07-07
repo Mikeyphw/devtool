@@ -77,3 +77,20 @@ Failed!  - Failed:     1, Passed:   113, Skipped:     0, Total:   114, Duration:
             self.assertEqual(issues[0].message, "Assert.Single() Failure: The collection was empty")
             self.assertEqual(issues[0].file, "tests/S3oc.Tests/MainWindowViewModelTests.cs")
             self.assertEqual(issues[0].line, 2630)
+
+    def test_parse_failed_vstest_summary_without_detail_as_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = "Failed! - Failed: 1, Passed: 75, Skipped: 0, Total: 76, Duration: 9 s - App.Tests.dll (net8.0)\n"
+            issues = parse_issues(root, "test", output)
+            self.assertEqual(len(issues), 1)
+            self.assertEqual(issues[0].severity, "error")
+            self.assertEqual(issues[0].code, "VSTEST")
+            self.assertIn("1 failed", issues[0].message)
+
+    def test_parse_passing_vstest_summary_is_not_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = "Passed! - Failed: 0, Passed: 11, Skipped: 0, Total: 11, Duration: 1 s - App.Tests.dll (net8.0)\n"
+            issues = parse_issues(root, "test", output)
+            self.assertEqual(issues, [])

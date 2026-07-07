@@ -8,7 +8,7 @@ from unittest.mock import patch
 from devtool.clipboard import ClipboardResult
 from devtool.execution import build_chroot_exec_argv, wrap_specs_for_chroot
 from devtool.models import CommandSpec
-from devtool.termux_chroot_runner import build_inner_command, build_runner_command, copy_from_machine_file, prepare_host_clipboard_run, translate_devtool_args
+from devtool.termux_chroot_runner import _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, translate_devtool_args, wrap_specs_for_termux_host_chroot
 
 
 class ChrootExecutionWrapperTests(unittest.TestCase):
@@ -118,8 +118,48 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         )
         outer = build_runner_command(config, forwarded)
         self.assertEqual(outer[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
-        self.assertEqual(outer[8], "cd /home/mike/Code/demo && exec devtool validate --skip-test")
+        self.assertEqual(outer[8], "cd /home/mike/Code/demo && exec env DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos ~/.local/bin/devtool validate --skip-test")
         self.assertEqual(build_inner_command(config, forwarded), outer[8])
+
+    def test_plain_log_path_drops_ansi_suffix(self) -> None:
+        path = Path("/tmp/devtool-chroot-20260706-235754.ansi.log")
+        self.assertEqual(_plain_log_path_for(path), Path("/tmp/devtool-chroot-20260706-235754.log"))
+
+    def test_inner_command_uses_exec_env_assignments(self) -> None:
+        env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike"}
+        config, forwarded = translate_devtool_args(["validate"], env=env, cwd="/data/data/com.termux/files/home/Code/demo")
+        inner = build_inner_command(config, forwarded)
+        self.assertIn("exec env DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
+        self.assertNotIn("exec DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
+
+    def test_default_termux_home_maps_to_home_termux(self) -> None:
+        env = {"HOME": "/data/data/com.termux/files/home"}
+        config, forwarded = translate_devtool_args(
+            ["--repo", "/data/data/com.termux/files/home/Code/sims3tools", "validate"],
+            env=env,
+            cwd="/data/data/com.termux/files/home/Code/sims3tools",
+        )
+        self.assertEqual(config.cwd, "/home/termux/Code/sims3tools")
+        self.assertIn("/home/termux/Code/sims3tools", forwarded)
+
+    def test_host_chroot_wrapper_cd_and_translates_absolute_paths(self) -> None:
+        env = {"HOME": "/data/data/com.termux/files/home"}
+        spec = CommandSpec("build", ["dotnet", "build", "/data/data/com.termux/files/home/Code/demo/Demo.sln"])
+        wrapped = wrap_specs_for_termux_host_chroot(
+            [spec],
+            "androidos",
+            repo_root="/data/data/com.termux/files/home/Code/demo",
+            env=env,
+        )
+        self.assertEqual(wrapped[0].argv[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
+        self.assertEqual(wrapped[0].argv[8], "cd /home/termux/Code/demo && dotnet build /home/termux/Code/demo/Demo.sln")
+        self.assertEqual(wrapped[0].metadata["execution_mode"], "termux-host-chroot")
+        self.assertEqual(wrapped[0].metadata["chroot_cwd"], "/home/termux/Code/demo")
+
+    def test_host_mode_translates_desktop_hud_to_android_gui(self) -> None:
+        self.assertEqual(normalize_hud_mode_for_termux_host("desktop-window"), "android-gui")
+        self.assertEqual(normalize_hud_mode_for_termux_host("android-bridge"), "android-gui")
+        self.assertEqual(normalize_hud_mode_for_termux_host("android-notify"), "android-notify")
 
 
 if __name__ == "__main__":

@@ -116,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     exec_group = parser.add_mutually_exclusive_group()
     exec_group.add_argument("--host", action="store_true", help="Force commands to run on the host")
     exec_group.add_argument("--chroot", default="", help="Run command phases inside a named chroot via chrootctl exec")
+    parser.add_argument("--no-auto-chroot", action="store_true", help="On Termux host, do not auto-route this devtool command through chrootctl")
     parser.add_argument(
         "--stdout-payload",
         choices=["auto", "summary", "json", "raw"],
@@ -714,12 +715,22 @@ def _matrix_items(args: argparse.Namespace) -> list[str]:
     return [item.strip() for item in str(getattr(args, "matrix", "") or "").split(",") if item.strip()]
 
 
-def _prepare_specs_for_execution(specs: list[CommandSpec], args: argparse.Namespace) -> list[CommandSpec]:
+def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec], args: argparse.Namespace) -> list[CommandSpec]:
     items = _matrix_items(args)
     if items and getattr(args, "matrix_mode", "rid") == "rid":
         specs = apply_matrix(specs, items, mode="rid")
     if getattr(args, "chroot", "") and not getattr(args, "host", False):
-        specs = wrap_specs_for_chroot(specs, args.chroot)
+        if bool(getattr(args, "_devtool_termux_host_chroot_backend", False)):
+            from .termux_chroot_runner import wrap_specs_for_termux_host_chroot
+
+            specs = wrap_specs_for_termux_host_chroot(
+                specs,
+                str(args.chroot),
+                repo_root=config.repo_root,
+                path_map=getattr(args, "_devtool_chroot_path_map", None),
+            )
+        else:
+            specs = wrap_specs_for_chroot(specs, args.chroot)
     return specs
 
 
@@ -787,7 +798,7 @@ def _run_specs_for_args(
 ) -> tuple[list[OperationResult], str]:
     return run_specs(
         config,
-        _prepare_specs_for_execution(specs, args),
+        _prepare_specs_for_execution(config, specs, args),
         verbose=args.verbose,
         dry_run=args.dry_run,
         continue_on_error=continue_on_error,
@@ -908,6 +919,10 @@ def _artifact_commit_paths(args: argparse.Namespace) -> list[str]:
                         for value in values:
                             add_path(value)
 
+    # Applying overlays/snapshots updates the artifact history file.
+    # Include it in scoped auto-commits so the repo records what was applied.
+    add_path(".devtool/artifacts.json")
+
     return paths
 
 
@@ -959,6 +974,12 @@ def _maybe_commit_after_apply(
     # Failed applies or failed validation are never committed.
     if not results or any(result.returncode != 0 for result in results):
         return results, raw_output
+
+    # Record artifact history before the auto-commit so .devtool/artifacts.json
+    # is staged with the same overlay/snapshot commit.
+    if not getattr(args, "_devtool_history_recorded", False):
+        _record_apply_history(config, args, results)
+        args._devtool_history_recorded = True
 
     commit_paths = _artifact_commit_paths(args)
     commit_results, commit_raw = _git_commit_with_optional_log(
@@ -1553,13 +1574,76 @@ def _config_command(args: argparse.Namespace) -> int:
     return 1
 
 
+def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namespace) -> int | None:
+    """Enable Android chroot execution from Termux.
+
+    Default mode keeps devtool itself on the Termux host and uses the chroot as
+    an execution backend for command phases.  This preserves the native Rich UI,
+    Termux:GUI HUD, clipboard, and command summary on Android.  The old whole-
+    devtool delegation remains available with DEVTOOL_AUTO_CHROOT_MODE=full.
+    """
+    if bool(getattr(args, "no_auto_chroot", False)):
+        return None
+    try:
+        from .termux_chroot_runner import (
+            normalize_hud_mode_for_termux_host,
+            run_auto_chroot,
+            should_auto_chroot,
+            translate_devtool_args,
+        )
+        if not should_auto_chroot(raw_argv, command=str(getattr(args, "command", "") or "")):
+            return None
+        mode = os.environ.get("DEVTOOL_AUTO_CHROOT_MODE", "backend").strip().lower()
+        if mode in {"full", "legacy", "process", "wrapper"}:
+            return run_auto_chroot(raw_argv)
+        config, _forwarded = translate_devtool_args(raw_argv, cwd=os.getcwd())
+        args.chroot = config.chroot_name
+        args.host = False
+        args._devtool_termux_host_chroot_backend = True
+        args._devtool_chroot_path_map = config.path_map
+        args._devtool_chroot_name = config.chroot_name
+        args.hud_mode = normalize_hud_mode_for_termux_host(str(getattr(args, "hud_mode", "desktop") or "desktop"))
+        if str(getattr(args, "copy_via", "auto") or "auto") == "auto":
+            args.copy_via = "termux"
+        if getattr(args, "tasker_progress", None) is True and getattr(args, "auto_hud", None) is None:
+            args.auto_hud = True
+        return None
+    except Exception as exc:
+        if os.environ.get("DEVTOOL_AUTO_CHROOT_STRICT", "0").strip().lower() in {"1", "true", "yes"}:
+            raise
+        console.print(f"[yellow]Auto chroot unavailable; running on host: {exc}[/yellow]")
+    return None
+
+
+def _print_chroot_indicator_once(args: argparse.Namespace) -> None:
+    if os.environ.get("DEVTOOL_CHROOT_INDICATOR", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    if getattr(args, "machine", "") or getattr(args, "json", False):
+        return
+    command = str(getattr(args, "command", "") or "")
+    if command in {"hud", "android-hud-bridge", "termux-hud-bridge"}:
+        return
+    if bool(getattr(args, "_devtool_termux_host_chroot_backend", False)):
+        chroot_name = str(getattr(args, "_devtool_chroot_name", "") or getattr(args, "chroot", "androidos"))
+        console.print(f"[magenta]Android chroot executor[/magenta] [dim]{chroot_name}[/dim] [green]host UI[/green]")
+        return
+    if os.environ.get("DEVTOOL_INSIDE_TERMUX_CHROOT") == "1":
+        chroot_name = os.environ.get("DEVTOOL_CHROOT_CONTEXT", "androidos")
+        console.print(f"[magenta]Android chroot[/magenta] [dim]{chroot_name}[/dim]")
+
+
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
     _normalize_command_aliases(args)
     _normalize_tasker_args(args)
     _validate_apply_args(args, parser)
     effective_payload, copy_mode = _validate_output_flags(args, parser)
+    auto_chroot_rc = _maybe_prepare_termux_auto_chroot(raw_argv, args)
+    if auto_chroot_rc is not None:
+        return auto_chroot_rc
+    _print_chroot_indicator_once(args)
 
     if args.command in {"ai-prompt", "ap"}:
         if copy_mode in {"summary", "json"}:
@@ -1853,7 +1937,9 @@ def main(argv: list[str] | None = None) -> int:
             if cleanup_result is not None:
                 results.append(cleanup_result)
                 raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
-        _record_apply_history(config, args, results)
+        if not getattr(args, "_devtool_history_recorded", False):
+            _record_apply_history(config, args, results)
+            args._devtool_history_recorded = True
     elif args.command in {"validate", "v", "wine-validate", "wv"}:
         if getattr(args, "watch", False):
             def _run_once() -> int:

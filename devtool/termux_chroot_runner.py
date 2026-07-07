@@ -1,17 +1,33 @@
 from __future__ import annotations
 
+import contextlib
+import datetime as dt
+import errno
+import io
 import json
 import os
+import pty
+import re
+import select
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from .clipboard import copy_text
 from .execution import build_chroot_exec_argv
+from .models import CommandSpec
 
 _PATH_VALUE_FLAGS = {
     "-r", "--repo", "-c", "--config", "--solution", "--project",
@@ -34,6 +50,25 @@ _PATH_SUFFIXES = (
     ".zip", ".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.bz2", ".tbz2", ".sln", ".csproj", ".fsproj",
     ".vbproj", ".py", ".toml", ".json", ".md", ".txt", ".log",
 )
+
+DESKTOP_HUD_MODES = {"auto", "desktop", "desktop-window", "gnome", "gtk", "gtk3", "x11", "x11-gtk"}
+ANDROID_GUI_ALIASES = {"android-gui", "android-overlay", "termux-gui", "termuxgui"}
+ANDROID_NOTIFY_ALIASES = {"android-notify", "android-notification", "termux-notify", "termux-notification"}
+ANDROID_BRIDGE_ALIASES = {"android-bridge", "termux-bridge", "android-chroot", "termux-chroot", "chroot-bridge"}
+HOST_ONLY_COMMANDS = {
+    "hud", "android-hud-bridge", "termux-hud-bridge", "logs", "completion",
+    "ai-prompt", "ap", "bundle", "config", "init-config",
+}
+AUTO_CHROOT_COMMANDS = {
+    "restore", "rs", "build", "b", "test", "t", "validate", "v", "wine-validate", "wv",
+    "run", "rn", "package", "pkg", "apply-overlay", "ao", "apply-overlays", "aos",
+    "apply-snapshot", "as", "batch", "commit", "ci", "tag", "status", "st",
+    "doctor", "dr", "rollback", "history", "targets", "tg", "detect", "handoff",
+}
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+OSC_RE = re.compile(r"\x1b\][^\a]*(?:\a|\x1b\\)")
+TEST_FAILED_RE = re.compile(r"tests?:\s*\d+\s+passed,\s*([1-9]\d*)\s+failed", re.I)
+TOTALS_ERRORS_RE = re.compile(r"errors\s*=\s*([1-9]\d*)", re.I)
 
 
 @dataclass(slots=True)
@@ -75,8 +110,19 @@ def default_path_map(env: Mapping[str, str] | None = None) -> list[tuple[str, st
     termux_home = env.get("HOME", "").strip()
     chroot_home = env.get("DEVTOOL_TERMUX_CHROOT_HOME", "").strip()
     if not chroot_home:
-        chroot_user = env.get("DEVTOOL_TERMUX_CHROOT_USER", "mike").strip() or "mike"
-        chroot_home = f"/home/{chroot_user}"
+        # On Android/Termux hosts, the Termux home is normally bind-mounted
+        # into the Ubuntu chroot as /home/termux.  Older builds guessed a
+        # Linux user home such as /home/mike, which made host-side artifact
+        # paths point at the wrong place when only toolchain phases need the
+        # chroot.  Keep DEVTOOL_TERMUX_CHROOT_HOME/USER as explicit overrides.
+        explicit_user = env.get("DEVTOOL_TERMUX_CHROOT_USER", "").strip()
+        if explicit_user:
+            chroot_home = f"/home/{explicit_user}"
+        elif termux_home.startswith("/data/data/com.termux/files/home"):
+            chroot_home = "/home/termux"
+        else:
+            chroot_user = env.get("DEVTOOL_TERMUX_CHROOT_USER", "mike").strip() or "mike"
+            chroot_home = f"/home/{chroot_user}"
     if termux_home and chroot_home:
         mappings.append((os.path.expanduser(termux_home).rstrip("/"), chroot_home.rstrip("/")))
 
@@ -206,7 +252,7 @@ def _consume_value(argv: list[str], index: int) -> tuple[str, str | None, int]:
 def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerConfig, list[str]]:
     config = RunnerConfig(
         chroot_name=env.get("DEVTOOL_TERMUX_CHROOT", "androidos").strip() or "androidos",
-        tool=env.get("DEVTOOL_TERMUX_CHROOT_TOOL", "devtool").strip() or "devtool",
+        tool=env.get("DEVTOOL_TERMUX_CHROOT_TOOL", "~/.local/bin/devtool").strip() or "~/.local/bin/devtool",
         chrootctl=env.get("DEVTOOL_CHROOTCTL", "chrootctl").strip() or "chrootctl",
         sudo=env.get("DEVTOOL_CHROOT_SUDO", "sudo"),
         path_map=default_path_map(env),
@@ -321,9 +367,26 @@ def translate_devtool_args(argv: list[str], *, env: Mapping[str, str] | None = N
     return config, translated
 
 
+def _quote_shell_token(token: str) -> str:
+    if token.startswith("~/") or token.startswith("$HOME/"):
+        return token
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
+        return token
+    return shlex.quote(token)
+
+
+def _shell_join_tool_argv(argv: list[str]) -> str:
+    return " ".join(_quote_shell_token(part) for part in argv)
+
+
 def build_inner_command(config: RunnerConfig, forwarded: list[str]) -> str:
     devtool_argv = [config.tool, *forwarded]
-    return "cd " + shlex.quote(config.cwd or "/") + " && exec " + shlex.join(devtool_argv)
+    env_prefix = [
+        "env",
+        "DEVTOOL_INSIDE_TERMUX_CHROOT=1",
+        f"DEVTOOL_CHROOT_CONTEXT={config.chroot_name}",
+    ]
+    return "cd " + shlex.quote(config.cwd or "/") + " && exec " + _shell_join_tool_argv([*env_prefix, *devtool_argv])
 
 
 def build_runner_command(config: RunnerConfig, forwarded: list[str]) -> list[str]:
@@ -345,6 +408,546 @@ def build_runner_command(config: RunnerConfig, forwarded: list[str]) -> list[str
 
 
 
+
+
+def _is_termux_host_env(env: Mapping[str, str] | None = None) -> bool:
+    env = env or os.environ
+    prefix = env.get("PREFIX", "")
+    home = env.get("HOME", "")
+    return bool(
+        env.get("TERMUX_VERSION")
+        or env.get("TERMUX_APP_PID")
+        or prefix.startswith("/data/data/com.termux/")
+        or "com.termux" in prefix
+        or home.startswith("/data/data/com.termux/files/home")
+    )
+
+
+def _truthy_env(name: str, default: str = "0", *, env: Mapping[str, str] | None = None) -> bool:
+    env = env or os.environ
+    return env.get(name, default).strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _falsey_env(name: str, default: str = "1", *, env: Mapping[str, str] | None = None) -> bool:
+    env = env or os.environ
+    return env.get(name, default).strip().lower() in {"", "0", "false", "no", "off"}
+
+
+def chrootctl_available(env: Mapping[str, str] | None = None) -> bool:
+    env = env or os.environ
+    chrootctl = env.get("DEVTOOL_CHROOTCTL", "chrootctl").strip() or "chrootctl"
+    if os.path.sep in chrootctl:
+        return Path(chrootctl).exists()
+    return shutil.which(chrootctl) is not None
+
+
+def should_auto_chroot(argv: list[str], *, command: str | None = None, env: Mapping[str, str] | None = None) -> bool:
+    env = env or os.environ
+    if _falsey_env("DEVTOOL_AUTO_CHROOT", "1", env=env):
+        return False
+    if env.get("DEVTOOL_AUTO_CHROOT_ACTIVE") == "1" or env.get("DEVTOOL_INSIDE_TERMUX_CHROOT") == "1":
+        return False
+    if not _is_termux_host_env(env):
+        return False
+    if "--no-auto-chroot" in argv or "--host" in argv:
+        return False
+    if "--chroot" in argv or any(token.startswith("--chroot=") for token in argv):
+        return False
+    cmd = (command or "").strip()
+    if not cmd:
+        for token in argv:
+            if token == "--":
+                break
+            if token.startswith("--") and "=" in token:
+                continue
+            if token.startswith("-"):
+                continue
+            cmd = token
+            break
+    if cmd in HOST_ONLY_COMMANDS:
+        return False
+    if AUTO_CHROOT_COMMANDS and cmd and cmd not in AUTO_CHROOT_COMMANDS:
+        return False
+    return chrootctl_available(env)
+
+
+def normalize_hud_mode_for_chroot(mode: str | None) -> str:
+    if not mode:
+        return "android-bridge"
+    normalized = mode.strip().lower()
+    if normalized in DESKTOP_HUD_MODES or normalized in ANDROID_GUI_ALIASES or normalized in ANDROID_BRIDGE_ALIASES:
+        return "android-bridge"
+    if normalized in ANDROID_NOTIFY_ALIASES:
+        return "android-notify"
+    return mode
+
+
+def normalize_hud_mode_for_termux_host(mode: str | None) -> str:
+    """Map desktop/chroot HUD names to the native Termux host HUD.
+
+    In host-orchestrated mode devtool itself stays in Termux, so there is no
+    reason to start the bridge HUD just because the user passed familiar
+    desktop flags like --hud-mode desktop-window.  Keep notification modes
+    explicit, but map desktop/GTK/X11 and Android GUI aliases to android-gui.
+    """
+    if not mode:
+        return "android-gui"
+    normalized = mode.strip().lower()
+    if normalized in DESKTOP_HUD_MODES or normalized in ANDROID_GUI_ALIASES or normalized in ANDROID_BRIDGE_ALIASES:
+        return "android-gui"
+    if normalized in ANDROID_NOTIFY_ALIASES:
+        return "android-notify"
+    return mode
+
+
+def translate_argv_paths_for_chroot(argv: list[str], *, mappings: Iterable[tuple[str, str]], cwd: str | None = None) -> list[str]:
+    """Translate absolute host paths inside a command argv to chroot paths."""
+    translated: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        flag, value, value_index = _consume_value(argv, index)
+        if value is not None and flag in _PATH_VALUE_FLAGS:
+            translated_value = _translate_path(value, mappings, cwd=cwd)
+            if "=" in token and token.startswith("--"):
+                translated.append(f"{flag}={translated_value}")
+            else:
+                translated.append(token)
+                translated.append(translated_value)
+            index = value_index + 1
+            continue
+        if value is not None and value_index != index:
+            translated.append(token)
+            translated.append(value)
+            index = value_index + 1
+            continue
+        if _looks_like_path(token) and token.startswith(("/", "~/")):
+            translated.append(_translate_path(token, mappings, cwd=cwd))
+        else:
+            translated.append(token)
+        index += 1
+    return translated
+
+
+def wrap_specs_for_termux_host_chroot(
+    specs: list[CommandSpec],
+    chroot_name: str,
+    *,
+    repo_root: str | Path | None = None,
+    env: Mapping[str, str] | None = None,
+    path_map: Iterable[tuple[str, str]] | None = None,
+) -> list[CommandSpec]:
+    """Wrap command phases for chroot while keeping devtool itself on Termux.
+
+    This is the toolchain/backend mode: the outer devtool keeps Rich UI,
+    Termux:GUI HUD, clipboard, artifact matching, and command summaries on the
+    Android host.  Only each external command phase is run through:
+
+        chrootctl exec -- zsh -lc 'cd <translated cwd> && <command>'
+
+    It is intentionally separate from build_inner_command/run_auto_chroot,
+    which still delegates the whole devtool process for fallback/legacy cases.
+    """
+    env = env or os.environ
+    mappings = list(path_map or default_path_map(env))
+    host_repo = Path(repo_root).expanduser() if repo_root is not None else None
+    wrapped: list[CommandSpec] = []
+    for spec in specs:
+        host_cwd = str(spec.cwd or host_repo or os.getcwd())
+        chroot_cwd = _translate_path(host_cwd, mappings, cwd=os.getcwd())
+        argv = translate_argv_paths_for_chroot(list(spec.argv), mappings=mappings, cwd=host_cwd)
+        command = "cd " + shlex.quote(chroot_cwd or "/") + " && " + shlex.join(argv)
+        metadata = dict(spec.metadata)
+        metadata["execution_mode"] = "termux-host-chroot"
+        metadata["chroot"] = chroot_name
+        metadata["chroot_runner"] = "termux-host-toolchain"
+        metadata["chroot_cwd"] = chroot_cwd
+        wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, chroot_name), cwd=None, metadata=metadata))
+    return wrapped
+
+
+def _strip_ansi(text: str) -> str:
+    text = ANSI_RE.sub("", text)
+    text = OSC_RE.sub("", text)
+    return re.sub(r"\r$", "", text, flags=re.MULTILINE)
+
+
+def _now() -> str:
+    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _stamp() -> str:
+    return dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _append_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("ab") as handle:
+        handle.write(data)
+        handle.flush()
+
+
+def _append_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", errors="replace") as handle:
+        handle.write(text)
+        handle.flush()
+
+
+def _width(default: int = 78) -> int:
+    try:
+        return max(53, shutil.get_terminal_size((default, 24)).columns)
+    except Exception:
+        return default
+
+
+def _rule(label: str = "", ch: str = "─") -> str:
+    width = _width()
+    if not label:
+        return ch * width
+    text = f" {label} "
+    left = max(0, (width - len(text)) // 2)
+    right = max(0, width - len(text) - left)
+    return ch * left + text + ch * right
+
+
+def _echo_log(path: Path, text: str = "") -> None:
+    print(text, flush=True)
+    _append_text(path, text + "\n")
+
+
+def _render_to_log(renderable: Any) -> str:
+    stream = io.StringIO()
+    console = Console(file=stream, force_terminal=False, color_system=None, width=_width())
+    console.print(renderable)
+    return _strip_ansi(stream.getvalue()).rstrip()
+
+
+def _print_rich(renderable: Any, raw_logfile: Path) -> None:
+    Console().print(renderable)
+    rendered = _render_to_log(renderable)
+    if rendered:
+        _append_text(raw_logfile, rendered + "\n")
+
+
+def _compact_command(argv: list[str]) -> str:
+    # Human-facing summary: avoid dumping the full nested shell unless the user asks.
+    if not argv:
+        return ""
+    try:
+        if "zsh" in argv and "-lc" in argv:
+            idx = argv.index("-lc")
+            return argv[idx + 1] if idx + 1 < len(argv) else shlex.join(argv)
+    except Exception:
+        pass
+    return shlex.join(argv)
+
+
+def _make_start_panel(config: RunnerConfig, meta: Mapping[str, str], raw_logfile: Path, plain_logfile: Path, cmd: list[str], *, env: Mapping[str, str]) -> Panel:
+    mode = meta.get("hud_mode") or ("disabled" if meta.get("hud_requested") != "1" else "android-bridge")
+    if meta.get("hud_requested") != "1":
+        mode = "disabled"
+    elif meta.get("hud_mode_adapted") == "1":
+        mode = f"{mode} [dim](adapted from desktop)[/dim]"
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(style="white")
+    table.add_row("Chroot", config.chroot_name)
+    table.add_row("Repo", config.cwd or "/")
+    table.add_row("Tool", config.tool)
+    table.add_row("HUD", mode)
+    table.add_row("Logs", f"{plain_logfile}")
+    if _truthy_env("DEVTOOL_TERMUX_CHROOT_VERBOSE", "0", env=env) or config.print_command:
+        table.add_row("Command", _compact_command(cmd))
+    title = Text("Android chroot", style="bold green")
+    subtitle = Text(f"started { _now() }", style="dim")
+    return Panel(table, title=title, subtitle=subtitle, border_style="green")
+
+
+def _make_end_panel(rc: int, analysis: Mapping[str, int | str], raw_logfile: Path, plain_logfile: Path, *, copied: bool | None = None) -> Panel:
+    has_parsed_failure = bool(analysis.get("errors", 0) or analysis.get("failed_tests", 0))
+    ok = rc == 0 and not has_parsed_failure
+    status = "Complete" if ok else "Failed"
+    style = "green" if ok else "red"
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(style="white")
+    table.add_row("Status", f"[{style}]{status}[/{style}]")
+    table.add_row("Exit code", str(rc))
+    if analysis.get("reason"):
+        table.add_row("Reason", str(analysis["reason"]))
+    if copied is not None:
+        table.add_row("Clipboard", "copied" if copied else "skipped")
+    table.add_row("Log", str(plain_logfile))
+    title = Text("Android chroot", style=f"bold {style}")
+    subtitle = Text(f"ended { _now() }", style="dim")
+    return Panel(table, title=title, subtitle=subtitle, border_style=style)
+
+
+def _make_live_rule(raw_logfile: Path) -> None:
+    rule_text = Text("live chroot output", style="bold cyan")
+    _print_rich(rule_text, raw_logfile)
+
+
+def _plain_log_path_for(raw_logfile: Path) -> Path:
+    name = raw_logfile.name
+    if name.endswith(".ansi.log"):
+        return raw_logfile.with_name(name[:-len(".ansi.log")] + ".log")
+    return raw_logfile.with_suffix(".log")
+
+
+def _adapt_forwarded_for_chroot(forwarded: list[str]) -> tuple[list[str], dict[str, str]]:
+    args = list(forwarded)
+    out: list[str] = []
+    meta = {"hud_requested": "0", "hud_disabled": "0", "hud_mode": "", "hud_mode_adapted": "0", "needs_android_bridge": "0"}
+    has_tasker_progress = False
+    has_tasker_broadcast = False
+    has_copy_via = False
+    has_no_clipboard = "--no-clipboard" in args
+    has_auto_hud = False
+    has_no_hud = False
+    has_hud_mode = False
+    i = 0
+    while i < len(args):
+        token = args[i]
+        if token == "--tasker-progress":
+            has_tasker_progress = True
+            out.append(token)
+        elif token == "--tasker-broadcast":
+            has_tasker_broadcast = True
+            out.append(token)
+        elif token == "--auto-hud":
+            has_auto_hud = True
+            meta["hud_requested"] = "1"
+            out.append(token)
+        elif token == "--no-hud":
+            has_no_hud = True
+            meta["hud_disabled"] = "1"
+            out.append(token)
+        elif token == "--hud-mode":
+            has_hud_mode = True
+            meta["hud_requested"] = "1"
+            out.append(token)
+            i += 1
+            original = args[i] if i < len(args) else ""
+            adapted = normalize_hud_mode_for_chroot(original)
+            meta["hud_mode"] = adapted
+            if adapted == "android-bridge":
+                meta["needs_android_bridge"] = "1"
+            if adapted != original:
+                meta["hud_mode_adapted"] = "1"
+            out.append(adapted)
+        elif token.startswith("--hud-mode="):
+            has_hud_mode = True
+            meta["hud_requested"] = "1"
+            original = token.split("=", 1)[1]
+            adapted = normalize_hud_mode_for_chroot(original)
+            meta["hud_mode"] = adapted
+            if adapted == "android-bridge":
+                meta["needs_android_bridge"] = "1"
+            if adapted != original:
+                meta["hud_mode_adapted"] = "1"
+            out.append(f"--hud-mode={adapted}")
+        elif token == "--copy-via":
+            has_copy_via = True
+            out.append(token)
+            i += 1
+            if i < len(args):
+                out.append(args[i])
+        elif token.startswith("--copy-via="):
+            has_copy_via = True
+            out.append(token)
+        else:
+            out.append(token)
+        i += 1
+    if not has_tasker_progress:
+        out.insert(0, "--tasker-progress")
+    if not has_tasker_broadcast:
+        out.insert(0, "--tasker-broadcast")
+    if not has_copy_via:
+        out = _insert_global_flags_before_command(out, ["--copy-via", "termux"])
+    if not has_no_clipboard:
+        out = _insert_global_flags_before_command(out, ["--no-clipboard"])
+    if has_no_hud:
+        meta["hud_requested"] = "0"
+    elif meta["hud_requested"] == "1" or has_auto_hud:
+        if not has_auto_hud:
+            out = _insert_global_flags_before_command(out, ["--auto-hud"])
+        if not has_hud_mode:
+            out = _insert_global_flags_before_command(out, ["--hud-mode", "android-bridge"])
+            meta["hud_mode"] = "android-bridge"
+            meta["needs_android_bridge"] = "1"
+    else:
+        out = _insert_global_flags_before_command(out, ["--no-hud"])
+    return out, meta
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _start_android_hud_bridge(raw_logfile: Path, state_dir: Path) -> None:
+    if _falsey_env("DEVTOOL_ANDROID_HUD_AUTOSTART", "1"):
+        _echo_log(raw_logfile, "HUD bridge: autostart disabled")
+        return
+    state_dir.mkdir(parents=True, exist_ok=True)
+    pidfile = state_dir / "devtool-android-hud-bridge.pid"
+    logfile = state_dir / "devtool-android-hud-bridge.log"
+    if pidfile.exists():
+        try:
+            pid = int(pidfile.read_text(encoding="utf-8", errors="replace").strip())
+            if pid > 0 and _pid_alive(pid):
+                _echo_log(raw_logfile, f"HUD bridge: already running (pid {pid})")
+                _echo_log(raw_logfile, f"HUD bridge log: {logfile}")
+                return
+        except Exception:
+            pass
+    mode = os.environ.get("DEVTOOL_ANDROID_HUD_MODE", "android-gui")
+    argv = [sys.executable, "-m", "devtool", "android-hud-bridge", "--mode", mode, "--state-dir", str(state_dir)]
+    env = os.environ.copy()
+    env["DEVTOOL_AUTO_CHROOT"] = "0"
+    env["DEVTOOL_AUTO_CHROOT_ACTIVE"] = "0"
+    try:
+        handle = logfile.open("ab")
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.STDOUT, start_new_session=True, env=env)
+        pidfile.write_text(str(proc.pid), encoding="utf-8")
+        _echo_log(raw_logfile, f"HUD bridge: started Android GUI renderer (pid {proc.pid})")
+        _echo_log(raw_logfile, f"HUD bridge log: {logfile}")
+    except Exception as exc:
+        _echo_log(raw_logfile, f"HUD bridge: could not start ({exc})")
+
+
+def _run_live_pty(argv: list[str], raw_logfile: Path, env: dict[str, str]) -> int:
+    master_fd = None
+    slave_fd = None
+    proc: subprocess.Popen[bytes] | None = None
+    try:
+        master_fd, slave_fd = pty.openpty()
+        proc = subprocess.Popen(argv, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, env=env, close_fds=True, start_new_session=True)
+        os.close(slave_fd)
+        slave_fd = None
+        while True:
+            if proc.poll() is not None:
+                while True:
+                    try:
+                        ready, _, _ = select.select([master_fd], [], [], 0)
+                        if not ready:
+                            break
+                        data = os.read(master_fd, 8192)
+                        if not data:
+                            break
+                        sys.stdout.buffer.write(data)
+                        sys.stdout.buffer.flush()
+                        _append_bytes(raw_logfile, data)
+                    except OSError as exc:
+                        if exc.errno == errno.EIO:
+                            break
+                        raise
+                return int(proc.returncode or 0)
+            try:
+                ready, _, _ = select.select([master_fd], [], [], 0.2)
+                if ready:
+                    data = os.read(master_fd, 8192)
+                    if data:
+                        sys.stdout.buffer.write(data)
+                        sys.stdout.buffer.flush()
+                        _append_bytes(raw_logfile, data)
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    proc.wait(timeout=2)
+                    return int(proc.returncode or 0)
+                raise
+    except KeyboardInterrupt:
+        if proc and proc.poll() is None:
+            with contextlib.suppress(Exception):
+                os.killpg(proc.pid, signal.SIGINT)
+            try:
+                return int(proc.wait(timeout=8) or 130)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(Exception):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                return 130
+        return 130
+    finally:
+        for fd in (slave_fd, master_fd):
+            if fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+
+
+def _analyze_plain_log(text: str) -> dict[str, int | str]:
+    errors = 0
+    failed_tests = 0
+    reason = ""
+    for match in TOTALS_ERRORS_RE.finditer(text):
+        value = int(match.group(1))
+        errors = max(errors, value)
+    for match in TEST_FAILED_RE.finditer(text):
+        value = int(match.group(1))
+        failed_tests = max(failed_tests, value)
+    if errors:
+        reason = f"parsed errors={errors}"
+    if failed_tests:
+        reason = (reason + "; " if reason else "") + f"parsed failed tests={failed_tests}"
+    return {"errors": errors, "failed_tests": failed_tests, "reason": reason}
+
+
+def run_auto_chroot(argv: list[str], *, env: Mapping[str, str] | None = None, cwd: str | None = None) -> int:
+    env = dict(env or os.environ)
+    cwd = cwd or os.getcwd()
+    try:
+        config, forwarded = translate_devtool_args(argv, env=env, cwd=cwd)
+    except ValueError as exc:
+        print(f"devtool android chroot: {exc}", file=sys.stderr)
+        return 2
+    adapted_forwarded, meta = _adapt_forwarded_for_chroot(forwarded)
+    forwarded, machine_path, cleanup_machine_path = prepare_host_clipboard_run(config, adapted_forwarded)
+    cmd = build_runner_command(config, forwarded)
+
+    log_root = Path(env.get("DEVTOOL_TERMUX_CHROOT_LOG_DIR", "~/.cache/devtool/termux-chroot-runner")).expanduser()
+    log_root.mkdir(parents=True, exist_ok=True)
+    raw_logfile = log_root / f"devtool-chroot-{_stamp()}.ansi.log"
+    plain_logfile = _plain_log_path_for(raw_logfile)
+
+    _print_rich(_make_start_panel(config, meta, raw_logfile, plain_logfile, cmd, env=env), raw_logfile)
+
+    child_env = env.copy()
+    child_env["PYTHONUNBUFFERED"] = "1"
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["DEVTOOL_AUTO_CHROOT_ACTIVE"] = "1"
+    child_env["DEVTOOL_AUTO_CHROOT"] = "0"
+    child_env["DEVTOOL_CHROOT_CONTEXT"] = config.chroot_name
+    if meta.get("needs_android_bridge") == "1" and meta.get("hud_disabled") != "1":
+        bridge_dir = child_env.get("DEVTOOL_HUD_BRIDGE_DIR", "/home/termux/.local/state/devtool-android-hud")
+        child_env["DEVTOOL_HUD_BRIDGE_DIR"] = bridge_dir
+        child_env.setdefault("DEVTOOL_HUD_SINGLETON", "kill")
+        host_bridge_dir = Path(env.get("DEVTOOL_ANDROID_HUD_STATE_DIR", "~/.local/state/devtool-android-hud")).expanduser()
+        _start_android_hud_bridge(raw_logfile, host_bridge_dir)
+
+    _make_live_rule(raw_logfile)
+    rc = _run_live_pty(cmd, raw_logfile, child_env)
+    try:
+        plain = _strip_ansi(raw_logfile.read_text(encoding="utf-8", errors="replace"))
+        plain_logfile.write_text(plain, encoding="utf-8")
+    except Exception:
+        plain = ""
+    analysis = _analyze_plain_log(plain)
+    if rc == 0 and _truthy_env("DEVTOOL_FAIL_ON_PARSED_ERRORS", "1") and (analysis.get("errors", 0) or analysis.get("failed_tests", 0)):
+        rc = 1
+    copied: bool | None = None
+    if config.copy_mode:
+        # Failed runs often do not produce the machine summary. Avoid noisy JSON
+        # tracebacks; the failure reason and logs are already shown below.
+        copied = copy_from_machine_file(machine_path, config.copy_mode, config.copy_via, quiet_missing=(rc != 0))
+    _print_rich(_make_end_panel(rc, analysis, raw_logfile, plain_logfile, copied=copied), raw_logfile)
+    if cleanup_machine_path and machine_path is not None:
+        with contextlib.suppress(OSError):
+            machine_path.unlink()
+    return int(rc)
 
 def _insert_global_flags_before_command(argv: list[str], flags: list[str]) -> list[str]:
     """Insert devtool global flags before the subcommand.
@@ -402,14 +1005,19 @@ def prepare_host_clipboard_run(config: RunnerConfig, forwarded: list[str]) -> tu
     return forwarded, host_machine_path, cleanup
 
 
-def copy_from_machine_file(path: Path | None, copy_mode: str, copy_via: str = "auto") -> bool:
+def copy_from_machine_file(path: Path | None, copy_mode: str, copy_via: str = "auto", *, quiet_missing: bool = False) -> bool:
     if path is None:
-        print("Host clipboard copy skipped: machine JSON path is not host-readable.", file=sys.stderr)
+        if not quiet_missing:
+            print("Clipboard: skipped because the machine summary path is not host-readable.", file=sys.stderr)
         return False
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Host clipboard copy failed: could not read machine JSON from {path}: {exc}", file=sys.stderr)
+        raw = path.read_text(encoding="utf-8")
+        if not raw.strip():
+            raise ValueError("machine summary was empty")
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        if not quiet_missing:
+            print(f"Clipboard: skipped because devtool did not write a readable machine summary ({exc}).", file=sys.stderr)
         return False
     text = _clipboard_text_from_machine_payload(payload, copy_mode)
     result = copy_text(text) if copy_via == "auto" else copy_text(text, preferred=copy_via)

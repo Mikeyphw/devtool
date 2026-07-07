@@ -36,6 +36,11 @@ _CARGO_RUSTC = re.compile(
 )
 _CARGO_FILE = re.compile(r"^\s*-->\s+(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+)$")
 _GENERIC_WARN_ERR = re.compile(r"\b(?P<severity>warning|error)\b[: ]+(?P<message>.+)", re.IGNORECASE)
+_DOTNET_TEST_RESULT_LINE = re.compile(
+    r"\b(?P<status>Passed|Failed)!\s+-\s+Failed:\s*(?P<failed>\d+),\s*Passed:\s*(?P<passed>\d+),\s*Skipped:\s*(?P<skipped>\d+),\s*Total:\s*(?P<total>\d+)",
+    re.IGNORECASE,
+)
+_TEST_RUN_FAILED = re.compile(r"\bTest Run Failed\b", re.IGNORECASE)
 
 
 def relativize(repo_root: Path, path_text: str) -> str:
@@ -55,6 +60,8 @@ def relativize(repo_root: Path, path_text: str) -> str:
 def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]:
     issues: list[Issue] = []
     cargo_pending: Issue | None = None
+    dotnet_failed_summary: tuple[int, int, int, int] | None = None
+    dotnet_run_failed = False
     lines = output.splitlines()
     index = 0
 
@@ -81,6 +88,25 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 issues.append(issue)
                 index = next_index
                 continue
+
+
+        match = _DOTNET_TEST_RESULT_LINE.search(stripped)
+        if match:
+            failed = int(match.group("failed"))
+            if failed > 0 or match.group("status").lower() == "failed":
+                dotnet_failed_summary = (
+                    failed,
+                    int(match.group("passed")),
+                    int(match.group("skipped")),
+                    int(match.group("total")),
+                )
+            index += 1
+            continue
+
+        if _TEST_RUN_FAILED.search(stripped):
+            dotnet_run_failed = True
+            index += 1
+            continue
 
         match = _PYTEST_FAILURE.match(stripped)
         if match:
@@ -182,6 +208,21 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 ))
 
         index += 1
+
+    has_error = any(issue.severity == "error" for issue in issues)
+    command_is_test = "test" in command_name.lower()
+    if command_is_test and not has_error:
+        if dotnet_failed_summary is not None:
+            failed, passed, skipped, total = dotnet_failed_summary
+            issues.append(Issue(
+                "error",
+                command_name,
+                "-",
+                "VSTEST",
+                f"{failed} failed, {passed} passed, {skipped} skipped, {total} total",
+            ))
+        elif dotnet_run_failed:
+            issues.append(Issue("error", command_name, "-", "VSTEST", "Test Run Failed"))
 
     return _dedupe_issues(issues)
 

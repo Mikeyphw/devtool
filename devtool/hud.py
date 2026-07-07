@@ -1396,6 +1396,28 @@ class GtkDesktopHud:
                 window.set_icon_from_file(str(icon_path))
         window.connect("destroy", Gtk.main_quit)
 
+        def _move_window_top_right() -> bool:
+            """Place the desktop HUD near the top-right of the active monitor."""
+            try:
+                margin = int(os.environ.get("DEVTOOL_DESKTOP_HUD_MARGIN", "24"))
+            except ValueError:
+                margin = 24
+            with contextlib.suppress(Exception):
+                screen = window.get_screen()
+                gdk_window = window.get_window()
+                if gdk_window is not None:
+                    monitor = screen.get_monitor_at_window(gdk_window)
+                else:
+                    monitor = screen.get_primary_monitor()
+                geometry = screen.get_monitor_workarea(monitor)
+                width, _height = window.get_size()
+                x = geometry.x + geometry.width - width - margin
+                y = geometry.y + margin
+                window.move(max(geometry.x, x), max(geometry.y, y))
+            return False
+
+        window.connect("realize", lambda *_args: GLib.idle_add(_move_window_top_right))
+
         css = b"""
         .hud-root { background: #0b0f14; color: #eef4ff; }
         .hud-card { background: #121923; border-radius: 18px; padding: 14px; }
@@ -1415,8 +1437,12 @@ class GtkDesktopHud:
         .hud-failed { color: #ff6978; font-weight: 900; }
         .hud-running { color: #ffd166; font-weight: 800; }
         .hud-neutral { color: #91a3b8; }
-        progressbar trough { min-height: 14px; border-radius: 999px; background: #071018; }
-        progressbar progress { min-height: 14px; border-radius: 999px; background: #5ee49b; }
+        progressbar.hud-progress trough { min-height: 14px; border-radius: 999px; background: #071018; }
+        progressbar.hud-progress progress { min-height: 14px; border-radius: 999px; background: #ffd166; }
+        progressbar.hud-progress-ok progress { background: #5ee49b; }
+        progressbar.hud-progress-failed progress { background: #ff6978; }
+        progressbar.hud-progress-running progress { background: #ffd166; }
+        progressbar.hud-progress-neutral progress { background: #415064; }
         button { border-radius: 10px; padding: 5px 9px; background: #1b2634; color: #e8eef6; }
         expander { color: #91a3b8; }
         """
@@ -1457,7 +1483,7 @@ class GtkDesktopHud:
         warning_label = _label("", "hud-warning-banner", wrap=True); warning_label.set_no_show_all(True); card.pack_start(warning_label, False, False, 0)
 
         pipeline = _label("Validate → Apply → Test → Commit", "hud-pipeline"); pipeline.set_ellipsize(Pango.EllipsizeMode.END); card.pack_start(pipeline, False, False, 0)
-        progress = Gtk.ProgressBar(); progress.set_show_text(True); card.pack_start(progress, False, False, 0)
+        progress = Gtk.ProgressBar(); progress.set_show_text(True); progress.get_style_context().add_class("hud-progress"); card.pack_start(progress, False, False, 0)
 
         metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); card.pack_start(metrics, False, False, 0)
         error_metric = _label("0\nERRORS", "hud-metric", wrap=True)
@@ -1500,6 +1526,19 @@ class GtkDesktopHud:
             else:
                 ctx.add_class("hud-neutral")
 
+        def _set_progress_classes(status: str) -> None:
+            ctx = progress.get_style_context()
+            for cls in ("hud-progress-ok", "hud-progress-failed", "hud-progress-running", "hud-progress-neutral"):
+                ctx.remove_class(cls)
+            if status == "ok":
+                ctx.add_class("hud-progress-ok")
+            elif status == "failed":
+                ctx.add_class("hud-progress-failed")
+            elif status == "running":
+                ctx.add_class("hud-progress-running")
+            else:
+                ctx.add_class("hud-progress-neutral")
+
         def refresh() -> bool:
             current_dir = resolve_hud_directory(directory, follow_active=follow_active)
             snapshot = snapshot_from_directory(current_dir, recent_events=max(self.recent_events, 14))
@@ -1530,16 +1569,38 @@ class GtkDesktopHud:
             pipeline.set_text(pipeline_label(state, highlights))
 
             if state.current is not None and state.total is not None and state.total > 0:
-                progress.set_fraction(max(0.0, min(1.0, state.current / state.total)))
-                progress.set_text(f"{state.current}/{state.total}  {state.percent or 0}%")
+                fraction = max(0.0, min(1.0, state.current / state.total))
+                if state.status == "ok":
+                    progress.set_fraction(1.0)
+                    progress.set_text("complete")
+                elif state.status == "failed":
+                    progress.set_fraction(1.0)
+                    progress.set_text("failed")
+                else:
+                    progress.set_fraction(fraction)
+                    progress.set_text(f"{state.current}/{state.total}  {state.percent or 0}%")
+            elif state.status == "ok":
+                progress.set_fraction(1.0)
+                progress.set_text("complete")
+            elif state.status == "failed":
+                progress.set_fraction(1.0)
+                progress.set_text("failed")
             elif state.current is not None:
-                progress.pulse(); progress.set_text(f"{state.current} done")
+                progress.pulse()
+                progress.set_text(f"{state.current} done")
             else:
-                progress.pulse(); progress.set_text(human_status(state.status).lower())
+                progress.pulse()
+                progress.set_text(human_status(state.status).lower())
+            _set_progress_classes(state.status)
 
             error_metric.set_text(f"{error_count}\nERRORS")
             warning_metric.set_text(f"{warning_count}\nWARNINGS")
-            progress_metric.set_text((f"{state.percent}%\nPROGRESS" if state.percent is not None else f"{human_status(state.status).upper()}\nSTATUS"))
+            if state.status == "ok":
+                progress_metric.set_text("100%\nCOMPLETE")
+            elif state.status == "failed":
+                progress_metric.set_text("FAILED\nSTATUS")
+            else:
+                progress_metric.set_text((f"{state.percent}%\nPROGRESS" if state.percent is not None else f"{human_status(state.status).upper()}\nSTATUS"))
             _set_status_classes(error_metric, "failed" if error_count else "ok")
             _set_status_classes(warning_metric, "running" if warning_count else "ok")
             _set_status_classes(progress_metric, state.status)
@@ -1824,15 +1885,21 @@ def choose_hud_mode(requested: str) -> str:
             return "android-notify"
     if _is_termux_chroot_bridge():
         return "android-bridge"
+
+    # Prefer native Termux:GUI whenever it is available, even if a desktop
+    # DISPLAY/WAYLAND_DISPLAY exists. This keeps Android/Termux auto-HUD from
+    # being stolen by GTK/X11 and preserves the documented priority:
+    # android-gui → android-notify → desktop-window → desktop-notify → terminal.
+    if TermuxGuiHud.available():
+        return "android-gui"
+    if shutil.which("termux-notification"):
+        return "android-notify"
+
     if os.name == "posix" and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         if GtkDesktopHud.available():
             return "desktop-window"
         if DesktopNotificationHud.available():
             return "desktop-notify"
-    if TermuxGuiHud.available():
-        return "android-gui"
-    if shutil.which("termux-notification"):
-        return "android-notify"
     return "terminal"
 
 
