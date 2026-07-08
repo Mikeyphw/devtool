@@ -14,6 +14,7 @@ from typing import Any
 
 from .artifacts import preview_artifact, read_delete_manifest
 from .models import OperationResult
+from .concurrency import process_is_alive
 
 
 
@@ -50,6 +51,14 @@ def transaction_root(repo_root: Path) -> Path:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _process_start_token(pid: int) -> str:
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace").split()
+        return fields[21] if len(fields) > 21 else ""
+    except OSError:
+        return ""
 
 
 def _safe_rel(text: str) -> Path:
@@ -92,8 +101,36 @@ def _transaction_file(tx_dir: Path) -> Path:
     return tx_dir / "transaction.json"
 
 
-def _active_file(repo_root: Path) -> Path:
-    return transaction_root(repo_root) / "active.json"
+def _active_dir(repo_root: Path) -> Path:
+    return transaction_root(repo_root) / "active"
+
+
+def _active_file(repo_root: Path, transaction_id: str = "") -> Path:
+    # Keep the legacy active.json path readable for recovery, but new
+    # transactions get one marker each so concurrent applies cannot overwrite
+    # another run's recovery state.
+    if not transaction_id:
+        return transaction_root(repo_root) / "active.json"
+    return _active_dir(repo_root) / f"{transaction_id}.json"
+
+
+def _remove_active_marker(repo_root: Path, transaction_path: Path, transaction_id: str = "") -> None:
+    candidates = []
+    if transaction_id:
+        candidates.append(_active_file(repo_root, transaction_id))
+    candidates.append(_active_file(repo_root))
+    for active in candidates:
+        if not active.exists():
+            continue
+        try:
+            active_data = _read_json(active)
+            if str(active_data.get("path")) == str(transaction_path):
+                active.unlink(missing_ok=True)
+        except Exception:
+            # Only remove a corrupt per-transaction marker automatically. A
+            # corrupt legacy global marker is left for explicit recovery.
+            if active.parent.name == "active":
+                active.unlink(missing_ok=True)
 
 
 def _rsync() -> str:
@@ -201,6 +238,8 @@ def create_apply_transaction(
         "started_at": _utc_now(),
         "updated_at": _utc_now(),
         "pid": os.getpid(),
+        "process_start": _process_start_token(os.getpid()),
+        "run_id": os.environ.get("DEVTOOL_RUN_ID", ""),
         "affected_paths": entries,
         "preview_counts": preview.get("counts", {}),
     }
@@ -213,22 +252,55 @@ def create_apply_transaction(
     tx["status"] = "backup-ready"
     tx["updated_at"] = _utc_now()
     _atomic_write_json(_transaction_file(tx_dir), tx)
-    _atomic_write_json(_active_file(repo_root), {"transaction_id": transaction_id, "path": str(_transaction_file(tx_dir)), "status": "backup-ready", "updated_at": _utc_now(), "pid": os.getpid()})
+    _atomic_write_json(
+        _active_file(repo_root, transaction_id),
+        {
+            "transaction_id": transaction_id,
+            "path": str(_transaction_file(tx_dir)),
+            "status": "backup-ready",
+            "updated_at": _utc_now(),
+            "pid": os.getpid(),
+            "process_start": tx.get("process_start", ""),
+            "run_id": tx.get("run_id", ""),
+        },
+    )
     return tx
 
 
+def find_active_transactions(repo_root: Path, *, include_live: bool = False) -> list[Path]:
+    repo_root = repo_root.resolve()
+    markers: list[Path] = []
+    legacy = _active_file(repo_root)
+    if legacy.exists():
+        markers.append(legacy)
+    active_dir = _active_dir(repo_root)
+    if active_dir.exists():
+        markers.extend(sorted(active_dir.glob("*.json")))
+
+    found: list[Path] = []
+    for marker in markers:
+        try:
+            data = _read_json(marker)
+            path = Path(str(data.get("path") or ""))
+            if not path.exists():
+                marker.unlink(missing_ok=True)
+                continue
+            pid = int(data.get("pid", 0) or 0)
+            live = process_is_alive(pid, str(data.get("process_start") or ""))
+            if live and not include_live:
+                continue
+            found.append(path)
+        except Exception:
+            if marker == legacy:
+                found.append(marker)
+            else:
+                marker.unlink(missing_ok=True)
+    return found
+
+
 def find_active_transaction(repo_root: Path) -> Path | None:
-    active = _active_file(repo_root.resolve())
-    if not active.exists():
-        return None
-    try:
-        data = _read_json(active)
-        path = Path(str(data.get("path") or ""))
-        if path.exists():
-            return path
-    except Exception:
-        return active
-    return active
+    stale = find_active_transactions(repo_root, include_live=False)
+    return stale[0] if stale else None
 
 
 def _cleanup_transaction_dir(path: Path) -> None:
@@ -250,14 +322,8 @@ def mark_transaction_completed(transaction_path: str | Path | None) -> None:
     tx["completed_at"] = _utc_now()
     tx["updated_at"] = _utc_now()
     _atomic_write_json(path, tx)
-    active = _active_file(Path(str(tx.get("repo_root") or ".")))
-    if active.exists():
-        try:
-            active_data = _read_json(active)
-            if str(active_data.get("path")) == str(path):
-                active.unlink(missing_ok=True)
-        except Exception:
-            active.unlink(missing_ok=True)
+    repo_root = Path(str(tx.get("repo_root") or "."))
+    _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
     # Successful applies no longer leave backup payloads in the repository or XDG tree.
     _cleanup_transaction_dir(path)
 
@@ -271,7 +337,7 @@ def _delete_path(path: Path) -> None:
 def rollback_transaction(transaction_path: str | Path, *, reason: str = "rollback requested") -> OperationResult:
     start = time.perf_counter()
     path = Path(transaction_path)
-    if path.name == "active.json":
+    if path.name == "active.json" or path.parent.name == "active":
         active = _read_json(path)
         path = Path(str(active.get("path") or ""))
     argv = ["rsync", "rollback", str(path)]
@@ -292,14 +358,7 @@ def rollback_transaction(transaction_path: str | Path, *, reason: str = "rollbac
             tx["rolled_back_at"] = _utc_now()
             tx["updated_at"] = _utc_now()
             _atomic_write_json(path, tx)
-            active = _active_file(repo_root)
-            if active.exists():
-                try:
-                    active_data = _read_json(active)
-                    if str(active_data.get("path")) == str(path):
-                        active.unlink(missing_ok=True)
-                except Exception:
-                    active.unlink(missing_ok=True)
+            _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
             output = (
                 "Cleared stale devtool apply transaction.\n"
                 f"reason: {reason}\n"
@@ -338,14 +397,7 @@ def rollback_transaction(transaction_path: str | Path, *, reason: str = "rollbac
         tx["rolled_back_at"] = _utc_now()
         tx["updated_at"] = _utc_now()
         _atomic_write_json(path, tx)
-        active = _active_file(repo_root)
-        if active.exists():
-            try:
-                active_data = _read_json(active)
-                if str(active_data.get("path")) == str(path):
-                    active.unlink(missing_ok=True)
-            except Exception:
-                active.unlink(missing_ok=True)
+        _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
         output = (
             "Rolled back devtool apply transaction.\n"
             f"reason: {reason}\n"

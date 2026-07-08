@@ -24,6 +24,7 @@ from .artifacts import (
     diff_artifact,
     format_preview,
     is_overlay_bundle,
+    materialize_overlay_bundle_entries,
     overlay_bundle_targets,
     latest_commit_hash,
     load_history,
@@ -50,6 +51,7 @@ from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_ACTION, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, start_auto_hud
 from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
+from .concurrency import ConcurrencyLease, merge_scopes, scope_for_artifact_preview, scope_for_specs
 
 console = create_console()
 
@@ -76,60 +78,89 @@ PROGRESS_CAPABLE_COMMANDS = {
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="devtool")
-    parser.add_argument("-r", "--repo", default=None, help="Repository root")
-    parser.add_argument("-c", "--config", default=None, help="Config file path")
-    parser.add_argument("--target", default="", help="Named target/profile from .devtool.toml")
-    parser.add_argument("--solution", default="", help="Exact solution path for restore/build/test")
-    parser.add_argument("--project", default="", help="Exact project path for run/validation")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Stream full command output")
-    parser.add_argument("-j", "--json", action="store_true", help="Shortcut for the machine envelope stdout payload")
-    parser.add_argument("--machine", nargs="?", const="compact", choices=["compact", "pretty"], default="", help="Emit the clean machine envelope on stdout")
-    parser.add_argument("--machine-file", default="", help="Write the machine envelope to this file")
-    parser.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
-    parser.add_argument("-f", "--force", action="store_true", help="Force dangerous actions")
-    parser.add_argument("--dry-run", action="store_true", help="Print commands without running them")
-    parser.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="For test: pass --no-build to dotnet test")
-    parser.add_argument("-k", "--continue-on-error", action="store_true", help="Continue batch after errors")
-    parser.add_argument("--fail-fast", action="store_true", help="Stop batch on first error")
-    parser.add_argument("-p", "--copy", action="store_true", help="Copy a concise summary on success, or verbose output on failure")
-    parser.add_argument("--copy-summary", action="store_true", help="Copy rendered summary to clipboard without prompting")
-    parser.add_argument("--copy-json", action="store_true", help="Copy JSON summary to clipboard without prompting")
-    parser.add_argument("--no-clipboard", action="store_true", help="Disable clipboard prompts and copy behavior")
-    parser.add_argument("--copy-via", choices=["auto", "socket", "fifo", "termux", "x11", "wayland"], default="auto", help="Prefer a clipboard backend family")
-    parser.add_argument("-n", "--notify", action="store_true", help="Send notification when done")
-    parser.add_argument("--notify-brief", action="store_true", help="Use shorter notification body")
-    parser.add_argument("--notify-on-success", action="store_true", help="Only notify on success")
-    parser.add_argument("--notify-on-fail", action="store_true", help="Only notify on failure")
-    parser.add_argument("--notify-progress", action="store_true", help="Update a live Termux notification while phases run")
-    parser.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for --notify-progress")
-    parser.add_argument("--tasker", action="store_true", help="Enable Tasker JSON, broadcast, and live notification integration")
-    parser.add_argument("--tasker-progress", "--progress", dest="tasker_progress", action="store_true", default=None, help="Write live HUD/Tasker-compatible JSON progress files (default for build/test/validate/apply commands)")
-    parser.add_argument("--no-tasker-progress", "--no-progress", dest="tasker_progress", action="store_false", help="Disable live HUD/Tasker progress files")
-    parser.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory for HUD/Tasker JSON files (default: platform state dir, usually ~/.local/state/devtool on Linux)")
-    parser.add_argument("--tasker-broadcast", action="store_true", help="Send an Android broadcast after Tasker event files are written")
-    parser.add_argument("--tasker-action", default=DEFAULT_TASKER_ACTION, help="Android broadcast action for Tasker events")
-    parser.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start/reuse the HUD when progress is emitted (default)")
-    parser.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not auto-start the HUD for this command")
-    parser.add_argument("--hud-mode", default="desktop", help="HUD mode to auto-start, e.g. desktop, android-gui, android-bridge, android-notify, desktop-window, desktop-notify, v5, terminal")
-    parser.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
-    exec_group = parser.add_mutually_exclusive_group()
-    exec_group.add_argument("--host", action="store_true", help="Force commands to run on the host")
-    exec_group.add_argument("--chroot", default="", help="Run command phases inside a named chroot via chrootctl exec")
-    parser.add_argument("--no-auto-chroot", action="store_true", help="On Termux host, do not auto-route this devtool command through chrootctl")
-    parser.add_argument(
+    parser = argparse.ArgumentParser(
+        prog="devtool",
+        description="Apply artifacts, validate projects, and produce reviewable handoff commits.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Common workflows:\n"
+            "  devtool -r REPO validate\n"
+            "  devtool -r REPO apply-overlay PATCH.zip --validate --commit MESSAGE\n"
+            "  devtool -r REPO apply-overlays BUNDLE.zip --validate --commit MESSAGE\n"
+            "\nMultiple overlays run sequentially: each overlay is applied, validated, and committed before the next starts."
+        ),
+    )
+
+    project = parser.add_argument_group("Project selection")
+    project.add_argument("-r", "--repo", default=None, help="Repository root")
+    project.add_argument("-c", "--config", default=None, help="Config file path")
+    project.add_argument("--target", default="", help="Named target/profile from .devtool.toml")
+    project.add_argument("--solution", default="", help="Exact solution path for restore/build/test")
+    project.add_argument("--project", default="", help="Exact project path for run/validation")
+
+    execution = parser.add_argument_group("Execution")
+    execution.add_argument("-v", "--verbose", action="store_true", help="Stream full command output")
+    execution.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
+    execution.add_argument("-f", "--force", action="store_true", help="Force dangerous actions")
+    execution.add_argument("--dry-run", action="store_true", help="Print commands without running them")
+    execution.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="For test: pass --no-build to dotnet test")
+    execution.add_argument("-k", "--continue-on-error", action="store_true", help="Continue with the next independent step after an error")
+    execution.add_argument("--fail-fast", action="store_true", help="Stop at the first failed step")
+
+    output = parser.add_argument_group("Output and clipboard")
+    output.add_argument("-j", "--json", action="store_true", help="Shortcut for the machine envelope stdout payload")
+    output.add_argument("--machine", nargs="?", const="compact", choices=["compact", "pretty"], default="", help="Emit the clean machine envelope on stdout")
+    output.add_argument("--machine-file", default="", help="Write the machine envelope to this file")
+    output.add_argument("-p", "--copy", action="store_true", help="Copy a concise summary on success, or verbose output on failure")
+    output.add_argument("--copy-summary", action="store_true", help="Copy the concise summary without prompting")
+    output.add_argument("--copy-json", action="store_true", help="Copy JSON summary without prompting")
+    output.add_argument("--no-clipboard", action="store_true", help="Disable clipboard prompts and copy behavior")
+    output.add_argument("--copy-via", choices=["auto", "socket", "fifo", "termux", "x11", "wayland"], default="auto", help="Prefer a clipboard backend family")
+    output.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
+    output.add_argument(
         "--stdout-payload",
         choices=["auto", "summary", "json", "raw"],
         default="auto",
-        help="Select the stdout payload; use summary/json/raw, or auto for normal CLI output",
+        help="Select stdout content: normal UI, concise summary, machine JSON, or raw command output",
     )
-    parser.add_argument(
+    output.add_argument(
         "--save-json-payload",
         "--json-output",
         dest="save_json_payload",
         default="",
-        help="Write the machine JSON payload to this file path",
+        help="Write the machine JSON payload to this file",
     )
+
+    notifications = parser.add_argument_group("Notifications and integrations")
+    notifications.add_argument("-n", "--notify", action="store_true", help="Send a completion notification")
+    notifications.add_argument("--notify-brief", action="store_true", help="Use a shorter notification body")
+    notifications.add_argument("--notify-on-success", action="store_true", help="Only notify on success")
+    notifications.add_argument("--notify-on-fail", action="store_true", help="Only notify on failure")
+    notifications.add_argument("--notify-progress", action="store_true", help="Update a live Termux notification while phases run")
+    notifications.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for live progress")
+    notifications.add_argument("--tasker", action="store_true", help="Enable Tasker JSON, broadcast, and notification integration")
+    notifications.add_argument("--tasker-progress", "--progress", dest="tasker_progress", action="store_true", default=None, help="Write live HUD/Tasker progress files (default for build/test/validate/apply)")
+    notifications.add_argument("--no-tasker-progress", "--no-progress", dest="tasker_progress", action="store_false", help="Disable live HUD/Tasker progress files")
+    notifications.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory for HUD/Tasker progress files")
+    notifications.add_argument("--tasker-broadcast", action="store_true", help="Send an Android broadcast after Tasker event files are written")
+    notifications.add_argument("--tasker-action", default=DEFAULT_TASKER_ACTION, help="Android broadcast action for Tasker events")
+
+    hud = parser.add_argument_group("HUD")
+    hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the HUD when progress is emitted (default)")
+    hud.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not auto-start the HUD for this command")
+    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-gui, android-bridge, android-notify, desktop-window, desktop-notify, v5, or terminal")
+    hud.add_argument("--hud-no-overlay", action="store_true", help="Run Termux:GUI HUD as a normal Activity instead of a floating overlay")
+
+    concurrency = parser.add_argument_group("Concurrency")
+    concurrency.add_argument("--concurrency", choices=["auto", "off"], default=os.environ.get("DEVTOOL_CONCURRENCY", "auto"), help="Allow concurrent runs when their repository file scopes do not conflict")
+    concurrency.add_argument("--lock-timeout", type=float, default=float(os.environ.get("DEVTOOL_LOCK_TIMEOUT", "300")), help="Seconds to wait for a conflicting run (default: 300)")
+    concurrency.add_argument("--no-wait", action="store_true", help="Fail immediately instead of waiting for a conflicting file lease")
+
+    environment = parser.add_argument_group("Execution environment")
+    exec_group = environment.add_mutually_exclusive_group()
+    exec_group.add_argument("--host", action="store_true", help="Force command phases to run on the host")
+    exec_group.add_argument("--chroot", default="", help="Run command phases inside a named chroot via chrootctl exec")
+    environment.add_argument("--no-auto-chroot", action="store_true", help="On Termux, do not auto-route command phases through chrootctl")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -282,6 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
     hud_cmd.add_argument("--studio-notify", action="store_true", help="In studio/v5 mode, also mirror state into termux-notification when available")
     hud_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
     hud_cmd.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory written by auto-HUD")
+    hud_cmd.add_argument("--no-overlay", action="store_true", help="For android-gui, use a normal Activity instead of a floating overlay")
 
     android_bridge_cmd = subparsers.add_parser("android-hud-bridge", aliases=["termux-hud-bridge"], help="Display chroot/proot Android HUD bridge state from the Termux host")
     android_bridge_cmd.add_argument("--state-dir", default="", help="Shared bridge state directory; defaults to ~/.local/state/devtool-android-hud on Termux or /home/termux/.local/state/devtool-android-hud in a chroot")
@@ -292,6 +324,7 @@ def build_parser() -> argparse.ArgumentParser:
     android_bridge_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
     android_bridge_cmd.add_argument("--follow-active", action="store_true", default=True, help="Follow active HUD pointer in the shared bridge directory")
     android_bridge_cmd.add_argument("--no-follow-active", dest="follow_active", action="store_false", help="Read the shared bridge directory directly")
+    android_bridge_cmd.add_argument("--no-overlay", action="store_true", help="For android-gui bridge mode, use a normal Activity instead of a floating overlay")
 
     history_cmd = subparsers.add_parser("history")
     history_cmd.add_argument("--limit", type=int, default=20)
@@ -327,6 +360,15 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         return
 
     import re as _re
+
+    suppression_patterns = (
+        (r"Artifact (?:not found|check failed before apply)|No matching artifact|Could not resolve artifact|FileNotFoundError|No such file or directory.*(?:\.zip|\.tar)", "artifact is missing"),
+        (r"Requested command was not executed.*re-run|previous devtool apply appears to have been interrupted|Cleared stale devtool apply transaction|Interrupted by user|Interrupted during (?:artifact|overlay)|Child process was terminated", "run was interrupted or guarded by recovery"),
+    )
+    for pattern, reason in suppression_patterns:
+        if _re.search(pattern, raw_output, _re.IGNORECASE | _re.DOTALL):
+            console.print(f"[yellow]Clipboard copy skipped because the {reason}.[/yellow]")
+            return
 
     try:
         payload = json.loads(json_text)
@@ -542,13 +584,40 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     test_totals = _test_totals()
     commit_hash = _commit_hash()
 
-    success_lines = [
-        "Devtool completed successfully.",
-        "",
-        "Actions completed:",
-        *action_lines,
-        "",
-    ]
+    overlay_summaries = payload.get("overlays") if isinstance(payload, dict) else None
+    success_lines = ["Devtool completed successfully.", ""]
+
+    if isinstance(overlay_summaries, list) and overlay_summaries:
+        success_lines.append(f"Overlays completed: {len(overlay_summaries)}")
+        for overlay in overlay_summaries:
+            if not isinstance(overlay, dict):
+                continue
+            index = int(overlay.get("index") or 0)
+            total = int(overlay.get("total") or len(overlay_summaries))
+            label_text = str(overlay.get("label") or f"Overlay {index}")
+            target_text = str(overlay.get("target") or "")
+            success_lines.extend(("", f"Overlay {index}/{total}: {label_text}" + (f" [{target_text}]" if target_text else "")))
+            tests_data = overlay.get("tests")
+            if isinstance(tests_data, dict):
+                success_lines.append(
+                    "- Tests: "
+                    f"{int(tests_data.get('passed') or 0)} passed, "
+                    f"{int(tests_data.get('failed') or 0)} failed, "
+                    f"{int(tests_data.get('skipped') or 0)} skipped "
+                    f"({int(tests_data.get('total') or 0)} total)"
+                )
+            success_lines.append(
+                f"- Diagnostics: {int(overlay.get('warnings') or 0)} warnings, "
+                f"{int(overlay.get('errors') or 0)} errors"
+            )
+            if overlay.get("commit_hash"):
+                success_lines.append(f"- Git commit: {overlay['commit_hash']}")
+            success_lines.append(f"- Duration: {float(overlay.get('duration_seconds') or 0):.2f}s")
+        success_lines.extend(("", "Overall actions:"))
+        success_lines.extend(action_lines)
+        success_lines.append("")
+    else:
+        success_lines.extend(("Actions completed:", *action_lines, ""))
 
     if test_totals is not None:
         test_passed, test_failed, test_skipped, test_total = test_totals
@@ -745,7 +814,7 @@ def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = No
                 directory = default_android_bridge_dir()
         except Exception:
             chosen_hud_mode = hud_mode
-        start_auto_hud(directory, mode=hud_mode, poll_interval=0.1)
+        start_auto_hud(directory, mode=hud_mode, poll_interval=0.1, no_overlay=bool(getattr(args, "hud_no_overlay", False)))
     return build_tasker_sink(
         enabled=enabled,
         directory=str(directory),
@@ -790,12 +859,34 @@ def _finish_tasker(tasker_progress: TaskerProgressSink | None, *, totals: dict[s
 
 def _summary_text(results: list[OperationResult]) -> str:
     parts: list[str] = []
+    current_group: tuple[int, str] | None = None
     for result in results:
+        metadata = result.metadata or {}
+        if metadata.get("overlay_index") is not None:
+            index = int(metadata.get("overlay_index") or 0)
+            total = int(metadata.get("overlay_total") or 0)
+            label = str(metadata.get("overlay_label") or f"Overlay {index}")
+            target = str(metadata.get("overlay_target") or "")
+            group = (index, label)
+            if group != current_group:
+                if parts:
+                    parts.append("")
+                heading = f"Overlay {index}/{total}: {label}"
+                if target:
+                    heading += f" [{target}]"
+                parts.append(heading)
+                current_group = group
+        elif current_group is not None:
+            parts.append("")
+            parts.append("Bundle/final actions")
+            current_group = None
+
         status = "skipped" if result.skipped else ("ok" if result.returncode == 0 else "failed")
-        parts.append(f"{result.name}: {status} exit={result.returncode} time={result.duration_seconds:.2f}s")
+        indent = "  " if metadata.get("overlay_index") is not None else ""
+        parts.append(f"{indent}{result.name}: {status} exit={result.returncode} time={result.duration_seconds:.2f}s")
         for issue in result.issues:
             location = issue.file if issue.line is None or issue.file in {"", "-"} else f"{issue.file}:{issue.line}"
-            parts.append(f"  {issue.severity} {issue.command} {location} {issue.code} {issue.message}")
+            parts.append(f"{indent}  {issue.severity} {issue.command} {location} {issue.code} {issue.message}")
     return "\n".join(parts)
 
 
@@ -1136,7 +1227,14 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         )
         if getattr(args, "_devtool_artifact_sha", ""):
             entry["sha256"] = args._devtool_artifact_sha
-        append_history(config.repo_root, entry)
+        history_entry_path = append_history(config.repo_root, entry)
+        try:
+            args._devtool_history_paths = [
+                str(history_entry_path.relative_to(config.repo_root)).replace("\\", "/"),
+                ".devtool/artifacts.json",
+            ]
+        except Exception:
+            args._devtool_history_paths = [".devtool/artifacts.json"]
     except Exception as exc:
         console.print(f"[yellow]Could not write artifact history: {exc}[/yellow]")
 
@@ -1214,9 +1312,13 @@ def _artifact_commit_paths(args: argparse.Namespace) -> list[str]:
                         for value in values:
                             add_path(value)
 
-    # Applying overlays/snapshots updates the artifact history file.
-    # Include it in scoped auto-commits so the repo records what was applied.
-    add_path(".devtool/artifacts.json")
+    # Include this run's append-only history record and generated index.
+    history_paths = getattr(args, "_devtool_history_paths", None)
+    if isinstance(history_paths, (list, tuple)):
+        for history_path in history_paths:
+            add_path(history_path)
+    else:
+        add_path(".devtool/artifacts.json")
 
     return paths
 
@@ -1270,27 +1372,136 @@ def _maybe_commit_after_apply(
     if not results or any(result.returncode != 0 for result in results):
         return results, raw_output
 
-    # Record artifact history before the auto-commit so .devtool/artifacts.json
-    # is staged with the same overlay/snapshot commit.
-    if not getattr(args, "_devtool_history_recorded", False):
-        _record_apply_history(config, args, results)
-        args._devtool_history_recorded = True
-
-    commit_paths = _artifact_commit_paths(args)
-    commit_results, commit_raw = _git_commit_with_optional_log(
+    # Builds/tests may run concurrently, but Git index/ref updates are serialized
+    # for a very short phase. History is recorded inside the same lease so each
+    # commit includes a coherent append-only record and generated index.
+    git_lease = ConcurrencyLease(
         config.repo_root,
-        commit_message,
-        verbose=args.verbose,
-        dry_run=args.dry_run,
-        log_path=log_path,
-        paths=commit_paths,
+        command=f"{args.command}:git-commit",
+        writes=["@git-commit"],
+        phase="git-commit",
+        run_id=str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")),
+        timeout=0.0 if bool(getattr(args, "no_wait", False)) else float(getattr(args, "lock_timeout", 300.0)),
     )
+    with git_lease:
+        if not getattr(args, "_devtool_history_recorded", False):
+            _record_apply_history(config, args, results)
+            args._devtool_history_recorded = True
+
+        commit_paths = _artifact_commit_paths(args)
+        commit_results, commit_raw = _git_commit_with_optional_log(
+            config.repo_root,
+            commit_message,
+            verbose=args.verbose,
+            dry_run=args.dry_run,
+            log_path=log_path,
+            paths=commit_paths,
+        )
     results.extend(commit_results)
     if raw_output:
         raw_output = raw_output + "\n\n" + commit_raw
     else:
         raw_output = commit_raw
     return results, raw_output
+
+
+def _preview_scope_for_args(config: ProjectConfig, args: argparse.Namespace) -> tuple[list[str], list[str]]:
+    if args.command not in APPLY_COMMANDS:
+        return [], []
+    snapshot = "snapshot" in args.command
+    if snapshot:
+        return [], ["@repo"]
+    scopes: list[tuple[list[str], list[str]]] = []
+    bundle_targets: list[str] = []
+    for artifact_text in _artifact_arg_list(getattr(args, "artifact", "")):
+        try:
+            artifact_path = resolve_artifact_path(artifact_text)
+            preview = preview_artifact(config.repo_root, artifact_path, snapshot=False)
+            scopes.append(scope_for_artifact_preview(preview, snapshot=False))
+            if is_overlay_bundle(artifact_path):
+                bundle_targets.extend(overlay_bundle_targets(artifact_path))
+            else:
+                manifest = read_artifact_manifest(artifact_path)
+                target = str(manifest.get("validate_target") or manifest.get("target") or "").strip()
+                if target:
+                    bundle_targets.append(target)
+        except Exception:
+            # Missing/invalid artifacts are handled by the normal artifact check.
+            # No repo file can be modified before that check succeeds.
+            continue
+    if bundle_targets:
+        args._devtool_bundle_targets = list(dict.fromkeys(bundle_targets))
+    return merge_scopes(*scopes) if scopes else ([], [])
+
+
+def _command_concurrency_scope(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[list[str], list[str]]:
+    command = str(getattr(args, "command", "") or "")
+    if command in APPLY_COMMANDS:
+        scopes = [_preview_scope_for_args(config, args)]
+        if bool(getattr(args, "validate", False) or getattr(args, "validate_only", False)):
+            scopes.append(scope_for_specs(config, _validation_specs_for_args(config, args, parser)))
+        return merge_scopes(*scopes)
+    if command in {"validate", "v", "wine-validate", "wv"}:
+        return scope_for_specs(config, _validation_specs_for_args(config, args, parser))
+    if command == "batch":
+        return [], ["@repo"]
+    if command in {"commit", "ci", "tag", "rollback", "package", "pkg"}:
+        return [], ["@repo", "@git-commit"]
+    try:
+        specs = build_specs(config, command)
+    except Exception:
+        return [], ["@repo"]
+    return scope_for_specs(config, specs)
+
+
+def _acquire_command_lease(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> ConcurrencyLease | None:
+    if str(getattr(args, "concurrency", "auto") or "auto") == "off":
+        return None
+    reads, writes = _command_concurrency_scope(config, args, parser)
+    if not reads and not writes:
+        return None
+    run_id = os.environ.get("DEVTOOL_RUN_ID", "") or __import__("uuid").uuid4().hex
+    args._devtool_run_id = run_id
+    os.environ["DEVTOOL_RUN_ID"] = run_id
+    timeout = 0.0 if bool(getattr(args, "no_wait", False)) else max(0.0, float(getattr(args, "lock_timeout", 300.0)))
+    def _show_wait(conflicts: list[object]) -> None:
+        if not conflicts:
+            return
+        first = conflicts[0]
+        paths = list(getattr(first, "paths", []) or [])
+        console.print(
+            "[yellow]Waiting for another devtool run[/yellow] "
+            f"[dim]pid={getattr(first, 'pid', '?')} command={getattr(first, 'command', 'devtool')}[/dim]"
+        )
+        for path in paths[:5]:
+            console.print(f"  [dim]{path}[/dim]")
+
+    lease = ConcurrencyLease(
+        config.repo_root,
+        command=str(getattr(args, "command", "devtool")),
+        reads=reads,
+        writes=writes,
+        phase="run",
+        run_id=run_id,
+        timeout=timeout,
+        wait_callback=_show_wait,
+    )
+    try:
+        lease.acquire()
+    except TimeoutError as exc:
+        raise SystemExit(str(exc)) from exc
+    args._devtool_concurrency_lease = lease
+    return lease
+
+
+def _release_command_lease(args: argparse.Namespace) -> None:
+    lease = getattr(args, "_devtool_concurrency_lease", None)
+    if lease is not None:
+        lease.release()
+        run_id = str(getattr(args, "_devtool_run_id", "") or "")
+        if run_id and os.environ.get("DEVTOOL_RUN_ID") == run_id:
+            os.environ.pop("DEVTOOL_RUN_ID", None)
+        args._devtool_concurrency_lease = None
 
 
 def _targets(config: ProjectConfig) -> None:
@@ -1498,6 +1709,254 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     result.output = result.output + manifest_note
     return _return_apply(result, text)
 
+
+
+
+def _tag_overlay_results(
+    results: list[OperationResult],
+    *,
+    index: int,
+    total: int,
+    label: str,
+    target: str,
+    artifact: str,
+) -> None:
+    """Attach stable grouping metadata used by Rich/JSON/clipboard summaries."""
+    for result in results:
+        metadata = dict(result.metadata or {})
+        metadata.update(
+            {
+                "overlay_index": index,
+                "overlay_total": total,
+                "overlay_label": label,
+                "overlay_target": target,
+                "overlay_artifact": artifact,
+            }
+        )
+        result.metadata = metadata
+
+
+def _overlay_sequence_entries(args: argparse.Namespace):
+    """Return materialized overlays in execution order.
+
+    A real bundle is materialized into a temporary directory. Multiple direct
+    archives remain direct source artifacts so each can be cleaned independently.
+    """
+    artifacts = [resolve_artifact_path(item) for item in _artifact_arg_list(getattr(args, "artifact", ""))]
+    if not artifacts:
+        raise RuntimeError("No overlay artifacts were provided.")
+
+    temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    source_bundle: Path | None = None
+    entries: list[dict[str, object]] = []
+
+    if len(artifacts) == 1 and is_overlay_bundle(artifacts[0]):
+        source_bundle = artifacts[0]
+        temp_dir = tempfile.TemporaryDirectory(prefix="devtool-sequential-overlays-")
+        _manifest, materialized = materialize_overlay_bundle_entries(source_bundle, temp_dir.name)
+        total = len(materialized)
+        for item in materialized:
+            label = item.label or Path(item.bundle_path).name
+            entries.append(
+                {
+                    "path": item.path,
+                    "source": source_bundle,
+                    "bundle_member": item.bundle_path,
+                    "label": label,
+                    "target": item.target.strip(),
+                    "index": item.index,
+                    "total": total,
+                    "materialized": True,
+                }
+            )
+    else:
+        total = len(artifacts)
+        for index, path in enumerate(artifacts, start=1):
+            manifest = read_artifact_manifest(path)
+            label = str(manifest.get("name") or manifest.get("label") or path.name).strip() or path.name
+            target = str(manifest.get("validate_target") or manifest.get("target") or "").strip()
+            entries.append(
+                {
+                    "path": path,
+                    "source": path,
+                    "bundle_member": "",
+                    "label": label,
+                    "target": target,
+                    "index": index,
+                    "total": total,
+                    "materialized": False,
+                }
+            )
+    return temp_dir, source_bundle, entries
+
+
+def _overlay_commit_message(base: str, *, index: int, total: int, label: str) -> str:
+    base = base.strip()
+    if not base:
+        return ""
+    if total <= 1:
+        return base
+    return f"{base} [{index}/{total}] {label}"
+
+
+def _run_sequential_overlays(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    log_path: Path | str | None,
+    tasker_progress: TaskerProgressSink | None,
+    continue_on_error: bool,
+) -> tuple[list[OperationResult], str]:
+    """Apply, validate, and commit each overlay as an independent transaction."""
+    all_results: list[OperationResult] = []
+    raw_sections: list[str] = []
+    temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    source_bundle: Path | None = None
+
+    try:
+        temp_dir, source_bundle, entries = _overlay_sequence_entries(args)
+        for entry in entries:
+            index = int(entry["index"])
+            total = int(entry["total"])
+            path = Path(entry["path"])
+            source = Path(entry["source"])
+            label = str(entry["label"])
+            target = str(entry["target"])
+            materialized = bool(entry["materialized"])
+            heading = f"Overlay {index}/{total}: {label}" + (f" [{target}]" if target else "")
+            raw_sections.append(f"=== {heading} ===")
+
+            entry_args = argparse.Namespace(**vars(args))
+            entry_args.command = "apply-overlay"
+            entry_args.artifact = str(path)
+            entry_args.commit = _overlay_commit_message(
+                str(getattr(args, "commit", "") or ""),
+                index=index,
+                total=total,
+                label=label,
+            )
+            entry_args._devtool_history_recorded = False
+            entry_args._devtool_bundle_targets = []
+            for name in ("_devtool_history_paths", "_devtool_artifact_preview", "_devtool_artifact_manifest", "_devtool_artifact_sha"):
+                if hasattr(entry_args, name):
+                    delattr(entry_args, name)
+
+            entry_config = config
+            if target:
+                entry_config = load_project_config(
+                    args.repo,
+                    args.config,
+                    target_name=target,
+                    solution_override=args.solution,
+                    project_override=args.project,
+                )
+
+            results, raw = _run_apply(
+                config,
+                entry_args,
+                "apply-overlay",
+                str(path),
+                log_path=log_path,
+                tasker_progress=tasker_progress,
+            )
+            transaction_path = _apply_transaction_path(results)
+            should_validate = bool(getattr(args, "validate", False) or getattr(args, "validate_only", False))
+
+            if should_validate and (getattr(args, "validate_only", False) or (results and results[-1].returncode == 0)):
+                specs = _validation_specs(entry_config, entry_args, parser)
+                validation_results, validation_raw = _run_specs_for_args(
+                    entry_config,
+                    specs,
+                    entry_args,
+                    continue_on_error=continue_on_error,
+                    log_path=log_path,
+                    tasker_progress=tasker_progress,
+                )
+                results.extend(validation_results)
+                raw = raw + "\n\n" + validation_raw if raw else validation_raw
+
+            if transaction_path and _has_failed_after_apply(results):
+                rollback_result, rollback_raw = _run_transaction_rollback(
+                    transaction_path,
+                    reason=f"validation/build/test failed for overlay {index}/{total}: {label}",
+                    tasker_progress=tasker_progress,
+                    log_path=log_path,
+                )
+                results.append(rollback_result)
+                raw = raw + "\n\n" + rollback_raw if raw else rollback_raw
+
+            results, raw = _maybe_commit_after_apply(
+                entry_config,
+                entry_args,
+                results,
+                raw,
+                log_path=log_path,
+            )
+
+            if transaction_path:
+                if any(result.returncode != 0 for result in results):
+                    if not any(result.name == "apply-rollback" for result in results):
+                        rollback_result, rollback_raw = _run_transaction_rollback(
+                            transaction_path,
+                            reason=f"post-apply command failed for overlay {index}/{total}: {label}",
+                            tasker_progress=tasker_progress,
+                            log_path=log_path,
+                        )
+                        results.append(rollback_result)
+                        raw = raw + "\n\n" + rollback_raw if raw else rollback_raw
+                else:
+                    mark_transaction_completed(transaction_path)
+
+            if not getattr(entry_args, "_devtool_history_recorded", False):
+                _record_apply_history(entry_config, entry_args, results)
+                entry_args._devtool_history_recorded = True
+
+            # Direct overlay arguments are real source files and can be cleaned
+            # after their own transaction. Nested bundle members are temporary;
+            # the outer bundle source is cleaned once after the sequence.
+            if not materialized and not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
+                cleanup = _delete_original_artifact_after_apply(
+                    results,
+                    artifact=str(source),
+                    delete_on_failure=True,
+                )
+                if cleanup is not None:
+                    results.append(cleanup)
+                    raw += "\n\n$ " + " ".join(cleanup.argv) + "\n" + cleanup.output
+
+            _tag_overlay_results(
+                results,
+                index=index,
+                total=total,
+                label=label,
+                target=target,
+                artifact=(f"{source}::{entry['bundle_member']}" if materialized else str(source)),
+            )
+            all_results.extend(results)
+            raw_sections.append(raw)
+
+            if any(result.returncode != 0 for result in results) and not continue_on_error:
+                break
+
+        if source_bundle is not None and not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
+            cleanup = _delete_original_artifact_after_apply(
+                [],
+                artifact=str(source_bundle),
+                delete_on_failure=True,
+            )
+            if cleanup is not None:
+                metadata = dict(cleanup.metadata or {})
+                metadata["summary_group"] = "bundle"
+                metadata["bundle_label"] = source_bundle.name
+                cleanup.metadata = metadata
+                all_results.append(cleanup)
+                raw_sections.append("=== Bundle source ===\n$ " + " ".join(cleanup.argv) + "\n" + cleanup.output)
+
+        return all_results, "\n\n".join(section for section in raw_sections if section)
+    finally:
+        if temp_dir is not None:
+            temp_dir.cleanup()
 
 
 def _apply_transaction_path(results: list[OperationResult]) -> str:
@@ -2061,6 +2520,7 @@ def main(argv: list[str] | None = None) -> int:
             studio_notify=False,
             once=bool(args.once),
             follow_active=bool(args.follow_active),
+            no_overlay=bool(getattr(args, "no_overlay", False)),
         )
         return run_hud(hud_args)
 
@@ -2137,6 +2597,7 @@ def main(argv: list[str] | None = None) -> int:
     continue_on_error = args.continue_on_error and not args.fail_fast
     log_path = new_log_path()
     tasker_progress = _tasker_for_args(args, config)
+    command_lease = _acquire_command_lease(config, args, parser)
 
     started_at = datetime.now(timezone.utc)
     if tasker_progress is not None:
@@ -2177,6 +2638,7 @@ def main(argv: list[str] | None = None) -> int:
         _maybe_copy(raw_output, summary_text, json_text, args)
         _finish_tasker(tasker_progress, totals=totals, results=results, command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds, args=args)
         _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds)
+        _release_command_lease(args)
         return 1
 
     if args.command == "batch":
@@ -2185,56 +2647,65 @@ def main(argv: list[str] | None = None) -> int:
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
 
     if args.command in APPLY_COMMANDS:
-        results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
-        transaction_path = _apply_transaction_path(results)
-        should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
-        if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
-            more_results, more_raw = _run_specs_for_args(
+        if args.command in {"apply-overlays", "aos"}:
+            results, raw_output = _run_sequential_overlays(
                 config,
-                _validation_specs_for_args(config, args, parser),
                 args,
+                parser,
+                log_path=log_path,
+                tasker_progress=tasker_progress,
                 continue_on_error=continue_on_error,
-                log_path=log_path,
-                tasker_progress=tasker_progress,
             )
-            results.extend(more_results)
-            raw_output += "\n\n" + more_raw
-        if transaction_path and _has_failed_after_apply(results):
-            rollback_result, rollback_raw = _run_transaction_rollback(
-                transaction_path,
-                reason="validation/build/test failed after artifact apply",
-                tasker_progress=tasker_progress,
-                log_path=log_path,
-            )
-            results.append(rollback_result)
-            raw_output += "\n\n" + rollback_raw
-        results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
-        if transaction_path:
-            if any(result.returncode != 0 for result in results):
-                # A commit failure after validation still means the apply transaction is unsafe.
-                if not any(result.name == "apply-rollback" for result in results):
-                    rollback_result, rollback_raw = _run_transaction_rollback(
-                        transaction_path,
-                        reason="post-apply command failed",
-                        tasker_progress=tasker_progress,
-                        log_path=log_path,
-                    )
-                    results.append(rollback_result)
-                    raw_output += "\n\n" + rollback_raw
-            else:
-                mark_transaction_completed(transaction_path)
-        if not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
-            cleanup_result = _delete_original_artifact_after_apply(
-                results,
-                artifact=getattr(args, "artifact", ""),
-                delete_on_failure=True,
-            )
-            if cleanup_result is not None:
-                results.append(cleanup_result)
-                raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
-        if not getattr(args, "_devtool_history_recorded", False):
-            _record_apply_history(config, args, results)
-            args._devtool_history_recorded = True
+        else:
+            results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
+            transaction_path = _apply_transaction_path(results)
+            should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
+            if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
+                more_results, more_raw = _run_specs_for_args(
+                    config,
+                    _validation_specs_for_args(config, args, parser),
+                    args,
+                    continue_on_error=continue_on_error,
+                    log_path=log_path,
+                    tasker_progress=tasker_progress,
+                )
+                results.extend(more_results)
+                raw_output += "\n\n" + more_raw
+            if transaction_path and _has_failed_after_apply(results):
+                rollback_result, rollback_raw = _run_transaction_rollback(
+                    transaction_path,
+                    reason="validation/build/test failed after artifact apply",
+                    tasker_progress=tasker_progress,
+                    log_path=log_path,
+                )
+                results.append(rollback_result)
+                raw_output += "\n\n" + rollback_raw
+            results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
+            if transaction_path:
+                if any(result.returncode != 0 for result in results):
+                    if not any(result.name == "apply-rollback" for result in results):
+                        rollback_result, rollback_raw = _run_transaction_rollback(
+                            transaction_path,
+                            reason="post-apply command failed",
+                            tasker_progress=tasker_progress,
+                            log_path=log_path,
+                        )
+                        results.append(rollback_result)
+                        raw_output += "\n\n" + rollback_raw
+                else:
+                    mark_transaction_completed(transaction_path)
+            if not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
+                cleanup_result = _delete_original_artifact_after_apply(
+                    results,
+                    artifact=getattr(args, "artifact", ""),
+                    delete_on_failure=True,
+                )
+                if cleanup_result is not None:
+                    results.append(cleanup_result)
+                    raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
+            if not getattr(args, "_devtool_history_recorded", False):
+                _record_apply_history(config, args, results)
+                args._devtool_history_recorded = True
     elif args.command in {"validate", "v", "wine-validate", "wv"}:
         if getattr(args, "watch", False):
             def _run_once() -> int:
@@ -2257,7 +2728,10 @@ def main(argv: list[str] | None = None) -> int:
                 _write_json_payload(args.save_json_payload or args.machine_file, run_machine)
                 _maybe_copy(run_raw, run_summary, run_json, args)
                 return 0 if run_totals["failed"] == 0 else 1
-            return watch_loop(config.repo_root, _run_once, interval=args.watch_interval)
+            try:
+                return watch_loop(config.repo_root, _run_once, interval=args.watch_interval)
+            finally:
+                _release_command_lease(args)
         specs = _validation_specs_for_args(config, args, parser)
         results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
     elif args.command == "batch":
@@ -2284,4 +2758,5 @@ def main(argv: list[str] | None = None) -> int:
     _maybe_copy(raw_output, summary_text, json_text, args)
     _finish_tasker(tasker_progress, totals=totals, results=results, command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds, args=args)
     _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds)
+    _release_command_lease(args)
     return 0 if totals["failed"] == 0 else 1

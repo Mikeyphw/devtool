@@ -601,9 +601,65 @@ def hud_event_summary(events: Iterable[dict[str, Any]]) -> dict[str, int]:
     return summary
 
 
+def completion_from_state(state: HudState) -> dict[str, Any]:
+    completion = state.raw.get("completion") if isinstance(state.raw, dict) else None
+    return completion if isinstance(completion, dict) else {}
+
+
+def completion_copy_text(state: HudState) -> str:
+    completion = completion_from_state(state)
+    if not completion:
+        return ""
+    lines = [str(completion.get("headline") or "Devtool completed") + "."]
+    detail = str(completion.get("detail") or "").strip()
+    if detail:
+        lines.extend(("", detail))
+    actions = completion.get("actions") if isinstance(completion.get("actions"), list) else []
+    if actions:
+        labels = {
+            "apply-overlay": "Applied overlay",
+            "apply-overlays": "Applied overlay bundle",
+            "apply-snapshot": "Applied snapshot",
+            "restore": "Restored dependencies",
+            "build": "Built project",
+            "test": "Ran test suite",
+            "wine-test": "Ran Wine test suite",
+            "git-commit": "Committed repository changes",
+            "artifact-cleanup": "Cleaned applied artifact",
+        }
+        lines.extend(("", "Actions completed:"))
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            name = str(action.get("name") or "step")
+            label = labels.get(name, name.replace("-", " ").title())
+            duration = action.get("duration_s")
+            suffix = f" ({float(duration):.2f}s)" if isinstance(duration, (int, float)) else ""
+            status = str(action.get("status") or "ok")
+            lines.append(f"- {label}{suffix}" if status == "ok" else f"- {label}: {status}{suffix}")
+    warning_details = completion.get("warning_details") if isinstance(completion.get("warning_details"), list) else []
+    if warning_details:
+        lines.extend(("", "Warnings:"))
+        lines.extend(f"- {item}" for item in warning_details if item)
+    commit_hash = str(completion.get("commit_hash") or "").strip()
+    if commit_hash:
+        lines.extend(("", f"Git commit: {commit_hash}"))
+    return "\n".join(lines).strip()
+
+
 def pipeline_label(state: HudState, highlights: dict[str, str]) -> str:
     phase_key = (state.phase_name or state.command or "").strip().lower().replace("_", "-")
     steps = [("validate", "Validate"), ("apply", "Apply"), ("test", "Test"), ("commit", "Commit")]
+    if state.status == "ok":
+        actions = completion_from_state(state).get("actions")
+        action_names = {str(item.get("name") or "") for item in actions if isinstance(item, dict)} if isinstance(actions, list) else set()
+        performed = {
+            "apply": any("apply" in name for name in action_names),
+            "test": any(name in {"test", "tests", "wine-test"} for name in action_names),
+            "commit": any(name in {"git-commit", "commit"} for name in action_names),
+            "validate": any(name in {"restore", "build", "test", "tests", "wine-test"} for name in action_names),
+        }
+        return " → ".join(f"✓ {label}" if performed.get(key) else label for key, label in steps)
     pieces: list[str] = []
     for key, label in steps:
         active = key in phase_key or (key == "apply" and "overlay" in phase_key)
@@ -629,6 +685,9 @@ def state_context_label(state: HudState) -> str:
 
 
 def state_metric_text(state: HudState, events: Iterable[dict[str, Any]]) -> str:
+    completion = completion_from_state(state)
+    if completion:
+        return str(completion.get("detail") or completion.get("headline") or "Completed")
     summary = hud_event_summary(events)
     errors = summary.get("errors", 0)
     warnings = summary.get("warnings", 0)
@@ -643,7 +702,8 @@ def state_metric_text(state: HudState, events: Iterable[dict[str, Any]]) -> str:
 
 
 def state_window_title(state: HudState) -> str:
-    pieces = ["Devtool HUD", human_status(state.status)]
+    status_label = "Complete" if state.status == "ok" else human_status(state.status)
+    pieces = ["Devtool HUD", status_label]
     target = state.target or state.repo_name or (Path(state.repo_root).name if state.repo_root else "")
     if target:
         pieces.append(target)
@@ -667,7 +727,7 @@ def compact_operation_title(state: HudState) -> str:
     if status == "failed":
         return f"Failed during {phase}" if phase else "Devtool failed"
     if status == "ok":
-        return "Devtool finished"
+        return str(completion_from_state(state).get("headline") or "Completed successfully")
     if phase and phase.lower() not in {"progress", "idle"}:
         return f"Finished {phase}" if state.event_type in {"phase_finished", "phase-finished"} else f"Running {phase}"
     title = human_detail(state.title)
@@ -675,6 +735,9 @@ def compact_operation_title(state: HudState) -> str:
 
 
 def compact_detail_text(state: HudState) -> str:
+    completion = completion_from_state(state)
+    if completion:
+        return str(completion.get("detail") or "Completed")
     bits: list[str] = []
     detail = human_detail(state.text or state.expanded_text)
     if detail and detail.lower() not in {"devtool", "progress"}:
@@ -759,10 +822,81 @@ def snapshot_from_runtime_directory(directory: Path, *, follow_active: bool = Fa
     snapshot = snapshot_from_directory(current, recent_events=recent_events)
     snapshot["active_directory"] = str(current)
     snapshot["follow_active"] = bool(follow_active)
+    snapshot["runs"] = _run_payloads(current)
     return snapshot
 
 
+def _run_payloads(directory: Path) -> list[dict[str, Any]]:
+    runs_dir = directory / "runs"
+    payloads: list[dict[str, Any]] = []
+    if not runs_dir.exists():
+        return payloads
+    for path in runs_dir.glob("*.json"):
+        payload = _read_json_file(path)
+        if not isinstance(payload, dict):
+            continue
+        pid = int(payload.get("pid", 0) or 0)
+        if str(payload.get("status") or "") == "running" and pid > 0:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+                continue
+            except PermissionError:
+                pass
+            except OSError:
+                continue
+        payloads.append(payload)
+    payloads.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+    return payloads
+
+
+def _aggregate_active_runs(directory: Path) -> dict[str, Any] | None:
+    active = [item for item in _run_payloads(directory) if str(item.get("status") or "") == "running"]
+    if not active:
+        return None
+    if len(active) == 1:
+        return active[0]
+    lines: list[str] = []
+    for item in active[:6]:
+        phase = item.get("phase") if isinstance(item.get("phase"), dict) else {}
+        phase_name = str(phase.get("name") or item.get("command") or "run")
+        progress = item.get("progress") if isinstance(item.get("progress"), dict) else {}
+        percent = progress.get("percent")
+        suffix = f" {float(percent):.0f}%" if isinstance(percent, (int, float)) else ""
+        repo = str(item.get("repo_name") or "repo")
+        lines.append(f"{repo}: {phase_name}{suffix}")
+    if len(active) > 6:
+        lines.append(f"…and {len(active) - 6} more")
+    newest = dict(active[0])
+    newest.update({
+        "title": f"Devtool — {len(active)} active runs",
+        "text": "\n".join(lines),
+        "expanded_title": f"Devtool — {len(active)} active runs",
+        "expanded_text": "\n".join(lines),
+        "current": None,
+        "total": None,
+        "target": "multiple concurrent tasks",
+        "repo_name": f"{len(active)} active runs",
+        "command": "concurrent",
+        "phase": {"name": "concurrent", "index": 0, "total": len(active)},
+        "progress": {"detail": "\n".join(lines), "percent": None},
+        "notification": {
+            "title": f"Devtool — {len(active)} active runs",
+            "text": "\n".join(lines),
+            "expanded_title": f"Devtool — {len(active)} active runs",
+            "expanded_text": "\n".join(lines),
+        },
+        "active_runs": active,
+    })
+    return newest
+
+
 def state_from_directory(directory: Path) -> HudState:
+    aggregate = _aggregate_active_runs(directory)
+    if aggregate is not None:
+        return parse_hud_state(aggregate)
     # Keep notification.json as the simple primary state file, but fall back to
     # newer rich state/event files when notification.json is missing or clearly
     # stale.  The stale threshold avoids flicker in tests/tools that write a
@@ -1568,11 +1702,15 @@ class GtkDesktopHud:
             _set_status_classes(status_badge, state.status)
             pipeline.set_text(pipeline_label(state, highlights))
 
+            completion = completion_from_state(state)
+            recent_heading.set_text("RESULT" if state.status in {"ok", "failed"} else "RECENT")
+
             if state.current is not None and state.total is not None and state.total > 0:
                 fraction = max(0.0, min(1.0, state.current / state.total))
                 if state.status == "ok":
                     progress.set_fraction(1.0)
-                    progress.set_text("complete")
+                    duration = completion.get("duration_s")
+                    progress.set_text(f"Complete · {float(duration):.1f}s" if isinstance(duration, (int, float)) else "Complete")
                 elif state.status == "failed":
                     progress.set_fraction(1.0)
                     progress.set_text("failed")
@@ -1581,7 +1719,8 @@ class GtkDesktopHud:
                     progress.set_text(f"{state.current}/{state.total}  {state.percent or 0}%")
             elif state.status == "ok":
                 progress.set_fraction(1.0)
-                progress.set_text("complete")
+                duration = completion.get("duration_s")
+                progress.set_text(f"Complete · {float(duration):.1f}s" if isinstance(duration, (int, float)) else "Complete")
             elif state.status == "failed":
                 progress.set_fraction(1.0)
                 progress.set_text("failed")
@@ -1593,17 +1732,26 @@ class GtkDesktopHud:
                 progress.set_text(human_status(state.status).lower())
             _set_progress_classes(state.status)
 
-            error_metric.set_text(f"{error_count}\nERRORS")
-            warning_metric.set_text(f"{warning_count}\nWARNINGS")
-            if state.status == "ok":
-                progress_metric.set_text("100%\nCOMPLETE")
-            elif state.status == "failed":
-                progress_metric.set_text("FAILED\nSTATUS")
+            if state.status == "ok" and completion:
+                tests = completion.get("tests") if isinstance(completion.get("tests"), dict) else {}
+                test_total = int(tests.get("total", 0) or 0)
+                duration = completion.get("duration_s")
+                error_metric.set_text(f"{test_total}\nTESTS" if test_total else "PASS\nRESULT")
+                warning_metric.set_text(f"{int(completion.get('warnings', warning_count) or 0)}\nWARNINGS")
+                progress_metric.set_text(f"{float(duration):.1f}s\nDURATION" if isinstance(duration, (int, float)) else "100%\nCOMPLETE")
+                _set_status_classes(error_metric, "ok")
+                _set_status_classes(warning_metric, "running" if int(completion.get('warnings', 0) or 0) else "ok")
+                _set_status_classes(progress_metric, "ok")
             else:
-                progress_metric.set_text((f"{state.percent}%\nPROGRESS" if state.percent is not None else f"{human_status(state.status).upper()}\nSTATUS"))
-            _set_status_classes(error_metric, "failed" if error_count else "ok")
-            _set_status_classes(warning_metric, "running" if warning_count else "ok")
-            _set_status_classes(progress_metric, state.status)
+                error_metric.set_text(f"{error_count}\nERRORS")
+                warning_metric.set_text(f"{warning_count}\nWARNINGS")
+                if state.status == "failed":
+                    progress_metric.set_text("FAILED\nSTATUS")
+                else:
+                    progress_metric.set_text((f"{state.percent}%\nPROGRESS" if state.percent is not None else f"{human_status(state.status).upper()}\nSTATUS"))
+                _set_status_classes(error_metric, "failed" if error_count else "ok")
+                _set_status_classes(warning_metric, "running" if warning_count else "ok")
+                _set_status_classes(progress_metric, state.status)
 
             if errors:
                 error_label.set_text("❌ " + "\n❌ ".join(errors))
@@ -1650,7 +1798,8 @@ class GtkDesktopHud:
                 *phase_lines,
                 *[line for _event, line in shown],
             ]
-            last_summary["text"] = "\n".join(line for line in summary_lines if line)
+            final_copy = completion_copy_text(state)
+            last_summary["text"] = final_copy or "\n".join(line for line in summary_lines if line)
             last_summary["log_path"] = log_path or ""
             debug_label.set_text("\n".join([f"active_dir={current_dir}", f"state={current_dir / 'state.json'}", f"events={current_dir / 'events.jsonl'}", f"seq={state.seq if state.seq is not None else '-'} status={state.status} event={state.event_type}", *meta_lines, f"log={log_path or '-'}"]))
             return True
@@ -1920,6 +2069,7 @@ def build_hud_parser() -> argparse.ArgumentParser:
     parser.add_argument("--studio-notify", action="store_true", help="In studio/v5 mode, also mirror state into termux-notification when available")
     parser.add_argument("--once", action="store_true", help="Render/update once and exit")
     parser.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory written by auto-HUD")
+    parser.add_argument("--no-overlay", action="store_true", help="For android-gui, use a normal Activity instead of a floating overlay")
     return parser
 
 
@@ -1930,7 +2080,8 @@ def run_hud(args: argparse.Namespace) -> int:
     recent_events = max(0, int(args.recent_events))
     follow_active = bool(getattr(args, "follow_active", False))
     if mode == "android-gui":
-        return TermuxGuiHud(recent_events=recent_events, overlay=True, notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
+        use_overlay = not bool(getattr(args, "no_overlay", False))
+        return TermuxGuiHud(recent_events=recent_events, overlay=use_overlay, notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     if mode == "android-bridge":
         return AndroidBridgeHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     if mode in {"android-notify", "notification"}:

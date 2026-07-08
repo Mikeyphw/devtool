@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import difflib
 import hashlib
 import json
@@ -11,6 +12,7 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +24,7 @@ MANIFEST_NAMES = {".devtool-artifact.json", "artifact.devtool.json", "devtool-ar
 DELETE_MANIFEST_NAME = ".devtool-delete"
 ARTIFACT_METADATA_NAMES = MANIFEST_NAMES | {DELETE_MANIFEST_NAME}
 HISTORY_PATH = Path(".devtool") / "artifacts.json"
+HISTORY_ENTRIES_PATH = Path(".devtool") / "artifacts.d"
 
 SUPPORTED_ARCHIVE_SUFFIXES = (
     ".tar.zst", ".tzst",
@@ -996,32 +999,80 @@ def history_file(repo_root: Path) -> Path:
     return repo_root / HISTORY_PATH
 
 
+def history_entries_dir(repo_root: Path) -> Path:
+    return repo_root / HISTORY_ENTRIES_PATH
+
+
+def _history_entry_files(repo_root: Path) -> list[Path]:
+    directory = history_entries_dir(repo_root)
+    return sorted(directory.glob("*.json")) if directory.exists() else []
+
+
 def load_history(repo_root: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    # New append-only records are authoritative and safe for concurrent runs.
+    for entry_path in _history_entry_files(repo_root):
+        try:
+            item = json.loads(entry_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("history_id") or item.get("sha256") or entry_path.name)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(item)
+
+    # Import legacy/index-only entries for backward compatibility.
     path = history_file(repo_root)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            items = data.get("artifacts", [])
-        else:
-            items = data
-        return items if isinstance(items, list) else []
-    except Exception:
-        return []
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            items = data.get("artifacts", []) if isinstance(data, dict) else data
+            if isinstance(items, list):
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    key = str(item.get("history_id") or item.get("sha256") or json.dumps(item, sort_keys=True))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    entries.append(item)
+        except Exception:
+            pass
+    entries.sort(key=lambda item: str(item.get("applied_at") or ""))
+    return entries
 
 
 def save_history(repo_root: Path, entries: list[dict[str, Any]]) -> Path:
     path = history_file(repo_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"schema_version": 1, "artifacts": entries}, indent=2) + "\n", encoding="utf-8")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(json.dumps({"schema_version": 2, "artifacts": entries}, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
     return path
 
 
 def append_history(repo_root: Path, entry: dict[str, Any]) -> Path:
-    entries = load_history(repo_root)
-    entries.append(entry)
-    return save_history(repo_root, entries)
+    directory = history_entries_dir(repo_root)
+    directory.mkdir(parents=True, exist_ok=True)
+    lock_path = repo_root / ".devtool" / "artifacts.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        history_id = str(entry.get("history_id") or uuid.uuid4().hex)
+        entry = dict(entry)
+        entry["history_id"] = history_id
+        stamp = re.sub(r"[^0-9A-Za-z]+", "", str(entry.get("applied_at") or ""))[:20] or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        path = directory / f"{stamp}-{history_id}.json"
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+        save_history(repo_root, load_history(repo_root))
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    return path
 
 
 def make_history_entry(

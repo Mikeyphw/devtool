@@ -92,6 +92,29 @@ class SummaryRenderingTests(unittest.TestCase):
         self.assertEqual(data["notification"]["title"], "⚠️ WARN")
         self.assertEqual(data["notification"]["body"], "⚠️ WARN: sims3tools: validate • 0E 1W")
 
+    def test_render_summary_separates_overlay_groups(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=100)
+        first_meta = {"overlay_index": 1, "overlay_total": 2, "overlay_label": "Core", "overlay_target": "core"}
+        second_meta = {"overlay_index": 2, "overlay_total": 2, "overlay_label": "UI", "overlay_target": "ui"}
+        results = [
+            OperationResult("apply-overlay", ["apply"], 0, 0.1, "ok", [], metadata=first_meta),
+            OperationResult("test", ["test"], 0, 0.2, "Passed! - Failed: 0, Passed: 4, Skipped: 0, Total: 4", [], metadata=first_meta),
+            OperationResult("git-commit", ["git"], 0, 0.1, "[main abc1234] Core", [], metadata=first_meta),
+            OperationResult("apply-overlay", ["apply"], 0, 0.1, "ok", [], metadata=second_meta),
+            OperationResult("test", ["test"], 0, 0.2, "Passed! - Failed: 0, Passed: 7, Skipped: 1, Total: 8", [], metadata=second_meta),
+            OperationResult("git-commit", ["git"], 0, 0.1, "[main def5678] UI", [], metadata=second_meta),
+        ]
+        render_summary(results, console_obj=console)
+        output = stream.getvalue()
+        self.assertIn("Overlay 1/2: Core", output)
+        self.assertIn("Overlay 2/2: UI", output)
+        self.assertIn("4 passed", output)
+        self.assertIn("7 passed", output)
+        self.assertIn("abc1234", output)
+        self.assertIn("def5678", output)
+
+
 
 if __name__ == "__main__":
     unittest.main()

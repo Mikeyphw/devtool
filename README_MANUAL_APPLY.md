@@ -1,14 +1,26 @@
 # Manual apply
 
-Unzip this archive at the root of the devtool source repo, then run the focused tests.
+Extract this archive at the root of the devtool source repository:
 
 ```bash
 cd "$HOME/Code/devtool"
-unzip -o "$HOME/Downloads/devtool_chroot_dotnet_progress_parser_fix_manual.zip"
-PYTHONPATH=. python -m pytest \
-  tests/test_termux_chroot_runner.py \
-  tests/test_dotnet_progress.py \
-  tests/test_runners_termux.py \
-  tests/test_process_hang.py \
-  -q
+unzip -o "$HOME/Downloads/devtool_concurrent_runs_overlay_manual.zip"
+PYTHONPATH=. python -m pytest -q
+```
+
+Useful flags:
+
+```bash
+# Wait up to five minutes for overlapping file scopes (default)
+devtool --lock-timeout 300 ...
+
+# Fail immediately on a conflicting run
+devtool --no-wait ...
+
+# Disable path-aware concurrency for one invocation
+devtool --concurrency off ...
+
+# Use a normal Termux:GUI Activity instead of an overlay
+devtool --hud-no-overlay --auto-hud --hud-mode android-gui ...
+devtool hud --mode android-gui --no-overlay
 ```

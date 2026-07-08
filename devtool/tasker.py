@@ -263,7 +263,7 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: float = 0.1) -> bool:
+def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: float = 0.1, no_overlay: bool = False) -> bool:
     """Start, reuse, or replace the global live HUD process.
 
     Auto-HUD is a singleton by default. Each new devtool task writes the active
@@ -316,6 +316,7 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
             return value
 
     chosen_mode = _resolve_mode_for_detached_child(requested_mode)
+    registry_mode = chosen_mode + (":window" if no_overlay and chosen_mode == "android-gui" else "")
     if chosen_mode == "android-bridge":
         _append_hud_log(
             "android bridge mode: not starting a local detached HUD child; "
@@ -344,7 +345,7 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
             or (follow_active and old_mode and old_mode != chosen_mode)
         )
         if should_replace:
-            _append_hud_log(f"replacing existing HUD pid={old_pid} mode={old_mode or '-'} with mode={chosen_mode}")
+            _append_hud_log(f"replacing existing HUD pid={old_pid} mode={old_mode or '-'} with mode={registry_mode}")
             _terminate_pid(old_pid)
         elif follow_active and bool(singleton.get("follow_active")):
             return True
@@ -369,6 +370,8 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     ]
     if follow_active:
         argv.append("--follow-active")
+    if no_overlay and chosen_mode == "android-gui":
+        argv.append("--no-overlay")
 
     try:
         env = os.environ.copy()
@@ -386,7 +389,7 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
             legacy_pid_file.parent.mkdir(parents=True, exist_ok=True)
             legacy_pid_file.write_text(str(pid), encoding="utf-8")
             if follow_active:
-                _write_hud_singleton(pid=pid, mode=chosen_mode, directory=directory, follow_active=True)
+                _write_hud_singleton(pid=pid, mode=registry_mode, directory=directory, follow_active=True)
             _append_hud_log(f"spawned auto-HUD pid={pid} mode={chosen_mode}")
         return completed.returncode == 0
     except Exception as exc:
@@ -410,6 +413,129 @@ def _result_to_json(result: OperationResult) -> dict[str, Any]:
         "metadata": result.metadata or {},
         "warnings": sum(1 for issue in result.issues if issue.severity == "warning"),
         "errors": sum(1 for issue in result.issues if issue.severity == "error"),
+    }
+
+
+def _completion_test_totals(results: list[OperationResult]) -> dict[str, int]:
+    """Aggregate test totals from command output for final HUD/notification state."""
+    import re
+
+    text = "\n".join(result.output or "" for result in results if result.name in {"test", "tests", "wine-test"})
+    modern = list(re.finditer(
+        r"\b(?:Passed|Failed)!\s*-\s*Failed:\s*(\d+),\s*Passed:\s*(\d+),\s*Skipped:\s*(\d+),\s*Total:\s*(\d+)",
+        text,
+        re.IGNORECASE,
+    ))
+    if modern:
+        return {
+            "failed": sum(int(match.group(1)) for match in modern),
+            "passed": sum(int(match.group(2)) for match in modern),
+            "skipped": sum(int(match.group(3)) for match in modern),
+            "total": sum(int(match.group(4)) for match in modern),
+        }
+
+    pytest_match = re.search(
+        r"(?:(\d+)\s+failed(?:,\s*)?)?(?:(\d+)\s+passed)(?:,\s*(\d+)\s+skipped)?",
+        text,
+        re.IGNORECASE,
+    )
+    if pytest_match:
+        failed = int(pytest_match.group(1) or 0)
+        passed = int(pytest_match.group(2) or 0)
+        skipped = int(pytest_match.group(3) or 0)
+        return {"passed": passed, "failed": failed, "skipped": skipped, "total": passed + failed + skipped}
+    return {}
+
+
+def _completion_commit_hash(results: list[OperationResult]) -> str:
+    """Return the commit created by this run when available."""
+    import re
+
+    for result in reversed(results):
+        if result.name not in {"git-commit", "commit"}:
+            continue
+        metadata = result.metadata or {}
+        for key in ("commit", "commit_hash", "git_commit", "sha"):
+            value = str(metadata.get(key) or "").strip()
+            if re.fullmatch(r"[0-9a-f]{7,40}", value, re.IGNORECASE):
+                return value
+        for pattern in (
+            r"^\[[^\]\n]*?\s([0-9a-f]{7,40})\]\s",
+            r"^\[detached HEAD\s+([0-9a-f]{7,40})\]\s",
+            r"\bcommit(?:ted)?(?:\s+as)?\s+([0-9a-f]{7,40})\b",
+        ):
+            match = re.search(pattern, result.output or "", re.IGNORECASE | re.MULTILINE)
+            if match:
+                return match.group(1)
+    return ""
+
+
+def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[OperationResult]) -> dict[str, Any]:
+    """Build a stable, descriptive final result for every HUD renderer."""
+    tests = _completion_test_totals(results)
+    commit_hash = _completion_commit_hash(results)
+    duration_s = sum(max(0.0, float(result.duration_seconds or 0.0)) for result in results)
+    warnings = int(totals.get("warnings", 0) or 0)
+    errors = int(totals.get("errors", 0) or 0)
+    failed = int(totals.get("failed", 0) or 0)
+
+    warning_details: list[str] = []
+    seen: set[str] = set()
+    for result in results:
+        for issue in result.issues:
+            if issue.severity != "warning":
+                continue
+            location = issue.file or ""
+            if issue.line is not None and location not in {"", "-"}:
+                location = f"{location}:{issue.line}"
+            code = f" {issue.code}" if issue.code else ""
+            prefix = f"{location}: " if location not in {"", "-"} else ""
+            detail = f"{prefix}warning{code}: {issue.message}".strip()
+            key = detail.casefold()
+            if key not in seen:
+                seen.add(key)
+                warning_details.append(detail)
+            if len(warning_details) >= 5:
+                break
+        if len(warning_details) >= 5:
+            break
+
+    actions = [
+        {
+            "name": result.name,
+            "status": _result_status(result),
+            "duration_s": round(float(result.duration_seconds or 0.0), 3),
+        }
+        for result in results
+        if result.name != "git-add"
+    ]
+
+    headline = "Completed successfully" if ok else "Completed with errors"
+    detail_parts: list[str] = []
+    if tests:
+        detail_parts.append(
+            f"{tests.get('passed', 0)} passed, {tests.get('failed', 0)} failed, "
+            f"{tests.get('skipped', 0)} skipped ({tests.get('total', 0)} tests)"
+        )
+    detail_parts.append(f"{warnings} warning{'s' if warnings != 1 else ''}")
+    if errors or failed:
+        detail_parts.append(f"{errors} error{'s' if errors != 1 else ''}")
+    if commit_hash:
+        detail_parts.append(f"commit {commit_hash[:12]}")
+    detail_parts.append(f"{duration_s:.2f}s")
+
+    return {
+        "ok": ok,
+        "headline": headline,
+        "detail": " • ".join(detail_parts),
+        "duration_s": round(duration_s, 3),
+        "warnings": warnings,
+        "errors": errors,
+        "failed": failed,
+        "tests": tests,
+        "commit_hash": commit_hash,
+        "warning_details": warning_details,
+        "actions": actions,
     }
 
 
@@ -590,31 +716,17 @@ class TaskerProgressSink:
         return self.directory / "runs"
 
     def reset_run_files(self) -> None:
-        """Clear stale HUD state/events before a new top-level devtool task.
+        """Initialize this run without erasing other concurrent HUD runs.
 
-        The desktop HUD intentionally shows recent events from events.jsonl.
-        Without clearing the stream, a new command can start with old test/build
-        lines and old totals, which looks like the process is still waiting on a
-        previous run.  Best-effort only: progress emission must never fail just
-        because cleanup is blocked by permissions.
+        Per-run state lives in runs/<run-id>.json. Global latest/event files are
+        compatibility views and must not be cleared because another devtool
+        process may be actively writing them.
         """
-        for path in (self.state_file, self.latest_event_file, self.notification_file, self.events_jsonl_file):
-            try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                if path.name == "events.jsonl":
-                    path.write_text("", encoding="utf-8")
-                elif path.exists():
-                    path.unlink()
-            except OSError:
-                pass
-        for directory in (self.events_dir,):
-            try:
-                if directory.exists():
-                    for child in directory.iterdir():
-                        if child.is_file():
-                            child.unlink()
-            except OSError:
-                pass
+        try:
+            self.runs_dir.mkdir(parents=True, exist_ok=True)
+            (self.runs_dir / f"{self.run_id}.json").unlink(missing_ok=True)
+        except OSError:
+            pass
         self.sequence = 0
         self.current_phase = None
         self._last_state = {}
@@ -668,13 +780,24 @@ class TaskerProgressSink:
 
     def finished(self, *, ok: bool, totals: dict[str, int], results: list[OperationResult], notification: dict[str, Any] | None = None) -> None:
         self.status = "ok" if ok else "failed"
+        completion = _completion_payload(ok=ok, totals=totals, results=results)
+        final_notification = dict(notification or {})
+        final_notification.update({
+            "title": completion["headline"],
+            "text": completion["detail"],
+            "body": completion["detail"],
+            "expanded_title": completion["headline"],
+            "expanded_text": completion["detail"],
+        })
         self.emit(
             "finished",
             status=self.status,
             totals=totals,
             results=[_result_to_json(result) for result in results],
-            notification=notification or {},
-            message=_human_event_message("finished", status=self.status),
+            completion=completion,
+            progress={"percent": 100.0 if ok else None},
+            notification=final_notification,
+            message=completion["headline"],
             force=True,
             notify=True,
         )
@@ -690,6 +813,7 @@ class TaskerProgressSink:
         result: dict[str, Any] | None = None,
         results: list[dict[str, Any]] | None = None,
         totals: dict[str, Any] | None = None,
+        completion: dict[str, Any] | None = None,
         notification: dict[str, Any] | None = None,
         force: bool = False,
         notify: bool = False,
@@ -721,6 +845,7 @@ class TaskerProgressSink:
             "schema_version": 1,
             "producer": "devtool",
             "run_id": self.run_id,
+            "pid": os.getpid(),
             "event_id": event_id,
             "event_type": event_type,
             "status": status,
@@ -739,6 +864,7 @@ class TaskerProgressSink:
             "result": result,
             "results": results,
             "totals": totals or {},
+            "completion": completion or {},
             "notification": notification_payload,
             "tasker_notification": simple_notification,
             "files": {

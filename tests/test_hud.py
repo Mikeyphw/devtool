@@ -341,3 +341,11 @@ class AndroidBridgeHudTests(unittest.TestCase):
         self.assertEqual(args.command, "android-hud-bridge")
         self.assertEqual(args.mode, "android-notify")
         self.assertEqual(args.state_dir, "/tmp/hud")
+
+class AndroidGuiWindowFlagTests(unittest.TestCase):
+    def test_cli_accepts_android_gui_non_overlay_flags(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--hud-no-overlay", "build"])
+        self.assertTrue(args.hud_no_overlay)
+        hud_args = parser.parse_args(["hud", "--mode", "android-gui", "--no-overlay"])
+        self.assertTrue(hud_args.no_overlay)
