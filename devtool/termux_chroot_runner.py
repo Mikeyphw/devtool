@@ -562,6 +562,11 @@ def wrap_specs_for_termux_host_chroot(
         metadata["chroot"] = chroot_name
         metadata["chroot_runner"] = "termux-host-toolchain"
         metadata["chroot_cwd"] = chroot_cwd
+        # Execute the translated command in the chroot, but plan/render dotnet
+        # progress from the original host-side command. This lets the parser
+        # inspect the real solution/project path and estimate project totals.
+        metadata.setdefault("progress_argv", list(spec.argv))
+        metadata.setdefault("progress_cwd", host_cwd)
         wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, chroot_name), cwd=None, metadata=metadata))
     return wrapped
 

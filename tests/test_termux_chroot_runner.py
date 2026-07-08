@@ -7,8 +7,9 @@ from unittest.mock import patch
 
 from devtool.clipboard import ClipboardResult
 from devtool.execution import build_chroot_exec_argv, wrap_specs_for_chroot
-from devtool.models import CommandSpec
+from devtool.models import CommandSpec, ProjectConfig
 from devtool.termux_chroot_runner import _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, translate_devtool_args, wrap_specs_for_termux_host_chroot
+from devtool.runners import run_specs
 
 
 class ChrootExecutionWrapperTests(unittest.TestCase):
@@ -21,6 +22,7 @@ class ChrootExecutionWrapperTests(unittest.TestCase):
         self.assertEqual(wrapped[0].argv[8], "dotnet build Demo.sln '/p:DefineConstants=A B'")
         self.assertEqual(wrapped[0].metadata["execution_mode"], "chroot")
         self.assertEqual(wrapped[0].metadata["chroot"], "androidos")
+        self.assertEqual(wrapped[0].metadata["progress_argv"], spec.argv)
 
     def test_chroot_exec_can_skip_sudo_with_env(self) -> None:
         with patch.dict("os.environ", {"DEVTOOL_CHROOT_SUDO": ""}, clear=False):
@@ -155,6 +157,36 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         self.assertEqual(wrapped[0].argv[8], "cd /home/termux/Code/demo && dotnet build /home/termux/Code/demo/Demo.sln")
         self.assertEqual(wrapped[0].metadata["execution_mode"], "termux-host-chroot")
         self.assertEqual(wrapped[0].metadata["chroot_cwd"], "/home/termux/Code/demo")
+        self.assertEqual(wrapped[0].metadata["progress_argv"], spec.argv)
+        self.assertEqual(wrapped[0].metadata["progress_cwd"], "/data/data/com.termux/files/home/Code/demo")
+
+    def test_run_specs_uses_original_dotnet_command_for_wrapped_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            solution = repo / "Demo.sln"
+            solution.write_text("", encoding="utf-8")
+            original = CommandSpec("build", ["dotnet", "build", str(solution)])
+            wrapped = wrap_specs_for_termux_host_chroot(
+                [original],
+                "androidos",
+                repo_root=repo,
+                env={"HOME": "/data/data/com.termux/files/home"},
+                path_map=[(str(repo), "/home/termux/Code/demo")],
+            )
+            config = ProjectConfig(repo_root=repo, kind="dotnet")
+
+            with (
+                patch("devtool.runners.dotnet_progress_plan", return_value=object()) as plan,
+                patch("devtool.runners._run_process_live", return_value=(0, "Build succeeded.")) as run_live,
+            ):
+                results, _raw = run_specs(config, wrapped, verbose=False)
+
+            self.assertEqual(results[0].returncode, 0)
+            plan.assert_called_once_with(original.argv, str(repo))
+            kwargs = run_live.call_args.kwargs
+            self.assertEqual(kwargs["progress_argv"], original.argv)
+            self.assertEqual(kwargs["progress_cwd"], str(repo))
+            self.assertNotEqual(run_live.call_args.args[0], original.argv)
 
     def test_host_mode_translates_desktop_hud_to_android_gui(self) -> None:
         self.assertEqual(normalize_hud_mode_for_termux_host("desktop-window"), "android-gui")

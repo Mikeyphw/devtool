@@ -49,6 +49,12 @@ def wrap_specs_for_chroot(specs: list[CommandSpec], chroot_name: str) -> list[Co
         metadata["execution_mode"] = "chroot"
         metadata["chroot"] = name
         metadata["chroot_runner"] = "termux-chrootctl-zsh"
+        # Keep the unwrapped command available to the dotnet progress parser.
+        # The executed argv becomes ``chrootctl ... zsh -lc ...`` and is not
+        # directly recognizable as a dotnet restore/build/test command.
+        metadata.setdefault("progress_argv", list(spec.argv))
+        if spec.cwd:
+            metadata.setdefault("progress_cwd", spec.cwd)
         command = shlex.join(spec.argv)
         wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, name), metadata=metadata))
     return wrapped

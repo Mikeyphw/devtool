@@ -594,6 +594,8 @@ def _run_process_live(
     tasker_progress: TaskerProgressSink | None = None,
     phase_index: int | None = None,
     phase_total: int | None = None,
+    progress_argv: list[str] | None = None,
+    progress_cwd: str | None = None,
 ) -> tuple[int, str]:
     try:
         proc = subprocess.Popen(
@@ -629,7 +631,9 @@ def _run_process_live(
 
     output_parts: list[str] = []
     assert proc.stdout is not None
-    tracker = DotnetProgressTracker(argv, cwd, command_name, console, phase_index=phase_index, phase_total=phase_total) if (not verbose or tasker_progress is not None) else None
+    parser_argv = list(progress_argv or argv)
+    parser_cwd = progress_cwd or cwd
+    tracker = DotnetProgressTracker(parser_argv, parser_cwd, command_name, console, phase_index=phase_index, phase_total=phase_total) if (not verbose or tasker_progress is not None) else None
     if tracker is not None and verbose:
         # In verbose mode stdout is already streamed as raw text. Keep the
         # dotnet parser active only for Tasker/progress events; do not
@@ -673,8 +677,8 @@ def _run_process_live(
                 pass
 
     try:
-        idle_timeout = _idle_timeout_for(argv, command_name)
-        completion_idle_grace = _test_completion_grace_for(argv, command_name)
+        idle_timeout = _idle_timeout_for(parser_argv, command_name)
+        completion_idle_grace = _test_completion_grace_for(parser_argv, command_name)
         completion_detector = _dotnet_test_completion_status if completion_idle_grace is not None else None
         if tracker is None:
             for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout, completion_idle_grace=completion_idle_grace, completion_status_detector=completion_detector):
@@ -740,21 +744,25 @@ def run_specs(
         returncode = 1
         output = ""
         try:
+            cwd = spec.cwd or str(config.repo_root)
+            progress_argv = list(spec.metadata.get("progress_argv") or effective_argv)
+            progress_cwd = str(spec.metadata.get("progress_cwd") or cwd)
             if verbose:
                 console.print(f"[cyan]$ {' '.join(shlex.quote(a) for a in effective_argv)}[/cyan]")
                 returncode, output = _run_process_live(
                     effective_argv,
-                    cwd=spec.cwd or str(config.repo_root),
+                    cwd=cwd,
                     env=env,
                     verbose=True,
                     command_name=spec.name,
                     tasker_progress=tasker_progress,
                     phase_index=spec_index,
                     phase_total=len(specs),
+                    progress_argv=progress_argv,
+                    progress_cwd=progress_cwd,
                 )
             else:
-                cwd = spec.cwd or str(config.repo_root)
-                if dotnet_progress_plan(effective_argv, cwd):
+                if dotnet_progress_plan(progress_argv, progress_cwd):
                     returncode, output = _run_process_live(
                         effective_argv,
                         cwd=cwd,
@@ -764,6 +772,8 @@ def run_specs(
                         tasker_progress=tasker_progress,
                         phase_index=spec_index,
                         phase_total=len(specs),
+                        progress_argv=progress_argv,
+                        progress_cwd=progress_cwd,
                     )
                 else:
                     with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
@@ -776,6 +786,8 @@ def run_specs(
                             tasker_progress=tasker_progress,
                             phase_index=spec_index,
                             phase_total=len(specs),
+                            progress_argv=progress_argv,
+                            progress_cwd=progress_cwd,
                         )
         finally:
             if cleanup_dir:
