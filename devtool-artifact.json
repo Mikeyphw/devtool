@@ -1,16 +1,20 @@
 {
-  "type": "overlay",
-  "name": "devtool concurrent run safety",
-  "description": "Adds path-aware concurrent runs, per-run transactional recovery markers, append-only artifact history, serialized Git commit phases, concurrent HUD state aggregation, clipboard suppression guards, and a non-overlay Android GUI HUD flag.",
+  "type": "snapshot",
+  "name": "devtool patched repository with native Android Live HUD and reliable concurrent run tracking",
+  "description": "Complete patched devtool repository with native Android Live HUD integration, path-aware concurrency, sequential per-overlay validation/commits, rich summaries, and robust HUD run identity/heartbeat cleanup that prevents phantom concurrent tasks.",
   "files": [
-    "devtool/artifacts.py",
-    "devtool/cli.py",
-    "devtool/concurrency.py",
     "devtool/hud.py",
+    "devtool/cli.py",
     "devtool/tasker.py",
-    "devtool/transactions.py",
-    "tests/test_concurrency.py",
+    "devtool/termux_chroot_runner.py",
+    "devtool/completion.py",
     "tests/test_hud.py",
-    "tests/test_transactions.py"
+    "tests/test_termux_chroot_runner.py",
+    "README.md",
+    "README_MANUAL_APPLY.md",
+    "devtool/android_live_hud.py",
+    "devtool/concurrency.py",
+    "tests/test_tasker.py",
+    "tests/test_concurrency.py"
   ]
 }

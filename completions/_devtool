@@ -67,6 +67,11 @@ _devtool() {
     '--tasker-dir[Tasker JSON directory]:dir:_files -/' \
     '--tasker-broadcast[send Android broadcast for Tasker events]' \
     '--tasker-action[Android broadcast action]:action:' \
+    '--auto-hud[auto-start or reuse the HUD]' \
+    '--no-hud[disable auto-HUD]' \
+    '--hud-mode[HUD backend]:(desktop android-notify android-bridge desktop-window desktop-notify v5 terminal)' \
+    '--hud-overlay[also show Android runs in the enabled floating overlay]' \
+    '--hud-no-overlay[use notification-only Android presentation]' \
     '--copy[always copy raw output]' \
     '--copy-summary[always copy rendered summary]' \
     '--copy-json[always copy JSON summary]' \
@@ -136,6 +141,8 @@ _devtool() {
         '--recent-events[number of recent events]:count:' \
         '--notify-id[notification id]:id:' \
         '--studio-notify[also mirror studio mode to termux-notification]' \
+        '--overlay[also show runs in the enabled Android floating overlay]' \
+        '--no-overlay[use notification-only Android presentation]' \
         '--once[render/update once and exit]'
       ;;
     history)

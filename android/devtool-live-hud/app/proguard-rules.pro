@@ -1,0 +1,2 @@
+-keep class io.github.mikeceead.devtoolhud.BridgeReceiver { *; }
+-keep class io.github.mikeceead.devtoolhud.ActionReceiver { *; }

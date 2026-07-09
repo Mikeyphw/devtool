@@ -1,4 +1,4 @@
-.TH DEVTOOL 1 "2026-07-01" "devtool 0.2.23" "User Commands"
+.TH DEVTOOL 1 "2026-07-01" "devtool 0.2.25" "User Commands"
 .SH NAME
 devtool \- generic Unix developer helper CLI
 .SH SYNOPSIS
@@ -142,6 +142,15 @@ Write Tasker-compatible state/event JSON under the configured Tasker directory a
 .TP
 .BR --notify-progress
 Update a live Termux notification while command phases run.
+.TP
+.BR --auto-hud , " --hud-mode"
+Start or reuse the configured HUD renderer. Desktop HUD mode names are translated to the Android notification HUD when running from Termux.
+.TP
+.BR --hud-overlay
+On Android, request that this run also appear in the user-enabled floating overlay HUD. The companion app must have display-over-other-apps permission and its overlay service enabled.
+.TP
+.BR --hud-no-overlay
+Use notification-only Android presentation. This is the default.
 .SH FILES
 .TP
 .I ~/.local/state/devtool/logs

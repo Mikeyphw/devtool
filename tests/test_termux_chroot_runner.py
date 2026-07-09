@@ -134,6 +134,14 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         self.assertIn("exec env DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
         self.assertNotIn("exec DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
 
+
+    def test_inner_command_preserves_shared_run_id(self) -> None:
+        env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/termux"}
+        config, forwarded = translate_devtool_args(["validate"], env=env, cwd="/data/data/com.termux/files/home/Code/demo")
+        with patch.dict("os.environ", {"DEVTOOL_RUN_ID": "shared-run"}, clear=False):
+            inner = build_inner_command(config, forwarded)
+        self.assertIn("DEVTOOL_RUN_ID=shared-run", inner)
+
     def test_default_termux_home_maps_to_home_termux(self) -> None:
         env = {"HOME": "/data/data/com.termux/files/home"}
         config, forwarded = translate_devtool_args(
@@ -189,8 +197,8 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             self.assertNotEqual(run_live.call_args.args[0], original.argv)
 
     def test_host_mode_translates_desktop_hud_to_android_gui(self) -> None:
-        self.assertEqual(normalize_hud_mode_for_termux_host("desktop-window"), "android-gui")
-        self.assertEqual(normalize_hud_mode_for_termux_host("android-bridge"), "android-gui")
+        self.assertEqual(normalize_hud_mode_for_termux_host("desktop-window"), "android-notify")
+        self.assertEqual(normalize_hud_mode_for_termux_host("android-bridge"), "android-notify")
         self.assertEqual(normalize_hud_mode_for_termux_host("android-notify"), "android-notify")
 
 

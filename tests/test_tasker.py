@@ -39,12 +39,48 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertEqual(state["status"], "ok")
             self.assertEqual(latest["run_id"], state["run_id"])
             self.assertGreaterEqual(len(events), 4)
-            self.assertEqual(len(runs), 1)
+            self.assertEqual(len(runs), 0)
+            self.assertIn("process_start", state)
+            self.assertIn("boot_id", state)
+            self.assertIn("heartbeat_at", state)
             self.assertEqual(state["current"], state["total"])
             self.assertEqual(notification["current"], notification["total"])
             self.assertIn("title", notification)
             self.assertIn("text", notification)
             self.assertGreaterEqual(len(jsonl_lines), 4)
+
+
+    def test_sink_uses_shared_run_id_from_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"DEVTOOL_RUN_ID": "shared-run"}, clear=False):
+            sink = TaskerProgressSink(
+                directory=Path(tmp),
+                command="validate",
+                repo_root="/repo/demo",
+                repo_name="demo",
+                enabled=True,
+            )
+            self.assertEqual(sink.run_id, "shared-run")
+            sink.started()
+            run_files = list((Path(tmp) / "runs").glob("*.json"))
+            self.assertEqual([item.name for item in run_files], ["shared-run.json"])
+            sink.finished(ok=True, totals={"warnings": 0, "errors": 0, "failed": 0, "skipped": 0}, results=[])
+            self.assertFalse((Path(tmp) / "runs" / "shared-run.json").exists())
+
+
+    def test_sink_persists_per_run_overlay_preference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = TaskerProgressSink(
+                directory=Path(tmp),
+                command="validate",
+                repo_root="/repo/demo",
+                repo_name="demo",
+                enabled=True,
+                overlay=True,
+            )
+            sink.started()
+            state = json.loads((Path(tmp) / "state.json").read_text(encoding="utf-8"))
+            self.assertTrue(state["overlay"])
+            sink.finished(ok=True, totals={"warnings": 0, "errors": 0, "failed": 0, "skipped": 0}, results=[])
 
     def test_progress_event_writes_current_total_for_tasker_progress_bar(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

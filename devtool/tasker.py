@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import contextlib
 import json
 import os
@@ -7,6 +8,7 @@ import shutil
 import shlex
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -66,6 +68,28 @@ DEFAULT_NOTIFICATION_ID = "7771"
 DEFAULT_EVENT_HTTP_URL = os.environ.get("DEVTOOL_EVENT_HTTP_URL", "http://127.0.0.1:1821/")
 DEFAULT_EVENT_HTTP_TIMEOUT_S = 0.5
 DEFAULT_HUD_SINGLETON_MODE = os.environ.get("DEVTOOL_HUD_SINGLETON", "reuse").strip().lower() or "reuse"
+DEFAULT_RUN_HEARTBEAT_INTERVAL_S = 5.0
+
+
+def _boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _process_start_token(pid: int) -> str:
+    if pid <= 0:
+        return ""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace").split()
+        return fields[21] if len(fields) > 21 else ""
+    except OSError:
+        return ""
+
+
+def _default_run_id() -> str:
+    return os.environ.get("DEVTOOL_RUN_ID", "").strip() or uuid.uuid4().hex
 
 
 def hud_registry_dir() -> Path:
@@ -316,7 +340,7 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
             return value
 
     chosen_mode = _resolve_mode_for_detached_child(requested_mode)
-    registry_mode = chosen_mode + (":window" if no_overlay and chosen_mode == "android-gui" else "")
+    registry_mode = chosen_mode
     if chosen_mode == "android-bridge":
         _append_hud_log(
             "android bridge mode: not starting a local detached HUD child; "
@@ -370,8 +394,6 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     ]
     if follow_active:
         argv.append("--follow-active")
-    if no_overlay and chosen_mode == "android-gui":
-        argv.append("--no-overlay")
 
     try:
         env = os.environ.copy()
@@ -677,10 +699,11 @@ class TaskerProgressSink:
     broadcast_action: str = DEFAULT_TASKER_ACTION
     notify_progress: bool = False
     notification_id: str = DEFAULT_NOTIFICATION_ID
+    overlay: bool = False
     event_http_url: str = DEFAULT_EVENT_HTTP_URL
     update_interval_s: float = 0.10
     notification_interval_s: float = 0.75
-    run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    run_id: str = field(default_factory=_default_run_id)
     sequence: int = 0
     current_phase: dict[str, Any] | None = None
     started_at: str = field(default_factory=utc_now_iso)
@@ -689,6 +712,11 @@ class TaskerProgressSink:
     _last_update_at: float = 0.0
     _last_notification_at: float = 0.0
     _last_state: dict[str, Any] = field(default_factory=dict)
+    _process_start: str = field(default_factory=lambda: _process_start_token(os.getpid()))
+    _boot_id: str = field(default_factory=_boot_id)
+    _heartbeat_interval_s: float = DEFAULT_RUN_HEARTBEAT_INTERVAL_S
+    _heartbeat_stop: threading.Event = field(default_factory=threading.Event)
+    _heartbeat_thread: threading.Thread | None = None
 
     @property
     def state_file(self) -> Path:
@@ -732,9 +760,52 @@ class TaskerProgressSink:
         self._last_state = {}
         self._last_update_at = 0.0
 
+    def _run_file(self) -> Path:
+        return self.runs_dir / f"{self.run_id}.json"
+
+    def _start_heartbeat(self) -> None:
+        if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
+            return
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name=f"devtool-hud-heartbeat-{self.run_id[:8]}",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+        atexit.register(self._cleanup_run_file)
+
+    def _heartbeat_loop(self) -> None:
+        while not self._heartbeat_stop.wait(max(1.0, float(self._heartbeat_interval_s))):
+            if not self._last_state:
+                continue
+            payload = dict(self._last_state)
+            payload["heartbeat_at"] = utc_now_iso()
+            payload["pid"] = os.getpid()
+            payload["process_start"] = self._process_start
+            payload["boot_id"] = self._boot_id
+            try:
+                _atomic_write_json(self._run_file(), payload)
+                self._last_state = payload
+            except OSError as exc:
+                self.last_error = str(exc)
+
+    def _stop_heartbeat(self) -> None:
+        self._heartbeat_stop.set()
+        thread = self._heartbeat_thread
+        self._heartbeat_thread = None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=0.25)
+
+    def _cleanup_run_file(self) -> None:
+        self._stop_heartbeat()
+        with contextlib.suppress(OSError):
+            self._run_file().unlink(missing_ok=True)
+
     def started(self, *, message: str = "started") -> None:
         self.reset_run_files()
         self.emit("started", status="running", message=message, force=True, notify=True)
+        self._start_heartbeat()
 
     def phase_started(self, name: str, *, index: int, total: int, argv: list[str] | None = None) -> None:
         self.current_phase = {
@@ -801,6 +872,10 @@ class TaskerProgressSink:
             force=True,
             notify=True,
         )
+        # Global state/notification files retain the completion result. The
+        # per-run file exists only for active-run aggregation, so remove it as
+        # soon as this logical run is complete.
+        self._cleanup_run_file()
 
     def emit(
         self,
@@ -846,6 +921,9 @@ class TaskerProgressSink:
             "producer": "devtool",
             "run_id": self.run_id,
             "pid": os.getpid(),
+            "process_start": self._process_start,
+            "boot_id": self._boot_id,
+            "heartbeat_at": timestamp,
             "event_id": event_id,
             "event_type": event_type,
             "status": status,
@@ -853,6 +931,7 @@ class TaskerProgressSink:
             "repo_root": self.repo_root,
             "repo_name": self.repo_name,
             "target": display_target,
+            "overlay": self.overlay,
             "started_at": self.started_at,
             "updated_at": timestamp,
             "finished_at": timestamp if event_type == "finished" else None,
@@ -888,7 +967,7 @@ class TaskerProgressSink:
                 _atomic_write_json(event_file, event)
                 _append_jsonl(self.events_jsonl_file, event)
                 send_local_http_event(event, url=self.event_http_url)
-                _atomic_write_json(self.runs_dir / f"{self.run_id}.json", state)
+                _atomic_write_json(self._run_file(), state)
                 self._last_state = state
                 if self.broadcast and (force or event_type != "progress"):
                     send_tasker_broadcast(self.broadcast_action, event_file, self.state_file, event_type, self.run_id)
@@ -957,6 +1036,8 @@ def build_tasker_sink(
     broadcast_action: str = DEFAULT_TASKER_ACTION,
     notify_progress: bool = False,
     notification_id: str = DEFAULT_NOTIFICATION_ID,
+    run_id: str = "",
+    overlay: bool = False,
 ) -> TaskerProgressSink | None:
     if not enabled and not notify_progress:
         return None
@@ -972,4 +1053,6 @@ def build_tasker_sink(
         broadcast_action=broadcast_action,
         notify_progress=notify_progress,
         notification_id=notification_id,
+        run_id=run_id.strip() or _default_run_id(),
+        overlay=overlay,
     )

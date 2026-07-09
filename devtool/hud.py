@@ -3,17 +3,20 @@ from __future__ import annotations
 import argparse
 import contextlib
 import html
-import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import threading
 import time
+import zlib
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,6 +29,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, read_active_hud_directory
+from .android_live_hud import AndroidLiveHudBridge
 
 
 DEFAULT_HUD_POLL_INTERVAL = 0.10
@@ -35,6 +39,73 @@ DEFAULT_HUD_PORT = 8765
 DESKTOP_HUD_APP_ID = "net.mph.devtool.HUD"
 DESKTOP_HUD_ICON_NAME = "devtool-hud"
 DESKTOP_HUD_WM_CLASS = "devtool-hud"
+DEFAULT_RUN_HEARTBEAT_TIMEOUT_S = 30.0
+
+
+def _boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _process_start_token(pid: int) -> str:
+    if pid <= 0:
+        return ""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace").split()
+        return fields[21] if len(fields) > 21 else ""
+    except OSError:
+        return ""
+
+
+def _iso_age_seconds(value: object) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds())
+    except ValueError:
+        return None
+
+
+def _running_payload_is_stale(payload: dict[str, Any]) -> bool:
+    if str(payload.get("status") or "") != "running":
+        return False
+    payload_boot = str(payload.get("boot_id") or "").strip()
+    current_boot = _boot_id()
+    if payload_boot and current_boot and payload_boot != current_boot:
+        return True
+    pid = int(payload.get("pid", 0) or 0)
+    expected_start = str(payload.get("process_start") or "").strip()
+    if pid <= 0:
+        # Legacy HUD records did not include process identity. Keep them
+        # readable for compatibility; all newly written records include PID,
+        # process start token, boot ID, and heartbeat metadata.
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        pass
+    except OSError:
+        return True
+    current_start = _process_start_token(pid)
+    if expected_start and current_start and expected_start != current_start:
+        return True
+    heartbeat_age = _iso_age_seconds(payload.get("heartbeat_at") or payload.get("updated_at"))
+    timeout = float(os.environ.get("DEVTOOL_HUD_RUN_HEARTBEAT_TIMEOUT", DEFAULT_RUN_HEARTBEAT_TIMEOUT_S))
+    # New-format records include process_start/boot_id and are heartbeated even
+    # during quiet phases. Expire them if the identity cannot be verified and
+    # their heartbeat has stopped. Older records keep the PID-only behavior.
+    if heartbeat_age is not None and heartbeat_age > max(5.0, timeout):
+        if not expected_start or not current_start or (payload_boot and not current_boot):
+            return True
+    return False
 
 
 def _is_termux_android() -> bool:
@@ -828,26 +899,33 @@ def snapshot_from_runtime_directory(directory: Path, *, follow_active: bool = Fa
 
 def _run_payloads(directory: Path) -> list[dict[str, Any]]:
     runs_dir = directory / "runs"
-    payloads: list[dict[str, Any]] = []
+    payloads_by_run: dict[str, dict[str, Any]] = {}
+    paths_by_run: dict[str, Path] = {}
     if not runs_dir.exists():
-        return payloads
+        return []
     for path in runs_dir.glob("*.json"):
         payload = _read_json_file(path)
         if not isinstance(payload, dict):
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
             continue
-        pid = int(payload.get("pid", 0) or 0)
-        if str(payload.get("status") or "") == "running" and pid > 0:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
+        if _running_payload_is_stale(payload):
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+            continue
+        run_id = str(payload.get("run_id") or path.stem).strip() or path.stem
+        existing = payloads_by_run.get(run_id)
+        if existing is None or str(payload.get("updated_at") or "") >= str(existing.get("updated_at") or ""):
+            old_path = paths_by_run.get(run_id)
+            if old_path is not None and old_path != path:
                 with contextlib.suppress(OSError):
-                    path.unlink(missing_ok=True)
-                continue
-            except PermissionError:
-                pass
-            except OSError:
-                continue
-        payloads.append(payload)
+                    old_path.unlink(missing_ok=True)
+            payloads_by_run[run_id] = payload
+            paths_by_run[run_id] = path
+        else:
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+    payloads = list(payloads_by_run.values())
     payloads.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
     return payloads
 
@@ -1024,282 +1102,354 @@ class TerminalHud:
 
 
 class TermuxNotificationHud:
-    def __init__(self, *, notification_id: str = DEFAULT_NOTIFICATION_ID) -> None:
-        self.notification_id = str(notification_id)
-        self.last_signature: tuple[Any, ...] | None = None
+    """Android HUD rendered as one continuously updated Termux:API notification.
 
-    def _build_argv(self, state: HudState) -> list[str]:
-        argv = [
-            "termux-notification",
-            "--id",
-            self.notification_id,
-            "--title",
-            state.display_title,
-            "--content",
-            state.display_text,
-            "--ongoing",
-            "--priority",
-            "high",
-        ]
-        # Termux:API builds have not always exposed the same progress argument
-        # shape. Keep current/total visible in text by default and allow opt-in
-        # to either known argument form via env.
-        progress_mode = os.environ.get("DEVTOOL_TERMUX_NOTIFICATION_PROGRESS", "").strip().lower()
-        if progress_mode and state.current is not None and state.total is not None:
-            current = max(0, min(state.current, state.total)) if state.total > 0 else max(0, state.current)
-            total = max(1, state.total or 1)
-            if progress_mode in {"csv", "android"}:
-                argv += ["--progress", f"{total},{current},false"]
-            elif progress_mode in {"split", "legacy"}:
-                argv += ["--progress", str(current), "--max", str(total)]
-        return argv
-
-    def update(self, state: HudState) -> None:
-        signature = (state.display_title, state.display_text, state.current, state.total, state.status)
-        if signature == self.last_signature:
-            return
-        self.last_signature = signature
-        if not shutil.which("termux-notification"):
-            return
-        try:
-            subprocess.run(self._build_argv(state), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        except OSError:
-            return
-
-    def run(self, *, directory: Path, interval_s: float, once: bool = False) -> int:
-        while True:
-            self.update(state_from_directory(directory))
-            if once:
-                return 0
-            time.sleep(interval_s)
-
-
-class TermuxGuiHud:
-    """Android-native floating/dashboard HUD through the Termux:GUI plugin.
-
-    Termux:GUI supports Android Activity overlays via Activity(..., overlay=True)
-    and setposition().  Overlay mode requires the Termux:GUI Android app to
-    have the system "Display over other apps" permission.  When overlay creation
-    fails, this backend falls back to a normal Termux:GUI Activity unless the
-    user explicitly disables fallback with DEVTOOL_ANDROID_GUI_FALLBACK=0.
+    Official Termux:API currently does not expose NotificationCompat.setProgress().
+    The backend therefore renders a dense textual progress bar by default and
+    opportunistically enables native progress arguments if a future or patched
+    ``termux-notification`` advertises them in ``--help``.
     """
 
-    def __init__(self, *, recent_events: int = DEFAULT_RECENT_EVENTS, overlay: bool = True, notification_id: str = DEFAULT_NOTIFICATION_ID) -> None:
-        self.recent_events = recent_events
-        self.overlay = overlay
+    def __init__(self, *, notification_id: str = DEFAULT_NOTIFICATION_ID, recent_events: int = DEFAULT_RECENT_EVENTS, overlay: bool | None = None) -> None:
         self.notification_id = str(notification_id)
+        self.recent_events = max(0, int(recent_events))
+        self.overlay = overlay
+        self.last_signature: tuple[Any, ...] | None = None
+        self._help_text: str | None = None
+        self._live_bridge = AndroidLiveHudBridge()
+        self._run_started_at: dict[str, int] = {}
 
     @staticmethod
     def available() -> bool:
-        return importlib.util.find_spec("termuxgui") is not None
+        return AndroidLiveHudBridge().available() or bool(shutil.which("termux-notification"))
 
     @staticmethod
     def install_hint() -> str:
         return (
-            "Termux:GUI HUD requires the Termux:GUI Android app and Python bindings. "
-            "Install the app, then run: pip install termuxgui. "
-            "For a floating HUD, enable Android Settings → Apps → Termux:GUI → Display over other apps."
+            "Install Devtool Live HUD and configure its token, or install the "
+            "Termux:API app and run: pkg install termux-api"
         )
 
+    def _notification_help(self) -> str:
+        if self._help_text is not None:
+            return self._help_text
+        binary = shutil.which("termux-notification")
+        if not binary:
+            self._help_text = ""
+            return self._help_text
+        try:
+            result = subprocess.run(
+                [binary, "--help"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            self._help_text = result.stdout or ""
+        except (OSError, subprocess.SubprocessError):
+            self._help_text = ""
+        return self._help_text
+
+    def _native_progress_args(self, state: HudState) -> list[str]:
+        if state.current is None or state.total is None or state.total <= 0:
+            return []
+        mode = os.environ.get("DEVTOOL_TERMUX_NOTIFICATION_PROGRESS", "auto").strip().lower()
+        if mode in {"", "off", "false", "0", "text"}:
+            return []
+        current = max(0, min(int(state.current), int(state.total)))
+        total = max(1, int(state.total))
+        help_text = self._notification_help().lower() if mode == "auto" else ""
+        if mode == "auto":
+            if "--progress-current" in help_text and "--progress-max" in help_text:
+                mode = "named"
+            elif "--progress" in help_text and "--max" in help_text:
+                mode = "split"
+            elif "--progress" in help_text:
+                mode = "csv"
+            else:
+                return []
+        if mode == "named":
+            return ["--progress-current", str(current), "--progress-max", str(total)]
+        if mode in {"split", "legacy"}:
+            return ["--progress", str(current), "--max", str(total)]
+        if mode in {"csv", "android"}:
+            return ["--progress", f"{total},{current},false"]
+        return []
+
     @staticmethod
-    def _safe_call(obj: Any, method: str, *args: Any) -> Any:
-        fn = getattr(obj, method, None)
-        if fn is None:
+    def _status_symbol(state: HudState) -> str:
+        return {"ok": "✓", "failed": "✕", "running": "●", "idle": "○", "skipped": "–"}.get(state.status, "•")
+
+    @staticmethod
+    def _priority(state: HudState) -> str:
+        if state.status == "failed":
+            return "high"
+        if state.status == "ok":
+            return "default"
+        return "low"
+
+    @staticmethod
+    def _progress_text(state: HudState, *, width: int = 18) -> str:
+        if state.status == "ok":
+            return f"{'█' * width} 100%"
+        if state.has_progress:
+            percent = state.percent or 0
+            return f"{render_ascii_bar(state.current, state.total, width=width)} {percent:>3}%"
+        if state.status == "failed":
+            return f"{'█' * width} failed"
+        return f"{'░' * width} working"
+
+    @staticmethod
+    def _short_target(state: HudState) -> str:
+        target = (state.target or "").strip()
+        if not target:
+            return ""
+        return Path(target).name if "/" in target or "\\" in target else target
+
+    def _notification_text(self, state: HudState, events: list[dict[str, Any]]) -> str:
+        completion = completion_from_state(state)
+        phase = human_phase_name(state.phase_name or state.command) if (state.phase_name or state.command) else human_status(state.status)
+        context = " · ".join(bit for bit in (state.repo_name or Path(state.repo_root).name, self._short_target(state)) if bit)
+        lines = [self._progress_text(state)]
+        if context:
+            lines.append(context)
+
+        if completion:
+            detail = str(completion.get("detail") or "").strip()
+            if detail:
+                lines.append(detail)
+            tests = completion.get("tests") if isinstance(completion.get("tests"), dict) else {}
+            if tests:
+                passed = int(tests.get("passed", 0) or 0)
+                failed = int(tests.get("failed", 0) or 0)
+                skipped = int(tests.get("skipped", 0) or 0)
+                total = int(tests.get("total", passed + failed + skipped) or 0)
+                lines.append(f"Tests {passed} passed · {failed} failed · {skipped} skipped · {total} total")
+            warnings = int(completion.get("warnings", 0) or 0)
+            errors = int(completion.get("errors", 0) or 0)
+            if warnings or errors:
+                lines.append(f"Diagnostics {warnings} warnings · {errors} errors")
+            commit_hash = str(completion.get("commit_hash") or "").strip()
+            if commit_hash:
+                lines.append(f"Commit {commit_hash}")
+        else:
+            detail = human_detail(state.text or state.expanded_text)
+            if detail and detail.lower() not in {phase.lower(), context.lower()}:
+                lines.append(detail)
+            highlights = last_phase_highlights(events)
+            highlight = highlights.get((state.phase_name or state.command or "").strip().lower().replace("_", "-"))
+            if highlight and highlight != detail:
+                lines.append(highlight)
+            summary = hud_event_summary(events)
+            if summary.get("warnings") or summary.get("errors"):
+                lines.append(f"Diagnostics {summary.get('warnings', 0)} warnings · {summary.get('errors', 0)} errors")
+
+        recent = [line for event in events if (line := friendly_event_line(event))]
+        if recent and not completion:
+            candidate = recent[-1]
+            if candidate not in lines and candidate != human_detail(state.text):
+                lines.append(candidate)
+        return "\n".join(line[:220] for line in lines[:7] if line)
+
+    def _summary_text(self, state: HudState, events: list[dict[str, Any]]) -> str:
+        completion_text = completion_copy_text(state)
+        if completion_text:
+            return completion_text
+        title = f"{self._status_symbol(state)} {human_status(state.status)}"
+        phase = human_phase_name(state.phase_name or state.command) if (state.phase_name or state.command) else ""
+        lines = [title]
+        if state.repo_name:
+            lines.append(f"Repository: {state.repo_name}")
+        if phase:
+            lines.append(f"Phase: {phase}")
+        if state.has_progress:
+            lines.append(f"Progress: {state.current}/{state.total} ({state.percent or 0}%)")
+        detail = human_detail(state.text or state.expanded_text)
+        if detail:
+            lines.append(detail)
+        recent = [line for event in events if (line := friendly_event_line(event))]
+        if recent:
+            lines.extend(("", "Recent:", *(f"- {line}" for line in recent[-5:])))
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _write_progress_image(directory: Path, state: HudState) -> Path | None:
+        """Write a small PNG progress strip for Termux:API BigPictureStyle."""
+        width, height = 640, 48
+        margin, top, bottom = 8, 8, 40
+        background = (7, 16, 24)
+        track = (28, 39, 52)
+        color = {
+            "ok": (94, 228, 155),
+            "failed": (255, 105, 120),
+            "running": (255, 209, 102),
+            "idle": (65, 80, 100),
+        }.get(state.status, (65, 80, 100))
+        if state.status == "ok":
+            fraction = 1.0
+        elif state.has_progress:
+            assert state.current is not None and state.total is not None
+            fraction = max(0.0, min(1.0, state.current / state.total))
+        elif state.status == "failed":
+            fraction = 1.0
+        else:
+            fraction = 0.08
+        fill_end = margin + int((width - margin * 2) * fraction)
+        rows: list[bytes] = []
+        for y in range(height):
+            row = bytearray([0])  # PNG filter byte
+            for x in range(width):
+                pixel = background
+                if margin <= x < width - margin and top <= y < bottom:
+                    pixel = color if x < fill_end else track
+                row.extend(pixel)
+            rows.append(bytes(row))
+        raw = b"".join(rows)
+
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+        png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b"")
+        path = directory / "notification-progress.png"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+            tmp.write_bytes(png)
+            tmp.replace(path)
+            return path
+        except OSError:
             return None
-        with contextlib.suppress(Exception):
-            return fn(*args)
-        return None
 
     @staticmethod
-    def _make_activity(tg: Any, connection: Any, *, overlay: bool) -> tuple[Any, bool, str]:
-        fallback_enabled = os.environ.get("DEVTOOL_ANDROID_GUI_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
-        if overlay:
-            try:
-                activity = tg.Activity(connection, overlay=True, intercept=True)
-                with contextlib.suppress(Exception):
-                    activity.sendoverlayevents(True)
-                x = int(os.environ.get("DEVTOOL_ANDROID_HUD_X", "12"))
-                y = int(os.environ.get("DEVTOOL_ANDROID_HUD_Y", "56"))
-                with contextlib.suppress(Exception):
-                    activity.setposition(x, y)
-                return activity, True, "floating overlay"
-            except Exception as exc:
-                if not fallback_enabled:
-                    raise RuntimeError(
-                        "Could not start Termux:GUI overlay HUD. Enable Android 'Display over other apps' for Termux:GUI, "
-                        "or set DEVTOOL_ANDROID_GUI_OVERLAY=0 to use a normal Activity."
-                    ) from exc
-                with contextlib.suppress(Exception):
-                    connection.toast("Devtool HUD: overlay permission missing; using normal window", True)
-        activity = tg.Activity(connection, intercept=True)
-        return activity, False, "normal activity"
+    def _write_summary_file(directory: Path, text: str) -> Path | None:
+        path = directory / "notification-summary.txt"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+            tmp.write_text(text.rstrip() + "\n", encoding="utf-8")
+            tmp.replace(path)
+            return path
+        except OSError:
+            return None
 
-    def _format_recent_lines(self, events: list[dict[str, Any]]) -> str:
-        pairs = [(event, line) for event in events if (line := friendly_event_line(event))]
-        lines = [f"{event_icon(event)} {line}" for event, line in pairs[-self.recent_events :]]
-        return "\n".join(lines) or "No events yet"
+    def _action_args(self, summary_path: Path | None) -> list[str]:
+        args: list[str] = []
+        clipboard = shutil.which("termux-clipboard-set")
+        remove = shutil.which("termux-notification-remove")
+        if summary_path is not None and clipboard:
+            action = f"{shlex.quote(str(clipboard))} < {shlex.quote(str(summary_path))}"
+            args += ["--button1", "Copy summary", "--button1-action", action]
+        if remove:
+            action = f"{shlex.quote(str(remove))} {shlex.quote(self.notification_id)}"
+            button = "2" if args else "1"
+            args += [f"--button{button}", "Dismiss", f"--button{button}-action", action]
+        return args
+
+    def _build_argv(
+        self,
+        state: HudState,
+        events: list[dict[str, Any]] | None = None,
+        *,
+        directory: Path | None = None,
+    ) -> list[str]:
+        events = events or []
+        phase = human_phase_name(state.phase_name or state.command) if (state.phase_name or state.command) else human_status(state.status)
+        repo = state.repo_name or (Path(state.repo_root).name if state.repo_root else "devtool")
+        title = f"{self._status_symbol(state)} {repo} · {phase}"
+        content = self._notification_text(state, events)
+        summary_path = self._write_summary_file(directory, self._summary_text(state, events)) if directory else None
+        progress_image = self._write_progress_image(directory, state) if directory else None
+        argv = [
+            shutil.which("termux-notification") or "termux-notification",
+            "--id", self.notification_id,
+            "--title", title,
+            "--content", content,
+            "--group", "devtool",
+            "--icon", "event_note",
+            "--priority", self._priority(state),
+            "--alert-once",
+        ]
+        if progress_image is not None:
+            argv += ["--image-path", str(progress_image)]
+        if state.status not in {"ok", "failed", "skipped"}:
+            argv.append("--ongoing")
+        argv += self._native_progress_args(state)
+        argv += self._action_args(summary_path)
+        return argv
+
+    def _live_bridge_payload(self, state: HudState, events: list[dict[str, Any]], directory: Path) -> tuple[str, dict[str, Any]]:
+        completion = completion_from_state(state) or {}
+        tests = completion.get("tests") if isinstance(completion.get("tests"), dict) else {}
+        run_id = str(
+            state.raw.get("run_id")
+            or state.raw.get("task_id")
+            or directory.name
+            or self.notification_id
+        )
+        started_at = self._run_started_at.setdefault(run_id, int(time.time() * 1000))
+        status = (state.status or "running").strip().lower()
+        action = "update"
+        if status in {"ok", "skipped"}:
+            action = "complete"
+        elif status in {"failed", "interrupted", "cancelled"}:
+            action = "fail"
+        duration_seconds = completion.get("duration_seconds")
+        try:
+            duration_ms = int(float(duration_seconds) * 1000) if duration_seconds is not None else 0
+        except (TypeError, ValueError):
+            duration_ms = 0
+        payload: dict[str, Any] = {
+            "run_id": run_id,
+            "status": status,
+            "phase": human_phase_name(state.phase_name or state.command) or human_status(status),
+            "detail": human_detail(state.text or state.expanded_text),
+            "repo": state.repo_name or (Path(state.repo_root).name if state.repo_root else "devtool"),
+            "target": state.target,
+            "progress": state.percent if state.percent is not None else 0,
+            "indeterminate": state.percent is None and status not in {"ok", "failed", "skipped"},
+            "current": state.current,
+            "total": state.total,
+            "passed": int(tests.get("passed", 0) or 0),
+            "failed": int(tests.get("failed", 0) or 0),
+            "skipped": int(tests.get("skipped", 0) or 0),
+            "warnings": int(completion.get("warnings", 0) or 0),
+            "errors": int(completion.get("errors", 0) or 0),
+            "commit": str(completion.get("commit_hash") or ""),
+            "summary": completion_copy_text(state),
+            "started_at_ms": started_at,
+            "duration_ms": duration_ms,
+            "overlay": bool(state.raw.get("overlay", False)) if self.overlay is None else bool(self.overlay),
+        }
+        return action, payload
+
+    def update(self, state: HudState, events: list[dict[str, Any]], *, directory: Path) -> None:
+        content = self._notification_text(state, events)
+        signature = (state.status, state.phase_name, state.command, state.current, state.total, state.repo_name, state.target, content)
+        if signature == self.last_signature:
+            return
+        self.last_signature = signature
+
+        if self._live_bridge.available():
+            action, payload = self._live_bridge_payload(state, events, directory)
+            if self._live_bridge.send(action, payload):
+                return
+
+        if not shutil.which("termux-notification"):
+            return
+        try:
+            subprocess.run(self._build_argv(state, events, directory=directory), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except OSError:
+            return
 
     def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
-        try:
-            import termuxgui as tg  # type: ignore[import-not-found]
-        except ModuleNotFoundError:
-            raise RuntimeError(self.install_hint()) from None
-
-        if once:
-            snapshot = snapshot_from_runtime_directory(directory, follow_active=follow_active, recent_events=self.recent_events)
-            print(json.dumps({"state": snapshot["state"], "events": snapshot["events"], "mode": "android-gui"}, ensure_ascii=False, indent=2))
-            return 0
-
-        overlay_requested = self.overlay and os.environ.get("DEVTOOL_ANDROID_GUI_OVERLAY", "1").strip().lower() not in {"0", "false", "no"}
-        events_path = directory / "events.jsonl"
-        poll_ms = max(100, int(interval_s * 1000))
-
-        with tg.Connection() as connection:
-            activity, overlay_active, presentation = self._make_activity(tg, connection, overlay=overlay_requested)
-            with contextlib.suppress(Exception):
-                activity.settaskdescription("Devtool HUD", "")
-            with contextlib.suppress(Exception):
-                activity.settheme(
-                    _android_argb(0xFF0B0F14),
-                    _android_argb(0xFF121923),
-                    _android_argb(0xFF0B0F14),
-                    _android_argb(0xFFE8EEF6),
-                    _android_argb(0xFF5EE49B),
-                )
-            with contextlib.suppress(Exception):
-                activity.keepscreenon(False)
-            with contextlib.suppress(Exception):
-                activity.interceptbackbutton(True)
-
-            root = tg.LinearLayout(activity)
-            self._safe_call(root, "setbackgroundcolor", _android_argb(0xFF0B0F14))
-            self._safe_call(root, "setdimensions", 380 if overlay_active else getattr(tg.View, "MATCH_PARENT", "MATCH_PARENT"), getattr(tg.View, "WRAP_CONTENT", "WRAP_CONTENT"))
-            self._safe_call(root, "setmargin", 8)
-
-            header = tg.LinearLayout(activity, root, False)
-            self._safe_call(header, "setlinearlayoutparams", 0)
-            app_label = tg.TextView(activity, "DEVTOOL", header)
-            status_badge = tg.TextView(activity, "WAITING", header)
-            title = tg.TextView(activity, "Waiting for progress", root)
-            context_label = tg.TextView(activity, "Waiting for target", root)
-            detail = tg.TextView(activity, "No devtool task has reported progress yet.", root)
-            error_label = tg.TextView(activity, "", root)
-            warning_label = tg.TextView(activity, "", root)
-            pipeline = tg.TextView(activity, "Validate → Apply → Test → Commit", root)
-            progress_bar = tg.ProgressBar(activity, root) if hasattr(tg, "ProgressBar") else None
-            progress_text = tg.TextView(activity, "waiting", root)
-            metrics = tg.TextView(activity, "0 errors · 0 warnings", root)
-            recent_heading = tg.TextView(activity, "RECENT", root)
-            recent = tg.TextView(activity, "No events yet", root)
-            footer = tg.TextView(activity, f"android-gui · {presentation}", root)
-
-            labels = [app_label, status_badge, title, context_label, detail, error_label, warning_label, pipeline, progress_text, metrics, recent_heading, recent, footer]
-            for widget in labels:
-                self._safe_call(widget, "setheight", getattr(tg.View, "WRAP_CONTENT", "WRAP_CONTENT"))
-                self._safe_call(widget, "setmargin", 3)
-            for widget, size in ((app_label, 11), (status_badge, 11), (title, 20), (context_label, 14), (detail, 12), (error_label, 14), (warning_label, 13), (pipeline, 13), (progress_text, 13), (metrics, 16), (recent_heading, 11), (recent, 12), (footer, 10)):
-                self._safe_call(widget, "settextsize", size)
-            color_map = {
-                app_label: 0xFF8EA0B4,
-                status_badge: 0xFFFFD166,
-                title: 0xFFF8FBFF,
-                context_label: 0xFFCFE0F5,
-                detail: 0xFF91A3B8,
-                error_label: 0xFFFF6978,
-                warning_label: 0xFFFFD166,
-                pipeline: 0xFFD8E5F6,
-                progress_text: 0xFF5EE49B,
-                metrics: 0xFFF6F8FB,
-                recent_heading: 0xFF8EA0B4,
-                recent: 0xFFD6E2F0,
-                footer: 0xFF64748B,
-            }
-            for widget, color in color_map.items():
-                self._safe_call(widget, "settextcolor", _android_argb(color))
-            for widget in (error_label, warning_label):
-                self._safe_call(widget, "setvisibility", getattr(tg.View, "GONE", 0))
-            if progress_bar is not None:
-                self._safe_call(progress_bar, "setheight", 14)
-                self._safe_call(progress_bar, "setprogress", 0)
-
-            last_signature: tuple[Any, ...] | None = None
-            running = True
-
-            def pump_events() -> None:
-                nonlocal running
-                checkevent = getattr(connection, "checkevent", None)
-                if checkevent is None:
-                    return
-                while True:
-                    try:
-                        event = checkevent()
-                    except Exception:
-                        return
-                    if event is None:
-                        return
-                    event_type = str(getattr(event, "type", ""))
-                    value = getattr(event, "value", {}) if isinstance(getattr(event, "value", {}), dict) else {}
-                    if event_type in {getattr(tg.Event, "destroy", "destroy"), getattr(tg.Event, "back", "back")}:
-                        if event_type != getattr(tg.Event, "destroy", "destroy") or value.get("finishing", True):
-                            running = False
-                            return
-
-            def refresh() -> None:
-                nonlocal last_signature
-                current_dir = resolve_hud_directory(directory, follow_active=follow_active)
-                current_events_path = current_dir / "events.jsonl"
-                state = state_from_directory(current_dir)
-                events = _last_jsonl_events(current_events_path, max(self.recent_events, 14))
-                highlights = last_phase_highlights(events)
-                errors = recent_error_lines(events, limit=2)
-                if state.status == "failed" and not errors:
-                    errors = [compact_detail_text(state)]
-                warnings: list[str] = []
-                for event in events:
-                    if event_is_warning(event):
-                        line = friendly_event_line(event)
-                        if line and line not in warnings:
-                            warnings.append(line)
-                warnings = warnings[-2:]
-                summary = hud_event_summary(events)
-                error_count = max(summary.get("errors", 0), 1 if state.status == "failed" else 0)
-                warning_count = summary.get("warnings", 0)
-                progress_label = f"{state.current}/{state.total}  {state.percent or 0}%" if state.current is not None and state.total is not None and state.total > 0 else human_status(state.status).lower()
-                if state.current is not None and (state.total is None or state.total <= 0):
-                    progress_label = f"{state.current} done"
-                signature = (state.seq, state.status, state.current, state.total, state.text, state.target, len(events), error_count, warning_count)
-                if signature == last_signature:
-                    return
-                last_signature = signature
-                status = human_status(state.status).upper()
-                self._safe_call(status_badge, "settext", status)
-                self._safe_call(title, "settext", compact_operation_title(state))
-                self._safe_call(context_label, "settext", state_context_label(state))
-                self._safe_call(detail, "settext", compact_detail_text(state))
-                self._safe_call(pipeline, "settext", pipeline_label(state, highlights))
-                self._safe_call(progress_text, "settext", progress_label)
-                if progress_bar is not None:
-                    self._safe_call(progress_bar, "setprogress", state.percent or 0)
-                self._safe_call(metrics, "settext", f"{error_count} errors · {warning_count} warnings" + (f" · {state.percent}%" if state.percent is not None else ""))
-                if errors:
-                    self._safe_call(error_label, "settext", "❌ " + "\n❌ ".join(errors))
-                    self._safe_call(error_label, "setvisibility", getattr(tg.View, "VISIBLE", 2))
-                else:
-                    self._safe_call(error_label, "setvisibility", getattr(tg.View, "GONE", 0))
-                if warnings and not errors:
-                    self._safe_call(warning_label, "settext", "⚠ " + "\n⚠ ".join(warnings))
-                    self._safe_call(warning_label, "setvisibility", getattr(tg.View, "VISIBLE", 2))
-                else:
-                    self._safe_call(warning_label, "setvisibility", getattr(tg.View, "GONE", 0))
-                self._safe_call(recent, "settext", self._format_recent_lines(events))
-                self._safe_call(footer, "settext", f"android-gui · {presentation} · {current_dir}")
-
-            while running:
-                pump_events()
-                refresh()
-                time.sleep(poll_ms / 1000)
-        return 0
-
+        while True:
+            current_dir = resolve_hud_directory(directory, follow_active=follow_active)
+            events = _last_jsonl_events(current_dir / "events.jsonl", self.recent_events)
+            self.update(state_from_directory(current_dir), events, directory=current_dir)
+            if once:
+                return 0
+            time.sleep(interval_s)
 
 class AndroidBridgeHud:
     """Chroot/proot-safe Android HUD bridge writer.
@@ -1307,7 +1457,7 @@ class AndroidBridgeHud:
     This backend does not import Termux:GUI. It mirrors the current HUD state
     into a shared directory, normally /home/termux/.local/state/devtool-android-hud
     inside an Ubuntu chroot. A Termux host helper can then render that directory
-    using the android-gui or android-notify backend.
+    using the Termux:API android-notify backend.
     """
 
     def __init__(self, *, recent_events: int = DEFAULT_RECENT_EVENTS, bridge_dir: Path | None = None) -> None:
@@ -1980,44 +2130,28 @@ class StudioHud:
 
 
 def choose_hud_mode(requested: str) -> str:
-    requested = requested.lower().strip()
+    requested = (requested or "auto").strip().lower()
     aliases = {
-        "v3": "terminal",
-        "console": "terminal",
-        "rich": "terminal",
-        "v4": "web",
-        "server": "web",
-        "http": "web",
-        "dashboard": "web",
-        "v5": "studio",
-        "all": "studio",
-        "v6": "desktop",
-        "unix": "desktop",
-        "gnome": "desktop",
-        "desktop-gtk": "desktop-window",
-        "gtk": "desktop-window",
-        "notify-send": "desktop-notify",
-        "libnotify": "desktop-notify",
-        "termux-gui": "android-gui",
-        "termuxgui": "android-gui",
-        "android": "android-gui",
-        "android-overlay": "android-gui",
-        "android-chroot": "android-bridge",
-        "termux-bridge": "android-bridge",
-        "termux-chroot": "android-bridge",
-        "android-hud-bridge": "android-bridge",
-        "termux-notification": "android-notify",
-        "termux-notify": "android-notify",
+        "v3": "terminal", "console": "terminal",
+        "v4": "web", "server": "web", "http": "web", "dashboard": "web",
+        "v5": "studio", "all": "studio",
+        "v6": "desktop", "unix": "desktop", "gnome": "desktop",
+        "desktop-gtk": "desktop-window", "gtk": "desktop-window",
+        "notify-send": "desktop-notify", "libnotify": "desktop-notify",
+        # Legacy Android GUI names now resolve to the Termux:API notification HUD.
+        "termux-gui": "android-notify", "termuxgui": "android-notify",
+        "android": "android-notify", "android-gui": "android-notify",
+        "android-overlay": "android-notify",
+        "android-chroot": "android-bridge", "termux-bridge": "android-bridge",
+        "termux-chroot": "android-bridge", "android-hud-bridge": "android-bridge",
+        "termux-notification": "android-notify", "termux-notify": "android-notify",
         "android-notification": "android-notify",
         "notification": "android-notify" if _is_termux_android() else "notification",
     }
     requested = aliases.get(requested, requested)
     if requested == "desktop":
         if _is_termux_android():
-            if TermuxGuiHud.available():
-                return "android-gui"
-            if shutil.which("termux-notification"):
-                return "android-notify"
+            return "android-notify" if TermuxNotificationHud.available() else "terminal"
         if _is_termux_chroot_bridge():
             return "android-bridge"
         if GtkDesktopHud.available():
@@ -2025,25 +2159,14 @@ def choose_hud_mode(requested: str) -> str:
         if DesktopNotificationHud.available():
             return "desktop-notify"
         return "terminal"
+    if _is_termux_android() and requested in {"desktop-window", "desktop-notify"}:
+        return "android-notify" if TermuxNotificationHud.available() else "terminal"
     if requested != "auto":
         return requested
     if _is_termux_android():
-        if TermuxGuiHud.available():
-            return "android-gui"
-        if shutil.which("termux-notification"):
-            return "android-notify"
+        return "android-notify" if TermuxNotificationHud.available() else "terminal"
     if _is_termux_chroot_bridge():
         return "android-bridge"
-
-    # Prefer native Termux:GUI whenever it is available, even if a desktop
-    # DISPLAY/WAYLAND_DISPLAY exists. This keeps Android/Termux auto-HUD from
-    # being stolen by GTK/X11 and preserves the documented priority:
-    # android-gui → android-notify → desktop-window → desktop-notify → terminal.
-    if TermuxGuiHud.available():
-        return "android-gui"
-    if shutil.which("termux-notification"):
-        return "android-notify"
-
     if os.name == "posix" and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         if GtkDesktopHud.available():
             return "desktop-window"
@@ -2051,15 +2174,14 @@ def choose_hud_mode(requested: str) -> str:
             return "desktop-notify"
     return "terminal"
 
-
 def build_hud_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="devtool hud")
     parser.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool HUD/Tasker JSON files (default: platform state dir)")
     parser.add_argument(
         "--mode",
-        choices=["auto", "android-gui", "android-bridge", "android-notify", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
+        choices=["auto", "android-notify", "android-bridge", "android-gui", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
         default="auto",
-        help="HUD renderer: android-gui/android-bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6",
+        help="HUD renderer: Termux:API notification/android-bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6",
     )
     parser.add_argument("--host", default=DEFAULT_HUD_HOST, help="Host/IP for HUD web/studio modes")
     parser.add_argument("--port", type=int, default=DEFAULT_HUD_PORT, help="Port for HUD web/studio modes")
@@ -2069,7 +2191,9 @@ def build_hud_parser() -> argparse.ArgumentParser:
     parser.add_argument("--studio-notify", action="store_true", help="In studio/v5 mode, also mirror state into termux-notification when available")
     parser.add_argument("--once", action="store_true", help="Render/update once and exit")
     parser.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory written by auto-HUD")
-    parser.add_argument("--no-overlay", action="store_true", help="For android-gui, use a normal Activity instead of a floating overlay")
+    presentation = parser.add_mutually_exclusive_group()
+    presentation.add_argument("--overlay", action="store_true", help="Also publish runs to the enabled Android floating overlay HUD")
+    presentation.add_argument("--no-overlay", action="store_true", help="Use notification-only presentation (default)")
     return parser
 
 
@@ -2079,13 +2203,15 @@ def run_hud(args: argparse.Namespace) -> int:
     interval_s = max(0.05, float(args.poll_interval))
     recent_events = max(0, int(args.recent_events))
     follow_active = bool(getattr(args, "follow_active", False))
-    if mode == "android-gui":
-        use_overlay = not bool(getattr(args, "no_overlay", False))
-        return TermuxGuiHud(recent_events=recent_events, overlay=use_overlay, notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     if mode == "android-bridge":
         return AndroidBridgeHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     if mode in {"android-notify", "notification"}:
-        return TermuxNotificationHud(notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once))
+        overlay_override: bool | None = None
+        if bool(getattr(args, "overlay", False)):
+            overlay_override = True
+        elif bool(getattr(args, "no_overlay", False)):
+            overlay_override = False
+        return TermuxNotificationHud(notification_id=str(args.notify_id), recent_events=recent_events, overlay=overlay_override).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     if mode == "web":
         return WebDashboardHud(host=str(args.host), port=int(args.port), recent_events=recent_events, interval_s=interval_s, follow_active=follow_active).run(directory=directory, once=bool(args.once))
     if mode == "studio":

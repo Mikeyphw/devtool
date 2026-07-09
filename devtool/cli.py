@@ -148,8 +148,10 @@ def build_parser() -> argparse.ArgumentParser:
     hud = parser.add_argument_group("HUD")
     hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the HUD when progress is emitted (default)")
     hud.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not auto-start the HUD for this command")
-    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-gui, android-bridge, android-notify, desktop-window, desktop-notify, v5, or terminal")
-    hud.add_argument("--hud-no-overlay", action="store_true", help="Run Termux:GUI HUD as a normal Activity instead of a floating overlay")
+    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-notify, android-bridge, desktop-window, desktop-notify, v5, or terminal (legacy android-gui maps to android-notify)")
+    hud_presentation = hud.add_mutually_exclusive_group()
+    hud_presentation.add_argument("--hud-overlay", action="store_true", help="On Android, also show the run in the user-enabled floating overlay HUD")
+    hud_presentation.add_argument("--hud-no-overlay", action="store_true", help="On Android, use notification-only presentation (default)")
 
     concurrency = parser.add_argument_group("Concurrency")
     concurrency.add_argument("--concurrency", choices=["auto", "off"], default=os.environ.get("DEVTOOL_CONCURRENCY", "auto"), help="Allow concurrent runs when their repository file scopes do not conflict")
@@ -304,7 +306,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     hud_cmd = subparsers.add_parser("hud")
     hud_cmd.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool HUD/Tasker JSON files (default: platform state dir)")
-    hud_cmd.add_argument("--mode", choices=["auto", "android-gui", "android-bridge", "android-notify", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: android-gui/android-bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6")
+    hud_cmd.add_argument("--mode", choices=["auto", "android-gui", "android-bridge", "android-notify", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: Termux:API notification/android-bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6")
     hud_cmd.add_argument("--host", default="127.0.0.1", help="Host/IP for HUD web/studio modes")
     hud_cmd.add_argument("--port", type=int, default=8765, help="Port for HUD web/studio modes")
     hud_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
@@ -313,18 +315,22 @@ def build_parser() -> argparse.ArgumentParser:
     hud_cmd.add_argument("--studio-notify", action="store_true", help="In studio/v5 mode, also mirror state into termux-notification when available")
     hud_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
     hud_cmd.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory written by auto-HUD")
-    hud_cmd.add_argument("--no-overlay", action="store_true", help="For android-gui, use a normal Activity instead of a floating overlay")
+    hud_presentation_cmd = hud_cmd.add_mutually_exclusive_group()
+    hud_presentation_cmd.add_argument("--overlay", action="store_true", help="Also publish runs to the enabled Android floating overlay HUD")
+    hud_presentation_cmd.add_argument("--no-overlay", action="store_true", help="Use notification-only presentation (default)")
 
     android_bridge_cmd = subparsers.add_parser("android-hud-bridge", aliases=["termux-hud-bridge"], help="Display chroot/proot Android HUD bridge state from the Termux host")
     android_bridge_cmd.add_argument("--state-dir", default="", help="Shared bridge state directory; defaults to ~/.local/state/devtool-android-hud on Termux or /home/termux/.local/state/devtool-android-hud in a chroot")
-    android_bridge_cmd.add_argument("--mode", choices=["android-gui", "android-notify", "terminal"], default="android-gui", help="Renderer used by the Termux host helper")
+    android_bridge_cmd.add_argument("--mode", choices=["android-notify", "android-gui", "terminal"], default="android-notify", help="Renderer used by the Termux host helper; legacy android-gui maps to android-notify")
     android_bridge_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
     android_bridge_cmd.add_argument("--recent-events", type=int, default=8, help="Recent events to show")
     android_bridge_cmd.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for android-notify mode")
     android_bridge_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
     android_bridge_cmd.add_argument("--follow-active", action="store_true", default=True, help="Follow active HUD pointer in the shared bridge directory")
     android_bridge_cmd.add_argument("--no-follow-active", dest="follow_active", action="store_false", help="Read the shared bridge directory directly")
-    android_bridge_cmd.add_argument("--no-overlay", action="store_true", help="For android-gui bridge mode, use a normal Activity instead of a floating overlay")
+    android_bridge_presentation = android_bridge_cmd.add_mutually_exclusive_group()
+    android_bridge_presentation.add_argument("--overlay", action="store_true", help="Also publish runs to the enabled Android floating overlay HUD")
+    android_bridge_presentation.add_argument("--no-overlay", action="store_true", help="Use notification-only presentation (default)")
 
     history_cmd = subparsers.add_parser("history")
     history_cmd.add_argument("--limit", type=int, default=20)
@@ -814,7 +820,13 @@ def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = No
                 directory = default_android_bridge_dir()
         except Exception:
             chosen_hud_mode = hud_mode
-        start_auto_hud(directory, mode=hud_mode, poll_interval=0.1, no_overlay=bool(getattr(args, "hud_no_overlay", False)))
+        overlay_requested = bool(getattr(args, "hud_overlay", False)) and not bool(getattr(args, "hud_no_overlay", False))
+        start_auto_hud(directory, mode=hud_mode, poll_interval=0.1, no_overlay=not overlay_requested)
+        # The Android notification HUD already consumes the same progress files
+        # and updates the stable notification ID. Avoid racing it with the older
+        # simplified --notify-progress emitter.
+        if chosen_hud_mode == "android-notify":
+            notify_progress = False
     return build_tasker_sink(
         enabled=enabled,
         directory=str(directory),
@@ -825,6 +837,8 @@ def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = No
         broadcast_action=str(getattr(args, "tasker_action", DEFAULT_TASKER_ACTION)),
         notify_progress=notify_progress,
         notification_id=str(getattr(args, "notify_id", DEFAULT_NOTIFICATION_ID)),
+        run_id=str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")),
+        overlay=bool(getattr(args, "hud_overlay", False)) and not bool(getattr(args, "hud_no_overlay", False)),
     )
 
 
@@ -1454,15 +1468,22 @@ def _command_concurrency_scope(config: ProjectConfig, args: argparse.Namespace, 
     return scope_for_specs(config, specs)
 
 
+def _ensure_run_id(args: argparse.Namespace) -> str:
+    run_id = str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")).strip()
+    if not run_id:
+        run_id = __import__("uuid").uuid4().hex
+    args._devtool_run_id = run_id
+    os.environ["DEVTOOL_RUN_ID"] = run_id
+    return run_id
+
+
 def _acquire_command_lease(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> ConcurrencyLease | None:
     if str(getattr(args, "concurrency", "auto") or "auto") == "off":
         return None
     reads, writes = _command_concurrency_scope(config, args, parser)
     if not reads and not writes:
         return None
-    run_id = os.environ.get("DEVTOOL_RUN_ID", "") or __import__("uuid").uuid4().hex
-    args._devtool_run_id = run_id
-    os.environ["DEVTOOL_RUN_ID"] = run_id
+    run_id = _ensure_run_id(args)
     timeout = 0.0 if bool(getattr(args, "no_wait", False)) else max(0.0, float(getattr(args, "lock_timeout", 300.0)))
     def _show_wait(conflicts: list[object]) -> None:
         if not conflicts:
@@ -2333,7 +2354,7 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
 
     Default mode keeps devtool itself on the Termux host and uses the chroot as
     an execution backend for command phases.  This preserves the native Rich UI,
-    Termux:GUI HUD, clipboard, and command summary on Android.  The old whole-
+    Termux:API notification HUD, clipboard, and command summary on Android.  The old whole-
     devtool delegation remains available with DEVTOOL_AUTO_CHROOT_MODE=full.
     """
     if bool(getattr(args, "no_auto_chroot", False)):
@@ -2520,6 +2541,7 @@ def main(argv: list[str] | None = None) -> int:
             studio_notify=False,
             once=bool(args.once),
             follow_active=bool(args.follow_active),
+            overlay=bool(getattr(args, "overlay", False)),
             no_overlay=bool(getattr(args, "no_overlay", False)),
         )
         return run_hud(hud_args)
@@ -2596,6 +2618,7 @@ def main(argv: list[str] | None = None) -> int:
     config = _load_command_config(args)
     continue_on_error = args.continue_on_error and not args.fail_fast
     log_path = new_log_path()
+    _ensure_run_id(args)
     tasker_progress = _tasker_for_args(args, config)
     command_lease = _acquire_command_lease(config, args, parser)
 

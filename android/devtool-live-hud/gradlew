@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -eu
+VERSION=8.13
+BASE="${GRADLE_USER_HOME:-$HOME/.gradle}/devtool-bootstrap"
+HOME_DIR="$BASE/gradle-$VERSION"
+ZIP="$BASE/gradle-$VERSION-bin.zip"
+if [ ! -x "$HOME_DIR/bin/gradle" ]; then
+  mkdir -p "$BASE"
+  URL="https://services.gradle.org/distributions/gradle-$VERSION-bin.zip"
+  if command -v curl >/dev/null 2>&1; then curl -fL "$URL" -o "$ZIP"
+  elif command -v wget >/dev/null 2>&1; then wget -O "$ZIP" "$URL"
+  else echo "curl or wget is required to bootstrap Gradle" >&2; exit 2; fi
+  rm -rf "$HOME_DIR"
+  unzip -q "$ZIP" -d "$BASE"
+fi
+exec "$HOME_DIR/bin/gradle" "$@"

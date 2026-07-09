@@ -1,0 +1,79 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+PACKAGE="io.github.mikeceead.devtoolhud"
+COMPONENT="$PACKAGE/.BridgeReceiver"
+TOKEN_FILE="${DEVTOOL_ANDROID_HUD_TOKEN_FILE:-$HOME/.config/devtool/android-live-hud.token}"
+TOKEN="${DEVTOOL_ANDROID_HUD_TOKEN:-}"
+[[ -n "$TOKEN" ]] || { [[ -r "$TOKEN_FILE" ]] && TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE")"; }
+
+usage() {
+  cat <<'EOF'
+Usage:
+  devtool-live-hud update [options]
+  devtool-live-hud complete [options]
+  devtool-live-hud fail [options]
+  devtool-live-hud cancel --run-id ID
+  devtool-live-hud test
+  devtool-live-hud test-overlay
+
+Options:
+  --run-id ID          Stable ID for this devtool run
+  --status STATUS      running, waiting, ok, failed, interrupted
+  --phase TEXT         Restore, Build, Test, Commit, etc.
+  --detail TEXT        Current task detail
+  --repo TEXT          Repository name
+  --target TEXT        Solution/project/target
+  --progress N         0..100
+  --current N --total N
+  --passed N --failed N --skipped N
+  --warnings N --errors N
+  --commit HASH
+  --summary TEXT
+  --started-at-ms N
+  --duration-ms N
+  --indeterminate
+  --overlay            Also show this run in the enabled floating overlay HUD
+  --no-overlay         Force notification-only presentation (default)
+EOF
+}
+
+[[ -n "$TOKEN" ]] || { echo "Missing token: $TOKEN_FILE" >&2; exit 2; }
+command -v am >/dev/null || { echo "The Android 'am' command is required (pkg install termux-am)." >&2; exit 2; }
+
+sub="${1:-}"; shift || true
+case "$sub" in
+  update) action="$PACKAGE.UPDATE"; default_status=running ;;
+  complete) action="$PACKAGE.COMPLETE"; default_status=ok ;;
+  fail) action="$PACKAGE.FAIL"; default_status=failed ;;
+  cancel) action="$PACKAGE.CANCEL"; default_status=cancelled ;;
+  test)
+    exec "$0" update --run-id bridge-test --phase Testing --detail "Running 7 of 10 test projects" --repo sims3tools --target S3Atelier.Modern.sln --progress 72 --passed 160 --skipped 1 --warnings 2 --no-overlay
+    ;;
+  test-overlay)
+    exec "$0" update --run-id bridge-overlay-test --phase Testing --detail "Running 7 of 10 test projects" --repo sims3tools --target S3Atelier.Modern.sln --progress 72 --passed 160 --skipped 1 --warnings 2 --overlay
+    ;;
+  -h|--help|help|'') usage; exit 0 ;;
+  *) echo "Unknown command: $sub" >&2; usage >&2; exit 2 ;;
+esac
+
+overlay_requested=false
+args=(am broadcast --user 0 -n "$COMPONENT" -a "$action" --es token "$TOKEN" --es status "$default_status")
+while (($#)); do
+  case "$1" in
+    --run-id|--status|--phase|--detail|--repo|--target|--commit|--summary)
+      key="${1#--}"; key="${key//-/_}"; args+=(--es "$key" "${2:?missing value for $1}"); shift 2 ;;
+    --progress|--current|--total|--passed|--failed|--skipped|--warnings|--errors)
+      key="${1#--}"; args+=(--ei "$key" "${2:?missing value for $1}"); shift 2 ;;
+    --started-at-ms|--duration-ms)
+      key="${1#--}"; key="${key//-/_}"; args+=(--el "$key" "${2:?missing value for $1}"); shift 2 ;;
+    --indeterminate) args+=(--ez indeterminate true); shift ;;
+    --overlay) overlay_requested=true; shift ;;
+    --no-overlay) overlay_requested=false; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+args+=(--ez overlay "$overlay_requested")
+
+"${args[@]}" >/dev/null

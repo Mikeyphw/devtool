@@ -386,6 +386,9 @@ def build_inner_command(config: RunnerConfig, forwarded: list[str]) -> str:
         "DEVTOOL_INSIDE_TERMUX_CHROOT=1",
         f"DEVTOOL_CHROOT_CONTEXT={config.chroot_name}",
     ]
+    run_id = os.environ.get("DEVTOOL_RUN_ID", "").strip()
+    if run_id:
+        env_prefix.append(f"DEVTOOL_RUN_ID={run_id}")
     return "cd " + shlex.quote(config.cwd or "/") + " && exec " + _shell_join_tool_argv([*env_prefix, *devtool_argv])
 
 
@@ -488,13 +491,13 @@ def normalize_hud_mode_for_termux_host(mode: str | None) -> str:
     In host-orchestrated mode devtool itself stays in Termux, so there is no
     reason to start the bridge HUD just because the user passed familiar
     desktop flags like --hud-mode desktop-window.  Keep notification modes
-    explicit, but map desktop/GTK/X11 and Android GUI aliases to android-gui.
+    explicit, but map desktop/GTK/X11 and legacy Android GUI aliases to android-notify.
     """
     if not mode:
-        return "android-gui"
+        return "android-notify"
     normalized = mode.strip().lower()
     if normalized in DESKTOP_HUD_MODES or normalized in ANDROID_GUI_ALIASES or normalized in ANDROID_BRIDGE_ALIASES:
-        return "android-gui"
+        return "android-notify"
     if normalized in ANDROID_NOTIFY_ALIASES:
         return "android-notify"
     return mode
@@ -540,7 +543,7 @@ def wrap_specs_for_termux_host_chroot(
     """Wrap command phases for chroot while keeping devtool itself on Termux.
 
     This is the toolchain/backend mode: the outer devtool keeps Rich UI,
-    Termux:GUI HUD, clipboard, artifact matching, and command summaries on the
+    Termux:API notification HUD, clipboard, artifact matching, and command summaries on the
     Android host.  Only each external command phase is run through:
 
         chrootctl exec -- zsh -lc 'cd <translated cwd> && <command>'
@@ -811,7 +814,7 @@ def _start_android_hud_bridge(raw_logfile: Path, state_dir: Path) -> None:
                 return
         except Exception:
             pass
-    mode = os.environ.get("DEVTOOL_ANDROID_HUD_MODE", "android-gui")
+    mode = os.environ.get("DEVTOOL_ANDROID_HUD_MODE", "android-notify")
     argv = [sys.executable, "-m", "devtool", "android-hud-bridge", "--mode", mode, "--state-dir", str(state_dir)]
     env = os.environ.copy()
     env["DEVTOOL_AUTO_CHROOT"] = "0"
@@ -820,7 +823,7 @@ def _start_android_hud_bridge(raw_logfile: Path, state_dir: Path) -> None:
         handle = logfile.open("ab")
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.STDOUT, start_new_session=True, env=env)
         pidfile.write_text(str(proc.pid), encoding="utf-8")
-        _echo_log(raw_logfile, f"HUD bridge: started Android GUI renderer (pid {proc.pid})")
+        _echo_log(raw_logfile, f"HUD bridge: started Android notification renderer (pid {proc.pid})")
         _echo_log(raw_logfile, f"HUD bridge log: {logfile}")
     except Exception as exc:
         _echo_log(raw_logfile, f"HUD bridge: could not start ({exc})")

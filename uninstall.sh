@@ -8,5 +8,6 @@ ZSH_DIR="$PREFIX/share/zsh/site-functions"
 python3 -m pip uninstall -y devtool || true
 rm -f "$MAN_DIR/devtool.1"
 rm -f "$ZSH_DIR/_devtool"
+rm -f "$PREFIX/bin/devtool-live-hud"
 
 echo "Uninstalled devtool."
