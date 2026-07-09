@@ -27,3 +27,13 @@ devtool hud --mode android-notify --follow-active
 # Existing desktop/legacy Android mode names auto-translate on Termux
 devtool --auto-hud --hud-mode desktop-window ...
 devtool --auto-hud --hud-mode android-gui ...  # compatibility alias
+
+
+## Optional root bridge module
+
+```bash
+cd "$HOME/Code/devtool"
+./build-root-bridge-module.sh
+```
+
+Install `devtool_root_bridge_module.zip` from KernelSU/Magisk/APatch, reboot, grant the Android app root, then use **Devtool Root Bridge → Pair root bridge**. The app can also export this identical ZIP from its dynamic root-bridge tile. This is optional; Termux `RUN_COMMAND` remains the default backend.

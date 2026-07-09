@@ -1,0 +1,196 @@
+#!/system/bin/sh
+set -u
+
+MODULE_VERSION="0.1.0"
+DATA_DIR=/data/adb/devtool-bridge
+TOKEN_FILE="$DATA_DIR/token"
+RUNS_DIR="$DATA_DIR/runs"
+LOGS_DIR="$DATA_DIR/logs"
+TERMUX_PREFIX=/data/data/com.termux/files/usr
+TERMUX_HOME=/data/data/com.termux/files/home
+
+mkdir_secure() {
+  mkdir -p "$DATA_DIR" "$RUNS_DIR" "$LOGS_DIR"
+  chmod 0700 "$DATA_DIR" "$RUNS_DIR" "$LOGS_DIR" 2>/dev/null || true
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\r/\\r/g; s/\t/\\t/g' | tr '\n' ' '
+}
+
+sha256_text() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$1" | sha256sum | awk '{print $1}'
+  elif command -v toybox >/dev/null 2>&1; then
+    printf '%s' "$1" | toybox sha256sum | awk '{print $1}'
+  else
+    printf '%s' "$1" | md5sum | awk '{print $1}'
+  fi
+}
+
+b64decode() {
+  if command -v base64 >/dev/null 2>&1; then
+    printf '%s' "$1" | base64 -d
+  else
+    printf '%s' "$1" | toybox base64 -d
+  fi
+}
+
+termux_uid() {
+  cmd package list packages -U com.termux 2>/dev/null \
+    | sed -n 's/^package:com\.termux uid://p' \
+    | head -n 1
+}
+
+module_installed() {
+  [ -d /data/adb/modules/devtool_bridge ] || [ -d /data/adb/modules_update/devtool_bridge ]
+}
+
+module_enabled() {
+  module_installed || return 1
+  [ ! -e /data/adb/modules/devtool_bridge/disable ] \
+    && [ ! -e /data/adb/modules/devtool_bridge/remove ] \
+    && [ ! -e /data/adb/modules_update/devtool_bridge/disable ]
+}
+
+require_token() {
+  supplied=${1:-}
+  [ -s "$TOKEN_FILE" ] || { echo "Bridge token is not paired" >&2; exit 77; }
+  stored=$(cat "$TOKEN_FILE" 2>/dev/null || true)
+  [ -n "$supplied" ] && [ "$stored" = "$supplied" ] || { echo "Bridge token mismatch" >&2; exit 77; }
+}
+
+validate_command() {
+  compact=$(printf '%s' "$1" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ *//')
+  rest=$compact
+  while :; do
+    first=${rest%% *}
+    case "$first" in
+      [A-Za-z_][A-Za-z0-9_]*=*)
+        [ "$rest" = "$first" ] && break
+        rest=${rest#* }
+        ;;
+      *) break ;;
+    esac
+  done
+  case "$rest" in
+    devtool|devtool\ *|devtool-androidos|devtool-androidos\ *) return 0 ;;
+    *) echo "Root bridge only accepts devtool or devtool-androidos commands" >&2; return 64 ;;
+  esac
+}
+
+run_as_termux() {
+  uid=$(termux_uid)
+  [ -n "$uid" ] || { echo "Unable to resolve the Termux app UID" >&2; return 69; }
+  [ -x "$TERMUX_PREFIX/bin/bash" ] || { echo "Termux bash is unavailable" >&2; return 69; }
+  payload=$1
+  if su -h 2>&1 | grep -q -- '-s'; then
+    exec su -s "$TERMUX_PREFIX/bin/bash" "$uid" -c "$payload"
+  fi
+  exec su "$uid" -c "$TERMUX_PREFIX/bin/bash -lc $(printf "'%s'" "$(printf '%s' "$payload" | sed "s/'/'\\''/g")")"
+}
+
+cmd_status() {
+  mkdir_secure
+  uid=$(termux_uid || true)
+  paired=false; [ -s "$TOKEN_FILE" ] && paired=true
+  installed=false; module_installed && installed=true
+  enabled=false; module_enabled && enabled=true
+  matches=false
+  human=false
+  probe_token=""
+  for arg in "$@"; do
+    if [ "$arg" = "--human" ]; then human=true
+    elif [ -z "$probe_token" ]; then probe_token=$arg
+    fi
+  done
+  if $paired && [ -n "$probe_token" ] && [ "$(cat "$TOKEN_FILE" 2>/dev/null || true)" = "$probe_token" ]; then
+    matches=true
+  fi
+  if $human; then
+    echo "Devtool Root Bridge $MODULE_VERSION"
+    echo "Module: $($installed && echo installed || echo missing)"
+    echo "Enabled: $enabled"
+    echo "Token: $($paired && echo paired || echo not-paired)"
+    [ -n "$probe_token" ] && echo "Token match: $matches"
+    echo "Termux UID: ${uid:-unavailable}"
+    echo "Active runs: $(find "$RUNS_DIR" -name '*.pid' -type f 2>/dev/null | wc -l)"
+    exit 0
+  fi
+  printf '{"version":"%s","installed":%s,"enabled":%s,"paired":%s,"matches":%s,"termux_uid":"%s","data_dir":"%s"}\n' \
+    "$MODULE_VERSION" "$installed" "$enabled" "$paired" "$matches" "$(json_escape "${uid:-}")" "$DATA_DIR"
+}
+
+
+cmd_pair() {
+  mkdir_secure
+  token=${1:-}
+  [ ${#token} -ge 32 ] || { echo "Refusing a short bridge token" >&2; exit 64; }
+  tmp="$TOKEN_FILE.tmp.$$"
+  umask 077
+  printf '%s\n' "$token" > "$tmp"
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$TOKEN_FILE"
+  printf 'DEVTOOL_ROOT_BRIDGE_PAIRED %s\n' "$(sha256_text "$token")"
+}
+
+cmd_unpair() {
+  rm -f "$TOKEN_FILE"
+  echo "DEVTOOL_ROOT_BRIDGE_UNPAIRED"
+}
+
+cmd_cancel() {
+  require_token "${1:-}"
+  run_id=${2:-}
+  [ -n "$run_id" ] || { echo "Missing run id" >&2; exit 64; }
+  pid_file="$RUNS_DIR/$run_id.pid"
+  [ -s "$pid_file" ] || { echo "Run is not active" >&2; exit 3; }
+  pid=$(cat "$pid_file")
+  kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  sleep 1
+  kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  rm -f "$pid_file"
+  echo "DEVTOOL_ROOT_BRIDGE_CANCELLED $run_id"
+}
+
+cmd_run() {
+  mkdir_secure
+  token=${1:-}; run_id=${2:-}; overlay=${3:-0}; workdir64=${4:-}; command64=${5:-}
+  require_token "$token"
+  [ -n "$run_id" ] && [ -n "$command64" ] || { echo "Missing run arguments" >&2; exit 64; }
+  case "$run_id" in *[!A-Za-z0-9._-]*|'') echo "Invalid run id" >&2; exit 64;; esac
+  workdir=$(b64decode "$workdir64") || exit 65
+  command=$(b64decode "$command64") || exit 65
+  validate_command "$command" || exit $?
+  [ -n "$workdir" ] || workdir="$TERMUX_HOME"
+  case "$workdir" in
+    "~") workdir="$TERMUX_HOME" ;;
+    "~/"*) workdir="$TERMUX_HOME/${workdir#~/}" ;;
+    '$HOME') workdir="$TERMUX_HOME" ;;
+    '$HOME/'*) workdir="$TERMUX_HOME/${workdir#\$HOME/}" ;;
+  esac
+  log="$LOGS_DIR/$run_id.log"
+  pid_file="$RUNS_DIR/$run_id.pid"
+  umask 077
+  printf '%s\n' "$$" > "$pid_file"
+  trap 'rm -f "$pid_file"' EXIT INT TERM HUP
+  export DEVTOOL_RUN_ID="$run_id"
+  export DEVTOOL_ANDROID_HUD_TOKEN="$token"
+  export DEVTOOL_HUD_OVERLAY="$overlay"
+  export DEVTOOL_ANDROID_HUD_AUTOSTART=1
+  export DEVTOOL_ROOT_BRIDGE=1
+  quoted_workdir=$(printf "'%s'" "$(printf '%s' "$workdir" | sed "s/'/'\\''/g")")
+  payload="export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX TMPDIR=$TERMUX_PREFIX/tmp; export PATH=$TERMUX_HOME/.local/bin:$TERMUX_PREFIX/bin:/system/bin:/system/xbin; cd $quoted_workdir && exec $command"
+  echo "DEVTOOL_ROOT_BRIDGE_STARTED $run_id"
+  run_as_termux "$payload" 2>&1 | tee -a "$log"
+}
+
+case "${1:-status}" in
+  status) shift; cmd_status "$@" ;;
+  pair) shift; cmd_pair "$@" ;;
+  unpair) shift; cmd_unpair "$@" ;;
+  run) shift; cmd_run "$@" ;;
+  cancel) shift; cmd_cancel "$@" ;;
+  version) echo "$MODULE_VERSION" ;;
+  *) echo "Usage: devtool-root-bridge {status|pair TOKEN|unpair|run TOKEN RUN_ID OVERLAY WORKDIR_B64 COMMAND_B64|cancel TOKEN RUN_ID|version}" >&2; exit 64 ;;
+esac

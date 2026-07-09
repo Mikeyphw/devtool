@@ -594,15 +594,23 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     success_lines = ["Devtool completed successfully.", ""]
 
     if isinstance(overlay_summaries, list) and overlay_summaries:
-        success_lines.append(f"Overlays completed: {len(overlay_summaries)}")
-        for overlay in overlay_summaries:
-            if not isinstance(overlay, dict):
-                continue
+        valid_overlays = [item for item in overlay_summaries if isinstance(item, dict)]
+        if len(valid_overlays) == 1:
+            first = valid_overlays[0]
+            first_label = str(first.get("label") or "Overlay")
+            first_target = str(first.get("target") or "")
+            success_lines.append("Applied overlay: " + first_label + (f" [{first_target}]" if first_target else ""))
+        else:
+            success_lines.append(f"Applied overlays: {len(valid_overlays)}")
+        for overlay in valid_overlays:
             index = int(overlay.get("index") or 0)
-            total = int(overlay.get("total") or len(overlay_summaries))
+            total = int(overlay.get("total") or len(valid_overlays))
             label_text = str(overlay.get("label") or f"Overlay {index}")
             target_text = str(overlay.get("target") or "")
+            artifact_text = str(overlay.get("artifact") or "")
             success_lines.extend(("", f"Overlay {index}/{total}: {label_text}" + (f" [{target_text}]" if target_text else "")))
+            if artifact_text and artifact_text != label_text:
+                success_lines.append(f"- Artifact: {artifact_text}")
             tests_data = overlay.get("tests")
             if isinstance(tests_data, dict):
                 success_lines.append(
@@ -2740,6 +2748,20 @@ def main(argv: list[str] | None = None) -> int:
                 if cleanup_result is not None:
                     results.append(cleanup_result)
                     raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
+            if args.command in {"apply-overlay", "ao"}:
+                artifact_text = str(getattr(args, "artifact", "") or "")
+                try:
+                    overlay_label = resolve_artifact_path(artifact_text).name
+                except Exception:
+                    overlay_label = Path(artifact_text).name or "Overlay"
+                _tag_overlay_results(
+                    results,
+                    index=1,
+                    total=1,
+                    label=overlay_label,
+                    target=config.selected_target or config.default_target or "",
+                    artifact=artifact_text,
+                )
             if not getattr(args, "_devtool_history_recorded", False):
                 _record_apply_history(config, args, results)
                 args._devtool_history_recorded = True

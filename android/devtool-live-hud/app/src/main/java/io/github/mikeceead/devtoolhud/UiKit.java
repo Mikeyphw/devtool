@@ -55,6 +55,81 @@ final class UiKit {
         return layout;
     }
 
+    LinearLayout tile(String symbol, String title, String detail, String state,
+                      int accent, String actionLabel, boolean actionEnabled,
+                      View.OnClickListener listener) {
+        LinearLayout tile = surface();
+        tile.setPadding(dp(16), dp(16), dp(16), dp(14));
+
+        LinearLayout top = new LinearLayout(context);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView icon = text(symbol, 18, accent, true);
+        icon.setGravity(Gravity.CENTER);
+        icon.setBackground(flat(withAlpha(accent, 32), 13));
+        top.addView(icon, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
+        LinearLayout copy = new LinearLayout(context);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        copy.setPadding(dp(12), 0, dp(8), 0);
+        copy.addView(text(title, 15, palette.text, true));
+        TextView detailView = text(detail, 12, palette.muted, false);
+        detailView.setPadding(0, dp(3), 0, 0);
+        copy.addView(detailView);
+        top.addView(copy, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView badge = text(state.toUpperCase(), 10, accent, true);
+        badge.setLetterSpacing(0.08f);
+        badge.setPadding(dp(8), dp(5), dp(8), dp(5));
+        badge.setBackground(flat(withAlpha(accent, 28), 999));
+        top.addView(badge);
+        tile.addView(top);
+
+        Button action = button(actionLabel, withAlpha(accent, 32), listener);
+        action.setTextColor(accent);
+        action.setEnabled(actionEnabled);
+        action.setAlpha(actionEnabled ? 1f : 0.55f);
+        tile.addView(action);
+        return tile;
+    }
+
+    Button navButton(String symbol, String label, boolean selected, View.OnClickListener listener) {
+        Button button = new Button(context);
+        button.setText(symbol + "\n" + label);
+        button.setTextSize(11);
+        button.setAllCaps(false);
+        button.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
+        button.setGravity(Gravity.CENTER);
+        button.setTextColor(selected ? palette.green : palette.muted);
+        button.setBackground(flat(selected ? withAlpha(palette.green, 22) : palette.background, 16));
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setPadding(dp(6), dp(7), dp(6), dp(6));
+        button.setOnClickListener(listener);
+        return button;
+    }
+
+    Button quickTile(String symbol, String title, String detail, int accent, View.OnClickListener listener) {
+        Button button = new Button(context);
+        button.setText(symbol + "   " + title + "\n" + detail);
+        button.setTextSize(13);
+        button.setTextColor(palette.text);
+        button.setAllCaps(false);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        button.setPadding(dp(16), dp(14), dp(16), dp(14));
+        button.setMinHeight(dp(74));
+        button.setBackground(flat(palette.surface, 18));
+        button.setCompoundDrawableTintList(ColorStateList.valueOf(accent));
+        button.setOnClickListener(listener);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(5), 0, dp(5));
+        button.setLayoutParams(params);
+        return button;
+    }
+
     Button button(String label, int accent, View.OnClickListener listener) {
         Button button = new Button(context);
         button.setText(label);
@@ -116,7 +191,7 @@ final class UiKit {
         return input;
     }
 
-    private static int withAlpha(int color, int alpha) {
+    static int withAlpha(int color, int alpha) {
         return (color & 0x00FFFFFF) | ((alpha & 0xFF) << 24);
     }
 

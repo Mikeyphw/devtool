@@ -20,6 +20,7 @@ final class TaskerProtocol {
     static final String KEY_WORKDIR = "workdir";
     static final String KEY_BACKGROUND = "background";
     static final String KEY_OVERLAY = "overlay";
+    static final String KEY_ROOT_BRIDGE = "root_bridge";
     static final String KEY_AUTH_TOKEN = "authorization_token";
 
     static final int RESULT_OK = Activity.RESULT_OK;
@@ -46,11 +47,11 @@ final class TaskerProtocol {
         result.putExtra(EXTRA_BLURB, blurb(config));
         result.putExtra(EXTRA_REQUESTED_TIMEOUT, 3_599_000);
         result.putExtra(EXTRA_RELEVANT_VARIABLES, new String[]{
-                "%devtool_execution_id\nExecution ID\nUnique identifier for this Termux command.",
-                "%devtool_exit_code\nExit code\nShell exit code returned by Termux.",
+                "%devtool_execution_id\nExecution ID\nUnique identifier for this devtool command.",
+                "%devtool_exit_code\nExit code\nShell exit code returned by the selected backend.",
                 "%devtool_stdout\nStandard output\nCaptured stdout, or the foreground session transcript.",
                 "%devtool_stderr\nStandard error\nCaptured stderr for background commands.",
-                "%devtool_error\nExecution error\nTermux or plug-in error details.",
+                "%devtool_error\nExecution error\nBackend or plug-in error details.",
                 "%errmsg\nError message\nHuman-readable Tasker failure message."
         });
         config.putString(EXTRA_VARIABLE_REPLACE_KEYS, KEY_COMMAND + " " + KEY_WORKDIR);
@@ -59,7 +60,7 @@ final class TaskerProtocol {
     static String blurb(Bundle config) {
         String command = config.getString(KEY_COMMAND, "devtool").trim();
         String shortCommand = command.length() > 54 ? command.substring(0, 51) + "…" : command;
-        return "Run in Termux: " + shortCommand;
+        return (config.getBoolean(KEY_ROOT_BRIDGE, false) ? "Run with root bridge: " : "Run in Termux: ") + shortCommand;
     }
 
     static void addVariablesToResult(Bundle resultExtras, Bundle variables) {

@@ -1,6 +1,7 @@
 package io.github.mikeceead.devtoolhud;
 
 import android.app.Activity;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
@@ -16,6 +17,7 @@ public final class TaskerPluginActivity extends Activity {
     private EditText workdir;
     private Switch background;
     private Switch overlay;
+    private Switch rootBridge;
     private UiKit ui;
 
     @Override
@@ -44,9 +46,9 @@ public final class TaskerPluginActivity extends Activity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(ui.dp(20), ui.dp(18), ui.dp(20), ui.dp(24));
         content.setBackgroundColor(ui.palette.background);
-        TextView title = ui.text("Run devtool in Termux", 25, ui.palette.text, true);
+        TextView title = ui.text("Run devtool", 25, ui.palette.text, true);
         content.addView(title);
-        TextView subtitle = ui.text("Tasker waits for completion and receives exit code, stdout, stderr and errors.",
+        TextView subtitle = ui.text("Choose the rootless Termux backend or the optional paired root bridge. Tasker waits for completion and receives the result.",
                 14, ui.palette.muted, false);
         subtitle.setPadding(0, ui.dp(6), 0, ui.dp(12));
         content.addView(subtitle);
@@ -56,10 +58,14 @@ public final class TaskerPluginActivity extends Activity {
         workdir = ui.input("", "Termux working directory", false);
         background = ui.toggle("Run in background (separate stdout/stderr)", true);
         overlay = ui.toggle("Request floating HUD", false);
+        rootBridge = ui.toggle("Use optional root bridge", false);
+        rootBridge.setEnabled(RootBridgeManager.isReady(this));
         settings.addView(command);
+        settings.addView(ui.secondaryButton("Paste command from clipboard", v -> pasteCommand()));
         settings.addView(workdir);
         settings.addView(background);
         settings.addView(overlay);
+        settings.addView(rootBridge);
         settings.addView(ui.button("Save Tasker action", ui.palette.green, v -> saveAndFinish()));
         settings.addView(ui.secondaryButton("Cancel", v -> {
             setResult(RESULT_CANCELED);
@@ -82,6 +88,24 @@ public final class TaskerPluginActivity extends Activity {
                 : config.getBoolean(TaskerProtocol.KEY_BACKGROUND, true));
         overlay.setChecked(config == null ? AppSettings.overlayByDefault(this)
                 : config.getBoolean(TaskerProtocol.KEY_OVERLAY, false));
+        rootBridge.setChecked(RootBridgeManager.isReady(this) && config != null
+                && config.getBoolean(TaskerProtocol.KEY_ROOT_BRIDGE, false));
+    }
+
+    private void pasteCommand() {
+        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+        if (clipboard == null || !clipboard.hasPrimaryClip() || clipboard.getPrimaryClip() == null
+                || clipboard.getPrimaryClip().getItemCount() == 0) {
+            Toast.makeText(this, "Clipboard is empty or unavailable", Toast.LENGTH_LONG).show();
+            return;
+        }
+        CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(this);
+        if (text == null || text.toString().trim().isEmpty()) {
+            Toast.makeText(this, "Clipboard does not contain text", Toast.LENGTH_LONG).show();
+            return;
+        }
+        command.setText(text.toString().trim());
+        Toast.makeText(this, "Command pasted", Toast.LENGTH_SHORT).show();
     }
 
     private void saveAndFinish() {
@@ -95,6 +119,7 @@ public final class TaskerPluginActivity extends Activity {
         config.putString(TaskerProtocol.KEY_WORKDIR, workdir.getText().toString().trim());
         config.putBoolean(TaskerProtocol.KEY_BACKGROUND, background.isChecked());
         config.putBoolean(TaskerProtocol.KEY_OVERLAY, overlay.isChecked());
+        config.putBoolean(TaskerProtocol.KEY_ROOT_BRIDGE, rootBridge.isChecked());
         config.putString(TaskerProtocol.KEY_AUTH_TOKEN, TaskerAuthorization.token(this));
         Intent result = new Intent();
         TaskerProtocol.decorateEditResult(result, config);

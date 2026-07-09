@@ -52,6 +52,18 @@ final class TermuxCommandRunner {
 
     static LaunchResult run(Context context, String command, String workdir, boolean background,
                             boolean overlay, Intent taskerFireIntent) {
+        return runInternal(context, command, workdir, background, overlay, taskerFireIntent, "", "");
+    }
+
+    static LaunchResult runBridgeOperation(Context context, String command,
+                                           String operation, String expectedHash) {
+        return runInternal(context, command, "/data/data/com.termux/files/home",
+                true, false, null, operation, expectedHash);
+    }
+
+    private static LaunchResult runInternal(Context context, String command, String workdir,
+                                            boolean background, boolean overlay, Intent taskerFireIntent,
+                                            String bridgeOperation, String bridgeExpectedHash) {
         String cleanCommand = command == null ? "" : command.trim();
         if (cleanCommand.isEmpty()) return new LaunchResult(false, -1, "Command is empty");
         if (cleanCommand.length() > 120_000) return new LaunchResult(false, -1, "Command is too long");
@@ -59,10 +71,14 @@ final class TermuxCommandRunner {
         if (!hasPermission(context)) return new LaunchResult(false, -1, "Run commands in Termux permission is not granted");
 
         int executionId = nextExecutionId();
+        String runId = "termux-" + executionId;
         Intent resultIntent = new Intent(context, TermuxResultService.class)
+                .putExtra(TermuxResultService.EXTRA_RUN_ID, runId)
                 .putExtra(TermuxResultService.EXTRA_EXECUTION_ID, executionId)
                 .putExtra(TermuxResultService.EXTRA_TASKER_FIRE_INTENT, taskerFireIntent)
-                .putExtra(TermuxResultService.EXTRA_OVERLAY, overlay);
+                .putExtra(TermuxResultService.EXTRA_OVERLAY, overlay)
+                .putExtra(TermuxResultService.EXTRA_BRIDGE_OPERATION, bridgeOperation)
+                .putExtra(TermuxResultService.EXTRA_BRIDGE_EXPECTED_HASH, bridgeExpectedHash);
         int flags = PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_CANCEL_CURRENT;
         flags |= Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0;
         PendingIntent result = PendingIntent.getService(context, executionId, resultIntent, flags);
@@ -72,22 +88,41 @@ final class TermuxCommandRunner {
                 .setAction(ACTION)
                 .putExtra(EXTRA_PATH, "$PREFIX/bin/bash")
                 .putExtra(EXTRA_ARGUMENTS, new String[]{"-lc",
-                        overlay ? "export DEVTOOL_HUD_OVERLAY=1; " + cleanCommand : cleanCommand})
+                        buildShellCommand(context, runId, cleanCommand, overlay)})
                 .putExtra(EXTRA_WORKDIR, cleanWorkdir(workdir))
                 .putExtra(EXTRA_BACKGROUND, background)
                 .putExtra(EXTRA_PENDING_INTENT, result)
-                .putExtra(EXTRA_LABEL, "Devtool Live HUD")
+                .putExtra(EXTRA_LABEL, "Devtool Frontend")
                 .putExtra(EXTRA_DESCRIPTION, "Runs a user-configured devtool command and returns its result.");
         try {
             context.startService(request);
-            HudUpdate started = HudUpdate.commandStarted(executionId, cleanCommand, cleanWorkdir(workdir), overlay);
-            new NotificationController(context).post(started);
-            OverlayHudService.publish(context, started);
+            if (bridgeOperation == null || bridgeOperation.isEmpty()) {
+                HudUpdate started = HudUpdate.commandStarted(runId, cleanCommand, cleanWorkdir(workdir), overlay);
+                RunStore.started(context, runId, cleanCommand, cleanWorkdir(workdir));
+                new NotificationController(context).post(started);
+                OverlayHudService.publish(context, started);
+            }
             return new LaunchResult(true, executionId, "");
         } catch (RuntimeException error) {
             return new LaunchResult(false, executionId,
                     error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
         }
+    }
+
+    private static String buildShellCommand(Context context, String runId, String command, boolean overlay) {
+        StringBuilder shell = new StringBuilder();
+        shell.append("export DEVTOOL_RUN_ID=").append(shellQuote(runId)).append("; ");
+        shell.append("export DEVTOOL_ANDROID_HUD_TOKEN=")
+                .append(shellQuote(BridgeSecrets.getOrCreateToken(context))).append("; ");
+        shell.append("export DEVTOOL_HUD_OVERLAY=").append(overlay ? "1" : "0").append("; ");
+        shell.append("export DEVTOOL_ANDROID_HUD_AUTOSTART=1; ");
+        shell.append(command);
+        return shell.toString();
+    }
+
+    private static String shellQuote(String value) {
+        String clean = value == null ? "" : value;
+        return "'" + clean.replace("'", "'\\''") + "'";
     }
 
     private static int nextExecutionId() {

@@ -753,3 +753,34 @@ def test_hud_overlay_can_be_requested_by_environment(monkeypatch, tmp_path) -> N
                               auto_hud=False, hud_overlay=False, hud_no_overlay=False)
     _normalize_tasker_args(args)
     assert args.hud_overlay is True
+
+
+class OverlayClipboardSummaryTests(unittest.TestCase):
+    def test_single_overlay_copy_summary_names_applied_artifact(self) -> None:
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            artifact = root / "named_overlay.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("new.txt", "new")
+            copied: list[str] = []
+
+            def capture(text: str, **_kwargs):
+                copied.append(text)
+                return SimpleNamespace(success=True, backend="test", reason="")
+
+            with (
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}),
+                patch("devtool.cli.copy_text", side_effect=capture),
+            ):
+                rc = main([
+                    "--repo", str(root), "--yes", "--copy-summary",
+                    "apply-overlay", "--keep-artifact", str(artifact),
+                ])
+
+            self.assertEqual(rc, 0)
+            self.assertTrue(copied)
+            self.assertIn("Applied overlay: named_overlay.zip", copied[-1])
+            self.assertIn(str(artifact), copied[-1])

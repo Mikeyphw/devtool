@@ -383,6 +383,7 @@ def human_phase_name(value: str) -> str:
         "validate": "Validation",
         "apply-overlay": "Apply overlay",
         "apply-snapshot": "Apply snapshot",
+        "apply-rollback": "Rollback",
         "commit": "Commit",
         "started": "Started",
         "progress": "Progress",
@@ -557,6 +558,11 @@ def friendly_event_line(event: dict[str, Any]) -> str | None:
         return f"Starting {phase}" if phase else "Starting next step"
 
     if event_type == "phase-finished":
+        if _phase_from_event(event).strip().lower().replace("_", "-") == "apply-rollback":
+            if status in {"ok", "complete", "completed", "success"}:
+                return "Changes rolled back"
+            if status == "failed":
+                return "Rollback failed"
         if status in {"ok", "complete", "completed", "success"}:
             return f"{phase} completed" if phase else "Step completed"
         if status == "failed":
@@ -596,6 +602,9 @@ def event_is_error(event: dict[str, Any]) -> bool:
     if _is_test_summary(message):
         return _test_summary_failed(message)
     status = _result_status_from_event(event).lower()
+    phase_key = _phase_from_event(event).strip().lower().replace("_", "-")
+    if phase_key == "apply-rollback" and status in {"ok", "complete", "completed", "success"}:
+        return False
     if status in {"failed", "error"}:
         return True
     notification = event.get("notification") if isinstance(event.get("notification"), dict) else {}
@@ -607,15 +616,55 @@ def event_is_error(event: dict[str, Any]) -> bool:
     return bool(message and (" error " in f" {message} " or " failed" in message or message.startswith("failed")))
 
 
-def recent_error_lines(events: Iterable[dict[str, Any]], *, limit: int = 3) -> list[str]:
+def recent_error_lines(events: Iterable[dict[str, Any]], *, limit: int = 2) -> list[str]:
     lines: list[str] = []
+    generic: list[str] = []
     for event in events:
         if not event_is_error(event):
             continue
         line = friendly_event_line(event)
-        if line and line not in lines:
+        if not line:
+            continue
+        if line in {"Devtool finished with errors", "Step failed"}:
+            if line not in generic:
+                generic.append(line)
+            continue
+        if line not in lines:
             lines.append(line)
-    return lines[-limit:]
+    selected = lines or generic
+    return selected[-limit:]
+
+
+def events_for_state(events: Iterable[dict[str, Any]], state: HudState) -> list[dict[str, Any]]:
+    """Return only events belonging to the state currently shown by the HUD.
+
+    HUD directories keep a compatibility event log across runs.  Without this
+    filter, a fresh run can inherit warning/error banners and metrics from the
+    previous completion until enough new events have been appended.
+    """
+    items = list(events)
+    run_id = str(state.raw.get("run_id") or "").strip() if isinstance(state.raw, dict) else ""
+    if not run_id:
+        return items
+    return [event for event in items if str(event.get("run_id") or "").strip() == run_id]
+
+
+def concise_event_pairs(events: Iterable[dict[str, Any]], *, limit: int = 5) -> list[tuple[dict[str, Any], str]]:
+    """Collapse duplicate and generic HUD lines into a short recent timeline."""
+    pairs: list[tuple[dict[str, Any], str]] = []
+    seen: set[str] = set()
+    for event in events:
+        line = friendly_event_line(event)
+        if not line:
+            continue
+        if line == "Devtool finished with errors" and any(event_is_error(item) for item, _ in pairs):
+            continue
+        key = line.casefold().strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append((event, line))
+    return pairs[-max(1, limit):]
 
 
 def event_is_warning(event: dict[str, Any]) -> bool:
@@ -685,6 +734,20 @@ def completion_copy_text(state: HudState) -> str:
     detail = str(completion.get("detail") or "").strip()
     if detail:
         lines.extend(("", detail))
+    overlays = completion.get("overlays") if isinstance(completion.get("overlays"), list) else []
+    if overlays:
+        lines.extend(("", "Applied overlay:" if len(overlays) == 1 else "Applied overlays:"))
+        for overlay in overlays:
+            if not isinstance(overlay, dict):
+                continue
+            label = str(overlay.get("label") or "Overlay").strip()
+            target = str(overlay.get("target") or "").strip()
+            artifact = str(overlay.get("artifact") or "").strip()
+            suffix = f" [{target}]" if target else ""
+            if artifact and artifact != label:
+                lines.append(f"- {label}{suffix} — {artifact}")
+            else:
+                lines.append(f"- {label}{suffix}")
     actions = completion.get("actions") if isinstance(completion.get("actions"), list) else []
     if actions:
         labels = {
@@ -697,6 +760,7 @@ def completion_copy_text(state: HudState) -> str:
             "wine-test": "Ran Wine test suite",
             "git-commit": "Committed repository changes",
             "artifact-cleanup": "Cleaned applied artifact",
+            "apply-rollback": "Rolled back changes",
         }
         lines.extend(("", "Actions completed:"))
         for action in actions:
@@ -796,6 +860,10 @@ def compact_operation_title(state: HudState) -> str:
     phase = human_phase_name(state.phase_name or state.command or state.event_type)
     status = (state.status or "").strip().lower()
     if status == "failed":
+        completion = completion_from_state(state)
+        headline = str(completion.get("headline") or "").strip()
+        if headline:
+            return headline
         return f"Failed during {phase}" if phase else "Devtool failed"
     if status == "ok":
         return str(completion_from_state(state).get("headline") or "Completed successfully")
@@ -1827,10 +1895,11 @@ class GtkDesktopHud:
             current_dir = resolve_hud_directory(directory, follow_active=follow_active)
             snapshot = snapshot_from_directory(current_dir, recent_events=max(self.recent_events, 14))
             state = state_from_directory(current_dir)
-            events = snapshot.get("events") if isinstance(snapshot.get("events"), list) else []
+            raw_events = snapshot.get("events") if isinstance(snapshot.get("events"), list) else []
+            events = events_for_state(raw_events, state)
             highlights = last_phase_highlights(events)
             operation = compact_operation_title(state)
-            errors = recent_error_lines(events, limit=3)
+            errors = recent_error_lines(events, limit=2)
             if state.status == "failed" and not errors:
                 errors = [compact_detail_text(state)]
             warnings = []
@@ -1841,8 +1910,15 @@ class GtkDesktopHud:
                         warnings.append(line)
             warnings = warnings[-2:]
             summary = hud_event_summary(events)
-            error_count = max(summary.get("errors", 0), 1 if state.status == "failed" else 0)
-            warning_count = summary.get("warnings", 0)
+            completion = completion_from_state(state)
+            if completion:
+                error_count = int(completion.get("errors", 0) or 0)
+                failed_count = int(completion.get("failed", 0) or 0)
+                error_count = max(error_count, 1 if failed_count or state.status == "failed" else 0)
+                warning_count = int(completion.get("warnings", 0) or 0)
+            else:
+                error_count = max(summary.get("errors", 0), 1 if state.status == "failed" else 0)
+                warning_count = summary.get("warnings", 0)
 
             title.set_text(operation)
             context_label.set_text(state_context_label(state))
@@ -1852,7 +1928,6 @@ class GtkDesktopHud:
             _set_status_classes(status_badge, state.status)
             pipeline.set_text(pipeline_label(state, highlights))
 
-            completion = completion_from_state(state)
             recent_heading.set_text("RESULT" if state.status in {"ok", "failed"} else "RECENT")
 
             if state.current is not None and state.total is not None and state.total > 0:
@@ -1914,8 +1989,7 @@ class GtkDesktopHud:
             else:
                 warning_label.hide()
 
-            event_pairs = [(event, line) for event in events if (line := friendly_event_line(event))]
-            shown = event_pairs[-7:]
+            shown = concise_event_pairs(events, limit=5)
             formatted_lines = [f"{event_icon(event)} {line}" for event, line in shown]
             events_label.set_text("\n".join(formatted_lines) or "No events yet")
 

@@ -91,17 +91,17 @@ final class HudUpdate {
                 160, 0, 1, 2, 0, System.currentTimeMillis() - 83000L, 0L, true);
     }
 
-    static HudUpdate commandStarted(int executionId, String command, String workdir, boolean overlay) {
-        return new HudUpdate("termux-" + executionId, "running", "Termux",
-                clean(command, "Running command"), "Termux", clean(workdir, "~/"), "", "",
+    static HudUpdate commandStarted(String runId, String command, String workdir, boolean overlay) {
+        return new HudUpdate(runId, "running", "Preparing",
+                "Waiting for devtool progress", "Termux", clean(workdir, "~/"), "", clean(command, ""),
                 0, true, 0, 0, 0, 0, 0, System.currentTimeMillis(), 0L, overlay);
     }
 
-    static HudUpdate commandFinished(int executionId, int exitCode, String stdout, String stderr,
+    static HudUpdate commandFinished(String runId, int exitCode, String stdout, String stderr,
                                      String error, boolean overlay) {
         boolean ok = exitCode == 0 && clean(error, "").isEmpty();
         String detail = firstUseful(error, stderr, stdout, ok ? "Command completed" : "Command failed");
-        return new HudUpdate("termux-" + executionId, ok ? "ok" : "failed", "Termux",
+        return new HudUpdate(runId, ok ? "ok" : "failed", "Termux",
                 detail, "Termux", "exit " + exitCode, "", "", 100, false,
                 0, ok ? 0 : 1, 0, 0, ok ? 0 : 1,
                 System.currentTimeMillis(), 0L, overlay);

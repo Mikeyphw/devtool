@@ -34,6 +34,7 @@ dist/
 **/build/
 *.apk
 *.aab
+/devtool_root_bridge_module.zip
 *.ap_
 *.dex
 captures/

@@ -140,7 +140,7 @@ class DotnetValidationNoBuildTests(unittest.TestCase):
         self.assertEqual(len(specs), 1)
         self.assertNotIn("--no-build", specs[0].argv)
 
-    def test_explicit_test_command_is_not_modified(self) -> None:
+    def test_validation_adds_no_build_to_explicit_dotnet_test(self) -> None:
         from devtool.runners import build_validation_specs
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,7 +157,27 @@ class DotnetValidationNoBuildTests(unittest.TestCase):
 
         test_specs = [spec for spec in specs if spec.name == "test"]
         self.assertEqual(len(test_specs), 1)
-        self.assertNotIn("--no-build", test_specs[0].argv)
+        self.assertIn("--no-build", test_specs[0].argv)
+
+    def test_validation_adds_no_restore_to_explicit_dotnet_build(self) -> None:
+        from devtool.runners import build_validation_specs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="dotnet",
+                restore_target="Demo.sln",
+                build_target="Demo.sln",
+                test_target="Demo.sln",
+                build_command="dotnet build Demo.sln -c Release",
+            )
+
+            specs = build_validation_specs(config)
+
+        build_specs = [spec for spec in specs if spec.name == "build"]
+        self.assertEqual(len(build_specs), 1)
+        self.assertIn("--no-restore", build_specs[0].argv)
 
 class DotnetTestNoBuildFlagTests(unittest.TestCase):
     def test_user_no_build_adds_flag_to_implicit_dotnet_test(self) -> None:

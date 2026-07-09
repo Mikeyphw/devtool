@@ -128,3 +128,95 @@ def test_termux_pending_intent_identity_is_not_reused() -> None:
 def test_tasker_returns_official_error_message_variable() -> None:
     protocol = _java_source("TaskerProtocol.java")
     assert 'vars.putString("%errmsg"' in protocol
+
+
+def test_android_frontend_has_visual_run_builder_history_and_shared_run_identity() -> None:
+    source_dir = APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud"
+    main = (source_dir / "MainActivity.java").read_text(encoding="utf-8")
+    builder = (source_dir / "DevtoolCommandBuilder.java").read_text(encoding="utf-8")
+    store = (source_dir / "RunStore.java").read_text(encoding="utf-8")
+    runner = (source_dir / "TermuxCommandRunner.java").read_text(encoding="utf-8")
+    for page in ("Overview", "Run", "History", "Settings"):
+        assert page in main
+    for operation in ("apply-overlay", "apply-overlays", "validate", "build", "test", "status"):
+        assert operation in builder
+    assert "RunStore.started" in runner
+    assert "DEVTOOL_RUN_ID" in runner
+    assert "DEVTOOL_ANDROID_HUD_TOKEN" in runner
+    assert "MAX_RUNS" in store
+    assert "Copy output" in main
+
+
+def test_android_frontend_can_paste_and_visually_import_shell_commands() -> None:
+    main = _java_source("MainActivity.java")
+    importer = _java_source("DevtoolCommandImporter.java")
+    settings = _java_source("AppSettings.java")
+    assert "Paste and import command" in main
+    assert "Paste command from clipboard" in main
+    assert "Paste command from clipboard" in _java_source("TaskerPluginActivity.java")
+    assert "DevtoolCommandImporter.parse" in main
+    config = _java_source("DevtoolRunConfig.java")
+    assert "DEVTOOL_HUD_SINGLETON=kill" in config
+    assert 'token.equals("cd")' in importer
+    assert 'hudMode.equals("desktop-window")' in importer
+    assert "extraGlobalArguments" in settings
+    assert "extraOperationArguments" in settings
+
+
+def test_android_frontend_uses_dynamic_tiles_bottom_navigation_and_one_tap_token_pairing() -> None:
+    main = _java_source("MainActivity.java")
+    ui = _java_source("UiKit.java")
+    token = _java_source("BridgeTokenManager.java")
+    runner = _java_source("TermuxCommandRunner.java")
+    result = _java_source("TermuxResultService.java")
+    assert "buildBottomNavigation" in main
+    assert "Termux bridge token" in main
+    assert 'notifications ? "Manage" : "Grant access"' in main
+    assert "Install token" in token
+    assert "Update token" in token
+    assert "DEVTOOL_BRIDGE_TOKEN_OK" in token
+    assert "runBridgeOperation" in runner
+    assert "BridgeTokenManager.handleResult" in result
+    assert "LinearLayout tile(" in ui
+
+
+def test_optional_root_bridge_module_and_app_backend_are_bundled() -> None:
+    module = ROOT / "root-module" / "devtool-bridge"
+    assert (module / "module.prop").is_file()
+    assert (module / "skip_mount").is_file()
+    assert (module / "service.sh").is_file()
+    assert (module / "bin" / "devtool-root-bridge").is_file()
+    module_prop = (module / "module.prop").read_text(encoding="utf-8")
+    assert "id=devtool_bridge" in module_prop
+    assert "Zygisk" in module_prop
+    assert not (module / "zygisk").exists()
+
+    source = _java_source("RootBridgeManager.java")
+    main = _java_source("MainActivity.java")
+    assert 'new ProcessBuilder("su", "-c", shell)' in source
+    assert "Root bridge only accepts generated devtool" in source
+    assert "DEVTOOL_ROOT_MODULE_MISSING" in source
+    assert "cancel(Context context, String runId)" in source
+    assert "Export module ZIP" in source
+    assert "Devtool Root Bridge" in main
+    assert "Use optional root bridge" in main
+    assert "R.raw.devtool_root_bridge_module" in main
+    bridge_script = (module / "bin" / "devtool-root-bridge").read_text(encoding="utf-8")
+    assert '"enabled":%s' in bridge_script
+    assert "KEY_ROOT_BRIDGE" in _java_source("TaskerProtocol.java")
+    assert "RootBridgeManager.run" in _java_source("TaskerPluginReceiver.java")
+
+
+def test_bundled_root_module_zip_is_valid_and_non_zygisk() -> None:
+    import zipfile
+
+    archive = APP / "app" / "src" / "main" / "res" / "raw" / "devtool_root_bridge_module.zip"
+    assert archive.is_file()
+    with zipfile.ZipFile(archive) as zf:
+        names = set(zf.namelist())
+        assert "module.prop" in names
+        assert "skip_mount" in names
+        assert "service.sh" in names
+        assert "bin/devtool-root-bridge" in names
+        assert not any(name.startswith("zygisk/") for name in names)
+        zf.testzip()

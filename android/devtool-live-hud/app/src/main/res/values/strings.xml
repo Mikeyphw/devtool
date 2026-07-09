@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Devtool Live HUD</string>
+    <string name="app_name">Devtool Frontend</string>
     <string name="tasker_action_name">Run devtool in Termux</string>
     <string name="channel_live_name">Devtool live runs</string>
     <string name="channel_live_description">Live restore, build, test, validation and commit progress from devtool</string>

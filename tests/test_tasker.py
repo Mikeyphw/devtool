@@ -170,3 +170,23 @@ class TaskerProgressTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_direct_termux_android_bridge_autostarts_native_renderer() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        runtime = root / "runtime"
+        registry = root / "registry"
+        completed = Mock(returncode=0, stdout="4321\n")
+        with patch.dict("os.environ", {
+            "DEVTOOL_HUD_REGISTRY_DIR": str(registry),
+            "DEVTOOL_HUD_SINGLETON": "kill",
+        }, clear=False), patch("devtool.hud.choose_hud_mode", return_value="android-bridge"), patch(
+            "devtool.hud._is_termux_android", return_value=True
+        ), patch("devtool.tasker._pid_is_alive", return_value=False), patch(
+            "devtool.tasker.subprocess.run", return_value=completed
+        ) as run:
+            assert start_auto_hud(runtime, mode="android-bridge")
+        launcher = run.call_args.args[0][-1]
+        assert "--mode android-notify" in launcher
+        assert "--follow-active" in launcher

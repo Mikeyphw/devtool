@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from devtool.hud import HudState, TermuxNotificationHud, choose_hud_mode, last_phase_highlights, latest_log_path, parse_hud_state, render_ascii_bar, state_from_directory
+from devtool.hud import HudState, TermuxNotificationHud, choose_hud_mode, events_for_state, last_phase_highlights, latest_log_path, parse_hud_state, render_ascii_bar, state_from_directory
 from devtool.cli import build_parser
 
 
@@ -68,6 +68,33 @@ class HudTests(unittest.TestCase):
             {"event_type": "phase_finished", "phase": {"name": "build"}, "result": {"status": "failed"}, "message": "Build failed"},
         ]
         self.assertEqual(recent_error_lines(events), ["Build failed"])
+
+    def test_events_for_state_excludes_previous_run_errors(self) -> None:
+        state = HudState(status="running", raw={"run_id": "current"})
+        events = [
+            {"run_id": "previous", "event_type": "phase_finished", "phase": {"name": "build"}, "result": {"status": "failed"}, "message": "Build failed"},
+            {"run_id": "current", "event_type": "started", "status": "running", "message": "Started"},
+        ]
+        self.assertEqual(events_for_state(events, state), [events[1]])
+
+    def test_recent_errors_prefer_actionable_failure_over_generic_final_line(self) -> None:
+        from devtool.hud import recent_error_lines
+        events = [
+            {"event_type": "phase_finished", "phase": {"name": "test"}, "result": {"status": "failed"}, "message": "Tests failed"},
+            {"event_type": "finished", "status": "failed", "message": "Completed with errors"},
+        ]
+        self.assertEqual(recent_error_lines(events), ["Tests failed"])
+
+    def test_successful_rollback_is_not_reported_as_an_error(self) -> None:
+        from devtool.hud import event_is_error, friendly_event_line
+        event = {
+            "event_type": "phase_finished",
+            "phase": {"name": "apply-rollback"},
+            "result": {"status": "ok", "exit_code": 0},
+            "message": "Apply Rollback completed",
+        }
+        self.assertFalse(event_is_error(event))
+        self.assertEqual(friendly_event_line(event), "Changes rolled back")
 
 
     def test_raw_vstest_success_is_not_an_error(self) -> None:

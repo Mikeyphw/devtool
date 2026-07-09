@@ -129,12 +129,18 @@ def build_validation_specs(
     if not skip_build:
         build_phase_specs = build_specs(config, "build")
         if config.kind == "dotnet" and ran_restore:
-            build_phase_specs = [_add_no_restore_to_dotnet_build_spec(spec) for spec in build_phase_specs]
+            build_phase_specs = [
+                _add_no_restore_to_dotnet_build_spec(spec, allow_explicit=True)
+                for spec in build_phase_specs
+            ]
         specs.extend(build_phase_specs)
     if not skip_test:
         test_specs = build_specs(config, "wine-test" if wine else "test")
         if config.kind == "dotnet" and not skip_build:
-            test_specs = [_add_no_build_to_dotnet_test_spec(spec) for spec in test_specs]
+            test_specs = [
+                _add_no_build_to_dotnet_test_spec(spec, allow_explicit=True)
+                for spec in test_specs
+            ]
         specs.extend(test_specs)
     if not specs:
         raise SystemExit("Validation would run no commands. Clear at least one skip flag.")
@@ -156,8 +162,8 @@ def _is_dotnet_build_argv(argv: list[str]) -> bool:
     return False
 
 
-def _add_no_restore_to_dotnet_build_spec(spec: CommandSpec) -> CommandSpec:
-    if spec.metadata.get("explicit"):
+def _add_no_restore_to_dotnet_build_spec(spec: CommandSpec, *, allow_explicit: bool = False) -> CommandSpec:
+    if spec.metadata.get("explicit") and not allow_explicit:
         return spec
     if not _is_dotnet_build_argv(spec.argv) or "--no-restore" in spec.argv:
         return spec

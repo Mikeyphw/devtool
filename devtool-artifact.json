@@ -1,10 +1,11 @@
 {
   "type": "snapshot",
-  "name": "devtool 0.2.26 with modern Android HUD, Tasker and Termux integration",
-  "description": "Complete devtool source repository with current-run desktop HUD preflight, implicit nested-overlay bundle expansion, repository ignore rules, and Android Live HUD 1.2.0 featuring a modern GTK-colored UI, optional Monet colors, Tasker action support, direct Termux RUN_COMMAND execution, matching GTK iconography, secure bridge and Tasker authorization, and Android 15+ overlay lifecycle hardening.",
+  "name": "devtool 0.2.30 with optional root bridge and overlay-aware success summaries",
+  "description": "Complete devtool source repository with Android frontend 1.5.0, optional non-Zygisk KernelSU/Magisk/APatch root bridge, rootless Termux fallback, Tasker integration, cancellation and logs, dynamic root status tiles, and success summaries that name applied overlays in order.",
   "files": [
     ".gitignore",
-    "CHANGES-0.2.26.md",
+    "CHANGES-0.2.27.md",
+    "CHANGES-0.2.28.md",
     "devtool/__init__.py",
     "devtool/artifacts.py",
     "devtool/cli.py",
@@ -22,6 +23,19 @@
     "android/devtool-live-hud/app/build.gradle",
     "android/devtool-live-hud/app/src/main/AndroidManifest.xml",
     "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/",
-    "android/devtool-live-hud/app/src/main/res/"
+    "android/devtool-live-hud/app/src/main/res/",
+    "tests/test_android_command_importer.py",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/DevtoolCommandImporter.java",
+    "CHANGES-0.2.29.md",
+    "devtool/hud.py",
+    "devtool/runners.py",
+    "tests/test_completion_state.py",
+    "tests/test_runners_termux.py",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/BridgeTokenManager.java",
+    "CHANGES-0.2.30.md",
+    "build-root-bridge-module.sh",
+    "root-module/devtool-bridge/",
+    "android/devtool-live-hud/app/src/main/res/raw/devtool_root_bridge_module.zip",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootBridgeManager.java"
   ]
 }

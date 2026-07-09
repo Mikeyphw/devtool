@@ -28,6 +28,7 @@ final class BridgeSecrets {
         String token = out.toString();
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putString(KEY_TOKEN, token).apply();
+        BridgeTokenManager.invalidate(context);
         return token;
     }
 

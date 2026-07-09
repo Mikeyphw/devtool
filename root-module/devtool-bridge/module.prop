@@ -1,0 +1,6 @@
+id=devtool_bridge
+name=Devtool Root Bridge
+version=0.1.0
+versionCode=1
+author=Mike Silva / OpenAI
+description=Optional non-Zygisk KernelSU/Magisk bridge for authenticated devtool execution, chroot access, logs, and cancellation. Rootless Termux mode remains supported.

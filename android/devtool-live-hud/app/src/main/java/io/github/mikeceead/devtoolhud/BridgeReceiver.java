@@ -26,6 +26,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
         }
 
         HudUpdate update = HudUpdate.fromIntent(intent);
+        RunStore.update(context, update);
         controller.post(update);
         OverlayHudService.publish(context, update);
     }

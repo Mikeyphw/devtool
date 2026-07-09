@@ -48,6 +48,83 @@ class CompletionStateTests(unittest.TestCase):
         self.assertIn("✓ Test", pipeline_label(state, {}))
         self.assertIn("✓ Commit", pipeline_label(state, {}))
 
+    def test_failed_validation_reports_successful_rollback_as_recovery(self) -> None:
+        results = [
+            OperationResult("build", ["dotnet", "build"], 1, 1.0, "Build failed", []),
+            OperationResult("apply-rollback", ["rsync", "rollback"], 0, 0.2, "Rollback completed", []),
+        ]
+        payload = _completion_payload(
+            ok=False,
+            totals={"warnings": 0, "errors": 1, "failed": 1, "skipped": 0},
+            results=results,
+        )
+        self.assertEqual(payload["headline"], "Build failed; changes rolled back")
+        self.assertIn("1 error", payload["detail"])
+        self.assertTrue(payload["rolled_back"])
+        rollback = next(item for item in payload["actions"] if item["name"] == "apply-rollback")
+        self.assertEqual(rollback["status"], "ok")
+
+    def test_finished_state_keeps_original_failure_phase_after_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = TaskerProgressSink(directory=Path(tmp), command="apply-overlay", repo_root="/repo", repo_name="repo")
+            sink.phase_started("build", index=1, total=2)
+            failed = OperationResult("build", ["dotnet", "build"], 1, 1.0, "Build failed", [])
+            sink.phase_finished(failed)
+            sink.phase_started("apply-rollback", index=2, total=2)
+            rollback = OperationResult("apply-rollback", ["rsync", "rollback"], 0, 0.2, "Rollback completed", [])
+            sink.phase_finished(rollback)
+            sink.finished(ok=False, totals={"warnings": 0, "errors": 1, "failed": 1, "skipped": 0}, results=[failed, rollback])
+            import json
+            state = json.loads((Path(tmp) / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["phase"]["name"], "build")
+            self.assertEqual(state["completion"]["headline"], "Build failed; changes rolled back")
+            self.assertEqual(compact_operation_title(HudState(status="failed", phase_name="build", raw=state)),
+                             "Build failed; changes rolled back")
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OverlayCompletionSummaryTests(unittest.TestCase):
+    def test_success_copy_names_single_applied_overlay(self) -> None:
+        metadata = {
+            "overlay_index": 1,
+            "overlay_total": 1,
+            "overlay_label": "s3atelier_object_modl_mlod_workbench_overlay.zip",
+            "overlay_target": "s3atelier_avalonia_S3Atelier_Modern",
+            "overlay_artifact": "/home/mike/Downloads/s3atelier_object_modl_mlod_workbench_overlay.zip",
+        }
+        results = [
+            OperationResult("apply-overlay", ["apply"], 0, 0.2, "ok", [], metadata=metadata),
+            OperationResult("test", ["test"], 0, 0.3, "Passed! - Failed: 0, Passed: 5, Skipped: 0, Total: 5", [], metadata=metadata),
+        ]
+        payload = _completion_payload(
+            ok=True,
+            totals={"warnings": 0, "errors": 0, "failed": 0, "skipped": 0},
+            results=results,
+        )
+        text = completion_copy_text(HudState(status="ok", raw={"completion": payload}))
+        self.assertIn("Applied overlay:", text)
+        self.assertIn("s3atelier_object_modl_mlod_workbench_overlay.zip", text)
+        self.assertIn("s3atelier_avalonia_S3Atelier_Modern", text)
+
+    def test_success_copy_names_ordered_overlay_set(self) -> None:
+        results = []
+        for index, label in ((1, "first_overlay.zip"), (2, "second_overlay.zip")):
+            metadata = {
+                "overlay_index": index,
+                "overlay_total": 2,
+                "overlay_label": label,
+                "overlay_target": "s3atelier",
+                "overlay_artifact": f"/downloads/{label}",
+            }
+            results.append(OperationResult("apply-overlay", ["apply"], 0, 0.1, "ok", [], metadata=metadata))
+        payload = _completion_payload(
+            ok=True,
+            totals={"warnings": 0, "errors": 0, "failed": 0, "skipped": 0},
+            results=results,
+        )
+        text = completion_copy_text(HudState(status="ok", raw={"completion": payload}))
+        self.assertIn("Applied overlays:", text)
+        self.assertLess(text.index("first_overlay.zip"), text.index("second_overlay.zip"))

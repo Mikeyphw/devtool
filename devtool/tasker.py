@@ -342,11 +342,30 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     chosen_mode = _resolve_mode_for_detached_child(requested_mode)
     registry_mode = chosen_mode
     if chosen_mode == "android-bridge":
-        _append_hud_log(
-            "android bridge mode: not starting a local detached HUD child; "
-            "run `devtool android-hud-bridge` from the Termux host to display the shared state."
-        )
-        return True
+        # Direct Termux runs can render the shared bridge state themselves.
+        # Older builds only wrote JSON and expected a separately started
+        # `devtool android-hud-bridge` daemon, leaving app-launched runs frozen
+        # on the initial “waiting” card.  Keep the file-mirroring behavior for
+        # Linux/chroot producers, but automatically launch the native Android
+        # notification renderer when this process is already in Termux.
+        try:
+            from .hud import _is_termux_android
+            termux_host = _is_termux_android()
+        except Exception:
+            termux_host = False
+        if termux_host:
+            chosen_mode = "android-notify"
+            registry_mode = "android-bridge"
+            _append_hud_log(
+                "android bridge mode: starting the Termux-host native notification "
+                "renderer for the shared active run."
+            )
+        else:
+            _append_hud_log(
+                "android bridge mode: producer is not the Termux host; state is "
+                "mirrored for the host bridge daemon."
+            )
+            return True
     if chosen_mode in {"terminal", "console", "v3"}:
         _append_hud_log(
             "not starting auto-HUD because the requested/resolved mode is terminal, "
@@ -492,10 +511,39 @@ def _completion_commit_hash(results: list[OperationResult]) -> str:
     return ""
 
 
+def _completion_overlays(results: list[OperationResult]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[int, str], dict[str, Any]] = {}
+    for result in results:
+        metadata = result.metadata or {}
+        raw_index = metadata.get("overlay_index")
+        if raw_index is None:
+            continue
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        artifact = str(metadata.get("overlay_artifact") or "").strip()
+        key = (index, artifact)
+        item = grouped.setdefault(
+            key,
+            {
+                "index": index,
+                "total": int(metadata.get("overlay_total") or 1),
+                "label": str(metadata.get("overlay_label") or f"Overlay {index}"),
+                "target": str(metadata.get("overlay_target") or ""),
+                "artifact": artifact,
+            },
+        )
+        if result.returncode != 0 and result.name != "apply-rollback":
+            item["failed"] = True
+    return [grouped[key] for key in sorted(grouped, key=lambda value: value[0])]
+
+
 def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[OperationResult]) -> dict[str, Any]:
     """Build a stable, descriptive final result for every HUD renderer."""
     tests = _completion_test_totals(results)
     commit_hash = _completion_commit_hash(results)
+    overlays = _completion_overlays(results)
     duration_s = sum(max(0.0, float(result.duration_seconds or 0.0)) for result in results)
     warnings = int(totals.get("warnings", 0) or 0)
     errors = int(totals.get("errors", 0) or 0)
@@ -522,26 +570,61 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
         if len(warning_details) >= 5:
             break
 
-    actions = [
-        {
-            "name": result.name,
-            "status": _result_status(result),
-            "duration_s": round(float(result.duration_seconds or 0.0), 3),
-        }
-        for result in results
-        if result.name != "git-add"
-    ]
+    rollback_results = [result for result in results if result.name == "apply-rollback"]
+    rollback_succeeded = any(
+        result.returncode == 0 or result.failure_kind == "stale_apply_rolled_back"
+        for result in rollback_results
+    )
+    rollback_failed = any(
+        result.returncode != 0 and result.failure_kind != "stale_apply_rolled_back"
+        for result in rollback_results
+    )
+    failed_result = next(
+        (result for result in results if result.returncode != 0 and result.name != "apply-rollback"),
+        None,
+    )
+    stale_recovery = any(result.failure_kind == "stale_apply_rolled_back" for result in rollback_results)
 
-    headline = "Completed successfully" if ok else "Completed with errors"
+    actions: list[dict[str, Any]] = []
+    for result in results:
+        if result.name == "git-add":
+            continue
+        action_status = _result_status(result)
+        if result.name == "apply-rollback" and result.failure_kind == "stale_apply_rolled_back":
+            action_status = "ok"
+        actions.append({
+            "name": result.name,
+            "status": action_status,
+            "duration_s": round(float(result.duration_seconds or 0.0), 3),
+        })
+
+    if ok:
+        headline = "Completed successfully"
+    elif stale_recovery:
+        headline = "Recovered interrupted apply; rerun command"
+    elif rollback_succeeded and not rollback_failed:
+        phase_name = _human_phase_name(failed_result.name) if failed_result is not None else "Validation"
+        headline = f"{phase_name} failed; changes rolled back"
+    elif rollback_failed:
+        headline = "Validation failed and rollback failed"
+    else:
+        headline = "Completed with errors"
     detail_parts: list[str] = []
+    if overlays:
+        if len(overlays) == 1:
+            detail_parts.append(f"overlay {overlays[0]['label']}")
+        else:
+            detail_parts.append(f"{len(overlays)} overlays applied")
     if tests:
         detail_parts.append(
             f"{tests.get('passed', 0)} passed, {tests.get('failed', 0)} failed, "
             f"{tests.get('skipped', 0)} skipped ({tests.get('total', 0)} tests)"
         )
     detail_parts.append(f"{warnings} warning{'s' if warnings != 1 else ''}")
-    if errors or failed:
+    if errors:
         detail_parts.append(f"{errors} error{'s' if errors != 1 else ''}")
+    elif failed:
+        detail_parts.append(f"{failed} failed step{'s' if failed != 1 else ''}")
     if commit_hash:
         detail_parts.append(f"commit {commit_hash[:12]}")
     detail_parts.append(f"{duration_s:.2f}s")
@@ -556,8 +639,12 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
         "failed": failed,
         "tests": tests,
         "commit_hash": commit_hash,
+        "overlays": overlays,
         "warning_details": warning_details,
         "actions": actions,
+        "rolled_back": rollback_succeeded,
+        "rollback_failed": rollback_failed,
+        "failure_phase": failed_result.name if failed_result is not None else "",
     }
 
 
@@ -706,6 +793,7 @@ class TaskerProgressSink:
     run_id: str = field(default_factory=_default_run_id)
     sequence: int = 0
     current_phase: dict[str, Any] | None = None
+    failed_phase: dict[str, Any] | None = None
     started_at: str = field(default_factory=utc_now_iso)
     status: str = "running"
     last_error: str = ""
@@ -757,6 +845,7 @@ class TaskerProgressSink:
             pass
         self.sequence = 0
         self.current_phase = None
+        self.failed_phase = None
         self._last_state = {}
         self._last_update_at = 0.0
 
@@ -856,6 +945,8 @@ class TaskerProgressSink:
         status = _result_status(result)
         phase = dict(self.current_phase or {"name": result.name})
         phase["finished_at"] = utc_now_iso()
+        if result.returncode != 0 and result.name != "apply-rollback":
+            self.failed_phase = dict(phase)
         self.emit(
             "phase_finished",
             status="running" if result.returncode == 0 else "failed",
@@ -880,6 +971,7 @@ class TaskerProgressSink:
         self.emit(
             "finished",
             status=self.status,
+            phase=(self.failed_phase if not ok and self.failed_phase else self.current_phase),
             totals=totals,
             results=[_result_to_json(result) for result in results],
             completion=completion,

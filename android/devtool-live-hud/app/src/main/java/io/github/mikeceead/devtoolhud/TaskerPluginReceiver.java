@@ -19,8 +19,10 @@ public final class TaskerPluginReceiver extends BroadcastReceiver {
         String workdir = config.getString(TaskerProtocol.KEY_WORKDIR, "~/");
         boolean background = config.getBoolean(TaskerProtocol.KEY_BACKGROUND, true);
         boolean overlay = config.getBoolean(TaskerProtocol.KEY_OVERLAY, false);
-        TermuxCommandRunner.LaunchResult launch = TermuxCommandRunner.run(
-                context, command, workdir, background, overlay, intent);
+        boolean rootBridge = config.getBoolean(TaskerProtocol.KEY_ROOT_BRIDGE, false);
+        TermuxCommandRunner.LaunchResult launch = rootBridge
+                ? RootBridgeManager.run(context, command, workdir, overlay, intent)
+                : TermuxCommandRunner.run(context, command, workdir, background, overlay, intent);
         if (launch.started) {
             if (isOrderedBroadcast()) setResultCode(TaskerProtocol.RESULT_PENDING);
         } else {
