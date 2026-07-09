@@ -410,3 +410,25 @@ class AndroidOverlayPresentationTests(unittest.TestCase):
         action, payload = hud._live_bridge_payload(state, [], Path("/tmp/overlay-run"))
         self.assertEqual(action, "update")
         self.assertTrue(payload["overlay"])
+
+class HudCurrentRunPreflightTests(unittest.TestCase):
+    def test_prepare_hud_replaces_stale_global_state(self) -> None:
+        from devtool.tasker import TaskerProgressSink
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "state.json").write_text(json.dumps({"run_id": "old", "status": "ok", "message": "old"}), encoding="utf-8")
+            sink = TaskerProgressSink(
+                directory=directory,
+                command="apply-overlay",
+                repo_root="/repo",
+                repo_name="repo",
+                run_id="current-run",
+            )
+            sink.prepare_hud()
+            payload = json.loads((directory / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["run_id"], "current-run")
+            self.assertEqual(payload["status"], "waiting")
+            self.assertIn("Preparing", payload["message"])

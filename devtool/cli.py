@@ -790,6 +790,9 @@ def _maybe_notify(args: argparse.Namespace, *, warnings: int, errors: int, faile
 
 def _normalize_tasker_args(args: argparse.Namespace) -> None:
     command = str(getattr(args, "command", "") or "")
+    env_overlay = os.environ.get("DEVTOOL_HUD_OVERLAY", "").strip().lower() in {"1", "true", "yes", "on"}
+    if env_overlay and not bool(getattr(args, "hud_no_overlay", False)):
+        args.hud_overlay = True
     if getattr(args, "tasker", False):
         args.tasker_progress = True
         args.tasker_broadcast = True
@@ -811,6 +814,7 @@ def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = No
     enabled = bool(getattr(args, "tasker_progress", False))
     notify_progress = bool(getattr(args, "notify_progress", False))
     hud_mode = str(getattr(args, "hud_mode", "desktop") or "desktop")
+    chosen_hud_mode = hud_mode
     if enabled and bool(getattr(args, "auto_hud", False)):
         try:
             from .hud import choose_hud_mode, default_android_bridge_dir
@@ -820,14 +824,8 @@ def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = No
                 directory = default_android_bridge_dir()
         except Exception:
             chosen_hud_mode = hud_mode
-        overlay_requested = bool(getattr(args, "hud_overlay", False)) and not bool(getattr(args, "hud_no_overlay", False))
-        start_auto_hud(directory, mode=hud_mode, poll_interval=0.1, no_overlay=not overlay_requested)
-        # The Android notification HUD already consumes the same progress files
-        # and updates the stable notification ID. Avoid racing it with the older
-        # simplified --notify-progress emitter.
-        if chosen_hud_mode == "android-notify":
-            notify_progress = False
-    return build_tasker_sink(
+
+    sink = build_tasker_sink(
         enabled=enabled,
         directory=str(directory),
         command=str(getattr(args, "command", "devtool") or "devtool"),
@@ -840,6 +838,16 @@ def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = No
         run_id=str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")),
         overlay=bool(getattr(args, "hud_overlay", False)) and not bool(getattr(args, "hud_no_overlay", False)),
     )
+
+    if sink is not None and enabled and bool(getattr(args, "auto_hud", False)):
+        # Publish this run before changing/reusing the singleton HUD. This keeps
+        # the prior run's state from flashing in the desktop window.
+        sink.prepare_hud()
+        overlay_requested = bool(getattr(args, "hud_overlay", False)) and not bool(getattr(args, "hud_no_overlay", False))
+        start_auto_hud(directory, mode=hud_mode, poll_interval=0.1, no_overlay=not overlay_requested)
+        if chosen_hud_mode == "android-notify":
+            sink.notify_progress = False
+    return sink
 
 
 def _notification_payload_from_totals(*, warnings: int, errors: int, failed: int, command: str, repo_name: str, duration_seconds: float, brief: bool) -> dict:
@@ -2670,7 +2678,13 @@ def main(argv: list[str] | None = None) -> int:
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
 
     if args.command in APPLY_COMMANDS:
-        if args.command in {"apply-overlays", "aos"}:
+        implicit_or_explicit_bundle = False
+        if args.command in {"apply-overlay", "ao"}:
+            try:
+                implicit_or_explicit_bundle = is_overlay_bundle(resolve_artifact_path(args.artifact))
+            except Exception:
+                implicit_or_explicit_bundle = False
+        if args.command in {"apply-overlays", "aos"} or implicit_or_explicit_bundle:
             results, raw_output = _run_sequential_overlays(
                 config,
                 args,

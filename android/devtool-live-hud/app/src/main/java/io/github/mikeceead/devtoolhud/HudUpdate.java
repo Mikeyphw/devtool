@@ -91,6 +91,30 @@ final class HudUpdate {
                 160, 0, 1, 2, 0, System.currentTimeMillis() - 83000L, 0L, true);
     }
 
+    static HudUpdate commandStarted(int executionId, String command, String workdir, boolean overlay) {
+        return new HudUpdate("termux-" + executionId, "running", "Termux",
+                clean(command, "Running command"), "Termux", clean(workdir, "~/"), "", "",
+                0, true, 0, 0, 0, 0, 0, System.currentTimeMillis(), 0L, overlay);
+    }
+
+    static HudUpdate commandFinished(int executionId, int exitCode, String stdout, String stderr,
+                                     String error, boolean overlay) {
+        boolean ok = exitCode == 0 && clean(error, "").isEmpty();
+        String detail = firstUseful(error, stderr, stdout, ok ? "Command completed" : "Command failed");
+        return new HudUpdate("termux-" + executionId, ok ? "ok" : "failed", "Termux",
+                detail, "Termux", "exit " + exitCode, "", "", 100, false,
+                0, ok ? 0 : 1, 0, 0, ok ? 0 : 1,
+                System.currentTimeMillis(), 0L, overlay);
+    }
+
+    private static String firstUseful(String first, String second, String third, String fallback) {
+        for (String value : new String[]{first, second, third}) {
+            String clean = clean(value, "");
+            if (!clean.isEmpty()) return clean.length() > 180 ? clean.substring(0, 177) + "…" : clean;
+        }
+        return fallback;
+    }
+
     boolean isTerminal() {
         return status.equals("ok") || status.equals("failed") || status.equals("interrupted")
                 || status.equals("cancelled") || status.equals("skipped");
@@ -100,11 +124,23 @@ final class HudUpdate {
     boolean failedState() { return status.equals("failed"); }
 
     String title() {
-        if (succeeded()) return "Build completed";
-        if (failedState()) return "Build failed";
-        if (status.equals("interrupted") || status.equals("cancelled")) return "Build interrupted";
-        if (status.equals("waiting")) return "Waiting · " + repo;
+        String operation = operationName();
+        if (succeeded()) return operation + " completed";
+        if (failedState()) return operation + " failed";
+        if (status.equals("interrupted") || status.equals("cancelled")) return operation + " interrupted";
+        if (status.equals("waiting")) return "Preparing · " + repo;
         return phase + " · " + repo;
+    }
+
+    private String operationName() {
+        String lower = phase.toLowerCase(Locale.ROOT);
+        if (lower.contains("test")) return "Tests";
+        if (lower.contains("commit")) return "Commit";
+        if (lower.contains("overlay") || lower.contains("apply")) return "Overlay";
+        if (lower.contains("validat")) return "Validation";
+        if (lower.contains("restor")) return "Restore";
+        if (lower.contains("build")) return "Build";
+        return "Devtool run";
     }
 
     String contentText() {

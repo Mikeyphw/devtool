@@ -401,8 +401,40 @@ def _archive_file_data(artifact: str | Path) -> dict[str, bytes]:
     return data
 
 
+def _implicit_overlay_bundle_manifest(artifact: str | Path) -> dict[str, Any]:
+    """Recognize legacy wrapper archives that contain only nested overlays.
+
+    Older bundle producers sometimes omitted ``devtool-bundle.json`` and simply
+    placed ordered overlay archives at the root. Treating that wrapper as a
+    normal overlay copies the inner ZIP/TAR files into the target repository.
+    Detect this shape conservatively: every non-metadata payload member must be
+    a supported archive and at least one nested archive must be present.
+    """
+    try:
+        members = [
+            member for member in list_archive_members(artifact, include_data=False)
+            if not member.is_dir and not is_artifact_metadata_member(member.name)
+        ]
+    except Exception:
+        return {}
+    if not members or any(not archive_suffix(member.name) for member in members):
+        return {}
+    ordered = sorted((member.name for member in members), key=lambda value: value.casefold())
+    return {
+        "kind": "devtool.overlay_bundle",
+        "version": 1,
+        "name": Path(artifact).name,
+        "description": "Implicit legacy wrapper bundle detected by devtool.",
+        "implicit": True,
+        "apply_order": [{"path": name, "label": Path(name).stem} for name in ordered],
+        "stop_on_failure": True,
+        "validate_each": True,
+        "validate_final": True,
+    }
+
+
 def read_overlay_bundle_manifest(artifact: str | Path) -> dict[str, Any]:
-    """Read an overlay bundle manifest without treating it as a normal overlay manifest."""
+    """Read an explicit bundle manifest or synthesize one for legacy wrappers."""
     try:
         for member in list_archive_members(artifact, include_data=True):
             if Path(member.name).name not in BUNDLE_MANIFEST_NAMES or member.data is None:
@@ -411,7 +443,7 @@ def read_overlay_bundle_manifest(artifact: str | Path) -> dict[str, Any]:
             return data if isinstance(data, dict) else {}
     except Exception:
         return {}
-    return {}
+    return _implicit_overlay_bundle_manifest(artifact)
 
 
 def is_overlay_bundle(artifact: str | Path) -> bool:

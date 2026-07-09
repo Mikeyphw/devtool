@@ -5,3 +5,11 @@ local.properties
 *.iml
 *.apk
 *.aab
+*.ap_
+*.jks
+*.keystore
+bridge-token.txt
+android-live-hud.token
+captures/
+.externalNativeBuild/
+.cxx/

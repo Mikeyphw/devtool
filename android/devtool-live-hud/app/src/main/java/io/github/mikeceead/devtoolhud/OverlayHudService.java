@@ -58,6 +58,7 @@ public final class OverlayHudService extends Service {
     private TextView headerTitle;
     private TextView headerCount;
     private boolean explicitlyStopped;
+    private AppPalette palette;
     private boolean collapsed;
     private float dragStartRawX;
     private float dragStartRawY;
@@ -107,9 +108,12 @@ public final class OverlayHudService extends Service {
         }
         if (isEnabled(context) && hasPermission(context)) {
             synchronized (pendingUpdates) {
+                pendingUpdates.remove(update.runId);
                 pendingUpdates.put(update.runId, update);
             }
-            setEnabled(context, true);
+            // Do not start a foreground service from this background receiver.
+            // Android 15+ may reject it unless an overlay is already visible.
+            // The progress notification exposes an explicit “Show HUD” action.
         }
     }
 
@@ -125,6 +129,7 @@ public final class OverlayHudService extends Service {
     public void onCreate() {
         super.onCreate();
         instance = this;
+        palette = AppPalette.resolve(this);
         if (!hasPermission(this)) {
             stopSelf();
             return;
@@ -218,17 +223,17 @@ public final class OverlayHudService extends Service {
         overlayRoot = new LinearLayout(this);
         overlayRoot.setOrientation(LinearLayout.VERTICAL);
         overlayRoot.setPadding(dp(12), dp(10), dp(12), dp(12));
-        overlayRoot.setBackground(rounded(Color.rgb(15, 23, 32), 18, Color.argb(120, 255, 255, 255), 1));
+        overlayRoot.setBackground(rounded(palette.background, 18, Color.TRANSPARENT, 0));
         overlayRoot.setElevation(dp(12));
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
-        headerTitle = label("Devtool HUD", 15, Color.WHITE, true);
+        headerTitle = label("Devtool HUD", 15, palette.text, true);
         header.addView(headerTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        headerCount = label("Ready", 12, Color.rgb(190, 200, 212), false);
+        headerCount = label("Ready", 12, palette.muted, false);
         headerCount.setPadding(dp(8), 0, dp(8), 0);
         header.addView(headerCount);
 
@@ -312,7 +317,7 @@ public final class OverlayHudService extends Service {
         headerCount.setText(active > 0 ? active + (active == 1 ? " active" : " active") : "Ready");
 
         if (runs.isEmpty()) {
-            TextView waiting = label("Waiting for a devtool run", 13, Color.rgb(160, 171, 184), false);
+            TextView waiting = label("Waiting for a devtool run", 13, palette.muted, false);
             waiting.setPadding(0, dp(10), 0, 0);
             cardsContainer.addView(waiting);
             return;
@@ -323,7 +328,7 @@ public final class OverlayHudService extends Service {
         for (int i = start; i < visible.size(); i++) cardsContainer.addView(card(visible.get(i)));
         int hidden = visible.size() - (visible.size() - start);
         if (hidden > 0) {
-            TextView more = label("+" + hidden + " more run" + (hidden == 1 ? "" : "s"), 12, Color.rgb(160, 171, 184), false);
+            TextView more = label("+" + hidden + " more run" + (hidden == 1 ? "" : "s"), 12, palette.muted, false);
             more.setPadding(0, dp(6), 0, 0);
             cardsContainer.addView(more);
         }
@@ -334,7 +339,7 @@ public final class OverlayHudService extends Service {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(10), dp(9), dp(10), dp(9));
         int accent = statusColor(update);
-        card.setBackground(rounded(Color.rgb(28, 39, 51), 13, accent, 2));
+        card.setBackground(rounded(palette.surface, 13, Color.TRANSPARENT, 0));
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -344,14 +349,14 @@ public final class OverlayHudService extends Service {
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = label(update.title(), 14, Color.WHITE, true);
+        TextView title = label(update.title(), 14, palette.text, true);
         title.setMaxLines(1);
         titleRow.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         TextView percent = label(update.criticalText(), 13, accent, true);
         titleRow.addView(percent);
         card.addView(titleRow);
 
-        TextView detail = label(update.detail, 12, Color.rgb(205, 214, 224), false);
+        TextView detail = label(update.detail, 12, palette.text, false);
         detail.setMaxLines(2);
         detail.setPadding(0, dp(4), 0, dp(6));
         card.addView(detail);
@@ -371,7 +376,7 @@ public final class OverlayHudService extends Service {
         if (update.warnings > 0 || update.errors > 0) metrics.append(" · ")
                 .append(update.warnings).append(" warnings · ").append(update.errors).append(" errors");
         if (!update.commit.isEmpty()) metrics.append("\nCommit ").append(update.commit);
-        TextView meta = label(metrics.toString(), 11, Color.rgb(158, 171, 186), false);
+        TextView meta = label(metrics.toString(), 11, palette.muted, false);
         meta.setPadding(0, dp(6), 0, 0);
         card.addView(meta);
         return card;
@@ -423,7 +428,7 @@ public final class OverlayHudService extends Service {
         Button button = new Button(this);
         button.setText(value);
         button.setTextSize(17);
-        button.setTextColor(Color.WHITE);
+        button.setTextColor(palette.text);
         button.setAllCaps(false);
         button.setMinWidth(dp(38));
         button.setMinimumWidth(dp(38));
@@ -438,16 +443,17 @@ public final class OverlayHudService extends Service {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(fill);
         drawable.setCornerRadius(dp(radiusDp));
-        drawable.setStroke(dp(strokeDp), stroke);
+        if (strokeDp > 0) drawable.setStroke(dp(strokeDp), stroke);
         return drawable;
     }
 
     private int statusColor(HudUpdate update) {
-        if (update.succeeded()) return Color.rgb(94, 228, 155);
-        if (update.failedState()) return Color.rgb(255, 105, 120);
-        if (update.status.equals("interrupted") || update.status.equals("cancelled")) return Color.rgb(255, 176, 92);
-        if (update.status.equals("waiting")) return Color.rgb(142, 151, 165);
-        return Color.rgb(255, 209, 102);
+        if (palette == null) palette = AppPalette.resolve(this);
+        if (update.succeeded()) return palette.green;
+        if (update.failedState()) return palette.red;
+        if (update.status.equals("interrupted") || update.status.equals("cancelled")) return palette.orange;
+        if (update.status.equals("waiting")) return palette.muted;
+        return palette.yellow;
     }
 
     private int dp(int value) {

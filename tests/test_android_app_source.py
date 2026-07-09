@@ -47,3 +47,84 @@ def test_build_script_syntax_and_override_flags() -> None:
         "--apk-path", "--skip-system-deps", "--skip-sdk-install",
     ):
         assert flag in help_text
+
+
+def test_manifest_declares_tasker_and_termux_integration() -> None:
+    root = ET.parse(APP / "app" / "src" / "main" / "AndroidManifest.xml").getroot()
+    permissions = {node.attrib.get(ANDROID_NS + "name") for node in root.findall("uses-permission")}
+    assert "com.termux.permission.RUN_COMMAND" in permissions
+    application = root.find("application")
+    assert application is not None
+    activities = {node.attrib.get(ANDROID_NS + "name") for node in application.findall("activity")}
+    receivers = {node.attrib.get(ANDROID_NS + "name") for node in application.findall("receiver")}
+    services = {node.attrib.get(ANDROID_NS + "name") for node in application.findall("service")}
+    assert ".TaskerPluginActivity" in activities
+    assert ".TaskerPluginReceiver" in receivers
+    assert ".TermuxResultService" in services
+
+
+def test_tasker_plugin_returns_termux_results_as_variables() -> None:
+    source_dir = APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud"
+    protocol = (source_dir / "TaskerProtocol.java").read_text(encoding="utf-8")
+    runner = (source_dir / "TermuxCommandRunner.java").read_text(encoding="utf-8")
+    result_service = (source_dir / "TermuxResultService.java").read_text(encoding="utf-8")
+    assert "com.twofortyfouram.locale.intent.action.FIRE_SETTING" in protocol
+    assert "%devtool_exit_code" in protocol
+    assert "%devtool_stdout" in protocol
+    assert "%devtool_stderr" in protocol
+    assert "com.termux.app.RunCommandService" in runner
+    assert "com.termux.RUN_COMMAND_PENDING_INTENT" in runner
+    assert 'getBundleExtra("result")' in result_service
+    assert "TaskerProtocol.signalFinish" in result_service
+
+
+def test_android_ui_uses_gtk_palette_monet_setting_and_desktop_icon() -> None:
+    source_dir = APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud"
+    palette = (source_dir / "AppPalette.java").read_text(encoding="utf-8")
+    settings = (source_dir / "AppSettings.java").read_text(encoding="utf-8")
+    icon = (APP / "app" / "src" / "main" / "res" / "drawable" / "ic_launcher_legacy.xml").read_text(encoding="utf-8")
+    for color in ("94, 228, 155", "104, 216, 255", "255, 209, 102", "11, 15, 20"):
+        assert color in palette
+    assert "system_accent1_200" in palette
+    assert 'KEY_MONET = "monet"' in settings
+    for color in ("#111827", "#5EE49B", "#68D8FF", "#FFD166"):
+        assert color in icon
+
+
+def test_overlay_receiver_does_not_restart_foreground_service_in_background() -> None:
+    source = (APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud" / "OverlayHudService.java").read_text(encoding="utf-8")
+    publish = source[source.index("static void publish"):source.index("static void cancel")]
+    assert "setEnabled(context, true)" not in publish
+    notification = (APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud" / "NotificationController.java").read_text(encoding="utf-8")
+    assert '"Show HUD"' in notification
+
+
+def test_root_gitignore_excludes_generated_android_and_devtool_state() -> None:
+    ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    for pattern in ("**/.gradle/", "**/build/", "*.apk", ".devtool/", "**/android-live-hud.token"):
+        assert pattern in ignore
+
+
+def _java_source(name: str) -> str:
+    return (APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud" / name).read_text(encoding="utf-8")
+
+
+def test_tasker_receiver_requires_private_pairing_token() -> None:
+    auth = _java_source("TaskerAuthorization.java")
+    receiver = _java_source("TaskerPluginReceiver.java")
+    activity = _java_source("TaskerPluginActivity.java")
+    assert "MessageDigest.isEqual" in auth
+    assert "isTrustedEditor(getCallingActivity())" in activity
+    assert "KEY_AUTH_TOKEN" in activity
+    assert "TaskerAuthorization.matches" in receiver
+
+
+def test_termux_pending_intent_identity_is_not_reused() -> None:
+    runner = _java_source("TermuxCommandRunner.java")
+    assert "SecureRandom" in runner
+    assert "PendingIntent.FLAG_CANCEL_CURRENT" in runner
+
+
+def test_tasker_returns_official_error_message_variable() -> None:
+    protocol = _java_source("TaskerProtocol.java")
+    assert 'vars.putString("%errmsg"' in protocol

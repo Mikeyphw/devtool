@@ -18,7 +18,6 @@ final class NotificationController {
     static final String CHANNEL_ID = "devtool_live_runs_v1";
     private static final String GROUP_KEY = "devtool_live_runs";
     private static final int NOTIFICATION_ID = 7101;
-    private static final String PROMOTED_EXTRA = "android.requestPromotedOngoing";
 
     private final Context context;
     private final NotificationManager manager;
@@ -51,11 +50,12 @@ final class NotificationController {
                         Icon.createWithResource(context, R.drawable.ic_done),
                         "Dismiss", dismissIntent(update.runId)).build());
 
-        if (!update.isTerminal()) {
-            // Literal key keeps the project buildable with API 36 while also
-            // working on Android releases where the public constant arrived later.
-            builder.getExtras().putBoolean(PROMOTED_EXTRA, true);
+        if (update.overlayRequested && !update.isTerminal()) {
+            builder.addAction(new Notification.Action.Builder(
+                    Icon.createWithResource(context, R.drawable.ic_start),
+                    "Show HUD", showOverlayIntent(update.runId)).build());
         }
+        if (!update.isTerminal()) requestPromotedOngoing(builder);
 
         if (Build.VERSION.SDK_INT >= 36) {
             applyProgressStyle(builder, update);
@@ -63,6 +63,7 @@ final class NotificationController {
             builder.setProgress(100, update.progress, update.indeterminate && !update.isTerminal());
         }
 
+        if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(update.criticalText());
         Notification notification = builder.build();
         manager.notify(notificationTag(update.runId), NOTIFICATION_ID, notification);
     }
@@ -91,6 +92,27 @@ final class NotificationController {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
+
+    private PendingIntent showOverlayIntent(String runId) {
+        Intent intent = new Intent(context, ActionReceiver.class)
+                .setAction(ActionReceiver.ACTION_START_OVERLAY)
+                .putExtra("run_id", runId);
+        return PendingIntent.getBroadcast(context, runId.hashCode() ^ 0x31a9, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    private void requestPromotedOngoing(Notification.Builder builder) {
+        if (Build.VERSION.SDK_INT < 36) return;
+        try {
+            Notification.Builder.class
+                    .getMethod("setRequestPromotedOngoing", boolean.class)
+                    .invoke(builder, true);
+        } catch (ReflectiveOperationException ignored) {
+            // API 36.0 exposes Live Updates before the typed 36.1 setter.
+            builder.getExtras().putBoolean("android.requestPromotedOngoing", true);
+        }
+    }
+
     private PendingIntent dismissIntent(String runId) {
         Intent intent = new Intent(context, ActionReceiver.class)
                 .setAction(ActionReceiver.ACTION_DISMISS)
@@ -103,12 +125,13 @@ final class NotificationController {
         return "devtool:" + runId;
     }
 
-    private static int statusColor(HudUpdate update) {
-        if (update.succeeded()) return Color.rgb(94, 228, 155);
-        if (update.failedState()) return Color.rgb(255, 105, 120);
-        if (update.status.equals("interrupted") || update.status.equals("cancelled")) return Color.rgb(255, 176, 92);
-        if (update.status.equals("waiting")) return Color.rgb(142, 151, 165);
-        return Color.rgb(255, 209, 102);
+    private int statusColor(HudUpdate update) {
+        AppPalette palette = AppPalette.resolve(context);
+        if (update.succeeded()) return palette.green;
+        if (update.failedState()) return palette.red;
+        if (update.status.equals("interrupted") || update.status.equals("cancelled")) return palette.orange;
+        if (update.status.equals("waiting")) return palette.muted;
+        return palette.yellow;
     }
 
     @android.annotation.TargetApi(36)
@@ -129,10 +152,10 @@ final class NotificationController {
                             new Notification.ProgressStyle.Segment(100).setColor(statusColor(update))));
         } else {
             List<Notification.ProgressStyle.Segment> segments = new ArrayList<>();
-            segments.add(new Notification.ProgressStyle.Segment(15).setColor(Color.rgb(86, 156, 214)));  // restore
-            segments.add(new Notification.ProgressStyle.Segment(45).setColor(Color.rgb(255, 209, 102))); // build
-            segments.add(new Notification.ProgressStyle.Segment(35).setColor(Color.rgb(184, 134, 255))); // test
-            segments.add(new Notification.ProgressStyle.Segment(5).setColor(Color.rgb(94, 228, 155)));   // commit
+            segments.add(new Notification.ProgressStyle.Segment(15).setColor(AppPalette.resolve(context).cyan));  // restore
+            segments.add(new Notification.ProgressStyle.Segment(45).setColor(AppPalette.resolve(context).yellow)); // build
+            segments.add(new Notification.ProgressStyle.Segment(35).setColor(AppPalette.resolve(context).cyan)); // test
+            segments.add(new Notification.ProgressStyle.Segment(5).setColor(AppPalette.resolve(context).green));   // commit
             style.setProgress(update.progress)
                     .setProgressSegments(segments)
                     .setProgressPoints(List.of(

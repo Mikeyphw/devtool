@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="launcher_background">#101820</color>
-    <color name="devtool_accent">#5EE49B</color>
+    <color name="launcher_background">#111827</color>
+    <color name="devtool_background">#0B0F14</color>
+    <color name="devtool_surface">#121923</color>
+    <color name="devtool_text">#EEF4FF</color>
+    <color name="devtool_muted">#8EA0B4</color>
+    <color name="devtool_green">#5EE49B</color>
+    <color name="devtool_cyan">#68D8FF</color>
+    <color name="devtool_yellow">#FFD166</color>
+    <color name="devtool_red">#FF6978</color>
 </resources>

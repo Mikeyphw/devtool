@@ -802,6 +802,23 @@ class TaskerProgressSink:
         with contextlib.suppress(OSError):
             self._run_file().unlink(missing_ok=True)
 
+    def prepare_hud(self) -> None:
+        """Publish the new run identity before a singleton HUD follows it.
+
+        Without this preflight record, the desktop HUD can resolve the shared
+        active directory while it still contains the previous run's state and
+        briefly render that stale completion before ``started()`` is emitted.
+        """
+        self.reset_run_files()
+        self.emit(
+            "preparing",
+            status="waiting",
+            message=f"Preparing {self.command}",
+            progress={"percent": None},
+            force=True,
+            notify=False,
+        )
+
     def started(self, *, message: str = "started") -> None:
         self.reset_run_files()
         self.emit("started", status="running", message=message, force=True, notify=True)

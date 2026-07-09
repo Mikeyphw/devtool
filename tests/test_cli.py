@@ -742,3 +742,14 @@ class ValidationDotnetFlagTests(unittest.TestCase):
 
         self.assertEqual(specs[0].argv, ["dotnet", "build", "App.sln"])
         self.assertEqual(specs[1].argv, ["dotnet", "test", "--no-build", "App.sln"])
+
+
+def test_hud_overlay_can_be_requested_by_environment(monkeypatch, tmp_path) -> None:
+    from devtool.cli import _normalize_tasker_args
+    import argparse
+
+    monkeypatch.setenv("DEVTOOL_HUD_OVERLAY", "1")
+    args = argparse.Namespace(command="validate", tasker=False, tasker_progress=False,
+                              auto_hud=False, hud_overlay=False, hud_no_overlay=False)
+    _normalize_tasker_args(args)
+    assert args.hud_overlay is True
