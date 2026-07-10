@@ -135,3 +135,52 @@ def test_import_accepts_unknown_subcommand_as_custom(importer_classpath: Path, t
     assert values["operation"] == "custom"
     assert "experimental-command" in values["rebuilt"]
     assert "'two words'" in values["rebuilt"]
+
+
+def test_termux_workdir_normalizes_shell_home_forms(tmp_path: Path) -> None:
+    if shutil.which("javac") is None or shutil.which("java") is None:
+        pytest.skip("JDK is not installed")
+    root = tmp_path / "termux-paths"
+    sources = root / "io" / "github" / "mikeceead" / "devtoolhud"
+    sources.mkdir(parents=True)
+    shutil.copy2(PACKAGE / "TermuxPaths.java", sources / "TermuxPaths.java")
+    (sources / "PathHarness.java").write_text(
+        textwrap.dedent(
+            """
+            package io.github.mikeceead.devtoolhud;
+
+            public final class PathHarness {
+                public static void main(String[] args) {
+                    for (String arg : args) {
+                        System.out.println(TermuxPaths.normalizeWorkdir(arg));
+                    }
+                }
+            }
+            """
+        ),
+        encoding="utf-8",
+    )
+    output = root / "classes"
+    output.mkdir()
+    subprocess.run(
+        ["javac", "-d", str(output), *map(str, sources.glob("*.java"))],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    values = [
+        "$HOME/Code/sims3tools",
+        "/$HOME/Code/sims3tools",
+        "${HOME}/Code/sims3tools",
+        "~/Code/sims3tools",
+        "Code/sims3tools",
+        "/data/data/com.termux/files/home/Code/sims3tools",
+    ]
+    completed = subprocess.run(
+        ["java", "-cp", str(output), "io.github.mikeceead.devtoolhud.PathHarness", *values],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    expected = "/data/data/com.termux/files/home/Code/sims3tools"
+    assert completed.stdout.splitlines() == [expected] * len(values)

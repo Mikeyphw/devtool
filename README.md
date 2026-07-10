@@ -83,3 +83,7 @@ The module does not inject into Zygote or applications. It installs no `/system`
 ## Applied overlay names in success summaries
 
 Successful apply summaries now identify the actual overlay or ordered overlay set. This applies to automatic clipboard output, `--copy-summary`, desktop/Android HUD copy actions, history, notifications backed by the completion payload, and Tasker stdout/results. Single applies show `Applied overlay: <name>`; bundles list each overlay in execution order with target and artifact path when available.
+
+### Android frontend working-directory paths
+
+The Android frontend accepts `~`, `$HOME`, `${HOME}`, relative Termux paths, and absolute paths in the **Termux working directory** field. Before dispatching `RUN_COMMAND`, it expands them to the absolute Termux home path (`/data/data/com.termux/files/home`). This also repairs the legacy malformed `/$HOME/...` value produced by older builds.

@@ -119,6 +119,15 @@ def test_tasker_receiver_requires_private_pairing_token() -> None:
     assert "TaskerAuthorization.matches" in receiver
 
 
+def test_termux_run_command_expands_shell_home_in_workdir() -> None:
+    runner = _java_source("TermuxCommandRunner.java")
+    paths = _java_source("TermuxPaths.java")
+    assert "TermuxPaths.normalizeWorkdir(workdir)" in runner
+    assert '"/$HOME/"' in paths
+    assert '"${HOME}/"' in paths
+    assert 'HOME = "/data/data/com.termux/files/home"' in paths
+
+
 def test_termux_pending_intent_identity_is_not_reused() -> None:
     runner = _java_source("TermuxCommandRunner.java")
     assert "SecureRandom" in runner

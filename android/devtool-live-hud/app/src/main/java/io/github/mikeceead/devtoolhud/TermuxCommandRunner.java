@@ -57,7 +57,7 @@ final class TermuxCommandRunner {
 
     static LaunchResult runBridgeOperation(Context context, String command,
                                            String operation, String expectedHash) {
-        return runInternal(context, command, "/data/data/com.termux/files/home",
+        return runInternal(context, command, TermuxPaths.HOME,
                 true, false, null, operation, expectedHash);
     }
 
@@ -89,7 +89,7 @@ final class TermuxCommandRunner {
                 .putExtra(EXTRA_PATH, "$PREFIX/bin/bash")
                 .putExtra(EXTRA_ARGUMENTS, new String[]{"-lc",
                         buildShellCommand(context, runId, cleanCommand, overlay)})
-                .putExtra(EXTRA_WORKDIR, cleanWorkdir(workdir))
+                .putExtra(EXTRA_WORKDIR, TermuxPaths.normalizeWorkdir(workdir))
                 .putExtra(EXTRA_BACKGROUND, background)
                 .putExtra(EXTRA_PENDING_INTENT, result)
                 .putExtra(EXTRA_LABEL, "Devtool Frontend")
@@ -97,8 +97,9 @@ final class TermuxCommandRunner {
         try {
             context.startService(request);
             if (bridgeOperation == null || bridgeOperation.isEmpty()) {
-                HudUpdate started = HudUpdate.commandStarted(runId, cleanCommand, cleanWorkdir(workdir), overlay);
-                RunStore.started(context, runId, cleanCommand, cleanWorkdir(workdir));
+                String normalizedWorkdir = TermuxPaths.normalizeWorkdir(workdir);
+                HudUpdate started = HudUpdate.commandStarted(runId, cleanCommand, normalizedWorkdir, overlay);
+                RunStore.started(context, runId, cleanCommand, normalizedWorkdir);
                 new NotificationController(context).post(started);
                 OverlayHudService.publish(context, started);
             }
@@ -132,8 +133,4 @@ final class TermuxCommandRunner {
         return value;
     }
 
-    private static String cleanWorkdir(String workdir) {
-        String value = workdir == null ? "" : workdir.trim();
-        return value.isEmpty() ? "~/" : value;
-    }
 }
