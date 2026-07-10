@@ -63,7 +63,6 @@ def default_tasker_dir() -> str:
 
 
 DEFAULT_TASKER_DIR = default_tasker_dir()
-DEFAULT_TASKER_ACTION = "net.mph.devtool.EVENT"
 DEFAULT_NOTIFICATION_ID = "7771"
 DEFAULT_EVENT_HTTP_URL = os.environ.get("DEVTOOL_EVENT_HTTP_URL", "http://127.0.0.1:1821/")
 DEFAULT_EVENT_HTTP_TIMEOUT_S = 0.5
@@ -342,24 +341,13 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     chosen_mode = _resolve_mode_for_detached_child(requested_mode)
     registry_mode = chosen_mode
     if chosen_mode == "android-bridge":
-        # Direct Termux runs can render the shared bridge state themselves.
-        # Older builds only wrote JSON and expected a separately started
-        # `devtool android-hud-bridge` daemon, leaving app-launched runs frozen
-        # on the initial “waiting” card.  Keep the file-mirroring behavior for
-        # Linux/chroot producers, but automatically launch the native Android
-        # notification renderer when this process is already in Termux.
         try:
             from .hud import _is_termux_android
             termux_host = _is_termux_android()
         except Exception:
             termux_host = False
         if termux_host:
-            chosen_mode = "android-notify"
-            registry_mode = "android-bridge"
-            _append_hud_log(
-                "android bridge mode: starting the Termux-host native notification "
-                "renderer for the shared active run."
-            )
+            _append_hud_log("android bridge mode: starting the native app state forwarder.")
         else:
             _append_hud_log(
                 "android bridge mode: producer is not the Termux host; state is "
@@ -408,7 +396,7 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     argv = [
         sys.executable, "-m", "devtool", "hud",
         "--mode", chosen_mode,
-        "--tasker-dir", str(directory),
+        "--state-dir", str(directory),
         "--poll-interval", str(max(0.05, float(poll_interval))),
     ]
     if follow_active:
@@ -662,48 +650,6 @@ def _run_quiet(argv: list[str]) -> bool:
     return completed.returncode == 0
 
 
-def send_tasker_broadcast(action: str, event_file: Path, state_file: Path, event_type: str, run_id: str) -> bool:
-    if not shutil.which("am"):
-        return False
-    return _run_quiet(
-        [
-            "am",
-            "broadcast",
-            "-a",
-            action,
-            "--es",
-            "devtool_event",
-            event_type,
-            "--es",
-            "devtool_run_id",
-            run_id,
-            "--es",
-            "devtool_event_file",
-            str(event_file),
-            "--es",
-            "devtool_state_file",
-            str(state_file),
-        ]
-    )
-
-
-def send_progress_notification(*, notification_id: str, title: str, body: str, ongoing: bool = False) -> bool:
-    if not shutil.which("termux-notification"):
-        return False
-    argv = [
-        "termux-notification",
-        "--id",
-        str(notification_id),
-        "--title",
-        title,
-        "--content",
-        body,
-    ]
-    if ongoing:
-        argv.append("--ongoing")
-    return _run_quiet(argv)
-
-
 def _human_phase_name(value: str) -> str:
     key = (value or "").strip().lower().replace("_", "-")
     mapping = {
@@ -782,8 +728,6 @@ class TaskerProgressSink:
     repo_name: str
     target: str = ""
     enabled: bool = True
-    broadcast: bool = False
-    broadcast_action: str = DEFAULT_TASKER_ACTION
     notify_progress: bool = False
     notification_id: str = DEFAULT_NOTIFICATION_ID
     overlay: bool = False
@@ -832,15 +776,16 @@ class TaskerProgressSink:
         return self.directory / "runs"
 
     def reset_run_files(self) -> None:
-        """Initialize this run without erasing other concurrent HUD runs.
-
-        Per-run state lives in runs/<run-id>.json. Global latest/event files are
-        compatibility views and must not be cleared because another devtool
-        process may be actively writing them.
-        """
+        """Initialize the one active HUD run and discard stale live state."""
         try:
+            for path in (self.state_file, self.latest_event_file, self.notification_file, self.events_jsonl_file):
+                path.unlink(missing_ok=True)
+            if self.events_dir.exists():
+                shutil.rmtree(self.events_dir, ignore_errors=True)
+            if self.runs_dir.exists():
+                shutil.rmtree(self.runs_dir, ignore_errors=True)
+            self.events_dir.mkdir(parents=True, exist_ok=True)
             self.runs_dir.mkdir(parents=True, exist_ok=True)
-            (self.runs_dir / f"{self.run_id}.json").unlink(missing_ok=True)
         except OSError:
             pass
         self.sequence = 0
@@ -981,9 +926,8 @@ class TaskerProgressSink:
             force=True,
             notify=True,
         )
-        # Global state/notification files retain the completion result. The
-        # per-run file exists only for active-run aggregation, so remove it as
-        # soon as this logical run is complete.
+        # Global state files retain the completion result; the heartbeat file
+        # is only needed while the single logical run is active.
         self._cleanup_run_file()
 
     def emit(
@@ -1002,7 +946,7 @@ class TaskerProgressSink:
         force: bool = False,
         notify: bool = False,
     ) -> None:
-        if not self.enabled and not self.notify_progress:
+        if not self.enabled:
             return
         self.sequence += 1
         timestamp = utc_now_iso()
@@ -1078,13 +1022,9 @@ class TaskerProgressSink:
                 send_local_http_event(event, url=self.event_http_url)
                 _atomic_write_json(self._run_file(), state)
                 self._last_state = state
-                if self.broadcast and (force or event_type != "progress"):
-                    send_tasker_broadcast(self.broadcast_action, event_file, self.state_file, event_type, self.run_id)
             except OSError as exc:
                 self.last_error = str(exc)
 
-        if notify and self.notify_progress:
-            self._maybe_notify(state, force=force or event_type in {"started", "phase_started", "phase_finished", "finished"})
 
     def _notification_payload(self, status: str, message: str, progress: dict[str, Any] | None) -> dict[str, Any]:
         phase_name = str((self.current_phase or {}).get("name") or self.command or "work")
@@ -1122,17 +1062,6 @@ class TaskerProgressSink:
         body = " • ".join(bits) or "Waiting for progress"
         return {"title": title, "text": body, "expanded_title": title, "expanded_text": body, "body": body, "id": self.notification_id}
 
-    def _maybe_notify(self, state: dict[str, Any], *, force: bool) -> None:
-        now = time.monotonic()
-        if not force and now - self._last_notification_at < self.notification_interval_s:
-            return
-        self._last_notification_at = now
-        notification = state.get("notification") or {}
-        title = str(notification.get("title") or "devtool")
-        body = str(notification.get("text") or notification.get("body") or state.get("message") or state.get("event_type") or "running")
-        ongoing = state.get("status") == "running"
-        send_progress_notification(notification_id=self.notification_id, title=title, body=body, ongoing=ongoing)
-
 
 def build_tasker_sink(
     *,
@@ -1141,14 +1070,12 @@ def build_tasker_sink(
     command: str,
     repo_root: Path,
     target: str = "",
-    broadcast: bool = False,
-    broadcast_action: str = DEFAULT_TASKER_ACTION,
     notify_progress: bool = False,
     notification_id: str = DEFAULT_NOTIFICATION_ID,
     run_id: str = "",
     overlay: bool = False,
 ) -> TaskerProgressSink | None:
-    if not enabled and not notify_progress:
+    if not enabled:
         return None
     repo = repo_root.resolve()
     return TaskerProgressSink(
@@ -1158,9 +1085,7 @@ def build_tasker_sink(
         repo_name=repo.name,
         target=target,
         enabled=enabled,
-        broadcast=broadcast,
-        broadcast_action=broadcast_action,
-        notify_progress=notify_progress,
+        notify_progress=False,
         notification_id=notification_id,
         run_id=run_id.strip() or _default_run_id(),
         overlay=overlay,

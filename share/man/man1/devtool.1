@@ -1,42 +1,32 @@
-.TH DEVTOOL 1 "2026-07-01" "devtool 0.2.26" "User Commands"
+.TH DEVTOOL 1 "2026-07-10" "devtool 0.2.32" "User Commands"
 .SH NAME
 devtool \- generic Unix developer helper CLI
 .SH SYNOPSIS
 .B devtool
 .RI [ global-options ] command " [command-options]"
 .SH DESCRIPTION
-devtool applies artifacts, validates repositories, summarizes restore/build/test output,
-copies logs to the clipboard, sends notifications, writes Tasker JSON events, and automates
-common repository tasks.
+devtool applies artifacts, validates repositories, records transactional rollback state,
+summarizes restore/build/test output, copies results, and publishes one live run to a
+desktop HUD or the Android Devtool Frontend.
 .PP
-Global options are placement-tolerant where possible, so options such as
-.BR --yes ,
-.BR --repo ,
-.BR --copy ,
-and
-.B --machine-file
-may be placed before or after the subcommand.
+One mutating devtool run is allowed per repository. A second invocation fails immediately
+while the current operation owns the repository run lock. There are no concurrency modes,
+wait policies, or path-scoped leases.
 .SH COMMANDS
 .TP
 .B restore | build | test | validate | wine-validate | run | package
 Run project actions from .devtool.toml or detected project defaults.
 .TP
-.B test --no-build
-Run tests while passing
-.B --no-build
-to
-.B dotnet test
-when the resolved test command is a dotnet test command.
-.TP
 .B validate
-Run restore, build, and test. When validation has already built the target, implicit dotnet test commands use
-.B --no-build
-so the test phase does not rebuild the same target.
+Run restore, build, and test. Dotnet validation uses
+.B dotnet build --no-restore
+after restore and
+.B dotnet test --no-build
+after build.
 .TP
-.B apply-overlay | apply-snapshot
-Apply an artifact to a repository. Options include
+.B apply-overlay | apply-overlays | apply-snapshot
+Apply an artifact transactionally. Options include
 .BR --validate ,
-.BR --validate-only ,
 .BR --preview ,
 .BR --diff ,
 .BR --interactive ,
@@ -47,136 +37,112 @@ and
 .BR --skip-test .
 .TP
 .B batch
-Run a sequence of steps such as validate or apply-overlay=/path/to/file.zip.
+Run a sequence of devtool steps.
 .TP
-.B config show | defaults | resolve | doctor
-Inspect configuration.
+.B status | doctor | detect | handoff | history | rollback | targets
+Inspect or maintain repository state.
 .TP
-.B status | doctor
-Show repo and tool status. Use
-.B doctor --fix
-to create safe state/cache/XDG data directories.
+.B hud
+Run the terminal, web, studio, desktop, or Android app bridge renderer.
 .TP
-.B detect | handoff | history | rollback | targets
-Inspect repository shape, generate handoff notes, show artifact history, revert a recorded commit, or list configured targets.
+.B android-hud-bridge
+Forward shared Termux/chroot live state to the Android app.
 .TP
-.B logs latest
-Show or print the latest saved raw log.
+.B commit | tag | release-notes
+Git helper commands. Commit, tag, and rollback use the same repository run lock.
 .TP
-.B completion zsh
-Print zsh completion.
-.TP
-.B init-config
-Write a .devtool.toml template into a repository root.
-.TP
-.B tag | release-notes | commit
-Git helper commands.
-.TP
-.B ai-prompt
-Generate a fully resolved AI workflow prompt for the current repository.
+.B ai-prompt | completion | logs | init-config | config
+Generate workflow text, shell completion, inspect logs, or configure devtool.
+.SH ANDROID FRONTEND
+The CLI publishes Android progress only through
+.BR --hud-mode android-bridge .
+The Android app owns its live notification, optional floating overlay, visual frontend,
+history, Termux command execution, and native Tasker plug-in integration.
+.PP
+The former standalone Termux notification mode and CLI Tasker/notification flags have been
+removed. Use the app settings and Tasker plug-in action instead.
 .SH TERMUX CHROOT RUNNER
 The optional host-side commands
 .B devtool-androidos
 and
 .B devtool-termux-chroot
-forward devtool invocations into a named Android/Termux chroot. The default outer command shape is:
+forward devtool invocations into a named chroot. The command shape is:
 .PP
-.B sudo chrootctl --name androidos exec --zsh -lc 'cd <translated-cwd> && exec devtool <translated-flags>'
+.B sudo chrootctl --name androidos exec -- zsh -lc '<command>'
 .PP
-The runner consumes
-.B --chroot
-as the outer chroot name, honors
-.B --host
-by bypassing the chroot, and translates path-bearing flags such as
-.BR --repo ,
-.BR --config ,
-.BR --solution ,
-.BR --project ,
-.BR --machine-file ,
-.BR --save-json-payload ,
-.BR --tasker-dir ,
-and artifact paths for apply-overlay/apply-snapshot.
+Host paths are translated for the chroot. Desktop HUD names are adapted to
+.B android-bridge
+when execution originates from Termux.
+.SH TRANSACTIONAL APPLY
+Before mutating files, devtool backs up only paths touched by the artifact. If extraction,
+restore, build, test, commit preparation, or interruption fails, the touched paths are
+restored. A successful rollback is reported as recovery while the final result retains the
+actual phase that failed.
 .PP
-Environment overrides include
-.BR DEVTOOL_TERMUX_CHROOT ,
-.BR DEVTOOL_TERMUX_CHROOT_HOME ,
-.BR DEVTOOL_TERMUX_CHROOT_USER ,
-.BR DEVTOOL_TERMUX_CHROOT_PATH_MAP ,
-.BR DEVTOOL_CHROOTCTL ,
-and
-.BR DEVTOOL_CHROOT_SUDO .
-
-.SH TRANSACTIONAL ARTIFACT APPLY
-Before mutating files for
-.B apply-overlay
-or
-.BR apply-snapshot ,
-devtool creates an rsync backup of only the paths the artifact will touch. For overlays this includes changed archive members and paths listed in
-.BR .devtool-delete .
-Unchanged archive members and devtool metadata files are not backed up.
-.PP
-If extraction, delete handling, restore, build, test, or an interruption fails after the transaction begins, devtool rolls the touched paths back from the backup. Rollback is a normal devtool result: stdout summaries, notifications, clipboard output, Tasker progress/events, and machine JSON are still emitted.
-.PP
-If the process is force-closed and leaves an active transaction marker, the next devtool command for that repository detects the stale transaction, rolls it back, emits normal output/JSON/notifications, and exits non-zero so the original command can be rerun.
-.PP
-Successful applies and successful rollbacks remove the transaction backup directory. The original overlay/snapshot artifact and sidecar manifest are deleted only after the complete apply/validate/commit flow succeeds without rollback. If rollback happens, the artifact is preserved for debugging or retry.
+A stale transaction left by a killed process is restored before the next mutating command,
+which then exits non-zero so the requested operation can be rerun.
 .SH OPTIONS
 .TP
+.BR -r , " --repo" " PATH"
+Repository root.
+.TP
 .BR -y , " --yes"
-Assume yes for confirmations, including dirty repository and artifact prompts.
+Assume yes for confirmations.
 .TP
 .BR --force
-Force dangerous actions such as non-git repository operation.
-.TP
-.BR --machine "[=compact|pretty]"
-Emit the machine JSON envelope on stdout.
-.TP
-.BR --machine-file " FILE"
-Write the machine JSON envelope to FILE without changing normal stdout.
+Allow explicitly forced dangerous operations.
 .TP
 .BR --copy , " --copy-summary" , " --copy-json"
-Copy raw output, rendered summary, or JSON summary.
+Copy raw output, the rendered summary, or JSON.
 .TP
-.BR --tasker , " --tasker-progress" , " --tasker-dir" , " --tasker-broadcast"
-Write Tasker-compatible state/event JSON under the configured Tasker directory and optionally broadcast Android intents.
+.BR --auto-hud , " --hud-mode" " MODE"
+Start or reuse the selected live HUD. Use
+.B android-bridge
+for the Android app.
 .TP
-.BR --notify-progress
-Update a live Termux notification while command phases run.
-.TP
-.BR --auto-hud , " --hud-mode"
-Start or reuse the configured HUD renderer. Desktop HUD mode names are translated to the Android notification HUD when running from Termux.
+.BR --no-hud
+Do not publish live HUD progress for this command.
 .TP
 .BR --hud-overlay
-On Android, request that this run also appear in the user-enabled floating overlay HUD. The companion app must have display-over-other-apps permission and its overlay service enabled.
+Request the app's user-enabled floating overlay for this run.
 .TP
 .BR --hud-no-overlay
-Use notification-only Android presentation. This is the default.
+Keep the run in the app without opening the floating overlay.
+.TP
+.BR --machine "[=compact|pretty]" , " --machine-file" " FILE"
+Emit or save the machine JSON envelope.
+.SH REMOVED OPTIONS
+.BR --notify ,
+.BR --notify-progress ,
+.BR --tasker ,
+.BR --tasker-progress ,
+.BR --tasker-broadcast ,
+.BR --concurrency ,
+.BR --lock-timeout ,
+and
+.B --no-wait
+are no longer accepted.
 .SH FILES
 .TP
 .I ~/.local/state/devtool/logs
-Saved raw command logs.
+Saved command logs.
 .TP
-.I ${XDG_DATA_HOME:-~/.local/share}/devtool
-XDG devtool data directory. Transaction state and rsync backups are stored under
-.I transactions/<repo-key>/
-while active. Set
-.B DEVTOOL_XDG_DIR
-to override this location.
+.I ~/.local/state/devtool/locks
+Single-run repository lock files.
 .TP
 .I .devtool.toml
 Per-repository configuration.
 .SH ENVIRONMENT
 .TP
 .B DEVTOOL_XDG_DIR
-Override the XDG devtool data directory for transaction state and backups.
+Override devtool runtime state storage.
 .TP
-.B DEVTOOL_PROJECT_*
-Overrides [project] values from .devtool.toml.
+.B DEVTOOL_RUN_ID
+Run identity shared with the Android app or desktop HUD.
 .TP
-.B DEVTOOL_ENV_*
-Overrides or injects runtime env vars from [env].
+.B DEVTOOL_HUD_SINGLETON
+Controls reuse of the HUD process; use
+.B kill
+to replace an older renderer.
 .SH AUTHOR
 OpenAI
-
-.PP
-Dotnet restore, build, and test commands render as separate Rich progress bars in non-verbose mode. Each completed command leaves its own summary line, with parsed repo-relative detail below the bar.

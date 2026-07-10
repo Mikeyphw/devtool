@@ -31,12 +31,12 @@ from .models import CommandSpec
 
 _PATH_VALUE_FLAGS = {
     "-r", "--repo", "-c", "--config", "--solution", "--project",
-    "--machine-file", "--save-json-payload", "--json-output", "--tasker-dir",
+    "--machine-file", "--save-json-payload", "--json-output",
     "-o", "--output",
 }
 
 _FLAGS_WITH_VALUES = _PATH_VALUE_FLAGS | {
-    "--target", "--machine", "--notify-id", "--tasker-action", "--hud-mode",
+    "--target", "--machine", "--hud-mode",
     "--theme", "--stdout-payload", "--copy-via", "--commit", "--watch-interval",
     "--matrix", "--matrix-mode", "--format", "--repo-name", "--project-type",
     "--build-target", "--run-target", "--target-name", "--solution-target",
@@ -53,8 +53,7 @@ _PATH_SUFFIXES = (
 
 DESKTOP_HUD_MODES = {"auto", "desktop", "desktop-window", "gnome", "gtk", "gtk3", "x11", "x11-gtk"}
 ANDROID_GUI_ALIASES = {"android-gui", "android-overlay", "termux-gui", "termuxgui"}
-ANDROID_NOTIFY_ALIASES = {"android-notify", "android-notification", "termux-notify", "termux-notification"}
-ANDROID_BRIDGE_ALIASES = {"android-bridge", "termux-bridge", "android-chroot", "termux-chroot", "chroot-bridge"}
+ANDROID_BRIDGE_ALIASES = {"android-bridge", "termux-bridge", "android-chroot", "termux-chroot", "chroot-bridge", "android-notify", "notification"}
 HOST_ONLY_COMMANDS = {
     "hud", "android-hud-bridge", "termux-hud-bridge", "logs", "completion",
     "ai-prompt", "ap", "bundle", "config", "init-config",
@@ -480,26 +479,16 @@ def normalize_hud_mode_for_chroot(mode: str | None) -> str:
     normalized = mode.strip().lower()
     if normalized in DESKTOP_HUD_MODES or normalized in ANDROID_GUI_ALIASES or normalized in ANDROID_BRIDGE_ALIASES:
         return "android-bridge"
-    if normalized in ANDROID_NOTIFY_ALIASES:
-        return "android-notify"
     return mode
 
 
 def normalize_hud_mode_for_termux_host(mode: str | None) -> str:
-    """Map desktop/chroot HUD names to the native Termux host HUD.
-
-    In host-orchestrated mode devtool itself stays in Termux, so there is no
-    reason to start the bridge HUD just because the user passed familiar
-    desktop flags like --hud-mode desktop-window.  Keep notification modes
-    explicit, but map desktop/GTK/X11 and legacy Android GUI aliases to android-notify.
-    """
+    """Map desktop/chroot HUD names to the Devtool Android app bridge."""
     if not mode:
-        return "android-notify"
+        return "android-bridge"
     normalized = mode.strip().lower()
     if normalized in DESKTOP_HUD_MODES or normalized in ANDROID_GUI_ALIASES or normalized in ANDROID_BRIDGE_ALIASES:
-        return "android-notify"
-    if normalized in ANDROID_NOTIFY_ALIASES:
-        return "android-notify"
+        return "android-bridge"
     return mode
 
 
@@ -543,7 +532,7 @@ def wrap_specs_for_termux_host_chroot(
     """Wrap command phases for chroot while keeping devtool itself on Termux.
 
     This is the toolchain/backend mode: the outer devtool keeps Rich UI,
-    Termux:API notification HUD, clipboard, artifact matching, and command summaries on the
+    native Android app HUD bridge, clipboard, artifact matching, and command summaries on the
     Android host.  Only each external command phase is run through:
 
         chrootctl exec -- zsh -lc 'cd <translated cwd> && <command>'
@@ -708,8 +697,6 @@ def _adapt_forwarded_for_chroot(forwarded: list[str]) -> tuple[list[str], dict[s
     args = list(forwarded)
     out: list[str] = []
     meta = {"hud_requested": "0", "hud_disabled": "0", "hud_mode": "", "hud_mode_adapted": "0", "needs_android_bridge": "0"}
-    has_tasker_progress = False
-    has_tasker_broadcast = False
     has_copy_via = False
     has_no_clipboard = "--no-clipboard" in args
     has_auto_hud = False
@@ -718,13 +705,7 @@ def _adapt_forwarded_for_chroot(forwarded: list[str]) -> tuple[list[str], dict[s
     i = 0
     while i < len(args):
         token = args[i]
-        if token == "--tasker-progress":
-            has_tasker_progress = True
-            out.append(token)
-        elif token == "--tasker-broadcast":
-            has_tasker_broadcast = True
-            out.append(token)
-        elif token == "--auto-hud":
+        if token == "--auto-hud":
             has_auto_hud = True
             meta["hud_requested"] = "1"
             out.append(token)
@@ -768,10 +749,6 @@ def _adapt_forwarded_for_chroot(forwarded: list[str]) -> tuple[list[str], dict[s
         else:
             out.append(token)
         i += 1
-    if not has_tasker_progress:
-        out.insert(0, "--tasker-progress")
-    if not has_tasker_broadcast:
-        out.insert(0, "--tasker-broadcast")
     if not has_copy_via:
         out = _insert_global_flags_before_command(out, ["--copy-via", "termux"])
     if not has_no_clipboard:
@@ -814,7 +791,7 @@ def _start_android_hud_bridge(raw_logfile: Path, state_dir: Path) -> None:
                 return
         except Exception:
             pass
-    mode = os.environ.get("DEVTOOL_ANDROID_HUD_MODE", "android-notify")
+    mode = "android-bridge"
     argv = [sys.executable, "-m", "devtool", "android-hud-bridge", "--mode", mode, "--state-dir", str(state_dir)]
     env = os.environ.copy()
     env["DEVTOOL_AUTO_CHROOT"] = "0"
@@ -823,7 +800,7 @@ def _start_android_hud_bridge(raw_logfile: Path, state_dir: Path) -> None:
         handle = logfile.open("ab")
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.STDOUT, start_new_session=True, env=env)
         pidfile.write_text(str(proc.pid), encoding="utf-8")
-        _echo_log(raw_logfile, f"HUD bridge: started Android notification renderer (pid {proc.pid})")
+        _echo_log(raw_logfile, f"HUD bridge: started Android app forwarder (pid {proc.pid})")
         _echo_log(raw_logfile, f"HUD bridge log: {logfile}")
     except Exception as exc:
         _echo_log(raw_logfile, f"HUD bridge: could not start ({exc})")

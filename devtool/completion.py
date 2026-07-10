@@ -58,17 +58,6 @@ _devtool() {
     '(-y --yes)'{-y,--yes}'[assume yes for confirmations]' \
     '(-f --force)'{-f,--force}'[force dangerous actions]' \
     '--no-build[for test: pass --no-build to dotnet test]' \
-    '(-n --notify)'{-n,--notify}'[send notification]' \
-    '--notify-brief[send brief notification]' \
-    '--notify-on-success[only notify on success]' \
-    '--notify-on-fail[only notify on failure]' \
-    '--notify-progress[update live Termux notification]' \
-    '--notify-id[notification id]:id:' \
-    '--tasker[enable Tasker JSON/broadcast/progress integration]' \
-    '--tasker-progress[write live Tasker JSON files]' \
-    '--tasker-dir[Tasker JSON directory]:dir:_files -/' \
-    '--tasker-broadcast[send Android broadcast for Tasker events]' \
-    '--tasker-action[Android broadcast action]:action:' \
     '--copy[always copy raw output]' \
     '--copy-summary[always copy rendered summary]' \
     '--copy-json[always copy JSON summary]' \
@@ -131,13 +120,11 @@ _devtool() {
       ;;
     hud)
       _arguments \
-        '--mode[HUD renderer]:(auto android-notify android-bridge android-gui termux-gui terminal notification web studio desktop desktop-window desktop-notify v3 v4 v5 v6 console dashboard all unix gnome)' \
+        '--mode[HUD renderer]:(auto android-bridge android-gui termux-gui terminal web studio desktop desktop-window desktop-notify v3 v4 v5 v6 console dashboard all unix gnome)' \
         '--host[host/IP for web/studio modes]:host:' \
         '--port[port for web/studio modes]:port:' \
         '--poll-interval[seconds between refreshes]:seconds:' \
         '--recent-events[number of recent events]:count:' \
-        '--notify-id[notification id]:id:' \
-        '--studio-notify[also mirror studio mode to termux-notification]' \
         '--once[render/update once and exit]'
       ;;
     history)

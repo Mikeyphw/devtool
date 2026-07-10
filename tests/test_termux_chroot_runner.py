@@ -197,9 +197,9 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             self.assertNotEqual(run_live.call_args.args[0], original.argv)
 
     def test_host_mode_translates_desktop_hud_to_android_gui(self) -> None:
-        self.assertEqual(normalize_hud_mode_for_termux_host("desktop-window"), "android-notify")
-        self.assertEqual(normalize_hud_mode_for_termux_host("android-bridge"), "android-notify")
-        self.assertEqual(normalize_hud_mode_for_termux_host("android-notify"), "android-notify")
+        self.assertEqual(normalize_hud_mode_for_termux_host("desktop-window"), "android-bridge")
+        self.assertEqual(normalize_hud_mode_for_termux_host("android-bridge"), "android-bridge")
+        self.assertEqual(normalize_hud_mode_for_termux_host("android-notify"), "android-bridge")
 
 
 if __name__ == "__main__":

@@ -10,8 +10,6 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -27,7 +25,8 @@ final class RootBridgeManager {
     private static final String BRIDGE = "/data/adb/devtool-bridge/bin/devtool-root-bridge";
     private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
     private static final SecureRandom IDS = new SecureRandom();
-    private static final Map<String, Process> ACTIVE = new ConcurrentHashMap<>();
+    private static volatile Process activeProcess;
+    private static volatile String activeRunId = "";
     private static final int MAX_OUTPUT = 64_000;
 
     private RootBridgeManager() {}
@@ -161,6 +160,11 @@ final class RootBridgeManager {
             return new TermuxCommandRunner.LaunchResult(false, -1,
                     "Root bridge only accepts generated devtool or devtool-androidos commands");
         }
+        RunRecord active = RunStore.active(context);
+        if (active != null) {
+            return new TermuxCommandRunner.LaunchResult(false, -1,
+                    "A devtool run is already active. Finish or cancel it before starting another.");
+        }
 
         int executionId = nextExecutionId();
         String runId = "root-" + Integer.toUnsignedString(executionId, 16);
@@ -184,8 +188,12 @@ final class RootBridgeManager {
 
     static boolean cancel(Context context, String runId) {
         if (runId == null || !runId.startsWith("root-")) return false;
-        Process process = ACTIVE.remove(runId);
-        if (process != null) process.destroy();
+        Process process = activeProcess;
+        if (process != null && runId.equals(activeRunId)) {
+            process.destroy();
+            activeProcess = null;
+            activeRunId = "";
+        }
         String token = BridgeSecrets.getOrCreateToken(context);
         EXECUTOR.execute(() -> rootCommand(bridgeInvocation("cancel " + shellQuote(token) + " " + shellQuote(runId))));
         return true;
@@ -198,7 +206,8 @@ final class RootBridgeManager {
         String error = "";
         try {
             Process process = new ProcessBuilder("su", "-c", shell).redirectErrorStream(true).start();
-            ACTIVE.put(runId, process);
+            activeProcess = process;
+            activeRunId = runId;
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                     process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
@@ -210,7 +219,10 @@ final class RootBridgeManager {
         } catch (Exception exception) {
             error = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
         } finally {
-            ACTIVE.remove(runId);
+            if (runId.equals(activeRunId)) {
+                activeProcess = null;
+                activeRunId = "";
+            }
         }
         String stdout = output.toString();
         boolean richCompletion = RunStore.finish(context, runId, exitCode, stdout, "", error);

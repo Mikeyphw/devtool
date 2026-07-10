@@ -1,39 +1,38 @@
-# Manual apply
+# Manual update
 
-Extract this archive at the root of the devtool source repository:
+Extract the updated repository over a clean devtool checkout, then reinstall the CLI and rebuild the Android app.
 
 ```bash
-cd "$HOME/Code/devtool"
-unzip -o "$HOME/Downloads/devtool_concurrent_runs_overlay_manual.zip"
-PYTHONPATH=. python -m pytest -q
+cd "$HOME/Code"
+rm -rf devtool-new
+mkdir devtool-new
+unzip "$HOME/Downloads/devtool.zip" -d devtool-new
+cd devtool-new
+./install.sh
 ```
 
-Useful flags:
+Build the Android frontend:
 
 ```bash
-# Wait up to five minutes for overlapping file scopes (default)
-devtool --lock-timeout 300 ...
-
-# Fail immediately on a conflicting run
-devtool --no-wait ...
-
-# Disable path-aware concurrency for one invocation
-devtool --concurrency off ...
-
-# Android HUD through Termux:API notification
-devtool --auto-hud --hud-mode android-notify ...
-devtool hud --mode android-notify --follow-active
-
-# Existing desktop/legacy Android mode names auto-translate on Termux
-devtool --auto-hud --hud-mode desktop-window ...
-devtool --auto-hud --hud-mode android-gui ...  # compatibility alias
-
-
-## Optional root bridge module
-
-```bash
-cd "$HOME/Code/devtool"
-./build-root-bridge-module.sh
+./build-android-hud.sh
 ```
 
-Install `devtool_root_bridge_module.zip` from KernelSU/Magisk/APatch, reboot, grant the Android app root, then use **Devtool Root Bridge → Pair root bridge**. The app can also export this identical ZIP from its dynamic root-bridge tile. This is optional; Termux `RUN_COMMAND` remains the default backend.
+After installing the APK, open the app and verify:
+
+1. Notification permission.
+2. Termux `RUN_COMMAND` permission.
+3. **Termux bridge → Install token** or **Verify**.
+4. Floating HUD permission only when the overlay is desired.
+
+For a direct Termux run, use:
+
+```bash
+DEVTOOL_HUD_SINGLETON=kill devtool \
+  --auto-hud \
+  --hud-mode android-bridge \
+  --yes \
+  -r "$HOME/Code/sims3tools" \
+  status
+```
+
+Do not use the removed `android-notify`, `--notify*`, `--tasker*`, or concurrency flags. Tasker actions are configured through **Tasker → Plugin → Devtool Live HUD**.

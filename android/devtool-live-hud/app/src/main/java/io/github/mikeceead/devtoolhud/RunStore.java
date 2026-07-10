@@ -18,6 +18,7 @@ final class RunStore {
     private static final String KEY_RUNS = "runs";
     private static final int MAX_RUNS = 40;
     private static final int MAX_OUTPUT = 16_000;
+    private static final long ACTIVE_STALE_MS = 12L * 60L * 60L * 1000L;
 
     private RunStore() {}
 
@@ -92,6 +93,14 @@ final class RunStore {
     static synchronized RunRecord latest(Context context) {
         List<RunRecord> values = all(context);
         return values.isEmpty() ? null : values.get(0);
+    }
+
+    static synchronized RunRecord active(Context context) {
+        long now = System.currentTimeMillis();
+        for (RunRecord record : all(context)) {
+            if (!record.terminal() && now - record.updatedAtMs < ACTIVE_STALE_MS) return record;
+        }
+        return null;
     }
 
     static synchronized RunRecord find(Context context, String runId) {

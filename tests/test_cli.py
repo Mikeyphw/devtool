@@ -14,7 +14,7 @@ from unittest.mock import patch
 from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _notification_message, build_parser, main
+from devtool.cli import build_parser, main
 from devtool.logstore import latest_log, write_log
 from devtool.summary import build_json_summary
 
@@ -78,6 +78,22 @@ class CliTests(unittest.TestCase):
             parser.parse_args(["apply-overlay-validate", "artifact.zip"])
         with self.assertRaises(SystemExit):
             parser.parse_args(["termux-run"])
+
+
+    def test_parser_rejects_removed_notification_tasker_and_concurrency_flags(self) -> None:
+        parser = build_parser()
+        for argv in (
+            ["--notify", "build"],
+            ["--notify-progress", "build"],
+            ["--tasker", "build"],
+            ["--tasker-progress", "build"],
+            ["--tasker-broadcast", "build"],
+            ["--concurrency", "off", "build"],
+            ["--lock-timeout", "1", "build"],
+            ["--no-wait", "build"],
+        ):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                parser.parse_args(argv)
 
     def test_ai_prompt_prints_to_stdout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -745,13 +761,12 @@ class ValidationDotnetFlagTests(unittest.TestCase):
 
 
 def test_hud_overlay_can_be_requested_by_environment(monkeypatch, tmp_path) -> None:
-    from devtool.cli import _normalize_tasker_args
+    from devtool.cli import _normalize_live_progress_args
     import argparse
 
     monkeypatch.setenv("DEVTOOL_HUD_OVERLAY", "1")
-    args = argparse.Namespace(command="validate", tasker=False, tasker_progress=False,
-                              auto_hud=False, hud_overlay=False, hud_no_overlay=False)
-    _normalize_tasker_args(args)
+    args = argparse.Namespace(command="validate", auto_hud=False, hud_overlay=False, hud_no_overlay=False)
+    _normalize_live_progress_args(args)
     assert args.hud_overlay is True
 
 

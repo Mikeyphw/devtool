@@ -58,13 +58,13 @@ class TransactionalApplyTests(unittest.TestCase):
             preview = {"changes": [{"kind": "modify", "path": "file.txt"}, {"kind": "add", "path": "new.txt"}], "counts": {"modify": 1, "add": 1}}
             create_apply_transaction(root, artifact, artifact_type="overlay", preview=preview)
             # Simulate a killed process. Live transactions from another devtool
-            # run must not be rolled back by concurrent commands.
+            # run must not be rolled back by other commands.
             transaction_path = find_active_transactions(root, include_live=True)[0]
             transaction = __import__("json").loads(transaction_path.read_text(encoding="utf-8"))
             transaction["pid"] = 99999999
             transaction["process_start"] = "dead"
             transaction_path.write_text(__import__("json").dumps(transaction), encoding="utf-8")
-            marker = next((transaction_root(root) / "active").glob("*.json"))
+            marker = transaction_root(root) / "active.json"
             marker_data = __import__("json").loads(marker.read_text(encoding="utf-8"))
             marker_data["pid"] = 99999999
             marker_data["process_start"] = "dead"

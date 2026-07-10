@@ -1043,7 +1043,7 @@ def _history_entry_files(repo_root: Path) -> list[Path]:
 def load_history(repo_root: Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     seen: set[str] = set()
-    # New append-only records are authoritative and safe for concurrent runs.
+    # New append-only records are authoritative and safe for interrupted or repeated runs.
     for entry_path in _history_entry_files(repo_root):
         try:
             item = json.loads(entry_path.read_text(encoding="utf-8"))

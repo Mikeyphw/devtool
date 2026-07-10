@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from devtool.hud import HudState, TermuxNotificationHud, choose_hud_mode, events_for_state, last_phase_highlights, latest_log_path, parse_hud_state, render_ascii_bar, state_from_directory
+from devtool.hud import AndroidAppHud, HudState, choose_hud_mode, events_for_state, last_phase_highlights, latest_log_path, parse_hud_state, render_ascii_bar, state_from_directory
 from devtool.cli import build_parser
 
 
@@ -132,52 +132,6 @@ class HudTests(unittest.TestCase):
         self.assertEqual(render_ascii_bar(20, 10, width=10), "██████████")
         self.assertEqual(render_ascii_bar(None, None, width=4), "░░░░")
 
-    def test_choose_hud_mode_auto_prefers_termux_notification_then_terminal(self) -> None:
-        with patch("devtool.hud._is_termux_android", return_value=True), patch("devtool.hud.TermuxNotificationHud.available", return_value=True):
-            self.assertEqual(choose_hud_mode("auto"), "android-notify")
-        with patch("devtool.hud._is_termux_android", return_value=False), patch("devtool.hud._is_termux_chroot_bridge", return_value=False), patch("devtool.hud.GtkDesktopHud.available", return_value=False), patch("devtool.hud.DesktopNotificationHud.available", return_value=False):
-            self.assertEqual(choose_hud_mode("auto"), "terminal")
-
-    def test_notification_hud_builds_rich_progress_argv(self) -> None:
-        hud = TermuxNotificationHud(notification_id="42")
-        state = HudState(title="Build", text="Compiling", current=2, total=4, status="running", phase_name="build", repo_name="demo")
-        argv = hud._build_argv(state)
-        self.assertIn("termux-notification", argv[0])
-        self.assertIn("--id", argv)
-        self.assertIn("42", argv)
-        self.assertIn("● demo · Build", argv)
-        content = argv[argv.index("--content") + 1]
-        self.assertIn("50%", content)
-        self.assertIn("█████████░░░░░░░░░", content)
-        self.assertIn("Compiling", content)
-        self.assertIn("--ongoing", argv)
-        self.assertIn("--alert-once", argv)
-
-    def test_notification_hud_writes_graphical_progress_strip(self) -> None:
-        hud = TermuxNotificationHud(notification_id="42")
-        state = HudState(current=3, total=4, status="running", phase_name="build", repo_name="demo")
-        with tempfile.TemporaryDirectory() as tmp:
-            argv = hud._build_argv(state, directory=Path(tmp))
-            self.assertIn("--image-path", argv)
-            image = Path(argv[argv.index("--image-path") + 1])
-            self.assertTrue(image.exists())
-            self.assertEqual(image.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
-
-    def test_notification_hud_completion_is_full_and_dismissible(self) -> None:
-        hud = TermuxNotificationHud(notification_id="42")
-        state = HudState(
-            title="Done", status="ok", phase_name="commit", repo_name="demo", current=4, total=4,
-            raw={"completion": {"detail": "12 passed, 0 failed, 0 skipped", "tests": {"passed": 12, "failed": 0, "skipped": 0, "total": 12}, "warnings": 2, "errors": 0, "commit_hash": "abc1234"}},
-        )
-        argv = hud._build_argv(state)
-        content = argv[argv.index("--content") + 1]
-        self.assertIn("100%", content)
-        self.assertIn("Tests 12 passed", content)
-        self.assertIn("2 warnings", content)
-        self.assertIn("Commit abc1234", content)
-        self.assertNotIn("--ongoing", argv)
-
-
     def test_last_phase_highlights_keep_restore_build_test_details(self) -> None:
         events = [
             {"event_type": "progress", "phase": {"name": "restore"}, "message": "restored App.Core", "progress": {"detail": "restored App.Core"}},
@@ -244,12 +198,11 @@ class HudV345Tests(unittest.TestCase):
 
     def test_cli_accepts_hud_v5_web_flags(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["hud", "--mode", "v5", "--host", "0.0.0.0", "--port", "9999", "--studio-notify", "--once"])
+        args = parser.parse_args(["hud", "--mode", "v5", "--host", "0.0.0.0", "--port", "9999", "--once"])
         self.assertEqual(args.command, "hud")
         self.assertEqual(args.mode, "v5")
         self.assertEqual(args.host, "0.0.0.0")
         self.assertEqual(args.port, 9999)
-        self.assertTrue(args.studio_notify)
 
     def test_choose_desktop_aliases(self) -> None:
         from devtool.hud import choose_hud_mode
@@ -278,27 +231,25 @@ class HudV345Tests(unittest.TestCase):
         self.assertEqual(args.mode, "v6")
 
 
-    def test_android_hud_modes_are_accepted(self) -> None:
+    def test_android_hud_modes_are_app_bridge_only(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["hud", "--mode", "android-gui", "--once"])
         self.assertEqual(args.mode, "android-gui")
-        args = parser.parse_args(["hud", "--mode", "android-notify", "--once"])
-        self.assertEqual(args.mode, "android-notify")
-        args = parser.parse_args(["hud", "--mode", "termux-gui", "--once"])
-        self.assertEqual(args.mode, "termux-gui")
+        args = parser.parse_args(["hud", "--mode", "android-bridge", "--once"])
+        self.assertEqual(args.mode, "android-bridge")
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["hud", "--mode", "android-notify", "--once"])
 
     def test_android_hud_aliases_and_termux_auto(self) -> None:
-        from devtool.hud import choose_hud_mode
-        self.assertEqual(choose_hud_mode("termux-gui"), "android-notify")
-        self.assertEqual(choose_hud_mode("android-overlay"), "android-notify")
-        self.assertEqual(choose_hud_mode("android-gui"), "android-notify")
+        self.assertEqual(choose_hud_mode("termux-gui"), "android-bridge")
+        self.assertEqual(choose_hud_mode("android-overlay"), "android-bridge")
+        self.assertEqual(choose_hud_mode("android-gui"), "android-bridge")
         with patch("devtool.hud._is_termux_android", return_value=True), \
-             patch("devtool.hud.TermuxNotificationHud.available", return_value=True), \
              patch("devtool.hud.GtkDesktopHud.available", return_value=True):
-            self.assertEqual(choose_hud_mode("desktop"), "android-notify")
-            self.assertEqual(choose_hud_mode("desktop-window"), "android-notify")
-            self.assertEqual(choose_hud_mode("desktop-notify"), "android-notify")
-            self.assertEqual(choose_hud_mode("auto"), "android-notify")
+            self.assertEqual(choose_hud_mode("desktop"), "android-bridge")
+            self.assertEqual(choose_hud_mode("desktop-window"), "android-bridge")
+            self.assertEqual(choose_hud_mode("desktop-notify"), "android-bridge")
+            self.assertEqual(choose_hud_mode("auto"), "android-bridge")
 
     def test_termux_gui_backend_class_is_removed(self) -> None:
         import devtool.hud as hud_module
@@ -352,10 +303,11 @@ class AndroidBridgeHudTests(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["hud", "--mode", "android-bridge", "--once"])
         self.assertEqual(args.mode, "android-bridge")
-        args = parser.parse_args(["android-hud-bridge", "--mode", "android-notify", "--state-dir", "/tmp/hud", "--once"])
+        args = parser.parse_args(["android-hud-bridge", "--state-dir", "/tmp/hud", "--once"])
         self.assertEqual(args.command, "android-hud-bridge")
-        self.assertEqual(args.mode, "android-notify")
         self.assertEqual(args.state_dir, "/tmp/hud")
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["android-hud-bridge", "--mode", "android-notify", "--once"])
 
 class AndroidLegacyFlagTests(unittest.TestCase):
     def test_legacy_gui_flags_remain_hidden_compatibility_noops(self) -> None:
@@ -364,77 +316,29 @@ class AndroidLegacyFlagTests(unittest.TestCase):
         self.assertTrue(args.hud_no_overlay)
         hud_args = parser.parse_args(["hud", "--mode", "android-gui", "--no-overlay"])
         self.assertTrue(hud_args.no_overlay)
-        self.assertEqual(choose_hud_mode(hud_args.mode), "android-notify")
+        self.assertEqual(choose_hud_mode(hud_args.mode), "android-bridge")
 
 
-class HudRunRegistryCleanupTests(unittest.TestCase):
-    def test_stale_running_record_with_reused_pid_is_removed(self) -> None:
-        from devtool.hud import _run_payloads
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            runs = root / "runs"
-            runs.mkdir()
-            path = runs / "stale.json"
-            path.write_text(json.dumps({
-                "run_id": "stale",
-                "status": "running",
-                "pid": 123,
-                "process_start": "old-start",
-                "boot_id": "boot-a",
-                "heartbeat_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
-            }), encoding="utf-8")
-            with patch("devtool.hud._boot_id", return_value="boot-a"), \
-                 patch("devtool.hud.os.kill", return_value=None), \
-                 patch("devtool.hud._process_start_token", return_value="new-start"):
-                payloads = _run_payloads(root)
-            self.assertEqual(payloads, [])
-            self.assertFalse(path.exists())
-
-    def test_duplicate_files_for_same_logical_run_are_deduplicated(self) -> None:
-        from devtool.hud import _run_payloads
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            runs = root / "runs"
-            runs.mkdir()
-            base = {
-                "run_id": "shared",
-                "status": "running",
-                "pid": 123,
-                "process_start": "same",
-                "boot_id": "boot-a",
-                "heartbeat_at": "2026-07-08T18:00:00Z",
-            }
-            (runs / "outer.json").write_text(json.dumps({**base, "updated_at": "2026-07-08T18:00:00Z"}), encoding="utf-8")
-            (runs / "inner.json").write_text(json.dumps({**base, "updated_at": "2026-07-08T18:00:01Z"}), encoding="utf-8")
-            with patch("devtool.hud._boot_id", return_value="boot-a"), \
-                 patch("devtool.hud.os.kill", return_value=None), \
-                 patch("devtool.hud._process_start_token", return_value="same"), \
-                 patch("devtool.hud._iso_age_seconds", return_value=0.0):
-                payloads = _run_payloads(root)
-            self.assertEqual(len(payloads), 1)
-            self.assertEqual(payloads[0]["updated_at"], "2026-07-08T18:00:01Z")
-            self.assertEqual(len(list(runs.glob("*.json"))), 1)
 
 class AndroidOverlayPresentationTests(unittest.TestCase):
-    def test_global_cli_accepts_explicit_overlay_and_notification_only_modes(self) -> None:
+    def test_global_cli_accepts_explicit_overlay_modes(self) -> None:
         parser = build_parser()
         overlay_args = parser.parse_args(["--hud-overlay", "build"])
         self.assertTrue(overlay_args.hud_overlay)
         self.assertFalse(overlay_args.hud_no_overlay)
-        notification_args = parser.parse_args(["--hud-no-overlay", "build"])
-        self.assertTrue(notification_args.hud_no_overlay)
+        no_overlay_args = parser.parse_args(["--hud-no-overlay", "build"])
+        self.assertTrue(no_overlay_args.hud_no_overlay)
         with self.assertRaises(SystemExit):
             parser.parse_args(["--hud-overlay", "--hud-no-overlay", "build"])
 
     def test_native_bridge_payload_contains_overlay_request(self) -> None:
-        hud = TermuxNotificationHud(notification_id="42", overlay=True)
+        hud = AndroidAppHud(overlay=True)
         state = HudState(
             title="Build", text="Compiling", current=2, total=4,
             status="running", phase_name="build", repo_name="demo",
             raw={"run_id": "overlay-run"},
         )
-        action, payload = hud._live_bridge_payload(state, [], Path("/tmp/overlay-run"))
+        action, payload = hud._payload(state, Path("/tmp/overlay-run"))
         self.assertEqual(action, "update")
         self.assertTrue(payload["overlay"])
 

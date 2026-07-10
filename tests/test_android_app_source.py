@@ -31,7 +31,7 @@ def test_manifest_declares_opt_in_overlay_service() -> None:
 def test_overlay_service_uses_application_overlay_and_multi_run_cards() -> None:
     source = (APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud" / "OverlayHudService.java").read_text(encoding="utf-8")
     assert "TYPE_APPLICATION_OVERLAY" in source
-    assert "LinkedHashMap<String, HudUpdate> runs" in source
+    assert "private HudUpdate currentRun" in source
     assert "TERMINAL_LINGER_MS" in source
     assert "FOREGROUND_SERVICE_TYPE_SPECIAL_USE" in source
 

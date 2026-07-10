@@ -14,7 +14,6 @@ from typing import Any
 
 from .artifacts import preview_artifact, read_delete_manifest
 from .models import OperationResult
-from .concurrency import process_is_alive
 
 
 
@@ -61,6 +60,21 @@ def _process_start_token(pid: int) -> str:
         return ""
 
 
+
+def _process_is_alive(pid: int, start_token: str = "") -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    current = _process_start_token(pid)
+    return not start_token or not current or current == start_token
+
 def _safe_rel(text: str) -> Path:
     rel = Path(str(text).strip())
     if not str(rel):
@@ -106,12 +120,10 @@ def _active_dir(repo_root: Path) -> Path:
 
 
 def _active_file(repo_root: Path, transaction_id: str = "") -> Path:
-    # Keep the legacy active.json path readable for recovery, but new
-    # transactions get one marker each so concurrent applies cannot overwrite
-    # another run's recovery state.
-    if not transaction_id:
-        return transaction_root(repo_root) / "active.json"
-    return _active_dir(repo_root) / f"{transaction_id}.json"
+    # Devtool now permits one active run per repository, so a single recovery
+    # marker is authoritative. The active/ directory is still read for cleanup
+    # compatibility with older releases.
+    return transaction_root(repo_root) / "active.json"
 
 
 def _remove_active_marker(repo_root: Path, transaction_path: Path, transaction_id: str = "") -> None:
@@ -286,7 +298,7 @@ def find_active_transactions(repo_root: Path, *, include_live: bool = False) -> 
                 marker.unlink(missing_ok=True)
                 continue
             pid = int(data.get("pid", 0) or 0)
-            live = process_is_alive(pid, str(data.get("process_start") or ""))
+            live = _process_is_alive(pid, str(data.get("process_start") or ""))
             if live and not include_live:
                 continue
             found.append(path)

@@ -10,6 +10,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,12 +47,11 @@ from .completion import ZSH_COMPLETION
 from .config import detect_project_kind, discover_dotnet_candidates, load_project_config, resolve_config_dict
 from .logstore import latest_log, new_log_path
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
-from .notify import available_notifier, send_notification
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
-from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_ACTION, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, start_auto_hud
+from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, start_auto_hud
 from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
-from .concurrency import ConcurrencyLease, merge_scopes, scope_for_artifact_preview, scope_for_specs
+from .single_run import SingleRunLock
 
 console = create_console()
 
@@ -131,32 +131,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write the machine JSON payload to this file",
     )
 
-    notifications = parser.add_argument_group("Notifications and integrations")
-    notifications.add_argument("-n", "--notify", action="store_true", help="Send a completion notification")
-    notifications.add_argument("--notify-brief", action="store_true", help="Use a shorter notification body")
-    notifications.add_argument("--notify-on-success", action="store_true", help="Only notify on success")
-    notifications.add_argument("--notify-on-fail", action="store_true", help="Only notify on failure")
-    notifications.add_argument("--notify-progress", action="store_true", help="Update a live Termux notification while phases run")
-    notifications.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for live progress")
-    notifications.add_argument("--tasker", action="store_true", help="Enable Tasker JSON, broadcast, and notification integration")
-    notifications.add_argument("--tasker-progress", "--progress", dest="tasker_progress", action="store_true", default=None, help="Write live HUD/Tasker progress files (default for build/test/validate/apply)")
-    notifications.add_argument("--no-tasker-progress", "--no-progress", dest="tasker_progress", action="store_false", help="Disable live HUD/Tasker progress files")
-    notifications.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory for HUD/Tasker progress files")
-    notifications.add_argument("--tasker-broadcast", action="store_true", help="Send an Android broadcast after Tasker event files are written")
-    notifications.add_argument("--tasker-action", default=DEFAULT_TASKER_ACTION, help="Android broadcast action for Tasker events")
-
-    hud = parser.add_argument_group("HUD")
-    hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the HUD when progress is emitted (default)")
-    hud.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not auto-start the HUD for this command")
-    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-notify, android-bridge, desktop-window, desktop-notify, v5, or terminal (legacy android-gui maps to android-notify)")
+    hud = parser.add_argument_group("HUD and app bridge")
+    hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the selected HUD while progress is emitted (default)")
+    hud.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not publish live HUD progress for this command")
+    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-bridge, desktop-window, web, studio, or terminal")
     hud_presentation = hud.add_mutually_exclusive_group()
     hud_presentation.add_argument("--hud-overlay", action="store_true", help="On Android, also show the run in the user-enabled floating overlay HUD")
-    hud_presentation.add_argument("--hud-no-overlay", action="store_true", help="On Android, use notification-only presentation (default)")
-
-    concurrency = parser.add_argument_group("Concurrency")
-    concurrency.add_argument("--concurrency", choices=["auto", "off"], default=os.environ.get("DEVTOOL_CONCURRENCY", "auto"), help="Allow concurrent runs when their repository file scopes do not conflict")
-    concurrency.add_argument("--lock-timeout", type=float, default=float(os.environ.get("DEVTOOL_LOCK_TIMEOUT", "300")), help="Seconds to wait for a conflicting run (default: 300)")
-    concurrency.add_argument("--no-wait", action="store_true", help="Fail immediately instead of waiting for a conflicting file lease")
+    hud_presentation.add_argument("--hud-no-overlay", action="store_true", help="On Android, keep the update in the app without opening the floating overlay")
 
     environment = parser.add_argument_group("Execution environment")
     exec_group = environment.add_mutually_exclusive_group()
@@ -305,32 +286,28 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_cmd.add_argument("-o", "--output", default="")
 
     hud_cmd = subparsers.add_parser("hud")
-    hud_cmd.add_argument("--tasker-dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool HUD/Tasker JSON files (default: platform state dir)")
-    hud_cmd.add_argument("--mode", choices=["auto", "android-gui", "android-bridge", "android-notify", "termux-gui", "terminal", "notification", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: Termux:API notification/android-bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6")
+    hud_cmd.add_argument("--state-dir", dest="tasker_dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool live HUD state")
+    hud_cmd.add_argument("--mode", choices=["auto", "android-gui", "android-bridge", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: Android app bridge, terminal, web, studio, or Unix desktop")
     hud_cmd.add_argument("--host", default="127.0.0.1", help="Host/IP for HUD web/studio modes")
     hud_cmd.add_argument("--port", type=int, default=8765, help="Port for HUD web/studio modes")
     hud_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
     hud_cmd.add_argument("--recent-events", type=int, default=8, help="Recent JSONL events to show/serve")
-    hud_cmd.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for HUD notification/studio mode")
-    hud_cmd.add_argument("--studio-notify", action="store_true", help="In studio/v5 mode, also mirror state into termux-notification when available")
     hud_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
     hud_cmd.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory written by auto-HUD")
     hud_presentation_cmd = hud_cmd.add_mutually_exclusive_group()
     hud_presentation_cmd.add_argument("--overlay", action="store_true", help="Also publish runs to the enabled Android floating overlay HUD")
-    hud_presentation_cmd.add_argument("--no-overlay", action="store_true", help="Use notification-only presentation (default)")
+    hud_presentation_cmd.add_argument("--no-overlay", action="store_true", help="Do not open the floating overlay")
 
     android_bridge_cmd = subparsers.add_parser("android-hud-bridge", aliases=["termux-hud-bridge"], help="Display chroot/proot Android HUD bridge state from the Termux host")
     android_bridge_cmd.add_argument("--state-dir", default="", help="Shared bridge state directory; defaults to ~/.local/state/devtool-android-hud on Termux or /home/termux/.local/state/devtool-android-hud in a chroot")
-    android_bridge_cmd.add_argument("--mode", choices=["android-notify", "android-gui", "terminal"], default="android-notify", help="Renderer used by the Termux host helper; legacy android-gui maps to android-notify")
     android_bridge_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
     android_bridge_cmd.add_argument("--recent-events", type=int, default=8, help="Recent events to show")
-    android_bridge_cmd.add_argument("--notify-id", default=DEFAULT_NOTIFICATION_ID, help="Notification id for android-notify mode")
     android_bridge_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
     android_bridge_cmd.add_argument("--follow-active", action="store_true", default=True, help="Follow active HUD pointer in the shared bridge directory")
     android_bridge_cmd.add_argument("--no-follow-active", dest="follow_active", action="store_false", help="Read the shared bridge directory directly")
     android_bridge_presentation = android_bridge_cmd.add_mutually_exclusive_group()
     android_bridge_presentation.add_argument("--overlay", action="store_true", help="Also publish runs to the enabled Android floating overlay HUD")
-    android_bridge_presentation.add_argument("--no-overlay", action="store_true", help="Use notification-only presentation (default)")
+    android_bridge_presentation.add_argument("--no-overlay", action="store_true", help="Do not open the floating overlay")
 
     history_cmd = subparsers.add_parser("history")
     history_cmd.add_argument("--limit", type=int, default=20)
@@ -758,80 +735,37 @@ def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentPa
     return explicit_stdout, copy_mode
 
 
-def _notification_style(*, warnings: int, errors: int, failed: int) -> tuple[str, str]:
-    if failed or errors:
-        return "❌", "FAIL"
-    if warnings:
-        return "⚠️", "WARN"
-    return "✅", "PASS"
-
-
-def _notification_message(*, warnings: int, errors: int, failed: int, command: str, repo_name: str, duration_seconds: float, brief: bool) -> tuple[str, str]:
-    emoji, status = _notification_style(warnings=warnings, errors=errors, failed=failed)
-    title = f"{emoji} {status}"
-    body = f"{emoji} {status}: {repo_name}: {command}"
-    if not brief:
-        body += f" in {duration_seconds:.1f}s"
-    body += f" • {errors}E {warnings}W"
-    return title, body
-
-
-def _maybe_notify(args: argparse.Namespace, *, warnings: int, errors: int, failed: int, command: str, repo_name: str, duration_seconds: float) -> None:
-    if not args.notify:
-        return
-    succeeded = failed == 0
-    if args.notify_on_success and not succeeded:
-        return
-    if args.notify_on_fail and succeeded:
-        return
-    title, body = _notification_message(
-        warnings=warnings,
-        errors=errors,
-        failed=failed,
-        command=command,
-        repo_name=repo_name,
-        duration_seconds=duration_seconds,
-        brief=args.notify_brief,
-    )
-    send_notification(title, body)
-
-
-def _normalize_tasker_args(args: argparse.Namespace) -> None:
+def _normalize_live_progress_args(args: argparse.Namespace) -> None:
     command = str(getattr(args, "command", "") or "")
     env_overlay = os.environ.get("DEVTOOL_HUD_OVERLAY", "").strip().lower() in {"1", "true", "yes", "on"}
     if env_overlay and not bool(getattr(args, "hud_no_overlay", False)):
         args.hud_overlay = True
-    if getattr(args, "tasker", False):
-        args.tasker_progress = True
-        args.tasker_broadcast = True
-        args.notify_progress = True
-    elif getattr(args, "tasker_progress", None) is None:
-        # Progress is useful by default for commands that run external phases.
-        # Keep introspection/config/HUD commands quiet unless the user opts in.
-        args.tasker_progress = command in PROGRESS_CAPABLE_COMMANDS
-
+    # Live state is an internal HUD/app bridge facility now. Legacy Tasker and
+    # standalone notification flags are intentionally not exposed by the CLI.
+    args.tasker_progress = command in PROGRESS_CAPABLE_COMMANDS
+    args.notify_progress = False
+    args.tasker_dir = DEFAULT_TASKER_DIR
+    args.notify_id = DEFAULT_NOTIFICATION_ID
     if getattr(args, "auto_hud", None) is None:
-        args.auto_hud = bool(getattr(args, "tasker_progress", False)) and command != "hud"
+        args.auto_hud = bool(args.tasker_progress) and command != "hud"
+    if args.auto_hud is False:
+        args.tasker_progress = False
 
 
-def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = None, repo: Path | None = None) -> TaskerProgressSink | None:
+def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | None = None, repo: Path | None = None) -> TaskerProgressSink | None:
     repo_root = (config.repo_root if config is not None else (repo or Path(args.repo or Path.cwd()))).resolve()
     target = str(getattr(args, "target", "") or getattr(args, "solution", "") or getattr(args, "project", "") or "")
-    tasker_dir_text = str(getattr(args, "tasker_dir", DEFAULT_TASKER_DIR))
-    directory = resolve_cli_path(tasker_dir_text)
+    directory = resolve_cli_path(DEFAULT_TASKER_DIR)
     enabled = bool(getattr(args, "tasker_progress", False))
-    notify_progress = bool(getattr(args, "notify_progress", False))
     hud_mode = str(getattr(args, "hud_mode", "desktop") or "desktop")
-    chosen_hud_mode = hud_mode
     if enabled and bool(getattr(args, "auto_hud", False)):
         try:
             from .hud import choose_hud_mode, default_android_bridge_dir
             chosen_hud_mode = choose_hud_mode(hud_mode)
-            tasker_dir_is_default = tasker_dir_text == DEFAULT_TASKER_DIR
-            if chosen_hud_mode == "android-bridge" and (tasker_dir_is_default or os.environ.get("DEVTOOL_HUD_BRIDGE_DIR")):
+            if chosen_hud_mode == "android-bridge" or os.environ.get("DEVTOOL_HUD_BRIDGE_DIR"):
                 directory = default_android_bridge_dir()
         except Exception:
-            chosen_hud_mode = hud_mode
+            pass
 
     sink = build_tasker_sink(
         enabled=enabled,
@@ -839,52 +773,28 @@ def _tasker_for_args(args: argparse.Namespace, config: ProjectConfig | None = No
         command=str(getattr(args, "command", "devtool") or "devtool"),
         repo_root=repo_root,
         target=target,
-        broadcast=bool(getattr(args, "tasker_broadcast", False)),
-        broadcast_action=str(getattr(args, "tasker_action", DEFAULT_TASKER_ACTION)),
-        notify_progress=notify_progress,
-        notification_id=str(getattr(args, "notify_id", DEFAULT_NOTIFICATION_ID)),
+        notify_progress=False,
+        notification_id=DEFAULT_NOTIFICATION_ID,
         run_id=str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")),
         overlay=bool(getattr(args, "hud_overlay", False)) and not bool(getattr(args, "hud_no_overlay", False)),
     )
 
     if sink is not None and enabled and bool(getattr(args, "auto_hud", False)):
-        # Publish this run before changing/reusing the singleton HUD. This keeps
-        # the prior run's state from flashing in the desktop window.
         sink.prepare_hud()
         overlay_requested = bool(getattr(args, "hud_overlay", False)) and not bool(getattr(args, "hud_no_overlay", False))
         start_auto_hud(directory, mode=hud_mode, poll_interval=0.1, no_overlay=not overlay_requested)
-        if chosen_hud_mode == "android-notify":
-            sink.notify_progress = False
     return sink
 
 
-def _notification_payload_from_totals(*, warnings: int, errors: int, failed: int, command: str, repo_name: str, duration_seconds: float, brief: bool) -> dict:
-    title, body = _notification_message(
-        warnings=warnings,
-        errors=errors,
-        failed=failed,
-        command=command,
-        repo_name=repo_name,
-        duration_seconds=duration_seconds,
-        brief=brief,
-    )
-    level = "error" if failed or errors else ("warning" if warnings else "success")
-    return {"level": level, "title": title, "text": body, "expanded_title": title, "expanded_text": body, "body": body}
-
-
-def _finish_tasker(tasker_progress: TaskerProgressSink | None, *, totals: dict[str, int], results: list[OperationResult], command: str, repo_name: str, duration_seconds: float, args: argparse.Namespace) -> None:
-    if tasker_progress is None:
+def _finish_live_progress(live_progress: TaskerProgressSink | None, *, totals: dict[str, int], results: list[OperationResult]) -> None:
+    if live_progress is None:
         return
-    notification = _notification_payload_from_totals(
-        warnings=totals["warnings"],
-        errors=totals["errors"],
-        failed=totals["failed"],
-        command=command,
-        repo_name=repo_name,
-        duration_seconds=duration_seconds,
-        brief=getattr(args, "notify_brief", False),
+    live_progress.finished(
+        ok=totals["failed"] == 0 and totals["errors"] == 0,
+        totals=totals,
+        results=results,
+        notification=None,
     )
-    tasker_progress.finished(ok=totals["failed"] == 0 and totals["errors"] == 0, totals=totals, results=results, notification=notification)
 
 
 def _summary_text(results: list[OperationResult]) -> str:
@@ -1402,86 +1312,26 @@ def _maybe_commit_after_apply(
     if not results or any(result.returncode != 0 for result in results):
         return results, raw_output
 
-    # Builds/tests may run concurrently, but Git index/ref updates are serialized
-    # for a very short phase. History is recorded inside the same lease so each
-    # commit includes a coherent append-only record and generated index.
-    git_lease = ConcurrencyLease(
-        config.repo_root,
-        command=f"{args.command}:git-commit",
-        writes=["@git-commit"],
-        phase="git-commit",
-        run_id=str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")),
-        timeout=0.0 if bool(getattr(args, "no_wait", False)) else float(getattr(args, "lock_timeout", 300.0)),
-    )
-    with git_lease:
-        if not getattr(args, "_devtool_history_recorded", False):
-            _record_apply_history(config, args, results)
-            args._devtool_history_recorded = True
+    # The whole devtool operation already owns the repository's single-run lock.
+    if not getattr(args, "_devtool_history_recorded", False):
+        _record_apply_history(config, args, results)
+        args._devtool_history_recorded = True
 
-        commit_paths = _artifact_commit_paths(args)
-        commit_results, commit_raw = _git_commit_with_optional_log(
-            config.repo_root,
-            commit_message,
-            verbose=args.verbose,
-            dry_run=args.dry_run,
-            log_path=log_path,
-            paths=commit_paths,
-        )
+    commit_paths = _artifact_commit_paths(args)
+    commit_results, commit_raw = _git_commit_with_optional_log(
+        config.repo_root,
+        commit_message,
+        verbose=args.verbose,
+        dry_run=args.dry_run,
+        log_path=log_path,
+        paths=commit_paths,
+    )
     results.extend(commit_results)
     if raw_output:
         raw_output = raw_output + "\n\n" + commit_raw
     else:
         raw_output = commit_raw
     return results, raw_output
-
-
-def _preview_scope_for_args(config: ProjectConfig, args: argparse.Namespace) -> tuple[list[str], list[str]]:
-    if args.command not in APPLY_COMMANDS:
-        return [], []
-    snapshot = "snapshot" in args.command
-    if snapshot:
-        return [], ["@repo"]
-    scopes: list[tuple[list[str], list[str]]] = []
-    bundle_targets: list[str] = []
-    for artifact_text in _artifact_arg_list(getattr(args, "artifact", "")):
-        try:
-            artifact_path = resolve_artifact_path(artifact_text)
-            preview = preview_artifact(config.repo_root, artifact_path, snapshot=False)
-            scopes.append(scope_for_artifact_preview(preview, snapshot=False))
-            if is_overlay_bundle(artifact_path):
-                bundle_targets.extend(overlay_bundle_targets(artifact_path))
-            else:
-                manifest = read_artifact_manifest(artifact_path)
-                target = str(manifest.get("validate_target") or manifest.get("target") or "").strip()
-                if target:
-                    bundle_targets.append(target)
-        except Exception:
-            # Missing/invalid artifacts are handled by the normal artifact check.
-            # No repo file can be modified before that check succeeds.
-            continue
-    if bundle_targets:
-        args._devtool_bundle_targets = list(dict.fromkeys(bundle_targets))
-    return merge_scopes(*scopes) if scopes else ([], [])
-
-
-def _command_concurrency_scope(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[list[str], list[str]]:
-    command = str(getattr(args, "command", "") or "")
-    if command in APPLY_COMMANDS:
-        scopes = [_preview_scope_for_args(config, args)]
-        if bool(getattr(args, "validate", False) or getattr(args, "validate_only", False)):
-            scopes.append(scope_for_specs(config, _validation_specs_for_args(config, args, parser)))
-        return merge_scopes(*scopes)
-    if command in {"validate", "v", "wine-validate", "wv"}:
-        return scope_for_specs(config, _validation_specs_for_args(config, args, parser))
-    if command == "batch":
-        return [], ["@repo"]
-    if command in {"commit", "ci", "tag", "rollback", "package", "pkg"}:
-        return [], ["@repo", "@git-commit"]
-    try:
-        specs = build_specs(config, command)
-    except Exception:
-        return [], ["@repo"]
-    return scope_for_specs(config, specs)
 
 
 def _ensure_run_id(args: argparse.Namespace) -> str:
@@ -1493,52 +1343,41 @@ def _ensure_run_id(args: argparse.Namespace) -> str:
     return run_id
 
 
-def _acquire_command_lease(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> ConcurrencyLease | None:
-    if str(getattr(args, "concurrency", "auto") or "auto") == "off":
-        return None
-    reads, writes = _command_concurrency_scope(config, args, parser)
-    if not reads and not writes:
-        return None
-    run_id = _ensure_run_id(args)
-    timeout = 0.0 if bool(getattr(args, "no_wait", False)) else max(0.0, float(getattr(args, "lock_timeout", 300.0)))
-    def _show_wait(conflicts: list[object]) -> None:
-        if not conflicts:
-            return
-        first = conflicts[0]
-        paths = list(getattr(first, "paths", []) or [])
-        console.print(
-            "[yellow]Waiting for another devtool run[/yellow] "
-            f"[dim]pid={getattr(first, 'pid', '?')} command={getattr(first, 'command', 'devtool')}[/dim]"
-        )
-        for path in paths[:5]:
-            console.print(f"  [dim]{path}[/dim]")
-
-    lease = ConcurrencyLease(
-        config.repo_root,
-        command=str(getattr(args, "command", "devtool")),
-        reads=reads,
-        writes=writes,
-        phase="run",
-        run_id=run_id,
-        timeout=timeout,
-        wait_callback=_show_wait,
+def _acquire_repo_single_run_lock(repo_root: Path, args: argparse.Namespace) -> SingleRunLock:
+    lock = SingleRunLock(
+        repo_root,
+        command=str(getattr(args, "command", "devtool") or "devtool"),
+        run_id=_ensure_run_id(args),
     )
     try:
-        lease.acquire()
-    except TimeoutError as exc:
+        lock.acquire()
+    except BlockingIOError as exc:
         raise SystemExit(str(exc)) from exc
-    args._devtool_concurrency_lease = lease
-    return lease
+    args._devtool_single_run_lock = lock
+    return lock
 
 
-def _release_command_lease(args: argparse.Namespace) -> None:
-    lease = getattr(args, "_devtool_concurrency_lease", None)
-    if lease is not None:
-        lease.release()
-        run_id = str(getattr(args, "_devtool_run_id", "") or "")
-        if run_id and os.environ.get("DEVTOOL_RUN_ID") == run_id:
-            os.environ.pop("DEVTOOL_RUN_ID", None)
-        args._devtool_concurrency_lease = None
+def _acquire_single_run_lock(config: ProjectConfig, args: argparse.Namespace) -> SingleRunLock:
+    return _acquire_repo_single_run_lock(config.repo_root, args)
+
+
+@contextmanager
+def _single_run_guard(repo_root: Path, args: argparse.Namespace):
+    _acquire_repo_single_run_lock(repo_root, args)
+    try:
+        yield
+    finally:
+        _release_single_run_lock(args)
+
+
+def _release_single_run_lock(args: argparse.Namespace) -> None:
+    lock = getattr(args, "_devtool_single_run_lock", None)
+    if lock is not None:
+        lock.release()
+        args._devtool_single_run_lock = None
+    run_id = str(getattr(args, "_devtool_run_id", "") or "")
+    if run_id and os.environ.get("DEVTOOL_RUN_ID") == run_id:
+        os.environ.pop("DEVTOOL_RUN_ID", None)
 
 
 def _targets(config: ProjectConfig) -> None:
@@ -2248,7 +2087,6 @@ def _doctor(config: ProjectConfig, *, fix: bool = False) -> None:
         ("kind", config.kind),
         ("git", "yes" if (config.repo_root / ".git").exists() else "no"),
         ("config", str(config.config_path) if config.config_path else "-"),
-        ("notifier", available_notifier() or "-"),
         ("wl-copy", "yes" if shutil.which("wl-copy") else "no"),
         ("fzf", "yes" if shutil.which("fzf") else "no"),
         ("dotnet", "yes" if shutil.which("dotnet") else "no"),
@@ -2370,7 +2208,7 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
 
     Default mode keeps devtool itself on the Termux host and uses the chroot as
     an execution backend for command phases.  This preserves the native Rich UI,
-    Termux:API notification HUD, clipboard, and command summary on Android.  The old whole-
+    native app HUD bridge, clipboard, and command summary on Android.  The old whole-
     devtool delegation remains available with DEVTOOL_AUTO_CHROOT_MODE=full.
     """
     if bool(getattr(args, "no_auto_chroot", False)):
@@ -2396,8 +2234,6 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
         args.hud_mode = normalize_hud_mode_for_termux_host(str(getattr(args, "hud_mode", "desktop") or "desktop"))
         if str(getattr(args, "copy_via", "auto") or "auto") == "auto":
             args.copy_via = "termux"
-        if getattr(args, "tasker_progress", None) is True and getattr(args, "auto_hud", None) is None:
-            args.auto_hud = True
         return None
     except Exception as exc:
         if os.environ.get("DEVTOOL_AUTO_CHROOT_STRICT", "0").strip().lower() in {"1", "true", "yes"}:
@@ -2428,7 +2264,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(raw_argv)
     _normalize_command_aliases(args)
-    _normalize_tasker_args(args)
+    _normalize_live_progress_args(args)
     _validate_apply_args(args, parser)
     effective_payload, copy_mode = _validate_output_flags(args, parser)
     auto_chroot_rc = _maybe_prepare_termux_auto_chroot(raw_argv, args)
@@ -2453,8 +2289,8 @@ def main(argv: list[str] | None = None) -> int:
             artifact_type=args.artifact_type,
             overlay_count=args.overlay_count,
             commit_message=args.commit_message,
-            notify=args.notify,
-            notify_brief=args.notify_brief,
+            notify=False,
+            notify_brief=False,
             copy=args.copy,
             no_clipboard=args.no_clipboard,
             prefer_wine_validation=args.wine,
@@ -2548,13 +2384,11 @@ def main(argv: list[str] | None = None) -> int:
         state_dir = Path(args.state_dir).expanduser() if args.state_dir else default_android_bridge_dir()
         hud_args = argparse.Namespace(
             tasker_dir=str(state_dir),
-            mode=str(args.mode),
+            mode="android-bridge",
             host="127.0.0.1",
             port=8765,
             poll_interval=float(args.poll_interval),
             recent_events=int(args.recent_events),
-            notify_id=str(args.notify_id),
-            studio_notify=False,
             once=bool(args.once),
             follow_active=bool(args.follow_active),
             overlay=bool(getattr(args, "overlay", False)),
@@ -2572,32 +2406,33 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "rollback":
         config = _load_command_config(args)
-        return _rollback(config, args)
+        with _single_run_guard(config.repo_root, args):
+            return _rollback(config, args)
 
     if args.command in {"doctor", "dr", "status", "st", "release-notes", "tag"} or args.command in {"commit", "ci"}:
         repo = Path(args.repo or Path.cwd()).resolve()
         if args.command in {"commit", "ci"}:
-            _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="commit")
-            log_path = new_log_path()
-            started_at = datetime.now(timezone.utc)
-            results, raw_output = _git_commit_with_optional_log(repo, args.message, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path)
-            finished_at = datetime.now(timezone.utc)
-            totals, summary_text, json_text, _machine_json_text = _emit_summary(
-                results,
-                None,
-                as_json=effective_payload == "json",
-                payload_mode=effective_payload,
-                raw_output=raw_output,
-                command=args.command,
-                started_at=started_at,
-                finished_at=finished_at,
-                machine_format=args.machine or "pretty",
-            )
-            failed = totals["failed"]
-            _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
-            _maybe_copy(raw_output, summary_text, json_text, args)
-            _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=failed, command=args.command, repo_name=repo.name, duration_seconds=sum(r.duration_seconds for r in results))
-            return 0 if failed == 0 else 1
+            with _single_run_guard(repo, args):
+                _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="commit")
+                log_path = new_log_path()
+                started_at = datetime.now(timezone.utc)
+                results, raw_output = _git_commit_with_optional_log(repo, args.message, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path)
+                finished_at = datetime.now(timezone.utc)
+                totals, summary_text, json_text, _machine_json_text = _emit_summary(
+                    results,
+                    None,
+                    as_json=effective_payload == "json",
+                    payload_mode=effective_payload,
+                    raw_output=raw_output,
+                    command=args.command,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    machine_format=args.machine or "pretty",
+                )
+                failed = totals["failed"]
+                _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
+                _maybe_copy(raw_output, summary_text, json_text, args)
+                return 0 if failed == 0 else 1
         config = load_project_config(str(repo), args.config)
         if args.command in {"doctor", "dr"}:
             _doctor(config, fix=getattr(args, "fix", False))
@@ -2609,34 +2444,34 @@ def main(argv: list[str] | None = None) -> int:
             print(_release_notes(config.repo_root, args.from_ref, args.to_ref))
             return 0
         if args.command == "tag":
-            _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="tag")
-            specs = [CommandSpec("tag", ["git", "tag"] + (["-m", args.message] if args.message else []) + [args.name], destructive=True)]
-            log_path = new_log_path()
-            started_at = datetime.now(timezone.utc)
-            results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=False, log_path=log_path)
-            finished_at = datetime.now(timezone.utc)
-            totals, summary_text, json_text, _machine_json_text = _emit_summary(
-                results,
-                config,
-                as_json=effective_payload == "json",
-                payload_mode=effective_payload,
-                raw_output=raw_output,
-                command=args.command,
-                started_at=started_at,
-                finished_at=finished_at,
-                machine_format=args.machine or "pretty",
-            )
-            _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
-            _maybe_copy(raw_output, summary_text, json_text, args)
-            _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=repo.name, duration_seconds=sum(r.duration_seconds for r in results))
-            return 0 if totals["failed"] == 0 else 1
+            with _single_run_guard(repo, args):
+                _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="tag")
+                specs = [CommandSpec("tag", ["git", "tag"] + (["-m", args.message] if args.message else []) + [args.name], destructive=True)]
+                log_path = new_log_path()
+                started_at = datetime.now(timezone.utc)
+                results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=False, log_path=log_path)
+                finished_at = datetime.now(timezone.utc)
+                totals, summary_text, json_text, _machine_json_text = _emit_summary(
+                    results,
+                    config,
+                    as_json=effective_payload == "json",
+                    payload_mode=effective_payload,
+                    raw_output=raw_output,
+                    command=args.command,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    machine_format=args.machine or "pretty",
+                )
+                _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
+                _maybe_copy(raw_output, summary_text, json_text, args)
+                return 0 if totals["failed"] == 0 else 1
 
     config = _load_command_config(args)
     continue_on_error = args.continue_on_error and not args.fail_fast
     log_path = new_log_path()
     _ensure_run_id(args)
-    tasker_progress = _tasker_for_args(args, config)
-    command_lease = _acquire_command_lease(config, args, parser)
+    _single_run_lock = _acquire_single_run_lock(config, args)
+    tasker_progress = _live_progress_for_args(args, config)
 
     started_at = datetime.now(timezone.utc)
     if tasker_progress is not None:
@@ -2675,9 +2510,8 @@ def main(argv: list[str] | None = None) -> int:
         duration_seconds = sum(r.duration_seconds for r in results)
         _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
         _maybe_copy(raw_output, summary_text, json_text, args)
-        _finish_tasker(tasker_progress, totals=totals, results=results, command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds, args=args)
-        _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds)
-        _release_command_lease(args)
+        _finish_live_progress(tasker_progress, totals=totals, results=results)
+        _release_single_run_lock(args)
         return 1
 
     if args.command == "batch":
@@ -2790,7 +2624,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 return watch_loop(config.repo_root, _run_once, interval=args.watch_interval)
             finally:
-                _release_command_lease(args)
+                _release_single_run_lock(args)
         specs = _validation_specs_for_args(config, args, parser)
         results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
     elif args.command == "batch":
@@ -2815,7 +2649,6 @@ def main(argv: list[str] | None = None) -> int:
     duration_seconds = sum(r.duration_seconds for r in results)
     _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
     _maybe_copy(raw_output, summary_text, json_text, args)
-    _finish_tasker(tasker_progress, totals=totals, results=results, command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds, args=args)
-    _maybe_notify(args, warnings=totals["warnings"], errors=totals["errors"], failed=totals["failed"], command=args.command, repo_name=config.repo_root.name, duration_seconds=duration_seconds)
-    _release_command_lease(args)
+    _finish_live_progress(tasker_progress, totals=totals, results=results)
+    _release_single_run_lock(args)
     return 0 if totals["failed"] == 0 else 1

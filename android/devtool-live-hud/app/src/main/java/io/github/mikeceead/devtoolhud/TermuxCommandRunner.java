@@ -69,6 +69,12 @@ final class TermuxCommandRunner {
         if (cleanCommand.length() > 120_000) return new LaunchResult(false, -1, "Command is too long");
         if (!isInstalled(context)) return new LaunchResult(false, -1, "Termux is not installed");
         if (!hasPermission(context)) return new LaunchResult(false, -1, "Run commands in Termux permission is not granted");
+        if (bridgeOperation == null || bridgeOperation.isEmpty()) {
+            RunRecord active = RunStore.active(context);
+            if (active != null) {
+                return new LaunchResult(false, -1, "A devtool run is already active. Finish or cancel it before starting another.");
+            }
+        }
 
         int executionId = nextExecutionId();
         String runId = "termux-" + executionId;

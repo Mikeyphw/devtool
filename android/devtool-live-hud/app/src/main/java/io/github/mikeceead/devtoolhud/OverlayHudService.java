@@ -27,10 +27,6 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 /** Optional, user-enabled floating HUD shown above other apps. */
 public final class OverlayHudService extends Service {
@@ -39,17 +35,16 @@ public final class OverlayHudService extends Service {
     private static final String CHANNEL_ID = "devtool_overlay_service_v1";
     private static final int SERVICE_NOTIFICATION_ID = 7201;
     private static final long TERMINAL_LINGER_MS = 10_000L;
-    private static final int MAX_VISIBLE_RUNS = 4;
 
     static final String ACTION_START = "io.github.mikeceead.devtoolhud.OVERLAY_START";
     static final String ACTION_STOP = "io.github.mikeceead.devtoolhud.OVERLAY_STOP";
 
     private static volatile OverlayHudService instance;
-    private static final LinkedHashMap<String, HudUpdate> pendingUpdates = new LinkedHashMap<>();
+    private static volatile HudUpdate pendingUpdate;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final LinkedHashMap<String, HudUpdate> runs = new LinkedHashMap<>();
-    private final Map<String, Runnable> removals = new LinkedHashMap<>();
+    private HudUpdate currentRun;
+    private Runnable removal;
 
     private WindowManager windowManager;
     private WindowManager.LayoutParams windowParams;
@@ -107,10 +102,7 @@ public final class OverlayHudService extends Service {
             return;
         }
         if (isEnabled(context) && hasPermission(context)) {
-            synchronized (pendingUpdates) {
-                pendingUpdates.remove(update.runId);
-                pendingUpdates.put(update.runId, update);
-            }
+            pendingUpdate = update;
             // Do not start a foreground service from this background receiver.
             // Android 15+ may reject it unless an overlay is already visible.
             // The progress notification exposes an explicit “Show HUD” action.
@@ -118,8 +110,9 @@ public final class OverlayHudService extends Service {
     }
 
     static void cancel(String runId) {
-        synchronized (pendingUpdates) {
-            pendingUpdates.remove(runId);
+        HudUpdate pending = pendingUpdate;
+        if (pending != null && (runId == null || runId.isEmpty() || pending.runId.equals(runId))) {
+            pendingUpdate = null;
         }
         OverlayHudService active = instance;
         if (active != null) active.removeRun(runId);
@@ -142,10 +135,9 @@ public final class OverlayHudService extends Service {
             startForeground(SERVICE_NOTIFICATION_ID, notification);
         }
         createOverlay();
-        synchronized (pendingUpdates) {
-            for (HudUpdate update : pendingUpdates.values()) postUpdate(update);
-            pendingUpdates.clear();
-        }
+        HudUpdate pending = pendingUpdate;
+        pendingUpdate = null;
+        if (pending != null) postUpdate(pending);
     }
 
     @Override
@@ -168,8 +160,8 @@ public final class OverlayHudService extends Service {
     @Override
     public void onDestroy() {
         instance = null;
-        for (Runnable pending : removals.values()) handler.removeCallbacks(pending);
-        removals.clear();
+        if (removal != null) handler.removeCallbacks(removal);
+        removal = null;
         if (windowManager != null && overlayRoot != null) {
             try {
                 windowManager.removeView(overlayRoot);
@@ -190,18 +182,17 @@ public final class OverlayHudService extends Service {
 
     private void postUpdate(HudUpdate update) {
         handler.post(() -> {
-            Runnable oldRemoval = removals.remove(update.runId);
-            if (oldRemoval != null) handler.removeCallbacks(oldRemoval);
-            runs.remove(update.runId);
-            runs.put(update.runId, update);
+            if (removal != null) handler.removeCallbacks(removal);
+            removal = null;
+            currentRun = update;
             render();
             if (update.isTerminal()) {
-                Runnable removal = () -> {
-                    runs.remove(update.runId);
-                    removals.remove(update.runId);
+                final String completedRunId = update.runId;
+                removal = () -> {
+                    if (currentRun != null && currentRun.runId.equals(completedRunId)) currentRun = null;
+                    removal = null;
                     render();
                 };
-                removals.put(update.runId, removal);
                 handler.postDelayed(removal, TERMINAL_LINGER_MS);
             }
         });
@@ -209,10 +200,12 @@ public final class OverlayHudService extends Service {
 
     private void removeRun(String runId) {
         handler.post(() -> {
-            Runnable pending = removals.remove(runId);
-            if (pending != null) handler.removeCallbacks(pending);
-            runs.remove(runId);
-            render();
+            if (currentRun == null || runId == null || runId.isEmpty() || currentRun.runId.equals(runId)) {
+                if (removal != null) handler.removeCallbacks(removal);
+                removal = null;
+                currentRun = null;
+                render();
+            }
         });
     }
 
@@ -312,26 +305,15 @@ public final class OverlayHudService extends Service {
     private void render() {
         if (cardsContainer == null) return;
         cardsContainer.removeAllViews();
-        int active = 0;
-        for (HudUpdate update : runs.values()) if (!update.isTerminal()) active++;
-        headerCount.setText(active > 0 ? active + (active == 1 ? " active" : " active") : "Ready");
-
-        if (runs.isEmpty()) {
+        if (currentRun == null) {
+            headerCount.setText("Ready");
             TextView waiting = label("Waiting for a devtool run", 13, palette.muted, false);
             waiting.setPadding(0, dp(10), 0, 0);
             cardsContainer.addView(waiting);
             return;
         }
-
-        List<HudUpdate> visible = new ArrayList<>(runs.values());
-        int start = Math.max(0, visible.size() - MAX_VISIBLE_RUNS);
-        for (int i = start; i < visible.size(); i++) cardsContainer.addView(card(visible.get(i)));
-        int hidden = visible.size() - (visible.size() - start);
-        if (hidden > 0) {
-            TextView more = label("+" + hidden + " more run" + (hidden == 1 ? "" : "s"), 12, palette.muted, false);
-            more.setPadding(0, dp(6), 0, 0);
-            cardsContainer.addView(more);
-        }
+        headerCount.setText(currentRun.isTerminal() ? "Complete" : "Running");
+        cardsContainer.addView(card(currentRun));
     }
 
     private View card(HudUpdate update) {

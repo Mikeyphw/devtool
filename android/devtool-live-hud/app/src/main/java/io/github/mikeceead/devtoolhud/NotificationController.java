@@ -16,7 +16,6 @@ import java.util.List;
 
 final class NotificationController {
     static final String CHANNEL_ID = "devtool_live_runs_v1";
-    private static final String GROUP_KEY = "devtool_live_runs";
     private static final int NOTIFICATION_ID = 7101;
 
     private final Context context;
@@ -36,7 +35,6 @@ final class NotificationController {
                 .setSubText(update.subText())
                 .setCategory(Notification.CATEGORY_PROGRESS)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .setGroup(GROUP_KEY)
                 .setOngoing(!update.isTerminal())
                 .setAutoCancel(update.isTerminal())
                 .setOnlyAlertOnce(!update.isTerminal())
@@ -65,11 +63,11 @@ final class NotificationController {
 
         if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(update.criticalText());
         Notification notification = builder.build();
-        manager.notify(notificationTag(update.runId), NOTIFICATION_ID, notification);
+        manager.notify(NOTIFICATION_ID, notification);
     }
 
     void cancel(String runId) {
-        manager.cancel(notificationTag(runId), NOTIFICATION_ID);
+        manager.cancel(NOTIFICATION_ID);
     }
 
     private void ensureChannel() {
@@ -119,10 +117,6 @@ final class NotificationController {
                 .putExtra("run_id", runId);
         return PendingIntent.getBroadcast(context, runId.hashCode() ^ 0x5a17, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-    }
-
-    private static String notificationTag(String runId) {
-        return "devtool:" + runId;
     }
 
     private int statusColor(HudUpdate update) {

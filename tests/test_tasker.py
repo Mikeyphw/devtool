@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from devtool.models import OperationResult
-from devtool.tasker import ANDROID_TASKER_DIR, DEFAULT_EVENT_HTTP_URL, TaskerProgressSink, default_tasker_dir, send_local_http_event, send_progress_notification, send_tasker_broadcast, start_auto_hud
+from devtool.tasker import ANDROID_TASKER_DIR, DEFAULT_EVENT_HTTP_URL, TaskerProgressSink, default_tasker_dir, send_local_http_event, start_auto_hud
 
 
 class TaskerProgressTests(unittest.TestCase):
@@ -122,25 +122,6 @@ class TaskerProgressTests(unittest.TestCase):
         self.assertEqual(body["current"], 1)
         self.assertEqual(body["detail"], large_detail)
 
-    def test_send_tasker_broadcast_uses_event_and_state_paths(self) -> None:
-        with patch("devtool.tasker.shutil.which", return_value="/system/bin/am"), patch("devtool.tasker.subprocess.run") as run_mock:
-            run_mock.return_value.returncode = 0
-            ok = send_tasker_broadcast("net.mph.devtool.EVENT", Path("/tmp/event.json"), Path("/tmp/state.json"), "progress", "rid")
-        self.assertTrue(ok)
-        argv = run_mock.call_args.args[0]
-        self.assertIn("net.mph.devtool.EVENT", argv)
-        self.assertIn("/tmp/event.json", argv)
-        self.assertIn("/tmp/state.json", argv)
-
-    def test_send_progress_notification_uses_stable_id(self) -> None:
-        with patch("devtool.tasker.shutil.which", return_value="/usr/bin/termux-notification"), patch("devtool.tasker.subprocess.run") as run_mock:
-            run_mock.return_value.returncode = 0
-            ok = send_progress_notification(notification_id="7771", title="devtool", body="running", ongoing=True)
-        self.assertTrue(ok)
-        argv = run_mock.call_args.args[0]
-        self.assertEqual(argv[:5], ["termux-notification", "--id", "7771", "--title", "devtool"])
-        self.assertIn("--ongoing", argv)
-
     def test_default_tasker_dir_uses_xdg_on_desktop_even_if_sdcard_exists(self) -> None:
         with patch.dict(
             "os.environ",
@@ -188,5 +169,5 @@ def test_direct_termux_android_bridge_autostarts_native_renderer() -> None:
         ) as run:
             assert start_auto_hud(runtime, mode="android-bridge")
         launcher = run.call_args.args[0][-1]
-        assert "--mode android-notify" in launcher
+        assert "--mode android-bridge" in launcher
         assert "--follow-active" in launcher
