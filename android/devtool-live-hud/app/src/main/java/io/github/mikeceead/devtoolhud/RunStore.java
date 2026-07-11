@@ -50,7 +50,10 @@ final class RunStore {
         record.repo = update.repo;
         record.target = update.target;
         record.summary = update.summary;
-        record.progress = update.progress;
+        record.progress = update.pipelineProgress();
+        record.warnings = update.warnings;
+        record.errors = update.errors;
+        record.stepsJson = update.stepsJson;
         record.indeterminate = update.indeterminate;
         record.startedAtMs = update.startedAtMs;
         record.durationMs = update.durationMs;

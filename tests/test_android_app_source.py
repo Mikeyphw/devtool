@@ -229,3 +229,17 @@ def test_bundled_root_module_zip_is_valid_and_non_zygisk() -> None:
         assert "bin/devtool-root-bridge" in names
         assert not any(name.startswith("zygisk/") for name in names)
         zf.testzip()
+
+
+def test_android_hud_uses_dynamic_operation_segments_and_live_issue_counts() -> None:
+    hud_update = _java_source("HudUpdate.java")
+    overlay = _java_source("OverlayHudService.java")
+    notification = _java_source("NotificationController.java")
+    assert 'intent.getStringExtra("steps_json")' in hud_update
+    assert "import org.json.JSONException;" in hud_update
+    assert "catch (JSONException | RuntimeException ignored)" in hud_update
+    assert "pipelineProgress()" in hud_update
+    assert "for (HudUpdate.Step step : update.steps)" in overlay
+    assert 'append(update.errors).append(" errors · ")' in overlay
+    assert "update.steps.size()" in notification
+    assert "Notification.ProgressStyle.Segment" in notification

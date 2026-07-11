@@ -30,3 +30,7 @@ Or from the repository root:
 ```bash
 ./build-android-hud.sh
 ```
+
+## Live operation pipeline
+
+The active run card, floating overlay, and Android 16 progress notification render the operation sequence supplied by devtool. Extract, restore, build, test, artifact validation, commit, and rollback are represented independently, and warning/error totals update while the command is still running.

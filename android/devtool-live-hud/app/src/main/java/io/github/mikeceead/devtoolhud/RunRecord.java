@@ -18,6 +18,9 @@ final class RunRecord {
     String stderr = "";
     String error = "";
     int progress = 0;
+    int warnings = 0;
+    int errors = 0;
+    String stepsJson = "";
     boolean indeterminate = true;
     long startedAtMs = System.currentTimeMillis();
     long updatedAtMs = System.currentTimeMillis();
@@ -44,6 +47,9 @@ final class RunRecord {
         value.put("stderr", stderr);
         value.put("error", error);
         value.put("progress", progress);
+        value.put("warnings", warnings);
+        value.put("errors", errors);
+        value.put("steps_json", stepsJson);
         value.put("indeterminate", indeterminate);
         value.put("started_at_ms", startedAtMs);
         value.put("updated_at_ms", updatedAtMs);
@@ -67,6 +73,9 @@ final class RunRecord {
         record.stderr = value.optString("stderr", "");
         record.error = value.optString("error", "");
         record.progress = value.optInt("progress", 0);
+        record.warnings = value.optInt("warnings", 0);
+        record.errors = value.optInt("errors", 0);
+        record.stepsJson = value.optString("steps_json", "");
         record.indeterminate = value.optBoolean("indeterminate", true);
         record.startedAtMs = value.optLong("started_at_ms", System.currentTimeMillis());
         record.updatedAtMs = value.optLong("updated_at_ms", record.startedAtMs);

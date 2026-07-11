@@ -343,25 +343,52 @@ public final class OverlayHudService extends Service {
         detail.setPadding(0, dp(4), 0, dp(6));
         card.addView(detail);
 
-        ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progress.setMax(100);
-        progress.setIndeterminate(update.indeterminate && !update.isTerminal());
-        progress.setProgress(update.isTerminal() ? 100 : update.progress, false);
-        if (Build.VERSION.SDK_INT >= 21) progress.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
-        card.addView(progress, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(8)));
+        LinearLayout pipeline = new LinearLayout(this);
+        pipeline.setOrientation(LinearLayout.HORIZONTAL);
+        pipeline.setPadding(0, dp(2), 0, dp(2));
+        for (HudUpdate.Step step : update.steps) {
+            LinearLayout segment = new LinearLayout(this);
+            segment.setOrientation(LinearLayout.VERTICAL);
+            segment.setPadding(dp(2), 0, dp(2), 0);
+            TextView stepLabel = label(step.label.toUpperCase(java.util.Locale.ROOT), 9, stepColor(step), true);
+            stepLabel.setGravity(Gravity.CENTER);
+            stepLabel.setMaxLines(1);
+            segment.addView(stepLabel, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            ProgressBar stepProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            stepProgress.setMax(100);
+            stepProgress.setIndeterminate(step.running() && step.progress <= 0);
+            stepProgress.setProgress((step.succeeded() || step.failed() || step.skipped()) ? 100 : step.progress, false);
+            if (Build.VERSION.SDK_INT >= 21) {
+                stepProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
+                stepProgress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
+            }
+            segment.addView(stepProgress, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(7)));
+            pipeline.addView(segment, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        card.addView(pipeline, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         StringBuilder metrics = new StringBuilder(update.subText());
         int tests = update.passed + update.failed + update.skipped;
         if (tests > 0) metrics.append("\n").append(update.passed).append(" passed · ")
                 .append(update.failed).append(" failed · ").append(update.skipped).append(" skipped");
-        if (update.warnings > 0 || update.errors > 0) metrics.append(" · ")
-                .append(update.warnings).append(" warnings · ").append(update.errors).append(" errors");
+        metrics.append("\n").append(update.errors).append(" errors · ")
+                .append(update.warnings).append(" warnings");
         if (!update.commit.isEmpty()) metrics.append("\nCommit ").append(update.commit);
         TextView meta = label(metrics.toString(), 11, palette.muted, false);
         meta.setPadding(0, dp(6), 0, 0);
         card.addView(meta);
         return card;
+    }
+
+    private int stepColor(HudUpdate.Step step) {
+        if (step.failed()) return palette.red;
+        if (step.succeeded()) return palette.green;
+        if (step.running()) return palette.yellow;
+        if (step.skipped()) return palette.muted;
+        return palette.muted;
     }
 
     private void ensureServiceChannel() {

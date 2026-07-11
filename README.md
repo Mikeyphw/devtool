@@ -2,7 +2,9 @@
 
 Devtool applies project overlays, validates builds and tests, records transactions, produces handoff summaries, and can publish one live run to the desktop HUD or the Android Devtool Frontend.
 
-## Devtool 0.3.2 behavior
+## Devtool 0.3.3 behavior
+
+Automatic artifact commits include the complete devtool-managed history registry (`.devtool/artifacts.json` and `.devtool/artifacts.d/`) so prior history records do not leave the repository dirty. Unrelated working-tree changes remain excluded.
 
 ### One active run
 
@@ -82,7 +84,7 @@ devtool --auto-hud --hud-mode desktop-window ...
 
 The desktop HUD binds to the current run before rendering, filters events by run ID, suppresses duplicate generic errors, and reports a successful rollback as recovery rather than as the cause of failure.
 
-The GTK desktop window starts in a compact summary mode showing the current operation, target, detail, warnings/errors, progress, and the Copy summary/Open log/Close actions. Select **Expand** to reveal metrics, recent events, and diagnostic details; the choice is preserved for the lifetime of that HUD window. Set `DEVTOOL_DESKTOP_HUD_START_EXPANDED=1` to launch the full dashboard immediately.
+The GTK desktop window starts in a compact, pipeline-focused mode. It shows separate live operation segments for extract, restore, build, test, artifact validation, commit, and rollback as applicable. Each segment has its own pending/running/succeeded/failed/skipped state and progress. Live **ERRORS** and **WARNINGS** totals remain visible beside the active operation, along with Copy summary/Open log/Close actions. Select **Expand** to reveal recent events and diagnostic details; the choice is preserved for the lifetime of that HUD window. Set `DEVTOOL_DESKTOP_HUD_START_EXPANDED=1` to launch expanded.
 
 ## Validation sequence
 
@@ -109,6 +111,8 @@ Build from the repository root:
 ```bash
 ./build-android-hud.sh
 ```
+
+The portrait-first app includes the same structured operation pipeline in its active-run card, floating overlay, and Android 16 progress notification. Warning/error totals update from the current event stream rather than waiting for final completion.
 
 The portrait-first app includes:
 

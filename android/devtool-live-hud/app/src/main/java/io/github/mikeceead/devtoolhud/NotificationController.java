@@ -58,7 +58,7 @@ final class NotificationController {
         if (Build.VERSION.SDK_INT >= 36) {
             applyProgressStyle(builder, update);
         } else {
-            builder.setProgress(100, update.progress, update.indeterminate && !update.isTerminal());
+            builder.setProgress(100, update.pipelineProgress(), update.indeterminate && update.activeStep() == null && !update.isTerminal());
         }
 
         if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(update.criticalText());
@@ -136,27 +136,26 @@ final class NotificationController {
                 .setProgressStartIcon(Icon.createWithResource(context, R.drawable.ic_start))
                 .setProgressEndIcon(Icon.createWithResource(context, R.drawable.ic_done));
 
-        if (update.isTerminal()) {
-            style.setProgress(100)
-                    .setProgressSegments(List.of(
-                            new Notification.ProgressStyle.Segment(100).setColor(statusColor(update))));
-        } else if (update.indeterminate) {
-            style.setProgressIndeterminate(true)
-                    .setProgressSegments(List.of(
-                            new Notification.ProgressStyle.Segment(100).setColor(statusColor(update))));
-        } else {
-            List<Notification.ProgressStyle.Segment> segments = new ArrayList<>();
-            segments.add(new Notification.ProgressStyle.Segment(15).setColor(AppPalette.resolve(context).cyan));  // restore
-            segments.add(new Notification.ProgressStyle.Segment(45).setColor(AppPalette.resolve(context).yellow)); // build
-            segments.add(new Notification.ProgressStyle.Segment(35).setColor(AppPalette.resolve(context).cyan)); // test
-            segments.add(new Notification.ProgressStyle.Segment(5).setColor(AppPalette.resolve(context).green));   // commit
-            style.setProgress(update.progress)
-                    .setProgressSegments(segments)
-                    .setProgressPoints(List.of(
-                            new Notification.ProgressStyle.Point(15).setColor(Color.WHITE),
-                            new Notification.ProgressStyle.Point(60).setColor(Color.WHITE),
-                            new Notification.ProgressStyle.Point(95).setColor(Color.WHITE)));
+        List<Notification.ProgressStyle.Segment> segments = new ArrayList<>();
+        List<Notification.ProgressStyle.Point> points = new ArrayList<>();
+        int count = Math.max(1, update.steps.size());
+        int used = 0;
+        AppPalette palette = AppPalette.resolve(context);
+        for (int i = 0; i < update.steps.size(); i++) {
+            HudUpdate.Step step = update.steps.get(i);
+            int length = i == update.steps.size() - 1 ? 100 - used : Math.max(1, 100 / count);
+            used += length;
+            int color = step.failed() ? palette.red
+                    : step.succeeded() ? palette.green
+                    : step.running() ? palette.yellow
+                    : palette.muted;
+            segments.add(new Notification.ProgressStyle.Segment(length).setColor(color));
+            if (i < update.steps.size() - 1) points.add(new Notification.ProgressStyle.Point(used).setColor(Color.WHITE));
         }
+        if (segments.isEmpty()) segments.add(new Notification.ProgressStyle.Segment(100).setColor(statusColor(update)));
+        style.setProgress(update.isTerminal() ? 100 : update.pipelineProgress())
+                .setProgressSegments(segments);
+        if (!points.isEmpty()) style.setProgressPoints(points);
         builder.setStyle(style);
     }
 }

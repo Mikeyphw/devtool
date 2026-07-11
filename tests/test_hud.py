@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from devtool.hud import AndroidAppHud, HudState, choose_hud_mode, desktop_hud_starts_expanded, events_for_state, last_phase_highlights, latest_log_path, parse_hud_state, render_ascii_bar, state_from_directory
+from devtool.hud import AndroidAppHud, HudState, choose_hud_mode, desktop_hud_starts_expanded, events_for_state, last_phase_highlights, latest_log_path, live_issue_counts, operation_steps, parse_hud_state, render_ascii_bar, state_from_directory
 from devtool.cli import build_parser
 
 
@@ -121,13 +121,49 @@ class HudTests(unittest.TestCase):
 
         source = inspect.getsource(hud_module.GtkDesktopHud.run)
         self.assertIn("DEVTOOL", source)
-        self.assertIn("Validate → Apply → Test → Commit", source)
+        self.assertIn("_render_operation_steps", source)
+        self.assertIn("hud-step-progress", source)
+        self.assertNotIn("Validate → Apply → Test → Commit", source)
         self.assertIn("ERRORS", source)
         self.assertIn("WARNINGS", source)
         self.assertIn("RECENT", source)
         self.assertIn("state_context_label", source)
         self.assertIn("card.pack_start(actions", source)
         self.assertNotIn("expanded_section.pack_start(actions", source)
+
+
+    def test_operation_steps_show_apply_pipeline_and_live_phase(self) -> None:
+        state = HudState(status="running", command="apply-overlay", phase_name="build", current=3, total=10)
+        events = [
+            {"event_type": "phase-finished", "phase": {"name": "apply-overlay"}, "result": {"status": "ok"}},
+            {"event_type": "phase-finished", "phase": {"name": "restore"}, "result": {"status": "ok"}},
+            {"event_type": "phase-started", "phase": {"name": "build"}, "result": {"status": "running"}},
+        ]
+        steps = operation_steps(state, events)
+        self.assertEqual([step.key for step in steps], ["extract", "restore", "build", "test", "commit"])
+        self.assertEqual([step.status for step in steps], ["ok", "ok", "running", "pending", "pending"])
+        self.assertEqual(steps[2].progress, 30)
+
+    def test_operation_steps_add_external_validation_and_rollback(self) -> None:
+        state = HudState(status="failed", command="apply-overlay", phase_name="apply-rollback")
+        events = [
+            {"event_type": "phase-finished", "phase": {"name": "artifact-validate-script"}, "result": {"status": "failed"}},
+            {"event_type": "phase-finished", "phase": {"name": "apply-rollback"}, "result": {"status": "ok"}},
+        ]
+        steps = operation_steps(state, events)
+        by_key = {step.key: step for step in steps}
+        self.assertEqual(by_key["validate"].status, "failed")
+        self.assertEqual(by_key["rollback"].status, "ok")
+
+    def test_live_issue_counts_update_from_unique_diagnostics_and_totals(self) -> None:
+        state = HudState(status="running")
+        events = [
+            {"event_type": "progress", "phase": {"name": "build"}, "message": "A.cs(1): warning CS1000: warning"},
+            {"event_type": "progress", "phase": {"name": "build"}, "message": "A.cs(1): warning CS1000: warning"},
+            {"event_type": "progress", "phase": {"name": "build"}, "message": "B.cs(1): error CS2000: error"},
+            {"event_type": "progress", "phase": {"name": "build"}, "message": "2 Warning(s) 1 Error(s)"},
+        ]
+        self.assertEqual(live_issue_counts(events, state), (1, 2))
 
     def test_render_ascii_bar_clamps_progress(self) -> None:
         self.assertEqual(render_ascii_bar(5, 10, width=10), "█████░░░░░")

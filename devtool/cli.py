@@ -1431,7 +1431,7 @@ def _rollback(config: ProjectConfig, args: argparse.Namespace) -> int:
     return 0 if totals["failed"] == 0 else 1
 
 
-def _artifact_commit_paths(args: argparse.Namespace) -> list[str]:
+def _artifact_commit_paths(args: argparse.Namespace, repo_root: Path | None = None) -> list[str]:
     """Return repo-relative paths that belong to the current applied artifact.
 
     The preview is computed before apply, so it contains exactly the paths the
@@ -1476,13 +1476,14 @@ def _artifact_commit_paths(args: argparse.Namespace) -> list[str]:
                         for value in values:
                             add_path(value)
 
-    # Include this run's append-only history record and generated index.
-    history_paths = getattr(args, "_devtool_history_paths", None)
-    if isinstance(history_paths, (list, tuple)):
-        for history_path in history_paths:
-            add_path(history_path)
-    else:
-        add_path(".devtool/artifacts.json")
+    # Artifact history is devtool-owned repository metadata. Stage the complete
+    # registry rather than only this run's record so earlier failed/manual runs
+    # cannot leave artifacts.json or append-only records dirty after a later
+    # successful automatic commit. The directory pathspec also captures tracked
+    # deletions and any records created before this process started.
+    add_path(".devtool/artifacts.json")
+    if repo_root is None or (repo_root / ".devtool" / "artifacts.d").exists():
+        add_path(".devtool/artifacts.d")
 
     return paths
 
@@ -1541,7 +1542,7 @@ def _maybe_commit_after_apply(
         _record_apply_history(config, args, results)
         args._devtool_history_recorded = True
 
-    commit_paths = _artifact_commit_paths(args)
+    commit_paths = _artifact_commit_paths(args, config.repo_root)
     commit_results, commit_raw = _git_commit_with_optional_log(
         config.repo_root,
         commit_message,

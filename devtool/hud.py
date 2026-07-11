@@ -39,8 +39,8 @@ DEFAULT_HUD_PORT = 8765
 DESKTOP_HUD_APP_ID = "net.mph.devtool.HUD"
 DESKTOP_HUD_ICON_NAME = "devtool-hud"
 DESKTOP_HUD_WM_CLASS = "devtool-hud"
-DEFAULT_DESKTOP_HUD_COMPACT_SIZE = (460, 250)
-DEFAULT_DESKTOP_HUD_EXPANDED_SIZE = (500, 430)
+DEFAULT_DESKTOP_HUD_COMPACT_SIZE = (520, 330)
+DEFAULT_DESKTOP_HUD_EXPANDED_SIZE = (560, 520)
 DEFAULT_RUN_HEARTBEAT_TIMEOUT_S = 30.0
 
 
@@ -799,30 +799,188 @@ def completion_copy_text(state: HudState) -> str:
     return "\n".join(lines).strip()
 
 
-def pipeline_label(state: HudState, highlights: dict[str, str]) -> str:
-    phase_key = (state.phase_name or state.command or "").strip().lower().replace("_", "-")
-    steps = [("validate", "Validate"), ("apply", "Apply"), ("test", "Test"), ("commit", "Commit")]
-    if state.status == "ok":
-        actions = completion_from_state(state).get("actions")
-        action_names = {str(item.get("name") or "") for item in actions if isinstance(item, dict)} if isinstance(actions, list) else set()
-        performed = {
-            "apply": any("apply" in name for name in action_names),
-            "test": any(name in {"test", "tests", "wine-test"} for name in action_names),
-            "commit": any(name in {"git-commit", "commit"} for name in action_names),
-            "validate": any(name in {"restore", "build", "test", "tests", "wine-test"} for name in action_names),
+@dataclass(slots=True)
+class HudOperationStep:
+    key: str
+    label: str
+    status: str = "pending"
+    progress: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "label": self.label,
+            "status": self.status,
+            "progress": max(0, min(100, int(self.progress))),
         }
-        return " → ".join(f"✓ {label}" if performed.get(key) else label for key, label in steps)
-    pieces: list[str] = []
-    for key, label in steps:
-        active = key in phase_key or (key == "apply" and "overlay" in phase_key)
-        done = key in highlights and key != "validate"
-        if active:
-            pieces.append(f"● {label}")
-        elif done:
-            pieces.append(f"✓ {label}")
-        else:
-            pieces.append(label)
-    return " → ".join(pieces)
+
+
+_STEP_ORDER = ("extract", "restore", "build", "test", "validate", "commit", "rollback")
+_STEP_LABELS = {
+    "extract": "Extract",
+    "restore": "Restore",
+    "build": "Build",
+    "test": "Test",
+    "validate": "Validate",
+    "commit": "Commit",
+    "rollback": "Rollback",
+}
+
+
+def _operation_step_key(name: str) -> str:
+    key = (name or "").strip().lower().replace("_", "-")
+    if key in {"apply-overlay", "apply-overlays", "apply-snapshot", "extract-overlay", "extract"}:
+        return "extract"
+    if key in {"restore", "dependency-restore"} or "restore" in key:
+        return "restore"
+    if key in {"build", "package"} or key.endswith("-build"):
+        return "build"
+    if key in {"test", "tests", "wine-test"} or key.endswith("-test"):
+        return "test"
+    if key in {"artifact-validate-script", "artifact-validation-expectations", "external-validation"} or "validate-script" in key:
+        return "validate"
+    if key in {"git-add", "git-commit", "git-commit-skipped", "commit"}:
+        return "commit"
+    if key in {"apply-rollback", "rollback"}:
+        return "rollback"
+    return ""
+
+
+def _step_status(value: str) -> str:
+    status = (value or "").strip().lower().replace("_", "-")
+    if status in {"ok", "success", "complete", "completed", "passed"}:
+        return "ok"
+    if status in {"failed", "error", "failure"}:
+        return "failed"
+    if status in {"skipped", "skip"}:
+        return "skipped"
+    if status in {"running", "started", "progress"}:
+        return "running"
+    return "pending"
+
+
+def operation_steps(state: HudState, events: Iterable[dict[str, Any]]) -> list[HudOperationStep]:
+    """Build a stable, live operation pipeline from HUD events.
+
+    Apply workflows begin with the common extract/restore/build/test/commit
+    sequence so users can see what is ahead. Artifact validation and rollback
+    are inserted only when actually used. At completion, untouched expected
+    steps become skipped rather than looking stuck.
+    """
+    events_list = list(events)
+    command = (state.command or str(state.raw.get("command") or "")).strip().lower().replace("_", "-")
+    apply_run = command in {"apply-overlay", "apply-overlays", "apply-snapshot", "ao", "aos", "as"} or any(
+        _operation_step_key(_phase_from_event(event)) == "extract" for event in events_list
+    )
+    included: set[str] = {"extract", "restore", "build", "test", "commit"} if apply_run else set()
+    statuses: dict[str, str] = {}
+    progresses: dict[str, int] = {}
+
+    for event in events_list:
+        phase_key = _operation_step_key(_phase_from_event(event))
+        if not phase_key:
+            continue
+        included.add(phase_key)
+        event_type = _coerce_str(event.get("event_type") or event.get("type")).lower().replace("_", "-")
+        status = _step_status(_result_status_from_event(event))
+        if event_type == "phase-started":
+            status = "running"
+        elif event_type == "progress" and status == "pending":
+            status = "running"
+        elif event_type == "phase-finished" and status == "pending":
+            status = "ok"
+        if status != "pending":
+            statuses[phase_key] = status
+        current, total = _progress_pair(event)
+        if current is not None and total is not None and total > 0:
+            progresses[phase_key] = max(0, min(100, int(round(current / total * 100))))
+        elif status in {"ok", "failed", "skipped"}:
+            progresses[phase_key] = 100
+
+    completion = completion_from_state(state)
+    actions = completion.get("actions") if isinstance(completion.get("actions"), list) else []
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        step_key = _operation_step_key(str(action.get("name") or ""))
+        if not step_key:
+            continue
+        included.add(step_key)
+        statuses[step_key] = _step_status(str(action.get("status") or "ok"))
+        progresses[step_key] = 100
+
+    active_key = _operation_step_key(state.phase_name or state.command)
+    if active_key:
+        included.add(active_key)
+        if state.status == "running":
+            statuses[active_key] = "running"
+            if state.percent is not None:
+                progresses[active_key] = state.percent
+        elif state.status == "failed" and statuses.get(active_key) not in {"ok", "skipped"}:
+            statuses[active_key] = "failed"
+            progresses[active_key] = 100
+
+    terminal = state.status in {"ok", "failed", "skipped", "interrupted", "cancelled"}
+    if terminal:
+        for key in included:
+            statuses.setdefault(key, "skipped")
+            if statuses[key] == "pending":
+                statuses[key] = "skipped"
+            progresses.setdefault(key, 100 if statuses[key] != "pending" else 0)
+
+    # A rollback replaces the normal tail of a failed transaction visually.
+    ordered = [key for key in _STEP_ORDER if key in included]
+    return [
+        HudOperationStep(key, _STEP_LABELS[key], statuses.get(key, "pending"), progresses.get(key, 0))
+        for key in ordered
+    ]
+
+
+def live_issue_counts(events: Iterable[dict[str, Any]], state: HudState) -> tuple[int, int]:
+    """Return live warning/error counts for the current run.
+
+    Explicit totals emitted by runners win. Otherwise unique diagnostic lines
+    are counted, preventing repeated summary/final events from inflating the
+    HUD while still updating immediately as compiler output arrives.
+    """
+    errors: set[str] = set()
+    warnings: set[str] = set()
+    explicit_errors = 0
+    explicit_warnings = 0
+    summary_re = re.compile(r"(?P<count>\d+)\s+(?P<kind>warning|error)\(s\)", re.I)
+    for event in events:
+        totals = event.get("totals") if isinstance(event.get("totals"), dict) else {}
+        explicit_errors = max(explicit_errors, int(_coerce_int(totals.get("errors") or totals.get("failed")) or 0))
+        explicit_warnings = max(explicit_warnings, int(_coerce_int(totals.get("warnings")) or 0))
+        message = _event_message(event).strip()
+        for match in summary_re.finditer(message):
+            count = int(match.group("count"))
+            if match.group("kind").lower().startswith("error"):
+                explicit_errors = max(explicit_errors, count)
+            else:
+                explicit_warnings = max(explicit_warnings, count)
+        normalized = re.sub(r"\s+", " ", message).casefold()
+        event_type = _coerce_str(event.get("event_type") or event.get("type")).lower().replace("_", "-")
+        if normalized and event_type not in {"phase-finished", "finished"}:
+            if event_is_error(event) and normalized not in {"devtool finished with errors", "step failed"}:
+                errors.add(normalized)
+            elif event_is_warning(event):
+                warnings.add(normalized)
+    completion = completion_from_state(state)
+    explicit_errors = max(explicit_errors, int(completion.get("errors", 0) or 0), int(completion.get("failed", 0) or 0))
+    explicit_warnings = max(explicit_warnings, int(completion.get("warnings", 0) or 0))
+    error_count = max(explicit_errors, len(errors), 1 if state.status == "failed" else 0)
+    warning_count = max(explicit_warnings, len(warnings))
+    return error_count, warning_count
+
+
+def pipeline_label(state: HudState, highlights: dict[str, str]) -> str:
+    # Compatibility helper retained for terminal/web callers. GTK and Android
+    # render the structured operation_steps() model instead.
+    return " → ".join(
+        ("✓ " if step.status == "ok" else "● " if step.status == "running" else "✕ " if step.status == "failed" else "") + step.label
+        for step in operation_steps(state, [])
+    )
 
 
 def state_context_label(state: HudState) -> str:
@@ -1118,9 +1276,12 @@ class AndroidAppHud:
         self.bridge = AndroidLiveHudBridge()
         self.run_started_at: dict[str, int] = {}
 
-    def _payload(self, state: HudState, directory: Path) -> tuple[str, dict[str, Any]]:
+    def _payload(self, state: HudState, directory: Path, events: list[dict[str, Any]] | None = None) -> tuple[str, dict[str, Any]]:
         completion = completion_from_state(state) or {}
+        events = events or []
         tests = completion.get("tests") if isinstance(completion.get("tests"), dict) else {}
+        error_count, warning_count = live_issue_counts(events, state)
+        steps = operation_steps(state, events)
         run_id = str(state.raw.get("run_id") or state.raw.get("task_id") or directory.name or "devtool")
         started_at = self.run_started_at.setdefault(run_id, int(time.time() * 1000))
         status = (state.status or "running").strip().lower()
@@ -1148,8 +1309,9 @@ class AndroidAppHud:
             "passed": int(tests.get("passed", 0) or 0),
             "failed": int(tests.get("failed", 0) or 0),
             "skipped": int(tests.get("skipped", 0) or 0),
-            "warnings": int(completion.get("warnings", 0) or 0),
-            "errors": int(completion.get("errors", 0) or 0),
+            "warnings": warning_count,
+            "errors": error_count,
+            "steps_json": json.dumps([step.to_dict() for step in steps], separators=(",", ":")),
             "commit": str(completion.get("commit_hash") or ""),
             "summary": completion_copy_text(state),
             "started_at_ms": started_at,
@@ -1159,14 +1321,20 @@ class AndroidAppHud:
         return action, payload
 
     def update(self, state: HudState, *, directory: Path) -> None:
+        raw_events = _last_jsonl_events(directory / "events.jsonl", 2000)
+        events = events_for_state(raw_events, state)
+        error_count, warning_count = live_issue_counts(events, state)
+        steps = operation_steps(state, events)
         signature = (
             state.raw.get("run_id"), state.status, state.phase_name, state.command,
             state.current, state.total, state.repo_name, state.target, state.text,
+            error_count, warning_count,
+            tuple((step.key, step.status, step.progress) for step in steps),
         )
         if signature == self.last_signature:
             return
         self.last_signature = signature
-        action, payload = self._payload(state, directory)
+        action, payload = self._payload(state, directory, events)
         self.bridge.send(action, payload)
 
     def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
@@ -1444,7 +1612,11 @@ class GtkDesktopHud:
         .hud-title { color: #f8fbff; font-size: 21px; font-weight: 900; }
         .hud-context { color: #cfe0f5; font-size: 14px; font-weight: 700; }
         .hud-muted { color: #91a3b8; font-size: 12px; }
-        .hud-pipeline { color: #d8e5f6; font-size: 13px; font-weight: 700; }
+        .hud-step-label { color: #91a3b8; font-size: 10px; font-weight: 800; }
+        .hud-step-label-running { color: #ffd166; }
+        .hud-step-label-ok { color: #5ee49b; }
+        .hud-step-label-failed { color: #ff6978; }
+        .hud-step-label-skipped { color: #66778a; }
         .hud-metric { color: #f6f8fb; font-size: 17px; font-weight: 900; }
         .hud-metric-label { color: #8ea0b4; font-size: 10px; letter-spacing: 0.05em; font-weight: 800; }
         .hud-event { color: #d6e2f0; font-size: 13px; font-weight: 600; }
@@ -1455,12 +1627,13 @@ class GtkDesktopHud:
         .hud-failed { color: #ff6978; font-weight: 900; }
         .hud-running { color: #ffd166; font-weight: 800; }
         .hud-neutral { color: #91a3b8; }
-        progressbar.hud-progress trough { min-height: 14px; border-radius: 999px; background: #071018; }
-        progressbar.hud-progress progress { min-height: 14px; border-radius: 999px; background: #ffd166; }
-        progressbar.hud-progress-ok progress { background: #5ee49b; }
-        progressbar.hud-progress-failed progress { background: #ff6978; }
-        progressbar.hud-progress-running progress { background: #ffd166; }
-        progressbar.hud-progress-neutral progress { background: #415064; }
+        progressbar.hud-step-progress trough { min-height: 9px; border-radius: 999px; background: #071018; }
+        progressbar.hud-step-progress progress { min-height: 9px; border-radius: 999px; background: #415064; }
+        progressbar.hud-step-ok progress { background: #5ee49b; }
+        progressbar.hud-step-failed progress { background: #ff6978; }
+        progressbar.hud-step-running progress { background: #ffd166; }
+        progressbar.hud-step-skipped progress { background: #263342; }
+        progressbar.hud-step-pending progress { background: #263342; }
         button { border-radius: 10px; padding: 5px 9px; background: #1b2634; color: #e8eef6; }
         expander { color: #91a3b8; }
         """
@@ -1499,24 +1672,23 @@ class GtkDesktopHud:
         context_label = _label("Waiting for target", "hud-context"); context_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE); card.pack_start(context_label, False, False, 0)
         detail = _label("No devtool task has reported progress yet.", "hud-muted", wrap=True); card.pack_start(detail, False, False, 0)
 
-        error_label = _label("", "hud-error-banner", wrap=True); error_label.set_no_show_all(True); card.pack_start(error_label, False, False, 0)
-        warning_label = _label("", "hud-warning-banner", wrap=True); warning_label.set_no_show_all(True); card.pack_start(warning_label, False, False, 0)
+        pipeline_heading = _label("OPERATIONS", "hud-header"); card.pack_start(pipeline_heading, False, False, 0)
+        step_pipeline = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6); card.pack_start(step_pipeline, False, False, 0)
 
-        progress = Gtk.ProgressBar(); progress.set_show_text(True); progress.get_style_context().add_class("hud-progress"); card.pack_start(progress, False, False, 0)
-
-        expanded_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
-        expanded_section.set_no_show_all(not start_expanded)
-        card.pack_start(expanded_section, True, True, 0)
-
-        pipeline = _label("Validate → Apply → Test → Commit", "hud-pipeline"); pipeline.set_ellipsize(Pango.EllipsizeMode.END); expanded_section.pack_start(pipeline, False, False, 0)
-
-        metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); expanded_section.pack_start(metrics, False, False, 0)
+        metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); card.pack_start(metrics, False, False, 0)
         error_metric = _label("0\nERRORS", "hud-metric", wrap=True)
         warning_metric = _label("0\nWARNINGS", "hud-metric", wrap=True)
         progress_metric = _label("WAITING\nSTATUS", "hud-metric", wrap=True)
         for metric in (error_metric, warning_metric, progress_metric):
             metric.set_justify(Gtk.Justification.CENTER)
             metrics.pack_start(metric, True, True, 0)
+
+        error_label = _label("", "hud-error-banner", wrap=True); error_label.set_no_show_all(True); card.pack_start(error_label, False, False, 0)
+        warning_label = _label("", "hud-warning-banner", wrap=True); warning_label.set_no_show_all(True); card.pack_start(warning_label, False, False, 0)
+
+        expanded_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
+        expanded_section.set_no_show_all(not start_expanded)
+        card.pack_start(expanded_section, True, True, 0)
 
         recent_heading = _label("RECENT", "hud-header"); expanded_section.pack_start(recent_heading, False, False, 0)
         events_scroller = Gtk.ScrolledWindow(); events_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); events_scroller.set_min_content_height(118)
@@ -1570,26 +1742,38 @@ class GtkDesktopHud:
             else:
                 ctx.add_class("hud-neutral")
 
-        def _set_progress_classes(status: str) -> None:
-            ctx = progress.get_style_context()
-            for cls in ("hud-progress-ok", "hud-progress-failed", "hud-progress-running", "hud-progress-neutral"):
-                ctx.remove_class(cls)
-            if status == "ok":
-                ctx.add_class("hud-progress-ok")
-            elif status == "failed":
-                ctx.add_class("hud-progress-failed")
-            elif status == "running":
-                ctx.add_class("hud-progress-running")
-            else:
-                ctx.add_class("hud-progress-neutral")
+        def _render_operation_steps(steps: list[HudOperationStep]) -> None:
+            for child in step_pipeline.get_children():
+                step_pipeline.remove(child)
+            for step in steps:
+                column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+                label = _label(step.label.upper(), "hud-step-label", xalign=0.5)
+                label.set_ellipsize(Pango.EllipsizeMode.END)
+                label_ctx = label.get_style_context()
+                label_ctx.add_class(f"hud-step-label-{step.status if step.status in {'running', 'ok', 'failed', 'skipped'} else 'skipped'}")
+                bar = Gtk.ProgressBar()
+                bar.get_style_context().add_class("hud-step-progress")
+                bar.get_style_context().add_class(f"hud-step-{step.status}")
+                if step.status == "running" and step.progress <= 0:
+                    bar.pulse()
+                else:
+                    fraction = 1.0 if step.status in {"ok", "failed", "skipped"} else max(0.0, min(1.0, step.progress / 100.0))
+                    bar.set_fraction(fraction)
+                column.pack_start(label, False, False, 0)
+                column.pack_start(bar, False, False, 0)
+                step_pipeline.pack_start(column, True, True, 0)
+            step_pipeline.show_all()
+
 
         def refresh() -> bool:
             current_dir = resolve_hud_directory(directory, follow_active=follow_active)
             snapshot = snapshot_from_directory(current_dir, recent_events=max(self.recent_events, 14))
             state = state_from_directory(current_dir)
-            raw_events = snapshot.get("events") if isinstance(snapshot.get("events"), list) else []
+            raw_events = _last_jsonl_events(current_dir / "events.jsonl", 2000)
             events = events_for_state(raw_events, state)
+            recent_events = events[-max(self.recent_events, 14):]
             highlights = last_phase_highlights(events)
+            steps = operation_steps(state, events)
             operation = compact_operation_title(state)
             errors = recent_error_lines(events, limit=2)
             if state.status == "failed" and not errors:
@@ -1603,14 +1787,7 @@ class GtkDesktopHud:
             warnings = warnings[-2:]
             summary = hud_event_summary(events)
             completion = completion_from_state(state)
-            if completion:
-                error_count = int(completion.get("errors", 0) or 0)
-                failed_count = int(completion.get("failed", 0) or 0)
-                error_count = max(error_count, 1 if failed_count or state.status == "failed" else 0)
-                warning_count = int(completion.get("warnings", 0) or 0)
-            else:
-                error_count = max(summary.get("errors", 0), 1 if state.status == "failed" else 0)
-                warning_count = summary.get("warnings", 0)
+            error_count, warning_count = live_issue_counts(events, state)
 
             title.set_text(operation)
             context_label.set_text(state_context_label(state))
@@ -1618,70 +1795,43 @@ class GtkDesktopHud:
             window.set_title(state_window_title(state))
             status_badge.set_text(human_status(state.status).upper())
             _set_status_classes(status_badge, state.status)
-            pipeline.set_text(pipeline_label(state, highlights))
+            _render_operation_steps(steps)
 
             recent_heading.set_text("RESULT" if state.status in {"ok", "failed"} else "RECENT")
 
-            if state.current is not None and state.total is not None and state.total > 0:
-                fraction = max(0.0, min(1.0, state.current / state.total))
-                if state.status == "ok":
-                    progress.set_fraction(1.0)
-                    duration = completion.get("duration_s")
-                    progress.set_text(f"Complete · {float(duration):.1f}s" if isinstance(duration, (int, float)) else "Complete")
-                elif state.status == "failed":
-                    progress.set_fraction(1.0)
-                    progress.set_text("failed")
-                else:
-                    progress.set_fraction(fraction)
-                    progress.set_text(f"{state.current}/{state.total}  {state.percent or 0}%")
-            elif state.status == "ok":
-                progress.set_fraction(1.0)
-                duration = completion.get("duration_s")
-                progress.set_text(f"Complete · {float(duration):.1f}s" if isinstance(duration, (int, float)) else "Complete")
-            elif state.status == "failed":
-                progress.set_fraction(1.0)
-                progress.set_text("failed")
-            elif state.current is not None:
-                progress.pulse()
-                progress.set_text(f"{state.current} done")
-            else:
-                progress.pulse()
-                progress.set_text(human_status(state.status).lower())
-            _set_progress_classes(state.status)
+            active_step = next((step for step in steps if step.status == "running"), None)
+            completed_steps = sum(1 for step in steps if step.status in {"ok", "failed", "skipped"})
+            total_steps = len(steps)
 
-            if state.status == "ok" and completion:
-                tests = completion.get("tests") if isinstance(completion.get("tests"), dict) else {}
-                test_total = int(tests.get("total", 0) or 0)
-                duration = completion.get("duration_s")
-                error_metric.set_text(f"{test_total}\nTESTS" if test_total else "PASS\nRESULT")
-                warning_metric.set_text(f"{int(completion.get('warnings', warning_count) or 0)}\nWARNINGS")
-                progress_metric.set_text(f"{float(duration):.1f}s\nDURATION" if isinstance(duration, (int, float)) else "100%\nCOMPLETE")
-                _set_status_classes(error_metric, "ok")
-                _set_status_classes(warning_metric, "running" if int(completion.get('warnings', 0) or 0) else "ok")
-                _set_status_classes(progress_metric, "ok")
+
+            error_metric.set_text(f"{error_count}\nERRORS")
+            warning_metric.set_text(f"{warning_count}\nWARNINGS")
+            if state.status == "failed":
+                progress_metric.set_text("FAILED\nSTATUS")
+            elif state.status == "ok":
+                progress_metric.set_text(f"{completed_steps}/{total_steps}\nSTEPS" if total_steps else "DONE\nSTATUS")
+            elif active_step is not None:
+                progress_metric.set_text(f"{active_step.label.upper()}\nACTIVE")
+            elif total_steps:
+                progress_metric.set_text(f"{completed_steps}/{total_steps}\nSTEPS")
             else:
-                error_metric.set_text(f"{error_count}\nERRORS")
-                warning_metric.set_text(f"{warning_count}\nWARNINGS")
-                if state.status == "failed":
-                    progress_metric.set_text("FAILED\nSTATUS")
-                else:
-                    progress_metric.set_text((f"{state.percent}%\nPROGRESS" if state.percent is not None else f"{human_status(state.status).upper()}\nSTATUS"))
-                _set_status_classes(error_metric, "failed" if error_count else "ok")
-                _set_status_classes(warning_metric, "running" if warning_count else "ok")
-                _set_status_classes(progress_metric, state.status)
+                progress_metric.set_text(f"{human_status(state.status).upper()}\nSTATUS")
+            _set_status_classes(error_metric, "failed" if error_count else "ok")
+            _set_status_classes(warning_metric, "running" if warning_count else "ok")
+            _set_status_classes(progress_metric, state.status)
 
             if errors:
                 error_label.set_text("❌ " + "\n❌ ".join(errors))
                 error_label.show()
             else:
                 error_label.hide()
-            if warnings and not errors:
+            if warnings:
                 warning_label.set_text("⚠ " + "\n⚠ ".join(warnings))
                 warning_label.show()
             else:
                 warning_label.hide()
 
-            shown = concise_event_pairs(events, limit=5)
+            shown = concise_event_pairs(recent_events, limit=5)
             formatted_lines = [f"{event_icon(event)} {line}" for event, line in shown]
             events_label.set_text("\n".join(formatted_lines) or "No events yet")
 
@@ -1708,7 +1858,7 @@ class GtkDesktopHud:
                 state_context_label(state),
                 compact_detail_text(state),
                 state_metric_text(state, events),
-                pipeline.get_text(),
+                " → ".join(f"{step.label}: {step.status}" for step in steps),
                 *(errors or []),
                 *(warnings or []),
                 *phase_lines,

@@ -15,8 +15,10 @@ from unittest.mock import patch
 from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _maybe_copy, build_parser, main
+from devtool.cli import _maybe_commit_after_apply, _maybe_copy, build_parser, main
+from devtool.config import ProjectConfig
 from devtool.logstore import latest_log, write_log
+from devtool.models import OperationResult
 from devtool.summary import build_json_summary
 
 
@@ -728,6 +730,73 @@ artifact-cleanup: ok exit=0 time=0.10s
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["handoff commit"])
+
+    def test_auto_commit_reconciles_complete_artifact_history_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "devtool@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Devtool Tests"], cwd=repo, check=True)
+
+            registry = repo / ".devtool" / "artifacts.json"
+            registry.parent.mkdir(parents=True)
+            registry.write_text('{"schema_version": 2, "artifacts": []}\n', encoding="utf-8")
+            (repo / "base.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "Base"], cwd=repo, check=True)
+
+            # Simulate registry records left by earlier failed/manual artifact runs.
+            old_entries = repo / ".devtool" / "artifacts.d"
+            old_entries.mkdir(parents=True)
+            (old_entries / "old-failure.json").write_text('{"status": "rolled-back"}\n', encoding="utf-8")
+            registry.write_text('{"schema_version": 2, "artifacts": [{"status": "rolled-back"}]}\n', encoding="utf-8")
+            (repo / "new.txt").write_text("new\n", encoding="utf-8")
+
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("new.txt", "new\n")
+
+            args = SimpleNamespace(
+                command="apply-overlay",
+                commit="Apply artifact",
+                artifact=str(artifact),
+                verbose=False,
+                dry_run=False,
+                validate=False,
+                validate_only=False,
+                preview=False,
+                _devtool_history_recorded=False,
+                _devtool_artifact_type="overlay",
+                _devtool_artifact_preview={"changes": [{"kind": "add", "path": "new.txt"}]},
+                _devtool_artifact_manifest={},
+                _devtool_artifact_sha="",
+            )
+            results = [OperationResult("apply-overlay", ["apply-overlay"], 0, 0.0, "ok", [])]
+            config = ProjectConfig(repo_root=repo, kind="unknown")
+
+            updated, _raw = _maybe_commit_after_apply(config, args, results, "apply ok")
+
+            self.assertTrue(any(result.name == "git-commit" and result.returncode == 0 for result in updated))
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout
+            self.assertEqual(status, "")
+            committed = subprocess.run(
+                ["git", "show", "--pretty=", "--name-only", "HEAD"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout.splitlines()
+            self.assertIn(".devtool/artifacts.json", committed)
+            self.assertIn(".devtool/artifacts.d/old-failure.json", committed)
+            self.assertIn("new.txt", committed)
 
     def test_apply_overlay_validate_skips_commit_when_validation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

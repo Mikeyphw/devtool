@@ -571,21 +571,38 @@ public final class MainActivity extends Activity {
             detail.setPadding(0, ui.dp(8), 0, 0);
             card.addView(detail);
         }
-        ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progress.setMax(100);
-        progress.setIndeterminate(record.indeterminate && !record.terminal());
-        progress.setProgress(record.progress);
-        progress.setProgressTintList(android.content.res.ColorStateList.valueOf(statusColor(record.status)));
-        progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(ui.palette.surfaceRaised));
-        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, ui.dp(6));
-        progressParams.setMargins(0, ui.dp(12), 0, ui.dp(4));
-        progress.setLayoutParams(progressParams);
-        card.addView(progress);
+        LinearLayout pipeline = new LinearLayout(this);
+        pipeline.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams pipelineParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        pipelineParams.setMargins(0, ui.dp(12), 0, ui.dp(4));
+        pipeline.setLayoutParams(pipelineParams);
+        java.util.List<HudUpdate.Step> steps = HudUpdate.parseSteps(
+                record.stepsJson, record.phase, record.status, record.progress);
+        for (HudUpdate.Step step : steps) {
+            LinearLayout segment = new LinearLayout(this);
+            segment.setOrientation(LinearLayout.VERTICAL);
+            segment.setPadding(ui.dp(2), 0, ui.dp(2), 0);
+            TextView stepLabel = ui.text(step.label.toUpperCase(java.util.Locale.ROOT), 9, stepColor(step), true);
+            stepLabel.setGravity(Gravity.CENTER);
+            stepLabel.setMaxLines(1);
+            segment.addView(stepLabel, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            ProgressBar stepProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            stepProgress.setMax(100);
+            stepProgress.setIndeterminate(step.running() && step.progress <= 0);
+            stepProgress.setProgress((step.succeeded() || step.failed() || step.skipped()) ? 100 : step.progress);
+            stepProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
+            stepProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(ui.palette.surfaceRaised));
+            segment.addView(stepProgress, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ui.dp(6)));
+            pipeline.addView(segment, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        card.addView(pipeline);
 
         String time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
                 .format(new Date(record.updatedAtMs));
-        card.addView(ui.text((record.indeterminate ? "Working" : record.progress + "%") + " · " + time,
+        card.addView(ui.text(record.errors + " errors · " + record.warnings + " warnings · " + time,
                 12, ui.palette.muted, false));
 
         if (actions) {
@@ -810,6 +827,13 @@ public final class MainActivity extends Activity {
                 "\nTermux command permission  " + yesNo(TermuxCommandRunner.hasPermission(this)) +
                 "\nOptional root bridge  " + RootBridgeManager.stateLabel(this));
         if (tokenView != null) tokenView.setText(BridgeSecrets.getOrCreateToken(this));
+    }
+
+    private int stepColor(HudUpdate.Step step) {
+        if (step.failed()) return ui.palette.red;
+        if (step.succeeded()) return ui.palette.green;
+        if (step.running()) return ui.palette.yellow;
+        return ui.palette.muted;
     }
 
     private int statusColor(String status) {

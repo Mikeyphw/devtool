@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .console_utils import resolve_cli_path
+from .logstore import state_dir
 
 MANIFEST_NAMES = {".devtool-artifact.json", "artifact.devtool.json", "devtool-artifact.json"}
 DELETE_MANIFEST_NAME = ".devtool-delete"
@@ -1687,23 +1688,59 @@ def save_history(repo_root: Path, entries: list[dict[str, Any]]) -> Path:
     return path
 
 
+def history_lock_file(repo_root: Path) -> Path:
+    """Return the external lock used to serialize artifact history writes.
+
+    The lock is runtime state, not repository content. Keeping it below the
+    devtool state directory prevents an otherwise clean checkout from gaining
+    an untracked ``.devtool/artifacts.lock`` file.
+    """
+    identity = hashlib.sha256(str(repo_root.expanduser().resolve()).encode("utf-8")).hexdigest()[:24]
+    return state_dir() / "artifact-history-locks" / f"{identity}.lock"
+
+
+def _cleanup_legacy_history_lock(repo_root: Path) -> None:
+    legacy = repo_root / ".devtool" / "artifacts.lock"
+    if not legacy.exists() or not legacy.is_file():
+        return
+
+    # Never remove a deliberately tracked repository file. Old devtool versions
+    # created this as untracked runtime state, which is safe to remove after the
+    # external lock has serialized the current write.
+    try:
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", ".devtool/artifacts.lock"],
+            cwd=repo_root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        tracked = None
+    if tracked is None or tracked.returncode != 0:
+        legacy.unlink(missing_ok=True)
+
+
 def append_history(repo_root: Path, entry: dict[str, Any]) -> Path:
     directory = history_entries_dir(repo_root)
     directory.mkdir(parents=True, exist_ok=True)
-    lock_path = repo_root / ".devtool" / "artifacts.lock"
+    lock_path = history_lock_file(repo_root)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        history_id = str(entry.get("history_id") or uuid.uuid4().hex)
-        entry = dict(entry)
-        entry["history_id"] = history_id
-        stamp = re.sub(r"[^0-9A-Za-z]+", "", str(entry.get("applied_at") or ""))[:20] or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        path = directory / f"{stamp}-{history_id}.json"
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, path)
-        save_history(repo_root, load_history(repo_root))
-        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        try:
+            history_id = str(entry.get("history_id") or uuid.uuid4().hex)
+            entry = dict(entry)
+            entry["history_id"] = history_id
+            stamp = re.sub(r"[^0-9A-Za-z]+", "", str(entry.get("applied_at") or ""))[:20] or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            path = directory / f"{stamp}-{history_id}.json"
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(tmp, path)
+            save_history(repo_root, load_history(repo_root))
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    _cleanup_legacy_history_lock(repo_root)
     return path
 
 
