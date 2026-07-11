@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -8,6 +9,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -648,12 +650,16 @@ def _run_process_live(
         tracker.enabled = False
     if tracker is not None and tasker_progress is not None:
         def _tasker_update(snapshot: dict) -> None:
+            phase = tasker_progress.current_phase or {}
+            display_target = str(phase.get("target") or phase.get("workspace") or snapshot.get("target") or "")
             tasker_progress.progress(
                 detail=str(snapshot.get("detail") or ""),
                 completed=snapshot.get("completed"),
                 total=snapshot.get("total"),
                 percent=snapshot.get("percent"),
-                target=str(snapshot.get("target") or ""),
+                target=display_target,
+                warnings=snapshot.get("warnings"),
+                errors=snapshot.get("errors"),
                 force=True,
             )
         tracker.update_callback = _tasker_update
@@ -683,6 +689,19 @@ def _run_process_live(
             except Exception:
                 pass
 
+    cancel_watch_stop = threading.Event()
+    cancel_watcher: threading.Thread | None = None
+    if tasker_progress is not None:
+        def _watch_cancel() -> None:
+            while not cancel_watch_stop.wait(0.1):
+                if proc.poll() is not None:
+                    return
+                if tasker_progress.cancel_requested():
+                    _interrupt_process()
+                    return
+        cancel_watcher = threading.Thread(target=_watch_cancel, name=f"devtool-cancel-{proc.pid}", daemon=True)
+        cancel_watcher.start()
+
     try:
         idle_timeout = _idle_timeout_for(parser_argv, command_name)
         completion_idle_grace = _test_completion_grace_for(parser_argv, command_name)
@@ -691,7 +710,10 @@ def _run_process_live(
             for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout, completion_idle_grace=completion_idle_grace, completion_status_detector=completion_detector):
                 output_parts.append(line)
                 print(line, end="", flush=True)
-            return _wait_process_returncode(proc), "".join(output_parts)
+            code = _wait_process_returncode(proc)
+            if tasker_progress is not None and tasker_progress.cancel_requested():
+                code = 130
+            return code, "".join(output_parts)
 
         with tracker:
             for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout, completion_idle_grace=completion_idle_grace, completion_status_detector=completion_detector):
@@ -703,6 +725,9 @@ def _run_process_live(
                     print(line, end="", flush=True)
                 tracker.update_from_line(line)
             returncode = _wait_process_returncode(proc)
+            if tasker_progress is not None and tasker_progress.cancel_requested():
+                returncode = 130
+                output_parts.append("\nCancelled from Devtool Control Center. Child process was terminated.\n")
             tracker.finish(returncode)
         return returncode, "".join(output_parts)
     except KeyboardInterrupt:
@@ -714,6 +739,14 @@ def _run_process_live(
             except Exception:
                 pass
         return 130, "".join(output_parts)
+    finally:
+        cancel_watch_stop.set()
+        if cancel_watcher is not None and cancel_watcher is not threading.current_thread():
+            cancel_watcher.join(timeout=0.25)
+        if tasker_progress is not None:
+            tasker_progress.clear_cancel()
+        with contextlib.suppress(Exception):
+            proc.stdout.close()
 
 
 def run_specs(
@@ -729,10 +762,21 @@ def run_specs(
     results: list[OperationResult] = []
     raw_sections: list[str] = []
 
+    if tasker_progress is not None and not dry_run:
+        tasker_progress.plan_phases([
+            {
+                "name": spec.name,
+                "target": str(spec.metadata.get("bundle_target") or spec.metadata.get("matrix") or ""),
+                "workspace": str(spec.metadata.get("workspace") or ""),
+                "workspace_root": str(spec.metadata.get("workspace_root") or ""),
+            }
+            for spec in specs
+        ])
+
     for spec_index, spec in enumerate(specs, start=1):
         effective_argv, cleanup_dir = _prepare_termux_dotnet(spec.argv)
         if tasker_progress is not None and not dry_run:
-            tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=effective_argv)
+            tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=effective_argv, metadata=spec.metadata)
 
         if dry_run:
             output = "$ " + " ".join(effective_argv)

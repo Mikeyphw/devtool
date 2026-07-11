@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Devtool Control Center
+GenericName=Development Workflow Monitor
+Comment=Run and monitor devtool workflows, artifacts, validation, and diagnostics
+Exec=devtool-control-center
+Icon=io.github.mikeceead.DevtoolControlCenter
+Terminal=false
+Categories=Development;Utility;
+Keywords=devtool;build;test;artifact;overlay;diagnostics;
+StartupNotify=true
+StartupWMClass=io.github.mikeceead.DevtoolControlCenter

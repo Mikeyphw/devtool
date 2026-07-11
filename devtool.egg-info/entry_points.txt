@@ -1,0 +1,4 @@
+[console_scripts]
+devtool = devtool.cli:main
+devtool-androidos = devtool.termux_chroot_runner:main
+devtool-termux-chroot = devtool.termux_chroot_runner:main

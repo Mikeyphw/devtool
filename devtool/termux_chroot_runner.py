@@ -321,7 +321,13 @@ def translate_devtool_args(argv: list[str], *, env: Mapping[str, str] | None = N
     env = env or os.environ
     cwd = cwd or os.getcwd()
     config, forwarded = _parse_runner_args(list(argv), env)
-    config.cwd = _translate_path(cwd, config.path_map, cwd=cwd) if config.translate_paths else cwd
+    explicit_repo = _find_flag_value(forwarded, {"-r", "--repo"})
+    # When the whole devtool process is delegated into the chroot, start from
+    # the requested repository rather than from Termux's current directory.
+    # The repository can exist only in the chroot namespace (for example
+    # /home/mike/Code/project), while the Termux host cwd cannot see it.
+    start_directory = explicit_repo or cwd
+    config.cwd = _translate_path(start_directory, config.path_map, cwd=cwd) if config.translate_paths else start_directory
     if not config.translate_paths:
         return config, forwarded
     translated: list[str] = []
@@ -441,6 +447,133 @@ def chrootctl_available(env: Mapping[str, str] | None = None) -> bool:
     if os.path.sep in chrootctl:
         return Path(chrootctl).exists()
     return shutil.which(chrootctl) is not None
+
+
+def repo_path_from_argv(argv: list[str], *, cwd: str | None = None) -> str:
+    """Return the repository path requested by the command, if any."""
+    value = _find_flag_value(list(argv), {"-r", "--repo"}).strip()
+    if not value:
+        return ""
+    expanded = os.path.expanduser(value)
+    if not os.path.isabs(expanded):
+        expanded = os.path.abspath(os.path.join(cwd or os.getcwd(), expanded))
+    return expanded
+
+
+def chroot_directory_exists(path: str, chroot_name: str, *, env: Mapping[str, str] | None = None) -> bool:
+    """Check a directory in the chroot namespace without relying on host visibility."""
+    if not path or not chroot_name.strip():
+        return False
+    env = env or os.environ
+    old_chrootctl = os.environ.get("DEVTOOL_CHROOTCTL")
+    old_sudo = os.environ.get("DEVTOOL_CHROOT_SUDO")
+    try:
+        if "DEVTOOL_CHROOTCTL" in env:
+            os.environ["DEVTOOL_CHROOTCTL"] = str(env["DEVTOOL_CHROOTCTL"])
+        if "DEVTOOL_CHROOT_SUDO" in env:
+            os.environ["DEVTOOL_CHROOT_SUDO"] = str(env["DEVTOOL_CHROOT_SUDO"])
+        command = "test -d " + shlex.quote(path)
+        completed = subprocess.run(
+            build_chroot_exec_argv(command, chroot_name),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=8,
+            check=False,
+        )
+        return completed.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        if old_chrootctl is None:
+            os.environ.pop("DEVTOOL_CHROOTCTL", None)
+        else:
+            os.environ["DEVTOOL_CHROOTCTL"] = old_chrootctl
+        if old_sudo is None:
+            os.environ.pop("DEVTOOL_CHROOT_SUDO", None)
+        else:
+            os.environ["DEVTOOL_CHROOT_SUDO"] = old_sudo
+
+
+def discover_chroot_home_for_termux_path(
+    host_path: str,
+    chroot_name: str,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Find the chroot home containing the same path relative to Termux HOME."""
+    env = env or os.environ
+    termux_home = os.path.expanduser(str(env.get("HOME", "") or "")).rstrip("/")
+    expanded = os.path.abspath(os.path.expanduser(host_path))
+    if not termux_home or not (expanded == termux_home or expanded.startswith(termux_home + "/")):
+        return ""
+    suffix = expanded[len(termux_home):].lstrip("/")
+    candidate_expr = '"$base"' if not suffix else '"$base"/' + shlex.quote(suffix)
+    command = (
+        'for base in /home/* /root; do '
+        '[ -d "$base" ] || continue; '
+        f'candidate={candidate_expr}; '
+        '[ -d "$candidate" ] || continue; '
+        "printf '%s\\n' \"$base\"; "
+        'done'
+    )
+    try:
+        completed = subprocess.run(
+            build_chroot_exec_argv(command, chroot_name),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=8,
+            check=False,
+            env=dict(os.environ),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    candidates = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    return candidates[0] if candidates else ""
+
+
+def repair_termux_home_mapping(
+    mappings: Iterable[tuple[str, str]],
+    *,
+    host_path: str,
+    chroot_name: str,
+    env: Mapping[str, str] | None = None,
+) -> list[tuple[str, str]]:
+    """Repair a guessed /home/termux mapping when the repo lives elsewhere."""
+    env = env or os.environ
+    current = list(mappings)
+    translated = _translate_path(host_path, current, cwd=os.getcwd())
+    if chroot_directory_exists(translated, chroot_name, env=env):
+        return current
+    discovered_home = discover_chroot_home_for_termux_path(host_path, chroot_name, env=env)
+    termux_home = os.path.expanduser(str(env.get("HOME", "") or "")).rstrip("/")
+    if not discovered_home or not termux_home:
+        return current
+    repaired = [(host, target) for host, target in current if host.rstrip("/") != termux_home]
+    repaired.insert(0, (termux_home, discovered_home.rstrip("/")))
+    return repaired
+
+
+def should_delegate_full_for_chroot_only_repo(
+    argv: list[str],
+    *,
+    chroot_name: str,
+    env: Mapping[str, str] | None = None,
+    cwd: str | None = None,
+) -> bool:
+    """Return True when the repo is invisible to Termux but exists in the chroot."""
+    env = env or os.environ
+    host_repo = repo_path_from_argv(argv, cwd=cwd)
+    if not host_repo or Path(host_repo).is_dir():
+        return False
+    try:
+        config, forwarded = translate_devtool_args(argv, env=env, cwd=cwd or os.getcwd())
+    except ValueError:
+        return False
+    chroot_repo = _find_flag_value(forwarded, {"-r", "--repo"}).strip() or config.cwd
+    return chroot_directory_exists(chroot_repo, chroot_name, env=env)
 
 
 def should_auto_chroot(argv: list[str], *, command: str | None = None, env: Mapping[str, str] | None = None) -> bool:

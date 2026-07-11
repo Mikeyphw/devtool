@@ -243,3 +243,11 @@ def test_android_hud_uses_dynamic_operation_segments_and_live_issue_counts() -> 
     assert 'append(update.errors).append(" errors · ")' in overlay
     assert "update.steps.size()" in notification
     assert "Notification.ProgressStyle.Segment" in notification
+
+
+def test_chroot_run_uses_termux_visible_workdir() -> None:
+    main = _java_source("MainActivity.java")
+    assert 'if (config.useChroot)' in main
+    assert 'configured.startsWith("/home/")' in main
+    assert 'configured.startsWith("/root/")' in main
+    assert 'return "~/";' in main

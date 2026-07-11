@@ -104,6 +104,47 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertEqual(latest["total"], 5)
             self.assertEqual(latest["progress"]["current"], 2)
 
+    def test_sink_publishes_planned_multi_target_pipeline_and_live_issue_totals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = TaskerProgressSink(
+                directory=Path(tmp),
+                command="apply-overlay",
+                repo_root="/repo/demo",
+                repo_name="demo",
+                enabled=True,
+                update_interval_s=0,
+            )
+            sink.started()
+            sink.plan_phases([
+                {"name": "build[s3atelier]", "workspace": "s3atelier", "target": "s3atelier-target"},
+                {"name": "build[s3pi-base]", "workspace": "s3pi-base", "target": "s3pi-target"},
+            ])
+            sink.phase_started(
+                "build[s3atelier]",
+                index=1,
+                total=2,
+                argv=["dotnet", "build", "S3Atelier.Modern.sln"],
+                metadata={"workspace": "s3atelier", "bundle_target": "s3atelier-target"},
+            )
+            sink.progress(detail="built 4 of 10 projects", completed=4, total=10, warnings=2, errors=1, force=True)
+
+            latest = json.loads((Path(tmp) / "latest_event.json").read_text(encoding="utf-8"))
+            self.assertEqual(latest["current"], 4)
+            self.assertEqual(latest["total"], 10)
+            self.assertEqual(latest["totals"], {"warnings": 2, "errors": 1})
+            self.assertEqual(latest["phase"]["workspace"], "s3atelier")
+            self.assertEqual(latest["targets"], ["s3atelier-target", "s3pi-target"] )
+            self.assertEqual(len(latest["pipeline"]), 2)
+            self.assertEqual(len(latest["phase_progress"]), 1)
+            live_phase = latest["phase_progress"][0]
+            self.assertEqual(live_phase["name"], "build[s3atelier]")
+            self.assertEqual(live_phase["workspace"], "s3atelier")
+            self.assertEqual(live_phase["completed"], 4)
+            self.assertEqual(live_phase["total"], 10)
+            self.assertEqual(live_phase["percent"], 40.0)
+            self.assertEqual(live_phase["warnings"], 2)
+            self.assertEqual(live_phase["errors"], 1)
+
     def test_send_local_http_event_posts_full_json_to_localhost(self) -> None:
         response = Mock()
         response.status = 204

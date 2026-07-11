@@ -8,7 +8,7 @@ from unittest.mock import patch
 from devtool.clipboard import ClipboardResult
 from devtool.execution import build_chroot_exec_argv, wrap_specs_for_chroot
 from devtool.models import CommandSpec, ProjectConfig
-from devtool.termux_chroot_runner import _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, translate_devtool_args, wrap_specs_for_termux_host_chroot
+from devtool.termux_chroot_runner import _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, repair_termux_home_mapping, should_delegate_full_for_chroot_only_repo, translate_devtool_args, wrap_specs_for_termux_host_chroot
 from devtool.runners import run_specs
 
 
@@ -55,6 +55,48 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         self.assertIn("/home/mike/Code/sims3tools", forwarded)
         self.assertIn("/home/mike/Downloads/fix.zip", forwarded)
         self.assertIn("--machine-file=/home/mike/out/result.json", forwarded)
+
+
+    def test_explicit_repo_becomes_full_chroot_start_directory(self) -> None:
+        env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike"}
+        config, forwarded = translate_devtool_args(
+            ["--repo", "/home/mike/Code/chroot-only", "validate"],
+            env=env,
+            cwd="/data/data/com.termux/files/home",
+        )
+        self.assertEqual(config.cwd, "/home/mike/Code/chroot-only")
+        self.assertIn("/home/mike/Code/chroot-only", forwarded)
+        self.assertTrue(build_inner_command(config, forwarded).startswith("cd /home/mike/Code/chroot-only &&"))
+
+    def test_repairs_default_home_mapping_when_repo_is_under_another_chroot_user(self) -> None:
+        env = {"HOME": "/data/data/com.termux/files/home"}
+        mappings = [(env["HOME"], "/home/termux"), ("/mnt", "/mnt")]
+        with (
+            patch("devtool.termux_chroot_runner.chroot_directory_exists", return_value=False),
+            patch("devtool.termux_chroot_runner.discover_chroot_home_for_termux_path", return_value="/home/mike"),
+        ):
+            repaired = repair_termux_home_mapping(
+                mappings,
+                host_path=env["HOME"] + "/Code/demo",
+                chroot_name="androidos",
+                env=env,
+            )
+        self.assertEqual(repaired[0], (env["HOME"], "/home/mike"))
+        self.assertNotIn((env["HOME"], "/home/termux"), repaired)
+
+    def test_chroot_only_repo_requests_full_delegation(self) -> None:
+        env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike"}
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "devtool.termux_chroot_runner.chroot_directory_exists", return_value=True
+        ) as exists:
+            missing = str(Path(tmp) / "not-visible-on-host")
+            self.assertTrue(should_delegate_full_for_chroot_only_repo(
+                ["--repo", missing, "validate"],
+                chroot_name="androidos",
+                env=env,
+                cwd=tmp,
+            ))
+        exists.assert_called_once_with(missing, "androidos", env=env)
 
     def test_batch_apply_steps_are_translated(self) -> None:
         env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike"}

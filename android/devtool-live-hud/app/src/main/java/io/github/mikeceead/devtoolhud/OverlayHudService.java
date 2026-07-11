@@ -344,15 +344,25 @@ public final class OverlayHudService extends Service {
         card.addView(detail);
 
         LinearLayout pipeline = new LinearLayout(this);
-        pipeline.setOrientation(LinearLayout.HORIZONTAL);
+        pipeline.setOrientation(LinearLayout.VERTICAL);
         pipeline.setPadding(0, dp(2), 0, dp(2));
+        LinearLayout row = null;
+        int rowCount = 0;
         for (HudUpdate.Step step : update.steps) {
+            if (row == null || rowCount == 4) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                pipeline.addView(row, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+                rowCount = 0;
+            }
             LinearLayout segment = new LinearLayout(this);
             segment.setOrientation(LinearLayout.VERTICAL);
-            segment.setPadding(dp(2), 0, dp(2), 0);
+            segment.setPadding(dp(2), 0, dp(2), dp(3));
             TextView stepLabel = label(step.label.toUpperCase(java.util.Locale.ROOT), 9, stepColor(step), true);
             stepLabel.setGravity(Gravity.CENTER);
             stepLabel.setMaxLines(1);
+            stepLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
             segment.addView(stepLabel, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
             ProgressBar stepProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -365,7 +375,15 @@ public final class OverlayHudService extends Service {
             }
             segment.addView(stepProgress, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, dp(7)));
-            pipeline.addView(segment, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            row.addView(segment, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            rowCount++;
+        }
+        if (row != null) {
+            while (rowCount < 4) {
+                android.view.View spacer = new android.view.View(this);
+                row.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+                rowCount++;
+            }
         }
         card.addView(pipeline, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));

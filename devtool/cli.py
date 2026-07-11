@@ -43,6 +43,7 @@ from .artifacts import (
     validate_overlay_bundle,
 )
 from .artifact_validation import run_artifact_validation_script
+from .artifact_inspection import inspect_artifact
 from .detect import detect_repo, render_detect_text
 from .execution import apply_matrix, wrap_specs_for_chroot
 from .handoff import render_handoff
@@ -252,6 +253,12 @@ def build_parser() -> argparse.ArgumentParser:
     validate_overlays_cmd.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to validate as a bundle")
     validate_overlays_cmd.add_argument("--fail-on-conflict", action="store_true", help="Fail if multiple nested overlays write the same file")
 
+    inspect_artifact_cmd = subparsers.add_parser("inspect-artifact", aliases=["ia"], help="Print machine-readable artifact, bundle, inventory, validation, and diff metadata")
+    inspect_artifact_cmd.add_argument("artifact")
+    inspect_artifact_cmd.add_argument("--diff", action="store_true", help="Include a repository-relative unified diff")
+    inspect_artifact_cmd.add_argument("--diff-context", type=int, default=3)
+    inspect_artifact_cmd.add_argument("--max-diff-lines", type=int, default=4000)
+
     bundle_cmd = subparsers.add_parser("bundle")
     bundle_sub = bundle_cmd.add_subparsers(dest="bundle_command", required=True)
     bundle_overlays = bundle_sub.add_parser("overlays")
@@ -338,6 +345,14 @@ def build_parser() -> argparse.ArgumentParser:
     rollback_cmd.add_argument("--last", action="store_true")
 
     subparsers.add_parser("targets", aliases=["tg"])
+
+    control_center = subparsers.add_parser("control-center", aliases=["gui"], help="Launch the Qt 6 Devtool Control Center")
+    control_center.add_argument("--binary", default="", help="Override the devtool-control-center executable")
+
+    ipc_server = subparsers.add_parser("ipc-server", help="Run or start the local Control Center IPC broker")
+    ipc_server.add_argument("--socket", default="", help="Override the Unix socket path")
+    ipc_server.add_argument("--state-dir", default="", help="Load initial run snapshots from this state directory")
+    ipc_server.add_argument("--foreground", action="store_true", help="Run the broker in the foreground")
 
     return parser
 
@@ -1697,6 +1712,13 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         args._devtool_artifact_manifest = validation.manifest
         args._devtool_bundle_targets = overlay_bundle_targets(artifact_path) if artifact_type == "overlay_bundle" else []
         args._devtool_workspace_validations = artifact_workspaces(validation.manifest) if artifact_type == "overlay" else []
+        if tasker_progress is not None:
+            manifest_targets = [str(item.get("target") or "").strip() for item in args._devtool_workspace_validations if isinstance(item, dict)]
+            manifest_targets.extend(str(item).strip() for item in args._devtool_bundle_targets)
+            embedded_target = artifact_target(validation.manifest)
+            if embedded_target:
+                manifest_targets.insert(0, embedded_target)
+            tasker_progress.set_targets(manifest_targets)
         preview = preview_artifact(config.repo_root, artifact_path, snapshot=snapshot)
         args._devtool_artifact_preview = preview
     except Exception as exc:
@@ -2603,17 +2625,46 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
         return None
     try:
         from .termux_chroot_runner import (
+            _is_termux_host_env,
+            chrootctl_available,
             normalize_hud_mode_for_termux_host,
+            repair_termux_home_mapping,
+            repo_path_from_argv,
             run_auto_chroot,
             should_auto_chroot,
+            should_delegate_full_for_chroot_only_repo,
             translate_devtool_args,
         )
-        if not should_auto_chroot(raw_argv, command=str(getattr(args, "command", "") or "")):
+        explicit_chroot = str(getattr(args, "chroot", "") or "").strip()
+        chroot_name = explicit_chroot or os.environ.get("DEVTOOL_TERMUX_CHROOT", "androidos").strip() or "androidos"
+        # Backend mode intentionally keeps devtool on the Termux host. That is
+        # impossible when -r points to a directory which exists only inside the
+        # chroot. Detect that namespace mismatch before project discovery and
+        # delegate the whole process instead of reporting a misleading missing
+        # repository error. Explicit --chroot is handled here too.
+        if (
+            _is_termux_host_env()
+            and chrootctl_available()
+            and should_delegate_full_for_chroot_only_repo(
+                raw_argv, chroot_name=chroot_name, cwd=os.getcwd()
+            )
+        ):
+            return run_auto_chroot(raw_argv)
+        eligible = should_auto_chroot(raw_argv, command=str(getattr(args, "command", "") or ""))
+        if not eligible and _is_termux_host_env() and explicit_chroot and chrootctl_available():
+            eligible = True
+        if not eligible:
             return None
         mode = os.environ.get("DEVTOOL_AUTO_CHROOT_MODE", "backend").strip().lower()
         if mode in {"full", "legacy", "process", "wrapper"}:
             return run_auto_chroot(raw_argv)
         config, _forwarded = translate_devtool_args(raw_argv, cwd=os.getcwd())
+        host_repo = repo_path_from_argv(raw_argv, cwd=os.getcwd()) or os.getcwd()
+        config.path_map = repair_termux_home_mapping(
+            config.path_map,
+            host_path=host_repo,
+            chroot_name=config.chroot_name,
+        )
         args.chroot = config.chroot_name
         args.host = False
         args._devtool_termux_host_chroot_backend = True
@@ -2729,6 +2780,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "bundle":
         return _run_bundle_command(args)
 
+    if args.command in {"inspect-artifact", "ia"}:
+        repo_root = Path(args.repo).expanduser().resolve() if args.repo else None
+        try:
+            payload = inspect_artifact(
+                args.artifact,
+                repo_root=repo_root,
+                include_diff=bool(args.diff),
+                diff_context=max(0, int(args.diff_context)),
+                max_diff_lines=max(100, int(args.max_diff_lines)),
+            )
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps(payload, indent=None if args.machine == "compact" else 2, ensure_ascii=False))
+        return 0 if bool(payload.get("validation", {}).get("ok", False)) else 1
+
     if _is_artifact_validation_args(args):
         config = _load_command_config(args)
         return _run_artifact_validation_command(config, args, as_json=effective_payload == "json")
@@ -2763,6 +2830,22 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(text)
         return 0
+
+    if args.command == "ipc-server":
+        from .ipc import run_ipc_server
+        return run_ipc_server(args)
+
+    if args.command in {"control-center", "gui"}:
+        binary = str(getattr(args, "binary", "") or os.environ.get("DEVTOOL_CONTROL_CENTER", "") or "devtool-control-center")
+        candidate = shutil.which(binary)
+        if candidate is None:
+            repo_candidate = Path(__file__).resolve().parent.parent / "desktop" / "devtool-control-center" / "build" / "devtool-control-center"
+            candidate = str(repo_candidate) if repo_candidate.is_file() else None
+        if candidate is None:
+            console.print("[red]Devtool Control Center is not installed.[/red]")
+            console.print("Build desktop/devtool-control-center and install devtool-control-center on PATH.")
+            return 2
+        return subprocess.call([candidate])
 
     if args.command == "hud":
         from .hud import run_hud

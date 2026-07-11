@@ -2,6 +2,10 @@
 
 Devtool applies project overlays, validates builds and tests, records transactions, produces handoff summaries, and can publish one live run to the desktop HUD or the Android Devtool Frontend.
 
+## Termux chroot repository paths
+
+When a repository exists only inside a chroot, devtool now detects that the path is not visible to the Termux host and delegates the full process automatically. Repositories mirrored from Termux home are also probed so mounts under `/home/mike`, `/home/termux`, or another chroot home resolve without manual path-map flags. The Android frontend always launches chroot workflows from a Termux-visible work directory.
+
 ## Devtool 0.3.3 behavior
 
 Automatic artifact commits include the complete devtool-managed history registry (`.devtool/artifacts.json` and `.devtool/artifacts.d/`) so prior history records do not leave the repository dirty. Unrelated working-tree changes remain excluded.
@@ -38,6 +42,17 @@ Use the Android Devtool Frontend for:
 
 The foreground-service notification required by Android while the floating overlay is running remains part of the app.
 
+
+
+## Artifact inspection API
+
+Devtool 0.4.1 exposes a machine-readable inspector used by the Qt Control Center:
+
+```bash
+devtool -r /path/to/repo inspect-artifact overlay-or-bundle.zip --diff
+```
+
+The JSON result includes artifact identity, repository/workspaces, validation, inventory, bundle dependencies, preview counts, manifest text, and an optional repository-relative diff.
 
 ## Self-contained artifacts
 
@@ -84,7 +99,7 @@ devtool --auto-hud --hud-mode desktop-window ...
 
 The desktop HUD binds to the current run before rendering, filters events by run ID, suppresses duplicate generic errors, and reports a successful rollback as recovery rather than as the cause of failure.
 
-The GTK desktop window starts in a compact, pipeline-focused mode. It shows separate live operation segments for extract, restore, build, test, artifact validation, commit, and rollback as applicable. Each segment has its own pending/running/succeeded/failed/skipped state and progress. Live **ERRORS** and **WARNINGS** totals remain visible beside the active operation, along with Copy summary/Open log/Close actions. Select **Expand** to reveal recent events and diagnostic details; the choice is preserved for the lifetime of that HUD window. Set `DEVTOOL_DESKTOP_HUD_START_EXPANDED=1` to launch expanded.
+The GTK desktop window starts in a compact, pipeline-focused mode. It shows separate live operation segments for extract, restore, build, test, artifact validation, commit, and rollback as applicable. Restore/build/test segments advance from parsed command output while the command is still running. Multi-workspace artifacts keep independent target-scoped segments such as `Build · s3atelier` and `Build · s3pi-base`, wrapped into rows of four. Live **ERRORS** and **WARNINGS** totals come directly from the active parser and remain visible beside the current operation, along with Copy summary/Open log/Close actions. Select **Expand** to reveal recent events and diagnostic details; the choice is preserved for the lifetime of that HUD window. Set `DEVTOOL_DESKTOP_HUD_START_EXPANDED=1` to launch expanded.
 
 ## Validation sequence
 
@@ -112,7 +127,7 @@ Build from the repository root:
 ./build-android-hud.sh
 ```
 
-The portrait-first app includes the same structured operation pipeline in its active-run card, floating overlay, and Android 16 progress notification. Warning/error totals update from the current event stream rather than waiting for final completion.
+The portrait-first app includes the same target-scoped operation pipeline in its active-run card, floating overlay, and Android 16 progress notification. Long multi-target pipelines wrap into rows of four, step progress advances while command output is parsed, and warning/error totals update from the current event stream rather than waiting for final completion. The active state also carries an authoritative per-operation progress snapshot, so desktop and Android bars continue updating even when a poll skips intermediate event-log records.
 
 The portrait-first app includes:
 
@@ -180,3 +195,44 @@ Replace older commands as follows:
 --tasker* flags               → configure the native Tasker plug-in action in the app
 --concurrency / --lock-timeout / --no-wait → removed; one run is enforced
 ```
+
+
+## Qt 6 Control Center
+
+Phase 1 of the native Linux frontend lives in `desktop/devtool-control-center`. It provides Overview, Run, History, Settings, tray integration, and a detachable compact HUD.
+
+```bash
+cd desktop/devtool-control-center
+./build.sh
+./build/devtool-control-center
+```
+
+Runs started by the app use `--hud-mode control-center`, which keeps live state publishing enabled without opening the legacy GTK HUD. Launch an installed build with `devtool control-center`.
+
+## Control Center native IPC
+
+Devtool 0.5.2 uses a per-user Unix socket for live Control Center updates. The default is
+`$XDG_RUNTIME_DIR/devtool/control-center.sock`, falling back to
+`$XDG_STATE_HOME/devtool/control-center.sock` or `~/.local/state/devtool/control-center.sock`.
+
+```bash
+devtool ipc-server                 # start/reuse the detached broker
+devtool ipc-server --foreground    # diagnostic foreground mode
+DEVTOOL_IPC_SOCKET=/path/to.sock devtool ...
+```
+
+The broker supports multiple repositories, producers, and Control Center clients. State files remain available as a reconnect and compatibility fallback. Cancellation from the Control Center is delivered to the matching run and causes the active command process group to terminate transactionally.
+
+
+## Devtool Control Center Phase 3
+
+The Qt application now uses the native IPC broker for normal live operation, reconnect snapshots, concurrent repositories, and per-run cancellation. File-state monitoring remains available when the broker is unavailable.
+
+
+### Qt Control Center packaging safety
+
+The Qt Control Center 0.3.2 builds outside the source tree by default and uses a clean dedicated build for Debian packages. The build launcher also normalizes source timestamps that are ahead of the local clock, preventing Ninja from endlessly printing `Re-running CMake...` after an archive extraction or source update.
+
+## Qt Control Center clipboard monitor
+
+The Linux Control Center can install an optional per-user clipboard monitoring service from **Settings → Clipboard monitoring**. It recognizes local devtool artifact archives and copied `devtool` commands, ignores unrelated clipboard data, and never runs detected content automatically. The service can be enabled, disabled, reinstalled, or removed from the UI.

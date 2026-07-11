@@ -572,20 +572,30 @@ public final class MainActivity extends Activity {
             card.addView(detail);
         }
         LinearLayout pipeline = new LinearLayout(this);
-        pipeline.setOrientation(LinearLayout.HORIZONTAL);
+        pipeline.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams pipelineParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         pipelineParams.setMargins(0, ui.dp(12), 0, ui.dp(4));
         pipeline.setLayoutParams(pipelineParams);
         java.util.List<HudUpdate.Step> steps = HudUpdate.parseSteps(
                 record.stepsJson, record.phase, record.status, record.progress);
+        LinearLayout row = null;
+        int rowCount = 0;
         for (HudUpdate.Step step : steps) {
+            if (row == null || rowCount == 4) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                pipeline.addView(row, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+                rowCount = 0;
+            }
             LinearLayout segment = new LinearLayout(this);
             segment.setOrientation(LinearLayout.VERTICAL);
-            segment.setPadding(ui.dp(2), 0, ui.dp(2), 0);
+            segment.setPadding(ui.dp(2), 0, ui.dp(2), ui.dp(3));
             TextView stepLabel = ui.text(step.label.toUpperCase(java.util.Locale.ROOT), 9, stepColor(step), true);
             stepLabel.setGravity(Gravity.CENTER);
             stepLabel.setMaxLines(1);
+            stepLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
             segment.addView(stepLabel, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
             ProgressBar stepProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -596,7 +606,15 @@ public final class MainActivity extends Activity {
             stepProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(ui.palette.surfaceRaised));
             segment.addView(stepProgress, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, ui.dp(6)));
-            pipeline.addView(segment, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            row.addView(segment, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            rowCount++;
+        }
+        if (row != null) {
+            while (rowCount < 4) {
+                android.view.View spacer = new android.view.View(this);
+                row.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+                rowCount++;
+            }
         }
         card.addView(pipeline);
 
@@ -652,8 +670,17 @@ public final class MainActivity extends Activity {
 
     private String resolvedWorkdir(DevtoolRunConfig config) {
         String configured = config.workdir == null ? "" : config.workdir.trim();
+        if (config.useChroot) {
+            // Termux RUN_COMMAND validates its work directory before the shell
+            // starts, so a chroot-only path such as /home/mike/Code/project is
+            // invalid here even though it exists after entering the chroot.
+            // Keep the repository path in the devtool command and launch from
+            // the Termux home unless the user supplied a Termux-visible path.
+            if (configured.isEmpty() || configured.startsWith("/home/")
+                    || configured.startsWith("/root/")) return "~/";
+        }
         if (!configured.isEmpty()) return configured;
-        return config.useChroot ? "~/" : config.repo;
+        return config.repo;
     }
 
     private void runRaw(String command, String workdir, boolean overlay, boolean useRootBridge) {

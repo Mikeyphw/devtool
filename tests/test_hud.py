@@ -144,6 +144,95 @@ class HudTests(unittest.TestCase):
         self.assertEqual([step.status for step in steps], ["ok", "ok", "running", "pending", "pending"])
         self.assertEqual(steps[2].progress, 30)
 
+    def test_operation_steps_keep_live_progress_for_multiple_workspace_targets(self) -> None:
+        from devtool.hud import state_context_label
+
+        pipeline = [
+            {"name": "restore[s3atelier]", "workspace": "s3atelier", "target": "s3atelier_avalonia_S3Atelier_Modern"},
+            {"name": "build[s3atelier]", "workspace": "s3atelier", "target": "s3atelier_avalonia_S3Atelier_Modern"},
+            {"name": "test[s3atelier]", "workspace": "s3atelier", "target": "s3atelier_avalonia_S3Atelier_Modern"},
+            {"name": "restore[s3pi-base]", "workspace": "s3pi-base", "target": "s3pi_base_S3pi_Base"},
+            {"name": "build[s3pi-base]", "workspace": "s3pi-base", "target": "s3pi_base_S3pi_Base"},
+            {"name": "test[s3pi-base]", "workspace": "s3pi-base", "target": "s3pi_base_S3pi_Base"},
+        ]
+        state = HudState(
+            status="running",
+            command="apply-overlay",
+            phase_name="build[s3atelier]",
+            current=4,
+            total=10,
+            repo_name="sims3tools",
+            raw={
+                "pipeline": pipeline,
+                "targets": ["s3atelier_avalonia_S3Atelier_Modern", "s3pi_base_S3pi_Base"],
+                "phase": {"name": "build[s3atelier]", "workspace": "s3atelier", "target": "s3atelier_avalonia_S3Atelier_Modern"},
+            },
+        )
+        events = [
+            {"event_type": "phase-finished", "phase": {"name": "apply-overlay"}, "result": {"status": "ok"}},
+            {"event_type": "phase-finished", "phase": {"name": "restore[s3atelier]", "workspace": "s3atelier"}, "result": {"status": "ok"}},
+            {"event_type": "phase-started", "phase": {"name": "build[s3atelier]", "workspace": "s3atelier"}},
+            {"event_type": "progress", "phase": {"name": "build[s3atelier]", "workspace": "s3atelier"}, "current": 4, "total": 10},
+        ]
+
+        steps = operation_steps(state, events)
+        self.assertEqual(
+            [step.key for step in steps],
+            [
+                "extract",
+                "restore:s3atelier", "build:s3atelier", "test:s3atelier",
+                "restore:s3pi-base", "build:s3pi-base", "test:s3pi-base",
+                "commit",
+            ],
+        )
+        build = next(step for step in steps if step.key == "build:s3atelier")
+        self.assertEqual(build.status, "running")
+        self.assertEqual(build.progress, 40)
+        self.assertEqual(build.label, "Build · s3atelier")
+        self.assertIn("2 targets", state_context_label(state))
+
+    def test_operation_steps_use_authoritative_live_phase_snapshot_without_events(self) -> None:
+        state = HudState(
+            status="running",
+            command="apply-overlay",
+            phase_name="build[s3atelier]",
+            repo_name="sims3tools",
+            raw={
+                "phase": {"name": "build[s3atelier]", "workspace": "s3atelier"},
+                "pipeline": [
+                    {"name": "restore[s3atelier]", "workspace": "s3atelier"},
+                    {"name": "build[s3atelier]", "workspace": "s3atelier"},
+                    {"name": "test[s3atelier]", "workspace": "s3atelier"},
+                ],
+                "phase_progress": [
+                    {
+                        "name": "restore[s3atelier]",
+                        "workspace": "s3atelier",
+                        "status": "ok",
+                        "completed": 2,
+                        "total": 2,
+                        "percent": 100.0,
+                    },
+                    {
+                        "name": "build[s3atelier]",
+                        "workspace": "s3atelier",
+                        "status": "running",
+                        "completed": 3,
+                        "total": 12,
+                        "percent": 25.0,
+                    },
+                ],
+            },
+        )
+
+        steps = operation_steps(state, [])
+        restore = next(step for step in steps if step.key == "restore:s3atelier")
+        build = next(step for step in steps if step.key == "build:s3atelier")
+        self.assertEqual(restore.status, "ok")
+        self.assertEqual(restore.progress, 100)
+        self.assertEqual(build.status, "running")
+        self.assertEqual(build.progress, 25)
+
     def test_operation_steps_add_external_validation_and_rollback(self) -> None:
         state = HudState(status="failed", command="apply-overlay", phase_name="apply-rollback")
         events = [

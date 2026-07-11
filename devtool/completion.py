@@ -70,7 +70,7 @@ _devtool() {
     '--chroot[run command phases inside chroot via sudo chrootctl --name NAME exec -- zsh -lc]:name:' \
     '--stdout-payload[select stdout payload]:(auto summary json raw)' \
     '--save-json-payload[write machine JSON payload]:file:_files' \
-    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-overlays apply-snapshot bundle batch logs status doctor config init-config completion tag release-notes ai-prompt detect handoff hud history rollback targets v wv b t ao aos as)' \
+    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-overlays apply-snapshot bundle batch logs status doctor config init-config completion tag release-notes ai-prompt detect handoff hud control-center gui ipc-server history rollback targets v wv b t ao aos as)' \
     '*::arg:->args'
 
   case $words[1] in

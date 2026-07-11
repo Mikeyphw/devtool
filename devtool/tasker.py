@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .ipc import IpcPublisher, ensure_ipc_server
+
 from .console_utils import resolve_cli_path
 from .models import OperationResult
 
@@ -340,6 +342,13 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
 
     chosen_mode = _resolve_mode_for_detached_child(requested_mode)
     registry_mode = chosen_mode
+    # The native Qt Control Center is already running and watches the same
+    # state directory. Publish the active pointer, but do not spawn a second
+    # renderer process.
+    if chosen_mode in {"control-center", "qt-control-center", "qt"}:
+        ready = ensure_ipc_server(state_dir=directory)
+        _append_hud_log("control-center mode: IPC broker ready." if ready else "control-center mode: IPC broker unavailable; file fallback remains active.")
+        return True
     if chosen_mode == "android-bridge":
         try:
             from .hud import _is_termux_android
@@ -538,24 +547,34 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
     failed = int(totals.get("failed", 0) or 0)
 
     warning_details: list[str] = []
+    diagnostics: list[dict[str, Any]] = []
     seen: set[str] = set()
     for result in results:
         for issue in result.issues:
-            if issue.severity != "warning":
-                continue
             location = issue.file or ""
             if issue.line is not None and location not in {"", "-"}:
                 location = f"{location}:{issue.line}"
             code = f" {issue.code}" if issue.code else ""
             prefix = f"{location}: " if location not in {"", "-"} else ""
-            detail = f"{prefix}warning{code}: {issue.message}".strip()
+            detail = f"{prefix}{issue.severity}{code}: {issue.message}".strip()
             key = detail.casefold()
-            if key not in seen:
-                seen.add(key)
+            if key in seen:
+                continue
+            seen.add(key)
+            diagnostics.append({
+                "severity": issue.severity,
+                "code": issue.code or "",
+                "message": issue.message,
+                "file": issue.file or "",
+                "line": issue.line,
+                "phase": result.name,
+                "detail": detail,
+            })
+            if issue.severity == "warning" and len(warning_details) < 5:
                 warning_details.append(detail)
-            if len(warning_details) >= 5:
+            if len(diagnostics) >= 200:
                 break
-        if len(warning_details) >= 5:
+        if len(diagnostics) >= 200:
             break
 
     rollback_results = [result for result in results if result.name == "apply-rollback"]
@@ -629,6 +648,7 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
         "commit_hash": commit_hash,
         "overlays": overlays,
         "warning_details": warning_details,
+        "diagnostics": diagnostics,
         "actions": actions,
         "rolled_back": rollback_succeeded,
         "rollback_failed": rollback_failed,
@@ -727,6 +747,8 @@ class TaskerProgressSink:
     repo_root: str
     repo_name: str
     target: str = ""
+    targets: list[str] = field(default_factory=list)
+    planned_phases: list[dict[str, Any]] = field(default_factory=list)
     enabled: bool = True
     notify_progress: bool = False
     notification_id: str = DEFAULT_NOTIFICATION_ID
@@ -744,11 +766,14 @@ class TaskerProgressSink:
     _last_update_at: float = 0.0
     _last_notification_at: float = 0.0
     _last_state: dict[str, Any] = field(default_factory=dict)
+    _phase_progress: dict[str, dict[str, Any]] = field(default_factory=dict)
     _process_start: str = field(default_factory=lambda: _process_start_token(os.getpid()))
     _boot_id: str = field(default_factory=_boot_id)
     _heartbeat_interval_s: float = DEFAULT_RUN_HEARTBEAT_INTERVAL_S
     _heartbeat_stop: threading.Event = field(default_factory=threading.Event)
     _heartbeat_thread: threading.Thread | None = None
+    _cancel_requested: threading.Event = field(default_factory=threading.Event)
+    _ipc_publisher: IpcPublisher | None = None
 
     @property
     def state_file(self) -> Path:
@@ -791,8 +816,12 @@ class TaskerProgressSink:
         self.sequence = 0
         self.current_phase = None
         self.failed_phase = None
+        self.planned_phases = []
+        self.targets = [self.target] if self.target else []
         self._last_state = {}
+        self._phase_progress = {}
         self._last_update_at = 0.0
+        self._cancel_requested.clear()
 
     def _run_file(self) -> Path:
         return self.runs_dir / f"{self.run_id}.json"
@@ -836,6 +865,25 @@ class TaskerProgressSink:
         with contextlib.suppress(OSError):
             self._run_file().unlink(missing_ok=True)
 
+    def request_cancel(self) -> None:
+        self._cancel_requested.set()
+
+    def cancel_requested(self) -> bool:
+        return self._cancel_requested.is_set()
+
+    def clear_cancel(self) -> None:
+        self._cancel_requested.clear()
+
+    def wait_for_cancel(self, timeout: float | None = None) -> bool:
+        return self._cancel_requested.wait(timeout)
+
+    def _publish_ipc(self, state: dict[str, Any]) -> None:
+        publisher = self._ipc_publisher
+        if publisher is None:
+            publisher = IpcPublisher(self.run_id, on_cancel=self.request_cancel)
+            self._ipc_publisher = publisher
+        publisher.publish(state)
+
     def prepare_hud(self) -> None:
         """Publish the new run identity before a singleton HUD follows it.
 
@@ -858,17 +906,110 @@ class TaskerProgressSink:
         self.emit("started", status="running", message=message, force=True, notify=True)
         self._start_heartbeat()
 
-    def phase_started(self, name: str, *, index: int, total: int, argv: list[str] | None = None) -> None:
+    def set_targets(self, values: list[str]) -> None:
+        normalized: list[str] = []
+        for value in values:
+            clean = str(value or "").strip()
+            if clean and clean not in normalized:
+                normalized.append(clean)
+        if normalized:
+            self.targets = normalized
+            self.target = normalized[0]
+
+    def plan_phases(self, phases: list[dict[str, Any]], *, append: bool = True) -> None:
+        planned = list(self.planned_phases) if append else []
+        existing = {(str(item.get("name") or ""), str(item.get("target") or ""), str(item.get("workspace") or "")) for item in planned}
+        for item in phases:
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            target = str(item.get("target") or "").strip()
+            workspace = str(item.get("workspace") or "").strip()
+            key = (name, target, workspace)
+            if key in existing:
+                continue
+            existing.add(key)
+            planned.append({
+                "name": name,
+                "target": target,
+                "workspace": workspace,
+                "workspace_root": str(item.get("workspace_root") or "").strip(),
+            })
+        self.planned_phases = planned
+        self.set_targets([str(item.get("target") or item.get("workspace") or "") for item in planned] + self.targets)
+
+    @staticmethod
+    def _phase_progress_key(phase: dict[str, Any] | None) -> str:
+        phase = phase or {}
+        name = str(phase.get("name") or "").strip()
+        workspace = str(phase.get("workspace") or "").strip()
+        target = str(phase.get("target") or "").strip()
+        return "\x1f".join((name, workspace, target))
+
+    def _record_phase_progress(
+        self,
+        *,
+        phase: dict[str, Any] | None = None,
+        status: str | None = None,
+        detail: str | None = None,
+        completed: int | None = None,
+        total: int | None = None,
+        percent: float | None = None,
+        warnings: int | None = None,
+        errors: int | None = None,
+    ) -> None:
+        source = dict(phase or self.current_phase or {})
+        if not source.get("name"):
+            return
+        key = self._phase_progress_key(source)
+        current = dict(self._phase_progress.get(key) or {})
+        current.update({
+            "name": str(source.get("name") or ""),
+            "target": str(source.get("target") or ""),
+            "workspace": str(source.get("workspace") or ""),
+            "workspace_root": str(source.get("workspace_root") or ""),
+            "index": source.get("index"),
+            "phase_total": source.get("total"),
+        })
+        if status is not None:
+            current["status"] = status
+        if detail is not None:
+            current["detail"] = detail
+        if completed is not None:
+            current["completed"] = completed
+        if total is not None:
+            current["total"] = total
+        if percent is None and completed is not None and total:
+            percent = max(0.0, min(100.0, completed / total * 100.0))
+        if percent is not None:
+            current["percent"] = max(0.0, min(100.0, float(percent)))
+        if warnings is not None:
+            current["warnings"] = max(0, int(warnings))
+        if errors is not None:
+            current["errors"] = max(0, int(errors))
+        current["updated_at"] = utc_now_iso()
+        self._phase_progress[key] = current
+
+    def phase_started(self, name: str, *, index: int, total: int, argv: list[str] | None = None, metadata: dict[str, Any] | None = None) -> None:
+        metadata = dict(metadata or {})
+        target = str(metadata.get("bundle_target") or metadata.get("target") or metadata.get("matrix") or "").strip()
+        workspace = str(metadata.get("workspace") or "").strip()
+        if target:
+            self.set_targets(self.targets + [target])
         self.current_phase = {
             "name": name,
             "index": index,
             "total": total,
             "argv": argv or [],
+            "target": target,
+            "workspace": workspace,
+            "workspace_root": str(metadata.get("workspace_root") or "").strip(),
             "started_at": utc_now_iso(),
         }
-        self.emit("phase_started", status="running", phase=self.current_phase, progress={"percent": None, "current": 0, "completed": 0, "total": None}, message=_human_event_message("phase_started", phase_name=name), force=True, notify=True)
+        self._record_phase_progress(phase=self.current_phase, status="running", completed=0)
+        self.emit("phase_started", status="running", phase=self.current_phase, progress={"percent": None, "current": 0, "completed": 0, "total": None, "target": target}, message=_human_event_message("phase_started", phase_name=name), force=True, notify=True)
 
-    def progress(self, *, detail: str = "", completed: int | None = None, total: int | None = None, percent: float | None = None, target: str = "", force: bool = False) -> None:
+    def progress(self, *, detail: str = "", completed: int | None = None, total: int | None = None, percent: float | None = None, target: str = "", warnings: int | None = None, errors: int | None = None, force: bool = False) -> None:
         now = time.monotonic()
         if not force and now - self._last_update_at < self.update_interval_s:
             return
@@ -884,7 +1025,21 @@ class TaskerProgressSink:
         }
         if target:
             payload["target"] = target
-        self.emit("progress", status="running", phase=self.current_phase, progress=payload, message=detail, notify=True)
+        issue_totals: dict[str, int] = {}
+        if warnings is not None:
+            issue_totals["warnings"] = max(0, int(warnings))
+        if errors is not None:
+            issue_totals["errors"] = max(0, int(errors))
+        self._record_phase_progress(
+            status="running",
+            detail=detail,
+            completed=completed,
+            total=total,
+            percent=percent,
+            warnings=warnings,
+            errors=errors,
+        )
+        self.emit("progress", status="running", phase=self.current_phase, progress=payload, totals=issue_totals, message=detail, notify=True)
 
     def phase_finished(self, result: OperationResult) -> None:
         status = _result_status(result)
@@ -892,6 +1047,19 @@ class TaskerProgressSink:
         phase["finished_at"] = utc_now_iso()
         if result.returncode != 0 and result.name != "apply-rollback":
             self.failed_phase = dict(phase)
+        phase_key = self._phase_progress_key(phase)
+        previous = self._phase_progress.get(phase_key) or {}
+        final_total = previous.get("total")
+        final_completed = previous.get("completed")
+        if status in {"ok", "failed", "skipped"} and final_total is not None:
+            final_completed = final_total
+        self._record_phase_progress(
+            phase=phase,
+            status=status,
+            completed=final_completed if isinstance(final_completed, int) else None,
+            total=final_total if isinstance(final_total, int) else None,
+            percent=100.0 if status in {"ok", "failed", "skipped"} else None,
+        )
         self.emit(
             "phase_finished",
             status="running" if result.returncode == 0 else "failed",
@@ -903,8 +1071,11 @@ class TaskerProgressSink:
         )
 
     def finished(self, *, ok: bool, totals: dict[str, int], results: list[OperationResult], notification: dict[str, Any] | None = None) -> None:
-        self.status = "ok" if ok else "failed"
+        cancelled = any(int(result.returncode or 0) == 130 for result in results if result.name != "apply-rollback")
+        self.status = "ok" if ok else ("cancelled" if cancelled else "failed")
         completion = _completion_payload(ok=ok, totals=totals, results=results)
+        if cancelled:
+            completion["headline"] = "Cancelled" + ("; changes rolled back" if completion.get("rolled_back") else "")
         final_notification = dict(notification or {})
         final_notification.update({
             "title": completion["headline"],
@@ -929,6 +1100,9 @@ class TaskerProgressSink:
         # Global state files retain the completion result; the heartbeat file
         # is only needed while the single logical run is active.
         self._cleanup_run_file()
+        if self._ipc_publisher is not None:
+            self._ipc_publisher.close(unregister=True)
+            self._ipc_publisher = None
 
     def emit(
         self,
@@ -984,6 +1158,9 @@ class TaskerProgressSink:
             "repo_root": self.repo_root,
             "repo_name": self.repo_name,
             "target": display_target,
+            "targets": list(self.targets),
+            "pipeline": list(self.planned_phases),
+            "phase_progress": [dict(item) for item in self._phase_progress.values()],
             "overlay": self.overlay,
             "started_at": self.started_at,
             "updated_at": timestamp,
@@ -1022,6 +1199,7 @@ class TaskerProgressSink:
                 send_local_http_event(event, url=self.event_http_url)
                 _atomic_write_json(self._run_file(), state)
                 self._last_state = state
+                self._publish_ipc(state)
             except OSError as exc:
                 self.last_error = str(exc)
 

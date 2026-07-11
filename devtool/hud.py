@@ -827,8 +827,18 @@ _STEP_LABELS = {
 }
 
 
+def _split_operation_phase(name: str) -> tuple[str, str]:
+    """Return the operation name and optional ``[...]`` target/workspace scope."""
+    raw = (name or "").strip()
+    match = re.match(r"^(?P<name>.*?)(?:\[(?P<scope>[^\]]+)\])?$", raw)
+    if not match:
+        return raw, ""
+    return (match.group("name") or raw).strip(), (match.group("scope") or "").strip()
+
+
 def _operation_step_key(name: str) -> str:
-    key = (name or "").strip().lower().replace("_", "-")
+    base, _scope = _split_operation_phase(name)
+    key = base.strip().lower().replace("_", "-")
     if key in {"apply-overlay", "apply-overlays", "apply-snapshot", "extract-overlay", "extract"}:
         return "extract"
     if key in {"restore", "dependency-restore"} or "restore" in key:
@@ -859,28 +869,122 @@ def _step_status(value: str) -> str:
     return "pending"
 
 
-def operation_steps(state: HudState, events: Iterable[dict[str, Any]]) -> list[HudOperationStep]:
-    """Build a stable, live operation pipeline from HUD events.
+def _compact_step_scope(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    # Workspace names are normally already compact. Long generated target IDs
+    # remain readable without consuming the entire compact HUD width.
+    if len(text) > 24:
+        parts = [part for part in re.split(r"[_/\\]+", text) if part]
+        if len(parts) >= 2:
+            text = "-".join(parts[:2])
+        if len(text) > 24:
+            text = text[:21] + "…"
+    return text
 
-    Apply workflows begin with the common extract/restore/build/test/commit
-    sequence so users can see what is ahead. Artifact validation and rollback
-    are inserted only when actually used. At completion, untouched expected
-    steps become skipped rather than looking stuck.
+
+def _phase_scope(event: dict[str, Any]) -> str:
+    phase = event.get("phase") if isinstance(event.get("phase"), dict) else {}
+    workspace = _coerce_str(phase.get("workspace"))
+    target = _coerce_str(phase.get("target"))
+    _base, bracket_scope = _split_operation_phase(_phase_from_event(event))
+    return workspace or bracket_scope or target
+
+
+def _step_instance_key(base: str, scope: str = "") -> str:
+    clean_scope = re.sub(r"[^a-z0-9]+", "-", (scope or "").casefold()).strip("-")
+    return f"{base}:{clean_scope}" if clean_scope else base
+
+
+def _step_display_label(base: str, scope: str = "") -> str:
+    label = _STEP_LABELS[base]
+    compact = _compact_step_scope(scope)
+    return f"{label} · {compact}" if compact else label
+
+
+def _planned_pipeline(state: HudState, events: list[dict[str, Any]]) -> list[dict[str, str]]:
+    candidates: list[Any] = []
+    raw_pipeline = state.raw.get("pipeline") if isinstance(state.raw, dict) else None
+    if isinstance(raw_pipeline, list):
+        candidates.extend(raw_pipeline)
+    if not candidates:
+        for event in reversed(events):
+            pipeline = event.get("pipeline") if isinstance(event.get("pipeline"), list) else None
+            if pipeline:
+                candidates.extend(pipeline)
+                break
+    planned: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        name = _coerce_str(item.get("name"))
+        base = _operation_step_key(name)
+        if not base:
+            continue
+        _raw_base, bracket_scope = _split_operation_phase(name)
+        scope = _coerce_str(item.get("workspace") or bracket_scope or item.get("target"))
+        marker = (base, scope.casefold())
+        if marker in seen:
+            continue
+        seen.add(marker)
+        planned.append({"base": base, "scope": scope})
+    return planned
+
+
+def operation_steps(state: HudState, events: Iterable[dict[str, Any]]) -> list[HudOperationStep]:
+    """Build a stable pipeline with independent live progress per target.
+
+    Target/workspace suffixes such as ``build[s3atelier]`` are preserved as
+    separate steps, so monorepo validation can show each restore/build/test
+    sequence instead of collapsing all targets into one finished-only bar.
     """
     events_list = list(events)
     command = (state.command or str(state.raw.get("command") or "")).strip().lower().replace("_", "-")
     apply_run = command in {"apply-overlay", "apply-overlays", "apply-snapshot", "ao", "aos", "as"} or any(
         _operation_step_key(_phase_from_event(event)) == "extract" for event in events_list
     )
-    included: set[str] = {"extract", "restore", "build", "test", "commit"} if apply_run else set()
+
+    descriptors: list[tuple[str, str]] = []
+    descriptor_set: set[tuple[str, str]] = set()
+
+    def add_descriptor(base: str, scope: str = "", *, before_tail: bool = False) -> None:
+        if not base:
+            return
+        marker = (base, scope.casefold())
+        if marker in descriptor_set:
+            return
+        descriptor_set.add(marker)
+        if before_tail:
+            tail_index = next((i for i, (key, _scope) in enumerate(descriptors) if key in {"commit", "rollback"}), len(descriptors))
+            descriptors.insert(tail_index, (base, scope))
+        else:
+            descriptors.append((base, scope))
+
+    if apply_run:
+        add_descriptor("extract")
+
+    planned = _planned_pipeline(state, events_list)
+    for item in planned:
+        add_descriptor(item["base"], item["scope"])
+
+    if apply_run and not any(base in {"restore", "build", "test"} for base, _scope in descriptors):
+        for base in ("restore", "build", "test"):
+            add_descriptor(base)
+    if apply_run:
+        add_descriptor("commit")
+
     statuses: dict[str, str] = {}
     progresses: dict[str, int] = {}
 
     for event in events_list:
-        phase_key = _operation_step_key(_phase_from_event(event))
-        if not phase_key:
+        base = _operation_step_key(_phase_from_event(event))
+        if not base:
             continue
-        included.add(phase_key)
+        scope = _phase_scope(event)
+        add_descriptor(base, scope, before_tail=True)
+        instance = _step_instance_key(base, scope)
         event_type = _coerce_str(event.get("event_type") or event.get("type")).lower().replace("_", "-")
         status = _step_status(_result_status_from_event(event))
         if event_type == "phase-started":
@@ -890,49 +994,96 @@ def operation_steps(state: HudState, events: Iterable[dict[str, Any]]) -> list[H
         elif event_type == "phase-finished" and status == "pending":
             status = "ok"
         if status != "pending":
-            statuses[phase_key] = status
+            statuses[instance] = status
         current, total = _progress_pair(event)
         if current is not None and total is not None and total > 0:
-            progresses[phase_key] = max(0, min(100, int(round(current / total * 100))))
+            progresses[instance] = max(0, min(100, int(round(current / total * 100))))
         elif status in {"ok", "failed", "skipped"}:
-            progresses[phase_key] = 100
+            progresses[instance] = 100
+
+    # The current state carries an authoritative snapshot for every phase.
+    # This avoids depending on the HUD poller observing every intermediate
+    # JSONL event and keeps target-scoped bars live across atomic file swaps.
+    phase_progress = state.raw.get("phase_progress") if isinstance(state.raw, dict) else None
+    if isinstance(phase_progress, list):
+        for item in phase_progress:
+            if not isinstance(item, dict):
+                continue
+            name = _coerce_str(item.get("name"))
+            base = _operation_step_key(name)
+            if not base:
+                continue
+            _raw_base, bracket_scope = _split_operation_phase(name)
+            scope = _coerce_str(item.get("workspace") or bracket_scope or item.get("target"))
+            add_descriptor(base, scope, before_tail=True)
+            instance = _step_instance_key(base, scope)
+            status = _step_status(_coerce_str(item.get("status")))
+            if status != "pending":
+                statuses[instance] = status
+            percent = item.get("percent")
+            if isinstance(percent, (int, float)):
+                progresses[instance] = max(0, min(100, int(round(float(percent)))))
+            else:
+                current = _coerce_int(item.get("current") if item.get("current") is not None else item.get("completed"))
+                total = _coerce_int(item.get("total"))
+                if current is not None and total is not None and total > 0:
+                    progresses[instance] = max(0, min(100, int(round(current / total * 100))))
+                elif status in {"ok", "failed", "skipped"}:
+                    progresses[instance] = 100
 
     completion = completion_from_state(state)
     actions = completion.get("actions") if isinstance(completion.get("actions"), list) else []
     for action in actions:
         if not isinstance(action, dict):
             continue
-        step_key = _operation_step_key(str(action.get("name") or ""))
-        if not step_key:
+        base = _operation_step_key(str(action.get("name") or ""))
+        if not base:
             continue
-        included.add(step_key)
-        statuses[step_key] = _step_status(str(action.get("status") or "ok"))
-        progresses[step_key] = 100
+        scope = str(action.get("workspace") or action.get("target") or "").strip()
+        add_descriptor(base, scope, before_tail=True)
+        instance = _step_instance_key(base, scope)
+        statuses[instance] = _step_status(str(action.get("status") or "ok"))
+        progresses[instance] = 100
 
-    active_key = _operation_step_key(state.phase_name or state.command)
-    if active_key:
-        included.add(active_key)
+    active_base = _operation_step_key(state.phase_name or state.command)
+    active_scope = ""
+    if isinstance(state.raw, dict):
+        active_scope = _phase_scope(state.raw)
+    if active_base:
+        add_descriptor(active_base, active_scope, before_tail=True)
+        instance = _step_instance_key(active_base, active_scope)
         if state.status == "running":
-            statuses[active_key] = "running"
+            statuses[instance] = "running"
             if state.percent is not None:
-                progresses[active_key] = state.percent
-        elif state.status == "failed" and statuses.get(active_key) not in {"ok", "skipped"}:
-            statuses[active_key] = "failed"
-            progresses[active_key] = 100
+                progresses[instance] = state.percent
+        elif state.status == "failed" and statuses.get(instance) not in {"ok", "skipped"}:
+            statuses[instance] = "failed"
+            progresses[instance] = 100
 
     terminal = state.status in {"ok", "failed", "skipped", "interrupted", "cancelled"}
     if terminal:
-        for key in included:
-            statuses.setdefault(key, "skipped")
-            if statuses[key] == "pending":
-                statuses[key] = "skipped"
-            progresses.setdefault(key, 100 if statuses[key] != "pending" else 0)
+        for base, scope in descriptors:
+            instance = _step_instance_key(base, scope)
+            statuses.setdefault(instance, "skipped")
+            progresses.setdefault(instance, 100 if statuses[instance] != "pending" else 0)
 
-    # A rollback replaces the normal tail of a failed transaction visually.
-    ordered = [key for key in _STEP_ORDER if key in included]
+    # Generic placeholders are replaced once target-scoped equivalents exist.
+    scoped_bases = {base for base, scope in descriptors if scope}
+    descriptors = [(base, scope) for base, scope in descriptors if scope or base not in scoped_bases]
+
+    # Rollback always belongs at the end; commit remains immediately before it.
+    order_index = {name: index for index, name in enumerate(_STEP_ORDER)}
+    if not planned:
+        descriptors.sort(key=lambda item: order_index.get(item[0], len(order_index)))
+
     return [
-        HudOperationStep(key, _STEP_LABELS[key], statuses.get(key, "pending"), progresses.get(key, 0))
-        for key in ordered
+        HudOperationStep(
+            _step_instance_key(base, scope),
+            _step_display_label(base, scope),
+            statuses.get(_step_instance_key(base, scope), "pending"),
+            progresses.get(_step_instance_key(base, scope), 0),
+        )
+        for base, scope in descriptors
     ]
 
 
@@ -989,7 +1140,14 @@ def state_context_label(state: HudState) -> str:
         bits.append(state.repo_name)
     elif state.repo_root:
         bits.append(Path(state.repo_root).name)
-    if state.target:
+    raw_targets = state.raw.get("targets") if isinstance(state.raw, dict) else None
+    targets = [str(item).strip() for item in raw_targets if str(item).strip()] if isinstance(raw_targets, list) else []
+    targets = list(dict.fromkeys(targets))
+    if len(targets) > 1:
+        bits.append(f"{len(targets)} targets: " + ", ".join(_compact_step_scope(item) for item in targets))
+    elif targets:
+        bits.append(targets[0])
+    elif state.target:
         bits.append(state.target)
     return " · ".join(bits) if bits else "Waiting for target"
 
@@ -1295,13 +1453,17 @@ class AndroidAppHud:
             duration_ms = int(float(duration_seconds) * 1000) if duration_seconds is not None else 0
         except (TypeError, ValueError):
             duration_ms = 0
+        raw_targets = state.raw.get("targets") if isinstance(state.raw, dict) else None
+        target_values = [str(item).strip() for item in raw_targets if str(item).strip()] if isinstance(raw_targets, list) else []
+        target_values = list(dict.fromkeys(target_values))
+        android_target = ", ".join(_compact_step_scope(item) for item in target_values) if len(target_values) > 1 else (target_values[0] if target_values else state.target)
         payload: dict[str, Any] = {
             "run_id": run_id,
             "status": status,
             "phase": human_phase_name(state.phase_name or state.command) or human_status(status),
             "detail": human_detail(state.text or state.expanded_text),
             "repo": state.repo_name or (Path(state.repo_root).name if state.repo_root else "devtool"),
-            "target": state.target,
+            "target": android_target,
             "progress": state.percent if state.percent is not None else 0,
             "indeterminate": state.percent is None and status not in {"ok", "failed", "skipped"},
             "current": state.current,
@@ -1673,7 +1835,14 @@ class GtkDesktopHud:
         detail = _label("No devtool task has reported progress yet.", "hud-muted", wrap=True); card.pack_start(detail, False, False, 0)
 
         pipeline_heading = _label("OPERATIONS", "hud-header"); card.pack_start(pipeline_heading, False, False, 0)
-        step_pipeline = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6); card.pack_start(step_pipeline, False, False, 0)
+        step_pipeline = Gtk.FlowBox()
+        step_pipeline.set_selection_mode(Gtk.SelectionMode.NONE)
+        step_pipeline.set_homogeneous(True)
+        step_pipeline.set_min_children_per_line(1)
+        step_pipeline.set_max_children_per_line(4)
+        step_pipeline.set_column_spacing(6)
+        step_pipeline.set_row_spacing(5)
+        card.pack_start(step_pipeline, False, False, 0)
 
         metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); card.pack_start(metrics, False, False, 0)
         error_metric = _label("0\nERRORS", "hud-metric", wrap=True)
@@ -1761,7 +1930,8 @@ class GtkDesktopHud:
                     bar.set_fraction(fraction)
                 column.pack_start(label, False, False, 0)
                 column.pack_start(bar, False, False, 0)
-                step_pipeline.pack_start(column, True, True, 0)
+                column.set_size_request(104, -1)
+                step_pipeline.insert(column, -1)
             step_pipeline.show_all()
 
 
@@ -2058,6 +2228,8 @@ def choose_hud_mode(requested: str) -> str:
         "termux-gui": "android-bridge", "termuxgui": "android-bridge",
         "android": "android-bridge", "android-gui": "android-bridge",
         "android-overlay": "android-bridge",
+        "qt": "control-center", "qt6": "control-center",
+        "qt-control-center": "control-center", "control-centre": "control-center",
         "android-chroot": "android-bridge", "termux-bridge": "android-bridge",
         "termux-chroot": "android-bridge", "android-hud-bridge": "android-bridge",
     }
@@ -2088,7 +2260,7 @@ def build_hud_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-dir", dest="tasker_dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool live HUD state")
     parser.add_argument(
         "--mode",
-        choices=["auto", "android-bridge", "android-gui", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
+        choices=["auto", "android-bridge", "android-gui", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "desktop-notify", "control-center", "qt", "qt6", "qt-control-center", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
         default="auto",
         help="HUD renderer: Android app bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6",
     )

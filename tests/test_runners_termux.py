@@ -209,3 +209,47 @@ class DotnetTestNoBuildFlagTests(unittest.TestCase):
         self.assertEqual(changed, 1)
         self.assertEqual(updated[0].argv[:3], ["dotnet", "test", "--no-build"])
         self.assertIn("--logger", updated[0].argv)
+
+class RunnersHudLiveProgressTests(unittest.TestCase):
+    def test_build_project_outputs_are_forwarded_as_live_scoped_hud_progress(self) -> None:
+        import json
+        from devtool.tasker import TaskerProgressSink
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "A.csproj").write_text("", encoding="utf-8")
+            (root / "B.csproj").write_text("", encoding="utf-8")
+            (root / "Demo.sln").write_text(
+                'Project("{GUID}") = "A", "A.csproj", "{A}"\nEndProject\n'
+                'Project("{GUID}") = "B", "B.csproj", "{B}"\nEndProject\n',
+                encoding="utf-8",
+            )
+            state_dir = root / "hud"
+            sink = TaskerProgressSink(
+                directory=state_dir,
+                command="apply-overlay",
+                repo_root=str(root),
+                repo_name="demo",
+                enabled=True,
+                update_interval_s=0,
+            )
+            sink.started()
+            config = ProjectConfig(repo_root=root, kind="dotnet")
+            spec = CommandSpec(
+                "build[s3atelier]",
+                ["bash", "-lc", "printf '  A -> /tmp/A.dll\\n'; sleep 0.05; printf '  B -> /tmp/B.dll\\n'"],
+                metadata={
+                    "progress_argv": ["dotnet", "build", "Demo.sln"],
+                    "progress_cwd": str(root),
+                    "workspace": "s3atelier",
+                    "bundle_target": "s3atelier-target",
+                },
+            )
+
+            results, _ = run_specs(config, [spec], verbose=False, tasker_progress=sink)
+            self.assertEqual(results[0].returncode, 0)
+            events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+            progress = [event for event in events if event.get("event_type") == "progress"]
+            self.assertTrue(any(event.get("current") == 1 and event.get("total") == 2 for event in progress))
+            self.assertTrue(any(event.get("current") == 2 and event.get("total") == 2 for event in progress))
+            self.assertTrue(all(event.get("phase", {}).get("workspace") == "s3atelier" for event in progress))

@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from devtool.hud import choose_hud_mode
+from devtool.cli import build_parser
+from devtool.tasker import start_auto_hud
+
+
+class QtControlCenterTests(unittest.TestCase):
+    def test_control_center_aliases(self) -> None:
+        self.assertEqual(choose_hud_mode("control-center"), "control-center")
+        self.assertEqual(choose_hud_mode("qt"), "control-center")
+        self.assertEqual(choose_hud_mode("qt6"), "control-center")
+
+    def test_control_center_mode_publishes_without_spawning_child(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"DEVTOOL_TASKER_DIR": tmp, "DEVTOOL_HUD_SINGLETON": "reuse"},
+            clear=False,
+        ), patch("devtool.tasker.hud_registry_dir", return_value=Path(tmp)), patch("devtool.tasker.subprocess.run") as run:
+            self.assertTrue(start_auto_hud(Path(tmp), mode="control-center"))
+            run.assert_not_called()
+            self.assertTrue((Path(tmp) / "hud-active.json").is_file())
+
+    def test_cli_exposes_control_center_launcher(self) -> None:
+        args = build_parser().parse_args(["control-center"])
+        self.assertEqual(args.command, "control-center")
+
+    def test_phase_one_sources_are_packaged(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        required = [
+            root / "CMakeLists.txt",
+            root / "src" / "main.cpp",
+            root / "src" / "HudStateStore.cpp",
+            root / "src" / "ProcessRunner.cpp",
+            root / "qml" / "Main.qml",
+            root / "qml" / "CompactHud.qml",
+            root / "qml" / "pages" / "OverviewPage.qml",
+            root / "qml" / "pages" / "RunPage.qml",
+            root / "qml" / "pages" / "HistoryPage.qml",
+            root / "qml" / "pages" / "SettingsPage.qml",
+        ]
+        self.assertTrue(all(path.is_file() for path in required))
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("Qt6::Quick", cmake)
+        self.assertIn("Qt6::Widgets", cmake)
+        controller = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
+        self.assertIn('"--hud-mode","control-center"', controller)
+
+class QtControlCenterPhaseTwoSourceTests(unittest.TestCase):
+    def test_phase_two_sources_are_packaged(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        required = [
+            root / "src" / "ArtifactInspector.cpp",
+            root / "src" / "RepositoryModel.cpp",
+            root / "qml" / "pages" / "ArtifactsPage.qml",
+            root / "qml" / "pages" / "DiagnosticsPage.qml",
+            root / "qml" / "pages" / "RepositoriesPage.qml",
+        ]
+        self.assertTrue(all(path.is_file() for path in required))
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("ArtifactInspector.cpp", cmake)
+        self.assertIn("RepositoriesPage.qml", cmake)
+        main_qml = (root / "qml" / "Main.qml").read_text(encoding="utf-8")
+        self.assertIn('text: "Artifacts"', main_qml)
+        self.assertIn('text: "Diagnostics"', main_qml)
+
+class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
+    def test_phase_three_ipc_sources_are_packaged(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        self.assertTrue((root / "src" / "IpcClient.cpp").is_file())
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("Qt6::Network", cmake)
+        self.assertIn("IpcClient.cpp", cmake)
+        main_cpp = (root / "src" / "main.cpp").read_text(encoding="utf-8")
+        self.assertIn('"ipc-server"', main_cpp)
+        run_card = (root / "qml" / "components" / "RunCard.qml").read_text(encoding="utf-8")
+        self.assertIn("cancelRun", run_card)
+
+    def test_qt_64_compatible_source_api(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        process_header = (root / "src" / "ProcessRunner.h").read_text(encoding="utf-8")
+        hud_source = (root / "src" / "HudStateStore.cpp").read_text(encoding="utf-8")
+        app_source = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
+        main_source = (root / "src" / "main.cpp").read_text(encoding="utf-8")
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+
+        self.assertIn("#include <QVariantMap>", process_header)
+        self.assertNotIn("toString(item.value", hud_source)
+        self.assertNotIn("toString(status)", app_source)
+        self.assertNotIn("loadFromModule", main_source)
+        self.assertIn("qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml", main_source)
+        self.assertIn("RESOURCE_PREFIX /qt/qml", cmake)
+
+    def test_system_palette_theme_and_styled_controls_are_packaged(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        components = root / "qml" / "components"
+        required = [
+            components / "Theme.qml",
+            components / "AppButton.qml",
+            components / "AppTextField.qml",
+            components / "AppComboBox.qml",
+            components / "AppCheckBox.qml",
+            components / "AppTabButton.qml",
+            components / "AppTextArea.qml",
+            components / "PageHeading.qml",
+            components / "SectionHeading.qml",
+            components / "SurfaceCard.qml",
+        ]
+        self.assertTrue(all(path.is_file() for path in required))
+
+        theme = (components / "Theme.qml").read_text(encoding="utf-8")
+        self.assertIn("SystemPalette", theme)
+        self.assertIn("activePalette.highlight", theme)
+        main_cpp = (root / "src" / "main.cpp").read_text(encoding="utf-8")
+        self.assertNotIn("app.setPalette", main_cpp)
+        self.assertNotIn("QQuickStyle::setStyle", main_cpp)
+
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        for path in required:
+            self.assertIn(path.name, cmake)
+
+        for page in (root / "qml" / "pages").glob("*.qml"):
+            source = page.read_text(encoding="utf-8")
+            self.assertNotRegex(source, r"(?m)^\s*(Button|TextField|ComboBox|CheckBox|TabButton|TextArea)\s*\{")
+            self.assertNotIn('color: "#', source)
+
+class QtControlCenterPackagingTests(unittest.TestCase):
+    def test_packaging_uses_clean_out_of_source_build(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        build_script = (root / "build.sh").read_text(encoding="utf-8")
+        package_script = (root / "package-deb.sh").read_text(encoding="utf-8")
+
+        self.assertIn('XDG_CACHE_HOME', build_script)
+        self.assertIn('normalize_future_mtimes', build_script)
+        self.assertIn('CMAKE_HOME_DIRECTORY:INTERNAL=', build_script)
+        self.assertNotIn('build=${BUILD_DIR:-"$root/build"}', build_script)
+
+        self.assertIn('package-build-${version}-${arch}', package_script)
+        self.assertIn('rm -rf "$build"', package_script)
+        self.assertIn('BUILD_DIR="$build" "$root/build.sh"', package_script)
+        self.assertNotIn('if [[ ! -x "$build/devtool-control-center" ]]', package_script)
+
+    def test_debian_packaging_assets_are_present_and_preflighted(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        desktop_file = root / "packaging" / "io.github.mikeceead.DevtoolControlCenter.desktop"
+        icon_file = root / "packaging" / "io.github.mikeceead.DevtoolControlCenter.svg"
+        control_file = root / "packaging" / "debian" / "control"
+        self.assertTrue(desktop_file.is_file())
+        self.assertTrue(icon_file.is_file())
+        self.assertTrue(control_file.is_file())
+
+        desktop = desktop_file.read_text(encoding="utf-8")
+        self.assertIn("[Desktop Entry]", desktop)
+        self.assertIn("Exec=devtool-control-center", desktop)
+        self.assertIn("Icon=io.github.mikeceead.DevtoolControlCenter", desktop)
+
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn(desktop_file.name, cmake)
+        self.assertIn(icon_file.name, cmake)
+
+        package_script = (root / "package-deb.sh").read_text(encoding="utf-8")
+        self.assertIn("required_packaging_files", package_script)
+        self.assertIn(desktop_file.name, package_script)
+        self.assertIn(icon_file.name, package_script)
+
+    def test_debian_package_does_not_require_apt_devtool_package(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        control = (root / "packaging" / "debian" / "control").read_text(encoding="utf-8")
+        depends = next(line for line in control.splitlines() if line.startswith("Depends:"))
+        self.assertNotIn("devtool", depends.split(":", 1)[1].split(","))
+        app_source = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
+        self.assertIn("QStandardPaths::findExecutable", app_source)
+        self.assertIn(".local/bin/devtool", app_source)
+
+    def test_debian_package_declares_implicit_qml_runtime_modules(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        control = (root / "packaging" / "debian" / "control").read_text(encoding="utf-8")
+        depends = next(line for line in control.splitlines() if line.startswith("Depends:"))
+        required = {
+            "qml6-module-qtqml",
+            "qml6-module-qtqml-models",
+            "qml6-module-qtqml-workerscript",
+            "qml6-module-qtquick",
+            "qml6-module-qtquick-window",
+            "qml6-module-qtquick-templates",
+            "qml6-module-qtquick-controls",
+            "qml6-module-qtquick-layouts",
+            "qml6-module-qtquick-dialogs",
+        }
+        declared = {item.strip() for item in depends.split(":", 1)[1].split(",")}
+        self.assertTrue(required.issubset(declared))
+
+        package_script = (root / "package-deb.sh").read_text(encoding="utf-8")
+        self.assertIn("required_qml_packages", package_script)
+        self.assertIn("qml6-module-qtqml-workerscript", package_script)
+
+class QtControlCenterClipboardMonitorTests(unittest.TestCase):
+    def test_clipboard_monitor_service_sources_are_packaged(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        self.assertTrue((root / "src" / "ClipboardMonitor.cpp").is_file())
+        self.assertTrue((root / "src" / "ClipboardMonitor.h").is_file())
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("ClipboardMonitor.cpp", cmake)
+        main_source = (root / "src" / "main.cpp").read_text(encoding="utf-8")
+        self.assertIn('"--clipboard-monitor"', main_source)
+        self.assertIn("ClipboardMonitor clipboardMonitor(true, true)", main_source)
+
+    def test_clipboard_monitor_is_installable_and_never_auto_executes(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        controller = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
+        monitor = (root / "src" / "ClipboardMonitor.cpp").read_text(encoding="utf-8")
+        settings = (root / "qml" / "pages" / "SettingsPage.qml").read_text(encoding="utf-8")
+        run_page = (root / "qml" / "pages" / "RunPage.qml").read_text(encoding="utf-8")
+
+        self.assertIn("devtool-control-center-clipboard.service", controller)
+        self.assertIn("systemctl", controller)
+        self.assertIn("enable", controller)
+        self.assertIn("disable", controller)
+        self.assertIn("--clipboard-monitor", controller)
+        self.assertIn("Install & enable", settings)
+        self.assertIn("never executes", settings)
+        self.assertIn("Detected clipboard command", run_page)
+        self.assertIn("looksLikeArtifact", monitor)
+        self.assertIn("devtoolCommand", monitor)
+        self.assertNotIn("startDetached(normalized", monitor)
+        self.assertNotIn("m_runner->start", monitor)
+
+    def test_clipboard_monitor_package_uses_optional_notifications(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        control = (root / "packaging" / "debian" / "control").read_text(encoding="utf-8")
+        self.assertIn("Suggests: python3-pip, pipx, libnotify-bin", control)
+        monitor = (root / "src" / "ClipboardMonitor.cpp").read_text(encoding="utf-8")
+        self.assertIn('findExecutable(QStringLiteral("notify-send"))', monitor)
