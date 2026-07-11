@@ -1,16 +1,38 @@
 {
+  "schema_version": 2,
   "type": "snapshot",
-  "name": "devtool 0.2.32 simplified single-run frontend",
-  "description": "Complete devtool source repository with one run per repository, a single-run Android app bridge, native app Tasker integration, optional root bridge, and no legacy Termux notification, Tasker CLI, or concurrency flags.",
-  "version": "0.2.32",
+  "name": "devtool 0.3.2 compact HUD actions and focused failure copy",
+  "description": "Complete devtool source repository with self-contained artifact metadata, atomic bundles, and disposable external validation scripts.",
+  "version": "0.3.2",
   "android_version": "1.5.2",
+  "repository": {
+    "name": "devtool"
+  },
+  "apply": {
+    "atomic": true,
+    "conflict_policy": "overwrite",
+    "path_policy": "repository-relative",
+    "requires_clean_worktree": false,
+    "commit": {
+      "enabled": false,
+      "strategy": "single",
+      "message": ""
+    }
+  },
+  "validation": {
+    "required": true,
+    "restore": false,
+    "build": false,
+    "test": true,
+    "rollback_on_failure": true
+  },
   "highlights": [
-    "One non-waiting run lock per repository",
-    "One active Android notification and floating HUD card",
-    "Legacy android-notify and Termux notification fallback removed",
-    "Legacy Tasker CLI flags and broadcast path removed",
-    "Native Tasker app plug-in retained",
-    "Optional non-Zygisk KernelSU/Magisk root bridge retained",
-    "Dotnet build uses --no-restore and test uses --no-build during validation"
+    "Artifact schema v2 inventory and repository identity",
+    "Embedded target, validation policy, and commit message",
+    "Atomic monorepo overlay bundles with dependency ordering",
+    "Disposable artifact validators executed from TMPDIR",
+    "CLI opt-outs for embedded validation, commit, and scripts",
+    "Compact-by-default GTK desktop HUD with persistent action buttons",
+    "Focused failure clipboard reports with concise successful-phase status"
   ]
 }

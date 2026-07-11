@@ -816,9 +816,26 @@ def render_artifact_manifest(manifest: dict, *, console_obj: Console | None = No
         if isinstance(commands, list):
             renderables.append(_manifest_list_table("Recommended commands", commands))
 
+    for key, title in [
+        ("repository", "Repository"),
+        ("workspace", "Workspace"),
+        ("apply", "Apply policy"),
+        ("inventory", "Inventory"),
+    ]:
+        value = manifest.get(key)
+        if isinstance(value, dict):
+            renderables.append(_tree_from_json(title, value))
+    workspaces = manifest.get("workspaces")
+    if isinstance(workspaces, list):
+        renderables.append(_tree_from_json("Workspaces", workspaces))
+    overlays = manifest.get("overlays") or manifest.get("apply_order")
+    if isinstance(overlays, list):
+        renderables.append(_tree_from_json("Bundle overlays", overlays))
+
     known = {
         "type", "repo", "repo_name", "target", "validate_target", "description", "expected_solution", "solution", "project",
-        "compat", "files", "mutates", "deletes", "validation",
+        "compat", "files", "mutates", "deletes", "validation", "repository", "workspace", "workspaces",
+        "apply", "inventory", "overlays", "apply_order",
     }
     extras = {key: value for key, value in manifest.items() if key not in known}
     if extras:

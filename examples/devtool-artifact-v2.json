@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "type": "overlay",
+  "name": "Example overlay",
+  "description": "Example self-contained devtool overlay.",
+  "repository": {
+    "name": "example-repository",
+    "branch": "main"
+  },
+  "workspace": {
+    "name": "app",
+    "root": "src/app"
+  },
+  "target": "app",
+  "solution": "src/app/App.sln",
+  "inventory": {
+    "format": 1,
+    "entries": [
+      {
+        "path": "src/app/NewFile.cs",
+        "action": "add",
+        "sha256": "REPLACE_WITH_PAYLOAD_SHA256",
+        "size": 0
+      }
+    ]
+  },
+  "apply": {
+    "atomic": true,
+    "conflict_policy": "fail",
+    "path_policy": "repository-relative",
+    "requires_clean_worktree": false,
+    "commit": {
+      "enabled": true,
+      "strategy": "single",
+      "message": "Apply example overlay"
+    }
+  },
+  "validation": {
+    "required": true,
+    "restore": true,
+    "build": true,
+    "test": true,
+    "rollback_on_failure": true,
+    "expected": {
+      "restore": "pass",
+      "build": "pass",
+      "tests": "pass",
+      "maximum_warnings": 0
+    }
+  }
+}

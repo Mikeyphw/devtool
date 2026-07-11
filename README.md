@@ -2,7 +2,7 @@
 
 Devtool applies project overlays, validates builds and tests, records transactions, produces handoff summaries, and can publish one live run to the desktop HUD or the Android Devtool Frontend.
 
-## Devtool 0.2.32 behavior
+## Devtool 0.3.2 behavior
 
 ### One active run
 
@@ -36,6 +36,20 @@ Use the Android Devtool Frontend for:
 
 The foreground-service notification required by Android while the floating overlay is running remains part of the app.
 
+
+## Self-contained artifacts
+
+Artifact schema v2 can carry the repository identity, monorepo workspace, target, solution, file inventory, validation policy, disposable validation script, and final commit message. A normal apply can therefore be reduced to:
+
+```bash
+DEVTOOL_HUD_SINGLETON=kill devtool \
+  --copy --auto-hud --hud-mode desktop-window --yes \
+  -r "$HOME/Code/sims3tools" \
+  apply-overlay "$HOME/Downloads/example_overlay.zip"
+```
+
+CLI options still override artifact values. Use `--no-validate`, `--no-commit`, or `--no-artifact-script` for explicit opt-outs. See [`docs/ARTIFACTS.md`](docs/ARTIFACTS.md) for the complete overlay and bundle formats.
+
 ## Typical Android command
 
 After pairing the secure bridge in the app, commands launched directly from Termux use:
@@ -67,6 +81,8 @@ devtool --auto-hud --hud-mode desktop-window ...
 ```
 
 The desktop HUD binds to the current run before rendering, filters events by run ID, suppresses duplicate generic errors, and reports a successful rollback as recovery rather than as the cause of failure.
+
+The GTK desktop window starts in a compact summary mode showing the current operation, target, detail, warnings/errors, progress, and the Copy summary/Open log/Close actions. Select **Expand** to reveal metrics, recent events, and diagnostic details; the choice is preserved for the lifetime of that HUD window. Set `DEVTOOL_DESKTOP_HUD_START_EXPANDED=1` to launch the full dashboard immediately.
 
 ## Validation sequence
 

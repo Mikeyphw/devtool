@@ -1,51 +1,8 @@
-# Python
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-.coverage.*
-htmlcov/
-*.egg-info/
-.venv/
-venv/
-
-# Local configuration and secrets
-.env
-.env.*
-!.env.example
-local.properties
-*.keystore
-*.jks
-**/bridge-token.txt
-**/android-live-hud.token
-
-# Devtool runtime state and generated artifacts
-.devtool/
-artifacts/
-release/
-dist/
-*.log
-
-# Android / Gradle
-.gradle/
 **/.gradle/
 **/build/
 *.apk
-*.aab
-/devtool_root_bridge_module.zip
-*.ap_
-*.dex
-captures/
-.externalNativeBuild/
-.cxx/
-
-# Editors / OS
-.idea/
-.vscode/
-*.iml
-.DS_Store
-Thumbs.db
-*~
-*.swp
+.devtool/
+**/android-live-hud.token
+__pycache__/
+.pytest_cache/
+*.pyc

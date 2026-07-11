@@ -39,7 +39,24 @@ DEFAULT_HUD_PORT = 8765
 DESKTOP_HUD_APP_ID = "net.mph.devtool.HUD"
 DESKTOP_HUD_ICON_NAME = "devtool-hud"
 DESKTOP_HUD_WM_CLASS = "devtool-hud"
+DEFAULT_DESKTOP_HUD_COMPACT_SIZE = (460, 250)
+DEFAULT_DESKTOP_HUD_EXPANDED_SIZE = (500, 430)
 DEFAULT_RUN_HEARTBEAT_TIMEOUT_S = 30.0
+
+
+def desktop_hud_starts_expanded() -> bool:
+    """Return whether the GTK HUD should bypass its compact initial state.
+
+    Compact mode is the default.  The environment override is intentionally
+    opt-in so launchers and older workflows can request the full dashboard
+    without adding another CLI flag.
+    """
+    return os.environ.get("DEVTOOL_DESKTOP_HUD_START_EXPANDED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _boot_id() -> str:
@@ -1374,9 +1391,16 @@ class GtkDesktopHud:
         with contextlib.suppress(Exception):
             Gtk.Window.set_default_icon_name(DESKTOP_HUD_ICON_NAME)
 
+        start_expanded = desktop_hud_starts_expanded()
+        compact_width, compact_height = DEFAULT_DESKTOP_HUD_COMPACT_SIZE
+        expanded_width, expanded_height = DEFAULT_DESKTOP_HUD_EXPANDED_SIZE
+
         window = Gtk.Window(title="Devtool HUD")
         window.set_name(DESKTOP_HUD_WM_CLASS)
-        window.set_default_size(520, 460)
+        window.set_default_size(
+            expanded_width if start_expanded else compact_width,
+            expanded_height if start_expanded else compact_height,
+        )
         window.set_keep_above(True)
         window.set_resizable(True)
         with contextlib.suppress(Exception):
@@ -1455,7 +1479,6 @@ class GtkDesktopHud:
                 label.get_style_context().add_class(css_class)
             return label
 
-        window.set_default_size(500, 430)
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         outer.get_style_context().add_class("hud-root")
         outer.set_margin_top(10); outer.set_margin_bottom(10); outer.set_margin_start(10); outer.set_margin_end(10)
@@ -1467,7 +1490,10 @@ class GtkDesktopHud:
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); card.pack_start(header, False, False, 0)
         header_label = _label("DEVTOOL", "hud-header"); header.pack_start(header_label, True, True, 0)
-        status_badge = _label("WAITING", "hud-badge", xalign=1.0); header.pack_end(status_badge, False, False, 0)
+        expand_button = Gtk.Button(label="Collapse" if start_expanded else "Expand")
+        status_badge = _label("WAITING", "hud-badge", xalign=1.0)
+        header.pack_end(status_badge, False, False, 0)
+        header.pack_end(expand_button, False, False, 0)
 
         title = _label("Waiting for progress", "hud-title", wrap=True); card.pack_start(title, False, False, 0)
         context_label = _label("Waiting for target", "hud-context"); context_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE); card.pack_start(context_label, False, False, 0)
@@ -1476,10 +1502,15 @@ class GtkDesktopHud:
         error_label = _label("", "hud-error-banner", wrap=True); error_label.set_no_show_all(True); card.pack_start(error_label, False, False, 0)
         warning_label = _label("", "hud-warning-banner", wrap=True); warning_label.set_no_show_all(True); card.pack_start(warning_label, False, False, 0)
 
-        pipeline = _label("Validate → Apply → Test → Commit", "hud-pipeline"); pipeline.set_ellipsize(Pango.EllipsizeMode.END); card.pack_start(pipeline, False, False, 0)
         progress = Gtk.ProgressBar(); progress.set_show_text(True); progress.get_style_context().add_class("hud-progress"); card.pack_start(progress, False, False, 0)
 
-        metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); card.pack_start(metrics, False, False, 0)
+        expanded_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
+        expanded_section.set_no_show_all(not start_expanded)
+        card.pack_start(expanded_section, True, True, 0)
+
+        pipeline = _label("Validate → Apply → Test → Commit", "hud-pipeline"); pipeline.set_ellipsize(Pango.EllipsizeMode.END); expanded_section.pack_start(pipeline, False, False, 0)
+
+        metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); expanded_section.pack_start(metrics, False, False, 0)
         error_metric = _label("0\nERRORS", "hud-metric", wrap=True)
         warning_metric = _label("0\nWARNINGS", "hud-metric", wrap=True)
         progress_metric = _label("WAITING\nSTATUS", "hud-metric", wrap=True)
@@ -1487,16 +1518,17 @@ class GtkDesktopHud:
             metric.set_justify(Gtk.Justification.CENTER)
             metrics.pack_start(metric, True, True, 0)
 
-        recent_heading = _label("RECENT", "hud-header"); card.pack_start(recent_heading, False, False, 0)
+        recent_heading = _label("RECENT", "hud-header"); expanded_section.pack_start(recent_heading, False, False, 0)
         events_scroller = Gtk.ScrolledWindow(); events_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); events_scroller.set_min_content_height(118)
-        events_label = _label("No events yet", "hud-event", wrap=True, selectable=True); events_scroller.add(events_label); card.pack_start(events_scroller, True, True, 0)
+        events_label = _label("No events yet", "hud-event", wrap=True, selectable=True); events_scroller.add(events_label); expanded_section.pack_start(events_scroller, True, True, 0)
 
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6); card.pack_start(actions, False, False, 0)
         copy_button = Gtk.Button(label="Copy summary"); log_button = Gtk.Button(label="Open log"); close_button = Gtk.Button(label="Close")
         actions.pack_start(copy_button, False, False, 0); actions.pack_start(log_button, False, False, 0); actions.pack_end(close_button, False, False, 0)
         debug = Gtk.Expander(label="Details"); debug.set_expanded(False)
-        debug_label = _label("", "hud-debug", wrap=True, selectable=True); debug.add(debug_label); card.pack_start(debug, False, False, 0)
+        debug_label = _label("", "hud-debug", wrap=True, selectable=True); debug.add(debug_label); expanded_section.pack_start(debug, False, False, 0)
         last_summary = {"text": "Devtool HUD: waiting", "log_path": ""}
+        expanded_state = {"value": start_expanded}
 
         def _copy_summary(_button: Any) -> None:
             clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD); clipboard.set_text(str(last_summary.get("text") or ""), -1); clipboard.store()
@@ -1505,7 +1537,25 @@ class GtkDesktopHud:
             if log_path:
                 with contextlib.suppress(Exception):
                     subprocess.Popen(["xdg-open", log_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def _set_expanded(expanded: bool) -> None:
+            expanded_state["value"] = bool(expanded)
+            if expanded:
+                expanded_section.set_no_show_all(False)
+                expanded_section.show_all()
+                expand_button.set_label("Collapse")
+                window.resize(expanded_width, expanded_height)
+            else:
+                expanded_section.hide()
+                expanded_section.set_no_show_all(True)
+                expand_button.set_label("Expand")
+                window.resize(compact_width, compact_height)
+            GLib.idle_add(_move_window_top_right)
+
+        def _toggle_expanded(_button: Any) -> None:
+            _set_expanded(not bool(expanded_state["value"]))
+
         copy_button.connect("clicked", _copy_summary); log_button.connect("clicked", _open_log); close_button.connect("clicked", lambda _button: Gtk.main_quit())
+        expand_button.connect("clicked", _toggle_expanded)
 
         def _set_status_classes(widget: Any, status: str) -> None:
             ctx = widget.get_style_context()
@@ -1669,7 +1719,13 @@ class GtkDesktopHud:
             last_summary["log_path"] = log_path or ""
             debug_label.set_text("\n".join([f"active_dir={current_dir}", f"state={current_dir / 'state.json'}", f"events={current_dir / 'events.jsonl'}", f"seq={state.seq if state.seq is not None else '-'} status={state.status} event={state.event_type}", *meta_lines, f"log={log_path or '-'}"]))
             return True
-        GLib.timeout_add(max(100, int(interval_s * 1000)), refresh); refresh(); window.show_all(); Gtk.main(); return 0
+        GLib.timeout_add(max(100, int(interval_s * 1000)), refresh)
+        refresh()
+        window.show_all()
+        if not start_expanded:
+            _set_expanded(False)
+        Gtk.main()
+        return 0
 
 
 DASHBOARD_HTML = r"""<!doctype html>

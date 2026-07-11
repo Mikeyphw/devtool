@@ -70,7 +70,7 @@ _devtool() {
     '--chroot[run command phases inside chroot via sudo chrootctl --name NAME exec -- zsh -lc]:name:' \
     '--stdout-payload[select stdout payload]:(auto summary json raw)' \
     '--save-json-payload[write machine JSON payload]:file:_files' \
-    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-snapshot batch logs status doctor config init-config completion tag release-notes ai-prompt detect handoff hud history rollback targets v wv b t ao as)' \
+    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-overlays apply-snapshot bundle batch logs status doctor config init-config completion tag release-notes ai-prompt detect handoff hud history rollback targets v wv b t ao aos as)' \
     '*::arg:->args'
 
   case $words[1] in
@@ -87,9 +87,10 @@ _devtool() {
         '--matrix[comma-separated runtime IDs or targets]:matrix:' \
         '--matrix-mode[matrix interpretation]:(rid target)'
       ;;
-    apply-overlay|ao|apply-snapshot|as)
+    apply-overlay|ao|apply-overlays|aos|apply-snapshot|as)
       _arguments \
         '--validate[run validation after apply]' \
+        '--no-validate[disable validation requested by the artifact manifest]' \
         '--validate-only[skip apply and only run validation]' \
         '--preview[preview archive changes without applying]' \
         '--diff[show repo-relative unified diff without applying]' \
@@ -101,7 +102,28 @@ _devtool() {
         '--skip-build[skip build during validation]' \
         '--skip-test[skip test during validation]' \
         '--commit[commit with this message after successful apply and validation]:message:' \
+        '--no-commit[disable a commit requested by the artifact manifest]' \
+        '--no-artifact-script[skip embedded artifact validation scripts]' \
         '1:artifact:_devtool_artifact_path'
+      ;;
+    bundle)
+      _arguments \
+        '1:bundle subcommand:(overlays)' \
+        '*:overlay:_devtool_artifact_path' \
+        '--name[bundle name]:name:' \
+        '--description[bundle description]:description:' \
+        '--default-target[default target]:target:' \
+        '--targets[comma-separated per-overlay targets]:targets:' \
+        '--repository-name[repository identity]:name:' \
+        '--repository-remote[expected Git remote]:remote:' \
+        '--repository-branch[expected Git branch]:branch:' \
+        '--commit-message[embedded final commit message]:message:' \
+        '--validate[require validation when applied]' \
+        '--validation-strategy[validation strategy]:(per-overlay after-all both)' \
+        '--validation-script[embed disposable validator]:file:_files' \
+        '--validation-runner[script runner]:(bash sh python3)' \
+        '--validation-timeout[script timeout seconds]:seconds:' \
+        '(-o --out)'{-o,--out}'[output bundle archive]:file:_files'
       ;;
     batch)
       _devtool_steps

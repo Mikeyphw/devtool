@@ -25,6 +25,7 @@ from .artifacts import (
     create_overlay_bundle,
     read_delete_manifest,
     resolve_artifact_path,
+    validate_artifact,
 )
 from .config import generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
@@ -882,6 +883,10 @@ def apply_overlay_bundle(
             with tempfile.TemporaryDirectory(prefix="devtool-bundle-apply-") as tmp:
                 _manifest, entries = materialize_overlay_bundle_entries(artifact_path, tmp)
                 for entry in entries:
+                    validation = validate_artifact(repo_root, entry.path, artifact_type="overlay", check_source_state=True)
+                    if not validation.ok:
+                        label = entry.label or Path(entry.bundle_path).name
+                        raise RuntimeError(f"Nested overlay validation failed for {label}: " + "; ".join(validation.messages))
                     skipped_metadata += _extract_archive(entry.path, repo_root)
                     deleted_paths.extend(_apply_delete_manifest(repo_root, entry.path))
                     label = entry.label or Path(entry.bundle_path).name
@@ -1037,6 +1042,9 @@ def _safe_extract_zip(archive: zipfile.ZipFile, target: Path) -> int:
     target = target.resolve()
     skipped_metadata = 0
     for member in archive.infolist():
+        mode = (member.external_attr >> 16) & 0o170000
+        if mode == 0o120000:
+            raise RuntimeError(f"Unsafe zip symlink member: {member.filename}")
         if is_artifact_metadata_member(member.filename):
             skipped_metadata += 1
             continue

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from devtool.hud import AndroidAppHud, HudState, choose_hud_mode, events_for_state, last_phase_highlights, latest_log_path, parse_hud_state, render_ascii_bar, state_from_directory
+from devtool.hud import AndroidAppHud, HudState, choose_hud_mode, desktop_hud_starts_expanded, events_for_state, last_phase_highlights, latest_log_path, parse_hud_state, render_ascii_bar, state_from_directory
 from devtool.cli import build_parser
 
 
@@ -126,6 +126,8 @@ class HudTests(unittest.TestCase):
         self.assertIn("WARNINGS", source)
         self.assertIn("RECENT", source)
         self.assertIn("state_context_label", source)
+        self.assertIn("card.pack_start(actions", source)
+        self.assertNotIn("expanded_section.pack_start(actions", source)
 
     def test_render_ascii_bar_clamps_progress(self) -> None:
         self.assertEqual(render_ascii_bar(5, 10, width=10), "█████░░░░░")
@@ -157,6 +159,19 @@ class HudTests(unittest.TestCase):
         self.assertEqual(args.command, "hud")
         self.assertEqual(args.mode, "terminal")
         self.assertTrue(args.once)
+
+    def test_desktop_hud_starts_compact_by_default(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(desktop_hud_starts_expanded())
+
+    def test_desktop_hud_can_start_expanded_by_environment(self) -> None:
+        for value in ("1", "true", "yes", "on", "TRUE"):
+            with self.subTest(value=value), patch.dict(
+                "os.environ",
+                {"DEVTOOL_DESKTOP_HUD_START_EXPANDED": value},
+                clear=True,
+            ):
+                self.assertTrue(desktop_hud_starts_expanded())
 
 
 class HudV345Tests(unittest.TestCase):

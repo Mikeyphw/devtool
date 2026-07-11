@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 import tomllib
 from unittest.mock import patch
@@ -14,7 +15,7 @@ from unittest.mock import patch
 from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import build_parser, main
+from devtool.cli import _maybe_copy, build_parser, main
 from devtool.logstore import latest_log, write_log
 from devtool.summary import build_json_summary
 
@@ -202,6 +203,66 @@ class CliTests(unittest.TestCase):
         metadata = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertEqual(__version__, metadata["project"]["version"])
 
+
+
+    def test_failure_copy_compacts_successful_phases_and_keeps_diagnostics(self) -> None:
+        raw_output = """$ devtool extract-overlay overlay.zip -C /repo
+Applied overlay from overlay.zip
+Artifact validation passed.
+
+$ dotnet restore /repo/App.sln
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+
+$ dotnet build --no-restore /repo/App.sln
+  App.Core -> /repo/bin/App.Core.dll
+/repo/App.axaml : Avalonia error AVLN2002: Duplicate x:Class directive [/repo/App.csproj]
+
+Build FAILED.
+
+/repo/App.axaml : Avalonia error AVLN2002: Duplicate x:Class directive [/repo/App.csproj]
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:10.00
+
+$ rsync rollback transaction.json
+Rolled back devtool apply transaction.
+restored_paths:
+  hundreds/of/noisy/files.cs
+
+$ delete overlay.zip
+Deleted original artifact(s) after failed apply.
+removed: overlay.zip
+"""
+        summary_text = """apply-overlay: ok exit=0 time=0.50s
+restore: ok exit=0 time=1.00s
+build: failed exit=1 time=10.00s
+rollback: ok exit=0 time=0.20s
+artifact-cleanup: ok exit=0 time=0.10s
+"""
+        args = SimpleNamespace(
+            no_clipboard=False,
+            copy=True,
+            copy_summary=False,
+            copy_json=False,
+            copy_via="auto",
+        )
+        copied: list[str] = []
+        result = SimpleNamespace(success=True, backend="test", reason="")
+        with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
+            _maybe_copy(raw_output, summary_text, '{"warnings":0,"errors":1,"failed":1,"skipped":0}', args)
+
+        self.assertEqual(len(copied), 1)
+        text = copied[0]
+        self.assertIn("Succeeded: overlay apply, restore", text)
+        self.assertIn("Failed: build", text)
+        self.assertIn("Recovery: rollback succeeded; artifact cleanup succeeded", text)
+        self.assertIn("$ dotnet build --no-restore /repo/App.sln", text)
+        self.assertIn("Avalonia error AVLN2002", text)
+        self.assertNotIn("App.Core ->", text)
+        self.assertNotIn("All projects are up-to-date", text)
+        self.assertNotIn("hundreds/of/noisy/files.cs", text)
 
     def test_copy_json_uses_json_summary_even_without_json_stdout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

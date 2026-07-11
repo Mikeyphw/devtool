@@ -20,7 +20,12 @@ from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
 from .artifacts import (
     SUPPORTED_ARCHIVE_SUFFIXES,
     append_history,
+    artifact_commit_policy,
     artifact_cleanup_paths,
+    artifact_solution,
+    artifact_target,
+    artifact_validation_policy,
+    artifact_workspaces,
     create_overlay_bundle,
     diff_artifact,
     format_preview,
@@ -37,6 +42,7 @@ from .artifacts import (
     validate_artifact,
     validate_overlay_bundle,
 )
+from .artifact_validation import run_artifact_validation_script
 from .detect import detect_repo, render_detect_text
 from .execution import apply_matrix, wrap_specs_for_chroot
 from .handoff import render_handoff
@@ -203,6 +209,7 @@ def build_parser() -> argparse.ArgumentParser:
         else:
             cmd.add_argument("artifact")
         cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
+        cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested by the artifact manifest")
         cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
         cmd.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
         cmd.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
@@ -212,6 +219,8 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Deprecated: artifacts are deleted after failure by default unless --keep-artifact is used")
         _add_validation_skip_flags(cmd)
         cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
+        cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
+        cmd.add_argument("--no-artifact-script", action="store_true", help="Skip embedded artifact validation scripts while keeping built-in validation")
 
     apply_cmd = subparsers.add_parser("apply", help="Apply an overlay, overlay bundle, or snapshot")
     apply_sub = apply_cmd.add_subparsers(dest="apply_command", required=True)
@@ -223,6 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
         else:
             sub.add_argument("artifact")
         sub.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
+        sub.add_argument("--no-validate", action="store_true", help="Disable validation requested by the artifact manifest")
         sub.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
         sub.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
         sub.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
@@ -232,6 +242,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--delete-artifact-on-failure", action="store_true", help="Deprecated: artifacts are deleted after failure by default unless --keep-artifact is used")
         _add_validation_skip_flags(sub)
         sub.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
+        sub.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
+        sub.add_argument("--no-artifact-script", action="store_true", help="Skip embedded artifact validation scripts while keeping built-in validation")
 
     validate_overlay_cmd = subparsers.add_parser("validate-overlay", aliases=["vo"])
     validate_overlay_cmd.add_argument("artifact")
@@ -248,6 +260,15 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_overlays.add_argument("--description", default="")
     bundle_overlays.add_argument("--default-target", default="", help="Default target for entries that do not declare one")
     bundle_overlays.add_argument("--targets", default="", help="Comma-separated targets aligned with the overlay arguments; use '-' to infer")
+    bundle_overlays.add_argument("--repository-name", default="", help="Repository identity stored in the bundle manifest")
+    bundle_overlays.add_argument("--repository-remote", default="", help="Optional expected Git remote")
+    bundle_overlays.add_argument("--repository-branch", default="", help="Optional expected Git branch")
+    bundle_overlays.add_argument("--commit-message", default="", help="Embed one final atomic bundle commit message")
+    bundle_overlays.add_argument("--validate", action="store_true", help="Require validation when the bundle is applied")
+    bundle_overlays.add_argument("--validation-strategy", choices=["per-overlay", "after-all", "both"], default="per-overlay")
+    bundle_overlays.add_argument("--validation-script", default="", help="Embed a disposable bundle validation script")
+    bundle_overlays.add_argument("--validation-runner", choices=["bash", "sh", "python3"], default="bash")
+    bundle_overlays.add_argument("--validation-timeout", type=int, default=900, help="Embedded validation script timeout in seconds")
     bundle_overlays.add_argument("-o", "--out", required=True, help="Output bundle archive; extension selects format")
 
     batch = subparsers.add_parser("batch")
@@ -540,6 +561,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     }
 
     action_lines: list[str] = []
+    action_records: list[tuple[str, str, str, float]] = []
     total_duration = 0.0
 
     for match in action_pattern.finditer(summary_text):
@@ -556,6 +578,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             name,
             name.replace("-", " ").replace("_", " ").capitalize(),
         )
+        action_records.append((name, status, description, duration))
 
         if status == "ok":
             action_lines.append(f"- {description} ({duration:.2f}s)")
@@ -653,24 +676,146 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         success_lines.append(f"Total action time: {total_duration:.2f}s")
 
     success_summary = "\n".join(success_lines).strip()
-    failure_output = raw_output.strip() or summary_text.strip() or json_text.strip()
+
+    def _failure_summary() -> str:
+        terse_names = {
+            "apply-overlay": "overlay apply",
+            "apply-overlays": "bundle apply",
+            "apply-snapshot": "snapshot apply",
+            "restore": "restore",
+            "build": "build",
+            "test": "tests",
+            "wine-test": "Wine tests",
+            "package": "package",
+            "run": "run",
+            "git-commit": "commit",
+            "artifact-cleanup": "artifact cleanup",
+            "rollback": "rollback",
+        }
+
+        successful_steps: list[str] = []
+        failed_steps: list[str] = []
+        recovery_steps: list[str] = []
+        for name, status, _description, _duration in action_records:
+            label_text = terse_names.get(name, name.replace("-", " ").replace("_", " "))
+            if name in {"rollback", "artifact-cleanup"}:
+                if status == "ok":
+                    recovery_steps.append(f"{label_text} succeeded")
+                elif status == "failed":
+                    recovery_steps.append(f"{label_text} failed")
+                continue
+            if status == "ok":
+                successful_steps.append(label_text)
+            elif status == "failed":
+                failed_steps.append(label_text)
+
+        # Some wrappers perform rollback and artifact cleanup outside the normal
+        # operation table. Detect those outcomes without copying their verbose
+        # restored/removed path inventories.
+        if _re.search(r"Rolled back (?:devtool apply transaction|changes)", raw_output, _re.IGNORECASE):
+            if not any(step.startswith("rollback ") for step in recovery_steps):
+                recovery_steps.append("rollback succeeded")
+        if _re.search(r"Deleted original artifact\(s\) after failed apply|removed:\s+.*\.(?:zip|tar)", raw_output, _re.IGNORECASE):
+            if not any(step.startswith("artifact cleanup ") for step in recovery_steps):
+                recovery_steps.append("artifact cleanup succeeded")
+
+        failed_names = [name for name, status, _description, _duration in action_records if status == "failed"]
+        command_hints = {
+            "apply-overlay": ("devtool extract-overlay", "apply-overlay"),
+            "apply-overlays": ("apply-overlays",),
+            "apply-snapshot": ("apply-snapshot",),
+            "restore": ("dotnet restore",),
+            "build": ("dotnet build",),
+            "test": ("dotnet test", "pytest", "unittest"),
+            "wine-test": ("wine",),
+            "package": ("dotnet pack", "python -m build", "npm pack"),
+            "run": ("dotnet run",),
+            "git-commit": ("git commit",),
+        }
+
+        command_blocks = [block.strip() for block in _re.split(r"(?m)(?=^\$ )", raw_output) if block.strip()]
+        failed_block = ""
+        for failed_name in failed_names:
+            hints = command_hints.get(failed_name, (failed_name.replace("-", " "),))
+            for block in command_blocks:
+                first_line = block.splitlines()[0].casefold() if block.splitlines() else ""
+                if any(hint.casefold() in first_line for hint in hints):
+                    failed_block = block
+                    break
+            if failed_block:
+                break
+
+        if failed_block:
+            lines = failed_block.splitlines()
+            command_line = lines[0].rstrip()
+            body = lines[1:]
+            marker_re = _re.compile(
+                r"(?:\berror\b|build failed|test run failed|failed!|error message:|stack trace:|traceback \(most recent call last\)|unhandled exception|fatal:)",
+                _re.IGNORECASE,
+            )
+            marker_index = next((index for index, line in enumerate(body) if marker_re.search(line)), None)
+            if marker_index is None:
+                diagnostic_lines = body[-80:]
+            else:
+                diagnostic_lines = body[marker_index:]
+
+            compact_lines: list[str] = []
+            seen_lines: set[str] = set()
+            routine_success = _re.compile(r"^\s*[^:]+\s+->\s+.+\.(?:dll|exe)\s*$", _re.IGNORECASE)
+            routine_noise = _re.compile(
+                r"^\s*(?:Determining projects to restore|All projects are up-to-date for restore\.|Restore completed|Skipping project).*",
+                _re.IGNORECASE,
+            )
+            for line in diagnostic_lines:
+                if routine_success.match(line) or routine_noise.match(line):
+                    continue
+                cleaned = line.rstrip()
+                key = _re.sub(r"\s+", " ", cleaned.strip()).casefold()
+                if key and key in seen_lines and ("error" in key or "failed" in key):
+                    continue
+                if key:
+                    seen_lines.add(key)
+                compact_lines.append(cleaned)
+
+            while compact_lines and not compact_lines[0].strip():
+                compact_lines.pop(0)
+            while compact_lines and not compact_lines[-1].strip():
+                compact_lines.pop()
+            if len(compact_lines) > 120:
+                compact_lines = compact_lines[:100] + ["… output trimmed; see the devtool log for the complete failure."] + compact_lines[-19:]
+            failure_details = "\n".join([command_line, *compact_lines]).strip()
+        else:
+            failure_details = raw_output.strip() or summary_text.strip() or json_text.strip()
+
+        lines = ["Devtool failed."]
+        if successful_steps:
+            lines.extend(("", "Succeeded: " + ", ".join(successful_steps)))
+        if failed_steps:
+            lines.append("Failed: " + ", ".join(failed_steps))
+        if recovery_steps:
+            lines.append("Recovery: " + "; ".join(recovery_steps))
+        if failure_details:
+            lines.extend(("", "Failure details:", failure_details))
+        return "\n".join(lines).strip()
+
+    failure_summary = _failure_summary()
 
     # Automatic behavior:
     # - successful run: descriptive concise summary
-    # - failed run: verbose output for troubleshooting
+    # - failed run: concise phase status plus focused diagnostics
     if succeeded:
         to_copy = success_summary
         label = "Successful run summary"
     else:
-        to_copy = failure_output
-        label = "Failure output"
+        to_copy = failure_summary
+        label = "Failure summary"
 
     # Explicit clipboard modes retain their override behavior.
     if args.copy_json:
         to_copy = json_text
         label = "JSON summary"
     elif args.copy_summary:
-        to_copy = success_summary if succeeded else summary_text
+        to_copy = success_summary if succeeded else failure_summary
         label = "Summary"
 
     if args.copy or args.copy_summary or args.copy_json:
@@ -924,10 +1069,10 @@ def _resolve_batch_steps(config: ProjectConfig, steps: list[str]) -> tuple[list[
 
 
 
-def _read_artifact_manifest(artifact: str) -> dict[str, str]:
+def _read_artifact_manifest(artifact: str) -> dict:
     try:
         data = read_artifact_manifest(artifact)
-        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        return dict(data) if isinstance(data, dict) else {}
     except Exception:
         return {}
 
@@ -956,12 +1101,12 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
     solution = args.solution
     project = args.project
 
-    if args.command in LEGACY_APPLY_VALIDATE_COMMANDS and (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
+    if args.command in LEGACY_APPLY_VALIDATE_COMMANDS:
         manifest = _read_artifact_manifest(_single_artifact_arg(getattr(args, "artifact", "")))
         if not target_name:
-            target_name = manifest.get("validate_target", "")
+            target_name = artifact_target(manifest)
         if not solution:
-            solution = manifest.get("solution", "")
+            solution = artifact_solution(manifest)
         if not project:
             project = manifest.get("run_project", "") or manifest.get("project", "")
 
@@ -972,6 +1117,50 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
         solution_override=solution,
         project_override=project,
     )
+
+
+def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
+    """Apply manifest defaults while preserving explicit CLI precedence."""
+    if getattr(args, "command", "") not in APPLY_COMMANDS:
+        return
+    artifacts = _artifact_arg_list(getattr(args, "artifact", ""))
+    if len(artifacts) != 1:
+        return
+    manifest = _read_artifact_manifest(artifacts[0])
+    args._devtool_declared_manifest = manifest
+    if not manifest:
+        return
+
+    preview_only = bool(getattr(args, "preview", False) or (getattr(args, "diff", False) and not getattr(args, "interactive", False)))
+
+    if not getattr(args, "target", ""):
+        args.target = artifact_target(manifest)
+    if not getattr(args, "solution", ""):
+        args.solution = artifact_solution(manifest)
+
+    validation = artifact_validation_policy(manifest)
+    if validation and not getattr(args, "no_validate", False) and not preview_only:
+        if bool(validation.get("required", False)) and not getattr(args, "validate_only", False):
+            args.validate = True
+        if not bool(validation.get("restore", True)):
+            args.skip_restore = True
+        if not bool(validation.get("build", True)):
+            args.skip_build = True
+        if not bool(validation.get("test", True)):
+            args.skip_test = True
+    if getattr(args, "no_validate", False):
+        args.validate = False
+
+    enabled, message, strategy = artifact_commit_policy(manifest)
+    args._devtool_artifact_commit_strategy = strategy
+    if (
+        enabled
+        and not getattr(args, "no_commit", False)
+        and not getattr(args, "validate_only", False)
+        and not preview_only
+        and not str(getattr(args, "commit", "") or "").strip()
+    ):
+        args.commit = message
 
 
 def _normalize_command_aliases(args: argparse.Namespace) -> None:
@@ -1004,6 +1193,10 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
             parser.error(f"validate {scope} requires an artifact archive")
     if args.command not in APPLY_COMMANDS:
         return
+    if getattr(args, "no_validate", False) and (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
+        parser.error("--no-validate cannot be combined with --validate or --validate-only.")
+    if getattr(args, "no_commit", False) and str(getattr(args, "commit", "") or "").strip():
+        parser.error("--no-commit cannot be combined with --commit.")
     if (args.skip_restore or args.skip_build or args.skip_test) and not (args.validate or args.validate_only):
         parser.error("--skip-restore, --skip-build, and --skip-test require --validate or --validate-only.")
     if args.validate_only and args.validate:
@@ -1062,7 +1255,38 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
 
 def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
     bundle_targets = [str(item).strip() for item in getattr(args, "_devtool_bundle_targets", []) if str(item).strip()]
+    workspace_validations = [item for item in getattr(args, "_devtool_workspace_validations", []) if isinstance(item, dict)]
     items = _matrix_items(args)
+    if workspace_validations and args.command in APPLY_COMMANDS and not items:
+        specs: list[CommandSpec] = []
+        seen: set[tuple[str, str]] = set()
+        for item in workspace_validations:
+            target = str(item.get("target") or "").strip()
+            solution = str(item.get("solution") or "").strip()
+            if not target and not solution:
+                continue
+            key = (target, solution)
+            if key in seen:
+                continue
+            seen.add(key)
+            target_config = load_project_config(
+                args.repo,
+                args.config,
+                target_name=target,
+                solution_override=solution or args.solution,
+                project_override=args.project,
+            )
+            target_specs = _validation_specs(target_config, args, parser)
+            label = str(item.get("name") or target or solution or "workspace")
+            for spec in target_specs:
+                spec.name = f"{spec.name}[{label}]"
+                spec.metadata["workspace"] = label
+                spec.metadata["workspace_root"] = str(item.get("root") or "")
+                if target:
+                    spec.metadata["bundle_target"] = target
+            specs.extend(target_specs)
+        if specs:
+            return specs
     if bundle_targets and args.command in APPLY_COMMANDS and not items:
         specs: list[CommandSpec] = []
         for item in dict.fromkeys(bundle_targets):
@@ -1471,6 +1695,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
         args._devtool_artifact_manifest = validation.manifest
         args._devtool_bundle_targets = overlay_bundle_targets(artifact_path) if artifact_type == "overlay_bundle" else []
+        args._devtool_workspace_validations = artifact_workspaces(validation.manifest) if artifact_type == "overlay" else []
         preview = preview_artifact(config.repo_root, artifact_path, snapshot=snapshot)
         args._devtool_artifact_preview = preview
     except Exception as exc:
@@ -1675,6 +1900,81 @@ def _overlay_commit_message(base: str, *, index: int, total: int, label: str) ->
     return f"{base} [{index}/{total}] {label}"
 
 
+def _artifact_script_result(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    artifact: Path,
+    manifest: dict,
+    *,
+    target: str,
+    solution: str,
+    log_path: Path | str | None,
+    tasker_progress: TaskerProgressSink | None,
+) -> tuple[OperationResult | None, str]:
+    if getattr(args, "no_artifact_script", False):
+        return None, ""
+    if not artifact_validation_policy(manifest).get("script"):
+        return None, ""
+    try:
+        if tasker_progress is not None:
+            tasker_progress.phase_started(
+                "artifact-validate-script",
+                index=1,
+                total=1,
+                argv=["artifact-validate-script", str(artifact)],
+            )
+        result = run_artifact_validation_script(
+            config.repo_root,
+            artifact,
+            manifest=manifest,
+            target=target,
+            solution=solution,
+            run_id=str(getattr(args, "_devtool_run_id", "") or ""),
+            dry_run=bool(getattr(args, "dry_run", False)),
+            log_path=log_path,
+        )
+    except Exception as exc:
+        result = OperationResult(
+            "artifact-validate-script",
+            ["artifact-validate-script", str(artifact)],
+            1,
+            0.0,
+            f"{type(exc).__name__}: {exc}",
+            [Issue("error", "artifact-validate-script", str(artifact), type(exc).__name__, str(exc))],
+            failure_kind="validation_failure",
+        )
+    if result is not None and tasker_progress is not None:
+        tasker_progress.phase_finished(result)
+    if result is None:
+        return None, ""
+    return result, "$ " + " ".join(result.argv) + "\n" + result.output
+
+
+def _validation_expectation_result(manifest: dict, results: list[OperationResult]) -> OperationResult | None:
+    policy = artifact_validation_policy(manifest)
+    expected = policy.get("expected") if isinstance(policy.get("expected"), dict) else {}
+    maximum = expected.get("maximum_warnings")
+    if maximum is None:
+        return None
+    warning_count = sum(
+        1
+        for result in results
+        for issue in result.issues
+        if str(issue.severity).lower() == "warning"
+    )
+    if warning_count <= int(maximum):
+        return None
+    return OperationResult(
+        "artifact-validation-expectations",
+        ["artifact-validation-expectations"],
+        1,
+        0.0,
+        f"Validation produced {warning_count} warning(s); artifact permits at most {maximum}.",
+        [Issue("error", "artifact-validation-expectations", "", "maximum-warnings", f"Expected at most {maximum} warning(s), found {warning_count}.")],
+        failure_kind="validation_failure",
+    )
+
+
 def _run_sequential_overlays(
     config: ProjectConfig,
     args: argparse.Namespace,
@@ -1684,156 +1984,231 @@ def _run_sequential_overlays(
     tasker_progress: TaskerProgressSink | None,
     continue_on_error: bool,
 ) -> tuple[list[OperationResult], str]:
-    """Apply, validate, and commit each overlay as an independent transaction."""
+    """Apply a bundle atomically, validate its overlays, and create one final commit."""
     all_results: list[OperationResult] = []
     raw_sections: list[str] = []
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    adhoc_bundle_temp: tempfile.TemporaryDirectory[str] | None = None
     source_bundle: Path | None = None
 
     try:
         temp_dir, source_bundle, entries = _overlay_sequence_entries(args)
-        for entry in entries:
-            index = int(entry["index"])
-            total = int(entry["total"])
-            path = Path(entry["path"])
-            source = Path(entry["source"])
-            label = str(entry["label"])
-            target = str(entry["target"])
-            materialized = bool(entry["materialized"])
-            heading = f"Overlay {index}/{total}: {label}" + (f" [{target}]" if target else "")
-            raw_sections.append(f"=== {heading} ===")
+        bundle_manifest = read_artifact_manifest(source_bundle) if source_bundle is not None else {}
+        bundle_policy = artifact_validation_policy(bundle_manifest)
+        bundle_strategy = str(bundle_policy.get("strategy") or "per-overlay").strip().lower()
+        if bundle_strategy not in {"per-overlay", "after-all", "both"}:
+            bundle_strategy = "per-overlay"
 
-            entry_args = argparse.Namespace(**vars(args))
-            entry_args.command = "apply-overlay"
-            entry_args.artifact = str(path)
-            entry_args.commit = _overlay_commit_message(
-                str(getattr(args, "commit", "") or ""),
-                index=index,
-                total=total,
-                label=label,
+        apply_artifact: object = getattr(args, "artifact", "")
+        direct_artifacts = _artifact_arg_list(apply_artifact)
+        direct_sources: list[Path] = []
+        if len(direct_artifacts) > 1:
+            adhoc_bundle_temp, adhoc_bundle_path, direct_sources = _make_ad_hoc_overlay_bundle(
+                direct_artifacts,
+                name="adhoc_overlay_bundle",
             )
-            entry_args._devtool_history_recorded = False
-            entry_args._devtool_bundle_targets = []
-            for name in ("_devtool_history_paths", "_devtool_artifact_preview", "_devtool_artifact_manifest", "_devtool_artifact_sha"):
-                if hasattr(entry_args, name):
-                    delattr(entry_args, name)
+            apply_artifact = str(adhoc_bundle_path)
 
-            entry_config = config
-            if target:
+        apply_results, apply_raw = _run_apply(
+            config,
+            args,
+            "apply-overlays",
+            apply_artifact,
+            log_path=log_path,
+            tasker_progress=tasker_progress,
+        )
+        if direct_sources:
+            for result in apply_results:
+                metadata = dict(result.metadata or {})
+                if metadata.get("transaction_path"):
+                    metadata["artifact_paths"] = [str(path) for path in direct_sources]
+                    metadata["artifact_path"] = str(direct_sources[0])
+                    result.metadata = metadata
+        all_results.extend(apply_results)
+        raw_sections.append(apply_raw)
+        transaction_path = _apply_transaction_path(all_results)
+        apply_ok = bool(apply_results) and all(result.returncode == 0 for result in apply_results)
+
+        if apply_ok or getattr(args, "validate_only", False):
+            for entry in entries:
+                path = Path(entry["path"])
+                label = str(entry["label"])
+                entry_manifest = read_artifact_manifest(path)
+                entry_policy = artifact_validation_policy(entry_manifest)
+                should_validate = not getattr(args, "no_validate", False) and bool(
+                    getattr(args, "validate", False)
+                    or getattr(args, "validate_only", False)
+                    or bundle_policy.get("required", False)
+                    or entry_policy.get("required", False)
+                )
+                if not should_validate:
+                    continue
+
+                manifest_target = str(entry["target"] or artifact_target(entry_manifest)).strip()
+                target = str(getattr(args, "target", "") or "").strip() if getattr(args, "_devtool_cli_target_explicit", False) else manifest_target
+                solution = str(getattr(args, "solution", "") or "").strip() if getattr(args, "_devtool_cli_solution_explicit", False) else artifact_solution(entry_manifest)
                 entry_config = load_project_config(
                     args.repo,
                     args.config,
                     target_name=target,
-                    solution_override=args.solution,
+                    solution_override=solution,
                     project_override=args.project,
                 )
+                entry_args = argparse.Namespace(**vars(args))
+                entry_args.command = "apply-overlay"
+                entry_args.artifact = str(path)
+                restore_enabled = entry_policy.get("restore", bundle_policy.get("restore", True))
+                build_enabled = entry_policy.get("build", bundle_policy.get("build", True))
+                test_enabled = entry_policy.get("test", bundle_policy.get("test", True))
+                entry_args.skip_restore = bool(getattr(args, "skip_restore", False) or not restore_enabled)
+                entry_args.skip_build = bool(getattr(args, "skip_build", False) or not build_enabled)
+                entry_args.skip_test = bool(getattr(args, "skip_test", False) or not test_enabled)
 
-            results, raw = _run_apply(
-                config,
-                entry_args,
-                "apply-overlay",
-                str(path),
-                log_path=log_path,
+                group_results: list[OperationResult] = []
+                if not (entry_args.skip_restore and entry_args.skip_build and entry_args.skip_test):
+                    specs = _validation_specs(entry_config, entry_args, parser)
+                    validation_results, validation_raw = _run_specs_for_args(
+                        entry_config,
+                        specs,
+                        entry_args,
+                        continue_on_error=continue_on_error,
+                        log_path=log_path,
+                        tasker_progress=tasker_progress,
+                    )
+                    group_results.extend(validation_results)
+                    raw_sections.append(f"=== Validate {label} ===\n{validation_raw}")
+
+                if not any(result.returncode != 0 for result in group_results):
+                    script_result, script_raw = _artifact_script_result(
+                        entry_config,
+                        entry_args,
+                        path,
+                        entry_manifest,
+                        target=target,
+                        solution=solution,
+                        log_path=log_path,
+                        tasker_progress=tasker_progress,
+                    )
+                    if script_result is not None:
+                        group_results.append(script_result)
+                        raw_sections.append(f"=== Artifact validator {label} ===\n{script_raw}")
+
+                expectation = _validation_expectation_result(entry_manifest, group_results)
+                if expectation is not None:
+                    group_results.append(expectation)
+                _tag_overlay_results(
+                    group_results,
+                    index=int(entry["index"]),
+                    total=int(entry["total"]),
+                    label=label,
+                    target=target,
+                    artifact=str(path),
+                )
+                all_results.extend(group_results)
+                if any(result.returncode != 0 for result in group_results) and not continue_on_error:
+                    break
+
+            # "both" adds a final integration pass across distinct affected targets.
+            if bundle_strategy == "both" and not any(result.returncode != 0 for result in all_results):
+                seen_targets: set[str] = set()
+                for entry in entries:
+                    path = Path(entry["path"])
+                    manifest = read_artifact_manifest(path)
+                    target = str(entry["target"] or artifact_target(manifest)).strip()
+                    if not target or target in seen_targets:
+                        continue
+                    seen_targets.add(target)
+                    final_config = load_project_config(args.repo, args.config, target_name=target, solution_override="", project_override=args.project)
+                    final_args = argparse.Namespace(**vars(args))
+                    final_args.command = "apply-overlay"
+                    specs = _validation_specs(final_config, final_args, parser)
+                    final_results, final_raw = _run_specs_for_args(
+                        final_config,
+                        specs,
+                        final_args,
+                        continue_on_error=continue_on_error,
+                        log_path=log_path,
+                        tasker_progress=tasker_progress,
+                    )
+                    all_results.extend(final_results)
+                    raw_sections.append(f"=== Final validation [{target}] ===\n{final_raw}")
+                    if any(result.returncode != 0 for result in final_results) and not continue_on_error:
+                        break
+
+            if source_bundle is not None and not any(result.returncode != 0 for result in all_results):
+                script_result, script_raw = _artifact_script_result(
+                    config,
+                    args,
+                    source_bundle,
+                    bundle_manifest,
+                    target=str(getattr(args, "target", "") or ""),
+                    solution=str(getattr(args, "solution", "") or ""),
+                    log_path=log_path,
+                    tasker_progress=tasker_progress,
+                )
+                if script_result is not None:
+                    all_results.append(script_result)
+                    raw_sections.append("=== Bundle validator ===\n" + script_raw)
+                expectation = _validation_expectation_result(bundle_manifest, all_results)
+                if expectation is not None:
+                    all_results.append(expectation)
+
+        rollback_enabled = bool(bundle_policy.get("rollback_on_failure", True))
+        if transaction_path and rollback_enabled and _has_failed_after_apply(all_results):
+            rollback_result, rollback_raw = _run_transaction_rollback(
+                transaction_path,
+                reason="bundle apply or validation failed",
                 tasker_progress=tasker_progress,
-            )
-            transaction_path = _apply_transaction_path(results)
-            should_validate = bool(getattr(args, "validate", False) or getattr(args, "validate_only", False))
-
-            if should_validate and (getattr(args, "validate_only", False) or (results and results[-1].returncode == 0)):
-                specs = _validation_specs(entry_config, entry_args, parser)
-                validation_results, validation_raw = _run_specs_for_args(
-                    entry_config,
-                    specs,
-                    entry_args,
-                    continue_on_error=continue_on_error,
-                    log_path=log_path,
-                    tasker_progress=tasker_progress,
-                )
-                results.extend(validation_results)
-                raw = raw + "\n\n" + validation_raw if raw else validation_raw
-
-            if transaction_path and _has_failed_after_apply(results):
-                rollback_result, rollback_raw = _run_transaction_rollback(
-                    transaction_path,
-                    reason=f"validation/build/test failed for overlay {index}/{total}: {label}",
-                    tasker_progress=tasker_progress,
-                    log_path=log_path,
-                )
-                results.append(rollback_result)
-                raw = raw + "\n\n" + rollback_raw if raw else rollback_raw
-
-            results, raw = _maybe_commit_after_apply(
-                entry_config,
-                entry_args,
-                results,
-                raw,
                 log_path=log_path,
             )
+            all_results.append(rollback_result)
+            raw_sections.append(rollback_raw)
 
-            if transaction_path:
-                if any(result.returncode != 0 for result in results):
-                    if not any(result.name == "apply-rollback" for result in results):
-                        rollback_result, rollback_raw = _run_transaction_rollback(
-                            transaction_path,
-                            reason=f"post-apply command failed for overlay {index}/{total}: {label}",
-                            tasker_progress=tasker_progress,
-                            log_path=log_path,
-                        )
-                        results.append(rollback_result)
-                        raw = raw + "\n\n" + rollback_raw if raw else rollback_raw
-                else:
-                    mark_transaction_completed(transaction_path)
+        commit_args = argparse.Namespace(**vars(args))
+        commit_args.artifact = str(source_bundle or apply_artifact)
+        all_results, commit_raw = _maybe_commit_after_apply(
+            config,
+            commit_args,
+            all_results,
+            "\n\n".join(raw_sections),
+            log_path=log_path,
+        )
+        raw_sections = [commit_raw]
 
-            if not getattr(entry_args, "_devtool_history_recorded", False):
-                _record_apply_history(entry_config, entry_args, results)
-                entry_args._devtool_history_recorded = True
+        if transaction_path:
+            if any(result.returncode != 0 for result in all_results):
+                if rollback_enabled and not any(result.name == "apply-rollback" for result in all_results):
+                    rollback_result, rollback_raw = _run_transaction_rollback(
+                        transaction_path,
+                        reason="post-bundle command failed",
+                        tasker_progress=tasker_progress,
+                        log_path=log_path,
+                    )
+                    all_results.append(rollback_result)
+                    raw_sections.append(rollback_raw)
+            else:
+                mark_transaction_completed(transaction_path)
 
-            # Direct overlay arguments are real source files and can be cleaned
-            # after their own transaction. Nested bundle members are temporary;
-            # the outer bundle source is cleaned once after the sequence.
-            if not materialized and not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
-                cleanup = _delete_original_artifact_after_apply(
-                    results,
-                    artifact=str(source),
-                    delete_on_failure=True,
-                )
-                if cleanup is not None:
-                    results.append(cleanup)
-                    raw += "\n\n$ " + " ".join(cleanup.argv) + "\n" + cleanup.output
+        if not getattr(args, "_devtool_history_recorded", False):
+            _record_apply_history(config, args, all_results)
+            args._devtool_history_recorded = True
 
-            _tag_overlay_results(
-                results,
-                index=index,
-                total=total,
-                label=label,
-                target=target,
-                artifact=(f"{source}::{entry['bundle_member']}" if materialized else str(source)),
-            )
-            all_results.extend(results)
-            raw_sections.append(raw)
-
-            if any(result.returncode != 0 for result in results) and not continue_on_error:
-                break
-
-        if source_bundle is not None and not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
+        if not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
             cleanup = _delete_original_artifact_after_apply(
-                [],
-                artifact=str(source_bundle),
+                all_results,
+                artifact=getattr(args, "artifact", ""),
                 delete_on_failure=True,
             )
             if cleanup is not None:
-                metadata = dict(cleanup.metadata or {})
-                metadata["summary_group"] = "bundle"
-                metadata["bundle_label"] = source_bundle.name
-                cleanup.metadata = metadata
                 all_results.append(cleanup)
-                raw_sections.append("=== Bundle source ===\n$ " + " ".join(cleanup.argv) + "\n" + cleanup.output)
+                raw_sections.append("$ " + " ".join(cleanup.argv) + "\n" + cleanup.output)
 
         return all_results, "\n\n".join(section for section in raw_sections if section)
     finally:
         if temp_dir is not None:
             temp_dir.cleanup()
-
+        if adhoc_bundle_temp is not None:
+            adhoc_bundle_temp.cleanup()
 
 def _apply_transaction_path(results: list[OperationResult]) -> str:
     for result in results:
@@ -2165,6 +2540,11 @@ def _run_bundle_command(args: argparse.Namespace) -> int:
     if args.bundle_command != "overlays":
         raise SystemExit(f"Unknown bundle command: {args.bundle_command}")
     targets = [item.strip() for item in str(getattr(args, "targets", "") or "").split(",") if item.strip()]
+    repository = {
+        "name": str(getattr(args, "repository_name", "") or "").strip(),
+        "remote": str(getattr(args, "repository_remote", "") or "").strip(),
+        "branch": str(getattr(args, "repository_branch", "") or "").strip(),
+    }
     out = create_overlay_bundle(
         args.out,
         list(args.overlays),
@@ -2172,6 +2552,13 @@ def _run_bundle_command(args: argparse.Namespace) -> int:
         description=args.description,
         targets=targets or None,
         default_target=getattr(args, "default_target", "") or "",
+        repository=repository,
+        commit_message=str(getattr(args, "commit_message", "") or ""),
+        validation_required=bool(getattr(args, "validate", False)),
+        validation_strategy=str(getattr(args, "validation_strategy", "per-overlay") or "per-overlay"),
+        validation_script=str(getattr(args, "validation_script", "") or "") or None,
+        validation_runner=str(getattr(args, "validation_runner", "bash") or "bash"),
+        validation_timeout_seconds=int(getattr(args, "validation_timeout", 900) or 900),
     )
     console.print(f"[green]Created overlay bundle[/green] {out}")
     return 0
@@ -2265,6 +2652,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(raw_argv)
     _normalize_command_aliases(args)
     _normalize_live_progress_args(args)
+    args._devtool_cli_target_explicit = bool(str(getattr(args, "target", "") or "").strip())
+    args._devtool_cli_solution_explicit = bool(str(getattr(args, "solution", "") or "").strip())
+    _apply_artifact_manifest_defaults(args)
     _validate_apply_args(args, parser)
     effective_payload, copy_mode = _validate_output_flags(args, parser)
     auto_chroot_rc = _maybe_prepare_termux_auto_chroot(raw_argv, args)
@@ -2540,20 +2930,43 @@ def main(argv: list[str] | None = None) -> int:
             transaction_path = _apply_transaction_path(results)
             should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
             if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
-                more_results, more_raw = _run_specs_for_args(
-                    config,
-                    _validation_specs_for_args(config, args, parser),
-                    args,
-                    continue_on_error=continue_on_error,
-                    log_path=log_path,
-                    tasker_progress=tasker_progress,
-                )
-                results.extend(more_results)
-                raw_output += "\n\n" + more_raw
-            if transaction_path and _has_failed_after_apply(results):
+                skip_restore, skip_build, skip_test = _validation_skip_values(args)
+                if not (skip_restore and skip_build and skip_test):
+                    more_results, more_raw = _run_specs_for_args(
+                        config,
+                        _validation_specs_for_args(config, args, parser),
+                        args,
+                        continue_on_error=continue_on_error,
+                        log_path=log_path,
+                        tasker_progress=tasker_progress,
+                    )
+                    results.extend(more_results)
+                    raw_output += "\n\n" + more_raw
+                if not any(result.returncode != 0 for result in results):
+                    artifact_path = resolve_artifact_path(args.artifact)
+                    manifest = read_artifact_manifest(artifact_path)
+                    script_result, script_raw = _artifact_script_result(
+                        config,
+                        args,
+                        artifact_path,
+                        manifest,
+                        target=str(getattr(args, "target", "") or artifact_target(manifest)),
+                        solution=str(getattr(args, "solution", "") or artifact_solution(manifest)),
+                        log_path=log_path,
+                        tasker_progress=tasker_progress,
+                    )
+                    if script_result is not None:
+                        results.append(script_result)
+                        raw_output += "\n\n" + script_raw
+                expectation = _validation_expectation_result(read_artifact_manifest(args.artifact), results)
+                if expectation is not None:
+                    results.append(expectation)
+            validation_policy = artifact_validation_policy(read_artifact_manifest(args.artifact))
+            rollback_enabled = bool(validation_policy.get("rollback_on_failure", True))
+            if transaction_path and rollback_enabled and _has_failed_after_apply(results):
                 rollback_result, rollback_raw = _run_transaction_rollback(
                     transaction_path,
-                    reason="validation/build/test failed after artifact apply",
+                    reason="validation or artifact validation script failed after artifact apply",
                     tasker_progress=tasker_progress,
                     log_path=log_path,
                 )
@@ -2562,7 +2975,7 @@ def main(argv: list[str] | None = None) -> int:
             results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
             if transaction_path:
                 if any(result.returncode != 0 for result in results):
-                    if not any(result.name == "apply-rollback" for result in results):
+                    if rollback_enabled and not any(result.name == "apply-rollback" for result in results):
                         rollback_result, rollback_raw = _run_transaction_rollback(
                             transaction_path,
                             reason="post-apply command failed",

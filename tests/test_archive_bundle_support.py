@@ -131,7 +131,7 @@ class ArchiveBundleSupportTests(unittest.TestCase):
             self.assertEqual((repo / "a.txt").read_text(encoding="utf-8"), "one")
             self.assertEqual((repo / "b.txt").read_text(encoding="utf-8"), "two")
 
-    def test_apply_overlays_runs_apply_validate_commit_per_overlay_in_order(self) -> None:
+    def test_apply_overlays_applies_atomically_validates_each_and_commits_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo = root / "repo"
@@ -175,15 +175,17 @@ class ArchiveBundleSupportTests(unittest.TestCase):
                 )
 
             self.assertEqual(order, [
-                "apply:001.zip",
+                "apply:adhoc_overlay_bundle.zip",
                 "validate:001.zip",
-                "commit:001.zip:Apply bundle [1/2] 001.zip",
-                "apply:002.zip",
                 "validate:002.zip",
-                "commit:002.zip:Apply bundle [2/2] 002.zip",
+                "commit:adhoc_overlay_bundle.zip:Apply bundle",
             ])
-            groups = [(result.metadata.get("overlay_index"), result.metadata.get("overlay_label")) for result in results]
-            self.assertTrue(all(index in {1, 2} for index, _label in groups))
+            groups = [
+                (result.metadata.get("overlay_index"), result.metadata.get("overlay_label"))
+                for result in results
+                if result.metadata.get("overlay_index")
+            ]
+            self.assertEqual({index for index, _label in groups}, {1, 2})
             self.assertEqual({label for _index, label in groups}, {"001.zip", "002.zip"})
 
 
