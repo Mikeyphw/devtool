@@ -1668,6 +1668,62 @@ StartupWMClass={DESKTOP_HUD_WM_CLASS}
         return None
 
 
+
+def _control_center_binary() -> str | None:
+    configured = os.environ.get("DEVTOOL_CONTROL_CENTER", "").strip()
+    candidates: list[str] = []
+    if configured:
+        candidates.append(configured)
+    located = shutil.which("devtool-control-center")
+    if located:
+        candidates.append(located)
+    source_root = Path(__file__).resolve().parent.parent
+    candidates.extend(
+        str(path)
+        for path in (
+            source_root / "desktop" / "devtool-control-center" / "build" / "devtool-control-center",
+            Path.home() / ".local" / "bin" / "devtool-control-center",
+            Path("/usr/local/bin/devtool-control-center"),
+            Path("/usr/bin/devtool-control-center"),
+        )
+    )
+    for candidate in candidates:
+        path = Path(candidate).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return None
+
+
+class QtCompactHud:
+    """Native Qt 6 compact HUD used by the desktop-window backend."""
+
+    @classmethod
+    def available(cls) -> bool:
+        return _control_center_binary() is not None
+
+    def run(
+        self,
+        *,
+        directory: Path,
+        interval_s: float,
+        once: bool = False,
+        follow_active: bool = False,
+    ) -> int:
+        del interval_s, follow_active
+        binary = _control_center_binary()
+        if not binary:
+            raise RuntimeError(
+                "The Qt 6 desktop HUD requires devtool-control-center. "
+                "Install the Control Center package or set DEVTOOL_CONTROL_CENTER."
+            )
+        env = os.environ.copy()
+        env["DEVTOOL_TASKER_DIR"] = str(directory.expanduser())
+        argv = [binary, "--compact-hud"]
+        if once:
+            argv.append("--exit-when-idle")
+        return subprocess.run(argv, env=env, check=False).returncode
+
+
 class GtkDesktopHud:
     """Compact GTK floating desktop HUD for GNOME/Unix desktops."""
 
@@ -2223,7 +2279,7 @@ def choose_hud_mode(requested: str) -> str:
         "v4": "web", "server": "web", "http": "web", "dashboard": "web",
         "v5": "studio", "all": "studio",
         "v6": "desktop", "unix": "desktop", "gnome": "desktop",
-        "desktop-gtk": "desktop-window", "gtk": "desktop-window",
+        "desktop-gtk": "gtk-window", "gtk": "gtk-window", "gtk3": "gtk-window",
         "notify-send": "desktop-notify", "libnotify": "desktop-notify",
         "termux-gui": "android-bridge", "termuxgui": "android-bridge",
         "android": "android-bridge", "android-gui": "android-bridge",
@@ -2237,7 +2293,7 @@ def choose_hud_mode(requested: str) -> str:
     if requested == "desktop":
         if _is_termux_android() or _is_termux_chroot_bridge():
             return "android-bridge"
-        if GtkDesktopHud.available():
+        if QtCompactHud.available():
             return "desktop-window"
         if DesktopNotificationHud.available():
             return "desktop-notify"
@@ -2249,7 +2305,7 @@ def choose_hud_mode(requested: str) -> str:
     if _is_termux_android() or _is_termux_chroot_bridge():
         return "android-bridge"
     if os.name == "posix" and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-        if GtkDesktopHud.available():
+        if QtCompactHud.available():
             return "desktop-window"
         if DesktopNotificationHud.available():
             return "desktop-notify"
@@ -2260,7 +2316,7 @@ def build_hud_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-dir", dest="tasker_dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool live HUD state")
     parser.add_argument(
         "--mode",
-        choices=["auto", "android-bridge", "android-gui", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "desktop-notify", "control-center", "qt", "qt6", "qt-control-center", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
+        choices=["auto", "android-bridge", "android-gui", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "gtk-window", "desktop-notify", "control-center", "qt", "qt6", "qt-control-center", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
         default="auto",
         help="HUD renderer: Android app bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6",
     )
@@ -2298,6 +2354,8 @@ def run_hud(args: argparse.Namespace) -> int:
     if mode == "studio":
         return StudioHud(host=str(args.host), port=int(args.port), recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     if mode == "desktop-window":
+        return QtCompactHud().run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
+    if mode == "gtk-window":
         return GtkDesktopHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     if mode == "desktop-notify":
         return DesktopNotificationHud(notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)

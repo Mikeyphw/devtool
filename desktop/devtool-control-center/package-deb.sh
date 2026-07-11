@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "$0")" && pwd)
-version=${VERSION:-0.3.7}
+version=${VERSION:-0.3.8}
 arch=${ARCH:-$(dpkg --print-architecture)}
 cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}
 build=${BUILD_DIR:-"$cache_root/devtool-control-center/package-build-${version}-${arch}"}

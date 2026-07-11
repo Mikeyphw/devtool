@@ -10,7 +10,7 @@ ApplicationWindow {
     height: 800
     minimumWidth: 940
     minimumHeight: 620
-    visible: true
+    visible: !appController.startCompactOnly
     color: palette.window
     title: "Devtool Control Center"
     property int pageIndex: 0
@@ -82,21 +82,34 @@ ApplicationWindow {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 12
-                spacing: 5
-                SidebarButton { Layout.fillWidth: true; iconText: "⌂"; text: "Overview"; selected: root.pageIndex === 0; onClicked: root.pageIndex = 0 }
-                SidebarButton { Layout.fillWidth: true; iconText: "▶"; text: "Run"; selected: root.pageIndex === 1; onClicked: root.pageIndex = 1 }
-                SidebarButton { Layout.fillWidth: true; iconText: "◇"; text: "Artifacts"; selected: root.pageIndex === 2; onClicked: root.pageIndex = 2 }
-                SidebarButton { Layout.fillWidth: true; iconText: "!"; text: "Diagnostics"; selected: root.pageIndex === 3; onClicked: root.pageIndex = 3 }
-                SidebarButton { Layout.fillWidth: true; iconText: "◷"; text: "History"; selected: root.pageIndex === 4; onClicked: root.pageIndex = 4 }
-                SidebarButton { Layout.fillWidth: true; iconText: "⌘"; text: "Repositories"; selected: root.pageIndex === 5; onClicked: root.pageIndex = 5 }
-                SidebarButton { Layout.fillWidth: true; iconText: "⚙"; text: "Settings"; selected: root.pageIndex === 6; onClicked: root.pageIndex = 6 }
-                Item { Layout.fillHeight: true }
+                spacing: 8
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    background: Rectangle { color: "transparent" }
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    Column {
+                        width: parent.width
+                        spacing: 5
+                        SidebarButton { width: parent.width; iconText: "⌂"; text: "Overview"; selected: root.pageIndex === 0; onClicked: root.pageIndex = 0 }
+                        SidebarButton { width: parent.width; iconText: "▶"; text: "Run"; selected: root.pageIndex === 1; onClicked: root.pageIndex = 1 }
+                        SidebarButton { width: parent.width; iconText: "◇"; text: "Artifacts"; selected: root.pageIndex === 2; onClicked: root.pageIndex = 2 }
+                        SidebarButton { width: parent.width; iconText: "!"; text: "Diagnostics"; selected: root.pageIndex === 3; onClicked: root.pageIndex = 3 }
+                        SidebarButton { width: parent.width; iconText: "◷"; text: "History"; selected: root.pageIndex === 4; onClicked: root.pageIndex = 4 }
+                        SidebarButton { width: parent.width; iconText: "⌘"; text: "Repositories"; selected: root.pageIndex === 5; onClicked: root.pageIndex = 5 }
+                        SidebarButton { width: parent.width; iconText: "⚙"; text: "Settings"; selected: root.pageIndex === 6; onClicked: root.pageIndex = 6 }
+                    }
+                }
                 AppButton { Layout.fillWidth: true; text: "Compact HUD"; variant: "default"; onClicked: appController.compactHudVisible = true }
             }
         }
-        StackLayout {
+        Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            color: theme.window
+            StackLayout {
+                anchors.fill: parent
             currentIndex: root.pageIndex
             OverviewPage { onOpenRun: function(run) { hudStore.selectedRunId = run.run_id; root.pageIndex = 3 } }
             RunPage { }
@@ -105,6 +118,7 @@ ApplicationWindow {
             HistoryPage { }
             RepositoriesPage { }
             SettingsPage { }
+        }
         }
     }
 

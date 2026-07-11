@@ -366,8 +366,8 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     if chosen_mode in {"terminal", "console", "v3"}:
         _append_hud_log(
             "not starting auto-HUD because the requested/resolved mode is terminal, "
-            "which would be invisible when detached. Install python3-gi + gir1.2-gtk-3.0 "
-            "or libnotify-bin, then retry desktop/desktop-window/desktop-notify."
+            "which would be invisible when detached. Install devtool-control-center or libnotify-bin, then retry desktop/desktop-window/desktop-notify. "
+            "The legacy GTK HUD remains available as --hud-mode gtk-window."
         )
         return False
 

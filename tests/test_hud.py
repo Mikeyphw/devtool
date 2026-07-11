@@ -346,11 +346,14 @@ class HudV345Tests(unittest.TestCase):
 
     def test_choose_desktop_aliases(self) -> None:
         from devtool.hud import choose_hud_mode
-        with patch("devtool.hud.GtkDesktopHud.available", return_value=False), patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
+        with patch("devtool.hud.QtCompactHud.available", return_value=False), patch("devtool.hud.GtkDesktopHud.available", return_value=False), patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
             self.assertEqual(choose_hud_mode("desktop"), "desktop-notify")
-        with patch("devtool.hud.GtkDesktopHud.available", return_value=True), patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
+        with patch("devtool.hud.QtCompactHud.available", return_value=True), patch("devtool.hud.GtkDesktopHud.available", return_value=True), patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
             self.assertEqual(choose_hud_mode("v6"), "desktop-window")
+        with patch("devtool.hud.QtCompactHud.available", return_value=False), patch("devtool.hud.GtkDesktopHud.available", return_value=True), patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
+            self.assertEqual(choose_hud_mode("desktop"), "desktop-notify")
         self.assertEqual(choose_hud_mode("desktop-window"), "desktop-window")
+        self.assertEqual(choose_hud_mode("gtk"), "gtk-window")
 
     def test_desktop_notification_argv_contains_progress_hint(self) -> None:
         from devtool.hud import DesktopNotificationHud

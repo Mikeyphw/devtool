@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DevtoolControlCenter VERSION 0.3.7 LANGUAGES CXX)
+project(DevtoolControlCenter VERSION 0.3.8 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,6 +36,7 @@ qt_add_qml_module(devtool-control-center
         qml/Main.qml
         qml/CompactHud.qml
         qml/components/Theme.qml
+        qml/components/AppScrollView.qml
         qml/components/AppButton.qml
         qml/components/AppTextField.qml
         qml/components/AppTextArea.qml

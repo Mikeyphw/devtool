@@ -26,8 +26,9 @@ class AppController final : public QObject {
     Q_PROPERTY(bool clipboardMonitorInstalled READ clipboardMonitorInstalled NOTIFY clipboardMonitorStatusChanged)
     Q_PROPERTY(bool clipboardMonitorActive READ clipboardMonitorActive NOTIFY clipboardMonitorStatusChanged)
     Q_PROPERTY(QString clipboardMonitorStatus READ clipboardMonitorStatus NOTIFY clipboardMonitorStatusChanged)
+    Q_PROPERTY(bool startCompactOnly READ startCompactOnly CONSTANT)
 public:
-    AppController(HudStateStore *store, ProcessRunner *runner, HistoryModel *history, IpcClient *ipc, QObject *parent = nullptr);
+    AppController(HudStateStore *store, ProcessRunner *runner, HistoryModel *history, IpcClient *ipc, bool startCompactOnly = false, QObject *parent = nullptr);
     QString repository() const { return m_repository; }
     QString artifact() const { return m_artifact; }
     QString devtoolExecutable() const { return m_devtool; }
@@ -41,6 +42,7 @@ public:
     bool clipboardMonitorInstalled() const { return m_clipboardMonitorInstalled; }
     bool clipboardMonitorActive() const { return m_clipboardMonitorActive; }
     QString clipboardMonitorStatus() const { return m_clipboardMonitorStatus; }
+    bool startCompactOnly() const { return m_startCompactOnly; }
 
     void setRepository(const QString &);
     void setArtifact(const QString &);
@@ -64,6 +66,7 @@ public:
     Q_INVOKABLE void scanClipboardNow();
     Q_INVOKABLE void useClipboardCandidate();
     Q_INVOKABLE void clearClipboardCandidate();
+    Q_INVOKABLE void runClipboardCommand();
 
 signals:
     void repositoryChanged();
@@ -97,4 +100,5 @@ private:
     bool m_clipboardMonitorInstalled = false;
     bool m_clipboardMonitorActive = false;
     QString m_clipboardMonitorStatus = QStringLiteral("Not installed");
+    bool m_startCompactOnly = false;
 };

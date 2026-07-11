@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import "../components"
 
-ScrollView {
+AppScrollView {
     id: root
     Theme { id: theme }
     FolderDialog { id: stateDialog; onAccepted: hudStore.stateDirectory = selectedFolder.toString().replace("file://", "") }
@@ -188,7 +188,7 @@ ScrollView {
                         RowLayout {
                             Layout.fillWidth: true
                             AppButton {
-                                text: appController.clipboardCandidateKind === "artifact" ? "Inspect artifact" : "Open Run page"
+                                text: appController.clipboardCandidateKind === "artifact" ? "Inspect artifact" : "Review & run"
                                 variant: "primary"
                                 onClicked: appController.useClipboardCandidate()
                             }

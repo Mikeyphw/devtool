@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 
-ScrollView {
+AppScrollView {
     id: root
     Theme { id: theme }
     ColumnLayout {

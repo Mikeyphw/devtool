@@ -23,7 +23,10 @@ int main(int argc,char**argv){
         ClipboardMonitor clipboardMonitor(true, true);
         return app.exec();
     }
-HistoryModel history;HudStateStore hud(&history);ProcessRunner runner;RepositoryModel repositories;ArtifactInspector inspector;IpcClient ipc;AppController controller(&hud,&runner,&history,&ipc);
+const bool compactOnly = app.arguments().contains(QStringLiteral("--compact-hud"));
+    const bool exitWhenIdle = app.arguments().contains(QStringLiteral("--exit-when-idle"));
+HistoryModel history;HudStateStore hud(&history);ProcessRunner runner;RepositoryModel repositories;ArtifactInspector inspector;IpcClient ipc;AppController controller(&hud,&runner,&history,&ipc,compactOnly);
+    if (compactOnly) controller.setCompactHudVisible(true);
     inspector.setDevtoolExecutable(controller.devtoolExecutable());inspector.setRepositoryPath(controller.repository());inspector.setArtifactPath(controller.artifact());
     QObject::connect(&controller,&AppController::devtoolExecutableChanged,&inspector,[&]{inspector.setDevtoolExecutable(controller.devtoolExecutable());});
     QObject::connect(&controller,&AppController::repositoryChanged,&inspector,[&]{inspector.setRepositoryPath(controller.repository());repositories.markUsed(controller.repository());});
@@ -36,6 +39,7 @@ HistoryModel history;HudStateStore hud(&history);ProcessRunner runner;Repository
     if(!controller.repository().isEmpty())repositories.addRepository(controller.repository());
     if(controller.devtoolAvailable())QProcess::startDetached(controller.devtoolExecutable(), QStringList{"ipc-server","--state-dir",hud.stateDirectory()});
     QTimer::singleShot(150,&ipc,&IpcClient::start);
+    if (exitWhenIdle) QTimer::singleShot(1200, &app, &QCoreApplication::quit);
     QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("appController",&controller);engine.rootContext()->setContextProperty("hudStore",&hud);engine.rootContext()->setContextProperty("processRunner",&runner);engine.rootContext()->setContextProperty("historyModel",&history);engine.rootContext()->setContextProperty("artifactInspector",&inspector);engine.rootContext()->setContextProperty("repositoryModel",&repositories);engine.rootContext()->setContextProperty("ipcClient",&ipc);
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml")));if(engine.rootObjects().isEmpty())return 1;
     auto *mainWindow=qobject_cast<QWindow*>(engine.rootObjects().first());

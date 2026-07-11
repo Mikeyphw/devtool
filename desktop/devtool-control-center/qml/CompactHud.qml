@@ -14,8 +14,13 @@ Window {
     Theme { id: theme }
 
     onClosing: function(close) {
-        close.accepted = false
-        appController.compactHudVisible = false
+        if (appController.startCompactOnly) {
+            close.accepted = true
+            Qt.quit()
+        } else {
+            close.accepted = false
+            appController.compactHudVisible = false
+        }
     }
 
     Rectangle {
@@ -38,7 +43,7 @@ Window {
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
-                AppButton { text: "×"; variant: "ghost"; compact: true; implicitWidth: 34; onClicked: appController.compactHudVisible = false }
+                AppButton { text: "×"; variant: "ghost"; compact: true; implicitWidth: 34; onClicked: { if (appController.startCompactOnly) Qt.quit(); else appController.compactHudVisible = false } }
             }
             PipelineView { Layout.fillWidth: true; steps: run.steps || [] }
             RowLayout {

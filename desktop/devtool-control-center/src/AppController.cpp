@@ -44,14 +44,31 @@ static QString resolveDevtoolExecutable(const QString &configured) {
     return value;
 }
 
+
+static QString normalizedClipboardCommand(QString command) {
+    command = command.trimmed();
+    QStringList lines = command.split(QLatin1Char('\n'));
+    for (QString &line : lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith(QStringLiteral("$ "))) {
+            const int marker = line.indexOf(QStringLiteral("$ "));
+            line.remove(marker, 2);
+        } else if (trimmed.startsWith(QStringLiteral("❯ "))) {
+            const int marker = line.indexOf(QStringLiteral("❯ "));
+            line.remove(marker, 2);
+        }
+    }
+    return lines.join(QLatin1Char('\n')).trimmed();
+}
+
 static QString systemdQuote(QString value) {
     value.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
     value.replace(QLatin1Char('"'), QStringLiteral("\\\""));
     return QStringLiteral("\"") + value + QStringLiteral("\"");
 }
 
-AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h, IpcClient *i, QObject *p)
-    : QObject(p), m_store(s), m_runner(r), m_history(h), m_ipc(i),
+AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h, IpcClient *i, bool startCompactOnly, QObject *p)
+    : QObject(p), m_store(s), m_runner(r), m_history(h), m_ipc(i), m_startCompactOnly(startCompactOnly),
       m_settings(QStringLiteral("mikeceead"), QStringLiteral("DevtoolControlCenter")) {
     m_repository = m_settings.value(QStringLiteral("repository")).toString();
     m_artifact = m_settings.value(QStringLiteral("artifact")).toString();
@@ -302,3 +319,20 @@ void AppController::useClipboardCandidate() {
 void AppController::clearClipboardCandidate() {
     if (m_clipboardMonitor) m_clipboardMonitor->clearCandidate();
 }
+
+void AppController::runClipboardCommand() {
+    if (!m_clipboardMonitor || m_clipboardMonitor->candidateKind() != QStringLiteral("command") || m_runner->running()) return;
+    const QString command = normalizedClipboardCommand(m_clipboardMonitor->candidateText());
+    if (command.isEmpty()) return;
+    QString shell = qEnvironmentVariable("SHELL");
+    if (shell.isEmpty() || !QFileInfo(shell).isExecutable()) shell = QStandardPaths::findExecutable(QStringLiteral("bash"));
+    if (shell.isEmpty()) shell = QStandardPaths::findExecutable(QStringLiteral("sh"));
+    if (shell.isEmpty()) return;
+    const QString workingDirectory = QFileInfo(m_repository).isDir() ? m_repository : QDir::homePath();
+    QVariantMap env;
+    env[QStringLiteral("DEVTOOL_CONTROL_CENTER_ACTIVE")] = QStringLiteral("1");
+    m_runner->start(shell, QStringList{QStringLiteral("-lc"), command}, workingDirectory, env);
+    emit requestMainWindow();
+    emit requestRunPage();
+}
+

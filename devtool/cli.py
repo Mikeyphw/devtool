@@ -141,7 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
     hud = parser.add_argument_group("HUD and app bridge")
     hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the selected HUD while progress is emitted (default)")
     hud.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not publish live HUD progress for this command")
-    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-bridge, desktop-window, web, studio, or terminal")
+    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-bridge, desktop-window (Qt 6), gtk-window (legacy), web, studio, or terminal")
     hud_presentation = hud.add_mutually_exclusive_group()
     hud_presentation.add_argument("--hud-overlay", action="store_true", help="On Android, also show the run in the user-enabled floating overlay HUD")
     hud_presentation.add_argument("--hud-no-overlay", action="store_true", help="On Android, keep the update in the app without opening the floating overlay")
@@ -315,7 +315,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     hud_cmd = subparsers.add_parser("hud")
     hud_cmd.add_argument("--state-dir", dest="tasker_dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool live HUD state")
-    hud_cmd.add_argument("--mode", choices=["auto", "android-gui", "android-bridge", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: Android app bridge, terminal, web, studio, or Unix desktop")
+    hud_cmd.add_argument("--mode", choices=["auto", "android-gui", "android-bridge", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "gtk-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: Android app bridge, terminal, web, studio, or Unix desktop")
     hud_cmd.add_argument("--host", default="127.0.0.1", help="Host/IP for HUD web/studio modes")
     hud_cmd.add_argument("--port", type=int, default=8765, help="Port for HUD web/studio modes")
     hud_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")

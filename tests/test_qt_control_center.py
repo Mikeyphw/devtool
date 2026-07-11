@@ -130,6 +130,44 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
             self.assertNotRegex(source, r"(?m)^\s*(Button|TextField|ComboBox|CheckBox|TabButton|TextArea)\s*\{")
             self.assertNotIn('color: "#', source)
 
+
+    def test_scrollable_system_palette_pages_and_runnable_clipboard_command(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        components = root / "qml" / "components"
+        self.assertTrue((components / "AppScrollView.qml").is_file())
+        app_scroll = (components / "AppScrollView.qml").read_text(encoding="utf-8")
+        self.assertIn("background: Rectangle { color: theme.window }", app_scroll)
+        self.assertIn("ScrollBar.vertical.policy", app_scroll)
+
+        for name in ("OverviewPage.qml", "RunPage.qml", "HistoryPage.qml", "SettingsPage.qml"):
+            source = (root / "qml" / "pages" / name).read_text(encoding="utf-8")
+            self.assertIn("AppScrollView {", source)
+
+        main_qml = (root / "qml" / "Main.qml").read_text(encoding="utf-8")
+        self.assertIn("color: theme.window", main_qml)
+        self.assertIn("ScrollBar.horizontal.policy", main_qml)
+
+        controller = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
+        run_page = (root / "qml" / "pages" / "RunPage.qml").read_text(encoding="utf-8")
+        self.assertIn("runClipboardCommand", controller)
+        self.assertIn('text: "Run command…"', run_page)
+        self.assertIn('text: "Run command"', run_page)
+        self.assertIn("commandConfirmation", run_page)
+
+    def test_desktop_window_uses_qt_compact_hud_and_keeps_gtk_legacy_alias(self) -> None:
+        import devtool.hud as hud_module
+        source = Path(hud_module.__file__).read_text(encoding="utf-8")
+        self.assertIn("class QtCompactHud", source)
+        self.assertIn('[binary, "--compact-hud"]', source)
+        self.assertIn('if mode == "desktop-window":\n        return QtCompactHud()', source)
+        self.assertIn('if mode == "gtk-window":', source)
+
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        main_cpp = (root / "src" / "main.cpp").read_text(encoding="utf-8")
+        main_qml = (root / "qml" / "Main.qml").read_text(encoding="utf-8")
+        self.assertIn('"--compact-hud"', main_cpp)
+        self.assertIn("visible: !appController.startCompactOnly", main_qml)
+
 class QtControlCenterPackagingTests(unittest.TestCase):
     def test_packaging_uses_clean_out_of_source_build(self) -> None:
         root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"

@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import "../components"
 
-ScrollView {
+AppScrollView {
     id: root
     property string operation: "Apply overlay"
     Theme { id: theme }
@@ -15,6 +15,78 @@ ScrollView {
         id: artifactDialog
         nameFilters: ["Archives (*.zip *.tar *.gz *.zst)", "All files (*)"]
         onAccepted: appController.artifact = selectedFile.toString().replace("file://", "")
+    }
+
+    Popup {
+        id: commandConfirmation
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        width: Math.min(760, Overlay.overlay.width - 48)
+        height: Math.min(520, Overlay.overlay.height - 48)
+        x: Math.round((Overlay.overlay.width - width) / 2)
+        y: Math.round((Overlay.overlay.height - height) / 2)
+        padding: 0
+        background: Rectangle {
+            color: theme.elevatedSurface
+            radius: theme.cardRadius
+            border.color: theme.strongBorder
+            border.width: 1
+        }
+        contentItem: ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 18
+            spacing: 12
+            Label {
+                text: "Run detected command?"
+                color: theme.windowText
+                font.pointSize: theme.cardTitlePointSize
+                font.weight: Font.DemiBold
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "This runs the copied command through your login shell only after confirmation. Review every argument first."
+                color: theme.warning
+                wrapMode: Text.Wrap
+                font.pointSize: theme.bodyPointSize
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: theme.recessedSurface
+                radius: theme.controlRadius
+                border.color: theme.border
+                border.width: 1
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    background: Rectangle { color: "transparent" }
+                    AppTextArea {
+                        text: appController.clipboardCandidateText
+                        readOnly: true
+                        wrapMode: TextEdit.WrapAnywhere
+                        font.family: "monospace"
+                        font.pointSize: theme.smallPointSize
+                        background: null
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                AppButton { text: "Cancel"; variant: "ghost"; onClicked: commandConfirmation.close() }
+                AppButton {
+                    text: "Run command"
+                    variant: "primary"
+                    enabled: !processRunner.running
+                    onClicked: {
+                        commandConfirmation.close()
+                        appController.runClipboardCommand()
+                    }
+                }
+            }
+        }
     }
 
     ColumnLayout {
@@ -65,7 +137,8 @@ ScrollView {
                     }
                 }
                 RowLayout {
-                    AppButton { text: "Copy command"; variant: "primary"; onClicked: appController.copyText(appController.clipboardCandidateText) }
+                    AppButton { text: "Run command…"; variant: "primary"; enabled: !processRunner.running; onClicked: commandConfirmation.open() }
+                    AppButton { text: "Copy"; onClicked: appController.copyText(appController.clipboardCandidateText) }
                     AppButton { text: "Dismiss"; variant: "ghost"; onClicked: appController.clearClipboardCandidate() }
                     Item { Layout.fillWidth: true }
                 }
@@ -167,6 +240,7 @@ ScrollView {
             color: theme.recessedSurface
             ScrollView {
                 anchors.fill: parent
+                background: Rectangle { color: "transparent" }
                 anchors.margins: 8
                 AppTextArea {
                     text: processRunner.output

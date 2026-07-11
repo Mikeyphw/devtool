@@ -142,7 +142,7 @@ _devtool() {
       ;;
     hud)
       _arguments \
-        '--mode[HUD renderer]:(auto android-bridge android-gui termux-gui terminal web studio desktop desktop-window desktop-notify v3 v4 v5 v6 console dashboard all unix gnome)' \
+        '--mode[HUD renderer]:(auto android-bridge android-gui termux-gui terminal web studio desktop desktop-window gtk-window desktop-notify v3 v4 v5 v6 console dashboard all unix gnome)' \
         '--host[host/IP for web/studio modes]:host:' \
         '--port[port for web/studio modes]:port:' \
         '--poll-interval[seconds between refreshes]:seconds:' \

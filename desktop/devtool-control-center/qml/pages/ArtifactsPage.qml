@@ -192,6 +192,7 @@ Item {
                 color: theme.recessedSurface
                 ScrollView {
                     anchors.fill: parent
+                    background: Rectangle { color: "transparent" }
                     anchors.margins: 12
                     Column {
                         width: parent.width

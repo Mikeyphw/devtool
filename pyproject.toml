@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "devtool"
-version = "0.5.8"
+version = "0.5.9"
 description = "Generic Unix developer helper CLI with transactional overlays, validation, clipboard summaries, live HUD progress, and repo automation."
 readme = "README.md"
 requires-python = ">=3.11"

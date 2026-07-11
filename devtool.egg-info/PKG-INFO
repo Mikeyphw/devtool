@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: devtool
-Version: 0.5.8
+Version: 0.5.9
 Summary: Generic Unix developer helper CLI with transactional overlays, validation, clipboard summaries, live HUD progress, and repo automation.
 Author: OpenAI
 License-Expression: MIT

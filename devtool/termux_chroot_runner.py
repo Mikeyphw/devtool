@@ -51,7 +51,7 @@ _PATH_SUFFIXES = (
     ".vbproj", ".py", ".toml", ".json", ".md", ".txt", ".log",
 )
 
-DESKTOP_HUD_MODES = {"auto", "desktop", "desktop-window", "gnome", "gtk", "gtk3", "x11", "x11-gtk"}
+DESKTOP_HUD_MODES = {"auto", "desktop", "desktop-window", "gtk-window", "gnome", "gtk", "gtk3", "x11", "x11-gtk"}
 ANDROID_GUI_ALIASES = {"android-gui", "android-overlay", "termux-gui", "termuxgui"}
 ANDROID_BRIDGE_ALIASES = {"android-bridge", "termux-bridge", "android-chroot", "termux-chroot", "chroot-bridge", "android-notify", "notification"}
 HOST_ONLY_COMMANDS = {

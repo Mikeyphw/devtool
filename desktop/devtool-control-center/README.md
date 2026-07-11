@@ -47,16 +47,16 @@ After a successful Qt build:
 ./package-deb.sh
 ```
 
-The package is written to `dist/devtool-control-center_0.3.7_<arch>.deb`. Set `VERSION`, `ARCH`, `BUILD_DIR`, or `OUT_DIR` to override defaults.
+The package is written to `dist/devtool-control-center_0.3.8_<arch>.deb`. Set `VERSION`, `ARCH`, `BUILD_DIR`, or `OUT_DIR` to override defaults.
 
 ## Phase 3 native protocol
 
-Version 0.3.7 connects to devtool 0.5.8 through a per-user Unix-domain socket. It receives snapshots and incremental run updates without polling, reconnects automatically, supports multiple clients, and can cancel the exact active run. If IPC is unavailable, the existing state-file watcher remains active as a recovery fallback.
+Version 0.3.8 connects to devtool 0.5.9 through a per-user Unix-domain socket. It receives snapshots and incremental run updates without polling, reconnects automatically, supports multiple clients, and can cancel the exact active run. If IPC is unavailable, the existing state-file watcher remains active as a recovery fallback.
 
 
 ## Qt 6.4 compatibility
 
-Version 0.3.7 builds on Qt 6.4 by avoiding APIs introduced in Qt 6.5, using explicit QVariant fallbacks, and loading the embedded entry point from `qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml`.
+Version 0.3.8 builds on Qt 6.4 by avoiding APIs introduced in Qt 6.5, using explicit QVariant fallbacks, and loading the embedded entry point from `qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml`.
 
 
 ## Build-directory and clock-skew safety
@@ -82,3 +82,11 @@ Control Center follows the active Qt 6 system palette, application font, accent 
 Settings now includes an **Install & enable** button for a per-user systemd service. The service launches `devtool-control-center --clipboard-monitor` with the graphical session, watches only for local artifact archive paths and commands containing `devtool`, and ignores all other clipboard content. Detected content is never executed automatically. It is stored in the user-only Control Center settings, surfaced in Settings, and can be reviewed, copied, dismissed, or opened in the relevant page.
 
 The service unit is written to `~/.config/systemd/user/devtool-control-center-clipboard.service` and can be enabled, disabled, reinstalled, or removed from the app. `notify-send` is used when available for passive desktop notifications and is only an optional package suggestion.
+
+## Clipboard command review and execution
+
+Clipboard monitoring still never auto-runs content. A detected devtool command appears on the Run page with a **Run command…** action. The app opens a modal review dialog showing the complete command; execution only begins after explicit confirmation. The command runs through the user's shell from the selected repository, or from the home directory when no repository is selected.
+
+## Compact Qt HUD
+
+`devtool --hud-mode desktop-window` now launches the Qt 6 compact HUD. The previous GTK renderer is retained only as the explicit legacy mode `--hud-mode gtk-window`; automatic desktop selection never falls back to GTK.
