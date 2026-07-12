@@ -50,7 +50,7 @@ final class RunStore {
         record.repo = update.repo;
         record.target = update.target;
         record.summary = update.summary;
-        record.progress = update.pipelineProgress();
+        record.progress = update.displayProgress();
         record.warnings = update.warnings;
         record.errors = update.errors;
         record.stepsJson = update.stepsJson;
@@ -75,12 +75,12 @@ final class RunStore {
             record.phase = "Finished";
             record.title = ok ? "Devtool run completed" : "Devtool run failed";
             record.detail = firstUseful(error, stderr, stdout, record.detail);
-            record.progress = 100;
-            record.indeterminate = false;
+        record.progress = 100;
+        record.indeterminate = false;
         }
-        record.stdout = limit(stdout);
-        record.stderr = limit(stderr);
-        record.error = limit(error);
+        record.stdout = limit(HudUpdate.plainText(stdout));
+        record.stderr = limit(HudUpdate.plainText(stderr));
+        record.error = limit(HudUpdate.plainText(error));
         record.updatedAtMs = System.currentTimeMillis();
         record.durationMs = Math.max(0L, record.updatedAtMs - record.startedAtMs);
         upsert(context, record);

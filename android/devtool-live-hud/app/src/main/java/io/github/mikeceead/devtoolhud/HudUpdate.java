@@ -120,7 +120,7 @@ final class HudUpdate {
 
     private static String firstUseful(String first, String second, String third, String fallback) {
         for (String value : new String[]{first, second, third}) {
-            String clean = clean(value, "");
+            String clean = plainText(clean(value, ""));
             if (!clean.isEmpty()) return clean.length() > 180 ? clean.substring(0, 177) + "…" : clean;
         }
         return fallback;
@@ -188,6 +188,12 @@ final class HudUpdate {
     boolean succeeded() { return status.equals("ok"); }
     boolean failedState() { return status.equals("failed"); }
 
+    int displayProgress() {
+        Step active = activeStep();
+        if (active != null) return active.progress;
+        return pipelineProgress();
+    }
+
     String title() {
         String operation = operationName();
         if (succeeded()) return operation + " completed";
@@ -246,7 +252,7 @@ final class HudUpdate {
         Step active = activeStep();
         if (active != null) return active.label;
         if (indeterminate) return phase;
-        return pipelineProgress() + "%";
+        return displayProgress() + "%";
     }
 
     private static String normalizeStatus(String value) {
@@ -265,5 +271,14 @@ final class HudUpdate {
         if (value == null) return fallback;
         String cleaned = value.trim().replace('\n', ' ').replace('\r', ' ');
         return cleaned.isEmpty() ? fallback : cleaned;
+    }
+
+    static String plainText(String value) {
+        if (value == null) return "";
+        String cleaned = value.replaceAll("\\u001B\\[[;\\d]*[ -/]*[@-~]", "");
+        cleaned = cleaned.replace('\r', ' ').replace('\n', ' ');
+        cleaned = cleaned.replaceAll("[\\p{Cntrl}&&[^\\t]]", " ");
+        cleaned = cleaned.replaceAll("\\s+", " ").trim();
+        return cleaned;
     }
 }

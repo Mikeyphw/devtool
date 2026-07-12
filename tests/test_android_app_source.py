@@ -74,6 +74,7 @@ def test_tasker_plugin_returns_termux_results_as_variables() -> None:
     assert "%devtool_stderr" in protocol
     assert "com.termux.app.RunCommandService" in runner
     assert "com.termux.RUN_COMMAND_PENDING_INTENT" in runner
+    assert "TERMUX_PREFIX + \"/bin/zsh\"" in runner
     assert 'getBundleExtra("result")' in result_service
     assert "TaskerProtocol.signalFinish" in result_service
 
@@ -167,7 +168,7 @@ def test_android_frontend_can_paste_and_visually_import_shell_commands() -> None
     config = _java_source("DevtoolRunConfig.java")
     assert "DEVTOOL_HUD_SINGLETON=kill" in config
     assert 'token.equals("cd")' in importer
-    assert 'hudMode.equals("desktop-window")' in importer
+    assert 'globalExtras.add("--hud-mode")' in importer
     assert "extraGlobalArguments" in settings
     assert "extraOperationArguments" in settings
 
@@ -195,6 +196,8 @@ def test_android_sources_do_not_reference_autonotification() -> None:
         text = path.read_text(encoding="utf-8")
         assert "AutoNotification" not in text
         assert "com.joaomgcd" not in text
+        assert "fromHtml" not in text
+        assert "Html." not in text
 
 
 def test_optional_root_bridge_module_and_app_backend_are_bundled() -> None:
@@ -220,6 +223,7 @@ def test_optional_root_bridge_module_and_app_backend_are_bundled() -> None:
     assert "R.raw.devtool_root_bridge_module" in main
     bridge_script = (module / "bin" / "devtool-root-bridge").read_text(encoding="utf-8")
     assert '"enabled":%s' in bridge_script
+    assert "bash" not in bridge_script
     assert "KEY_ROOT_BRIDGE" in _java_source("TaskerProtocol.java")
     assert "RootBridgeManager.run" in _java_source("TaskerPluginReceiver.java")
 
@@ -235,6 +239,7 @@ def test_bundled_root_module_zip_is_valid_and_non_zygisk() -> None:
         assert "skip_mount" in names
         assert "bin/devtool-root-bridge" in names
         assert "service.sh" not in names
+        assert "post-fs-data.sh" not in names
         assert not any(name.startswith("zygisk/") for name in names)
         zf.testzip()
 
@@ -243,14 +248,18 @@ def test_android_hud_uses_dynamic_operation_segments_and_live_issue_counts() -> 
     hud_update = _java_source("HudUpdate.java")
     overlay = _java_source("OverlayHudService.java")
     notification = _java_source("NotificationController.java")
+    run_store = _java_source("RunStore.java")
     assert 'intent.getStringExtra("steps_json")' in hud_update
     assert "import org.json.JSONException;" in hud_update
     assert "catch (JSONException | RuntimeException ignored)" in hud_update
     assert "pipelineProgress()" in hud_update
+    assert "displayProgress()" in hud_update
     assert "for (HudUpdate.Step step : update.steps)" in overlay
     assert 'append(update.errors).append(" errors · ")' in overlay
     assert "update.steps.size()" in notification
     assert "Notification.ProgressStyle.Segment" in notification
+    assert "displayProgress()" in notification
+    assert "displayProgress()" in run_store
 
 
 def test_chroot_run_uses_termux_visible_workdir() -> None:

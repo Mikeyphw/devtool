@@ -82,12 +82,14 @@ validate_command() {
 run_as_termux() {
   uid=$(termux_uid)
   [ -n "$uid" ] || { echo "Unable to resolve the Termux app UID" >&2; return 69; }
-  [ -x "$TERMUX_PREFIX/bin/bash" ] || { echo "Termux bash is unavailable" >&2; return 69; }
+  shell="$TERMUX_PREFIX/bin/sh"
+  [ -x "$shell" ] || shell=/system/bin/sh
+  [ -x "$shell" ] || { echo "Termux shell is unavailable" >&2; return 69; }
   payload=$1
   if su -h 2>&1 | grep -q -- '-s'; then
-    exec su -s "$TERMUX_PREFIX/bin/bash" "$uid" -c "$payload"
+    exec su -s "$shell" "$uid" -c "$payload"
   fi
-  exec su "$uid" -c "$TERMUX_PREFIX/bin/bash -lc $(printf "'%s'" "$(printf '%s' "$payload" | sed "s/'/'\\''/g")")"
+  exec su "$uid" -c "$shell -c $(printf "'%s'" "$(printf '%s' "$payload" | sed "s/'/'\\''/g")")"
 }
 
 cmd_status() {

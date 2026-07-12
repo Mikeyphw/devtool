@@ -40,7 +40,7 @@ AppScrollView {
                     AppTextField { Layout.fillWidth: true; text: hudStore.stateDirectory; onEditingFinished: hudStore.stateDirectory = text }
                     AppButton { text: "Browse…"; onClicked: stateDialog.open() }
                 }
-                AppCheckBox { text: "Show compact HUD"; checked: appController.compactHudVisible; onToggled: appController.compactHudVisible = checked }
+                AppButton { text: "Open HUD"; variant: "default"; onClicked: appController.launchHud() }
                 RowLayout {
                     Layout.fillWidth: true
                     Item { Layout.fillWidth: true }

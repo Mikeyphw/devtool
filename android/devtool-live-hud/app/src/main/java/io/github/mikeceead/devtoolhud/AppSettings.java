@@ -42,7 +42,7 @@ final class AppSettings {
 
     static String command(Context context) {
         return prefs(context).getString(KEY_COMMAND,
-                "devtool --copy --auto-hud --hud-mode android-bridge --yes --help");
+                "devtool --copy --auto-hud --yes --help");
     }
     static void setCommand(Context context, String value) { prefs(context).edit().putString(KEY_COMMAND, clean(value)).apply(); }
 

@@ -33,8 +33,6 @@ final class DevtoolCommandBuilder {
         }
         if (config.autoHud) {
             parts.add("--auto-hud");
-            parts.add("--hud-mode");
-            parts.add("android-bridge");
         } else {
             parts.add("--no-hud");
         }

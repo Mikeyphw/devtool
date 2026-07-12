@@ -148,7 +148,8 @@ final class BridgeTokenManager {
 
     private static String firstNonEmpty(String... values) {
         for (String value : values) {
-            if (value != null && !value.trim().isEmpty()) return value.trim();
+            String clean = HudUpdate.plainText(value);
+            if (!clean.isEmpty()) return clean;
         }
         return "Unknown bridge error";
     }

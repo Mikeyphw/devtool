@@ -17,6 +17,8 @@
 #include <QProcess>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QIODevice>
+#include <QLocalSocket>
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QUrl>
@@ -67,8 +69,31 @@ static QString systemdQuote(QString value) {
     return QStringLiteral("\"") + value + QStringLiteral("\"");
 }
 
-AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h, IpcClient *i, bool startCompactOnly, QObject *p)
-    : QObject(p), m_store(s), m_runner(r), m_history(h), m_ipc(i), m_startCompactOnly(startCompactOnly),
+static QString resolveHudExecutable() {
+    const QStringList candidates {
+        QCoreApplication::applicationDirPath() + QStringLiteral("/devtool-control-center-hud"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/devtool-control-center-hud.exe"),
+    };
+    for (const QString &candidate : candidates) {
+        const QFileInfo file(candidate);
+        if (file.isFile() && file.isExecutable()) return file.absoluteFilePath();
+    }
+    return QString();
+}
+
+static bool sendHudActivation() {
+    QLocalSocket socket;
+    socket.connectToServer(QStringLiteral("io.github.mikeceead.DevtoolControlCenter.hud"), QIODevice::WriteOnly);
+    if (!socket.waitForConnected(300)) return false;
+    socket.write("show-hud");
+    socket.flush();
+    socket.waitForBytesWritten(300);
+    socket.disconnectFromServer();
+    return true;
+}
+
+AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h, IpcClient *i, QObject *p)
+    : QObject(p), m_store(s), m_runner(r), m_history(h), m_ipc(i),
       m_settings(QStringLiteral("mikeceead"), QStringLiteral("DevtoolControlCenter")) {
     m_repository = m_settings.value(QStringLiteral("repository")).toString();
     m_artifact = m_settings.value(QStringLiteral("artifact")).toString();
@@ -88,7 +113,7 @@ AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h
         auto *menu = new QMenu;
         menu->addAction(QStringLiteral("Open"), this, [this] { emit requestMainWindow(); });
         menu->addAction(QStringLiteral("Artifacts"), this, [this] { emit requestMainWindow(); emit requestArtifactInspector(); });
-        menu->addAction(QStringLiteral("Compact HUD"), this, [this] { setCompactHudVisible(true); });
+        menu->addAction(QStringLiteral("Compact HUD"), this, [this] { launchHud(); });
         menu->addSeparator();
         menu->addAction(QStringLiteral("Quit"), qApp, &QCoreApplication::quit);
         m_tray->setContextMenu(menu);
@@ -146,7 +171,6 @@ QString AppController::clipboardCandidateKind() const { return m_clipboardMonito
 QString AppController::clipboardCandidateSummary() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateSummary() : QString(); }
 QString AppController::clipboardCandidateTimestamp() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateTimestamp() : QString(); }
 
-void AppController::setCompactHudVisible(bool v) { if (v == m_compactHudVisible) return; m_compactHudVisible = v; emit compactHudVisibleChanged(); }
 void AppController::saveSettings() {
     m_settings.setValue(QStringLiteral("repository"), m_repository);
     m_settings.setValue(QStringLiteral("artifact"), m_artifact);
@@ -186,6 +210,10 @@ void AppController::openPath(const QString &p) {
 }
 void AppController::quit() { qApp->quit(); }
 void AppController::cancelRun(const QString &runId) { if (m_ipc) m_ipc->cancelRun(runId); }
+void AppController::launchHud() {
+    if (sendHudActivation()) return;
+    QProcess::startDetached(resolveHudExecutable(), QStringList{});
+}
 
 QString AppController::clipboardServicePath() const {
     const QString configRoot = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);

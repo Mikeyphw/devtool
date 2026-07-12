@@ -106,11 +106,8 @@ final class DevtoolCommandImporter {
                 case "--hud-mode":
                     String hudMode = requireValue(tokens, ++index, token);
                     config.autoHud = !hudMode.equals("none") && !hudMode.equals("off");
-                    if (hudMode.equals("desktop-window") || hudMode.equals("android-gui") || hudMode.equals("termux-gui")) {
-                        notices.add("HUD mode " + hudMode + " was converted to android-bridge");
-                    } else if (!hudMode.equals("android-bridge")) {
-                        notices.add("HUD mode " + hudMode + " was imported as Android live progress");
-                    }
+                    globalExtras.add("--hud-mode");
+                    globalExtras.add(renderToken(hudMode));
                     index++;
                     continue;
                 case "--yes":

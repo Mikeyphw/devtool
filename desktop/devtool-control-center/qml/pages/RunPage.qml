@@ -215,7 +215,7 @@ AppScrollView {
             AppCheckBox { id: validate; text: "Validate"; checked: true; visible: root.operation === "Apply overlay" }
             AppCheckBox { id: commit; text: "Commit"; checked: true; visible: root.operation === "Apply overlay" }
             AppCheckBox { id: keep; text: "Keep artifact"; visible: root.operation === "Apply overlay" }
-            AppCheckBox { text: "Show compact HUD"; checked: appController.compactHudVisible; onToggled: appController.compactHudVisible = checked }
+            AppButton { text: "Open HUD"; variant: "default"; onClicked: appController.launchHud() }
             Item { Layout.fillWidth: true }
         }
 

@@ -10,7 +10,7 @@ ApplicationWindow {
     height: 800
     minimumWidth: 940
     minimumHeight: 620
-    visible: !appController.startCompactOnly
+    visible: true
     color: palette.window
     title: "Devtool Control Center"
     property int pageIndex: 0
@@ -107,7 +107,7 @@ ApplicationWindow {
                         SidebarButton { width: parent.width; iconText: "⚙"; text: "Settings"; selected: root.pageIndex === 6; onClicked: root.pageIndex = 6 }
                     }
                 }
-                AppButton { Layout.fillWidth: true; text: "Compact HUD"; variant: "default"; onClicked: appController.compactHudVisible = true }
+                AppButton { Layout.fillWidth: true; text: "Open HUD"; variant: "default"; onClicked: appController.launchHud() }
             }
         }
         Rectangle {
@@ -141,8 +141,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+6"; onActivated: root.pageIndex = 5 }
     Shortcut { sequence: "Ctrl+,"; onActivated: root.pageIndex = 6 }
     Shortcut { sequence: "Ctrl+O"; onActivated: root.pageIndex = 2 }
-    Shortcut { sequence: "F9"; onActivated: appController.compactHudVisible = !appController.compactHudVisible }
-    CompactHud { }
+    Shortcut { sequence: "F9"; onActivated: appController.launchHud() }
     onClosing: function(close) {
         if (appController.trayAvailable) {
             close.accepted = false

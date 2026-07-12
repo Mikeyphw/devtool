@@ -343,6 +343,17 @@ public final class OverlayHudService extends Service {
         detail.setPadding(0, dp(4), 0, dp(6));
         card.addView(detail);
 
+        ProgressBar overallProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        overallProgress.setMax(100);
+        overallProgress.setIndeterminate(update.indeterminate && update.activeStep() == null && !update.isTerminal());
+        overallProgress.setProgress(update.isTerminal() ? 100 : update.displayProgress(), false);
+        if (Build.VERSION.SDK_INT >= 21) {
+            overallProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
+            overallProgress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(accent));
+        }
+        card.addView(overallProgress, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(8)));
+
         LinearLayout pipeline = new LinearLayout(this);
         pipeline.setOrientation(LinearLayout.VERTICAL);
         pipeline.setPadding(0, dp(2), 0, dp(2));
@@ -443,7 +454,7 @@ public final class OverlayHudService extends Service {
 
     private TextView label(String value, int sp, int color, boolean bold) {
         TextView view = new TextView(this);
-        view.setText(value);
+        view.setText(HudUpdate.plainText(value));
         view.setTextSize(sp);
         view.setTextColor(color);
         view.setTypeface(Typeface.DEFAULT, bold ? Typeface.BOLD : Typeface.NORMAL);

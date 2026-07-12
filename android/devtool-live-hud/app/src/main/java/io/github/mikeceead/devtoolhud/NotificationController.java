@@ -58,7 +58,7 @@ final class NotificationController {
         if (Build.VERSION.SDK_INT >= 36) {
             applyProgressStyle(builder, update);
         } else {
-            builder.setProgress(100, update.pipelineProgress(), update.indeterminate && update.activeStep() == null && !update.isTerminal());
+            builder.setProgress(100, update.displayProgress(), update.indeterminate && update.activeStep() == null && !update.isTerminal());
         }
 
         if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(update.criticalText());
@@ -153,7 +153,7 @@ final class NotificationController {
             if (i < update.steps.size() - 1) points.add(new Notification.ProgressStyle.Point(used).setColor(Color.WHITE));
         }
         if (segments.isEmpty()) segments.add(new Notification.ProgressStyle.Segment(100).setColor(statusColor(update)));
-        style.setProgress(update.isTerminal() ? 100 : update.pipelineProgress())
+        style.setProgress(update.isTerminal() ? 100 : update.displayProgress())
                 .setProgressSegments(segments);
         if (!points.isEmpty()) style.setProgressPoints(points);
         builder.setStyle(style);

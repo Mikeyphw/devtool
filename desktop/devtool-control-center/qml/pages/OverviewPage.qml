@@ -97,7 +97,7 @@ AppScrollView {
             spacing: 10
             AppButton { text: "Validate repository"; enabled: appController.repository !== ""; onClicked: appController.runWorkflow("Validate", "", true, false, "", true) }
             AppButton { text: "Inspect artifact"; onClicked: appController.inspectArtifactRequested() }
-            AppButton { text: "Open compact HUD"; onClicked: appController.compactHudVisible = true }
+            AppButton { text: "Open HUD"; onClicked: appController.launchHud() }
             AppButton { text: "Refresh repositories"; onClicked: repositoryModel.refresh() }
             Item { Layout.fillWidth: true }
         }

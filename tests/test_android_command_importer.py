@@ -108,10 +108,11 @@ DEVTOOL_HUD_SINGLETON=kill devtool \
     assert values["commitMessage"] == "Add Object MODL MLOD workbench"
     assert values["environment"] == "DEVTOOL_HUD_SINGLETON=kill"
     assert values["copy"] == values["autoHud"] == values["validate"] == values["commit"] == values["yes"] == "true"
+    assert "--hud-mode android-bridge" in values["extraGlobal"]
     assert "--hud-mode android-bridge" in values["rebuilt"]
 
 
-def test_import_converts_desktop_hud_and_preserves_unknown_arguments(importer_classpath: Path, tmp_path: Path) -> None:
+def test_import_preserves_desktop_hud_flags_and_unknown_arguments(importer_classpath: Path, tmp_path: Path) -> None:
     command = """FOO='two words' devtool-androidos --chroot androidos --copy --copy-via termux \\
 --auto-hud --hud-mode desktop-window -r /home/mike/Code/sims3tools --target s3mo_s3mo_s3mo \\
 apply-overlays /home/termux/Downloads/bundle.zip --validate --commit 'Apply bundle' --future-flag value"""
@@ -120,9 +121,11 @@ apply-overlays /home/termux/Downloads/bundle.zip --validate --commit 'Apply bund
     assert values["chrootName"] == "androidos"
     assert values["copyViaTermux"] == "true"
     assert values["environment"] == "FOO='two words'"
+    assert "--hud-mode desktop-window" in values["extraGlobal"]
     assert values["extraOperation"] == "--future-flag value"
-    assert "converted to android-bridge" in values["notice"]
-    assert "--hud-mode android-bridge" in values["rebuilt"]
+    assert "converted to android-bridge" not in values["notice"]
+    assert "--hud-mode desktop-window" in values["rebuilt"]
+    assert "--hud-mode android-bridge" not in values["rebuilt"]
     assert "--future-flag value" in values["rebuilt"]
 
 

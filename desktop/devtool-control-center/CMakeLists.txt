@@ -28,6 +28,10 @@ qt_add_executable(devtool-control-center
     src/IpcClient.h
 )
 
+qt_add_executable(devtool-control-center-hud
+    src/HudMain.cpp
+)
+
 qt_add_qml_module(devtool-control-center
     URI Devtool.ControlCenter
     RESOURCE_PREFIX /qt/qml
@@ -59,6 +63,17 @@ qt_add_qml_module(devtool-control-center
         qml/pages/SettingsPage.qml
 )
 
+qt_add_qml_module(devtool-control-center-hud
+    URI Devtool.ControlCenter.Hud
+    RESOURCE_PREFIX /qt/qml
+    VERSION 1.0
+    QML_FILES
+        qml/CompactHud.qml
+        qml/components/Theme.qml
+        qml/components/AppButton.qml
+        qml/components/PipelineView.qml
+)
+
 set_source_files_properties(resources/devtool-control-center.svg PROPERTIES
     QT_RESOURCE_ALIAS "devtool-control-center.svg"
 )
@@ -73,7 +88,18 @@ qt_add_resources(devtool-control-center devtool_icons
         resources/devtool-control-center-tray.svg
 )
 
+qt_add_resources(devtool-control-center-hud devtool_icons
+    PREFIX /icons
+    FILES
+        resources/devtool-control-center.svg
+        resources/devtool-control-center-tray.svg
+)
+
 target_link_libraries(devtool-control-center PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Network
+)
+
+target_link_libraries(devtool-control-center-hud PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Network
 )
 
@@ -82,6 +108,7 @@ target_compile_definitions(devtool-control-center PRIVATE
 )
 
 install(TARGETS devtool-control-center RUNTIME DESTINATION bin)
+install(TARGETS devtool-control-center-hud RUNTIME DESTINATION bin)
 install(FILES packaging/io.github.mikeceead.DevtoolControlCenter.desktop
         DESTINATION share/applications)
 install(FILES packaging/io.github.mikeceead.DevtoolControlCenter.svg

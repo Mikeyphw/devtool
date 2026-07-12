@@ -20,6 +20,7 @@ final class TermuxCommandRunner {
     private static final String EXTRA_PENDING_INTENT = "com.termux.RUN_COMMAND_PENDING_INTENT";
     private static final String EXTRA_LABEL = "com.termux.RUN_COMMAND_COMMAND_LABEL";
     private static final String EXTRA_DESCRIPTION = "com.termux.RUN_COMMAND_COMMAND_DESCRIPTION";
+    private static final String TERMUX_PREFIX = "/data/data/com.termux/files/usr";
     private static final SecureRandom IDS = new SecureRandom();
 
     static final class LaunchResult {
@@ -92,9 +93,8 @@ final class TermuxCommandRunner {
         Intent request = new Intent()
                 .setClassName(TERMUX_PACKAGE, SERVICE)
                 .setAction(ACTION)
-                .putExtra(EXTRA_PATH, "$PREFIX/bin/bash")
-                .putExtra(EXTRA_ARGUMENTS, new String[]{"-lc",
-                        buildShellCommand(context, runId, cleanCommand, overlay)})
+                .putExtra(EXTRA_PATH, resolveShell())
+                .putExtra(EXTRA_ARGUMENTS, shellArguments(context, runId, cleanCommand, overlay))
                 .putExtra(EXTRA_WORKDIR, TermuxPaths.normalizeWorkdir(workdir))
                 .putExtra(EXTRA_BACKGROUND, background)
                 .putExtra(EXTRA_PENDING_INTENT, result)
@@ -125,6 +125,25 @@ final class TermuxCommandRunner {
         shell.append("export DEVTOOL_ANDROID_HUD_AUTOSTART=1; ");
         shell.append(command);
         return shell.toString();
+    }
+
+    private static String resolveShell() {
+        String[] candidates = new String[]{
+                TERMUX_PREFIX + "/bin/zsh",
+                TERMUX_PREFIX + "/bin/sh",
+                "/system/bin/sh"
+        };
+        for (String candidate : candidates) {
+            if (new java.io.File(candidate).canExecute()) return candidate;
+        }
+        return TERMUX_PREFIX + "/bin/sh";
+    }
+
+    private static String[] shellArguments(Context context, String runId, String command, boolean overlay) {
+        String shell = resolveShell();
+        String script = buildShellCommand(context, runId, command, overlay);
+        if (shell.endsWith("/zsh")) return new String[]{"-lc", script};
+        return new String[]{"-c", script};
     }
 
     private static String shellQuote(String value) {
