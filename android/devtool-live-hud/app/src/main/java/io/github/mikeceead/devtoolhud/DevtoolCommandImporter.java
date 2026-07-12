@@ -28,7 +28,7 @@ final class DevtoolCommandImporter {
 
         int executable = findExecutable(tokens);
         if (executable < 0) {
-            throw new IllegalArgumentException("No devtool or devtool-androidos command was found");
+            throw new IllegalArgumentException("Clipboard does not contain a recognizable devtool command");
         }
 
         DevtoolRunConfig config = emptyConfig();
@@ -38,15 +38,21 @@ final class DevtoolCommandImporter {
 
         for (int i = 0; i < executable; i++) {
             String token = tokens.get(i);
+            if (isPromptMarker(token) || token.equals("\\")) {
+                continue;
+            }
             if (token.equals("cd") && i + 1 < executable) {
+                if (isConnector(tokens.get(i + 1))) {
+                    throw new IllegalArgumentException("The pasted command has an incomplete cd prefix");
+                }
                 workdir = tokens.get(++i);
                 if (i + 1 < executable && isConnector(tokens.get(i + 1))) i++;
             } else if (token.equals("env")) {
                 // `env KEY=value devtool ...` is accepted without adding a literal env command.
             } else if (ASSIGNMENT.matcher(token).matches()) {
                 environment.add(renderAssignment(token));
-            } else if (!isConnector(token) && !token.equals("\\")) {
-                notices.add("Ignored shell prefix: " + token);
+            } else if (!isConnector(token)) {
+                throw new IllegalArgumentException("Clipboard does not contain a recognizable devtool command");
             }
         }
         config.environmentAssignments = String.join(" ", environment);
@@ -296,8 +302,21 @@ final class DevtoolCommandImporter {
 
     private static int findExecutable(List<String> tokens) {
         for (int i = 0; i < tokens.size(); i++) {
-            String name = basename(tokens.get(i));
+            String token = tokens.get(i);
+            if (isConnector(token) || isPromptMarker(token) || token.equals("\\") || token.equals("env")) {
+                continue;
+            }
+            if (token.equals("cd")) {
+                if (i + 1 >= tokens.size() || isConnector(tokens.get(i + 1))) return -1;
+                i++;
+                continue;
+            }
+            if (ASSIGNMENT.matcher(token).matches()) {
+                continue;
+            }
+            String name = basename(token);
             if (name.equals("devtool") || name.equals("devtool-androidos")) return i;
+            return -1;
         }
         return -1;
     }
@@ -324,6 +343,10 @@ final class DevtoolCommandImporter {
 
     private static boolean isConnector(String token) {
         return token.equals("&&") || token.equals(";") || token.equals("|");
+    }
+
+    private static boolean isPromptMarker(String token) {
+        return token.equals("$") || token.equals("❯") || token.equals(">") || token.equals("#");
     }
 
     private static String renderToken(String token) {

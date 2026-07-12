@@ -84,7 +84,7 @@ AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h
     QTimer::singleShot(0, this, &AppController::refreshClipboardMonitorStatus);
 
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
-        m_tray = new QSystemTrayIcon(QIcon::fromTheme(QStringLiteral("applications-development")), this);
+        m_tray = new QSystemTrayIcon(QIcon(QStringLiteral(":/icons/devtool-control-center-tray.svg")), this);
         auto *menu = new QMenu;
         menu->addAction(QStringLiteral("Open"), this, [this] { emit requestMainWindow(); });
         menu->addAction(QStringLiteral("Artifacts"), this, [this] { emit requestMainWindow(); emit requestArtifactInspector(); });
@@ -123,7 +123,6 @@ AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h
 void AppController::setRepository(const QString &v) { if (v == m_repository) return; m_repository = v; emit repositoryChanged(); }
 void AppController::setArtifact(const QString &v) { if (v == m_artifact) return; m_artifact = v; emit artifactChanged(); }
 void AppController::setDevtoolExecutable(const QString &v) {
-    if (v.trimmed().isEmpty()) return;
     const QString resolved = resolveDevtoolExecutable(v);
     if (resolved == m_devtool) return;
     m_devtool = resolved;
@@ -137,6 +136,12 @@ bool AppController::devtoolAvailable() const {
 }
 
 QString AppController::clipboardCandidateText() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateText() : QString(); }
+QString AppController::clipboardCandidateCopyText() const {
+    if (!m_clipboardMonitor) return QString();
+    const QString text = m_clipboardMonitor->candidateText();
+    if (m_clipboardMonitor->candidateKind() == QStringLiteral("command")) return normalizedClipboardCommand(text);
+    return text;
+}
 QString AppController::clipboardCandidateKind() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateKind() : QString(); }
 QString AppController::clipboardCandidateSummary() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateSummary() : QString(); }
 QString AppController::clipboardCandidateTimestamp() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateTimestamp() : QString(); }
@@ -322,7 +327,7 @@ void AppController::clearClipboardCandidate() {
 
 void AppController::runClipboardCommand() {
     if (!m_clipboardMonitor || m_clipboardMonitor->candidateKind() != QStringLiteral("command") || m_runner->running()) return;
-    const QString command = normalizedClipboardCommand(m_clipboardMonitor->candidateText());
+    const QString command = clipboardCandidateCopyText();
     if (command.isEmpty()) return;
     QString shell = qEnvironmentVariable("SHELL");
     if (shell.isEmpty() || !QFileInfo(shell).isExecutable()) shell = QStandardPaths::findExecutable(QStringLiteral("bash"));
@@ -332,7 +337,4 @@ void AppController::runClipboardCommand() {
     QVariantMap env;
     env[QStringLiteral("DEVTOOL_CONTROL_CENTER_ACTIVE")] = QStringLiteral("1");
     m_runner->start(shell, QStringList{QStringLiteral("-lc"), command}, workingDirectory, env);
-    emit requestMainWindow();
-    emit requestRunPage();
 }
-

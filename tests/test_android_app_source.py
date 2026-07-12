@@ -189,11 +189,18 @@ def test_android_frontend_uses_dynamic_tiles_bottom_navigation_and_one_tap_token
     assert "LinearLayout tile(" in ui
 
 
+def test_android_sources_do_not_reference_autonotification() -> None:
+    source_dir = APP / "app" / "src" / "main" / "java"
+    for path in source_dir.rglob("*.java"):
+        text = path.read_text(encoding="utf-8")
+        assert "AutoNotification" not in text
+        assert "com.joaomgcd" not in text
+
+
 def test_optional_root_bridge_module_and_app_backend_are_bundled() -> None:
     module = ROOT / "root-module" / "devtool-bridge"
     assert (module / "module.prop").is_file()
     assert (module / "skip_mount").is_file()
-    assert (module / "service.sh").is_file()
     assert (module / "bin" / "devtool-root-bridge").is_file()
     module_prop = (module / "module.prop").read_text(encoding="utf-8")
     assert "id=devtool_bridge" in module_prop
@@ -202,7 +209,8 @@ def test_optional_root_bridge_module_and_app_backend_are_bundled() -> None:
 
     source = _java_source("RootBridgeManager.java")
     main = _java_source("MainActivity.java")
-    assert 'new ProcessBuilder("su", "-c", shell)' in source
+    assert "/data/adb/modules/devtool_bridge/bin/devtool-root-bridge" in source
+    assert "/data/adb/modules_update/devtool_bridge/bin/devtool-root-bridge" in source
     assert "Root bridge only accepts generated devtool" in source
     assert "DEVTOOL_ROOT_MODULE_MISSING" in source
     assert "cancel(Context context, String runId)" in source
@@ -225,8 +233,8 @@ def test_bundled_root_module_zip_is_valid_and_non_zygisk() -> None:
         names = set(zf.namelist())
         assert "module.prop" in names
         assert "skip_mount" in names
-        assert "service.sh" in names
         assert "bin/devtool-root-bridge" in names
+        assert "service.sh" not in names
         assert not any(name.startswith("zygisk/") for name in names)
         zf.testzip()
 

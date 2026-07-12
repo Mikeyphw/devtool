@@ -17,7 +17,7 @@ ApplicationWindow {
     Theme { id: theme }
 
     header: ToolBar {
-        implicitHeight: 58
+        implicitHeight: 64
         background: Rectangle {
             color: theme.elevatedSurface
             border.color: theme.border
@@ -31,8 +31,11 @@ ApplicationWindow {
             Label {
                 text: "Devtool Control Center"
                 color: theme.windowText
-                font.pointSize: 12
+                font.pointSize: theme.pageTitlePointSize
                 font.weight: Font.DemiBold
+                font.letterSpacing: -0.2
+                lineHeight: theme.titleLineHeight
+                lineHeightMode: Text.ProportionalHeight
             }
             Rectangle {
                 radius: 6
@@ -44,8 +47,12 @@ ApplicationWindow {
                     anchors.centerIn: parent
                     text: "Phase 3"
                     color: theme.info
-                    font.pointSize: theme.captionPointSize
+                    font.pointSize: theme.smallPointSize
                     font.weight: Font.DemiBold
+                    font.capitalization: Font.AllUppercase
+                    font.letterSpacing: 0.7
+                    lineHeight: theme.compactLineHeight
+                    lineHeightMode: Text.ProportionalHeight
                 }
             }
             Item { Layout.fillWidth: true }
@@ -65,7 +72,9 @@ ApplicationWindow {
             Label {
                 text: hudStore.ipcConnected ? ("IPC · " + hudStore.activeRuns.length + " run" + (hudStore.activeRuns.length === 1 ? "" : "s")) : hudStore.connected ? "File fallback" : "Idle"
                 color: theme.mutedText
-                font.pointSize: theme.smallPointSize
+                font.pointSize: theme.bodyPointSize
+                lineHeight: theme.compactLineHeight
+                lineHeightMode: Text.ProportionalHeight
             }
         }
     }

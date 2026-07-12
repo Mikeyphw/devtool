@@ -21,6 +21,14 @@ Item {
                 Layout.preferredWidth: 360
                 model: hudStore.activeRuns
                 textRole: "title"
+                function selectedIndex() {
+                    for (var i = 0; i < hudStore.activeRuns.length; ++i) {
+                        if (hudStore.activeRuns[i] && hudStore.activeRuns[i].run_id === hudStore.selectedRunId)
+                            return i
+                    }
+                    return hudStore.activeRuns.length > 0 ? 0 : -1
+                }
+                currentIndex: selectedIndex()
                 displayText: currentIndex >= 0 && hudStore.activeRuns[currentIndex]
                              ? (hudStore.activeRuns[currentIndex].title || hudStore.activeRuns[currentIndex].run_id)
                              : "Select run"

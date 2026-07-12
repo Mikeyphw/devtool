@@ -137,6 +137,17 @@ def test_import_accepts_unknown_subcommand_as_custom(importer_classpath: Path, t
     assert "'two words'" in values["rebuilt"]
 
 
+def test_import_rejects_plain_prose_mentions_of_devtool(importer_classpath: Path, tmp_path: Path) -> None:
+    with pytest.raises(subprocess.CalledProcessError):
+        run_import(importer_classpath, tmp_path, "This note mentions devtool but is not a command.")
+
+
+def test_import_accepts_terminal_prompt_prefixes(importer_classpath: Path, tmp_path: Path) -> None:
+    values = run_import(importer_classpath, tmp_path, "❯ devtool status")
+    assert values["operation"] == "status"
+    assert values["notice"] == "Command imported into the visual builder"
+
+
 def test_termux_workdir_normalizes_shell_home_forms(tmp_path: Path) -> None:
     if shutil.which("javac") is None or shutil.which("java") is None:
         pytest.skip("JDK is not installed")

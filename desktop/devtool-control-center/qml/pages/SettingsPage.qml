@@ -32,6 +32,8 @@ AppScrollView {
                     color: appController.devtoolAvailable ? theme.success : theme.error
                     wrapMode: Text.Wrap
                     font.pointSize: theme.smallPointSize
+                    lineHeight: theme.bodyLineHeight
+                    lineHeightMode: Text.ProportionalHeight
                 }
                 SectionHeading { text: "Live state directory"; Layout.topMargin: 6 }
                 RowLayout {
@@ -65,6 +67,8 @@ AppScrollView {
                     color: hudStore.ipcConnected ? theme.success : theme.warning
                     wrapMode: Text.Wrap
                     font.pointSize: theme.bodyPointSize
+                    lineHeight: theme.bodyLineHeight
+                    lineHeightMode: Text.ProportionalHeight
                 }
                 Label { Layout.fillWidth: true; text: "Socket: " + ipcClient.socketPath; color: theme.subtleText; font.family: "monospace"; font.pointSize: theme.smallPointSize; elide: Text.ElideMiddle }
                 Label {
@@ -73,6 +77,8 @@ AppScrollView {
                     color: theme.mutedText
                     wrapMode: Text.Wrap
                     font.pointSize: theme.bodyPointSize
+                    lineHeight: theme.bodyLineHeight
+                    lineHeightMode: Text.ProportionalHeight
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -82,6 +88,8 @@ AppScrollView {
                         color: theme.mutedText
                         wrapMode: Text.Wrap
                         font.pointSize: theme.smallPointSize
+                        lineHeight: theme.bodyLineHeight
+                        lineHeightMode: Text.ProportionalHeight
                     }
                     AppButton { text: "Reconnect IPC"; onClicked: ipcClient.reconnect() }
                 }
@@ -105,6 +113,8 @@ AppScrollView {
                     color: theme.mutedText
                     wrapMode: Text.Wrap
                     font.pointSize: theme.bodyPointSize
+                    lineHeight: theme.bodyLineHeight
+                    lineHeightMode: Text.ProportionalHeight
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -169,6 +179,8 @@ AppScrollView {
                             color: theme.windowText
                             font.pointSize: theme.cardTitlePointSize
                             font.weight: Font.DemiBold
+                            lineHeight: theme.titleLineHeight
+                            lineHeightMode: Text.ProportionalHeight
                         }
                         Label {
                             Layout.fillWidth: true
@@ -177,6 +189,8 @@ AppScrollView {
                             wrapMode: Text.Wrap
                             font.family: appController.clipboardCandidateKind === "command" ? "monospace" : ""
                             font.pointSize: theme.smallPointSize
+                            lineHeight: theme.bodyLineHeight
+                            lineHeightMode: Text.ProportionalHeight
                         }
                         Label {
                             Layout.fillWidth: true
@@ -184,6 +198,8 @@ AppScrollView {
                             text: appController.clipboardCandidateTimestamp
                             color: theme.subtleText
                             font.pointSize: theme.captionPointSize
+                            lineHeight: theme.compactLineHeight
+                            lineHeightMode: Text.ProportionalHeight
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -192,7 +208,7 @@ AppScrollView {
                                 variant: "primary"
                                 onClicked: appController.useClipboardCandidate()
                             }
-                            AppButton { text: "Copy"; onClicked: appController.copyText(appController.clipboardCandidateText) }
+                            AppButton { text: "Copy"; onClicked: appController.copyText(appController.clipboardCandidateCopyText()) }
                             AppButton { text: "Dismiss"; variant: "ghost"; onClicked: appController.clearClipboardCandidate() }
                             Item { Layout.fillWidth: true }
                         }

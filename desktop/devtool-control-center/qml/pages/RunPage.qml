@@ -34,26 +34,39 @@ AppScrollView {
             border.color: theme.strongBorder
             border.width: 1
         }
-        contentItem: ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 18
-            spacing: 12
-            Label {
-                text: "Run detected command?"
-                color: theme.windowText
-                font.pointSize: theme.cardTitlePointSize
-                font.weight: Font.DemiBold
-            }
-            Label {
-                Layout.fillWidth: true
-                text: "This runs the copied command through your login shell only after confirmation. Review every argument first."
-                color: theme.warning
-                wrapMode: Text.Wrap
-                font.pointSize: theme.bodyPointSize
-            }
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+            contentItem: ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 18
+                spacing: 12
+                Label {
+                    text: "Run detected command?"
+                    color: theme.windowText
+                    font.pointSize: theme.cardTitlePointSize
+                    font.weight: Font.DemiBold
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "This runs the copied command through your login shell only after confirmation. Review every argument first."
+                    color: theme.warning
+                    wrapMode: Text.Wrap
+                    font.pointSize: theme.bodyPointSize
+                    lineHeight: theme.bodyLineHeight
+                    lineHeightMode: Text.ProportionalHeight
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "Cleaned command"
+                    color: theme.mutedText
+                    font.pointSize: theme.smallPointSize
+                    font.weight: Font.DemiBold
+                    font.capitalization: Font.AllUppercase
+                    letterSpacing: 0.7
+                    lineHeight: theme.compactLineHeight
+                    lineHeightMode: Text.ProportionalHeight
+                }
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
                 color: theme.recessedSurface
                 radius: theme.controlRadius
                 border.color: theme.border
@@ -63,11 +76,13 @@ AppScrollView {
                     anchors.margins: 8
                     background: Rectangle { color: "transparent" }
                     AppTextArea {
-                        text: appController.clipboardCandidateText
+                        text: appController.clipboardCandidateCopyText()
                         readOnly: true
                         wrapMode: TextEdit.WrapAnywhere
                         font.family: "monospace"
                         font.pointSize: theme.smallPointSize
+                        lineHeight: theme.bodyLineHeight
+                        lineHeightMode: Text.ProportionalHeight
                         background: null
                     }
                 }
@@ -117,6 +132,8 @@ AppScrollView {
                     color: theme.mutedText
                     wrapMode: Text.Wrap
                     font.pointSize: theme.smallPointSize
+                    lineHeight: theme.bodyLineHeight
+                    lineHeightMode: Text.ProportionalHeight
                 }
                 Rectangle {
                     Layout.fillWidth: true
@@ -133,12 +150,14 @@ AppScrollView {
                         color: theme.windowText
                         font.family: "monospace"
                         font.pointSize: theme.smallPointSize
+                        lineHeight: theme.bodyLineHeight
+                        lineHeightMode: Text.ProportionalHeight
                         wrapMode: Text.WrapAnywhere
                     }
                 }
                 RowLayout {
                     AppButton { text: "Run command…"; variant: "primary"; enabled: !processRunner.running; onClicked: commandConfirmation.open() }
-                    AppButton { text: "Copy"; onClicked: appController.copyText(appController.clipboardCandidateText) }
+                    AppButton { text: "Copy"; onClicked: appController.copyText(appController.clipboardCandidateCopyText()) }
                     AppButton { text: "Dismiss"; variant: "ghost"; onClicked: appController.clearClipboardCandidate() }
                     Item { Layout.fillWidth: true }
                 }

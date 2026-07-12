@@ -49,6 +49,8 @@ class QtControlCenterTests(unittest.TestCase):
         cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn("Qt6::Quick", cmake)
         self.assertIn("Qt6::Widgets", cmake)
+        self.assertIn("resources/devtool-control-center.svg", cmake)
+        self.assertIn("resources/devtool-control-center-tray.svg", cmake)
         controller = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
         self.assertIn('"--hud-mode","control-center"', controller)
 
@@ -149,10 +151,21 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
 
         controller = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
         run_page = (root / "qml" / "pages" / "RunPage.qml").read_text(encoding="utf-8")
+        settings_page = (root / "qml" / "pages" / "SettingsPage.qml").read_text(encoding="utf-8")
+        main_cpp = (root / "src" / "main.cpp").read_text(encoding="utf-8")
+        clipboard = (root / "src" / "ClipboardMonitor.cpp").read_text(encoding="utf-8")
         self.assertIn("runClipboardCommand", controller)
+        self.assertIn("clipboardCandidateCopyText", controller)
+        self.assertIn("devtool-control-center-tray.svg", controller)
         self.assertIn('text: "Run command…"', run_page)
         self.assertIn('text: "Run command"', run_page)
+        self.assertIn('text: "Cleaned command"', run_page)
+        self.assertIn("clipboardCandidateCopyText()", run_page)
         self.assertIn("commandConfirmation", run_page)
+        self.assertIn("clipboardCandidateCopyText()", settings_page)
+        self.assertIn("setWindowIcon(controlCenterIcon())", main_cpp)
+        self.assertIn("Devtool command:", clipboard)
+        self.assertIn("looksLikeDevtoolCommand", clipboard)
 
     def test_desktop_window_uses_qt_compact_hud_and_keeps_gtk_legacy_alias(self) -> None:
         import devtool.hud as hud_module
@@ -167,6 +180,16 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
         main_qml = (root / "qml" / "Main.qml").read_text(encoding="utf-8")
         self.assertIn('"--compact-hud"', main_cpp)
         self.assertIn("visible: !appController.startCompactOnly", main_qml)
+
+    def test_compact_hud_keeps_visibility_binding_and_widens_layout_for_readability(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        compact_hud = (root / "qml" / "CompactHud.qml").read_text(encoding="utf-8")
+        self.assertIn("visible: appController.compactHudVisible", compact_hud)
+        self.assertIn("appController.compactHudVisible = false", compact_hud)
+        self.assertNotIn("root.visible = false", compact_hud)
+        self.assertIn("minimumWidth: 540", compact_hud)
+        self.assertIn("minimumHeight: 320", compact_hud)
+        self.assertIn("ColumnLayout", compact_hud)
 
 class QtControlCenterPackagingTests(unittest.TestCase):
     def test_packaging_uses_clean_out_of_source_build(self) -> None:

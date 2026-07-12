@@ -63,11 +63,15 @@ Item {
     readonly property color errorSurface: mix(surface, error, dark ? 0.16 : 0.09)
     readonly property color infoSurface: mix(surface, info, dark ? 0.14 : 0.09)
 
-    readonly property real pageTitlePointSize: 22
-    readonly property real cardTitlePointSize: 13
-    readonly property real bodyPointSize: 10
-    readonly property real smallPointSize: 9
-    readonly property real captionPointSize: 8
+    readonly property real pageTitlePointSize: 24
+    readonly property real cardTitlePointSize: 14
+    readonly property real metricValuePointSize: 20
+    readonly property real bodyPointSize: 11
+    readonly property real smallPointSize: 10
+    readonly property real captionPointSize: 9
+    readonly property real titleLineHeight: 1.16
+    readonly property real bodyLineHeight: 1.25
+    readonly property real compactLineHeight: 1.18
     readonly property int controlHeight: 38
     readonly property int compactControlHeight: 32
     readonly property int cardRadius: 10

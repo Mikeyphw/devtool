@@ -30,6 +30,8 @@ AppScrollView {
                 text: hudStore.ipcConnected ? "Live IPC connected" : hudStore.connected ? "File fallback active" : "Waiting for devtool"
                 color: theme.mutedText
                 font.pointSize: theme.smallPointSize
+                lineHeight: theme.bodyLineHeight
+                lineHeightMode: Text.ProportionalHeight
             }
         }
 
@@ -77,12 +79,16 @@ AppScrollView {
                     font.pointSize: theme.cardTitlePointSize
                     font.weight: Font.Medium
                     anchors.horizontalCenter: parent.horizontalCenter
+                    lineHeight: theme.bodyLineHeight
+                    lineHeightMode: Text.ProportionalHeight
                 }
                 Label {
                     text: "Start a workflow from Run or from a terminal."
                     color: theme.mutedText
                     font.pointSize: theme.bodyPointSize
                     anchors.horizontalCenter: parent.horizontalCenter
+                    lineHeight: theme.bodyLineHeight
+                    lineHeightMode: Text.ProportionalHeight
                 }
             }
         }

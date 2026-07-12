@@ -7,17 +7,26 @@
 #include "IpcClient.h"
 #include "ClipboardMonitor.h"
 #include <QApplication>
+#include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QProcess>
 #include <QTimer>
 #include <QWindow>
 #include <QUrl>
+
+namespace {
+QIcon controlCenterIcon() {
+    return QIcon(QStringLiteral(":/icons/devtool-control-center.svg"));
+}
+}
+
 int main(int argc,char**argv){
     QApplication app(argc,argv);
     // Keep the platform palette, font, scale, and Qt Quick Controls style.
     // Users can override the control style with -style or QT_QUICK_CONTROLS_STYLE.
     app.setApplicationName("Devtool Control Center");app.setOrganizationName("mikeceead");app.setDesktopFileName("io.github.mikeceead.DevtoolControlCenter");
+    app.setWindowIcon(controlCenterIcon());
     if (app.arguments().contains(QStringLiteral("--clipboard-monitor"))) {
         app.setQuitOnLastWindowClosed(false);
         ClipboardMonitor clipboardMonitor(true, true);

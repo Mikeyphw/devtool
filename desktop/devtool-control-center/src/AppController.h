@@ -36,6 +36,7 @@ public:
     bool trayAvailable() const { return m_tray != nullptr; }
     bool devtoolAvailable() const;
     QString clipboardCandidateText() const;
+    Q_INVOKABLE QString clipboardCandidateCopyText() const;
     QString clipboardCandidateKind() const;
     QString clipboardCandidateSummary() const;
     QString clipboardCandidateTimestamp() const;

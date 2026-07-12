@@ -43,6 +43,13 @@ QString compactCommandSummary(const QString &text) {
     if (oneLine.size() > 110) oneLine = oneLine.left(107) + QStringLiteral("…");
     return oneLine;
 }
+
+bool looksLikeDevtoolCommand(const QString &text) {
+    static const QRegularExpression devtoolCommand(
+        QStringLiteral(R"((^|[;&|\n]\s*)(?:env\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*(?:[^\s]*/)?devtool(?:-androidos)?(?:\s+.+))"),
+        QRegularExpression::CaseInsensitiveOption);
+    return devtoolCommand.match(text).hasMatch();
+}
 }
 
 ClipboardMonitor::ClipboardMonitor(bool watchClipboard, bool notificationsEnabled, QObject *parent)
@@ -109,12 +116,9 @@ QString ClipboardMonitor::classify(const QString &rawText, QString *normalized, 
         return QStringLiteral("artifact");
     }
 
-    static const QRegularExpression devtoolCommand(
-        QStringLiteral(R"((^|[;&|\n]\s*|\s)(?:env\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*(?:[^\s]*/)?devtool(?:\s|$))"),
-        QRegularExpression::CaseInsensitiveOption);
-    if (devtoolCommand.match(text).hasMatch()) {
+    if (looksLikeDevtoolCommand(text)) {
         if (normalized) *normalized = text.left(16384);
-        if (summary) *summary = QStringLiteral("Command: %1").arg(compactCommandSummary(text));
+        if (summary) *summary = QStringLiteral("Devtool command: %1").arg(compactCommandSummary(text));
         return QStringLiteral("command");
     }
 

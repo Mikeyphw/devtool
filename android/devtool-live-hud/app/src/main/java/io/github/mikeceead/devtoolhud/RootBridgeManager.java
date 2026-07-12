@@ -22,7 +22,9 @@ final class RootBridgeManager {
     private static final String KEY_STATE = "state";
     private static final String KEY_DETAIL = "detail";
     private static final String KEY_VERSION = "version";
-    private static final String BRIDGE = "/data/adb/devtool-bridge/bin/devtool-root-bridge";
+    private static final String BRIDGE = "/data/adb/modules/devtool_bridge/bin/devtool-root-bridge";
+    private static final String BRIDGE_UPDATE = "/data/adb/modules_update/devtool_bridge/bin/devtool-root-bridge";
+    private static final String BRIDGE_LEGACY = "/data/adb/devtool-bridge/bin/devtool-root-bridge";
     private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
     private static final SecureRandom IDS = new SecureRandom();
     private static volatile Process activeProcess;
@@ -259,6 +261,9 @@ final class RootBridgeManager {
 
     private static String bridgeInvocation(String arguments) {
         return "if [ -x " + shellQuote(BRIDGE) + " ]; then " + shellQuote(BRIDGE) + " "
+                + arguments + "; elif [ -x " + shellQuote(BRIDGE_UPDATE) + " ]; then "
+                + shellQuote(BRIDGE_UPDATE) + " " + arguments + "; elif [ -x "
+                + shellQuote(BRIDGE_LEGACY) + " ]; then " + shellQuote(BRIDGE_LEGACY) + " "
                 + arguments + "; else echo DEVTOOL_ROOT_MODULE_MISSING; exit 127; fi";
     }
 

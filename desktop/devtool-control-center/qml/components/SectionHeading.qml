@@ -6,5 +6,8 @@ Label {
     color: theme.mutedText
     font.pointSize: theme.smallPointSize
     font.weight: Font.DemiBold
-    font.letterSpacing: 0.2
+    font.capitalization: Font.AllUppercase
+    font.letterSpacing: 0.85
+    lineHeight: theme.compactLineHeight
+    lineHeightMode: Text.ProportionalHeight
 }
