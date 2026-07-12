@@ -33,7 +33,6 @@ AppScrollView {
                     wrapMode: Text.Wrap
                     font.pointSize: theme.smallPointSize
                     lineHeight: theme.bodyLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
                 SectionHeading { text: "Live state directory"; Layout.topMargin: 6 }
                 RowLayout {
@@ -68,7 +67,6 @@ AppScrollView {
                     wrapMode: Text.Wrap
                     font.pointSize: theme.bodyPointSize
                     lineHeight: theme.bodyLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
                 Label { Layout.fillWidth: true; text: "Socket: " + ipcClient.socketPath; color: theme.subtleText; font.family: "monospace"; font.pointSize: theme.smallPointSize; elide: Text.ElideMiddle }
                 Label {
@@ -78,7 +76,6 @@ AppScrollView {
                     wrapMode: Text.Wrap
                     font.pointSize: theme.bodyPointSize
                     lineHeight: theme.bodyLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -89,7 +86,6 @@ AppScrollView {
                         wrapMode: Text.Wrap
                         font.pointSize: theme.smallPointSize
                         lineHeight: theme.bodyLineHeight
-                        lineHeightMode: Text.ProportionalHeight
                     }
                     AppButton { text: "Reconnect IPC"; onClicked: ipcClient.reconnect() }
                 }
@@ -114,7 +110,6 @@ AppScrollView {
                     wrapMode: Text.Wrap
                     font.pointSize: theme.bodyPointSize
                     lineHeight: theme.bodyLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -180,7 +175,6 @@ AppScrollView {
                             font.pointSize: theme.cardTitlePointSize
                             font.weight: Font.DemiBold
                             lineHeight: theme.titleLineHeight
-                            lineHeightMode: Text.ProportionalHeight
                         }
                         Label {
                             Layout.fillWidth: true
@@ -190,7 +184,6 @@ AppScrollView {
                             font.family: appController.clipboardCandidateKind === "command" ? "monospace" : ""
                             font.pointSize: theme.smallPointSize
                             lineHeight: theme.bodyLineHeight
-                            lineHeightMode: Text.ProportionalHeight
                         }
                         Label {
                             Layout.fillWidth: true
@@ -199,7 +192,6 @@ AppScrollView {
                             color: theme.subtleText
                             font.pointSize: theme.captionPointSize
                             lineHeight: theme.compactLineHeight
-                            lineHeightMode: Text.ProportionalHeight
                         }
                         RowLayout {
                             Layout.fillWidth: true

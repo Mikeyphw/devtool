@@ -31,7 +31,6 @@ AppScrollView {
                 color: theme.mutedText
                 font.pointSize: theme.smallPointSize
                 lineHeight: theme.bodyLineHeight
-                lineHeightMode: Text.ProportionalHeight
             }
         }
 
@@ -80,7 +79,6 @@ AppScrollView {
                     font.weight: Font.Medium
                     anchors.horizontalCenter: parent.horizontalCenter
                     lineHeight: theme.bodyLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
                 Label {
                     text: "Start a workflow from Run or from a terminal."
@@ -88,7 +86,6 @@ AppScrollView {
                     font.pointSize: theme.bodyPointSize
                     anchors.horizontalCenter: parent.horizontalCenter
                     lineHeight: theme.bodyLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
             }
         }

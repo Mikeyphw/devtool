@@ -59,6 +59,13 @@ qt_add_qml_module(devtool-control-center
         qml/pages/SettingsPage.qml
 )
 
+set_source_files_properties(resources/devtool-control-center.svg PROPERTIES
+    QT_RESOURCE_ALIAS "devtool-control-center.svg"
+)
+set_source_files_properties(resources/devtool-control-center-tray.svg PROPERTIES
+    QT_RESOURCE_ALIAS "devtool-control-center-tray.svg"
+)
+
 qt_add_resources(devtool-control-center devtool_icons
     PREFIX /icons
     FILES

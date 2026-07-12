@@ -8,5 +8,4 @@ Label {
     font.weight: Font.DemiBold
     font.letterSpacing: -0.25
     lineHeight: theme.titleLineHeight
-    lineHeightMode: Text.ProportionalHeight
 }

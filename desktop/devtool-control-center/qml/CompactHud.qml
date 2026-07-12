@@ -46,7 +46,6 @@ Window {
                     elide: Text.ElideRight
                     font.letterSpacing: -0.15
                     lineHeight: theme.titleLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
                 AppButton { text: "×"; variant: "ghost"; compact: true; implicitWidth: 34; onClicked: { if (appController.startCompactOnly) Qt.quit(); else appController.compactHudVisible = false } }
             }
@@ -68,7 +67,6 @@ Window {
                         elide: Text.ElideRight
                         font.pointSize: theme.bodyPointSize
                         lineHeight: theme.bodyLineHeight
-                        lineHeightMode: Text.ProportionalHeight
                     }
                 }
                 RowLayout {

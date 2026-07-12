@@ -35,7 +35,6 @@ ApplicationWindow {
                 font.weight: Font.DemiBold
                 font.letterSpacing: -0.2
                 lineHeight: theme.titleLineHeight
-                lineHeightMode: Text.ProportionalHeight
             }
             Rectangle {
                 radius: 6
@@ -52,7 +51,6 @@ ApplicationWindow {
                     font.capitalization: Font.AllUppercase
                     font.letterSpacing: 0.7
                     lineHeight: theme.compactLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
             }
             Item { Layout.fillWidth: true }
@@ -74,7 +72,6 @@ ApplicationWindow {
                 color: theme.mutedText
                 font.pointSize: theme.bodyPointSize
                 lineHeight: theme.compactLineHeight
-                lineHeightMode: Text.ProportionalHeight
             }
         }
     }

@@ -51,7 +51,6 @@ AppScrollView {
                     wrapMode: Text.Wrap
                     font.pointSize: theme.bodyPointSize
                     lineHeight: theme.bodyLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
                 Label {
                     Layout.fillWidth: true
@@ -60,9 +59,8 @@ AppScrollView {
                     font.pointSize: theme.smallPointSize
                     font.weight: Font.DemiBold
                     font.capitalization: Font.AllUppercase
-                    letterSpacing: 0.7
+                    font.letterSpacing: 0.7
                     lineHeight: theme.compactLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
                 Rectangle {
                     Layout.fillWidth: true
@@ -81,8 +79,6 @@ AppScrollView {
                         wrapMode: TextEdit.WrapAnywhere
                         font.family: "monospace"
                         font.pointSize: theme.smallPointSize
-                        lineHeight: theme.bodyLineHeight
-                        lineHeightMode: Text.ProportionalHeight
                         background: null
                     }
                 }
@@ -133,7 +129,6 @@ AppScrollView {
                     wrapMode: Text.Wrap
                     font.pointSize: theme.smallPointSize
                     lineHeight: theme.bodyLineHeight
-                    lineHeightMode: Text.ProportionalHeight
                 }
                 Rectangle {
                     Layout.fillWidth: true
@@ -151,7 +146,6 @@ AppScrollView {
                         font.family: "monospace"
                         font.pointSize: theme.smallPointSize
                         lineHeight: theme.bodyLineHeight
-                        lineHeightMode: Text.ProportionalHeight
                         wrapMode: Text.WrapAnywhere
                     }
                 }

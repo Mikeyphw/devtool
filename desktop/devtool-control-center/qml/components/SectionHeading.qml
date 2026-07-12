@@ -9,5 +9,4 @@ Label {
     font.capitalization: Font.AllUppercase
     font.letterSpacing: 0.85
     lineHeight: theme.compactLineHeight
-    lineHeightMode: Text.ProportionalHeight
 }

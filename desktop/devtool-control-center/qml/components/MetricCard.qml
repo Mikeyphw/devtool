@@ -23,7 +23,6 @@ Rectangle {
             font.weight: Font.DemiBold
             font.letterSpacing: -0.15
             lineHeight: theme.compactLineHeight
-            lineHeightMode: Text.ProportionalHeight
         }
         Label {
             text: root.label
@@ -33,7 +32,6 @@ Rectangle {
             font.capitalization: Font.AllUppercase
             font.letterSpacing: 0.95
             lineHeight: theme.compactLineHeight
-            lineHeightMode: Text.ProportionalHeight
         }
     }
 }
