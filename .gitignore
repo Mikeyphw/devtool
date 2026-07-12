@@ -1,9 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# .NET
+**/bin/
+**/obj/
+
+# Android / Gradle
 **/.gradle/
 **/build/
 *.apk
+*.aab
+
+# CMake / native builds
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+
+# Devtool runtime state
 .devtool/
 **/android-live-hud.token
-__pycache__/
-*.pyc
-.dist/
-dist/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

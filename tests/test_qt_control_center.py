@@ -54,6 +54,9 @@ class QtControlCenterTests(unittest.TestCase):
         self.assertIn("resources/devtool-control-center.svg", cmake)
         self.assertIn("resources/devtool-control-center-tray.svg", cmake)
         self.assertIn("devtool-control-center-hud", cmake)
+        hud_target = cmake.split("qt_add_executable(devtool-control-center-hud", 1)[1].split(")", 1)[0]
+        for source in ("HudStateStore.cpp", "HistoryModel.cpp", "IpcClient.cpp"):
+            self.assertIn(source, hud_target)
         controller = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
         self.assertIn('"--hud-mode","control-center"', controller)
 

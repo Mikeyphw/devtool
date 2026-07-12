@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from collections import Counter, defaultdict
 import json
 import os
 import re
@@ -25,11 +26,14 @@ from .artifacts import (
     preview_artifact,
     preview_overlay_bundle,
     create_overlay_bundle,
+    read_artifact_manifest,
+    artifact_solution,
+    artifact_target,
     read_delete_manifest,
     resolve_artifact_path,
     validate_artifact,
 )
-from .config import generate_template
+from .config import ensure_artifact_target_config, generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
 from .diagnostics import classify_failure, parse_issues
 from .dotnet_progress import DotnetProgressTracker, dotnet_progress_plan
@@ -156,6 +160,10 @@ def _maybe_explicit(command_name: str, text: str, env: dict[str, str] | None = N
     return []
 
 
+
+
+def _contains_dotnet_cli(argv: Sequence[str]) -> bool:
+    return any(Path(str(value)).name == "dotnet" for value in argv)
 
 
 def _is_dotnet_build_argv(argv: list[str]) -> bool:
@@ -605,6 +613,9 @@ def _run_process_live(
     phase_total: int | None = None,
     progress_argv: list[str] | None = None,
     progress_cwd: str | None = None,
+    display_target: str = "",
+    target_phase_index: int | None = None,
+    target_phase_total: int | None = None,
 ) -> tuple[int, str]:
     try:
         proc = subprocess.Popen(
@@ -642,7 +653,17 @@ def _run_process_live(
     assert proc.stdout is not None
     parser_argv = list(progress_argv or argv)
     parser_cwd = progress_cwd or cwd
-    tracker = DotnetProgressTracker(parser_argv, parser_cwd, command_name, console, phase_index=phase_index, phase_total=phase_total) if (not verbose or tasker_progress is not None) else None
+    tracker = DotnetProgressTracker(
+        parser_argv,
+        parser_cwd,
+        command_name,
+        console,
+        phase_index=phase_index,
+        phase_total=phase_total,
+        display_target=display_target,
+        target_phase_index=target_phase_index,
+        target_phase_total=target_phase_total,
+    ) if (not verbose or tasker_progress is not None) else None
     if tracker is not None and verbose:
         # In verbose mode stdout is already streamed as raw text. Keep the
         # dotnet parser active only for Tasker/progress events; do not
@@ -749,6 +770,128 @@ def _run_process_live(
             proc.stdout.close()
 
 
+def _shutdown_dotnet_build_server(
+    config: ProjectConfig,
+    *,
+    dry_run: bool,
+    log_path: Path | str | None,
+) -> tuple[OperationResult, str]:
+    argv, cleanup_dir = _prepare_termux_dotnet(["dotnet", "build-server", "shutdown"])
+    command_line = "$ " + " ".join(shlex.quote(value) for value in argv)
+    if dry_run:
+        raw = command_line + "\nBuild-server shutdown skipped during dry-run."
+        log_file = str(write_log(raw, log_path, append=log_path is not None))
+        return OperationResult(
+            "dotnet-build-server-shutdown", argv, 0, 0.0, raw.split("\n", 1)[1], [],
+            skipped=True, log_path=log_file, metadata={"cleanup": True},
+        ), raw
+
+    env = os.environ.copy()
+    env.update(config.env)
+    started = time.perf_counter()
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=str(config.repo_root),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        returncode = completed.returncode
+        output = completed.stdout or ""
+    except OSError as exc:
+        returncode = 127
+        output = str(exc)
+    finally:
+        if cleanup_dir:
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
+    duration = time.perf_counter() - started
+    issues = parse_issues(config.repo_root, "dotnet-build-server-shutdown", output)
+    raw = command_line + ("\n" + output if output else "")
+    log_file = str(write_log(raw, log_path, append=log_path is not None))
+    result = OperationResult(
+        "dotnet-build-server-shutdown",
+        argv,
+        returncode,
+        duration,
+        output,
+        issues,
+        log_path=log_file,
+        failure_kind="cleanup_failure" if returncode else "",
+        metadata={"cleanup": True},
+    )
+    return result, raw
+
+
+def _dotnet_target_argument(argv: Sequence[str], cwd: str) -> str:
+    command_index: int | None = None
+    for index, value in enumerate(argv):
+        if Path(str(value)).name == "dotnet":
+            command_index = index
+            break
+    if command_index is None or command_index + 1 >= len(argv):
+        return ""
+    skip_next = False
+    value_options = {
+        "--framework", "-f", "--runtime", "-r", "--configuration", "-c",
+        "--output", "-o", "--logger", "-l", "--verbosity", "-v",
+    }
+    for value in argv[command_index + 2 :]:
+        text = str(value)
+        if skip_next:
+            skip_next = False
+            continue
+        if text in value_options:
+            skip_next = True
+            continue
+        if text.startswith("-"):
+            continue
+        return text
+    return cwd
+
+
+def _dotnet_display_target(spec: CommandSpec, config: ProjectConfig) -> str:
+    for key in ("bundle_target", "matrix", "workspace", "devtool_target"):
+        value = str(spec.metadata.get(key) or "").strip()
+        if value:
+            return value
+    if config.selected_target:
+        return config.selected_target
+    progress_argv = list(spec.metadata.get("progress_argv") or spec.argv)
+    progress_cwd = str(spec.metadata.get("progress_cwd") or spec.cwd or config.repo_root)
+    target_text = _dotnet_target_argument(progress_argv, progress_cwd)
+    if not target_text:
+        return "default target"
+    target = Path(target_text)
+    if not target.is_absolute():
+        target = Path(progress_cwd) / target
+    try:
+        return str(target.resolve().relative_to(config.repo_root.resolve())).replace(os.sep, "/")
+    except (OSError, ValueError):
+        return target.name or target_text
+
+
+def _dotnet_phase_layout(specs: Sequence[CommandSpec], config: ProjectConfig) -> dict[int, tuple[str, int, int]]:
+    targets: dict[int, str] = {}
+    totals: Counter[str] = Counter()
+    for index, spec in enumerate(specs):
+        progress_argv = list(spec.metadata.get("progress_argv") or spec.argv)
+        if not _contains_dotnet_cli(progress_argv):
+            continue
+        target = _dotnet_display_target(spec, config) or "default target"
+        targets[index] = target
+        totals[target] += 1
+
+    seen: defaultdict[str, int] = defaultdict(int)
+    layout: dict[int, tuple[str, int, int]] = {}
+    for index, target in targets.items():
+        seen[target] += 1
+        layout[index] = (target, seen[target], totals[target])
+    return layout
+
+
 def run_specs(
     config: ProjectConfig,
     specs: list[CommandSpec],
@@ -761,6 +904,8 @@ def run_specs(
 ) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw_sections: list[str] = []
+    used_dotnet = any(_contains_dotnet_cli(spec.argv) for spec in specs)
+    dotnet_layout = _dotnet_phase_layout(specs, config)
 
     if tasker_progress is not None and not dry_run:
         tasker_progress.plan_phases([
@@ -775,6 +920,9 @@ def run_specs(
 
     for spec_index, spec in enumerate(specs, start=1):
         effective_argv, cleanup_dir = _prepare_termux_dotnet(spec.argv)
+        display_target, target_phase_index, target_phase_total = dotnet_layout.get(
+            spec_index - 1, ("", None, None)
+        )
         if tasker_progress is not None and not dry_run:
             tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=effective_argv, metadata=spec.metadata)
 
@@ -811,6 +959,9 @@ def run_specs(
                     phase_total=len(specs),
                     progress_argv=progress_argv,
                     progress_cwd=progress_cwd,
+                    display_target=display_target,
+                    target_phase_index=target_phase_index,
+                    target_phase_total=target_phase_total,
                 )
             else:
                 if dotnet_progress_plan(progress_argv, progress_cwd):
@@ -825,6 +976,9 @@ def run_specs(
                         phase_total=len(specs),
                         progress_argv=progress_argv,
                         progress_cwd=progress_cwd,
+                        display_target=display_target,
+                        target_phase_index=target_phase_index,
+                        target_phase_total=target_phase_total,
                     )
                 else:
                     with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
@@ -864,7 +1018,66 @@ def run_specs(
         if returncode != 0 and not continue_on_error:
             break
 
+    if used_dotnet:
+        shutdown_result, shutdown_raw = _shutdown_dotnet_build_server(
+            config,
+            dry_run=dry_run,
+            log_path=log_path,
+        )
+        results.append(shutdown_result)
+        raw_sections.append(shutdown_raw)
+
     return results, "\n\n".join(raw_sections)
+
+def _artifact_config_declaration(manifest: dict) -> dict[str, str]:
+    return {
+        "target": artifact_target(manifest),
+        "solution": artifact_solution(manifest),
+        "project": str(manifest.get("run_project") or manifest.get("project") or "").strip(),
+    }
+
+
+def _declaration_has_dotnet_target(declaration: dict[str, str]) -> bool:
+    return bool(declaration.get("solution") or declaration.get("project"))
+
+
+def _preview_with_config_registration(preview: dict, declarations: Sequence[dict[str, str]]) -> dict:
+    if not any(_declaration_has_dotnet_target(item) for item in declarations):
+        return preview
+    updated = dict(preview)
+    original_changes = [dict(item) for item in preview.get("changes", []) if isinstance(item, dict)]
+    already_listed = any(str(item.get("path") or "") == ".devtool.toml" for item in original_changes)
+    if not already_listed:
+        original_changes.append({"path": ".devtool.toml", "kind": "modify"})
+    updated["changes"] = original_changes
+    if not already_listed:
+        counts = dict(preview.get("counts", {}))
+        counts["modify"] = int(counts.get("modify", 0) or 0) + 1
+        updated["counts"] = counts
+    return updated
+
+
+def _register_artifact_config(repo_root: Path, manifest: dict, *, target_override: str = "") -> dict[str, str]:
+    declaration = _artifact_config_declaration(manifest)
+    if target_override.strip():
+        declaration["target"] = target_override.strip()
+    if not _declaration_has_dotnet_target(declaration):
+        return {}
+    return ensure_artifact_target_config(repo_root, **declaration)
+
+
+def _bundle_config_declarations(bundle: Path) -> list[dict[str, str]]:
+    declarations: list[dict[str, str]] = []
+    with tempfile.TemporaryDirectory(prefix="devtool-bundle-config-") as tmp:
+        _manifest, entries = materialize_overlay_bundle_entries(bundle, tmp)
+        for entry in entries:
+            declaration = _artifact_config_declaration(read_artifact_manifest(entry.path))
+            if entry.target:
+                declaration["target"] = entry.target
+            if _declaration_has_dotnet_target(declaration):
+                declarations.append(declaration)
+    return declarations
+
 
 def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
@@ -914,7 +1127,11 @@ def apply_overlay_bundle(
         transaction: dict | None = None
         rollback_result: OperationResult | None = None
         try:
-            preview_data = preview or preview_overlay_bundle(repo_root, artifact_path)
+            declarations = _bundle_config_declarations(artifact_path)
+            preview_data = _preview_with_config_registration(
+                preview or preview_overlay_bundle(repo_root, artifact_path),
+                declarations,
+            )
             transaction = create_apply_transaction(
                 repo_root,
                 artifact_path,
@@ -924,6 +1141,7 @@ def apply_overlay_bundle(
             skipped_metadata = 0
             deleted_paths: list[str] = []
             applied: list[str] = []
+            registrations: list[dict[str, str]] = []
             with tempfile.TemporaryDirectory(prefix="devtool-bundle-apply-") as tmp:
                 _manifest, entries = materialize_overlay_bundle_entries(artifact_path, tmp)
                 for entry in entries:
@@ -933,6 +1151,9 @@ def apply_overlay_bundle(
                         raise RuntimeError(f"Nested overlay validation failed for {label}: " + "; ".join(validation.messages))
                     skipped_metadata += _extract_archive(entry.path, repo_root)
                     deleted_paths.extend(_apply_delete_manifest(repo_root, entry.path))
+                    registration = _register_artifact_config(repo_root, validation.manifest, target_override=entry.target)
+                    if registration:
+                        registrations.append(registration)
                     label = entry.label or Path(entry.bundle_path).name
                     target_note = f" target={entry.target}" if entry.target else ""
                     applied.append(f"[{entry.index}/{len(entries)}] {label}{target_note}")
@@ -944,6 +1165,8 @@ def apply_overlay_bundle(
                 output += f"\nSkipped {skipped_metadata} devtool metadata file(s)."
             if deleted_paths:
                 output += f"\nDeleted {len(deleted_paths)} path(s) from nested .devtool-delete file(s)."
+            if registrations:
+                output += f"\nRegistered {len(registrations)} target(s) in .devtool.toml."
             rc = 0
         except KeyboardInterrupt:
             rc = 130
@@ -973,6 +1196,7 @@ def apply_overlay_bundle(
                 "artifact_paths": cleanup_sources,
                 "delete_artifact_on_success": True,
                 "artifact_type": "overlay_bundle",
+                "config_paths": sorted({item.get("path", "") for item in registrations if item.get("path")}),
             }
             if rollback_result is not None:
                 metadata["rollback_returncode"] = rollback_result.returncode
@@ -1002,8 +1226,14 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
 
     transaction: dict | None = None
     rollback_result: OperationResult | None = None
+    registration: dict[str, str] = {}
     try:
-        preview_data = preview or preview_artifact(repo_root, artifact_path, snapshot=snapshot)
+        manifest = read_artifact_manifest(artifact_path) if not snapshot else {}
+        declarations = [_artifact_config_declaration(manifest)] if manifest else []
+        preview_data = _preview_with_config_registration(
+            preview or preview_artifact(repo_root, artifact_path, snapshot=snapshot),
+            declarations,
+        )
         transaction = create_apply_transaction(
             repo_root,
             artifact_path,
@@ -1022,6 +1252,7 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         else:
             skipped_metadata += _extract_archive(artifact_path, repo_root)
             deleted_paths = _apply_delete_manifest(repo_root, artifact_path)
+            registration = _register_artifact_config(repo_root, manifest)
         # The original artifact is intentionally not deleted here.  Apply is now
         # transactional across extraction plus any later validation/commit steps,
         # so cleanup is deferred until the CLI knows no rollback happened.
@@ -1031,6 +1262,8 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
             output += f"\nSkipped {skipped_metadata} devtool metadata file(s)."
         if deleted_paths:
             output += f"\nDeleted {len(deleted_paths)} path(s) from .devtool-delete."
+        if registration:
+            output += f"\n{registration.get('action', 'updated').title()} .devtool.toml target: {registration.get('target', '')}."
         rc = 0
     except KeyboardInterrupt as exc:
         rc = 130
@@ -1057,6 +1290,7 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
             "transaction_path": tx_path,
             "artifact_path": str(artifact_path),
             "delete_artifact_on_success": bool(delete_artifact),
+            "config_paths": [registration.get("path", "")] if registration.get("path") else [],
         }
         if rollback_result is not None:
             metadata["rollback_returncode"] = rollback_result.returncode

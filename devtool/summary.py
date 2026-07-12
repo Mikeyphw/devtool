@@ -127,6 +127,7 @@ _ACTION_LABELS = {
     "git-add-skipped": "Stage changes",
     "git-commit-skipped": "Commit changes",
     "rollback": "Rollback",
+    "dotnet-build-server-shutdown": "Stop .NET build servers",
 }
 
 _DOTNET_TEST_SUMMARY_RE = re.compile(
@@ -746,100 +747,205 @@ def _add_json_to_tree(tree: Tree, value: object) -> None:
     tree.add(_json_scalar(value))
 
 
-def _manifest_summary_table(manifest: dict) -> Table:
-    table = Table(title="Summary", show_header=False, expand=False, box=None)
-    table.add_column("Field", style="bold", no_wrap=True)
-    table.add_column("Value", overflow="fold")
-    scalar_keys = [
-        "type",
-        "repo_name",
-        "repo",
-        "target",
-        "validate_target",
-        "description",
-        "expected_solution",
-        "solution",
-        "project",
-    ]
-    seen: set[str] = set()
-    for key in scalar_keys:
-        if key not in manifest or isinstance(manifest.get(key), (dict, list)):
+def _without_sha256(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): _without_sha256(item)
+            for key, item in value.items()
+            if "sha256" not in str(key).lower()
+        }
+    if isinstance(value, list):
+        return [_without_sha256(item) for item in value]
+    return value
+
+
+def _artifact_kind(manifest: dict) -> str:
+    kind = str(manifest.get("kind") or manifest.get("type") or "overlay").strip()
+    return kind.replace("devtool.", "").replace("_", " ").replace("-", " ").title()
+
+
+def _artifact_name(manifest: dict) -> str:
+    return str(manifest.get("name") or manifest.get("label") or "Devtool artifact").strip() or "Devtool artifact"
+
+
+def _inventory_rows(manifest: dict) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    inventory = manifest.get("inventory")
+    entries = inventory.get("entries") if isinstance(inventory, dict) else inventory if isinstance(inventory, list) else None
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            path = str(entry.get("path") or "").strip()
+            if path:
+                rows.append((str(entry.get("action") or "payload").strip().lower() or "payload", path))
+    if rows:
+        return rows
+    for key, action in (("files", "payload"), ("mutates", "modify"), ("deletes", "delete")):
+        values = manifest.get(key)
+        if not isinstance(values, list):
             continue
-        table.add_row(_human_json_key(key), Text(_json_scalar(manifest.get(key)), overflow="fold"))
-        seen.add(key)
-    if not seen:
-        table.add_row("Fields", str(len(manifest)))
+        for value in values:
+            path = str(value).strip()
+            if path:
+                rows.append((action, path))
+    return rows
+
+
+def _artifact_headline_panel(manifest: dict, target_console: Console) -> Panel:
+    kind = _artifact_kind(manifest)
+    name = _artifact_name(manifest)
+    description = str(manifest.get("description") or "").strip()
+    inventory_rows = _inventory_rows(manifest)
+    overlays = manifest.get("overlays") or manifest.get("apply_order")
+    overlay_count = len(overlays) if isinstance(overlays, list) else 0
+
+    headline = Text()
+    headline.append("◆ ", style="bold cyan")
+    headline.append(name, style="bold")
+
+    details = Table.grid(padding=(0, 2))
+    details.add_column(style="dim", no_wrap=True)
+    details.add_column(overflow="fold")
+    details.add_row("Type", Text(kind, style="bold cyan"))
+    schema = manifest.get("schema_version", manifest.get("version"))
+    if schema is not None:
+        details.add_row("Schema", str(schema))
+    repository = manifest.get("repository")
+    if isinstance(repository, dict):
+        repo_name = str(repository.get("name") or "").strip()
+    else:
+        repo_name = str(manifest.get("repo_name") or manifest.get("repo") or "").strip()
+    if repo_name:
+        details.add_row("Repository", repo_name)
+    target = str(manifest.get("target") or manifest.get("validate_target") or manifest.get("default_target") or "").strip()
+    if target:
+        details.add_row("Target", Text(target, style="cyan"))
+    solution = str(manifest.get("solution") or manifest.get("expected_solution") or "").strip()
+    if solution:
+        details.add_row("Solution", solution)
+    if overlay_count:
+        details.add_row("Overlays", Text(str(overlay_count), style="bold magenta"))
+    if inventory_rows:
+        details.add_row("Paths", Text(str(len(inventory_rows)), style="bold green"))
+    if description:
+        details.add_row("Purpose", description)
+
+    validation = manifest.get("validation") if isinstance(manifest.get("validation"), dict) else {}
+    if validation:
+        required = bool(validation.get("required", False))
+        details.add_row("Validation", Text("Required" if required else "Configured", style="bold green" if required else "yellow"))
+    apply = manifest.get("apply") if isinstance(manifest.get("apply"), dict) else {}
+    commit = apply.get("commit") if isinstance(apply.get("commit"), dict) else {}
+    if commit:
+        details.add_row("Commit", Text("Enabled" if commit.get("enabled") else "Disabled", style="green" if commit.get("enabled") else "dim"))
+
+    return Panel(
+        Group(headline, Text(""), details),
+        title="Artifact summary",
+        border_style="cyan",
+        padding=(1, 2),
+        expand=not (is_narrow_console(target_console) or target_console.width <= 60),
+    )
+
+
+def _inventory_table(manifest: dict) -> Table | None:
+    rows = _inventory_rows(manifest)
+    if not rows:
+        return None
+    table = Table(title="Inventory", show_lines=False, expand=True, box=box.SIMPLE_HEAVY)
+    table.add_column("Action", no_wrap=True, width=10)
+    table.add_column("Path", overflow="fold", ratio=1)
+    action_styles = {"add": "green", "modify": "yellow", "delete": "red", "payload": "cyan"}
+    for action, path in rows:
+        table.add_row(Text(action.upper(), style=f"bold {action_styles.get(action, 'cyan')}"), Text(path, overflow="fold"))
     return table
 
 
-def _manifest_list_table(title: str, values: list[object]) -> Table:
-    table = Table(title=title, show_lines=False, expand=False)
-    table.add_column("#", justify="right", style="dim", no_wrap=True)
+def _bundle_table(manifest: dict) -> Table | None:
+    overlays = manifest.get("overlays") or manifest.get("apply_order")
+    if not isinstance(overlays, list) or not overlays:
+        return None
+    table = Table(title="Bundle overlays", show_lines=False, expand=True, box=box.SIMPLE_HEAVY)
+    table.add_column("Overlay", overflow="fold", ratio=1)
+    table.add_column("Target", overflow="fold")
+    table.add_column("Mode", no_wrap=True)
+    table.add_column("Dependencies", overflow="fold")
+    for value in overlays:
+        if isinstance(value, str):
+            table.add_row(Path(value).name, "-", Text("Required", style="green"), "-")
+            continue
+        if not isinstance(value, dict):
+            continue
+        path = str(value.get("path") or value.get("artifact") or "").strip()
+        label = str(value.get("label") or value.get("name") or value.get("id") or Path(path).name or "Overlay").strip()
+        target = str(value.get("target") or "-").strip() or "-"
+        required = bool(value.get("required", True))
+        deps: list[str] = []
+        for key in ("after", "requires"):
+            items = value.get(key)
+            if isinstance(items, list) and items:
+                deps.append(f"{key}: " + ", ".join(str(item) for item in items))
+        table.add_row(
+            label,
+            target,
+            Text("Required" if required else "Optional", style="green" if required else "yellow"),
+            "; ".join(deps) or "-",
+        )
+    return table
+
+
+def _policy_table(title: str, value: dict) -> Table | None:
+    cleaned = _without_sha256(value)
+    if not isinstance(cleaned, dict) or not cleaned:
+        return None
+    table = Table(title=title, show_header=False, expand=True, box=None)
+    table.add_column("Field", style="bold", no_wrap=True)
     table.add_column("Value", overflow="fold")
-    for index, value in enumerate(values, start=1):
-        if isinstance(value, (dict, list)):
-            table.add_row(str(index), Text(str(value), overflow="fold"))
+    for key, item in cleaned.items():
+        if isinstance(item, list):
+            rendered = ", ".join(str(part) for part in item) if item else "-"
+        elif isinstance(item, dict):
+            compact = ", ".join(f"{subkey}={_json_scalar(subvalue)}" for subkey, subvalue in item.items())
+            rendered = compact or "-"
         else:
-            table.add_row(str(index), Text(_json_scalar(value), overflow="fold"))
+            rendered = _json_scalar(item)
+        table.add_row(_human_json_key(str(key)), Text(rendered, overflow="fold"))
     return table
 
 
 def render_artifact_manifest(manifest: dict, *, console_obj: Console | None = None) -> None:
-    """Render a devtool artifact manifest as semantic Rich sections instead of raw JSON."""
+    """Render a concise, semantic artifact or bundle summary without hashes/raw nodes."""
     if not manifest:
         return
     target_console = console_obj or console
-    scalar_summary = _manifest_summary_table(manifest)
-    renderables: list[object] = [scalar_summary]
+    renderables: list[object] = [_artifact_headline_panel(manifest, target_console)]
 
-    for key, title in [
-        ("compat", "Compatibility"),
-        ("files", "Files"),
-        ("mutates", "Mutates"),
-        ("deletes", "Deletes"),
-    ]:
-        value = manifest.get(key)
-        if isinstance(value, list):
-            renderables.append(_manifest_list_table(title, value))
+    bundle_table = _bundle_table(manifest)
+    if bundle_table is not None:
+        renderables.append(bundle_table)
+    inventory_table = _inventory_table(manifest)
+    if inventory_table is not None:
+        renderables.append(inventory_table)
 
-    validation = manifest.get("validation")
-    if isinstance(validation, dict):
-        validation_summary = Table(title="Validation", show_header=False, expand=False, box=None)
-        validation_summary.add_column("Field", style="bold", no_wrap=True)
-        validation_summary.add_column("Value", overflow="fold")
-        for key, value in validation.items():
-            if isinstance(value, list):
-                continue
-            validation_summary.add_row(_human_json_key(key), Text(_json_scalar(value), overflow="fold"))
-        renderables.append(validation_summary)
-        commands = validation.get("recommended_commands")
-        if isinstance(commands, list):
-            renderables.append(_manifest_list_table("Recommended commands", commands))
-
-    for key, title in [
-        ("repository", "Repository"),
-        ("workspace", "Workspace"),
-        ("apply", "Apply policy"),
-        ("inventory", "Inventory"),
-    ]:
+    for key, title in (("validation", "Validation policy"), ("apply", "Apply policy"), ("repository", "Repository"), ("workspace", "Workspace")):
         value = manifest.get(key)
         if isinstance(value, dict):
-            renderables.append(_tree_from_json(title, value))
+            table = _policy_table(title, value)
+            if table is not None:
+                renderables.append(table)
+
     workspaces = manifest.get("workspaces")
-    if isinstance(workspaces, list):
-        renderables.append(_tree_from_json("Workspaces", workspaces))
-    overlays = manifest.get("overlays") or manifest.get("apply_order")
-    if isinstance(overlays, list):
-        renderables.append(_tree_from_json("Bundle overlays", overlays))
+    if isinstance(workspaces, list) and workspaces:
+        table = Table(title="Workspaces", expand=True, box=box.SIMPLE)
+        table.add_column("Path", overflow="fold", ratio=1)
+        table.add_column("Target", overflow="fold")
+        for item in workspaces:
+            if isinstance(item, dict):
+                table.add_row(str(item.get("root") or item.get("path") or "-"), str(item.get("target") or "-"))
+            else:
+                table.add_row(str(item), "-")
+        renderables.append(table)
 
-    known = {
-        "type", "repo", "repo_name", "target", "validate_target", "description", "expected_solution", "solution", "project",
-        "compat", "files", "mutates", "deletes", "validation", "repository", "workspace", "workspaces",
-        "apply", "inventory", "overlays", "apply_order",
-    }
-    extras = {key: value for key, value in manifest.items() if key not in known}
-    if extras:
-        renderables.append(_tree_from_json("Additional metadata", extras))
-
-    target_console.print(Panel(Group(*renderables), title="Parsed artifact metadata", expand=not is_narrow_console(target_console)))
+    target_console.print(Group(*renderables))
 

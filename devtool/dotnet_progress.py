@@ -9,6 +9,7 @@ from typing import Any, Callable, Iterable
 from rich.console import Console, Group
 from rich.live import Live
 from rich.errors import LiveError
+from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -62,6 +63,9 @@ class DotnetProgressTracker:
     console: Console
     phase_index: int | None = None
     phase_total: int | None = None
+    display_target: str = ""
+    target_phase_index: int | None = None
+    target_phase_total: int | None = None
     plan: DotnetProgressPlan | None = field(init=False, default=None)
     progress: Progress | None = field(init=False, default=None)
     live: Live | None = field(init=False, default=None)
@@ -75,6 +79,12 @@ class DotnetProgressTracker:
     detail: str = field(init=False, default="")
     completed: int | None = field(init=False, default=None)
     total: int | None = field(init=False, default=None)
+    returncode: int | None = field(init=False, default=None)
+    tests_passed: int = field(init=False, default=0)
+    tests_failed: int = field(init=False, default=0)
+    tests_skipped: int = field(init=False, default=0)
+    tests_total: int = field(init=False, default=0)
+    seen_test_results: set[str] = field(init=False, default_factory=set)
 
     def __post_init__(self) -> None:
         self.plan = dotnet_progress_plan(self.argv, self.cwd)
@@ -85,10 +95,11 @@ class DotnetProgressTracker:
         if not self.enabled or self.plan is None:
             return self
         self.progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold cyan]{task.description}"),
-            BarColumn(bar_width=None),
+            SpinnerColumn(style="cyan"),
+            TextColumn("[bold]{task.description}"),
+            BarColumn(bar_width=None, complete_style="cyan", finished_style="green"),
             MofNCompleteColumn(),
+            TextColumn("[dim]{task.fields[unit_label]}[/dim]"),
             TimeElapsedColumn(),
             console=self.console,
             expand=True,
@@ -96,9 +107,9 @@ class DotnetProgressTracker:
         )
         description = self._progress_description()
         self.detail_text = Text(self._format_initial_detail(), overflow="fold")
-        self.task_id = self.progress.add_task(description, total=self.plan.total)
+        self.task_id = self.progress.add_task(description, total=self.plan.total, unit_label=self.plan.label)
         self.live = Live(
-            Group(self.progress, self.detail_text),
+            self._renderable(),
             console=self.console,
             refresh_per_second=8,
             transient=False,
@@ -170,6 +181,7 @@ class DotnetProgressTracker:
     def finish(self, returncode: int) -> None:
         if self.plan is None or (not self.enabled and self.update_callback is None):
             return
+        self.returncode = returncode
         if returncode == 0:
             if self.total is not None:
                 completed = max(self.completed or 0, self.total)
@@ -180,9 +192,17 @@ class DotnetProgressTracker:
         status = f"{command} ok" if returncode == 0 else f"{command} failed rc={returncode}"
         if self.errors or self.warnings:
             status += f" • diagnostics: {self.errors} errors, {self.warnings} warnings"
-        final_detail = status
-        if self.detail and self.detail != status:
-            final_detail = f"{status} • {self.detail}"
+        if command == "test" and self.tests_total:
+            assemblies = self._test_assembly_count()
+            noun = "assembly" if assemblies == 1 else "assemblies"
+            final_detail = (
+                f"{status} • tests: {self.tests_passed} passed, {self.tests_failed} failed, "
+                f"{self.tests_skipped} skipped across {assemblies} test {noun}"
+            )
+        else:
+            final_detail = status
+            if self.detail and self.detail != status:
+                final_detail = f"{status} • {self.detail}"
         self._set_progress(detail=final_detail, force_callback=True)
 
     def _update_issue_counts(self, text: str) -> None:
@@ -196,9 +216,21 @@ class DotnetProgressTracker:
             return
         test_match = _TEST_RESULT_RE.search(text)
         if test_match:
-            failed = int(test_match.group("failed"))
-            if failed > 0:
-                self.errors += failed
+            # Use the complete normalized result line as the identity. The same
+            # assembly name may legitimately run once per target framework.
+            result_key = " ".join(text.split())
+            if result_key not in self.seen_test_results:
+                self.seen_test_results.add(result_key)
+                passed = int(test_match.group("passed"))
+                failed = int(test_match.group("failed"))
+                skipped = int(test_match.group("skipped"))
+                total = int(test_match.group("total"))
+                self.tests_passed += passed
+                self.tests_failed += failed
+                self.tests_skipped += skipped
+                self.tests_total += total
+                if failed > 0:
+                    self.errors += failed
             return
         if _DIAGNOSTIC_WARNING_RE.search(text):
             self.warnings += 1
@@ -218,6 +250,12 @@ class DotnetProgressTracker:
             "percent": percent,
             "warnings": self.warnings,
             "errors": self.errors,
+            "unit_label": self.plan.label if self.plan else "items",
+            "tests_passed": self.tests_passed,
+            "tests_failed": self.tests_failed,
+            "tests_skipped": self.tests_skipped,
+            "tests_total": self.tests_total,
+            "test_assemblies": self._test_assembly_count(),
         }
 
     def _set_progress(self, *, completed: int | None = None, total: int | None = None, detail: str | None = None, force_callback: bool = False) -> None:
@@ -238,24 +276,67 @@ class DotnetProgressTracker:
         if self.live is not None:
             self.detail_text = Text(_wrap_detail(self.detail or self._format_initial_detail(), self.console.width), overflow="fold")
             if self.progress is not None:
-                self.live.update(Group(self.progress, self.detail_text))
+                self.live.update(self._renderable())
         if self.update_callback is not None and (force_callback or completed is not None or detail):
             self.update_callback(self.snapshot())
 
     def _progress_description(self) -> str:
         if self.plan is None:
             return self.command_name or "dotnet"
-        prefix = self.command_name or self.plan.command
-        if self.phase_index is not None and self.phase_total:
-            prefix = f"{prefix} {self.phase_index}/{self.phase_total}"
-        return f"{prefix} · dotnet {self.plan.command}"
+        command = self.plan.command
+        if self.target_phase_index is None and self.phase_index is not None and self.phase_total:
+            return f"{command} {self.phase_index}/{self.phase_total} · dotnet {command}"
+        return f"dotnet {command}"
 
     def _format_initial_detail(self) -> str:
         if self.plan is None:
             return ""
         target = _repo_relative(self.plan.target, self.cwd)
         total = f" • expected {self.plan.total} {self.plan.label}" if self.plan.total else ""
-        return f"target: {target}{total}"
+        return f"scope: {target}{total}"
+
+    def _test_assembly_count(self) -> int:
+        assemblies = [unit for unit in self.seen_units if unit.startswith("test:") and unit != "test:summary"]
+        if assemblies:
+            return len(assemblies)
+        return len(self.seen_test_results)
+
+    def _renderable(self) -> Panel:
+        target = (self.display_target or (self.plan.target if self.plan else "") or "default target").strip()
+        if self.plan is not None and not self.display_target:
+            target = _repo_relative(target, self.cwd)
+        if self.returncode is None:
+            icon = "◆"
+            border_style = "cyan"
+            status_style = "bold cyan"
+        elif self.returncode == 0:
+            icon = "✓"
+            border_style = "green"
+            status_style = "bold green"
+        else:
+            icon = "✗"
+            border_style = "red"
+            status_style = "bold red"
+
+        title = Text()
+        title.append(f" {icon} ", style=status_style)
+        title.append(".NET ", style="bold")
+        title.append("• ", style="dim")
+        title.append(target, style="bold white")
+        phase_bits: list[str] = []
+        if self.target_phase_index is not None and self.target_phase_total:
+            phase_bits.append(f"target phase {self.target_phase_index}/{self.target_phase_total}")
+        if self.phase_index is not None and self.phase_total:
+            phase_bits.append(f"overall {self.phase_index}/{self.phase_total}")
+        subtitle = Text(" • ".join(phase_bits), style="dim") if phase_bits else None
+        body = Group(self.progress, Text("  " + (self.detail or self._format_initial_detail()), style="dim")) if self.progress is not None else self.detail_text
+        return Panel(
+            body,
+            title=title,
+            subtitle=subtitle,
+            border_style=border_style,
+            padding=(0, 1),
+        )
 
     def _event_for_line(self, text: str) -> dict[str, Any] | None:
         assert self.plan is not None
@@ -298,10 +379,12 @@ class DotnetProgressTracker:
 
         test_match = _TEST_RESULT_RE.search(text)
         if test_match:
-            passed = int(test_match.group("passed"))
-            failed = int(test_match.group("failed"))
-            skipped = int(test_match.group("skipped"))
-            detail = f"tests: {passed} passed, {failed} failed, {skipped} skipped"
+            assemblies = self._test_assembly_count()
+            noun = "assembly" if assemblies == 1 else "assemblies"
+            detail = (
+                f"tests: {self.tests_passed} passed, {self.tests_failed} failed, "
+                f"{self.tests_skipped} skipped across {assemblies} {noun}"
+            )
             # If we have not seen any test assembly, still advance a single logical unit.
             unit = "test:summary" if not self.seen_units else ""
             return {"unit": unit, "detail": detail}
@@ -344,7 +427,7 @@ def dotnet_progress_plan(argv: list[str], cwd: str) -> DotnetProgressPlan | None
     command_args = argv[command_index + 2 :]
     target = _first_dotnet_target(command_args) or cwd
     total = _estimate_dotnet_total(command, target, cwd)
-    label = "tests" if command == "test" else "projects"
+    label = "test assemblies" if command == "test" else "projects"
     return DotnetProgressPlan(command=command, target=target, total=total, label=label)
 
 
@@ -502,7 +585,9 @@ def _normalize_project_unit(value: str, cwd: str) -> str:
 
 
 def _test_unit_from_assembly(value: str) -> str:
-    return Path(value).stem or value
+    # Keep the relative output path so multi-target-framework executions of the
+    # same project count as distinct test assemblies.
+    return value.replace("\\", "/").strip() or Path(value).stem
 
 
 def _project_from_assets_path(value: str) -> str:

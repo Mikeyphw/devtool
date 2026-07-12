@@ -30,6 +30,12 @@ qt_add_executable(devtool-control-center
 
 qt_add_executable(devtool-control-center-hud
     src/HudMain.cpp
+    src/HudStateStore.cpp
+    src/HudStateStore.h
+    src/HistoryModel.cpp
+    src/HistoryModel.h
+    src/IpcClient.cpp
+    src/IpcClient.h
 )
 
 qt_add_qml_module(devtool-control-center

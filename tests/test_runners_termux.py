@@ -16,12 +16,15 @@ class RunnersTermuxTests(unittest.TestCase):
             config = ProjectConfig(repo_root=repo_root, kind="dotnet")
             spec = CommandSpec("build", ["dotnet", "build", "Demo.sln"])
 
+            calls: list[list[str]] = []
+
             def fake_run(argv, cwd, env, text, stdout, stderr, check):
                 self.assertEqual(argv[0], "proot")
                 self.assertEqual(argv[1], "-b")
                 self.assertTrue(argv[2].endswith("/etc:/etc"))
                 self.assertEqual(argv[3], "/data/data/com.termux/files/usr/bin/dotnet")
-                self.assertEqual(argv[4:], ["build", "Demo.sln"])
+                self.assertIn(argv[4:], (["build", "Demo.sln"], ["build-server", "shutdown"]))
+                calls.append(argv[4:])
 
                 os_release_path = Path(argv[2].split(":", 1)[0]) / "os-release"
                 self.assertTrue(os_release_path.exists())
@@ -44,6 +47,8 @@ class RunnersTermuxTests(unittest.TestCase):
 
             self.assertEqual(results[0].returncode, 0)
             self.assertEqual(results[0].argv[0], "proot")
+            self.assertEqual(results[-1].name, "dotnet-build-server-shutdown")
+            self.assertEqual(calls, [["build", "Demo.sln"], ["build-server", "shutdown"]])
 
     def test_run_specs_honors_termux_dotnet_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -51,8 +56,11 @@ class RunnersTermuxTests(unittest.TestCase):
             config = ProjectConfig(repo_root=repo_root, kind="dotnet")
             spec = CommandSpec("test", ["dotnet", "test", "Demo.sln"])
 
+            calls: list[list[str]] = []
+
             def fake_run(argv, cwd, env, text, stdout, stderr, check):
                 self.assertEqual(argv[3], "/custom/dotnet")
+                calls.append(argv[4:])
                 class Result:
                     returncode = 0
                     stdout = "ok"
@@ -69,6 +77,8 @@ class RunnersTermuxTests(unittest.TestCase):
                 results, _ = run_specs(config, [spec], verbose=False)
 
             self.assertEqual(results[0].returncode, 0)
+            self.assertEqual(results[-1].name, "dotnet-build-server-shutdown")
+            self.assertEqual(calls, [["test", "Demo.sln"], ["build-server", "shutdown"]])
 
 
 class RunnersQuietModeTests(unittest.TestCase):

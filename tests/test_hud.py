@@ -506,3 +506,12 @@ class HudCurrentRunPreflightTests(unittest.TestCase):
             self.assertEqual(payload["run_id"], "current-run")
             self.assertEqual(payload["status"], "waiting")
             self.assertIn("Preparing", payload["message"])
+
+
+def test_devtool_no_hud_skips_direct_hud_renderer(monkeypatch) -> None:
+    import argparse
+    from devtool.hud import run_hud
+
+    monkeypatch.setenv("DEVTOOL_NO_HUD", "true")
+    args = argparse.Namespace()
+    assert run_hud(args) == 0

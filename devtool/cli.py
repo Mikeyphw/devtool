@@ -56,7 +56,7 @@ from .logstore import latest_log, new_log_path
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
-from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, start_auto_hud
+from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
 from .single_run import SingleRunLock
 
@@ -906,6 +906,14 @@ def _normalize_live_progress_args(args: argparse.Namespace) -> None:
     args.notify_progress = False
     args.tasker_dir = DEFAULT_TASKER_DIR
     args.notify_id = DEFAULT_NOTIFICATION_ID
+    if hud_disabled_by_environment():
+        # Hard environment override: command flags cannot re-enable any HUD
+        # state publication, renderer, bridge, notification, or overlay.
+        args.auto_hud = False
+        args.tasker_progress = False
+        args.hud_overlay = False
+        args.hud_no_overlay = True
+        return
     if getattr(args, "auto_hud", None) is None:
         args.auto_hud = bool(args.tasker_progress) and command != "hud"
     if args.auto_hud is False:
@@ -1125,13 +1133,32 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
         if not project:
             project = manifest.get("run_project", "") or manifest.get("project", "")
 
-    return load_project_config(
-        args.repo,
-        args.config,
-        target_name=target_name,
-        solution_override=solution,
-        project_override=project,
-    )
+    try:
+        return load_project_config(
+            args.repo,
+            args.config,
+            target_name=target_name,
+            solution_override=solution,
+            project_override=project,
+        )
+    except SystemExit as exc:
+        # An overlay may introduce both the named target and .devtool.toml. Allow
+        # extraction to proceed with a repository-only config, then reload after
+        # apply once the artifact-created configuration exists. Explicit CLI target
+        # mistakes remain fatal.
+        if (
+            args.command in APPLY_COMMANDS
+            and not getattr(args, "_devtool_cli_target_explicit", False)
+            and "Unknown target" in str(exc)
+        ):
+            return load_project_config(
+                args.repo,
+                args.config,
+                target_name="",
+                solution_override=solution,
+                project_override=project,
+            )
+        raise
 
 
 def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
@@ -1665,6 +1692,22 @@ def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict
         return
     raise SystemExit("Artifact manifest confirmation requires --yes in non-interactive mode.")
 
+def _reload_config_after_artifact_apply(args: argparse.Namespace, fallback: ProjectConfig, manifest: dict) -> ProjectConfig:
+    target = str(getattr(args, "target", "") or artifact_target(manifest)).strip()
+    solution = str(getattr(args, "solution", "") or artifact_solution(manifest)).strip()
+    project = str(getattr(args, "project", "") or manifest.get("run_project") or manifest.get("project") or "").strip()
+    try:
+        return load_project_config(
+            args.repo,
+            args.config,
+            target_name=target,
+            solution_override=solution,
+            project_override=project,
+        )
+    except SystemExit:
+        return fallback
+
+
 def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: object, *, log_path: Path | str | None = None, tasker_progress: TaskerProgressSink | None = None) -> tuple[list[OperationResult], str]:
     snapshot = "snapshot" in name
     artifact_type = "snapshot" if snapshot else "overlay"
@@ -1828,6 +1871,21 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         result = apply_snapshot(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
     if result.returncode != 0 and not result.failure_kind:
         result.failure_kind = "artifact_failure"
+    config_paths = result.metadata.get("config_paths", []) if result.metadata else []
+    if isinstance(config_paths, list) and config_paths:
+        preview_data = dict(getattr(args, "_devtool_artifact_preview", {}) or {})
+        changes = [dict(item) for item in preview_data.get("changes", []) if isinstance(item, dict)]
+        known = {str(item.get("path") or "") for item in changes}
+        for raw_path in config_paths:
+            try:
+                relative = str(Path(str(raw_path)).resolve().relative_to(config.repo_root.resolve())).replace("\\", "/")
+            except (OSError, ValueError):
+                relative = str(raw_path).replace("\\", "/")
+            if relative and relative not in known:
+                changes.append({"path": relative, "kind": "modify"})
+                known.add(relative)
+        preview_data["changes"] = changes
+        args._devtool_artifact_preview = preview_data
     manifest_note = "" if getattr(args, "no_manifest_check", False) else "\n" + "\n".join(validation.messages)
     text = "$ " + " ".join(result.argv) + "\n" + result.output + manifest_note
     result.output = result.output + manifest_note
@@ -3012,6 +3070,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
             transaction_path = _apply_transaction_path(results)
+            applied_manifest = read_artifact_manifest(args.artifact)
+            if results and results[-1].returncode == 0 and not getattr(args, "validate_only", False):
+                config = _reload_config_after_artifact_apply(args, config, applied_manifest)
             should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
             if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
                 skip_restore, skip_build, skip_test = _validation_skip_values(args)

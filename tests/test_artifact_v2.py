@@ -19,6 +19,7 @@ from devtool.artifacts import (
     write_archive_entries,
 )
 from devtool.cli import _apply_artifact_manifest_defaults, _normalize_command_aliases, build_parser, main
+from devtool.config import load_project_config
 
 
 def sha(data: bytes) -> str:
@@ -62,6 +63,87 @@ class ArtifactV2Tests(unittest.TestCase):
             self.assertEqual(args.target, "override")
             self.assertFalse(args.validate)
             self.assertEqual(args.commit, "")
+
+
+    def test_overlay_can_create_first_solution_and_auto_register_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "empty-repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            solution_path = "src/NewApp.sln"
+            solution = b"Microsoft Visual Studio Solution File, Format Version 12.00\n"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "target": "new_app",
+                "solution": solution_path,
+                "inventory": {
+                    "format": 1,
+                    "entries": [
+                        {"path": solution_path, "action": "add", "sha256": sha(solution), "size": len(solution)},
+                    ],
+                },
+                "validation": {"required": False},
+            }
+            archive = root / "bootstrap.zip"
+            write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), solution_path: solution})
+
+            rc = main(["-r", str(repo), "--yes", "apply-overlay", str(archive), "--keep-artifact"])
+
+            self.assertEqual(rc, 0)
+            self.assertTrue((repo / solution_path).is_file())
+            config_text = (repo / ".devtool.toml").read_text(encoding="utf-8")
+            self.assertIn('default_target = "new_app"', config_text)
+            self.assertIn("[targets.new_app]", config_text)
+            self.assertIn(f'solution = "{solution_path}"', config_text)
+            config = load_project_config(str(repo), None, target_name="new_app")
+            self.assertEqual(config.kind, "dotnet")
+            self.assertEqual(config.selected_target, "new_app")
+            self.assertEqual(config.build_target, str((repo / solution_path).resolve()))
+
+    def test_bundle_auto_registers_every_overlay_created_solution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "empty-repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+
+            def make_overlay(filename: str, solution_path: str) -> Path:
+                data = b"Microsoft Visual Studio Solution File, Format Version 12.00\n"
+                manifest = {
+                    "schema_version": 2,
+                    "type": "overlay",
+                    "solution": solution_path,
+                    "inventory": {
+                        "format": 1,
+                        "entries": [{"path": solution_path, "action": "add", "sha256": sha(data), "size": len(data)}],
+                    },
+                    "validation": {"required": False},
+                }
+                path = root / filename
+                write_archive_entries(path, {".devtool-artifact.json": json.dumps(manifest).encode(), solution_path: data})
+                return path
+
+            first = make_overlay("core.zip", "src/Core.sln")
+            second = make_overlay("ui.zip", "src/UI.sln")
+            bundle = create_overlay_bundle(
+                root / "bundle.zip",
+                [first, second],
+                name="Bootstrap bundle",
+                targets=["core", "ui"],
+            )
+
+            rc = main(["-r", str(repo), "--yes", "apply-overlays", str(bundle), "--keep-artifact"])
+
+            self.assertEqual(rc, 0)
+            config_text = (repo / ".devtool.toml").read_text(encoding="utf-8")
+            self.assertIn("[targets.core]", config_text)
+            self.assertIn('solution = "src/Core.sln"', config_text)
+            self.assertIn("[targets.ui]", config_text)
+            self.assertIn('solution = "src/UI.sln"', config_text)
+            self.assertEqual(load_project_config(str(repo), None, target_name="core").selected_target, "core")
+            self.assertEqual(load_project_config(str(repo), None, target_name="ui").selected_target, "ui")
 
     def test_inventory_hashes_actions_and_deletes_are_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

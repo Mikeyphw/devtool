@@ -71,7 +71,22 @@ def load_project_config(
     env_section = _apply_runtime_env_overrides({str(k): str(v) for k, v in loaded.get("env", {}).items()})
 
     kind = str(project_section.get("kind", "auto")).strip().lower() or "auto"
-    detected_kind = detect_project_kind(config_root) if kind == "auto" else kind
+    explicit_dotnet_intent = bool(
+        solution_override.strip()
+        or project_override.strip()
+        or str(project_section.get("solution", "")).strip()
+        or str(project_section.get("project", "")).strip()
+        or isinstance(loaded.get("targets"), dict) and bool(loaded.get("targets"))
+    )
+    if kind == "auto":
+        detected_kind = detect_project_kind(config_root)
+        # Apply-time manifests may point at a solution/project that the overlay is
+        # about to create. Treat that declaration as authoritative .NET intent
+        # instead of requiring the target to exist before extraction.
+        if detected_kind == "unknown" and explicit_dotnet_intent:
+            detected_kind = "dotnet"
+    else:
+        detected_kind = kind
 
     targets = _load_named_targets(config_root, loaded.get("targets", {}), env_section)
     default_target = str(project_section.get("default_target", "")).strip()
@@ -484,6 +499,134 @@ def _collect_paths_with_suffixes(repo_root: Path, suffixes: tuple[str, ...]) -> 
             if lower_name.endswith(suffixes_lower):
                 matches.append(base / filename)
     return sorted(matches)
+
+
+
+def _repository_relative_path(repo_root: Path, value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(repo_root.resolve()).as_posix()
+        except ValueError:
+            return path.as_posix()
+    return path.as_posix().lstrip("./")
+
+
+def _artifact_target_name(repo_root: Path, target: str, solution: str, project: str) -> str:
+    declared = str(target or "").strip()
+    if declared:
+        return declared
+    candidate = solution or project
+    if not candidate:
+        return ""
+    path = Path(_repository_relative_path(repo_root, candidate))
+    parts = [part.replace("-", "_").replace(".", "_") for part in path.parts[:-1]]
+    stem = path.stem.replace("-", "_").replace(".", "_")
+    parts.append(stem or "dotnet")
+    return "_".join(part for part in parts if part) or "dotnet"
+
+
+def _toml_key(value: str) -> str:
+    if value and all(ch.isalnum() or ch in "_-" for ch in value):
+        return value
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _toml_string(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _insert_project_setting(text: str, key: str, value: str) -> str:
+    lines = text.splitlines()
+    project_index = next((index for index, line in enumerate(lines) if line.strip() == "[project]"), None)
+    rendered = f"{key} = {_toml_string(value)}"
+    if project_index is None:
+        prefix = ["[project]", rendered, ""]
+        return "\n".join(prefix + lines).rstrip() + "\n"
+    end = len(lines)
+    for index in range(project_index + 1, len(lines)):
+        if lines[index].lstrip().startswith("["):
+            end = index
+            break
+    for index in range(project_index + 1, end):
+        stripped = lines[index].strip()
+        if stripped.startswith(key + " ") or stripped.startswith(key + "="):
+            lines[index] = rendered
+            return "\n".join(lines).rstrip() + "\n"
+    lines.insert(end, rendered)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def ensure_artifact_target_config(
+    repo_root: Path,
+    *,
+    target: str = "",
+    solution: str = "",
+    project: str = "",
+) -> dict[str, str]:
+    """Register an overlay-created .NET target in .devtool.toml when needed.
+
+    The function is intentionally additive: an overlay-provided configuration wins,
+    existing target tables are preserved, and only missing project/target metadata is
+    introduced. It is safe to call repeatedly for bundle entries.
+    """
+    repo_root = repo_root.expanduser().resolve()
+    solution_rel = _repository_relative_path(repo_root, solution)
+    project_rel = _repository_relative_path(repo_root, project)
+    if not solution_rel and not project_rel:
+        return {}
+
+    target_name = _artifact_target_name(repo_root, target, solution_rel, project_rel)
+    if not target_name:
+        return {}
+
+    config_path = repo_root / CONFIG_NAME
+    original = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    parsed: dict[str, Any] = {}
+    if original.strip():
+        try:
+            parsed = tomllib.loads(original)
+        except tomllib.TOMLDecodeError:
+            # Do not hide or overwrite a malformed user configuration. The normal
+            # config loader will report the actionable parse error later.
+            return {}
+
+    targets = parsed.get("targets") if isinstance(parsed.get("targets"), dict) else {}
+    if target_name in targets:
+        return {}
+
+    text = original
+    project_section = parsed.get("project") if isinstance(parsed.get("project"), dict) else {}
+    current_kind = str(project_section.get("kind", "auto")).strip().lower() or "auto"
+    if current_kind in {"auto", "unknown"}:
+        text = _insert_project_setting(text, "kind", "dotnet")
+        try:
+            parsed = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            return {}
+        project_section = parsed.get("project") if isinstance(parsed.get("project"), dict) else {}
+
+    if not str(project_section.get("default_target", "")).strip():
+        text = _insert_project_setting(text, "default_target", target_name)
+
+    block = [f"[targets.{_toml_key(target_name)}]"]
+    if solution_rel:
+        block.append(f"solution = {_toml_string(solution_rel)}")
+    if project_rel:
+        block.append(f"run_project = {_toml_string(project_rel)}")
+    text = text.rstrip() + ("\n\n" if text.strip() else "") + "\n".join(block) + "\n"
+    config_path.write_text(text, encoding="utf-8")
+    return {
+        "path": str(config_path),
+        "target": target_name,
+        "solution": solution_rel,
+        "project": project_rel,
+        "action": "created" if not original else "updated",
+    }
 
 
 def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:

@@ -304,3 +304,114 @@ class DotnetProgressStableTotalTests(unittest.TestCase):
             self.assertIsNotNone(plan)
             assert plan is not None
             self.assertEqual(plan.total, 3)
+
+class DotnetProgressStructuredUiTests(unittest.TestCase):
+    def test_target_panel_labels_test_assemblies_and_aggregates_each_dll(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        buffer = StringIO()
+        console = Console(file=buffer, force_terminal=True, width=120)
+        tracker = DotnetProgressTracker(
+            ["dotnet", "test", "Suite.sln"],
+            "/tmp",
+            "test[target-a]",
+            console,
+            phase_index=3,
+            phase_total=6,
+            display_target="target-a",
+            target_phase_index=3,
+            target_phase_total=3,
+        )
+
+        with tracker:
+            for index, passed in enumerate((75, 80, 70), start=1):
+                tracker.update_from_line(f"Test run for /tmp/tests/Suite{index}.Tests.dll (.NETCoreApp,Version=v8.0)")
+                tracker.update_from_line(
+                    f"Passed!  - Failed: 0, Passed: {passed}, Skipped: 0, Total: {passed}, "
+                    f"Duration: 1 s - Suite{index}.Tests.dll (net8.0)"
+                )
+            tracker.finish(0)
+
+        output = buffer.getvalue()
+        snapshot = tracker.snapshot()
+        self.assertIn("target-a", output)
+        self.assertIn("target phase 3/3", output)
+        self.assertIn("overall 3/6", output)
+        self.assertIn("test assemblies", output)
+        self.assertIn("225 passed", output)
+        self.assertEqual(snapshot["completed"], 3)
+        self.assertEqual(snapshot["total"], 3)
+        self.assertEqual(snapshot["unit_label"], "test assemblies")
+        self.assertEqual(snapshot["tests_passed"], 225)
+        self.assertEqual(snapshot["test_assemblies"], 3)
+
+    def test_duplicate_test_summary_for_same_assembly_is_not_double_counted(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        tracker = DotnetProgressTracker(
+            ["dotnet", "test", "Suite.Tests.csproj"],
+            "/tmp",
+            "test",
+            Console(file=StringIO(), force_terminal=True, width=100),
+        )
+        summary = "Passed!  - Failed: 0, Passed: 12, Skipped: 1, Total: 13, Duration: 1 s - Suite.Tests.dll (net8.0)"
+        with tracker:
+            tracker.update_from_line("Test run for /tmp/Suite.Tests.dll (.NETCoreApp,Version=v8.0)")
+            tracker.update_from_line(summary)
+            tracker.update_from_line(summary)
+            tracker.finish(0)
+
+        snapshot = tracker.snapshot()
+        self.assertEqual(snapshot["tests_passed"], 12)
+        self.assertEqual(snapshot["tests_skipped"], 1)
+        self.assertEqual(snapshot["tests_total"], 13)
+
+class DotnetTargetPhaseLayoutTests(unittest.TestCase):
+    def test_each_target_gets_its_own_restore_build_test_phase_count(self) -> None:
+        from devtool.models import CommandSpec, ProjectConfig
+        from devtool.runners import _dotnet_phase_layout
+
+        config = ProjectConfig(repo_root=Path("/repo"), kind="dotnet")
+        specs = []
+        for target in ("alpha", "beta"):
+            for command in ("restore", "build", "test"):
+                specs.append(
+                    CommandSpec(
+                        command,
+                        ["dotnet", command, f"/repo/{target}.sln"],
+                        metadata={"bundle_target": target},
+                    )
+                )
+
+        layout = _dotnet_phase_layout(specs, config)
+
+        self.assertEqual(layout[0], ("alpha", 1, 3))
+        self.assertEqual(layout[2], ("alpha", 3, 3))
+        self.assertEqual(layout[3], ("beta", 1, 3))
+        self.assertEqual(layout[5], ("beta", 3, 3))
+
+    def test_same_named_test_dlls_in_different_framework_paths_count_separately(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.dotnet_progress import DotnetProgressTracker
+
+        tracker = DotnetProgressTracker(
+            ["dotnet", "test", "Suite.Tests.csproj"],
+            "/repo",
+            "test",
+            Console(file=StringIO(), force_terminal=True, width=100),
+        )
+        with tracker:
+            tracker.update_from_line("Test run for /repo/bin/Debug/net8.0/Suite.Tests.dll (.NETCoreApp,Version=v8.0)")
+            tracker.update_from_line("Passed!  - Failed: 0, Passed: 10, Skipped: 0, Total: 10, Duration: 1 s - Suite.Tests.dll (net8.0)")
+            tracker.update_from_line("Test run for /repo/bin/Debug/net9.0/Suite.Tests.dll (.NETCoreApp,Version=v9.0)")
+            tracker.update_from_line("Passed!  - Failed: 0, Passed: 11, Skipped: 0, Total: 11, Duration: 1 s - Suite.Tests.dll (net9.0)")
+            tracker.finish(0)
+
+        snapshot = tracker.snapshot()
+        self.assertEqual(snapshot["test_assemblies"], 2)
+        self.assertEqual(snapshot["tests_passed"], 21)

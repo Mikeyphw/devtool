@@ -110,11 +110,46 @@ Item {
                 id: summaryColumn
                 anchors.fill: parent
                 anchors.margins: 12
-                spacing: 5
-                Label { text: artifactInspector.summary.name || artifactInspector.summary.filename || "Artifact"; color: theme.windowText; font.pointSize: theme.cardTitlePointSize; font.weight: Font.DemiBold }
+                spacing: 8
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Rectangle {
+                        Layout.preferredWidth: 34
+                        Layout.preferredHeight: 34
+                        radius: 10
+                        color: theme.infoSurface
+                        Label { anchors.centerIn: parent; text: "◆"; color: theme.info; font.pointSize: theme.bodyPointSize; font.weight: Font.Bold }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Label { Layout.fillWidth: true; text: artifactInspector.summary.name || artifactInspector.summary.filename || "Artifact"; color: theme.windowText; font.pointSize: theme.cardTitlePointSize; font.weight: Font.DemiBold; elide: Text.ElideRight }
+                        Label { text: (artifactInspector.summary.kind || "overlay").replace(/_/g, " ").toUpperCase() + "  ·  SCHEMA " + (artifactInspector.summary.schema_version || 1); color: theme.info; font.pointSize: theme.captionPointSize; font.weight: Font.DemiBold }
+                    }
+                    Rectangle {
+                        implicitWidth: summaryState.implicitWidth + 20
+                        implicitHeight: 28
+                        radius: 8
+                        color: ((artifactInspector.summary.validation || {}).ok) ? theme.successSurface : theme.errorSurface
+                        Label {
+                            id: summaryState
+                            anchors.centerIn: parent
+                            text: ((artifactInspector.summary.validation || {}).ok) ? "READY" : "CHECK FAILED"
+                            color: ((artifactInspector.summary.validation || {}).ok) ? theme.success : theme.error
+                            font.pointSize: theme.captionPointSize
+                            font.weight: Font.DemiBold
+                        }
+                    }
+                }
                 Label { Layout.fillWidth: true; text: artifactInspector.summary.description || "No description"; color: theme.mutedText; wrapMode: Text.Wrap; font.pointSize: theme.bodyPointSize }
-                Label { text: (artifactInspector.summary.kind || "overlay") + " · schema " + (artifactInspector.summary.schema_version || 1) + (artifactInspector.summary.target ? " · " + artifactInspector.summary.target : ""); color: theme.info; font.pointSize: theme.smallPointSize }
-                Label { text: "SHA-256  " + (artifactInspector.summary.sha256 || ""); color: theme.subtleText; font.family: "monospace"; font.pointSize: theme.captionPointSize }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Label { visible: artifactInspector.summary.target !== ""; text: "Target  " + artifactInspector.summary.target; color: theme.info; font.pointSize: theme.smallPointSize; font.weight: Font.DemiBold }
+                    Label { visible: artifactInspector.summary.solution !== ""; text: "Solution  " + artifactInspector.summary.solution; color: theme.mutedText; font.pointSize: theme.smallPointSize; elide: Text.ElideMiddle }
+                    Label { visible: artifactInspector.overlays.length > 0; text: artifactInspector.overlays.length + " overlays"; color: theme.mutedText; font.pointSize: theme.smallPointSize }
+                }
             }
         }
 

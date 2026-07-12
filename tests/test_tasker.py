@@ -212,3 +212,11 @@ def test_direct_termux_android_bridge_autostarts_native_renderer() -> None:
         launcher = run.call_args.args[0][-1]
         assert "--mode android-bridge" in launcher
         assert "--follow-active" in launcher
+
+
+def test_devtool_no_hud_hard_disables_auto_hud(tmp_path) -> None:
+    with patch.dict("os.environ", {"DEVTOOL_NO_HUD": "1"}, clear=False), patch(
+        "devtool.tasker.subprocess.run"
+    ) as run:
+        assert start_auto_hud(tmp_path / "hud", mode="desktop") is False
+    run.assert_not_called()

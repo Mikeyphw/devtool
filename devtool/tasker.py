@@ -70,6 +70,19 @@ DEFAULT_EVENT_HTTP_URL = os.environ.get("DEVTOOL_EVENT_HTTP_URL", "http://127.0.
 DEFAULT_EVENT_HTTP_TIMEOUT_S = 0.5
 DEFAULT_HUD_SINGLETON_MODE = os.environ.get("DEVTOOL_HUD_SINGLETON", "reuse").strip().lower() or "reuse"
 DEFAULT_RUN_HEARTBEAT_INTERVAL_S = 5.0
+HUD_DISABLE_ENV = "DEVTOOL_NO_HUD"
+_TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+def hud_disabled_by_environment() -> bool:
+    """Return whether HUD publication/rendering is hard-disabled.
+
+    DEVTOOL_NO_HUD is intentionally stronger than command-line flags: when it
+    is truthy, --auto-hud, --hud-overlay, and direct ``devtool hud`` launches
+    are all ignored. DEVTOOL_NO_AUTO_HUD remains supported as the narrower
+    legacy switch used by detached HUD children.
+    """
+    return os.environ.get(HUD_DISABLE_ENV, "").strip().lower() in _TRUTHY_ENV_VALUES
 
 
 def _boot_id() -> str:
@@ -296,7 +309,7 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     helper follows that pointer, so one already-open window can switch to the
     newest task instead of spawning duplicate windows.
     """
-    if os.environ.get("DEVTOOL_AUTO_HUD_CHILD") == "1" or os.environ.get("DEVTOOL_NO_AUTO_HUD") == "1":
+    if hud_disabled_by_environment() or os.environ.get("DEVTOOL_AUTO_HUD_CHILD") == "1" or os.environ.get("DEVTOOL_NO_AUTO_HUD") == "1":
         return False
 
     try:

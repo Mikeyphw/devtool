@@ -54,22 +54,59 @@ class SummaryRenderingTests(unittest.TestCase):
     def test_render_artifact_manifest_uses_semantic_sections(self) -> None:
         stream = StringIO()
         console = Console(file=stream, force_terminal=False, width=80)
+        hidden_hash = "a" * 64
         render_artifact_manifest(
             {
                 "type": "overlay",
                 "repo_name": "sims3tools",
                 "target": "s3ow_avalonia_TextureTweaker3_Modern",
-                "files": ["a.cs", "b.cs"],
+                "inventory": {
+                    "entries": [
+                        {"path": "a.cs", "action": "add", "sha256": hidden_hash, "size": 42},
+                        {"path": "b.cs", "action": "modify", "source_sha256": "b" * 64},
+                    ]
+                },
                 "validation": {"dotnet_available_in_authoring_environment": False, "recommended_commands": ["dotnet test App.sln --no-build"]},
             },
             console_obj=console,
         )
         output = stream.getvalue()
-        self.assertIn("Parsed artifact metadata", output)
-        self.assertIn("Summary", output)
-        self.assertIn("Files", output)
-        self.assertIn("Recommended commands", output)
+        self.assertIn("Artifact summary", output)
+        self.assertIn("Inventory", output)
+        self.assertIn("Action", output)
+        self.assertIn("Path", output)
+        self.assertIn("a.cs", output)
+        self.assertIn("b.cs", output)
+        self.assertIn("Recommended Commands", output)
         self.assertIn("dotnet test App.sln --no-build", output)
+        self.assertNotIn("sha256", output.lower())
+        self.assertNotIn(hidden_hash, output)
+        self.assertNotIn("[#]", output)
+
+    def test_render_bundle_manifest_uses_named_rows_without_index_nodes_or_hashes(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=100)
+        render_artifact_manifest(
+            {
+                "type": "overlay_bundle",
+                "name": "Modernization bundle",
+                "overlays": [
+                    {"id": "core", "artifact": "overlays/core.zip", "target": "core", "sha256": "c" * 64},
+                    {"id": "ui", "artifact": "overlays/ui.zip", "target": "ui", "after": ["core"]},
+                ],
+                "inventory": [
+                    {"path": "src/Core.cs", "action": "modify", "sha256": "d" * 64},
+                ],
+            },
+            console_obj=console,
+        )
+        output = stream.getvalue()
+        self.assertIn("Bundle overlays", output)
+        self.assertIn("core", output)
+        self.assertIn("ui", output)
+        self.assertIn("src/Core.cs", output)
+        self.assertNotIn("sha256", output.lower())
+        self.assertNotIn("[#]", output)
 
     def test_build_runner_json_uses_concise_notification_format(self) -> None:
         result = OperationResult(

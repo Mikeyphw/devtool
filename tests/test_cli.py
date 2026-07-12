@@ -929,3 +929,24 @@ class OverlayClipboardSummaryTests(unittest.TestCase):
             self.assertTrue(copied)
             self.assertIn("Applied overlay: named_overlay.zip", copied[-1])
             self.assertIn(str(artifact), copied[-1])
+
+
+def test_devtool_no_hud_overrides_all_hud_flags(monkeypatch) -> None:
+    import argparse
+    from devtool.cli import _normalize_live_progress_args
+
+    monkeypatch.setenv("DEVTOOL_NO_HUD", "1")
+    monkeypatch.setenv("DEVTOOL_HUD_OVERLAY", "1")
+    args = argparse.Namespace(
+        command="validate",
+        auto_hud=True,
+        hud_overlay=True,
+        hud_no_overlay=False,
+    )
+
+    _normalize_live_progress_args(args)
+
+    assert args.auto_hud is False
+    assert args.tasker_progress is False
+    assert args.hud_overlay is False
+    assert args.hud_no_overlay is True

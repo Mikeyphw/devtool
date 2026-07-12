@@ -28,7 +28,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, read_active_hud_directory
+from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, hud_disabled_by_environment, read_active_hud_directory
 from .android_live_hud import AndroidLiveHudBridge
 
 
@@ -2333,6 +2333,8 @@ def build_hud_parser() -> argparse.ArgumentParser:
 
 
 def run_hud(args: argparse.Namespace) -> int:
+    if hud_disabled_by_environment():
+        return 0
     directory = Path(args.tasker_dir).expanduser()
     mode = choose_hud_mode(str(args.mode))
     interval_s = max(0.05, float(args.poll_interval))

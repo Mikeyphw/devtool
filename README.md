@@ -101,6 +101,8 @@ The desktop HUD binds to the current run before rendering, filters events by run
 
 The GTK desktop window starts in a compact, pipeline-focused mode. It shows separate live operation segments for extract, restore, build, test, artifact validation, commit, and rollback as applicable. Restore/build/test segments advance from parsed command output while the command is still running. Multi-workspace artifacts keep independent target-scoped segments such as `Build · s3atelier` and `Build · s3pi-base`, wrapped into rows of four. Live **ERRORS** and **WARNINGS** totals come directly from the active parser and remain visible beside the current operation, along with Copy summary/Open log/Close actions. Select **Expand** to reveal recent events and diagnostic details; the choice is preserved for the lifetime of that HUD window. Set `DEVTOOL_DESKTOP_HUD_START_EXPANDED=1` to launch expanded.
 
+Set `DEVTOOL_NO_HUD=1` to hard-disable all HUD publication and rendering. This environment override wins over `--auto-hud`, `--hud-mode`, `--hud-overlay`, and direct `devtool hud` invocations, making it suitable for CI, headless shells, and commands that must never open or update a HUD.
+
 ## Validation sequence
 
 For .NET targets, validation uses:

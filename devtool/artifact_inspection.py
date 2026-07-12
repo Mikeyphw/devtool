@@ -16,10 +16,10 @@ from .artifacts import (
     is_overlay_bundle,
     is_artifact_metadata_member,
     list_archive_members,
+    materialize_overlay_bundle_entries,
     preview_artifact,
     read_artifact_manifest,
     resolve_artifact_path,
-    sha256_file,
     validate_artifact,
     validate_overlay_bundle,
 )
@@ -66,6 +66,36 @@ def _bundle_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _clean_inventory(entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+    cleaned: list[dict[str, str]] = []
+    for entry in entries:
+        path = str(entry.get("path") or "").strip()
+        if not path:
+            continue
+        cleaned.append({
+            "path": path,
+            "action": str(entry.get("action") or entry.get("kind") or "payload").strip().lower() or "payload",
+        })
+    return cleaned
+
+
+def _bundle_inventory(path: Path) -> list[dict[str, str]]:
+    inventory: list[dict[str, str]] = []
+    with tempfile.TemporaryDirectory(prefix="devtool-inspect-bundle-") as tmp:
+        _manifest, entries = materialize_overlay_bundle_entries(path, tmp)
+        for entry in entries:
+            nested_manifest = read_artifact_manifest(entry.path)
+            nested = artifact_inventory_entries(nested_manifest)
+            if not nested:
+                nested = [
+                    {"path": member.name, "action": "payload"}
+                    for member in list_archive_members(entry.path, include_data=False)
+                    if not member.is_dir and not is_artifact_metadata_member(member.name)
+                ]
+            inventory.extend(_clean_inventory(nested))
+    return inventory
+
+
 def inspect_artifact(
     artifact: str | Path,
     *,
@@ -102,18 +132,16 @@ def inspect_artifact(
         if include_diff:
             diff_text = diff_artifact(repo, path, snapshot=False, context=diff_context, max_lines=max_diff_lines)
 
-    inventory = artifact_inventory_entries(manifest)
+    inventory = _bundle_inventory(path) if bundle else _clean_inventory(artifact_inventory_entries(manifest))
     if not inventory and preview:
-        inventory = [
+        inventory = _clean_inventory([
             {
                 "path": str(change.get("path") or ""),
                 "action": str(change.get("kind") or "unknown"),
-                "overlay": str(change.get("overlay") or ""),
-                "target": str(change.get("target") or ""),
             }
             for change in preview.get("changes", [])
             if isinstance(change, dict)
-        ]
+        ])
     if not inventory:
         declared = manifest.get("files")
         if isinstance(declared, list):
@@ -124,6 +152,7 @@ def inspect_artifact(
                 for member in list_archive_members(path, include_data=False)
                 if not member.is_dir and not is_artifact_metadata_member(member.name)
             ]
+    inventory = _clean_inventory(inventory)
     commit_enabled, commit_message, commit_strategy = artifact_commit_policy(manifest)
     validation_policy = artifact_validation_policy(manifest)
     counts: dict[str, int] = {"add": 0, "modify": 0, "delete": 0, "other": 0}
@@ -136,7 +165,6 @@ def inspect_artifact(
         "artifact": str(path),
         "filename": path.name,
         "size": path.stat().st_size,
-        "sha256": sha256_file(path),
         "kind": "overlay_bundle" if bundle else str(manifest.get("type") or "overlay"),
         "schema_version": int(manifest.get("schema_version", manifest.get("version", 1)) or 1),
         "name": str(manifest.get("name") or path.stem),
