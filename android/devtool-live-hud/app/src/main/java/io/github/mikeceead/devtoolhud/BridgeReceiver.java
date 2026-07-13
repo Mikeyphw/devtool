@@ -16,9 +16,13 @@ public final class BridgeReceiver extends BroadcastReceiver {
             return;
         }
 
-        NotificationController controller = new NotificationController(context);
         String action = intent.getAction() == null ? "" : intent.getAction();
         String runId = intent.getStringExtra("run_id");
+        if (!action.endsWith("CANCEL") && !BridgeUpdateGate.accept(context, intent)) {
+            Log.d(TAG, "Ignored stale or out-of-order update for run " + runId);
+            return;
+        }
+        NotificationController controller = new NotificationController(context);
         if (action.endsWith("CANCEL")) {
             controller.cancel(runId);
             OverlayHudService.cancel(runId);

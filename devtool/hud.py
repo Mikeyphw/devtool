@@ -1139,6 +1139,23 @@ def live_issue_counts(events: Iterable[dict[str, Any]], state: HudState) -> tupl
                 errors.add(normalized)
             elif event_is_warning(event):
                 warnings.add(normalized)
+    # The state snapshot is authoritative and contains live phase counters even
+    # when the Android forwarder deliberately avoids reparsing the full JSONL
+    # history on every refresh.
+    raw = state.raw if isinstance(state.raw, dict) else {}
+    raw_totals = raw.get("totals") if isinstance(raw.get("totals"), dict) else {}
+    explicit_errors = max(
+        explicit_errors,
+        int(_coerce_int(raw_totals.get("errors") or raw_totals.get("failed")) or 0),
+    )
+    explicit_warnings = max(explicit_warnings, int(_coerce_int(raw_totals.get("warnings")) or 0))
+    phase_progress = raw.get("phase_progress") if isinstance(raw.get("phase_progress"), list) else []
+    for item in phase_progress:
+        if not isinstance(item, dict):
+            continue
+        explicit_errors = max(explicit_errors, int(_coerce_int(item.get("errors")) or 0))
+        explicit_warnings = max(explicit_warnings, int(_coerce_int(item.get("warnings")) or 0))
+
     completion = completion_from_state(state)
     explicit_errors = max(explicit_errors, int(completion.get("errors", 0) or 0), int(completion.get("failed", 0) or 0))
     explicit_warnings = max(explicit_warnings, int(completion.get("warnings", 0) or 0))
@@ -1463,7 +1480,13 @@ class TerminalHud:
 
 
 class AndroidAppHud:
-    """Forward the one active HUD run to the native Android companion app."""
+    """Forward the authoritative active state to the Android companion app.
+
+    The forwarder intentionally reads only ``state.json`` for normal live
+    updates.  The state already contains the complete pipeline and independent
+    per-workspace phase snapshots, so reparsing thousands of JSONL events every
+    100 ms only adds lag.  History remains available to the app through logs.
+    """
 
     def __init__(self, *, recent_events: int = DEFAULT_RECENT_EVENTS, overlay: bool | None = None) -> None:
         self.recent_events = max(0, int(recent_events))
@@ -1472,14 +1495,95 @@ class AndroidAppHud:
         self.bridge = AndroidLiveHudBridge()
         self.run_started_at: dict[str, int] = {}
 
-    def _payload(self, state: HudState, directory: Path, events: list[dict[str, Any]] | None = None) -> tuple[str, dict[str, Any]]:
+    @staticmethod
+    def _timestamp_ms(value: object) -> int:
+        text = str(value or "").strip()
+        if not text:
+            return int(time.time() * 1000)
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return int(parsed.timestamp() * 1000)
+        except ValueError:
+            return int(time.time() * 1000)
+
+    @staticmethod
+    def _pipeline_percent(steps: list[HudOperationStep], *, terminal_ok: bool) -> int:
+        if terminal_ok:
+            return 100
+        if not steps:
+            return 0
+        value = 0.0
+        for step in steps:
+            if step.status in {"ok", "failed", "skipped"}:
+                value += 100.0
+            else:
+                value += max(0, min(100, int(step.progress)))
+        return max(0, min(100, int(round(value / len(steps)))))
+
+    @staticmethod
+    def _live_test_metrics(state: HudState) -> dict[str, int]:
+        raw = state.raw if isinstance(state.raw, dict) else {}
+        result = {"passed": 0, "failed": 0, "skipped": 0, "total": 0, "assemblies": 0}
+        phase_progress = raw.get("phase_progress") if isinstance(raw.get("phase_progress"), list) else []
+        for item in phase_progress:
+            if not isinstance(item, dict):
+                continue
+            name = _operation_step_key(str(item.get("name") or item.get("command") or ""))
+            has_metrics = any(item.get(key) is not None for key in (
+                "tests_passed", "tests_failed", "tests_skipped", "tests_total", "test_assemblies",
+            ))
+            if name != "test" and not has_metrics:
+                continue
+            result["passed"] += max(0, int(_coerce_int(item.get("tests_passed")) or 0))
+            result["failed"] += max(0, int(_coerce_int(item.get("tests_failed")) or 0))
+            result["skipped"] += max(0, int(_coerce_int(item.get("tests_skipped")) or 0))
+            result["total"] += max(0, int(_coerce_int(item.get("tests_total")) or 0))
+            result["assemblies"] += max(0, int(_coerce_int(item.get("test_assemblies")) or 0))
+
         completion = completion_from_state(state) or {}
-        events = events or []
         tests = completion.get("tests") if isinstance(completion.get("tests"), dict) else {}
-        error_count, warning_count = live_issue_counts(events, state)
-        steps = operation_steps(state, events)
+        if tests:
+            # Completion is the final authority and avoids double counting when
+            # a workflow reports aggregate plus per-workspace phase metrics.
+            result["passed"] = max(0, int(tests.get("passed", 0) or 0))
+            result["failed"] = max(0, int(tests.get("failed", 0) or 0))
+            result["skipped"] = max(0, int(tests.get("skipped", 0) or 0))
+            result["total"] = max(0, int(tests.get("total", 0) or 0))
+        if result["total"] <= 0:
+            result["total"] = result["passed"] + result["failed"] + result["skipped"]
+        return result
+
+    @staticmethod
+    def _workspace_context(state: HudState) -> tuple[str, int, int]:
+        raw = state.raw if isinstance(state.raw, dict) else {}
+        pipeline = raw.get("pipeline") if isinstance(raw.get("pipeline"), list) else []
+        scopes: list[str] = []
+        for item in pipeline:
+            if not isinstance(item, dict):
+                continue
+            scope = str(item.get("workspace") or item.get("target") or "").strip()
+            if scope and scope not in scopes:
+                scopes.append(scope)
+        phase = raw.get("phase") if isinstance(raw.get("phase"), dict) else {}
+        active = str(phase.get("workspace") or phase.get("target") or state.target or "").strip()
+        if active and active not in scopes:
+            scopes.append(active)
+        total = max(1, len(scopes))
+        index = scopes.index(active) + 1 if active in scopes else 1
+        return active, index, total
+
+    def _payload(self, state: HudState, directory: Path) -> tuple[str, dict[str, Any]]:
+        completion = completion_from_state(state) or {}
+        steps = operation_steps(state, [])
+        error_count, warning_count = live_issue_counts([], state)
+        tests = self._live_test_metrics(state)
         run_id = str(state.raw.get("run_id") or state.raw.get("task_id") or directory.name or "devtool")
-        started_at = self.run_started_at.setdefault(run_id, int(time.time() * 1000))
+        started_at = self.run_started_at.setdefault(
+            run_id,
+            self._timestamp_ms(state.raw.get("started_at")) if isinstance(state.raw, dict) else int(time.time() * 1000),
+        )
         status = (state.status or "running").strip().lower()
         action = "update"
         if status in {"ok", "skipped"}:
@@ -1491,24 +1595,46 @@ class AndroidAppHud:
             duration_ms = int(float(duration_seconds) * 1000) if duration_seconds is not None else 0
         except (TypeError, ValueError):
             duration_ms = 0
+
         raw_targets = state.raw.get("targets") if isinstance(state.raw, dict) else None
         target_values = [str(item).strip() for item in raw_targets if str(item).strip()] if isinstance(raw_targets, list) else []
         target_values = list(dict.fromkeys(target_values))
         android_target = ", ".join(_compact_step_scope(item) for item in target_values) if len(target_values) > 1 else (target_values[0] if target_values else state.target)
+        workspace_name, workspace_index, workspace_total = self._workspace_context(state)
+        phase_progress = state.raw.get("progress") if isinstance(state.raw.get("progress"), dict) else {}
+        unit_label = ""
+        raw_phase_progress = state.raw.get("phase_progress") if isinstance(state.raw.get("phase_progress"), list) else []
+        for item in raw_phase_progress:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("status") or "").lower() == "running":
+                unit_label = str(item.get("unit_label") or "").strip()
+                break
+
+        overall_percent = self._pipeline_percent(steps, terminal_ok=status in {"ok", "skipped"})
         payload: dict[str, Any] = {
             "run_id": run_id,
+            "sequence": int(_coerce_int(state.raw.get("sequence")) or 0),
+            "updated_at_ms": self._timestamp_ms(state.raw.get("updated_at")),
             "status": status,
             "phase": human_phase_name(state.phase_name or state.command) or human_status(status),
             "detail": human_detail(state.text or state.expanded_text),
             "repo": state.repo_name or (Path(state.repo_root).name if state.repo_root else "devtool"),
             "target": android_target,
-            "progress": state.percent if state.percent is not None else 0,
+            "workspace": workspace_name,
+            "workspace_index": workspace_index,
+            "workspace_total": workspace_total,
+            "progress": overall_percent,
+            "phase_progress": state.percent if state.percent is not None else 0,
             "indeterminate": state.percent is None and status not in {"ok", "failed", "skipped"},
             "current": state.current,
             "total": state.total,
-            "passed": int(tests.get("passed", 0) or 0),
-            "failed": int(tests.get("failed", 0) or 0),
-            "skipped": int(tests.get("skipped", 0) or 0),
+            "unit_label": unit_label or str(phase_progress.get("unit_label") or ""),
+            "passed": tests["passed"],
+            "failed": tests["failed"],
+            "skipped": tests["skipped"],
+            "test_total": tests["total"],
+            "test_assemblies": tests["assemblies"],
             "warnings": warning_count,
             "errors": error_count,
             "steps_json": json.dumps([step.to_dict() for step in steps], separators=(",", ":")),
@@ -1521,21 +1647,20 @@ class AndroidAppHud:
         return action, payload
 
     def update(self, state: HudState, *, directory: Path) -> None:
-        raw_events = _last_jsonl_events(directory / "events.jsonl", 2000)
-        events = events_for_state(raw_events, state)
-        error_count, warning_count = live_issue_counts(events, state)
-        steps = operation_steps(state, events)
+        action, payload = self._payload(state, directory)
         signature = (
-            state.raw.get("run_id"), state.status, state.phase_name, state.command,
-            state.current, state.total, state.repo_name, state.target, state.text,
-            error_count, warning_count,
-            tuple((step.key, step.status, step.progress) for step in steps),
+            payload.get("run_id"), payload.get("sequence"), action, payload.get("status"),
+            payload.get("phase"), payload.get("progress"), payload.get("phase_progress"),
+            payload.get("current"), payload.get("total"), payload.get("passed"),
+            payload.get("failed"), payload.get("skipped"), payload.get("warnings"),
+            payload.get("errors"), payload.get("steps_json"),
         )
         if signature == self.last_signature:
             return
-        self.last_signature = signature
-        action, payload = self._payload(state, directory, events)
-        self.bridge.send(action, payload)
+        # Failed broadcasts are retried on the next poll.  Previously the
+        # signature was committed first, permanently dropping transient sends.
+        if self.bridge.send(action, payload):
+            self.last_signature = signature
 
     def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
         while True:

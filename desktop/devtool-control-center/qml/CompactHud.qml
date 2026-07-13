@@ -15,6 +15,9 @@ Window {
     flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
 
     property var run: hudStore.activeRun || ({})
+    property real backgroundOpacity: theme.dark ? 0.14 : 0.18
+    property real panelOpacity: theme.dark ? 0.36 : 0.42
+    property real recessedOpacity: theme.dark ? 0.26 : 0.32
     property bool parserExpanded: false
     property string expandedLaneKey: ""
     property bool copiedFeedback: false
@@ -332,8 +335,8 @@ Window {
         anchors.fill: parent
         radius: 18
         clip: true
-        color: theme.window
-        border.color: theme.alpha(theme.windowText, 0.10)
+        color: theme.alpha(theme.window, root.backgroundOpacity)
+        border.color: theme.alpha(theme.windowText, 0.24)
         border.width: 1
 
         ColumnLayout {
@@ -347,7 +350,7 @@ Window {
                 Layout.fillWidth: true
                 Layout.preferredHeight: headerContent.implicitHeight + 22
                 radius: 16
-                color: stateSurface()
+                color: theme.alpha(stateSurface(), root.panelOpacity)
                 border.color: theme.alpha(stateColor(), visualState() === "running" ? 0.18 : 0.34)
                 border.width: 1
 
@@ -509,7 +512,7 @@ Window {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 9
                             radius: 5
-                            color: theme.recessedSurface
+                            color: theme.alpha(theme.recessedSurface, root.recessedOpacity)
                             border.color: theme.alpha(theme.windowText, 0.06)
                             border.width: 1
                             Rectangle {
@@ -588,7 +591,7 @@ Window {
                             width: workspaceColumn.width
                             implicitHeight: cardColumn.implicitHeight + 18
                             radius: 12
-                            color: laneStatus(modelData) === "failed" ? theme.errorSurface : theme.surface
+                            color: theme.alpha(laneStatus(modelData) === "failed" ? theme.errorSurface : theme.surface, root.panelOpacity)
                             border.width: 1
                             border.color: laneStatus(modelData) === "failed" ? theme.alpha(theme.error, 0.40)
                                         : laneStatus(modelData) === "running" ? theme.alpha(theme.info, 0.34)
@@ -665,7 +668,7 @@ Window {
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: 5
                                         radius: 3
-                                        color: theme.recessedSurface
+                                        color: theme.alpha(theme.recessedSurface, root.recessedOpacity)
                                         border.color: theme.alpha(theme.windowText, 0.05)
                                         border.width: 1
                                         Rectangle {
@@ -732,7 +735,7 @@ Window {
                                                         implicitWidth: scriptLabel.implicitWidth + 8
                                                         implicitHeight: 16
                                                         radius: 8
-                                                        color: theme.elevatedSurface
+                                                        color: theme.alpha(theme.elevatedSurface, root.panelOpacity)
                                                         Label {
                                                             id: scriptLabel
                                                             anchors.centerIn: parent
@@ -812,7 +815,7 @@ Window {
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? parserContent.implicitHeight + 20 : 0
                 radius: 12
-                color: theme.recessedSurface
+                color: theme.alpha(theme.recessedSurface, root.recessedOpacity)
                 border.color: theme.alpha(theme.info, 0.28)
                 border.width: 1
 
@@ -857,7 +860,7 @@ Window {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 48
                                 radius: 9
-                                color: theme.elevatedSurface
+                                color: theme.alpha(theme.elevatedSurface, root.panelOpacity)
                                 border.color: theme.alpha(theme.windowText, 0.07)
                                 Column {
                                     anchors.centerIn: parent
@@ -886,7 +889,7 @@ Window {
                         Layout.fillWidth: true
                         text: "Last parsed update: " + (activeStep().detail || "Waiting for dotnet output")
                         color: theme.subtleText
-                        font.family: "monospace"
+                        font.family: theme.monospaceFamily
                         font.pointSize: theme.captionPointSize
                         elide: Text.ElideMiddle
                     }

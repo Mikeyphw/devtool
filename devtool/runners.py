@@ -443,8 +443,26 @@ def _iter_process_output_lines(
     def emit_text(text: str):
         nonlocal pending
         pending += text
-        while "\n" in pending:
-            line, pending = pending.split("\n", 1)
+        # MSBuild/NuGet sometimes redraw progress with carriage returns rather
+        # than newlines. Treat standalone CR as a live line boundary while
+        # preserving normal CRLF pairs.
+        while True:
+            newline = pending.find("\n")
+            carriage = pending.find("\r")
+            candidates = [index for index in (newline, carriage) if index >= 0]
+            if not candidates:
+                break
+            index = min(candidates)
+            delimiter = pending[index]
+            if delimiter == "\r" and index + 1 >= len(pending):
+                # A trailing CR may be the first half of CRLF; wait for one more
+                # chunk before deciding whether it is a redraw boundary.
+                break
+            line = pending[:index]
+            if delimiter == "\r" and index + 1 < len(pending) and pending[index + 1] == "\n":
+                pending = pending[index + 2:]
+            else:
+                pending = pending[index + 1:]
             yield line + "\n"
 
     def emit_and_track(text: str):
@@ -694,7 +712,7 @@ def _run_process_live(
                     )
                     if snapshot.get(key) is not None
                 },
-                force=True,
+                force=False,
             )
         tracker.update_callback = _tasker_update
     def _interrupt_process() -> None:

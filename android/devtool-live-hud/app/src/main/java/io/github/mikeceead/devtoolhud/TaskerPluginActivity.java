@@ -1,7 +1,6 @@
 package io.github.mikeceead.devtoolhud;
 
 import android.app.Activity;
-import android.content.ClipboardManager;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
@@ -93,18 +92,12 @@ public final class TaskerPluginActivity extends Activity {
     }
 
     private void pasteCommand() {
-        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
-        if (clipboard == null || !clipboard.hasPrimaryClip() || clipboard.getPrimaryClip() == null
-                || clipboard.getPrimaryClip().getItemCount() == 0) {
-            Toast.makeText(this, "Clipboard is empty or unavailable", Toast.LENGTH_LONG).show();
+        ClipboardTextReader.Result result = ClipboardTextReader.read(this);
+        if (!result.ok()) {
+            Toast.makeText(this, result.error, Toast.LENGTH_LONG).show();
             return;
         }
-        CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(this);
-        if (text == null || text.toString().trim().isEmpty()) {
-            Toast.makeText(this, "Clipboard does not contain text", Toast.LENGTH_LONG).show();
-            return;
-        }
-        command.setText(text.toString().trim());
+        command.setText(result.text);
         Toast.makeText(this, "Command pasted", Toast.LENGTH_SHORT).show();
     }
 

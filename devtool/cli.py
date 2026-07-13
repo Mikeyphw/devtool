@@ -222,8 +222,8 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
         cmd.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
         cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
-        cmd.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after apply (default: delete after success or failure)")
-        cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Deprecated: artifacts are deleted after failure by default unless --keep-artifact is used")
+        cmd.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
+        cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
         _add_validation_skip_flags(cmd)
         cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
         cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
@@ -245,8 +245,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
         sub.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
         sub.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
-        sub.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after apply (default: delete after success or failure)")
-        sub.add_argument("--delete-artifact-on-failure", action="store_true", help="Deprecated: artifacts are deleted after failure by default unless --keep-artifact is used")
+        sub.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
+        sub.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
         _add_validation_skip_flags(sub)
         sub.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
         sub.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
@@ -2539,7 +2539,7 @@ def _run_sequential_overlays(
             cleanup = _delete_original_artifact_after_apply(
                 all_results,
                 artifact=getattr(args, "artifact", ""),
-                delete_on_failure=True,
+                delete_on_failure=bool(getattr(args, "delete_artifact_on_failure", False)),
             )
             if cleanup is not None:
                 all_results.append(cleanup)
@@ -3462,7 +3462,7 @@ def main(argv: list[str] | None = None) -> int:
                 cleanup_result = _delete_original_artifact_after_apply(
                     results,
                     artifact=getattr(args, "artifact", ""),
-                    delete_on_failure=True,
+                    delete_on_failure=bool(getattr(args, "delete_artifact_on_failure", False)),
                 )
                 if cleanup_result is not None:
                     results.append(cleanup_result)

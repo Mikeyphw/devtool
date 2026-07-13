@@ -34,6 +34,35 @@ AppScrollView {
                     font.pointSize: theme.smallPointSize
                     lineHeight: theme.bodyLineHeight
                 }
+                SectionHeading { text: "Execution terminal"; Layout.topMargin: 6 }
+                Label {
+                    Layout.fillWidth: true
+                    text: "Preferred terminal: " + (appController.preferredTerminal ? appController.preferredTerminal : "not found")
+                    color: appController.preferredTerminal ? theme.success : theme.error
+                    font.family: theme.monospaceFamily
+                    font.pointSize: theme.smallPointSize
+                    elide: Text.ElideMiddle
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "Shell: " + appController.preferredShell + " · .NET: " + (appController.dotnetExecutable || "not found")
+                    color: appController.dotnetExecutable ? theme.mutedText : theme.warning
+                    font.family: theme.monospaceFamily
+                    font.pointSize: theme.smallPointSize
+                    elide: Text.ElideMiddle
+                }
+                AppCheckBox {
+                    text: "Close terminal automatically when the command finishes"
+                    checked: appController.autoCloseTerminal
+                    onToggled: appController.autoCloseTerminal = checked
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "Kitty is preferred. The launcher prepends ~/.local/share/mise/shims to PATH so desktop runs use the same dotnet SDK as your terminal."
+                    color: theme.subtleText
+                    wrapMode: Text.Wrap
+                    font.pointSize: theme.captionPointSize
+                }
                 SectionHeading { text: "Live state directory"; Layout.topMargin: 6 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -68,7 +97,7 @@ AppScrollView {
                     font.pointSize: theme.bodyPointSize
                     lineHeight: theme.bodyLineHeight
                 }
-                Label { Layout.fillWidth: true; text: "Socket: " + ipcClient.socketPath; color: theme.subtleText; font.family: "monospace"; font.pointSize: theme.smallPointSize; elide: Text.ElideMiddle }
+                Label { Layout.fillWidth: true; text: "Socket: " + ipcClient.socketPath; color: theme.subtleText; font.family: theme.monospaceFamily; font.pointSize: theme.smallPointSize; elide: Text.ElideMiddle }
                 Label {
                     Layout.fillWidth: true
                     text: "Runs started here use --hud-mode control-center. Live updates and cancellation use IPC; state.json remains the recovery fallback."
@@ -181,7 +210,7 @@ AppScrollView {
                             text: appController.clipboardCandidateSummary
                             color: theme.mutedText
                             wrapMode: Text.Wrap
-                            font.family: appController.clipboardCandidateKind === "command" ? "monospace" : ""
+                            font.family: appController.clipboardCandidateKind === "command" ? theme.monospaceFamily : ""
                             font.pointSize: theme.smallPointSize
                             lineHeight: theme.bodyLineHeight
                         }

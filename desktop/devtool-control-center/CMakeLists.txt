@@ -24,6 +24,8 @@ qt_add_executable(devtool-control-center
     src/ArtifactInspector.h
     src/RepositoryModel.cpp
     src/RepositoryModel.h
+    src/GitRepositoryController.cpp
+    src/GitRepositoryController.h
     src/IpcClient.cpp
     src/IpcClient.h
 )

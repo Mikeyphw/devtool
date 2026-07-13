@@ -222,7 +222,7 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
         self.assertIn("ListView.Horizontal", pipeline)
         self.assertIn("reuseItems: true", pipeline)
         self.assertIn("WheelHandler", pipeline)
-        self.assertIn("border.color: theme.alpha(theme.windowText, 0.10)", compact_hud)
+        self.assertIn("border.color: theme.alpha(theme.windowText, 0.24)", compact_hud)
         self.assertIn('map["testsPassed"]', hud_store)
         self.assertIn('map["testAssemblies"]', hud_store)
         self.assertIn('state["rolled_back"]', hud_store)
@@ -271,6 +271,20 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
         self.assertIn('enabled: !!run.log_path', compact_hud)
         self.assertIn("implicitHeight: 76", pipeline)
         self.assertIn("height: 72", pipeline)
+
+    def test_compact_hud_remembers_position_and_uses_translucent_background(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        hud_cpp = (root / "src" / "HudMain.cpp").read_text(encoding="utf-8")
+        compact_hud = (root / "qml" / "CompactHud.qml").read_text(encoding="utf-8")
+
+        self.assertIn('kHudPositionKey = "hud/windowPosition"', hud_cpp)
+        self.assertIn("restoreHudPosition(window)", hud_cpp)
+        self.assertIn("saveHudPosition(window)", hud_cpp)
+        self.assertIn("hudPositionIsVisible", hud_cpp)
+        self.assertIn("QGuiApplication::screenRemoved", hud_cpp)
+        self.assertIn("format.setAlphaBufferSize(8)", hud_cpp)
+        self.assertIn("property real backgroundOpacity", compact_hud)
+        self.assertIn("theme.alpha(theme.window, root.backgroundOpacity)", compact_hud)
 
 class QtControlCenterPackagingTests(unittest.TestCase):
     def test_packaging_uses_clean_out_of_source_build(self) -> None:
@@ -381,3 +395,99 @@ class QtControlCenterClipboardMonitorTests(unittest.TestCase):
         self.assertIn("Suggests: python3-pip, pipx, libnotify-bin", control)
         monitor = (root / "src" / "ClipboardMonitor.cpp").read_text(encoding="utf-8")
         self.assertIn('findExecutable(QStringLiteral("notify-send"))', monitor)
+
+class QtControlCenterRepositoryUxSourceTests(unittest.TestCase):
+    def test_command_import_preserves_cd_and_fills_run_form(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        clipboard = (root / "src" / "ClipboardMonitor.cpp").read_text(encoding="utf-8")
+        controller = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
+        run_page = (root / "qml" / "pages" / "RunPage.qml").read_text(encoding="utf-8")
+
+        self.assertIn("Preserve a shell prelude", clipboard)
+        self.assertIn("block << line", clipboard)
+        self.assertIn("pasteCommandFromClipboard", controller)
+        self.assertIn("parseDevtoolCommand", controller)
+        self.assertIn('QStringLiteral("zsh")', controller)
+        self.assertIn('text: "Paste from clipboard"', run_page)
+        self.assertIn("applyImportedCommand", run_page)
+        self.assertIn("artifactExists", run_page)
+        self.assertIn("manifest_present", run_page)
+        self.assertIn("manifest_json_valid", run_page)
+        self.assertIn("devtool-artifact.json", run_page)
+        self.assertIn("launchExternalTerminal", controller)
+        self.assertIn('QStringLiteral("kitty")', controller)
+        self.assertIn('.local/share/mise/shims', controller)
+        self.assertIn('QStringLiteral("-lc")', controller)
+        self.assertIn("targetExplicit", controller)
+        self.assertIn("commitExplicit", controller)
+        self.assertIn("applyArtifactManifestDefaults", run_page)
+        self.assertIn("summary.commit", run_page)
+        self.assertNotIn("processRunner.output", run_page)
+
+    def test_repository_registry_is_opt_in_and_git_workspace_is_packaged(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        main_source = (root / "src" / "main.cpp").read_text(encoding="utf-8")
+        repo_source = (root / "src" / "RepositoryModel.cpp").read_text(encoding="utf-8")
+        git_header = root / "src" / "GitRepositoryController.h"
+        git_source = root / "src" / "GitRepositoryController.cpp"
+        repos_page = (root / "qml" / "pages" / "RepositoriesPage.qml").read_text(encoding="utf-8")
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+
+        self.assertTrue(git_header.is_file())
+        self.assertTrue(git_source.is_file())
+        self.assertNotIn("repositories.addRepository(controller.repository())", main_source)
+        self.assertIn("Repositories are opt-in", repo_source)
+        self.assertIn('item[QStringLiteral("saved")] = false', repo_source)
+        self.assertIn("Live-only repositories", repo_source)
+        self.assertIn("SavedRole", (root / "src" / "RepositoryModel.h").read_text(encoding="utf-8"))
+        self.assertIn('"Save repository"', repos_page)
+        self.assertIn("LIVE · NOT SAVED", repos_page)
+        self.assertIn("GitRepositoryController.cpp", cmake)
+        self.assertIn('AppTabButton { text: "Activity" }', repos_page)
+        self.assertIn('AppTabButton { text: "Git" }', repos_page)
+        self.assertIn("chooseRepositoryDirectory", repos_page)
+        self.assertIn("addRepositoryFromNativeDialog", repos_page)
+        self.assertIn("historyModel.forRepository", repos_page)
+        self.assertIn("gitRepository.commits", repos_page)
+        self.assertIn("modelData.artifactName", repos_page)
+        history_header = (root / "src" / "HistoryModel.h").read_text(encoding="utf-8")
+        history_source = (root / "src" / "HistoryModel.cpp").read_text(encoding="utf-8")
+        self.assertIn("artifactForCommit", history_header)
+        self.assertIn("HistoryModel::artifactForCommit", history_source)
+
+    def test_external_terminal_and_manifest_defaults_are_wired(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        header = (root / "src" / "AppController.h").read_text(encoding="utf-8")
+        source = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
+        run_page = (root / "qml" / "pages" / "RunPage.qml").read_text(encoding="utf-8")
+        settings = (root / "qml" / "pages" / "SettingsPage.qml").read_text(encoding="utf-8")
+
+        self.assertIn("preferredTerminal", header)
+        self.assertIn("dotnetExecutable", header)
+        self.assertIn("autoCloseTerminal", header)
+        self.assertIn("launchExternalTerminal", header)
+        self.assertIn('QStringLiteral("kitty")', source)
+        self.assertIn('.local/share/mise/shims/dotnet', source)
+        self.assertIn('export PATH=', source)
+        self.assertIn("QProcess::startDetached", source)
+        self.assertIn("QFileDialog::getExistingDirectory", source)
+        self.assertIn("applyArtifactManifestDefaults", run_page)
+        self.assertIn("inferredArtifactTarget", run_page)
+        self.assertIn("External terminal execution", run_page)
+        self.assertNotIn("processRunner.output", run_page)
+        self.assertIn("Close terminal automatically", settings)
+
+    def test_nerd_font_and_high_transparency_are_applied(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        main_source = (root / "src" / "main.cpp").read_text(encoding="utf-8")
+        hud_source = (root / "src" / "HudMain.cpp").read_text(encoding="utf-8")
+        theme = (root / "qml" / "components" / "Theme.qml").read_text(encoding="utf-8")
+        compact = (root / "qml" / "CompactHud.qml").read_text(encoding="utf-8")
+
+        self.assertIn("preferredNerdFont", main_source)
+        self.assertIn("preferredNerdFont", hud_source)
+        self.assertIn("app.setFont(QFont(preferredNerdFont()))", main_source)
+        self.assertIn("app.setFont(QFont(preferredNerdFont()))", hud_source)
+        self.assertIn("monospaceFamily", theme)
+        self.assertIn("theme.dark ? 0.14 : 0.18", compact)
+        self.assertIn("panelOpacity", compact)

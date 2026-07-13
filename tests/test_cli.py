@@ -701,7 +701,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertFalse((root / ".devtool-artifact.json").exists())
             self.assertEqual((root / "new.txt").read_text(encoding="utf-8"), "new")
 
-    def test_apply_overlay_removes_original_artifact_when_validation_rolls_back_by_default(self) -> None:
+    def test_apply_overlay_preserves_original_artifact_when_validation_rolls_back_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
@@ -723,10 +723,48 @@ artifact-cleanup: ok exit=0 time=0.10s
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", str(artifact)])
 
             self.assertEqual(rc, 1)
-            self.assertFalse(artifact.exists())
-            self.assertFalse(sidecar.exists())
+            self.assertTrue(artifact.exists())
+            self.assertTrue(sidecar.exists())
             self.assertEqual((root / "existing.txt").read_text(encoding="utf-8"), "before")
             self.assertFalse((root / "new.txt").exists())
+
+    def test_apply_overlay_delete_artifact_on_failure_is_explicit_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "existing.txt").write_text("before", encoding="utf-8")
+            (root / ".devtool.toml").write_text('[project]\ntest_command = "echo test"\n', encoding="utf-8")
+            artifact = root / "artifact.zip"
+            sidecar = root / "artifact.zip.devtool.json"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("existing.txt", "after")
+            sidecar.write_text(json.dumps({"type": "overlay"}), encoding="utf-8")
+
+            with (
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}),
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", "--delete-artifact-on-failure", str(artifact)])
+
+            self.assertEqual(rc, 1)
+            self.assertFalse(artifact.exists())
+            self.assertFalse(sidecar.exists())
+
+    def test_apply_overlay_preserves_corrupt_artifact_when_failure_precedes_extraction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            artifact = root / "broken.zip"
+            artifact.write_bytes(b"not a zip archive")
+
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}):
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", str(artifact)])
+
+            self.assertNotEqual(rc, 0)
+            self.assertTrue(artifact.exists())
+            self.assertEqual(artifact.read_bytes(), b"not a zip archive")
 
     def test_apply_overlay_keep_artifact_preserves_original_after_rollback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

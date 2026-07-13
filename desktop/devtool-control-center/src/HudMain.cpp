@@ -5,6 +5,9 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QFont>
+#include <QFontDatabase>
+#include <QGuiApplication>
 #include <QIcon>
 #include <QIODevice>
 #include <QLocalServer>
@@ -12,7 +15,9 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QProcess>
+#include <QScreen>
 #include <QSettings>
+#include <QSurfaceFormat>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -20,6 +25,72 @@
 
 namespace {
 constexpr const char *kHudServerName = "io.github.mikeceead.DevtoolControlCenter.hud";
+constexpr const char *kHudPositionKey = "hud/windowPosition";
+constexpr int kHudScreenMargin = 24;
+constexpr int kMinimumVisibleWidth = 96;
+constexpr int kMinimumVisibleHeight = 64;
+
+QString preferredNerdFont() {
+    const QStringList preferred {
+        QStringLiteral("JetBrainsMono Nerd Font"), QStringLiteral("CaskaydiaCove Nerd Font"),
+        QStringLiteral("MesloLGS NF"), QStringLiteral("FiraCode Nerd Font"),
+        QStringLiteral("Symbols Nerd Font Mono"), QStringLiteral("Noto Sans Mono")
+    };
+    const QStringList available = QFontDatabase::families();
+    for (const QString &family : preferred) if (available.contains(family)) return family;
+    return QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+}
+
+QSettings hudSettings() {
+    return QSettings(QStringLiteral("mikeceead"), QStringLiteral("DevtoolControlCenter"));
+}
+
+QPoint defaultHudPosition(const QWindow *window) {
+    QScreen *screen = window ? window->screen() : nullptr;
+    if (!screen) screen = QGuiApplication::primaryScreen();
+    if (!screen || !window) return {};
+
+    const QRect available = screen->availableGeometry();
+    return QPoint(available.right() - window->width() - kHudScreenMargin + 1,
+                  available.top() + kHudScreenMargin);
+}
+
+bool hudPositionIsVisible(const QPoint &position, const QSize &size) {
+    const QRect candidate(position, size);
+    for (QScreen *screen : QGuiApplication::screens()) {
+        const QRect visible = candidate.intersected(screen->availableGeometry());
+        if (visible.width() >= kMinimumVisibleWidth && visible.height() >= kMinimumVisibleHeight)
+            return true;
+    }
+    return false;
+}
+
+void ensureHudIsVisible(QWindow *window) {
+    if (!window) return;
+    if (!hudPositionIsVisible(window->position(), window->size()))
+        window->setPosition(defaultHudPosition(window));
+}
+
+void restoreHudPosition(QWindow *window) {
+    if (!window) return;
+    QSettings settings = hudSettings();
+    if (!settings.contains(QString::fromLatin1(kHudPositionKey))) {
+        window->setPosition(defaultHudPosition(window));
+        return;
+    }
+
+    const QPoint saved = settings.value(QString::fromLatin1(kHudPositionKey)).toPoint();
+    window->setPosition(hudPositionIsVisible(saved, window->size())
+                            ? saved
+                            : defaultHudPosition(window));
+}
+
+void saveHudPosition(const QWindow *window) {
+    if (!window) return;
+    QSettings settings = hudSettings();
+    settings.setValue(QString::fromLatin1(kHudPositionKey), window->position());
+    settings.sync();
+}
 
 QIcon hudIcon() {
     return QIcon(QStringLiteral(":/icons/devtool-control-center-tray.svg"));
@@ -56,6 +127,7 @@ void installActivationServer(QLocalServer *server, QWindow *window) {
             }
             const QString command = QString::fromUtf8(socket->readAll()).trimmed();
             if (command == QStringLiteral("show-hud") && window) {
+                ensureHudIsVisible(window);
                 window->show();
                 window->raise();
                 window->requestActivate();
@@ -67,11 +139,16 @@ void installActivationServer(QLocalServer *server, QWindow *window) {
 }  // namespace
 
 int main(int argc, char **argv) {
+    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
+    format.setAlphaBufferSize(8);
+    QSurfaceFormat::setDefaultFormat(format);
+
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Devtool Control Center HUD"));
     app.setOrganizationName(QStringLiteral("mikeceead"));
     app.setDesktopFileName(QStringLiteral("io.github.mikeceead.DevtoolControlCenter"));
     app.setWindowIcon(hudIcon());
+    app.setFont(QFont(preferredNerdFont()));
     app.setQuitOnLastWindowClosed(true);
 
     if (sendMessage(QString::fromLatin1(kHudServerName), QStringLiteral("show-hud"))) return 0;
@@ -94,10 +171,36 @@ int main(int argc, char **argv) {
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("hudStore"), &hud);
+    engine.rootContext()->setContextProperty(QStringLiteral("uiMonospaceFont"), preferredNerdFont());
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/Hud/qml/CompactHud.qml")));
     if (engine.rootObjects().isEmpty()) return 1;
 
     auto *window = qobject_cast<QWindow *>(engine.rootObjects().first());
+    if (!window) return 1;
+
+    bool restoringPosition = true;
+    QTimer positionSaveTimer;
+    positionSaveTimer.setSingleShot(true);
+    positionSaveTimer.setInterval(250);
+    QObject::connect(&positionSaveTimer, &QTimer::timeout, &app, [window, &restoringPosition] {
+        if (!restoringPosition) saveHudPosition(window);
+    });
+    const auto schedulePositionSave = [&positionSaveTimer, &restoringPosition](int) {
+        if (!restoringPosition) positionSaveTimer.start();
+    };
+    QObject::connect(window, &QWindow::xChanged, &app, schedulePositionSave);
+    QObject::connect(window, &QWindow::yChanged, &app, schedulePositionSave);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [window] {
+        saveHudPosition(window);
+    });
+    QObject::connect(&app, &QGuiApplication::screenRemoved, &app, [window](QScreen *) {
+        QTimer::singleShot(0, window, [window] { ensureHudIsVisible(window); });
+    });
+    QTimer::singleShot(0, window, [window, &restoringPosition] {
+        restoreHudPosition(window);
+        restoringPosition = false;
+    });
+
     QLocalServer::removeServer(QString::fromLatin1(kHudServerName));
     auto *server = new QLocalServer(&app);
     if (server->listen(QString::fromLatin1(kHudServerName))) {

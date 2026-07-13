@@ -525,3 +525,55 @@ def test_devtool_no_hud_skips_direct_hud_renderer(monkeypatch) -> None:
     monkeypatch.setenv("DEVTOOL_NO_HUD", "true")
     args = argparse.Namespace()
     assert run_hud(args) == 0
+
+
+def test_android_payload_uses_overall_pipeline_progress_and_live_test_metrics() -> None:
+    hud = AndroidAppHud()
+    state = HudState(
+        title="Test", text="2/3 test assemblies", current=2, total=3,
+        status="running", phase_name="test", command="apply-overlay",
+        repo_name="demo", target="demo_target",
+        raw={
+            "run_id": "live-run",
+            "sequence": 17,
+            "updated_at": "2026-07-13T00:00:00+00:00",
+            "pipeline": [
+                {"name": "extract"}, {"name": "restore", "target": "demo_target"},
+                {"name": "build", "target": "demo_target"},
+                {"name": "test", "target": "demo_target"}, {"name": "commit"},
+            ],
+            "phase": {"name": "test", "target": "demo_target"},
+            "phase_progress": [
+                {"name": "extract", "status": "ok", "percent": 100},
+                {"name": "restore", "target": "demo_target", "status": "ok", "percent": 100},
+                {"name": "build", "target": "demo_target", "status": "ok", "percent": 100},
+                {"name": "test", "target": "demo_target", "status": "running", "percent": 66,
+                 "tests_passed": 225, "tests_failed": 0, "tests_skipped": 1,
+                 "tests_total": 226, "test_assemblies": 2},
+                {"name": "commit", "status": "pending", "percent": 0},
+            ],
+        },
+    )
+    action, payload = hud._payload(state, Path("/tmp/live-run"))
+    assert action == "update"
+    assert payload["progress"] == 73
+    assert payload["phase_progress"] == 67
+    assert payload["passed"] == 225
+    assert payload["skipped"] == 1
+    assert payload["test_assemblies"] == 2
+    assert payload["sequence"] == 17
+
+
+def test_android_forwarder_retries_failed_broadcast() -> None:
+    hud = AndroidAppHud()
+    state = HudState(status="running", phase_name="build", repo_name="demo", raw={"run_id": "retry", "sequence": 1})
+    calls = []
+    def send(action, payload):
+        calls.append((action, payload))
+        return len(calls) > 1
+    hud.bridge.send = send
+    hud.update(state, directory=Path("/tmp/retry"))
+    assert hud.last_signature is None
+    hud.update(state, directory=Path("/tmp/retry"))
+    assert hud.last_signature is not None
+    assert len(calls) == 2

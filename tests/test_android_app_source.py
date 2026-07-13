@@ -270,3 +270,40 @@ def test_chroot_run_uses_termux_visible_workdir() -> None:
     assert 'configured.startsWith("/home/")' in main
     assert 'configured.startsWith("/root/")' in main
     assert 'return "~/";' in main
+
+
+def test_android_notification_has_live_summary_actions_and_stale_update_gate() -> None:
+    notification = _java_source("NotificationController.java")
+    receiver = _java_source("BridgeReceiver.java")
+    gate = _java_source("BridgeUpdateGate.java")
+    action = _java_source("ActionReceiver.java")
+    hud_update = _java_source("HudUpdate.java")
+    assert '"Open log"' in notification
+    assert '"Copy summary"' in notification
+    assert "expandedText()" in notification
+    assert "displayProgress()" in notification
+    assert "BridgeUpdateGate.accept" in receiver
+    assert 'intent.getLongExtra("sequence"' in gate
+    assert "sequence <= lastSequence" in gate
+    assert "ACTION_COPY_SUMMARY" in action
+    assert 'return "Devtool · " + phaseLabel()' in hud_update
+    assert "if (succeeded()) return 100" in hud_update
+
+
+def test_android_clipboard_paste_is_guarded_against_first_access_crashes() -> None:
+    reader = _java_source("ClipboardTextReader.java")
+    main = _java_source("MainActivity.java")
+    tasker = _java_source("TaskerPluginActivity.java")
+    assert "getPrimaryClip();" in reader
+    assert "catch (SecurityException" in reader
+    assert "catch (RuntimeException" in reader
+    assert "ClipboardTextReader.read(this)" in main
+    assert "ClipboardTextReader.read(this)" in tasker
+    assert "coerceToText(this)" not in main
+    assert "coerceToText(this)" not in tasker
+
+
+def test_android_app_version_bumped_for_notification_bridge_update() -> None:
+    build = (APP / "app" / "build.gradle").read_text(encoding="utf-8")
+    assert "versionCode 14" in build
+    assert "versionName '1.5.7'" in build

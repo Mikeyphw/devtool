@@ -32,3 +32,16 @@ def test_bridge_requires_token(tmp_path: Path) -> None:
         AndroidLiveHudBridge, "_package_installed", return_value=True
     ):
         assert not bridge.available()
+
+
+def test_bridge_sends_sequence_as_long_extra(tmp_path: Path) -> None:
+    token_file = tmp_path / "token"
+    token_file.write_text("secret-token\n", encoding="utf-8")
+    bridge = AndroidLiveHudBridge(token_file=token_file)
+    with patch.object(AndroidLiveHudBridge, "_am_binary", return_value="am"), patch(
+        "devtool.android_live_hud.subprocess.run", return_value=CompletedProcess([], 0, "Broadcast completed")
+    ) as run:
+        assert bridge.send("update", {"run_id": "abc", "sequence": 1234567890123})
+    argv = run.call_args.args[0]
+    sequence_index = argv.index("sequence")
+    assert argv[sequence_index - 1] == "--el"

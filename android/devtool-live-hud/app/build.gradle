@@ -11,8 +11,8 @@ android {
         applicationId 'io.github.mikeceead.devtoolhud'
         minSdk 26
         targetSdk 36
-        versionCode 13
-        versionName '1.5.6'
+        versionCode 14
+        versionName '1.5.7'
 
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
     }

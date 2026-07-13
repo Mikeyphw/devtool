@@ -11,3 +11,4 @@ Categories=Development;Utility;
 Keywords=devtool;build;test;overlay;developer;
 StartupNotify=true
 StartupWMClass=io.github.mikeceead.DevtoolControlCenter
+X-GNOME-UsesNotifications=true

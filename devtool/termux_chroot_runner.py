@@ -924,8 +924,7 @@ def _start_android_hud_bridge(raw_logfile: Path, state_dir: Path) -> None:
                 return
         except Exception:
             pass
-    mode = "android-bridge"
-    argv = [sys.executable, "-m", "devtool", "android-hud-bridge", "--mode", mode, "--state-dir", str(state_dir)]
+    argv = [sys.executable, "-m", "devtool", "android-hud-bridge", "--state-dir", str(state_dir)]
     env = os.environ.copy()
     env["DEVTOOL_AUTO_CHROOT"] = "0"
     env["DEVTOOL_AUTO_CHROOT_ACTIVE"] = "0"

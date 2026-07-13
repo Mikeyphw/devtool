@@ -2,6 +2,7 @@
 #include "ArtifactInspector.h"
 #include "ClipboardMonitor.h"
 #include "HistoryModel.h"
+#include "GitRepositoryController.h"
 #include "HudStateStore.h"
 #include "IpcClient.h"
 #include "ProcessRunner.h"
@@ -12,6 +13,8 @@
 #include <QIODevice>
 #include <QFileInfo>
 #include <QIcon>
+#include <QFont>
+#include <QFontDatabase>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QQmlApplicationEngine>
@@ -55,6 +58,17 @@ bool sendMessage(const QString &serverName, const QString &message) {
     return true;
 }
 
+QString preferredNerdFont() {
+    const QStringList preferred {
+        QStringLiteral("JetBrainsMono Nerd Font"), QStringLiteral("CaskaydiaCove Nerd Font"),
+        QStringLiteral("MesloLGS NF"), QStringLiteral("FiraCode Nerd Font"),
+        QStringLiteral("Symbols Nerd Font Mono"), QStringLiteral("Noto Sans Mono")
+    };
+    const QStringList available = QFontDatabase::families();
+    for (const QString &family : preferred) if (available.contains(family)) return family;
+    return QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+}
+
 void installActivationServer(QLocalServer *server, AppController *controller) {
     QObject::connect(server, &QLocalServer::newConnection, server, [server, controller] {
         while (QLocalSocket *socket = server->nextPendingConnection()) {
@@ -77,10 +91,31 @@ void installActivationServer(QLocalServer *server, AppController *controller) {
 
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
+
+    QCoreApplication::setOrganizationName(
+        QStringLiteral("io.github.mikeceead")
+    );
+    QCoreApplication::setApplicationName(
+        QStringLiteral("Devtool Control Center")
+    );
+    QGuiApplication::setApplicationDisplayName(
+        QStringLiteral("Devtool Control Center")
+    );
+    QGuiApplication::setDesktopFileName(
+        QStringLiteral("io.github.mikeceead.DevtoolControlCenter")
+    );
+
+    const QIcon applicationIcon = QIcon::fromTheme(
+        QStringLiteral("io.github.mikeceead.DevtoolControlCenter")
+    );
+    if (!applicationIcon.isNull())
+        QGuiApplication::setWindowIcon(applicationIcon);
+
     app.setApplicationName(QStringLiteral("Devtool Control Center"));
     app.setOrganizationName(QStringLiteral("mikeceead"));
     app.setDesktopFileName(QStringLiteral("io.github.mikeceead.DevtoolControlCenter"));
     app.setWindowIcon(controlCenterIcon());
+    app.setFont(QFont(preferredNerdFont()));
 
     if (app.arguments().contains(QStringLiteral("--clipboard-monitor"))) {
         app.setQuitOnLastWindowClosed(false);
@@ -101,6 +136,7 @@ int main(int argc, char **argv) {
     HudStateStore hud(&history);
     ProcessRunner runner;
     RepositoryModel repositories;
+    GitRepositoryController gitRepository(&history);
     ArtifactInspector inspector;
     IpcClient ipc;
     AppController controller(&hud, &runner, &history, &ipc);
@@ -112,7 +148,7 @@ int main(int argc, char **argv) {
     QObject::connect(&controller, &AppController::devtoolExecutableChanged, &inspector,
                      [&] { inspector.setDevtoolExecutable(controller.devtoolExecutable()); });
     QObject::connect(&controller, &AppController::repositoryChanged, &inspector,
-                     [&] { inspector.setRepositoryPath(controller.repository()); repositories.markUsed(controller.repository()); });
+                     [&] { inspector.setRepositoryPath(controller.repository()); });
     QObject::connect(&controller, &AppController::artifactChanged, &inspector,
                      [&] { inspector.setArtifactPath(controller.artifact()); });
     QObject::connect(&hud, &HudStateStore::activeRunsChanged, &repositories,
@@ -123,7 +159,6 @@ int main(int argc, char **argv) {
     QObject::connect(&ipc, &IpcClient::connectedChanged, &hud,
                      [&] { hud.setIpcConnected(ipc.connected()); });
 
-    if (!controller.repository().isEmpty()) repositories.addRepository(controller.repository());
     if (controller.devtoolAvailable()) {
         QProcess::startDetached(controller.devtoolExecutable(),
                                 QStringList{QStringLiteral("ipc-server"), QStringLiteral("--state-dir"), hud.stateDirectory()});
@@ -158,6 +193,8 @@ int main(int argc, char **argv) {
         nextEngine->rootContext()->setContextProperty(QStringLiteral("historyModel"), &history);
         nextEngine->rootContext()->setContextProperty(QStringLiteral("artifactInspector"), &inspector);
         nextEngine->rootContext()->setContextProperty(QStringLiteral("repositoryModel"), &repositories);
+        nextEngine->rootContext()->setContextProperty(QStringLiteral("gitRepository"), &gitRepository);
+        nextEngine->rootContext()->setContextProperty(QStringLiteral("uiMonospaceFont"), preferredNerdFont());
         nextEngine->rootContext()->setContextProperty(QStringLiteral("ipcClient"), &ipc);
         nextEngine->load(QUrl(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml")));
         if (nextEngine->rootObjects().isEmpty()) return false;

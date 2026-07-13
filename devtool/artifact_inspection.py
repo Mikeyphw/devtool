@@ -12,6 +12,8 @@ from .artifacts import (
     artifact_target,
     artifact_validation_policy,
     artifact_workspaces,
+    BUNDLE_MANIFEST_NAMES,
+    MANIFEST_NAMES,
     diff_artifact,
     is_overlay_bundle,
     is_artifact_metadata_member,
@@ -24,6 +26,71 @@ from .artifacts import (
     validate_overlay_bundle,
 )
 
+
+
+def _manifest_probe(path: Path) -> dict[str, Any]:
+    """Return explicit manifest presence/JSON validity without hiding parse failures.
+
+    ``read_artifact_manifest`` intentionally returns an empty mapping for both a
+    missing manifest and malformed JSON.  The desktop Run page needs to
+    distinguish those states before an apply starts.
+    """
+    sidecars = [
+        path.with_name(path.name + ".devtool.json"),
+        path.with_name(path.name + ".manifest.json"),
+    ]
+    for candidate in sidecars:
+        if not candidate.exists():
+            continue
+        try:
+            value = json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return {
+                "present": True,
+                "json_valid": False,
+                "source": str(candidate),
+                "error": f"Invalid JSON in {candidate.name}: {exc}",
+            }
+        if not isinstance(value, dict):
+            return {
+                "present": True,
+                "json_valid": False,
+                "source": str(candidate),
+                "error": f"{candidate.name} must contain a JSON object.",
+            }
+        return {"present": True, "json_valid": True, "source": str(candidate), "error": ""}
+
+    try:
+        names = BUNDLE_MANIFEST_NAMES | MANIFEST_NAMES
+        for member in list_archive_members(path, include_data=True):
+            if Path(member.name).name not in names or member.data is None:
+                continue
+            try:
+                value = json.loads(member.data.decode("utf-8"))
+            except Exception as exc:
+                return {
+                    "present": True,
+                    "json_valid": False,
+                    "source": member.name,
+                    "error": f"Invalid JSON in {member.name}: {exc}",
+                }
+            if not isinstance(value, dict):
+                return {
+                    "present": True,
+                    "json_valid": False,
+                    "source": member.name,
+                    "error": f"{member.name} must contain a JSON object.",
+                }
+            return {"present": True, "json_valid": True, "source": member.name, "error": ""}
+    except Exception as exc:
+        return {"present": False, "json_valid": False, "source": "", "error": str(exc)}
+
+    return {
+        "present": False,
+        "json_valid": False,
+        "source": "",
+        "error": "No embedded devtool-artifact.json or supported sidecar manifest was found.",
+    }
 
 def _repository_info(manifest: dict[str, Any]) -> dict[str, Any]:
     repository = manifest.get("repository")
@@ -105,6 +172,7 @@ def inspect_artifact(
     max_diff_lines: int = 4000,
 ) -> dict[str, Any]:
     path = resolve_artifact_path(artifact)
+    manifest_probe = _manifest_probe(path)
     manifest = read_artifact_manifest(path)
     bundle = is_overlay_bundle(path)
     repository = _repository_info(manifest)
@@ -148,7 +216,7 @@ def inspect_artifact(
             inventory = [{"path": str(item), "action": "payload"} for item in declared if str(item).strip()]
         else:
             inventory = [
-                {"path": member.name, "action": "payload", "size": member.size}
+                {"path": member.name, "action": "payload"}
                 for member in list_archive_members(path, include_data=False)
                 if not member.is_dir and not is_artifact_metadata_member(member.name)
             ]
@@ -177,9 +245,13 @@ def inspect_artifact(
         "counts": counts,
         "payload_files": len(inventory),
         "overlays": _bundle_entries(manifest),
+        "manifest_present": bool(manifest_probe["present"]),
+        "manifest_json_valid": bool(manifest_probe["json_valid"]),
+        "manifest_source": str(manifest_probe["source"]),
+        "manifest_error": str(manifest_probe["error"]),
         "validation": {
-            "ok": validation.ok,
-            "messages": list(validation.messages),
+            "ok": bool(validation.ok and manifest_probe["present"] and manifest_probe["json_valid"]),
+            "messages": ([str(manifest_probe["error"])] if manifest_probe["error"] else []) + list(validation.messages),
             "policy": validation_policy,
         },
         "commit": {

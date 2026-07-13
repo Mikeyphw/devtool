@@ -9,10 +9,10 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.Icon;
 import android.os.Build;
-import android.provider.Settings;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 final class NotificationController {
     static final String CHANNEL_ID = "devtool_live_runs_v1";
@@ -37,33 +37,47 @@ final class NotificationController {
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setOngoing(!update.isTerminal())
                 .setAutoCancel(update.isTerminal())
-                .setOnlyAlertOnce(!update.isTerminal())
+                .setOnlyAlertOnce(true)
                 .setShowWhen(true)
                 .setWhen(update.startedAtMs)
                 .setUsesChronometer(!update.isTerminal())
                 .setColor(statusColor(update))
                 .setColorized(false)
-                .setContentIntent(openAppIntent(update.runId))
-                .addAction(new Notification.Action.Builder(
-                        Icon.createWithResource(context, R.drawable.ic_done),
-                        "Dismiss", dismissIntent(update.runId)).build());
+                .setContentIntent(openLogIntent(update.runId));
 
-        if (update.overlayRequested && !update.isTerminal()) {
+        // Keep actions stable and limited to three. Tapping Open log always
+        // navigates directly to this run's history entry.
+        builder.addAction(new Notification.Action.Builder(
+                Icon.createWithResource(context, R.drawable.ic_start),
+                "Open log", openLogIntent(update.runId)).build());
+        builder.addAction(new Notification.Action.Builder(
+                Icon.createWithResource(context, R.drawable.ic_done),
+                "Copy summary", copySummaryIntent(update)).build());
+
+        if (update.isTerminal()) {
+            builder.addAction(new Notification.Action.Builder(
+                    Icon.createWithResource(context, R.drawable.ic_done),
+                    "Dismiss", dismissIntent(update.runId)).build());
+        } else if (update.overlayRequested) {
             builder.addAction(new Notification.Action.Builder(
                     Icon.createWithResource(context, R.drawable.ic_start),
                     "Show HUD", showOverlayIntent(update.runId)).build());
         }
+
         if (!update.isTerminal()) requestPromotedOngoing(builder);
 
         if (Build.VERSION.SDK_INT >= 36) {
             applyProgressStyle(builder, update);
+            builder.setShortCriticalText(update.criticalText());
         } else {
-            builder.setProgress(100, update.displayProgress(), update.indeterminate && update.activeStep() == null && !update.isTerminal());
+            builder.setProgress(100, update.displayProgress(), update.indeterminate && !update.isTerminal());
+            builder.setStyle(new Notification.BigTextStyle()
+                    .bigText(update.expandedText())
+                    .setBigContentTitle(update.title())
+                    .setSummaryText(update.subText()));
         }
 
-        if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(update.criticalText());
-        Notification notification = builder.build();
-        manager.notify(NOTIFICATION_ID, notification);
+        manager.notify(NOTIFICATION_ID, builder.build());
     }
 
     void cancel(String runId) {
@@ -82,14 +96,14 @@ final class NotificationController {
         manager.createNotificationChannel(channel);
     }
 
-    private PendingIntent openAppIntent(String runId) {
+    private PendingIntent openLogIntent(String runId) {
         Intent intent = new Intent(context, MainActivity.class)
                 .putExtra("run_id", runId)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        return PendingIntent.getActivity(context, runId.hashCode(), intent,
+                .putExtra("open_log", true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        return PendingIntent.getActivity(context, runId.hashCode() ^ 0x1f31, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
-
 
     private PendingIntent showOverlayIntent(String runId) {
         Intent intent = new Intent(context, ActionReceiver.class)
@@ -99,16 +113,13 @@ final class NotificationController {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
-    private void requestPromotedOngoing(Notification.Builder builder) {
-        if (Build.VERSION.SDK_INT < 36) return;
-        try {
-            Notification.Builder.class
-                    .getMethod("setRequestPromotedOngoing", boolean.class)
-                    .invoke(builder, true);
-        } catch (ReflectiveOperationException ignored) {
-            // API 36.0 exposes Live Updates before the typed 36.1 setter.
-            builder.getExtras().putBoolean("android.requestPromotedOngoing", true);
-        }
+    private PendingIntent copySummaryIntent(HudUpdate update) {
+        Intent intent = new Intent(context, ActionReceiver.class)
+                .setAction(ActionReceiver.ACTION_COPY_SUMMARY)
+                .putExtra("run_id", update.runId)
+                .putExtra("summary", update.copySummaryText());
+        return PendingIntent.getBroadcast(context, update.runId.hashCode() ^ 0x441d, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     private PendingIntent dismissIntent(String runId) {
@@ -119,13 +130,26 @@ final class NotificationController {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
+    private void requestPromotedOngoing(Notification.Builder builder) {
+        if (Build.VERSION.SDK_INT < 36) return;
+        try {
+            Notification.Builder.class
+                    .getMethod("setRequestPromotedOngoing", boolean.class)
+                    .invoke(builder, true);
+        } catch (ReflectiveOperationException ignored) {
+            builder.getExtras().putBoolean("android.requestPromotedOngoing", true);
+        }
+    }
+
     private int statusColor(HudUpdate update) {
         AppPalette palette = AppPalette.resolve(context);
+        String phase = update.phase.toLowerCase(Locale.ROOT);
+        if (phase.contains("rollback") || phase.contains("rolling back")) return palette.orange;
         if (update.succeeded()) return palette.green;
         if (update.failedState()) return palette.red;
         if (update.status.equals("interrupted") || update.status.equals("cancelled")) return palette.orange;
         if (update.status.equals("waiting")) return palette.muted;
-        return palette.yellow;
+        return palette.cyan;
     }
 
     @android.annotation.TargetApi(36)
@@ -147,14 +171,17 @@ final class NotificationController {
             used += length;
             int color = step.failed() ? palette.red
                     : step.succeeded() ? palette.green
-                    : step.running() ? palette.yellow
+                    : step.running() ? palette.cyan
                     : palette.muted;
             segments.add(new Notification.ProgressStyle.Segment(length).setColor(color));
-            if (i < update.steps.size() - 1) points.add(new Notification.ProgressStyle.Point(used).setColor(Color.WHITE));
+            if (i < update.steps.size() - 1) {
+                points.add(new Notification.ProgressStyle.Point(used).setColor(Color.WHITE));
+            }
         }
-        if (segments.isEmpty()) segments.add(new Notification.ProgressStyle.Segment(100).setColor(statusColor(update)));
-        style.setProgress(update.isTerminal() ? 100 : update.displayProgress())
-                .setProgressSegments(segments);
+        if (segments.isEmpty()) {
+            segments.add(new Notification.ProgressStyle.Segment(100).setColor(statusColor(update)));
+        }
+        style.setProgress(update.displayProgress()).setProgressSegments(segments);
         if (!points.isEmpty()) style.setProgressPoints(points);
         builder.setStyle(style);
     }

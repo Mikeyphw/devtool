@@ -90,6 +90,17 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && intent.hasExtra("run_id")) {
+            currentPage = 2;
+            AppSettings.setPage(this, currentPage);
+            rebuildUi();
+        }
+    }
+
+    @Override
     protected void onStart() {
         super.onStart();
         if (!receiverRegistered) {
@@ -770,19 +781,12 @@ public final class MainActivity extends Activity {
     }
 
     private String clipboardText() {
-        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
-        if (clipboard == null || !clipboard.hasPrimaryClip() || clipboard.getPrimaryClip() == null
-                || clipboard.getPrimaryClip().getItemCount() == 0) {
-            Toast.makeText(this, "Clipboard is empty or unavailable", Toast.LENGTH_LONG).show();
+        ClipboardTextReader.Result result = ClipboardTextReader.read(this);
+        if (!result.ok()) {
+            Toast.makeText(this, result.error, Toast.LENGTH_LONG).show();
             return null;
         }
-        CharSequence text = clipboard.getPrimaryClip().getItemAt(0).coerceToText(this);
-        String command = text == null ? "" : text.toString().trim();
-        if (command.isEmpty()) {
-            Toast.makeText(this, "Clipboard does not contain text", Toast.LENGTH_LONG).show();
-            return null;
-        }
-        return command;
+        return result.text;
     }
 
     private void updatePreview() {
@@ -970,9 +974,17 @@ public final class MainActivity extends Activity {
     }
 
     private void copyText(String label, String value) {
-        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
-        Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show();
+        try {
+            ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+            if (clipboard == null) {
+                Toast.makeText(this, "Clipboard is unavailable", Toast.LENGTH_LONG).show();
+                return;
+            }
+            clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
+            Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show();
+        } catch (RuntimeException error) {
+            Toast.makeText(this, "Could not copy to the clipboard", Toast.LENGTH_LONG).show();
+        }
     }
 
     private static final class SimpleItemSelectedListener implements android.widget.AdapterView.OnItemSelectedListener {

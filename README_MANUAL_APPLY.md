@@ -1,38 +1,23 @@
-# Manual update
+# Desktop external-terminal and artifact-import patch
 
-Extract the updated repository over a clean devtool checkout, then reinstall the CLI and rebuild the Android app.
+This patch:
 
-```bash
-cd "$HOME/Code"
-rm -rf devtool-new
-mkdir devtool-new
-unzip "$HOME/Downloads/devtool.zip" -d devtool-new
-cd devtool-new
-./install.sh
-```
+- prepends `~/.local/share/mise/shims` to PATH so desktop-launched devtool runs find the mise-managed .NET SDK;
+- prefers Kitty, then WezTerm, Foot, Konsole, GNOME Terminal, XFCE Terminal, and xterm;
+- uses zsh when available;
+- removes the embedded Run-page terminal and launches a real external terminal;
+- adds a persistent auto-close-terminal option;
+- uses a native Qt directory chooser for Add repository;
+- reads artifact inspection metadata after clipboard import and fills target, validation, commit message, and checkboxes unless the copied command explicitly overrides them.
 
-Build the Android frontend:
-
-```bash
-./build-android-hud.sh
-```
-
-After installing the APK, open the app and verify:
-
-1. Notification permission.
-2. Termux `RUN_COMMAND` permission.
-3. **Termux bridge → Install token** or **Verify**.
-4. Floating HUD permission only when the overlay is desired.
-
-For a direct Termux run, use:
+Apply from the repository root:
 
 ```bash
-DEVTOOL_HUD_SINGLETON=kill devtool \
-  --auto-hud \
-  --hud-mode android-bridge \
-  --yes \
-  -r "$HOME/Code/sims3tools" \
-  status
-```
+unzip -o "$HOME/Downloads/devtool_desktop_external_terminal_manifest_patch.zip" \
+  -d "$HOME/Code/devtool"
 
-Do not use the removed `android-notify`, `--notify*`, `--tasker*`, or concurrency flags. Tasker actions are configured through **Tasker → Plugin → Devtool Live HUD**.
+rm -rf "$HOME/.cache/devtool-control-center/package-build-0.3.8-amd64"
+
+cd "$HOME/Code/devtool/desktop/devtool-control-center"
+./package-deb.sh --install --delete-after-install
+```

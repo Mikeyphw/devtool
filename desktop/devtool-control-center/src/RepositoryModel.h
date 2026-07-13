@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QJsonObject>
 #include <QVariantList>
 
@@ -9,7 +10,7 @@ class RepositoryModel final : public QAbstractListModel {
     Q_PROPERTY(int count READ count NOTIFY countChanged)
 public:
     enum Roles { PathRole = Qt::UserRole + 1, NameRole, BranchRole, RemoteRole, StatusRole,
-                 DirtyRole, ActiveRunsRole, LastUsedRole };
+                 DirtyRole, ActiveRunsRole, LastUsedRole, SavedRole };
     explicit RepositoryModel(QObject *parent = nullptr);
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;

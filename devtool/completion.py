@@ -98,8 +98,8 @@ _devtool() {
         '--diff[show repo-relative unified diff without applying]' \
         '--interactive[show preview/diff and ask before applying]' \
         '--no-manifest-check[disable artifact manifest validation]' \
-        '--keep-artifact[keep the source artifact and sidecars after apply]' \
-        '--delete-artifact-on-failure[deprecated: artifacts are now deleted after failure by default]' \
+        '--keep-artifact[keep the source artifact and sidecars after successful apply]' \
+        '--delete-artifact-on-failure[delete source artifact after failed apply; default is preserve]' \
         '--skip-restore[skip restore during validation]' \
         '--skip-build[skip build during validation]' \
         '--skip-test[skip test during validation]' \

@@ -103,7 +103,11 @@ QString devtoolSubcommand(const QString &line) {
 }
 
 QString extractCommandBlock(const QString &rawText) {
-    const QStringList rawLines = rawText.split(QLatin1Char('\n'));
+    QString normalizedText = rawText;
+    normalizedText.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    normalizedText.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+
+    const QStringList rawLines = normalizedText.split(QLatin1Char('\n'));
     QStringList lines;
     for (const QString &raw : rawLines) {
         const QString line = stripPrompt(raw);
@@ -111,31 +115,57 @@ QString extractCommandBlock(const QString &rawText) {
     }
     if (lines.isEmpty() || reportHeader(lines.first())) return {};
 
+    const auto continues = [](const QString &line) {
+        const QString value = line.trimmed();
+        return value.endsWith(QLatin1Char('\\')) || value.endsWith(QStringLiteral("&&"))
+            || value.endsWith(QStringLiteral("||"));
+    };
+    const auto isPrelude = [](const QString &line) {
+        const QString value = line.trimmed();
+        static const QRegularExpression assignment(
+            QStringLiteral(R"(^[A-Za-z_][A-Za-z0-9_]*=(?:\S+|\"[^\"]*\"|'[^']*')(?:\s+.*)?$)"));
+        return value.startsWith(QStringLiteral("cd "))
+            || value.startsWith(QStringLiteral("pushd "))
+            || value.startsWith(QStringLiteral("env "))
+            || value.startsWith(QStringLiteral("export "))
+            || value.startsWith(QStringLiteral("source "))
+            || value.startsWith(QStringLiteral(". "))
+            || assignment.match(value).hasMatch();
+    };
+
+    // Preserve a shell prelude and keep the complete command, including `cd ... && \\` and any
+    // environment prelude.  The prelude is operationally significant: running
+    // only the devtool line can target a different repository.
     QStringList block;
     bool foundDevtool = false;
-    for (int index = 0; index < lines.size(); ++index) {
+    bool continuation = false;
+    for (int index = 0; index < lines.size() && index < 32; ++index) {
         const QString line = lines.at(index);
+        const QString subcommand = devtoolSubcommand(line);
+
         if (!foundDevtool) {
-            const bool prelude = line.startsWith(QStringLiteral("cd ")) ||
-                line.startsWith(QStringLiteral("pushd ")) ||
-                line.startsWith(QStringLiteral("env ")) ||
-                QRegularExpression(QStringLiteral(R"(^[A-Za-z_][A-Za-z0-9_]*=\S+(?:\s+.*)?$)")).match(line).hasMatch();
-            const QString subcommand = devtoolSubcommand(line);
-            if (subcommand.isEmpty()) {
-                if (prelude && index < 8) { block << line; continue; }
-                return {};
+            if (!subcommand.isEmpty()) {
+                foundDevtool = true;
+                block << line;
+                continuation = continues(line);
+                if (!continuation) break;
+                continue;
             }
-            foundDevtool = true;
-            block << line;
-            if (!line.endsWith(QLatin1Char('\\'))) break;
-        } else {
-            block << line;
-            if (!line.endsWith(QLatin1Char('\\'))) break;
+            if (isPrelude(line) || continuation) {
+                block << line;
+                continuation = continues(line);
+                continue;
+            }
+            return {};
         }
+
+        block << line;
+        continuation = continues(line);
+        if (!continuation) break;
     }
+
     return foundDevtool ? block.join(QLatin1Char('\n')).trimmed() : QString();
 }
-
 bool looksLikeDevtoolCommand(const QString &text) {
     return !extractCommandBlock(text).isEmpty();
 }

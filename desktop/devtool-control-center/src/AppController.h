@@ -2,6 +2,8 @@
 #include <QObject>
 #include <QSettings>
 #include <QHash>
+#include <QVariantMap>
+#include <QStringList>
 
 class ClipboardMonitor;
 class HudStateStore;
@@ -15,6 +17,12 @@ class AppController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString repository READ repository WRITE setRepository NOTIFY repositoryChanged)
     Q_PROPERTY(QString artifact READ artifact WRITE setArtifact NOTIFY artifactChanged)
+    Q_PROPERTY(bool artifactExists READ artifactExists NOTIFY artifactChanged)
+    Q_PROPERTY(QString preferredShell READ preferredShell CONSTANT)
+    Q_PROPERTY(QString preferredTerminal READ preferredTerminal CONSTANT)
+    Q_PROPERTY(QString dotnetExecutable READ dotnetExecutable CONSTANT)
+    Q_PROPERTY(bool autoCloseTerminal READ autoCloseTerminal WRITE setAutoCloseTerminal NOTIFY autoCloseTerminalChanged)
+    Q_PROPERTY(QString launchStatus READ launchStatus NOTIFY launchStatusChanged)
     Q_PROPERTY(QString devtoolExecutable READ devtoolExecutable WRITE setDevtoolExecutable NOTIFY devtoolExecutableChanged)
     Q_PROPERTY(bool devtoolAvailable READ devtoolAvailable NOTIFY devtoolExecutableChanged)
     Q_PROPERTY(bool trayAvailable READ trayAvailable CONSTANT)
@@ -33,6 +41,12 @@ public:
     AppController(HudStateStore *store, ProcessRunner *runner, HistoryModel *history, IpcClient *ipc, QObject *parent = nullptr);
     QString repository() const { return m_repository; }
     QString artifact() const { return m_artifact; }
+    bool artifactExists() const;
+    QString preferredShell() const;
+    QString preferredTerminal() const;
+    QString dotnetExecutable() const;
+    bool autoCloseTerminal() const { return m_autoCloseTerminal; }
+    QString launchStatus() const { return m_launchStatus; }
     QString devtoolExecutable() const { return m_devtool; }
     bool trayAvailable() const { return m_tray != nullptr; }
     bool devtoolAvailable() const;
@@ -51,11 +65,26 @@ public:
     void setRepository(const QString &);
     void setArtifact(const QString &);
     void setDevtoolExecutable(const QString &);
+    void setAutoCloseTerminal(bool value);
 
-    Q_INVOKABLE void runWorkflow(const QString &operation, const QString &target, bool validate, bool commit, const QString &commitMessage, bool keepArtifact);
+    Q_INVOKABLE void runWorkflow(
+        const QString &operation,
+        const QString &target,
+        bool validate,
+        bool commit,
+        const QString &commitMessage,
+        bool keepArtifact,
+        const QString &copyMode,
+        bool autoHud,
+        const QString &hudMode);
     Q_INVOKABLE void showMainWindow() { emit requestMainWindow(); }
     Q_INVOKABLE void copyText(const QString &);
     Q_INVOKABLE void openPath(const QString &);
+    Q_INVOKABLE void openUrl(const QString &);
+    Q_INVOKABLE QVariantMap pasteCommandFromClipboard();
+    Q_INVOKABLE QString chooseRepositoryDirectory(const QString &initialPath);
+    Q_INVOKABLE QVariantMap parseDevtoolCommand(const QString &command) const;
+    Q_INVOKABLE void refreshArtifactState() { emit artifactChanged(); }
     Q_INVOKABLE void saveSettings();
     Q_INVOKABLE void quit();
     Q_INVOKABLE void inspectArtifactRequested() { emit requestArtifactInspector(); }
@@ -86,11 +115,16 @@ signals:
     void clipboardCandidateSnapshotChanged();
     void clipboardMonitorStatusChanged();
     void standbyChanged(bool standby);
+    void autoCloseTerminalChanged();
+    void launchStatusChanged();
 
 private:
     QString clipboardServicePath() const;
     bool runUserSystemctl(const QStringList &arguments, QString *output = nullptr, int timeoutMs = 8000) const;
     void setClipboardMonitorStatus(bool installed, bool active, const QString &status);
+    QString augmentedPath() const;
+    bool launchExternalTerminal(const QString &command, const QString &workingDirectory, const QString &title);
+    void setLaunchStatus(const QString &status);
 
     HudStateStore *m_store;
     ProcessRunner *m_runner;
@@ -111,4 +145,6 @@ private:
     bool m_clipboardMonitorActive = false;
     QString m_clipboardMonitorStatus = QStringLiteral("Not installed");
     bool m_standby = false;
+    bool m_autoCloseTerminal = false;
+    QString m_launchStatus;
 };

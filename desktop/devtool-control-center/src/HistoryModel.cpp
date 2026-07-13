@@ -28,6 +28,8 @@ QVariant HistoryModel::data(const QModelIndex &index, int role) const {
     case DurationRole: key="duration"; break; case ErrorsRole: key="errors"; break;
     case WarningsRole: key="warnings"; break; case SummaryRole: key="summary"; break;
     case CommandRole: key="command"; break; case StepsRole: key="steps"; break;
+    case RepoRootRole: key="repo_root"; break; case ArtifactNameRole: key="artifact_name"; break;
+    case ArtifactPathRole: key="artifact_path"; break; case GitCommitRole: key="git_commit"; break;
     }
     return key ? o.value(QLatin1String(key)).toVariant() : QVariant{};
 }
@@ -35,12 +37,40 @@ QHash<int,QByteArray> HistoryModel::roleNames() const {
     return {{RunIdRole,"runId"},{TitleRole,"title"},{RepoRole,"repo"},{TargetRole,"target"},
             {StatusRole,"status"},{StartedRole,"started"},{DurationRole,"duration"},
             {ErrorsRole,"errors"},{WarningsRole,"warnings"},{SummaryRole,"summary"},
-            {CommandRole,"command"},{StepsRole,"steps"}};
+            {CommandRole,"command"},{StepsRole,"steps"},{RepoRootRole,"repoRoot"},
+            {ArtifactNameRole,"artifactName"},{ArtifactPathRole,"artifactPath"},{GitCommitRole,"gitCommit"}};
 }
 QVariantMap HistoryModel::get(int row) const {
     const_cast<HistoryModel *>(this)->ensureLoaded();
     if (row < 0 || row >= m_items.size()) return {};
     return m_items.at(row).toVariantMap();
+}
+QVariantList HistoryModel::forRepository(const QString &path) const {
+    const_cast<HistoryModel *>(this)->ensureLoaded();
+    const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(path));
+    QVariantList result;
+    for (const auto &item : m_items) {
+        const QString root = QDir::cleanPath(QDir::fromNativeSeparators(item.value(QStringLiteral("repo_root")).toString()));
+        if (!clean.isEmpty() && root == clean) result << item.toVariantMap();
+    }
+    return result;
+}
+QVariantMap HistoryModel::artifactForCommit(const QString &hash, const QString &repoPath) const {
+    const_cast<HistoryModel *>(this)->ensureLoaded();
+    const QString clean = repoPath.trimmed().isEmpty()
+        ? QString()
+        : QDir::cleanPath(QDir::fromNativeSeparators(repoPath));
+    for (const auto &item : m_items) {
+        const QString commit = item.value(QStringLiteral("git_commit")).toString();
+        const QString root = QDir::cleanPath(QDir::fromNativeSeparators(item.value(QStringLiteral("repo_root")).toString()));
+        if ((commit == hash || (!commit.isEmpty() && hash.startsWith(commit)) || commit.startsWith(hash)) &&
+            (clean.isEmpty() || clean == root)) {
+            return {{QStringLiteral("artifactName"), item.value(QStringLiteral("artifact_name")).toString()},
+                    {QStringLiteral("artifactPath"), item.value(QStringLiteral("artifact_path")).toString()},
+                    {QStringLiteral("runId"), item.value(QStringLiteral("run_id")).toString()}};
+        }
+    }
+    return {};
 }
 QString HistoryModel::storagePath() const {
     const auto dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -79,5 +109,9 @@ void HistoryModel::record(const QJsonObject &state) {
     item["errors"] = totals.contains("errors") ? totals.value("errors") : state.value("errors"); item["warnings"] = totals.contains("warnings") ? totals.value("warnings") : state.value("warnings");
     item["summary"] = completion.value("summary").toString(state.value("message").toString());
     item["command"] = state.value("command"); item["steps"] = state.value("phase_progress");
+    item["repo_root"] = state.value("repo_root");
+    item["artifact_name"] = state.value("artifact_name");
+    item["artifact_path"] = state.value("artifact_path");
+    item["git_commit"] = completion.value("git_commit").toString(state.value("git_commit").toString());
     beginInsertRows({}, 0, 0); m_items.prepend(item); endInsertRows(); if (m_items.size() > 200) { const int last=m_items.size()-1; beginRemoveRows({},last,last); m_items.removeLast(); endRemoveRows(); } emit countChanged(); save();
 }

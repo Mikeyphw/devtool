@@ -7,14 +7,171 @@ import "../components"
 AppScrollView {
     id: root
     property string operation: "Apply overlay"
+    property string pasteFeedback: ""
+    property string importedCommand: ""
+    property bool manifestDefaultsPending: false
+    property bool importedTargetExplicit: false
+    property bool importedValidateExplicit: false
+    property bool importedCommitExplicit: false
+    property bool importedCopyExplicit: false
+    property bool importedHudExplicit: false
     Theme { id: theme }
+
+    function copyModeIndex(value) {
+        const normalized =
+            String(value || "summary").toLowerCase()
+
+        return normalized === "json"
+            ? 1
+            : normalized === "none"
+                ? 2
+                : 0
+    }
+
+    function selectedCopyMode() {
+        return copyMode.currentIndex === 1
+            ? "json"
+            : copyMode.currentIndex === 2
+                ? "none"
+                : "summary"
+    }
+
+    function hudModeIndex(value) {
+        const normalized =
+            String(value || "control-center").toLowerCase()
+
+        const values = [
+            "control-center",
+            "desktop-window",
+            "android-bridge",
+            "none"
+        ]
+
+        const index = values.indexOf(normalized)
+        return index < 0 ? 0 : index
+    }
+
+    function operationIndex(label) {
+        const values = ["Apply overlay", "Validate", "Restore", "Build", "Test", "Status", "Doctor"]
+        return Math.max(0, values.indexOf(label))
+    }
+
+    function inferredArtifactTarget(summary) {
+        if (!summary) return ""
+        if (summary.target) return String(summary.target)
+        const candidates = []
+        const workspaces = summary.workspaces || []
+        for (let i = 0; i < workspaces.length; ++i) {
+            const value = String(workspaces[i].target || "")
+            if (value && candidates.indexOf(value) < 0) candidates.push(value)
+        }
+        const overlays = summary.overlays || []
+        for (let i = 0; i < overlays.length; ++i) {
+            const value = String(overlays[i].target || "")
+            if (value && candidates.indexOf(value) < 0) candidates.push(value)
+        }
+        return candidates.length === 1 ? candidates[0] : ""
+    }
+
+    function applyArtifactManifestDefaults() {
+        if (!manifestDefaultsPending || !artifactInspector.summary || !artifactInspector.summary.manifest_present)
+            return
+        const summary = artifactInspector.summary
+        if (!importedTargetExplicit) {
+            const manifestTarget = inferredArtifactTarget(summary)
+            if (manifestTarget) target.text = manifestTarget
+        }
+        if (!importedValidateExplicit) {
+            const policy = (summary.validation || {}).policy || {}
+            validate.checked = !!policy.required
+        }
+        if (!importedCommitExplicit) {
+            const commitPolicy = summary.commit || {}
+            const manifestMessage =
+                String(commitPolicy.message || "")
+
+            message.text = manifestMessage
+
+            // A commit message embedded in the artifact is itself an explicit
+            // request to create the commit, including older manifests that
+            // omitted apply.commit.enabled.
+            commit.checked =
+                !!commitPolicy.enabled ||
+                manifestMessage.trim() !== ""
+        }
+        manifestDefaultsPending = false
+        pasteFeedback = "Command and artifact manifest loaded. Target, validation, commit message, and checkboxes are ready."
+    }
+
+    function applyImportedCommand(values) {
+        if (!values || !values.valid) {
+            pasteFeedback = "Clipboard does not contain a supported devtool command."
+            return
+        }
+        importedCommand = values.command || ""
+        if (values.repository) appController.repository = values.repository
+        if (values.artifact) appController.artifact = values.artifact
+        operationCombo.currentIndex = operationIndex(values.operation)
+        importedTargetExplicit = !!values.targetExplicit
+        importedValidateExplicit = !!values.validateExplicit
+        importedCommitExplicit = !!values.commitExplicit
+        importedCopyExplicit = !!values.copyExplicit
+        importedHudExplicit = !!values.hudExplicit
+        manifestDefaultsPending = !!values.artifact
+        target.text = values.target || ""
+        message.text = values.commitMessage || ""
+        validate.checked = !!values.validate
+        commit.checked = !!values.commit
+        keep.checked = !!values.keepArtifact
+
+        if (importedCopyExplicit)
+            copyMode.currentIndex =
+                copyModeIndex(values.copyMode)
+
+        if (importedHudExplicit) {
+            autoHud.checked = !!values.autoHud
+            hudMode.currentIndex =
+                hudModeIndex(values.hudMode)
+        }
+
+        pasteFeedback = values.artifact
+            ? "Command fields filled. Reading target, validation, and commit defaults from the artifact manifest…"
+            : "Command fields filled. The original cd + devtool command is preserved for direct execution."
+        artifactVerification.restart()
+    }
+
+    Timer {
+        id: artifactVerification
+        interval: 350
+        repeat: false
+        onTriggered: {
+            artifactInspector.clear()
+            artifactInspector.artifactPath = appController.artifact
+            artifactInspector.repositoryPath = appController.repository
+            if (appController.artifactExists)
+                artifactInspector.inspect(false)
+        }
+    }
+
+    Connections {
+        target: appController
+        function onArtifactChanged() { artifactVerification.restart() }
+    }
+    Connections {
+        target: artifactInspector
+        function onInspectionChanged() { root.applyArtifactManifestDefaults() }
+    }
+    Component.onCompleted: artifactVerification.restart()
     clip: true
 
     FolderDialog { id: repoDialog; onAccepted: appController.repository = selectedFolder.toString().replace("file://", "") }
     FileDialog {
         id: artifactDialog
         nameFilters: ["Archives (*.zip *.tar *.gz *.zst)", "All files (*)"]
-        onAccepted: appController.artifact = selectedFile.toString().replace("file://", "")
+        onAccepted: {
+            appController.artifact = selectedFile.toString().replace("file://", "")
+            artifactVerification.restart()
+        }
     }
 
     Popup {
@@ -46,7 +203,7 @@ AppScrollView {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: "This runs the copied command through your login shell only after confirmation. Review every argument first."
+                    text: "This opens the copied command in your preferred external terminal only after confirmation. Review every argument first."
                     color: theme.warning
                     wrapMode: Text.Wrap
                     font.pointSize: theme.bodyPointSize
@@ -77,7 +234,7 @@ AppScrollView {
                         text: appController.clipboardCandidateSnapshotText
                         readOnly: true
                         wrapMode: TextEdit.WrapAnywhere
-                        font.family: "monospace"
+                        font.family: theme.monospaceFamily
                         font.pointSize: theme.smallPointSize
                         background: null
                     }
@@ -90,7 +247,7 @@ AppScrollView {
                 AppButton {
                     text: "Run command"
                     variant: "primary"
-                    enabled: !processRunner.running && appController.clipboardCandidateSnapshotKind === "command"
+                    enabled: appController.clipboardCandidateSnapshotKind === "command"
                     onClicked: {
                         commandConfirmation.close()
                         appController.runClipboardCommand()
@@ -103,7 +260,50 @@ AppScrollView {
     ColumnLayout {
         width: root.availableWidth
         spacing: theme.sectionSpacing
-        PageHeading { text: "Run"; Layout.leftMargin: theme.pageMargin; Layout.topMargin: 20 }
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: theme.pageMargin
+            Layout.rightMargin: theme.pageMargin
+            Layout.topMargin: 20
+            PageHeading { text: "Run" }
+            Item { Layout.fillWidth: true }
+            AppButton {
+                text: "Paste from clipboard"
+                variant: "default"
+                onClicked: root.applyImportedCommand(appController.pasteCommandFromClipboard())
+            }
+        }
+        Label {
+            Layout.leftMargin: theme.pageMargin
+            Layout.rightMargin: theme.pageMargin
+            Layout.fillWidth: true
+            visible: root.pasteFeedback !== ""
+            text: root.pasteFeedback
+            color: root.pasteFeedback.startsWith("Clipboard does not") ? theme.warning : theme.success
+            font.pointSize: theme.smallPointSize
+            wrapMode: Text.Wrap
+        }
+        Rectangle {
+            Layout.leftMargin: theme.pageMargin
+            Layout.rightMargin: theme.pageMargin
+            Layout.fillWidth: true
+            visible: root.importedCommand !== ""
+            implicitHeight: importedCommandText.implicitHeight + 18
+            radius: theme.controlRadius
+            color: theme.recessedSurface
+            border.color: theme.border
+            border.width: 1
+            Label {
+                id: importedCommandText
+                anchors.fill: parent
+                anchors.margins: 9
+                text: root.importedCommand
+                color: theme.mutedText
+                font.family: theme.monospaceFamily
+                font.pointSize: theme.captionPointSize
+                wrapMode: Text.WrapAnywhere
+            }
+        }
 
         SurfaceCard {
             Layout.fillWidth: true
@@ -143,7 +343,7 @@ AppScrollView {
                         anchors.margins: 10
                         text: appController.clipboardCandidateText
                         color: theme.windowText
-                        font.family: "monospace"
+                        font.family: theme.monospaceFamily
                         font.pointSize: theme.smallPointSize
                         lineHeight: theme.bodyLineHeight
                         wrapMode: Text.WrapAnywhere
@@ -159,6 +359,7 @@ AppScrollView {
                             commandConfirmation.open()
                         }
                     }
+                    AppButton { text: "Fill fields"; onClicked: root.applyImportedCommand(appController.parseDevtoolCommand(appController.clipboardCandidateText)) }
                     AppButton { text: "Copy"; onClicked: appController.copyText(appController.clipboardCandidateCopyText()) }
                     AppButton { text: "Dismiss"; variant: "ghost"; onClicked: appController.clearClipboardCandidate() }
                     Item { Layout.fillWidth: true }
@@ -180,15 +381,25 @@ AppScrollView {
                 rowSpacing: 12
 
                 Label { text: "Repository"; color: theme.mutedText; font.pointSize: theme.smallPointSize; verticalAlignment: Text.AlignVCenter }
-                AppTextField { Layout.fillWidth: true; text: appController.repository; onTextEdited: appController.repository = text; placeholderText: "~/Code/project" }
+                AppTextField { id: repositoryField; Layout.fillWidth: true; text: appController.repository; onTextEdited: appController.repository = text; placeholderText: "~/Code/project" }
                 AppButton { text: "Browse…"; onClicked: repoDialog.open() }
 
                 Label { text: "Operation"; color: theme.mutedText; font.pointSize: theme.smallPointSize; verticalAlignment: Text.AlignVCenter }
-                AppComboBox { Layout.fillWidth: true; model: ["Apply overlay", "Validate", "Restore", "Build", "Test", "Status", "Doctor"]; onCurrentTextChanged: root.operation = currentText }
+                AppComboBox { id: operationCombo; Layout.fillWidth: true; model: ["Apply overlay", "Validate", "Restore", "Build", "Test", "Status", "Doctor"]; onCurrentTextChanged: root.operation = currentText }
                 Item { width: 1; height: 1 }
 
                 Label { text: "Artifact"; color: theme.mutedText; visible: root.operation === "Apply overlay" }
-                AppTextField { Layout.fillWidth: true; visible: root.operation === "Apply overlay"; text: appController.artifact; onTextEdited: appController.artifact = text; placeholderText: "Choose an overlay or bundle" }
+                AppTextField {
+                    id: artifactField
+                    Layout.fillWidth: true
+                    visible: root.operation === "Apply overlay"
+                    text: appController.artifact
+                    onTextEdited: {
+                        appController.artifact = text
+                        artifactVerification.restart()
+                    }
+                    placeholderText: "Choose an overlay or bundle"
+                }
                 RowLayout {
                     visible: root.operation === "Apply overlay"
                     spacing: 6
@@ -219,12 +430,126 @@ AppScrollView {
         RowLayout {
             Layout.leftMargin: theme.pageMargin
             Layout.rightMargin: theme.pageMargin
+            Layout.fillWidth: true
+            spacing: 10
+
+            Label {
+                text: "Clipboard"
+                color: theme.mutedText
+            }
+
+            AppComboBox {
+                id: copyMode
+                model: [
+                    "Copy summary",
+                    "Copy JSON",
+                    "Do not copy"
+                ]
+                currentIndex: 0
+            }
+
+            AppCheckBox {
+                id: autoHud
+                text: "Auto HUD"
+                checked: true
+
+                onToggled: {
+                    if (checked &&
+                        hudMode.currentText === "none") {
+                        hudMode.currentIndex = 0
+                    }
+                }
+            }
+
+            Label {
+                text: "HUD mode"
+                color: theme.mutedText
+                enabled: autoHud.checked
+            }
+
+            AppComboBox {
+                id: hudMode
+                model: [
+                    "control-center",
+                    "desktop-window",
+                    "android-bridge",
+                    "none"
+                ]
+                currentIndex: 0
+                enabled: autoHud.checked
+
+                onCurrentTextChanged: {
+                    if (currentText === "none")
+                        autoHud.checked = false
+                }
+            }
+
+            Item { Layout.fillWidth: true }
+        }
+
+        RowLayout {
+            Layout.leftMargin: theme.pageMargin
+            Layout.rightMargin: theme.pageMargin
+            Layout.fillWidth: true
+            visible: root.operation === "Apply overlay" && appController.artifact !== ""
+            spacing: 8
+            Rectangle {
+                width: 8; height: 8; radius: 4
+                color: !appController.artifactExists ? theme.error
+                     : artifactInspector.loading ? theme.info
+                     : artifactInspector.error !== "" ? theme.error
+                     : !artifactInspector.summary.manifest_present ? theme.warning
+                     : !artifactInspector.summary.manifest_json_valid ? theme.error
+                     : !((artifactInspector.summary.validation || {}).ok) ? theme.error
+                     : theme.success
+            }
+            Label {
+                Layout.fillWidth: true
+                text: !appController.artifactExists ? "Artifact file does not exist."
+                    : artifactInspector.loading ? "Checking artifact and devtool-artifact.json…"
+                    : artifactInspector.error !== "" ? "Artifact inspection failed: " + artifactInspector.error
+                    : !artifactInspector.summary.manifest_present ? "Artifact exists, but no devtool-artifact.json or supported sidecar manifest was found."
+                    : !artifactInspector.summary.manifest_json_valid ? "Artifact manifest JSON is invalid: " + (artifactInspector.summary.manifest_error || "unknown parse error")
+                    : !((artifactInspector.summary.validation || {}).ok) ? "Artifact manifest was found, but validation failed: " + (((artifactInspector.summary.validation || {}).messages || []).join(" · "))
+                    : "Artifact and manifest are valid · " + (artifactInspector.summary.manifest_source || "embedded manifest")
+                color: !appController.artifactExists || artifactInspector.error !== "" || artifactInspector.summary.manifest_json_valid === false || (((artifactInspector.summary.validation || {}).ok) === false && artifactInspector.summary.manifest_present) ? theme.error
+                     : artifactInspector.loading ? theme.info
+                     : artifactInspector.summary.manifest_present ? theme.success
+                     : theme.warning
+                font.pointSize: theme.smallPointSize
+                wrapMode: Text.Wrap
+            }
+            AppButton {
+                text: "Recheck"
+                compact: true
+                enabled: !artifactInspector.loading
+                onClicked: {
+                    appController.refreshArtifactState()
+                    artifactVerification.restart()
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.leftMargin: theme.pageMargin
+            Layout.rightMargin: theme.pageMargin
             spacing: 14
             AppCheckBox { id: validate; text: "Validate"; checked: true; visible: root.operation === "Apply overlay" }
             AppCheckBox { id: commit; text: "Commit"; checked: true; visible: root.operation === "Apply overlay" }
             AppCheckBox { id: keep; text: "Keep artifact"; visible: root.operation === "Apply overlay" }
             AppButton { text: "Open HUD"; variant: "default"; onClicked: appController.launchHud() }
             Item { Layout.fillWidth: true }
+            AppCheckBox {
+                text: "Auto-close terminal"
+                checked: appController.autoCloseTerminal
+                onToggled: appController.autoCloseTerminal = checked
+            }
+            Label {
+                text: "Terminal: " + (appController.preferredTerminal ? appController.preferredTerminal.split("/").pop() : "not found")
+                      + " · Shell: " + appController.preferredShell.split("/").pop()
+                color: theme.subtleText
+                font.pointSize: theme.captionPointSize
+            }
         }
 
         RowLayout {
@@ -232,44 +557,69 @@ AppScrollView {
             Layout.rightMargin: theme.pageMargin
             spacing: 10
             AppButton {
-                text: processRunner.running ? "Running…" : "Run"
+                text: "Open in " + (appController.preferredTerminal ? appController.preferredTerminal.split("/").pop() : "terminal")
                 variant: "primary"
-                enabled: !processRunner.running && appController.repository !== "" && (root.operation !== "Apply overlay" || appController.artifact !== "")
-                onClicked: appController.runWorkflow(root.operation, target.text, validate.checked, commit.checked, message.text, keep.checked)
+                enabled: appController.preferredTerminal !== "" && appController.repository !== ""
+                         && (root.operation !== "Apply overlay"
+                             || (appController.artifactExists
+                                 && !artifactInspector.loading
+                                 && artifactInspector.summary.manifest_present === true
+                                 && artifactInspector.summary.manifest_json_valid === true
+                                 && ((artifactInspector.summary.validation || {}).ok) === true))
+                onClicked: appController.runWorkflow(
+                    root.operation,
+                    target.text,
+                    validate.checked,
+                    commit.checked,
+                    message.text,
+                    keep.checked,
+                    root.selectedCopyMode(),
+                    autoHud.checked,
+                    hudMode.currentText
+                )
             }
-            AppButton { text: "Cancel"; variant: "danger"; enabled: processRunner.running; onClicked: processRunner.cancel() }
-            AppButton { text: "Clear output"; variant: "ghost"; onClicked: processRunner.clear() }
             Item { Layout.fillWidth: true }
-        }
-
-        Label {
-            Layout.fillWidth: true
-            Layout.leftMargin: theme.pageMargin
-            Layout.rightMargin: theme.pageMargin
-            text: processRunner.commandLine
-            color: theme.info
-            font.family: "monospace"
-            font.pointSize: theme.smallPointSize
-            wrapMode: Text.Wrap
         }
 
         SurfaceCard {
             Layout.fillWidth: true
             Layout.leftMargin: theme.pageMargin
             Layout.rightMargin: theme.pageMargin
-            Layout.preferredHeight: 330
-            color: theme.recessedSurface
-            ScrollView {
+            implicitHeight: terminalInfo.implicitHeight + 28
+            ColumnLayout {
+                id: terminalInfo
                 anchors.fill: parent
-                background: Rectangle { color: "transparent" }
-                anchors.margins: 8
-                AppTextArea {
-                    text: processRunner.output
-                    readOnly: true
-                    font.family: "monospace"
+                anchors.margins: 14
+                spacing: 6
+                Label {
+                    text: "External terminal execution"
+                    color: theme.windowText
+                    font.pointSize: theme.cardTitlePointSize
+                    font.weight: Font.DemiBold
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "Commands open in kitty when available, then fall back to another desktop terminal. The HUD and run history provide live progress and logs; no duplicate terminal is embedded here."
+                    color: theme.mutedText
+                    wrapMode: Text.Wrap
                     font.pointSize: theme.smallPointSize
-                    wrapMode: TextEdit.NoWrap
-                    background: null
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: appController.dotnetExecutable !== ""
+                    text: ".NET SDK command: " + appController.dotnetExecutable
+                    color: theme.subtleText
+                    font.family: theme.monospaceFamily
+                    font.pointSize: theme.captionPointSize
+                    elide: Text.ElideMiddle
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: appController.launchStatus !== ""
+                    text: appController.launchStatus
+                    color: appController.launchStatus.startsWith("Could not") || appController.launchStatus.startsWith("No supported") ? theme.error : theme.success
+                    wrapMode: Text.Wrap
+                    font.pointSize: theme.smallPointSize
                 }
             }
         }

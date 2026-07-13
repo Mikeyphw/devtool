@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QVector>
 #include <QHash>
+#include <QVariantList>
 
 class HistoryModel final : public QAbstractListModel {
     Q_OBJECT
@@ -11,7 +12,8 @@ class HistoryModel final : public QAbstractListModel {
 public:
     enum Roles { RunIdRole = Qt::UserRole + 1, TitleRole, RepoRole, TargetRole,
                  StatusRole, StartedRole, DurationRole, ErrorsRole, WarningsRole,
-                 SummaryRole, CommandRole, StepsRole };
+                 SummaryRole, CommandRole, StepsRole, RepoRootRole, ArtifactNameRole,
+                 ArtifactPathRole, GitCommitRole };
     explicit HistoryModel(QObject *parent = nullptr);
     int rowCount(const QModelIndex &parent = {}) const override;
     int count() const;
@@ -19,6 +21,8 @@ public:
     QHash<int, QByteArray> roleNames() const override;
     Q_INVOKABLE void clear();
     Q_INVOKABLE QVariantMap get(int row) const;
+    Q_INVOKABLE QVariantList forRepository(const QString &path) const;
+    Q_INVOKABLE QVariantMap artifactForCommit(const QString &hash, const QString &repoPath = QString()) const;
     void record(const QJsonObject &state);
 signals:
     void countChanged();

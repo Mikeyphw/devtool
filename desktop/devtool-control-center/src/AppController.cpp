@@ -11,17 +11,22 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileDialog>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QMenu>
 #include <QProcess>
+#include <QRegularExpression>
+#include <QProcessEnvironment>
 #include <QSaveFile>
+#include <QSet>
 #include <QStandardPaths>
 #include <QIODevice>
 #include <QLocalSocket>
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QUrl>
+#include <utility>
 
 static QString resolveDevtoolExecutable(const QString &configured) {
     const QString value = configured.trimmed().isEmpty() ? QStringLiteral("devtool") : configured.trimmed();
@@ -63,6 +68,53 @@ static QString normalizedClipboardCommand(QString command) {
     return lines.join(QLatin1Char('\n')).trimmed();
 }
 
+
+static QString shellUnquote(QString value) {
+    value = value.trimmed();
+    if (value.size() >= 2) {
+        const QChar first = value.front();
+        const QChar last = value.back();
+        if ((first == QLatin1Char('"') && last == QLatin1Char('"')) ||
+            (first == QLatin1Char('\'') && last == QLatin1Char('\''))) {
+            value = value.mid(1, value.size() - 2);
+        }
+    }
+    value.replace(QStringLiteral("$HOME"), QDir::homePath());
+    value.replace(QStringLiteral("${HOME}"), QDir::homePath());
+    if (value == QStringLiteral("~")) value = QDir::homePath();
+    else if (value.startsWith(QStringLiteral("~/"))) value = QDir::home().filePath(value.mid(2));
+    return QDir::cleanPath(QDir::fromNativeSeparators(value));
+}
+
+static QStringList shellTokens(QString command) {
+    command.replace(QStringLiteral("\\\r\n"), QStringLiteral(" "));
+    command.replace(QStringLiteral("\\\n"), QStringLiteral(" "));
+    static const QRegularExpression tokenPattern(
+        QStringLiteral(R"((?:"(?:\\.|[^"])*"|'[^']*'|[^\s]+))"));
+    QStringList values;
+    auto it = tokenPattern.globalMatch(command);
+    while (it.hasNext()) values << it.next().captured(0);
+    return values;
+}
+
+static QString operationLabel(const QString &value) {
+    const QString token = value.toLower();
+    if (token == QStringLiteral("apply-overlay") || token == QStringLiteral("apply-overlays") ||
+        token == QStringLiteral("ao") || token == QStringLiteral("aos")) return QStringLiteral("Apply overlay");
+    if (token == QStringLiteral("validate") || token == QStringLiteral("validate-artifact") || token == QStringLiteral("v")) return QStringLiteral("Validate");
+    if (token == QStringLiteral("restore") || token == QStringLiteral("rs")) return QStringLiteral("Restore");
+    if (token == QStringLiteral("build") || token == QStringLiteral("b")) return QStringLiteral("Build");
+    if (token == QStringLiteral("test") || token == QStringLiteral("t")) return QStringLiteral("Test");
+    if (token == QStringLiteral("status") || token == QStringLiteral("st")) return QStringLiteral("Status");
+    if (token == QStringLiteral("doctor") || token == QStringLiteral("dr")) return QStringLiteral("Doctor");
+    return {};
+}
+
+static QString shellQuote(QString value) {
+    value.replace(QLatin1Char('\''), QStringLiteral("'\"'\"'"));
+    return QLatin1Char('\'') + value + QLatin1Char('\'');
+}
+
 static QString systemdQuote(QString value) {
     value.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
     value.replace(QLatin1Char('"'), QStringLiteral("\\\""));
@@ -98,6 +150,7 @@ AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h
     m_repository = m_settings.value(QStringLiteral("repository")).toString();
     m_artifact = m_settings.value(QStringLiteral("artifact")).toString();
     m_devtool = resolveDevtoolExecutable(m_settings.value(QStringLiteral("devtool"), QStringLiteral("devtool")).toString());
+    m_autoCloseTerminal = m_settings.value(QStringLiteral("terminal/autoClose"), false).toBool();
 
     m_clipboardMonitor = new ClipboardMonitor(false, false, this);
     connect(m_clipboardMonitor, &ClipboardMonitor::candidateChanged, this, &AppController::clipboardCandidateChanged);
@@ -152,10 +205,316 @@ void AppController::setDevtoolExecutable(const QString &v) {
     emit devtoolExecutableChanged();
 }
 
+void AppController::setAutoCloseTerminal(bool value) {
+    if (value == m_autoCloseTerminal) return;
+    m_autoCloseTerminal = value;
+    emit autoCloseTerminalChanged();
+}
+
+void AppController::setLaunchStatus(const QString &status) {
+    if (status == m_launchStatus) return;
+    m_launchStatus = status;
+    emit launchStatusChanged();
+}
+
 bool AppController::devtoolAvailable() const {
     const QFileInfo file(m_devtool);
     if (file.isAbsolute()) return file.isFile() && file.isExecutable();
     return !QStandardPaths::findExecutable(m_devtool).isEmpty();
+}
+
+
+bool AppController::artifactExists() const {
+    return !m_artifact.trimmed().isEmpty() && QFileInfo(m_artifact.trimmed()).isFile();
+}
+
+QString AppController::preferredShell() const {
+    const QString zsh = QStandardPaths::findExecutable(QStringLiteral("zsh"));
+    if (!zsh.isEmpty()) return zsh;
+    const QFileInfo systemZsh(QStringLiteral("/usr/bin/zsh"));
+    if (systemZsh.isFile() && systemZsh.isExecutable()) return systemZsh.absoluteFilePath();
+    const QString configured = qEnvironmentVariable("SHELL");
+    if (!configured.isEmpty() && QFileInfo(configured).isExecutable()) return configured;
+    const QString bash = QStandardPaths::findExecutable(QStringLiteral("bash"));
+    return bash.isEmpty() ? QStandardPaths::findExecutable(QStringLiteral("sh")) : bash;
+}
+
+QString AppController::preferredTerminal() const {
+    const QStringList candidates {
+        QStringLiteral("kitty"), QStringLiteral("wezterm"), QStringLiteral("foot"),
+        QStringLiteral("konsole"), QStringLiteral("gnome-terminal"),
+        QStringLiteral("xfce4-terminal"), QStringLiteral("xterm")
+    };
+    for (const QString &candidate : candidates) {
+        const QString executable = QStandardPaths::findExecutable(candidate);
+        if (!executable.isEmpty()) return executable;
+        const QFileInfo localExecutable(QDir::home().filePath(QStringLiteral(".local/bin/") + candidate));
+        if (localExecutable.isFile() && localExecutable.isExecutable()) return localExecutable.absoluteFilePath();
+    }
+    return {};
+}
+
+QString AppController::dotnetExecutable() const {
+    const QString miseDotnet = QDir::home().filePath(QStringLiteral(".local/share/mise/shims/dotnet"));
+    const QFileInfo miseFile(miseDotnet);
+    if (miseFile.isFile() && miseFile.isExecutable()) return miseFile.absoluteFilePath();
+    return QStandardPaths::findExecutable(QStringLiteral("dotnet"));
+}
+
+QString AppController::augmentedPath() const {
+    QStringList entries;
+    const QString miseShims = QDir::home().filePath(QStringLiteral(".local/share/mise/shims"));
+    if (QFileInfo(miseShims).isDir()) entries << miseShims;
+    const QString localBin = QDir::home().filePath(QStringLiteral(".local/bin"));
+    if (QFileInfo(localBin).isDir()) entries << localBin;
+    const QString current = qEnvironmentVariable("PATH");
+    if (!current.isEmpty()) entries << current;
+    return entries.join(QLatin1Char(':'));
+}
+
+bool AppController::launchExternalTerminal(const QString &command, const QString &workingDirectory, const QString &title) {
+    const QString terminal = preferredTerminal();
+    const QString shell = preferredShell();
+    if (terminal.isEmpty()) {
+        setLaunchStatus(QStringLiteral("No supported terminal was found. Install kitty or configure a desktop terminal."));
+        return false;
+    }
+    if (shell.isEmpty()) {
+        setLaunchStatus(QStringLiteral("No supported shell was found."));
+        return false;
+    }
+
+    QString wrapped = QStringLiteral("export PATH=") + shellQuote(augmentedPath()) + QStringLiteral("; ") + command;
+    if (!m_autoCloseTerminal) {
+        wrapped += QStringLiteral(
+            "; __devtool_status=$?; printf '\n\nDevtool command finished with exit %s. Press Enter to close…' \"$__devtool_status\"; "
+            "read -r __devtool_close; exit \"$__devtool_status\"");
+    }
+
+    const QString base = QFileInfo(terminal).fileName();
+    QStringList arguments;
+    if (base == QStringLiteral("kitty")) {
+        arguments << QStringLiteral("--directory") << workingDirectory
+                  << QStringLiteral("--title") << title
+                  << shell << QStringLiteral("-lc") << wrapped;
+    } else if (base == QStringLiteral("wezterm")) {
+        arguments << QStringLiteral("start") << QStringLiteral("--always-new-process")
+                  << QStringLiteral("--cwd") << workingDirectory << QStringLiteral("--")
+                  << shell << QStringLiteral("-lc") << wrapped;
+    } else if (base == QStringLiteral("foot")) {
+        arguments << QStringLiteral("--working-directory") << workingDirectory
+                  << QStringLiteral("--title") << title
+                  << shell << QStringLiteral("-lc") << wrapped;
+    } else if (base == QStringLiteral("konsole")) {
+        arguments << QStringLiteral("--workdir") << workingDirectory
+                  << QStringLiteral("-p") << QStringLiteral("tabtitle=%1").arg(title)
+                  << QStringLiteral("-e") << shell << QStringLiteral("-lc") << wrapped;
+    } else if (base == QStringLiteral("gnome-terminal")) {
+        arguments << QStringLiteral("--working-directory=%1").arg(workingDirectory)
+                  << QStringLiteral("--title=%1").arg(title) << QStringLiteral("--")
+                  << shell << QStringLiteral("-lc") << wrapped;
+    } else if (base == QStringLiteral("xfce4-terminal")) {
+        arguments << QStringLiteral("--working-directory") << workingDirectory
+                  << QStringLiteral("--title") << title << QStringLiteral("-x")
+                  << shell << QStringLiteral("-lc") << wrapped;
+    } else {
+        arguments << QStringLiteral("-T") << title << QStringLiteral("-e")
+                  << shell << QStringLiteral("-lc") << wrapped;
+    }
+
+    const bool launched = QProcess::startDetached(terminal, arguments, workingDirectory);
+    if (launched) {
+        setLaunchStatus(QStringLiteral("Opened in %1%2.")
+            .arg(base, m_autoCloseTerminal ? QStringLiteral("; it will close when finished") : QStringLiteral("")));
+    } else {
+        setLaunchStatus(QStringLiteral("Could not launch %1.").arg(base));
+    }
+    return launched;
+}
+
+QString AppController::chooseRepositoryDirectory(const QString &initialPath) {
+    QString start = initialPath.trimmed();
+    if (!QFileInfo(start).isDir()) start = QFileInfo(m_repository).isDir() ? m_repository : QDir::homePath();
+    return QFileDialog::getExistingDirectory(nullptr, QStringLiteral("Add repository"), start,
+                                             QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+}
+
+QVariantMap AppController::parseDevtoolCommand(const QString &rawCommand) const {
+    const QString command = normalizedClipboardCommand(rawCommand);
+    QVariantMap result;
+    result[QStringLiteral("command")] = command;
+    if (command.isEmpty()) return result;
+
+    QString repository;
+    static const QRegularExpression cdPattern(
+        QStringLiteral(R"((?:^|&&|;)\s*cd\s+((?:"[^"]+")|(?:'[^']+')|(?:[^\s;&]+)))"),
+        QRegularExpression::MultilineOption);
+    const auto cdMatch = cdPattern.match(command);
+    if (cdMatch.hasMatch()) repository = shellUnquote(cdMatch.captured(1));
+
+    const QStringList rawTokens = shellTokens(command);
+    QStringList tokens;
+    for (QString token : rawTokens) {
+        if (token == QStringLiteral("\\") || token == QStringLiteral("&&") || token == QStringLiteral(";")) continue;
+        tokens << token;
+    }
+
+    int devtoolIndex = -1;
+    for (int index = 0; index < tokens.size(); ++index) {
+        const QString base = QFileInfo(shellUnquote(tokens.at(index))).fileName();
+        if (base == QStringLiteral("devtool") || base == QStringLiteral("devtool-androidos")) {
+            devtoolIndex = index;
+            break;
+        }
+    }
+    if (devtoolIndex < 0) return result;
+
+    QString operation;
+    QString artifact;
+    QString target;
+    QString commitMessage;
+    bool validate = false;
+    bool commit = false;
+    bool keepArtifact = false;
+    QString copyMode = QStringLiteral("summary");
+    bool autoHud = true;
+    QString hudMode = QStringLiteral("control-center");
+    bool validateExplicit = false;
+    bool commitExplicit = false;
+    bool keepArtifactExplicit = false;
+    bool targetExplicit = false;
+    bool copyExplicit = false;
+    bool hudExplicit = false;
+    static const QSet<QString> optionsWithValue {
+        QStringLiteral("-r"), QStringLiteral("--repo-root"), QStringLiteral("--config"),
+        QStringLiteral("--target"), QStringLiteral("--solution"), QStringLiteral("--project"),
+        QStringLiteral("--copy-via")
+    };
+
+    for (int index = devtoolIndex + 1; index < tokens.size(); ++index) {
+        const QString token = shellUnquote(tokens.at(index));
+        if ((token == QStringLiteral("-r") || token == QStringLiteral("--repo-root")) && index + 1 < tokens.size()) {
+            repository = shellUnquote(tokens.at(++index));
+            continue;
+        }
+        if ((token == QStringLiteral("--target") || token == QStringLiteral("--solution") || token == QStringLiteral("--project")) && index + 1 < tokens.size()) {
+            target = shellUnquote(tokens.at(++index));
+            targetExplicit = true;
+            continue;
+        }
+        if (token == QStringLiteral("--copy") ||
+            token == QStringLiteral("--copy-summary")) {
+            copyMode = QStringLiteral("summary");
+            copyExplicit = true;
+            continue;
+        }
+
+        if (token == QStringLiteral("--copy-json")) {
+            copyMode = QStringLiteral("json");
+            copyExplicit = true;
+            continue;
+        }
+
+        if (token == QStringLiteral("--no-clipboard")) {
+            copyMode = QStringLiteral("none");
+            copyExplicit = true;
+            continue;
+        }
+
+        if (token == QStringLiteral("--auto-hud") ||
+            token == QStringLiteral("--hud-auto")) {
+            autoHud = true;
+            hudExplicit = true;
+            continue;
+        }
+
+        if (token == QStringLiteral("--no-hud")) {
+            autoHud = false;
+            hudMode = QStringLiteral("none");
+            hudExplicit = true;
+            continue;
+        }
+
+        if (token == QStringLiteral("--hud-mode") &&
+            index + 1 < tokens.size()) {
+            hudMode = shellUnquote(tokens.at(++index));
+            autoHud =
+                hudMode.compare(
+                    QStringLiteral("none"),
+                    Qt::CaseInsensitive
+                ) != 0;
+            hudExplicit = true;
+            continue;
+        }
+
+        if (token == QStringLiteral("--commit")) {
+            commit = true;
+            commitExplicit = true;
+
+            // Bare --commit means that devtool must use the message embedded
+            // in devtool-artifact.json. Do not consume the following flag as
+            // though it were a commit message.
+            if (index + 1 < tokens.size()) {
+                const QString candidate =
+                    shellUnquote(tokens.at(index + 1));
+
+                if (!candidate.startsWith(QLatin1Char('-')) &&
+                    candidate != QStringLiteral("&&") &&
+                    candidate != QStringLiteral(";")) {
+                    commitMessage =
+                        shellUnquote(tokens.at(++index));
+                }
+            }
+            continue;
+        }
+        if (token == QStringLiteral("--no-commit")) { commit = false; commitExplicit = true; continue; }
+        if (token == QStringLiteral("--validate")) { validate = true; validateExplicit = true; continue; }
+        if (token == QStringLiteral("--no-validate")) { validate = false; validateExplicit = true; continue; }
+        if (token == QStringLiteral("--keep-artifact")) { keepArtifact = true; keepArtifactExplicit = true; continue; }
+        if (optionsWithValue.contains(token)) { if (index + 1 < tokens.size()) ++index; continue; }
+        if (token.startsWith(QLatin1Char('-'))) continue;
+        if (operation.isEmpty()) {
+            operation = operationLabel(token);
+            if (operation.isEmpty()) continue;
+            if (operation == QStringLiteral("Apply overlay") && index + 1 < tokens.size())
+                artifact = shellUnquote(tokens.at(++index));
+            continue;
+        }
+    }
+
+    if (operation.isEmpty()) return result;
+    result[QStringLiteral("valid")] = true;
+    result[QStringLiteral("repository")] = repository;
+    result[QStringLiteral("operation")] = operation;
+    result[QStringLiteral("artifact")] = artifact;
+    result[QStringLiteral("target")] = target;
+    result[QStringLiteral("validate")] = validate;
+    result[QStringLiteral("commit")] = commit;
+    result[QStringLiteral("commitMessage")] = commitMessage;
+    result[QStringLiteral("keepArtifact")] = keepArtifact;
+    result[QStringLiteral("copyMode")] = copyMode;
+    result[QStringLiteral("autoHud")] = autoHud;
+    result[QStringLiteral("hudMode")] = hudMode;
+    result[QStringLiteral("targetExplicit")] = targetExplicit;
+    result[QStringLiteral("validateExplicit")] = validateExplicit;
+    result[QStringLiteral("commitExplicit")] = commitExplicit;
+    result[QStringLiteral("keepArtifactExplicit")] = keepArtifactExplicit;
+    result[QStringLiteral("copyExplicit")] = copyExplicit;
+    result[QStringLiteral("hudExplicit")] = hudExplicit;
+    return result;
+}
+
+QVariantMap AppController::pasteCommandFromClipboard() {
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    if (!clipboard) return {};
+    const QString text = clipboard->text(QClipboard::Clipboard);
+    const QVariantMap parsed = parseDevtoolCommand(text);
+    if (!parsed.value(QStringLiteral("valid")).toBool()) return parsed;
+    const QString repo = parsed.value(QStringLiteral("repository")).toString();
+    const QString artifactPath = parsed.value(QStringLiteral("artifact")).toString();
+    if (!repo.isEmpty()) setRepository(repo);
+    if (!artifactPath.isEmpty()) setArtifact(artifactPath);
+    return parsed;
 }
 
 QString AppController::clipboardCandidateText() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateText() : QString(); }
@@ -177,18 +536,69 @@ void AppController::saveSettings() {
     m_settings.setValue(QStringLiteral("repository"), m_repository);
     m_settings.setValue(QStringLiteral("artifact"), m_artifact);
     m_settings.setValue(QStringLiteral("devtool"), m_devtool);
+    m_settings.setValue(QStringLiteral("terminal/autoClose"), m_autoCloseTerminal);
     m_settings.sync();
 }
 
-void AppController::runWorkflow(const QString &operation, const QString &target, bool validate, bool commit, const QString &message, bool keepArtifact) {
+void AppController::runWorkflow(
+    const QString &operation,
+    const QString &target,
+    bool validate,
+    bool commit,
+    const QString &message,
+    bool keepArtifact,
+    const QString &copyMode,
+    bool autoHud,
+    const QString &hudMode) {
+
     if (m_repository.isEmpty()) return;
-    QStringList a{"--auto-hud","--hud-mode","control-center","--yes","-r",m_repository};
+
+    QStringList a;
+
+    const QString normalizedCopyMode =
+        copyMode.trimmed().toLower();
+
+    if (normalizedCopyMode == QStringLiteral("json")) {
+        a << QStringLiteral("--copy-json");
+    } else if (normalizedCopyMode == QStringLiteral("none")) {
+        a << QStringLiteral("--no-clipboard");
+    } else {
+        a << QStringLiteral("--copy");
+    }
+
+    const QString normalizedHudMode =
+        hudMode.trimmed().isEmpty()
+            ? QStringLiteral("control-center")
+            : hudMode.trimmed();
+
+    if (autoHud &&
+        normalizedHudMode.compare(
+            QStringLiteral("none"),
+            Qt::CaseInsensitive
+        ) != 0) {
+        a << QStringLiteral("--auto-hud")
+          << QStringLiteral("--hud-mode")
+          << normalizedHudMode;
+    } else {
+        a << QStringLiteral("--no-hud");
+    }
+
+    a << QStringLiteral("--yes")
+      << QStringLiteral("-r")
+      << m_repository;
     if (!target.trimmed().isEmpty()) a << QStringLiteral("--target") << target.trimmed();
     const QString op = operation.toLower();
     if (op == QStringLiteral("apply overlay")) {
         a << QStringLiteral("apply-overlay") << m_artifact;
         if (validate) a << QStringLiteral("--validate");
-        if (commit && !message.trimmed().isEmpty()) a << QStringLiteral("--commit") << message.trimmed();
+        if (commit) {
+            // Always include --commit when requested. A bare flag lets the CLI
+            // obtain its message from devtool-artifact.json.
+            a << QStringLiteral("--commit");
+
+            if (!message.trimmed().isEmpty())
+                a << message.trimmed();
+        }
         if (keepArtifact) a << QStringLiteral("--keep-artifact");
     } else if (op == QStringLiteral("validate")) a << QStringLiteral("validate");
     else if (op == QStringLiteral("restore")) a << QStringLiteral("restore");
@@ -197,9 +607,11 @@ void AppController::runWorkflow(const QString &operation, const QString &target,
     else if (op == QStringLiteral("status")) a << QStringLiteral("status");
     else if (op == QStringLiteral("doctor")) a << QStringLiteral("doctor");
     else return;
-    QVariantMap env;
-    env[QStringLiteral("DEVTOOL_CONTROL_CENTER_ACTIVE")] = QStringLiteral("1");
-    m_runner->start(m_devtool, a, m_repository, env);
+    QString command = QStringLiteral("export DEVTOOL_CONTROL_CENTER_ACTIVE=1; cd ") + shellQuote(m_repository)
+        + QStringLiteral(" && ") + shellQuote(m_devtool);
+    for (const QString &argument : std::as_const(a))
+        command += QLatin1Char(' ') + shellQuote(argument);
+    launchExternalTerminal(command, m_repository, QStringLiteral("Devtool — %1").arg(operation));
     saveSettings();
 }
 
@@ -209,6 +621,10 @@ void AppController::openPath(const QString &p) {
     QString resolved = p;
     if (QDir::isRelativePath(resolved) && !m_repository.isEmpty()) resolved = QDir(m_repository).filePath(resolved);
     QDesktopServices::openUrl(QUrl::fromLocalFile(resolved));
+}
+void AppController::openUrl(const QString &url) {
+    const QUrl parsed = QUrl::fromUserInput(url);
+    if (parsed.isValid()) QDesktopServices::openUrl(parsed);
 }
 void AppController::quit() { qApp->quit(); }
 void AppController::cancelRun(const QString &runId) { if (m_ipc) m_ipc->cancelRun(runId); }
@@ -394,21 +810,13 @@ void AppController::clearClipboardCandidate() {
 }
 
 void AppController::runClipboardCommand() {
-    if (m_runner->running()) return;
-    if (m_clipboardCandidateSnapshotKind != QStringLiteral("command")) {
-        captureClipboardCandidate();
-    }
+    if (m_clipboardCandidateSnapshotKind != QStringLiteral("command")) captureClipboardCandidate();
     if (m_clipboardCandidateSnapshotKind != QStringLiteral("command")) return;
     const QString command = normalizedClipboardCommand(m_clipboardCandidateSnapshotText);
     if (command.isEmpty()) return;
-    QString shell = qEnvironmentVariable("SHELL");
-    if (shell.isEmpty() || !QFileInfo(shell).isExecutable()) shell = QStandardPaths::findExecutable(QStringLiteral("bash"));
-    if (shell.isEmpty()) shell = QStandardPaths::findExecutable(QStringLiteral("sh"));
-    if (shell.isEmpty()) return;
     const QString workingDirectory = QFileInfo(m_repository).isDir() ? m_repository : QDir::homePath();
-    QVariantMap env;
-    env[QStringLiteral("DEVTOOL_CONTROL_CENTER_ACTIVE")] = QStringLiteral("1");
-    m_runner->start(shell, QStringList{QStringLiteral("-lc"), command}, workingDirectory, env);
+    if (!launchExternalTerminal(QStringLiteral("export DEVTOOL_CONTROL_CENTER_ACTIVE=1; ") + command,
+                                workingDirectory, QStringLiteral("Devtool command"))) return;
     m_clipboardCandidateSnapshotKind.clear();
     m_clipboardCandidateSnapshotText.clear();
     m_clipboardCandidateSnapshotSummary.clear();

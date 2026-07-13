@@ -1,7 +1,6 @@
 package io.github.mikeceead.devtoolhud;
 
 import android.content.Intent;
-import android.os.SystemClock;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -120,8 +119,8 @@ final class HudUpdate {
 
     private static String firstUseful(String first, String second, String third, String fallback) {
         for (String value : new String[]{first, second, third}) {
-            String clean = plainText(clean(value, ""));
-            if (!clean.isEmpty()) return clean.length() > 180 ? clean.substring(0, 177) + "…" : clean;
+            String cleaned = plainText(clean(value, ""));
+            if (!cleaned.isEmpty()) return cleaned.length() > 180 ? cleaned.substring(0, 177) + "…" : cleaned;
         }
         return fallback;
     }
@@ -189,46 +188,81 @@ final class HudUpdate {
     boolean failedState() { return status.equals("failed"); }
 
     int displayProgress() {
+        if (succeeded()) return 100;
+        // Overall pipeline progress is supplied by the producer. The active
+        // step retains an independent local percentage for expanded text.
+        return progress;
+    }
+
+    int activeStepProgress() {
         Step active = activeStep();
-        if (active != null) return active.progress;
-        return pipelineProgress();
+        return active == null ? progress : active.progress;
+    }
+
+    String phaseLabel() {
+        if (succeeded()) return "Completed";
+        if (failedState()) return "Failed";
+        if (status.equals("interrupted") || status.equals("cancelled")) return "Interrupted";
+        if (status.equals("waiting")) return "Preparing";
+        return phase;
     }
 
     String title() {
-        String operation = operationName();
-        if (succeeded()) return operation + " completed";
-        if (failedState()) return operation + " failed";
-        if (status.equals("interrupted") || status.equals("cancelled")) return operation + " interrupted";
-        if (status.equals("waiting")) return "Preparing · " + repo;
-        return phase + " · " + repo;
-    }
-
-    private String operationName() {
-        String lower = phase.toLowerCase(Locale.ROOT);
-        if (lower.contains("test")) return "Tests";
-        if (lower.contains("commit")) return "Commit";
-        if (lower.contains("overlay") || lower.contains("apply")) return "Overlay";
-        if (lower.contains("validat")) return "Validation";
-        if (lower.contains("restor")) return "Restore";
-        if (lower.contains("build")) return "Build";
-        return "Devtool run";
+        return "Devtool · " + phaseLabel();
     }
 
     String contentText() {
+        String scope = target.isEmpty() ? repo : target;
         if (isTerminal()) {
             int total = passed + failed + skipped;
-            StringBuilder text = new StringBuilder();
-            if (total > 0) text.append(passed).append(" passed · ").append(failed).append(" failed · ").append(skipped).append(" skipped");
-            else text.append(detail);
-            if (warnings > 0) text.append(" · ").append(warnings).append(" warning").append(warnings == 1 ? "" : "s");
-            if (!commit.isEmpty()) text.append(" · ").append(commit);
-            return text.toString();
+            if (total > 0) return scope + " · " + passed + " passed · " + failed + " failed";
+            return scope + " · " + detail;
         }
-        return detail + " · " + errors + " errors · " + warnings + " warnings";
+        Step active = activeStep();
+        String local = detail;
+        if (active != null && active.progress > 0 && !detail.matches(".*\\d+\\s*/\\s*\\d+.*")) {
+            local = active.label + " " + active.progress + "%";
+        }
+        return scope + " · " + local;
     }
 
     String subText() {
-        return target.isEmpty() ? repo : repo + " · " + target;
+        StringBuilder text = new StringBuilder();
+        text.append(displayProgress()).append("% · ").append(elapsedText());
+        if (errors > 0) text.append(" · ").append(errors).append(" error").append(errors == 1 ? "" : "s");
+        else if (warnings > 0) text.append(" · ").append(warnings).append(" warning").append(warnings == 1 ? "" : "s");
+        else text.append(" · healthy");
+        return text.toString();
+    }
+
+    String expandedText() {
+        StringBuilder text = new StringBuilder();
+        text.append(target.isEmpty() ? repo : target).append("\n");
+        for (Step step : steps) {
+            String mark = step.succeeded() ? "✓" : step.failed() ? "✕" : step.running() ? "●" : "○";
+            text.append(mark).append(" ").append(step.label);
+            if (step.running() && step.progress > 0) text.append(" · ").append(step.progress).append("%");
+            text.append("\n");
+        }
+        int testTotal = passed + failed + skipped;
+        if (testTotal > 0) {
+            text.append("\nTests  ").append(passed).append(" passed · ").append(failed)
+                    .append(" failed · ").append(skipped).append(" skipped");
+        }
+        text.append("\nHealth  ").append(warnings).append(" warnings · ").append(errors).append(" errors");
+        text.append("\nElapsed  ").append(elapsedText());
+        return text.toString();
+    }
+
+    String copySummaryText() {
+        if (!summary.isEmpty()) return summary;
+        return title() + "\n" + contentText() + "\n" + subText() + "\n\n" + expandedText();
+    }
+
+    private String elapsedText() {
+        long elapsed = durationMs > 0 ? durationMs : Math.max(0L, System.currentTimeMillis() - startedAtMs);
+        long seconds = elapsed / 1000L;
+        return String.format(Locale.ROOT, "%02d:%02d", seconds / 60L, seconds % 60L);
     }
 
     Step activeStep() {

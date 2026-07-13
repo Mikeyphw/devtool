@@ -39,7 +39,31 @@ class ArtifactInspectionTests(unittest.TestCase):
             self.assertEqual(payload["name"], "Example overlay")
             self.assertEqual(payload["target"], "app")
             self.assertEqual(payload["counts"]["add"], 1)
+            self.assertTrue(payload["manifest_present"])
+            self.assertTrue(payload["manifest_json_valid"])
+            self.assertEqual(payload["manifest_source"], ".devtool-artifact.json")
             self.assertTrue(payload["validation"]["ok"])
+
+    def test_inspection_distinguishes_missing_and_invalid_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            missing = root / "missing.zip"
+            with zipfile.ZipFile(missing, "w") as zf:
+                zf.writestr("payload.txt", "hello")
+            missing_payload = inspect_artifact(missing)
+            self.assertFalse(missing_payload["manifest_present"])
+            self.assertFalse(missing_payload["manifest_json_valid"])
+            self.assertFalse(missing_payload["validation"]["ok"])
+
+            invalid = root / "invalid.zip"
+            with zipfile.ZipFile(invalid, "w") as zf:
+                zf.writestr(".devtool-artifact.json", "{not-json")
+                zf.writestr("payload.txt", "hello")
+            invalid_payload = inspect_artifact(invalid)
+            self.assertTrue(invalid_payload["manifest_present"])
+            self.assertFalse(invalid_payload["manifest_json_valid"])
+            self.assertIn("Invalid JSON", invalid_payload["manifest_error"])
+            self.assertFalse(invalid_payload["validation"]["ok"])
 
     def test_parser_exposes_inspect_artifact(self) -> None:
         args = build_parser().parse_args(["inspect-artifact", "example.zip", "--diff"])

@@ -99,7 +99,7 @@ class AndroidLiveHudBridge:
             if isinstance(value, bool):
                 argv += ["--ez", key, "true" if value else "false"]
             elif isinstance(value, int):
-                flag = "--el" if key.endswith("_ms") else "--ei"
+                flag = "--el" if key.endswith("_ms") or key in {"sequence"} else "--ei"
                 argv += [flag, key, str(value)]
             else:
                 argv += ["--es", key, str(value)]
