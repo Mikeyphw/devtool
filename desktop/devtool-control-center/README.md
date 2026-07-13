@@ -41,10 +41,16 @@ Runs started by the app use `--auto-hud --hud-mode control-center`. Artifact ins
 
 ## Debian package
 
-After a successful Qt build:
+Build a Debian package:
 
 ```bash
 ./package-deb.sh
+```
+
+Build, install, and delete the generated `.deb` only after installation succeeds:
+
+```bash
+./package-deb.sh --install --delete-after-install
 ```
 
 The package is written to `dist/devtool-control-center_0.3.8_<arch>.deb`. Set `VERSION`, `ARCH`, `BUILD_DIR`, or `OUT_DIR` to override defaults.
@@ -90,3 +96,20 @@ Clipboard monitoring still never auto-runs content. A detected devtool command a
 ## Compact Qt HUD
 
 `devtool --hud-mode desktop-window` now launches the Qt 6 compact HUD. The previous GTK renderer is retained only as the explicit legacy mode `--hud-mode gtk-window`; automatic desktop selection never falls back to GTK.
+
+## Standby and background efficiency
+
+When the window is hidden, Control Center releases Qt Quick graphics resources,
+unloads page content immediately, and destroys the complete QML engine after a
+short grace period. The tray icon, activation socket, IPC state, and lightweight
+run model remain available so reopening recreates the interface while preserving
+window geometry and the selected page. File fallback polling slows down in
+standby, IPC reconnects use exponential backoff, history loads on demand, and
+repository Git inspection is asynchronous and deferred until needed.
+
+Process output is delivered to QML through a bounded 2,000-line tail and batched
+at 75 ms intervals. The full output remains in the normal devtool log.
+
+Clipboard monitoring is event-driven through `QClipboard::dataChanged`. It
+requires a recognized, case-sensitive devtool invocation and rejects copied
+result reports such as `Devtool failed.` or `Devtool completed successfully.`.

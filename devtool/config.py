@@ -89,9 +89,10 @@ def load_project_config(
         detected_kind = kind
 
     targets = _load_named_targets(config_root, loaded.get("targets", {}), env_section)
-    default_target = str(project_section.get("default_target", "")).strip()
+    # Legacy [project].default_target is intentionally ignored. Devtool no longer
+    # chooses a target implicitly; use --target, --solution, or artifact metadata.
 
-    selected_target_name = target_name.strip() or str(project_section.get("target", "")).strip()
+    selected_target_name = target_name.strip()
     explicit_solution = solution_override.strip()
     explicit_project = project_override.strip()
     config_solution = str(project_section.get("solution", "")).strip()
@@ -104,7 +105,6 @@ def load_project_config(
         detected_kind,
         project_section,
         targets,
-        default_target=default_target,
         selected_target_name=selected_target_name,
         explicit_solution=explicit_solution,
         explicit_project=explicit_project,
@@ -133,7 +133,6 @@ def load_project_config(
         run_command=str(project_section.get("run_command", "")).strip(),
         env=effective_env,
         config_path=config_path,
-        default_target=default_target,
         selected_target=resolved["selected_target"],
         targets=targets,
     )
@@ -220,7 +219,6 @@ def _resolve_targets(
     project_section: dict[str, Any],
     targets: dict[str, DotnetTarget],
     *,
-    default_target: str,
     selected_target_name: str,
     explicit_solution: str,
     explicit_project: str,
@@ -257,7 +255,7 @@ def _resolve_targets(
             "run_target": project_path or build_target,
         }
 
-    chosen_name = selected_target_name or default_target
+    chosen_name = selected_target_name
     if chosen_name:
         target = targets.get(chosen_name)
         if target is None:
@@ -309,7 +307,7 @@ def _resolve_targets(
         displayed = "\n".join(f"  - {candidate.relative_to(repo_root)}" for candidate in candidates[:20])
         raise SystemExit(
             "Multiple dotnet targets found in monorepo. Refusing to guess.\n"
-            "Use --target <name>, --solution <path>, or configure [project].default_target.\n"
+            "Use --target <name>, --solution <path>, or declare the target in the artifact manifest.\n"
             f"Candidates:\n{displayed}"
         )
 
@@ -364,17 +362,14 @@ def generate_template(repo_root: Path) -> str:
         else:
             named_blocks: list[str] = []
             used_target_names: set[str] = set()
-            default_target = ""
-            for index, candidate in enumerate(candidates):
+            for candidate in candidates:
                 base_name = _target_name_from_path(repo_root, candidate)
                 target_name = _unique_target_name(used_target_names, base_name, candidate)
-                if index == 0:
-                    default_target = target_name
                 run_project = _pick_run_project_for_solution(repo_root, candidate, app_candidates)
                 named_blocks.append(
                     f"""\n[targets.{target_name}]\nsolution = "{candidate.relative_to(repo_root)}"\nrun_project = "{run_project}"\n"""
                 )
-            target_blocks = f'\ndefault_target = "{default_target}"\n' + "".join(named_blocks)
+            target_blocks = '\n' + ''.join(named_blocks)
             build_target = ""
     elif kind == "python":
         if (repo_root / "src").exists():
@@ -408,8 +403,6 @@ package_command = ""
 # DEVTOOL_PROJECT_KIND=python
 # DEVTOOL_PROJECT_BUILD_TARGET=pyproject.toml
 # DEVTOOL_PROJECT_RUN_TARGET=src/app.py
-# DEVTOOL_PROJECT_TARGET=s3pe
-# DEVTOOL_PROJECT_DEFAULT_TARGET=s3pe
 # DEVTOOL_PROJECT_PYTHON=python3.12
 # DEVTOOL_PROJECT_RUN_MODULE=my_app
 # DEVTOOL_PROJECT_RESTORE_COMMAND=python3 -m pip install -e .
@@ -610,9 +603,6 @@ def ensure_artifact_target_config(
             return {}
         project_section = parsed.get("project") if isinstance(parsed.get("project"), dict) else {}
 
-    if not str(project_section.get("default_target", "")).strip():
-        text = _insert_project_setting(text, "default_target", target_name)
-
     block = [f"[targets.{_toml_key(target_name)}]"]
     if solution_rel:
         block.append(f"solution = {_toml_string(solution_rel)}")
@@ -639,7 +629,6 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
             "restore_target": config.restore_target,
             "test_target": config.test_target,
             "run_target": config.run_target,
-            "default_target": config.default_target,
             "selected_target": config.selected_target,
             "python": config.python_executable,
             "run_module": config.run_module,

@@ -1,15 +1,14 @@
 #include "ClipboardMonitor.h"
 
 #include <QClipboard>
-#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
-#include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -44,11 +43,101 @@ QString compactCommandSummary(const QString &text) {
     return oneLine;
 }
 
-bool looksLikeDevtoolCommand(const QString &text) {
-    static const QRegularExpression devtoolCommand(
-        QStringLiteral(R"((^|[;&|\n]\s*)(?:env\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*(?:[^\s]*/)?devtool(?:-androidos)?(?:\s+.+))"),
+QString stripPrompt(QString line) {
+    line = line.trimmed();
+    static const QStringList prompts { QStringLiteral("$ "), QStringLiteral("❯ "), QStringLiteral("> ") };
+    for (const QString &prompt : prompts) {
+        if (line.startsWith(prompt)) return line.mid(prompt.size()).trimmed();
+    }
+    return line;
+}
+
+bool reportHeader(const QString &line) {
+    static const QRegularExpression report(
+        QStringLiteral(R"(^Devtool\s+(?:failed|completed|succeeded|cancelled|interrupted|finished)\b[\s.!:;-]*$)"),
         QRegularExpression::CaseInsensitiveOption);
-    return devtoolCommand.match(text).hasMatch();
+    return report.match(line.trimmed()).hasMatch();
+}
+
+bool recognizedSubcommand(const QString &command) {
+    static const QSet<QString> commands {
+        QStringLiteral("apply-overlay"), QStringLiteral("apply-overlays"), QStringLiteral("extract-overlay"),
+        QStringLiteral("inspect-artifact"), QStringLiteral("validate-artifact"), QStringLiteral("validate"),
+        QStringLiteral("restore"), QStringLiteral("build"), QStringLiteral("test"), QStringLiteral("run"),
+        QStringLiteral("status"), QStringLiteral("doctor"), QStringLiteral("repair"), QStringLiteral("rollback"),
+        QStringLiteral("hud"), QStringLiteral("control-center"), QStringLiteral("ipc-server"),
+        QStringLiteral("bundle-overlays"), QStringLiteral("config"), QStringLiteral("completion"),
+        QStringLiteral("handoff"), QStringLiteral("watch"), QStringLiteral("bundle"),
+        QStringLiteral("apply"), QStringLiteral("targets"), QStringLiteral("logs"),
+        QStringLiteral("history"), QStringLiteral("package"), QStringLiteral("run"),
+        QStringLiteral("ao"), QStringLiteral("aos"), QStringLiteral("as"), QStringLiteral("ia"),
+        QStringLiteral("rs"), QStringLiteral("b"), QStringLiteral("t"), QStringLiteral("v"),
+        QStringLiteral("wv"), QStringLiteral("rn"), QStringLiteral("pkg"), QStringLiteral("st"),
+        QStringLiteral("dr"), QStringLiteral("tg"), QStringLiteral("ci"), QStringLiteral("ap")
+    };
+    return commands.contains(command);
+}
+
+QString devtoolSubcommand(const QString &line) {
+    // Command names are intentionally case-sensitive. This prevents prose such
+    // as "Devtool failed." from being treated as an executable invocation.
+    static const QRegularExpression invocation(
+        QStringLiteral(R"((?:^|\s)(?:[^\s]*/)?devtool(?:-androidos)?\s+(.+)$)"));
+    const auto match = invocation.match(line);
+    if (!match.hasMatch()) return {};
+
+    const QStringList tokens = match.captured(1).split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    static const QSet<QString> optionsWithValue {
+        QStringLiteral("-r"), QStringLiteral("--repo-root"), QStringLiteral("--config"),
+        QStringLiteral("--target"), QStringLiteral("--solution"), QStringLiteral("--project"),
+        QStringLiteral("--hud-mode"), QStringLiteral("--copy-via")
+    };
+    for (int index = 0; index < tokens.size(); ++index) {
+        const QString token = tokens.at(index);
+        if (token == QStringLiteral("--")) continue;
+        if (optionsWithValue.contains(token)) { ++index; continue; }
+        if (token.startsWith(QLatin1Char('-'))) continue;
+        return recognizedSubcommand(token) ? token : QString();
+    }
+    return {};
+}
+
+QString extractCommandBlock(const QString &rawText) {
+    const QStringList rawLines = rawText.split(QLatin1Char('\n'));
+    QStringList lines;
+    for (const QString &raw : rawLines) {
+        const QString line = stripPrompt(raw);
+        if (!line.isEmpty()) lines << line;
+    }
+    if (lines.isEmpty() || reportHeader(lines.first())) return {};
+
+    QStringList block;
+    bool foundDevtool = false;
+    for (int index = 0; index < lines.size(); ++index) {
+        const QString line = lines.at(index);
+        if (!foundDevtool) {
+            const bool prelude = line.startsWith(QStringLiteral("cd ")) ||
+                line.startsWith(QStringLiteral("pushd ")) ||
+                line.startsWith(QStringLiteral("env ")) ||
+                QRegularExpression(QStringLiteral(R"(^[A-Za-z_][A-Za-z0-9_]*=\S+(?:\s+.*)?$)")).match(line).hasMatch();
+            const QString subcommand = devtoolSubcommand(line);
+            if (subcommand.isEmpty()) {
+                if (prelude && index < 8) { block << line; continue; }
+                return {};
+            }
+            foundDevtool = true;
+            block << line;
+            if (!line.endsWith(QLatin1Char('\\'))) break;
+        } else {
+            block << line;
+            if (!line.endsWith(QLatin1Char('\\'))) break;
+        }
+    }
+    return foundDevtool ? block.join(QLatin1Char('\n')).trimmed() : QString();
+}
+
+bool looksLikeDevtoolCommand(const QString &text) {
+    return !extractCommandBlock(text).isEmpty();
 }
 }
 
@@ -63,10 +152,16 @@ ClipboardMonitor::ClipboardMonitor(bool watchClipboard, bool notificationsEnable
     m_scanTimer->setInterval(180);
     connect(m_scanTimer, &QTimer::timeout, this, [this] { scanCurrentClipboard(); });
 
-    m_refreshTimer = new QTimer(this);
-    m_refreshTimer->setInterval(1500);
-    connect(m_refreshTimer, &QTimer::timeout, this, &ClipboardMonitor::refreshFromSettings);
-    m_refreshTimer->start();
+    m_settingsRefreshTimer = new QTimer(this);
+    m_settingsRefreshTimer->setSingleShot(true);
+    m_settingsRefreshTimer->setInterval(120);
+    connect(m_settingsRefreshTimer, &QTimer::timeout, this, [this] {
+        refreshFromSettings();
+        refreshSettingsWatch();
+    });
+    connect(&m_settingsWatcher, &QFileSystemWatcher::fileChanged, this, &ClipboardMonitor::scheduleSettingsRefresh);
+    connect(&m_settingsWatcher, &QFileSystemWatcher::directoryChanged, this, &ClipboardMonitor::scheduleSettingsRefresh);
+    refreshSettingsWatch();
 
     if (watchClipboard) {
         m_clipboard = QGuiApplication::clipboard();
@@ -77,6 +172,19 @@ ClipboardMonitor::ClipboardMonitor(bool watchClipboard, bool notificationsEnable
 
 void ClipboardMonitor::scheduleScan() {
     if (m_scanTimer) m_scanTimer->start();
+}
+
+void ClipboardMonitor::scheduleSettingsRefresh() {
+    if (m_settingsRefreshTimer) m_settingsRefreshTimer->start();
+}
+
+void ClipboardMonitor::refreshSettingsWatch() {
+    const QString filePath = m_settings.fileName();
+    const QString directory = QFileInfo(filePath).absolutePath();
+    if (QFileInfo::exists(directory) && !m_settingsWatcher.directories().contains(directory))
+        m_settingsWatcher.addPath(directory);
+    if (QFileInfo::exists(filePath) && !m_settingsWatcher.files().contains(filePath))
+        m_settingsWatcher.addPath(filePath);
 }
 
 bool ClipboardMonitor::scanCurrentClipboard() {
@@ -101,7 +209,7 @@ void ClipboardMonitor::refreshFromSettings() {
 }
 
 QString ClipboardMonitor::classify(const QString &rawText, QString *normalized, QString *summary) {
-    QString text = rawText.trimmed();
+    const QString text = rawText.trimmed();
     if (text.isEmpty() || text.size() > 65536) return {};
 
     const QString firstLine = unquote(text.section(QLatin1Char('\n'), 0, 0));
@@ -116,9 +224,11 @@ QString ClipboardMonitor::classify(const QString &rawText, QString *normalized, 
         return QStringLiteral("artifact");
     }
 
-    if (looksLikeDevtoolCommand(text)) {
-        if (normalized) *normalized = text.left(16384);
-        if (summary) *summary = QStringLiteral("Devtool command: %1").arg(compactCommandSummary(text));
+    if (!looksLikeDevtoolCommand(text)) return {};
+    const QString command = extractCommandBlock(text);
+    if (!command.isEmpty()) {
+        if (normalized) *normalized = command.left(16384);
+        if (summary) *summary = QStringLiteral("Devtool command: %1").arg(compactCommandSummary(command));
         return QStringLiteral("command");
     }
 
@@ -152,6 +262,7 @@ void ClipboardMonitor::persistCandidate(const QString &kind, const QString &text
     m_settings.setValue(QStringLiteral("clipboard/latest/timestamp"), timestamp);
     m_settings.sync();
     refreshFromSettings();
+    refreshSettingsWatch();
 }
 
 void ClipboardMonitor::clearCandidate() {
@@ -159,6 +270,7 @@ void ClipboardMonitor::clearCandidate() {
     m_settings.sync();
     m_lastProcessed.clear();
     refreshFromSettings();
+    refreshSettingsWatch();
 }
 
 void ClipboardMonitor::showNotification(const QString &kind, const QString &summary) const {

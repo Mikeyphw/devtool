@@ -111,6 +111,11 @@ Keep the run in the app without opening the floating overlay.
 .TP
 .BR --machine "[=compact|pretty]" , " --machine-file" " FILE"
 Emit or save the machine JSON envelope.
+.TP
+.BR --performance , " --performance-file" " FILE"
+Write wall time, per-operation durations, process count, and peak RSS metrics as JSON.
+.SH TARGET SELECTION
+Named targets are never selected implicitly. Legacy default_target and project.target values are ignored; use --target, --solution, or artifact target metadata.
 .SH REMOVED OPTIONS
 .BR --notify ,
 .BR --notify-progress ,

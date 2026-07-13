@@ -72,13 +72,15 @@ class SummaryRenderingTests(unittest.TestCase):
         )
         output = stream.getvalue()
         self.assertIn("Artifact summary", output)
-        self.assertIn("Inventory", output)
-        self.assertIn("Action", output)
-        self.assertIn("Path", output)
+        self.assertIn("Artifact contents", output)
+        self.assertIn("Change", output)
+        self.assertIn("Repository path", output)
+        self.assertIn("Execution contract", output)
         self.assertIn("a.cs", output)
         self.assertIn("b.cs", output)
         self.assertIn("Recommended Commands", output)
-        self.assertIn("dotnet test App.sln --no-build", output)
+        self.assertIn("dotnet test App.sln", output)
+        self.assertIn("--no-build", output)
         self.assertNotIn("sha256", output.lower())
         self.assertNotIn(hidden_hash, output)
         self.assertNotIn("[#]", output)
@@ -101,7 +103,7 @@ class SummaryRenderingTests(unittest.TestCase):
             console_obj=console,
         )
         output = stream.getvalue()
-        self.assertIn("Bundle overlays", output)
+        self.assertIn("Bundle composition", output)
         self.assertIn("core", output)
         self.assertIn("ui", output)
         self.assertIn("src/Core.cs", output)
@@ -150,6 +152,83 @@ class SummaryRenderingTests(unittest.TestCase):
         self.assertIn("7 passed", output)
         self.assertIn("abc1234", output)
         self.assertIn("def5678", output)
+
+    def test_render_summary_shows_repair_summary_for_fixable_failures(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=90)
+        results = [
+            OperationResult(
+                name="build",
+                argv=["dotnet", "build"],
+                returncode=1,
+                duration_seconds=0.1,
+                output="",
+                issues=[Issue("error", "build", "src/PathHelpers.cs", "CS1061", "string does not contain a definition for GetFullPath")],
+            )
+        ]
+
+        render_summary(results, console_obj=console)
+        output = stream.getvalue()
+        self.assertIn("Repair summary", output)
+        self.assertIn("Auto-fix candidates", output)
+        self.assertIn("System.IO.Path.GetFullPath", output)
+
+    def test_build_json_summary_includes_repairs(self) -> None:
+        result = OperationResult(
+            name="build",
+            argv=["dotnet", "build"],
+            returncode=1,
+            duration_seconds=0.1,
+            output="",
+            issues=[Issue("error", "build", "src/Strings.cs", "CS0121", "The call is ambiguous between the following methods or properties: Split")],
+        )
+
+        data = build_json_summary([result], repo_root="/tmp/sims3tools")
+        self.assertIn("repairs", data)
+        self.assertIn("auto_fix", data["repairs"])
+        self.assertGreaterEqual(len(data["repairs"]["auto_fix"]), 1)
+
+    def test_render_summary_shows_applied_repair_details(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=90)
+        results = [
+            OperationResult(
+                name="auto-repair",
+                argv=["devtool", "repair"],
+                returncode=0,
+                duration_seconds=0.1,
+                output="Auto repair pass:\n- Applied 1 safe fix.\n  - src/Program.cs:12 CS1061: Replace `string.GetFullPath(...)` with `System.IO.Path.GetFullPath(...)`.\n- Validation failures: 1 -> 0",
+                issues=[],
+                metadata={
+                    "applied_repairs": [
+                        {
+                            "bucket": "applied",
+                            "code": "CS1061",
+                            "file": "src/Program.cs",
+                            "line": 12,
+                            "message": "string does not contain a definition for GetFullPath",
+                            "fix": "Replace `string.GetFullPath(...)` with `System.IO.Path.GetFullPath(...)`.",
+                        }
+                    ],
+                    "restored": False,
+                    "before_failures": 1,
+                    "after_failures": 0,
+                },
+            ),
+            OperationResult(
+                name="build",
+                argv=["dotnet", "build"],
+                returncode=0,
+                duration_seconds=0.2,
+                output="ok",
+                issues=[],
+            ),
+        ]
+
+        render_summary(results, console_obj=console)
+        output = stream.getvalue()
+        self.assertIn("Applied repairs", output)
+        self.assertIn("System.IO.Path.GetFullPath", output)
 
 
 

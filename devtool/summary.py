@@ -17,6 +17,7 @@ from rich.pretty import Pretty
 
 from .console_utils import create_console, is_narrow_console
 from .models import Issue, OperationResult
+from .repair_policy import build_repair_report, repair_summary_lines_from_results, applied_repair_findings_from_results
 
 console = create_console()
 
@@ -275,6 +276,27 @@ def _render_outcome_panel(results: list[OperationResult], totals: dict[str, int]
     )
 
 
+def _render_repair_panel(results: list[OperationResult], target_console: Console) -> None:
+    summary_lines = repair_summary_lines_from_results(results)
+    if not summary_lines:
+        return
+
+    table = Table.grid(expand=True, padding=(0, 1))
+    table.add_column(ratio=1, overflow="fold")
+    for line in summary_lines:
+        table.add_row(Text(line, overflow="fold"))
+
+    target_console.print(
+        Panel(
+            table,
+            title="Repair summary",
+            border_style="bright_magenta",
+            padding=(1, 2),
+            expand=not (is_narrow_console(target_console) or target_console.width <= 60),
+        )
+    )
+
+
 def _runner_notification_message(*, repo_root: str, command: str, warnings: int, errors: int, failed: int) -> tuple[str, str, str]:
     if failed or errors:
         emoji, level, status = "❌", "error", "FAIL"
@@ -429,6 +451,7 @@ def render_summary(results: list[OperationResult], *, console_obj: Console | Non
     totals = calculate_totals(results)
 
     _render_outcome_panel(results, totals, target_console)
+    _render_repair_panel(results, target_console)
     grouped = _render_overlay_groups(results, target_console)
     if not grouped:
         if is_narrow_console(target_console) or target_console.width <= 60:
@@ -566,12 +589,35 @@ def render_status_table(rows: list[tuple[str, str]], *, console_obj: Console | N
 def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dict:
     totals = calculate_totals(results)
     overlay_groups, _ungrouped = _overlay_groups(results)
+    repair_report = build_repair_report(results)
+    applied_repairs = [
+        {
+            "bucket": finding.bucket,
+            "code": finding.code,
+            "file": finding.file,
+            "line": finding.line,
+            "message": finding.message,
+            "fix": finding.fix,
+        }
+        for finding in applied_repair_findings_from_results(results)
+    ]
+    applied_metadata = next(
+        (result.metadata for result in results if result.metadata and result.metadata.get("applied_repairs")),
+        {},
+    ) or {}
     data = {
         "repo_root": repo_root,
         "warnings": totals["warnings"],
         "errors": totals["errors"],
         "failed": totals["failed"],
         "skipped": totals["skipped"],
+        "repairs": {
+            **repair_report.to_dict(),
+            "applied": applied_repairs,
+            "before_failures": applied_metadata.get("before_failures"),
+            "after_failures": applied_metadata.get("after_failures"),
+            "restored": applied_metadata.get("restored", False),
+        },
         "results": [
             {
                 "name": result.name,
@@ -818,7 +864,7 @@ def _artifact_headline_panel(manifest: dict, target_console: Console) -> Panel:
         repo_name = str(manifest.get("repo_name") or manifest.get("repo") or "").strip()
     if repo_name:
         details.add_row("Repository", repo_name)
-    target = str(manifest.get("target") or manifest.get("validate_target") or manifest.get("default_target") or "").strip()
+    target = str(manifest.get("target") or manifest.get("validate_target") or "").strip()
     if target:
         details.add_row("Target", Text(target, style="cyan"))
     solution = str(manifest.get("solution") or manifest.get("expected_solution") or "").strip()
@@ -849,38 +895,81 @@ def _artifact_headline_panel(manifest: dict, target_console: Console) -> Panel:
     )
 
 
-def _inventory_table(manifest: dict) -> Table | None:
+def _inventory_table(manifest: dict) -> Panel | None:
     rows = _inventory_rows(manifest)
     if not rows:
         return None
-    table = Table(title="Inventory", show_lines=False, expand=True, box=box.SIMPLE_HEAVY)
-    table.add_column("Action", no_wrap=True, width=10)
-    table.add_column("Path", overflow="fold", ratio=1)
+
     action_styles = {"add": "green", "modify": "yellow", "delete": "red", "payload": "cyan"}
+    action_marks = {"add": "+", "modify": "~", "delete": "−", "payload": "•"}
+    counts: dict[str, int] = {}
+    for action, _path in rows:
+        counts[action] = counts.get(action, 0) + 1
+
+    metrics = Text()
+    metric_order = (("add", "added"), ("modify", "modified"), ("delete", "deleted"), ("payload", "payload"))
+    first = True
+    for action, label in metric_order:
+        count = counts.get(action, 0)
+        if not count:
+            continue
+        if not first:
+            metrics.append("   ", style="dim")
+        style = action_styles.get(action, "cyan")
+        metrics.append(f"{action_marks.get(action, '•')} ", style=f"bold {style}")
+        metrics.append(f"{count} {label}", style=style)
+        first = False
+    other_count = sum(value for key, value in counts.items() if key not in action_styles)
+    if other_count:
+        if not first:
+            metrics.append("   ", style="dim")
+        metrics.append("• ", style="bold cyan")
+        metrics.append(f"{other_count} other", style="cyan")
+
+    table = Table(show_lines=False, expand=True, box=box.MINIMAL, pad_edge=False, header_style="bold dim")
+    table.add_column("Change", no_wrap=True, width=13)
+    table.add_column("Repository path", overflow="fold", ratio=1)
     for action, path in rows:
-        table.add_row(Text(action.upper(), style=f"bold {action_styles.get(action, 'cyan')}"), Text(path, overflow="fold"))
-    return table
+        style = action_styles.get(action, "cyan")
+        label = Text()
+        label.append(action_marks.get(action, "•") + " ", style=f"bold {style}")
+        label.append(action.upper(), style=f"bold {style}")
+        table.add_row(label, Text(path, overflow="fold"))
+
+    return Panel(
+        Group(metrics, Text(""), table),
+        title="[bold]Artifact contents[/]",
+        subtitle=f"[dim]{len(rows)} repository path{'s' if len(rows) != 1 else ''}[/]",
+        title_align="left",
+        subtitle_align="right",
+        border_style="bright_blue",
+        padding=(1, 2),
+        expand=True,
+    )
 
 
-def _bundle_table(manifest: dict) -> Table | None:
+def _bundle_table(manifest: dict) -> Panel | None:
     overlays = manifest.get("overlays") or manifest.get("apply_order")
     if not isinstance(overlays, list) or not overlays:
         return None
-    table = Table(title="Bundle overlays", show_lines=False, expand=True, box=box.SIMPLE_HEAVY)
+    table = Table(show_lines=False, expand=True, box=box.MINIMAL, pad_edge=False, header_style="bold dim")
     table.add_column("Overlay", overflow="fold", ratio=1)
     table.add_column("Target", overflow="fold")
-    table.add_column("Mode", no_wrap=True)
-    table.add_column("Dependencies", overflow="fold")
+    table.add_column("Requirement", no_wrap=True)
+    table.add_column("Ordering", overflow="fold")
+    required_count = 0
     for value in overlays:
         if isinstance(value, str):
-            table.add_row(Path(value).name, "-", Text("Required", style="green"), "-")
+            required_count += 1
+            table.add_row(Path(value).name, "—", Text("● Required", style="green"), "—")
             continue
         if not isinstance(value, dict):
             continue
         path = str(value.get("path") or value.get("artifact") or "").strip()
         label = str(value.get("label") or value.get("name") or value.get("id") or Path(path).name or "Overlay").strip()
-        target = str(value.get("target") or "-").strip() or "-"
+        target = str(value.get("target") or "—").strip() or "—"
         required = bool(value.get("required", True))
+        required_count += int(required)
         deps: list[str] = []
         for key in ("after", "requires"):
             items = value.get(key)
@@ -888,64 +977,144 @@ def _bundle_table(manifest: dict) -> Table | None:
                 deps.append(f"{key}: " + ", ".join(str(item) for item in items))
         table.add_row(
             label,
-            target,
-            Text("Required" if required else "Optional", style="green" if required else "yellow"),
-            "; ".join(deps) or "-",
+            Text(target, style="cyan" if target != "—" else "dim"),
+            Text("● Required" if required else "○ Optional", style="green" if required else "yellow"),
+            "; ".join(deps) or "—",
         )
-    return table
+    return Panel(
+        table,
+        title="[bold]Bundle composition[/]",
+        subtitle=f"[dim]{len(overlays)} overlays · {required_count} required[/]",
+        title_align="left",
+        subtitle_align="right",
+        border_style="magenta",
+        padding=(1, 2),
+        expand=True,
+    )
 
 
-def _policy_table(title: str, value: dict) -> Table | None:
+def _policy_rows(section: str, value: dict) -> list[tuple[str, str, Text]]:
     cleaned = _without_sha256(value)
     if not isinstance(cleaned, dict) or not cleaned:
-        return None
-    table = Table(title=title, show_header=False, expand=True, box=None)
-    table.add_column("Field", style="bold", no_wrap=True)
-    table.add_column("Value", overflow="fold")
+        return []
+    rows: list[tuple[str, str, Text]] = []
     for key, item in cleaned.items():
         if isinstance(item, list):
-            rendered = ", ".join(str(part) for part in item) if item else "-"
+            rendered = ", ".join(str(part) for part in item) if item else "—"
         elif isinstance(item, dict):
             compact = ", ".join(f"{subkey}={_json_scalar(subvalue)}" for subkey, subvalue in item.items())
-            rendered = compact or "-"
+            rendered = compact or "—"
         else:
             rendered = _json_scalar(item)
-        table.add_row(_human_json_key(str(key)), Text(rendered, overflow="fold"))
-    return table
+        value_text = Text(rendered, overflow="fold")
+        lowered = rendered.lower()
+        if lowered in {"true", "enabled", "required"}:
+            value_text.stylize("green")
+        elif lowered in {"false", "disabled"}:
+            value_text.stylize("dim")
+        rows.append((section, _human_json_key(str(key)), value_text))
+    return rows
 
+
+def _execution_policy_panel(manifest: dict) -> Panel | None:
+    rows: list[tuple[str, str, Text]] = []
+    validation = manifest.get("validation")
+    if isinstance(validation, dict):
+        rows.extend(_policy_rows("Validation policy", validation))
+    apply = manifest.get("apply")
+    if isinstance(apply, dict):
+        rows.extend(_policy_rows("Apply policy", apply))
+    if not rows:
+        return None
+
+    table = Table(show_lines=False, expand=True, box=box.MINIMAL, pad_edge=False, header_style="bold dim")
+    table.add_column("Policy", no_wrap=True, width=19)
+    table.add_column("Setting", style="bold", no_wrap=True, width=27)
+    table.add_column("Value", overflow="fold", ratio=1)
+    previous = ""
+    for section, setting, value in rows:
+        section_text = Text(section if section != previous else "", style="cyan" if section.startswith("Validation") else "magenta")
+        table.add_row(section_text, setting, value)
+        previous = section
+    return Panel(
+        table,
+        title="[bold]Execution contract[/]",
+        title_align="left",
+        border_style="cyan",
+        padding=(1, 2),
+        expand=True,
+    )
+
+
+def _repository_layout_panel(manifest: dict) -> Panel | None:
+    repository = manifest.get("repository")
+    workspace = manifest.get("workspace")
+    workspaces = manifest.get("workspaces")
+    has_repository = isinstance(repository, dict) and bool(repository)
+    has_workspace = isinstance(workspace, dict) and bool(workspace)
+    has_workspaces = isinstance(workspaces, list) and bool(workspaces)
+    if not (has_repository or has_workspace or has_workspaces):
+        return None
+
+    renderables: list[object] = []
+    metadata = Table.grid(padding=(0, 2), expand=True)
+    metadata.add_column(style="bold dim", no_wrap=True)
+    metadata.add_column(overflow="fold", ratio=1)
+    if has_repository:
+        cleaned = _without_sha256(repository)
+        for key, value in cleaned.items():
+            metadata.add_row(_human_json_key(str(key)), Text(_json_scalar(value), overflow="fold"))
+    if has_workspace:
+        cleaned = _without_sha256(workspace)
+        for key, value in cleaned.items():
+            metadata.add_row("Workspace " + _human_json_key(str(key)), Text(_json_scalar(value), overflow="fold"))
+    if metadata.row_count:
+        renderables.append(metadata)
+
+    if has_workspaces:
+        if renderables:
+            renderables.append(Text(""))
+        table = Table(show_lines=False, expand=True, box=box.MINIMAL, pad_edge=False, header_style="bold dim")
+        table.add_column("Workspace path", overflow="fold", ratio=1)
+        table.add_column("Devtool target", overflow="fold", ratio=1)
+        for item in workspaces:
+            if isinstance(item, dict):
+                path = str(item.get("root") or item.get("path") or "—")
+                target = str(item.get("target") or "—")
+            else:
+                path, target = str(item), "—"
+            table.add_row(path, Text(target, style="cyan" if target != "—" else "dim"))
+        renderables.append(table)
+
+    return Panel(
+        Group(*renderables),
+        title="[bold]Repository layout[/]",
+        subtitle=f"[dim]{len(workspaces)} workspace{'s' if len(workspaces) != 1 else ''}[/]" if has_workspaces else None,
+        title_align="left",
+        subtitle_align="right",
+        border_style="green",
+        padding=(1, 2),
+        expand=True,
+    )
 
 def render_artifact_manifest(manifest: dict, *, console_obj: Console | None = None) -> None:
-    """Render a concise, semantic artifact or bundle summary without hashes/raw nodes."""
+    """Render an artifact or bundle as one cohesive, card-based inspection report."""
     if not manifest:
         return
     target_console = console_obj or console
     renderables: list[object] = [_artifact_headline_panel(manifest, target_console)]
 
-    bundle_table = _bundle_table(manifest)
-    if bundle_table is not None:
-        renderables.append(bundle_table)
-    inventory_table = _inventory_table(manifest)
-    if inventory_table is not None:
-        renderables.append(inventory_table)
-
-    for key, title in (("validation", "Validation policy"), ("apply", "Apply policy"), ("repository", "Repository"), ("workspace", "Workspace")):
-        value = manifest.get(key)
-        if isinstance(value, dict):
-            table = _policy_table(title, value)
-            if table is not None:
-                renderables.append(table)
-
-    workspaces = manifest.get("workspaces")
-    if isinstance(workspaces, list) and workspaces:
-        table = Table(title="Workspaces", expand=True, box=box.SIMPLE)
-        table.add_column("Path", overflow="fold", ratio=1)
-        table.add_column("Target", overflow="fold")
-        for item in workspaces:
-            if isinstance(item, dict):
-                table.add_row(str(item.get("root") or item.get("path") or "-"), str(item.get("target") or "-"))
-            else:
-                table.add_row(str(item), "-")
-        renderables.append(table)
+    bundle_panel = _bundle_table(manifest)
+    if bundle_panel is not None:
+        renderables.append(bundle_panel)
+    inventory_panel = _inventory_table(manifest)
+    if inventory_panel is not None:
+        renderables.append(inventory_panel)
+    policy_panel = _execution_policy_panel(manifest)
+    if policy_panel is not None:
+        renderables.append(policy_panel)
+    layout_panel = _repository_layout_panel(manifest)
+    if layout_panel is not None:
+        renderables.append(layout_panel)
 
     target_console.print(Group(*renderables))
-

@@ -80,7 +80,6 @@ class ProjectConfig:
     run_command: str = ""
     env: dict[str, str] = field(default_factory=dict)
     config_path: Path | None = None
-    default_target: str = ""
     selected_target: str = ""
     targets: dict[str, DotnetTarget] = field(default_factory=dict)
 

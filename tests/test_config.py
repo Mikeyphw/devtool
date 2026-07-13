@@ -123,7 +123,7 @@ class ConfigTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            config = load_project_config(str(repo), None)
+            config = load_project_config(str(repo), None, target_name="foo")
 
             self.assertEqual(config.repo_root, repo.resolve())
             self.assertEqual(config.selected_target, "foo")
@@ -163,8 +163,10 @@ class ConfigTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            config = load_project_config(str(root), None)
+            with self.assertRaises(SystemExit):
+                load_project_config(str(root), None)
 
+            config = load_project_config(str(root), None, target_name="s3pe")
             self.assertEqual(config.selected_target, "s3pe")
             self.assertTrue(config.build_target.endswith("apps/S3pe.Modern.sln"))
             self.assertTrue(config.run_target.endswith("apps/S3pe.App.csproj"))
@@ -211,7 +213,7 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(text.count("[targets.apps_One]"), 1)
             self.assertEqual(text.count("[targets.apps_Two]"), 1)
-            self.assertIn('default_target = "apps_One"', text)
+            self.assertNotIn("default_target", text)
 
     def test_generate_template_picks_nearest_run_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -15,10 +15,10 @@ from unittest.mock import patch
 from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _maybe_commit_after_apply, _maybe_copy, build_parser, main
+from devtool.cli import _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, build_parser, main
 from devtool.config import ProjectConfig
 from devtool.logstore import latest_log, write_log
-from devtool.models import OperationResult
+from devtool.models import CommandSpec, Issue, OperationResult
 from devtool.summary import build_json_summary
 
 
@@ -265,6 +265,271 @@ artifact-cleanup: ok exit=0 time=0.10s
         self.assertNotIn("App.Core ->", text)
         self.assertNotIn("All projects are up-to-date", text)
         self.assertNotIn("hundreds/of/noisy/files.cs", text)
+
+    def test_failure_copy_includes_repair_summary_when_available(self) -> None:
+        raw_output = "$ dotnet build /repo/App.sln\n/repo/App.cs(7,3): error CS1061: string does not contain a definition for GetFullPath\n"
+        summary_text = "build: failed exit=1 time=1.00s\n"
+        json_text = json.dumps(
+            {
+                "warnings": 0,
+                "errors": 1,
+                "failed": 1,
+                "skipped": 0,
+                "repairs": {
+                    "counts": {"auto_fix": 1, "confirm_fix": 0, "manual_review": 0},
+                    "auto_fix": [
+                        {
+                            "bucket": "auto_fix",
+                            "code": "CS1061",
+                            "file": "App.cs",
+                            "line": 7,
+                            "message": "string does not contain a definition for GetFullPath",
+                            "fix": "Use `System.IO.Path.GetFullPath(...)` instead of the string instance call.",
+                        }
+                    ],
+                    "confirm_fix": [],
+                    "manual_review": [],
+                },
+            }
+        )
+        args = SimpleNamespace(
+            no_clipboard=False,
+            copy=True,
+            copy_summary=False,
+            copy_json=False,
+            copy_via="auto",
+        )
+        copied: list[str] = []
+        result = SimpleNamespace(success=True, backend="test", reason="")
+        with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
+            _maybe_copy(raw_output, summary_text, json_text, args)
+
+        self.assertEqual(len(copied), 1)
+        self.assertIn("Repair summary", copied[0])
+        self.assertIn("Auto-fix candidates", copied[0])
+        self.assertIn("System.IO.Path.GetFullPath", copied[0])
+
+    def test_auto_repair_rewrites_and_revalidates_when_it_reduces_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            source = repo / "src" / "Program.cs"
+            source.parent.mkdir(parents=True)
+            source.write_text("class Demo { void Run() { var path = inputPath.GetFullPath(); } }\n", encoding="utf-8")
+            config = ProjectConfig(repo_root=repo, kind="dotnet")
+            args = SimpleNamespace(command="validate", repo=str(repo), dry_run=False, verbose=False)
+            validation_results = [
+                OperationResult(
+                    name="build",
+                    argv=["dotnet", "build"],
+                    returncode=1,
+                    duration_seconds=0.0,
+                    output="",
+                    issues=[Issue("error", "build", "src/Program.cs", "CS1061", "string does not contain a definition for GetFullPath")],
+                )
+            ]
+            repair_ok = [OperationResult("build", ["dotnet", "build"], 0, 0.0, "ok", [])]
+
+            with patch("devtool.cli._run_specs_for_args", return_value=(repair_ok, "revalidated")):
+                repaired_results, raw_output, repair_result = _attempt_auto_repair(
+                    config,
+                    args,
+                    validation_results=validation_results,
+                    validation_specs=[CommandSpec("build", ["dotnet", "build"])],
+                    continue_on_error=False,
+                    log_path=None,
+                    tasker_progress=None,
+                    parser=build_parser(),
+                )
+
+            self.assertIsNotNone(repair_result)
+            self.assertTrue(repaired_results[0].name == "auto-repair")
+            self.assertIn("System.IO.Path.GetFullPath", source.read_text(encoding="utf-8"))
+            self.assertIn("revalidated", raw_output)
+
+    def test_auto_repair_restores_sources_when_retry_does_not_reduce_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            source = repo / "src" / "Program.cs"
+            source.parent.mkdir(parents=True)
+            original = "class Demo { void Run() { var path = inputPath.GetFullPath(); } }\n"
+            source.write_text(original, encoding="utf-8")
+            config = ProjectConfig(repo_root=repo, kind="dotnet")
+            args = SimpleNamespace(command="validate", repo=str(repo), dry_run=False, verbose=False)
+            validation_results = [
+                OperationResult(
+                    name="build",
+                    argv=["dotnet", "build"],
+                    returncode=1,
+                    duration_seconds=0.0,
+                    output="",
+                    issues=[Issue("error", "build", "src/Program.cs", "CS1061", "string does not contain a definition for GetFullPath")],
+                )
+            ]
+            still_failed = [OperationResult("build", ["dotnet", "build"], 1, 0.0, "failed", [])]
+
+            with patch("devtool.cli._run_specs_for_args", return_value=(still_failed, "still failed")):
+                repaired_results, raw_output, repair_result = _attempt_auto_repair(
+                    config,
+                    args,
+                    validation_results=validation_results,
+                    validation_specs=[CommandSpec("build", ["dotnet", "build"])],
+                    continue_on_error=False,
+                    log_path=None,
+                    tasker_progress=None,
+                    parser=build_parser(),
+                )
+
+            self.assertIsNotNone(repair_result)
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
+            self.assertEqual(repaired_results[0].name, "build")
+            self.assertIn("Restored original source files", raw_output)
+
+    def test_sequential_overlay_flow_uses_auto_repair_before_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            source = repo / "src" / "Program.cs"
+            source.parent.mkdir(parents=True)
+            source.write_text("class Demo { void Run() { var path = inputPath.GetFullPath(); } }\n", encoding="utf-8")
+            config = ProjectConfig(repo_root=repo, kind="dotnet")
+            args = SimpleNamespace(
+                command="apply-overlays",
+                repo=str(repo),
+                config="",
+                artifact="bundle.zip",
+                validate=True,
+                validate_only=False,
+                no_validate=False,
+                no_artifact_script=True,
+                skip_restore=False,
+                skip_build=False,
+                skip_test=False,
+                keep_artifact=True,
+                dry_run=True,
+                force=False,
+                yes=True,
+                project="",
+                target="",
+                solution="",
+                _devtool_cli_target_explicit=False,
+                _devtool_cli_solution_explicit=False,
+                _devtool_history_recorded=False,
+            )
+            apply_result = OperationResult(
+                name="apply-overlay",
+                argv=["apply-overlay", "bundle.zip"],
+                returncode=0,
+                duration_seconds=0.0,
+                output="applied",
+                issues=[],
+                metadata={"transaction_path": "/tmp/devtool-transaction"},
+            )
+            validation_failure = [
+                OperationResult(
+                    name="build",
+                    argv=["dotnet", "build"],
+                    returncode=1,
+                    duration_seconds=0.0,
+                    output="",
+                    issues=[Issue("error", "build", "src/Program.cs", "CS1061", "string does not contain a definition for GetFullPath")],
+                )
+            ]
+            validation_success = [OperationResult("build", ["dotnet", "build"], 0, 0.0, "ok", [])]
+            entries = [
+                {
+                    "path": repo / "bundle-entry.zip",
+                    "source": repo / "bundle.zip",
+                    "bundle_member": "bundle-entry.zip",
+                    "label": "bundle-entry",
+                    "target": "",
+                    "index": 1,
+                    "total": 1,
+                    "materialized": False,
+                }
+            ]
+
+            with (
+                patch("devtool.cli._overlay_sequence_entries", return_value=(None, None, entries)),
+                patch("devtool.cli._run_apply", return_value=([apply_result], "apply raw")),
+                patch("devtool.cli._validation_specs", return_value=[CommandSpec("build", ["dotnet", "build"])]),
+                patch("devtool.cli._run_specs_for_args", side_effect=[(validation_failure, "validation raw"), (validation_success, "repaired raw")]),
+                patch("devtool.cli._artifact_script_result", return_value=(None, "")),
+                patch("devtool.cli._validation_expectation_result", return_value=None),
+                patch("devtool.cli._maybe_commit_after_apply", side_effect=lambda config, args, results, raw_output, log_path=None: (results, raw_output)),
+                patch("devtool.cli._record_apply_history"),
+                patch("devtool.cli._run_transaction_rollback", side_effect=AssertionError("rollback should not run after repair")),
+            ):
+                results, raw_output = _run_sequential_overlays(
+                    config,
+                    args,
+                    build_parser(),
+                    log_path=None,
+                    tasker_progress=None,
+                    continue_on_error=False,
+                )
+
+            self.assertEqual(results[0].name, "apply-overlay")
+            self.assertTrue(any(result.name == "auto-repair" for result in results))
+            self.assertTrue(any(result.returncode == 0 and result.name == "build" for result in results))
+            self.assertIn("Auto repair pass:", raw_output)
+            self.assertIn("repaired raw", raw_output)
+            self.assertEqual(source.read_text(encoding="utf-8"), "class Demo { void Run() { var path = System.IO.Path.GetFullPath(inputPath); } }\n")
+
+
+    def test_bundle_reuses_successful_dotnet_validation_for_same_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            entries = [
+                {"path": repo / "one.zip", "source": repo / "bundle.zip", "bundle_member": "one.zip", "label": "one", "target": "shared", "index": 1, "total": 2, "materialized": True},
+                {"path": repo / "two.zip", "source": repo / "bundle.zip", "bundle_member": "two.zip", "label": "two", "target": "shared", "index": 2, "total": 2, "materialized": True},
+            ]
+            args = SimpleNamespace(
+                command="apply-overlays", repo=str(repo), config="", artifact="bundle.zip", validate=True,
+                validate_only=False, no_validate=False, no_artifact_script=True, skip_restore=False,
+                skip_build=False, skip_test=False, keep_artifact=True, dry_run=True, force=False, yes=True,
+                project="", target="", solution="", _devtool_cli_target_explicit=False,
+                _devtool_cli_solution_explicit=False, _devtool_history_recorded=False,
+            )
+            apply_result = OperationResult("apply-overlays", ["apply"], 0, 0.0, "ok", [])
+            validation_result = OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])
+            shared_config = ProjectConfig(
+                repo_root=repo, kind="dotnet", restore_target="/repo/App.sln",
+                build_target="/repo/App.sln", test_target="/repo/App.sln", selected_target="shared",
+            )
+            calls = []
+
+            def fake_run(*_args, **_kwargs):
+                calls.append("validation")
+                return [validation_result], "validated"
+
+            with (
+                patch("devtool.cli._overlay_sequence_entries", return_value=(None, None, entries)),
+                patch("devtool.cli.read_artifact_manifest", return_value={"target": "shared", "validation": {"required": True}}),
+                patch("devtool.cli._run_apply", return_value=([apply_result], "applied")),
+                patch("devtool.cli.load_project_config", return_value=shared_config),
+                patch("devtool.cli._validation_specs", return_value=[CommandSpec("test", ["dotnet", "test"])]),
+                patch("devtool.cli._run_specs_for_args", side_effect=fake_run),
+                patch("devtool.cli._artifact_script_result", return_value=(None, "")),
+                patch("devtool.cli._validation_expectation_result", return_value=None),
+                patch("devtool.cli.shutdown_dotnet_build_server", return_value=(OperationResult("dotnet-build-server-shutdown", ["dotnet"], 0, 0.0, "ok", []), "shutdown")),
+                patch("devtool.cli._maybe_commit_after_apply", side_effect=lambda config, args, results, raw_output, log_path=None: (results, raw_output)),
+                patch("devtool.cli._record_apply_history"),
+            ):
+                results, raw = _run_sequential_overlays(
+                    shared_config, args, build_parser(), log_path=None, tasker_progress=None, continue_on_error=False
+                )
+
+            self.assertEqual(calls, ["validation"])
+            self.assertTrue(any(result.name == "validation-reused" for result in results))
+            self.assertIn("same workspace is restored, built, and tested only once", raw)
 
     def test_copy_json_uses_json_summary_even_without_json_stdout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

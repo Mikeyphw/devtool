@@ -7,6 +7,7 @@ import "../components"
 Item {
     id: root
     Theme { id: theme }
+    Component.onCompleted: repositoryModel.refresh()
     FolderDialog { id: folderDialog; onAccepted: repositoryModel.addRepository(selectedFolder.toString().replace("file://", "")) }
 
     ColumnLayout {

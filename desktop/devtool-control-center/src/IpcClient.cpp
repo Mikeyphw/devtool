@@ -21,6 +21,8 @@ IpcClient::IpcClient(QObject *parent):QObject(parent),m_socketPath(defaultSocket
     m_reconnectTimer.setInterval(1000);
     connect(&m_reconnectTimer,&QTimer::timeout,this,&IpcClient::start);
     connect(&m_socket,&QLocalSocket::connected,this,[this]{
+        m_reconnectAttempt = 0;
+        m_reconnectTimer.stop();
         emit connectedChanged();
         QVariantMap hello; hello["type"]="subscribe"; hello["client"]="devtool-control-center"; hello["protocol_version"]=1; send(hello);
     });
@@ -46,11 +48,20 @@ void IpcClient::start() {
 }
 
 void IpcClient::reconnect() {
-    m_reconnectTimer.stop(); m_socket.abort(); emit connectedChanged(); start();
+    m_reconnectTimer.stop();
+    m_reconnectAttempt = 0;
+    m_socket.abort();
+    emit connectedChanged();
+    start();
 }
 
 void IpcClient::scheduleReconnect() {
-    if(!m_reconnectTimer.isActive())m_reconnectTimer.start();
+    if (m_reconnectTimer.isActive()) return;
+    static const int delays[] = {1000, 2000, 5000, 10000, 30000};
+    constexpr int lastIndex = 4;
+    const int index = qMin(m_reconnectAttempt, lastIndex);
+    m_reconnectTimer.start(delays[index]);
+    if (m_reconnectAttempt < lastIndex) ++m_reconnectAttempt;
 }
 
 void IpcClient::send(const QVariantMap &message) {

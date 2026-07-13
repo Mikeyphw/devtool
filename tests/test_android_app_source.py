@@ -102,8 +102,10 @@ def test_overlay_receiver_does_not_restart_foreground_service_in_background() ->
 
 def test_root_gitignore_excludes_generated_android_and_devtool_state() -> None:
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    for pattern in ("**/.gradle/", "**/build/", "*.apk", ".devtool/", "**/android-live-hud.token"):
+    for pattern in ("**/.gradle/", "**/build/", ".devtool/", "**/android-live-hud.token"):
         assert pattern in ignore
+    assert "*.apk" in ignore
+    assert "!android/devtool-live-hud/devtool-live-hud-debug.apk" in ignore
 
 
 def _java_source(name: str) -> str:

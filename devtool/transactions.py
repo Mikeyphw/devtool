@@ -159,6 +159,42 @@ def _run_rsync(argv: list[str], *, cwd: Path) -> str:
     return proc.stdout or ""
 
 
+def _backup_existing_paths(repo_root: Path, backup_dir: Path, existing: list[str], tx_dir: Path) -> str:
+    """Back up affected paths using copy-on-write where the filesystem permits it.
+
+    GNU cp's ``--reflink=auto`` avoids duplicating unchanged file extents on
+    btrfs/XFS while retaining normal copy semantics elsewhere. Hard links are
+    deliberately not used because an in-place write to the working tree would
+    mutate the transaction backup too. rsync remains the portable fallback.
+    """
+    cp = shutil.which("cp")
+    if cp:
+        try:
+            for raw in existing:
+                proc = subprocess.run(
+                    [cp, "-a", "--reflink=auto", "--parents", "--", raw, str(backup_dir)],
+                    cwd=repo_root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(proc.stdout or f"cp exited with {proc.returncode}")
+            return "reflink-auto"
+        except (OSError, RuntimeError):
+            shutil.rmtree(backup_dir, ignore_errors=True)
+            backup_dir.mkdir(parents=True, exist_ok=True)
+
+    list_file = tx_dir / "backup-files.list"
+    list_file.write_bytes(b"".join(item.encode("utf-8") + b"\0" for item in existing))
+    _run_rsync(
+        [_rsync(), "-a", "--relative", "--files-from", str(list_file), "--from0", "./", str(backup_dir) + "/"],
+        cwd=repo_root,
+    )
+    return "rsync"
+
+
 def _path_kind(path: Path) -> str:
     if path.is_symlink():
         return "symlink"
@@ -257,10 +293,9 @@ def create_apply_transaction(
     }
     _atomic_write_json(_transaction_file(tx_dir), tx)
 
+    tx["backup_method"] = "none"
     if existing:
-        list_file = tx_dir / "backup-files.list"
-        list_file.write_bytes(b"".join(item.encode("utf-8") + b"\0" for item in existing))
-        _run_rsync([_rsync(), "-a", "--relative", "--files-from", str(list_file), "--from0", "./", str(backup_dir) + "/"], cwd=repo_root)
+        tx["backup_method"] = _backup_existing_paths(repo_root, backup_dir, existing, tx_dir)
     tx["status"] = "backup-ready"
     tx["updated_at"] = _utc_now()
     _atomic_write_json(_transaction_file(tx_dir), tx)

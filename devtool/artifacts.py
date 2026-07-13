@@ -13,6 +13,8 @@ import tarfile
 import tempfile
 import zipfile
 import uuid
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +42,10 @@ BUNDLE_MANIFEST_NAMES = {"devtool-bundle.json", ".devtool-bundle.json"}
 BUNDLE_KINDS = {"devtool.overlay_bundle", "overlay_bundle", "overlay-bundle"}
 _SUFFIX_VARIANT_RE = re.compile(r"^(?P<root>.+?)(?:\((?P<paren>\d+)\)|[_-](?P<sep>\d+)|(?P<bare>\d+))$")
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+
+_HASH_CACHE_LIMIT = 2048
+_HASH_CACHE: "OrderedDict[tuple[str, int, int, int], str]" = OrderedDict()
+_HASH_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,11 +260,30 @@ class MaterializedBundleOverlay:
 
 
 def sha256_file(path: Path) -> str:
+    resolved = path.resolve()
+    stat = resolved.stat()
+    key = (str(resolved), int(stat.st_size), int(stat.st_mtime_ns), int(getattr(stat, "st_ino", 0)))
+    with _HASH_CACHE_LOCK:
+        cached = _HASH_CACHE.get(key)
+        if cached is not None:
+            _HASH_CACHE.move_to_end(key)
+            return cached
+
     h = hashlib.sha256()
-    with path.open("rb") as handle:
+    with resolved.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
-    return h.hexdigest()
+    digest = h.hexdigest()
+
+    with _HASH_CACHE_LOCK:
+        # Keep one current record per path and cap process-wide memory use.
+        for stale in [cache_key for cache_key in _HASH_CACHE if cache_key[0] == key[0] and cache_key != key]:
+            _HASH_CACHE.pop(stale, None)
+        _HASH_CACHE[key] = digest
+        _HASH_CACHE.move_to_end(key)
+        while len(_HASH_CACHE) > _HASH_CACHE_LIMIT:
+            _HASH_CACHE.popitem(last=False)
+    return digest
 
 
 def _is_sha256(value: str) -> bool:
@@ -282,7 +307,7 @@ def _manifest_repository(manifest: dict[str, Any]) -> dict[str, Any]:
 
 def artifact_target(manifest: dict[str, Any]) -> str:
     """Return the preferred validation target from a v2 or legacy manifest."""
-    return str(manifest.get("target") or manifest.get("validate_target") or manifest.get("default_target") or "").strip()
+    return str(manifest.get("target") or manifest.get("validate_target") or "").strip()
 
 
 def artifact_solution(manifest: dict[str, Any]) -> str:
@@ -607,7 +632,7 @@ def is_overlay_bundle(artifact: str | Path) -> bool:
     return kind in BUNDLE_KINDS or isinstance(manifest.get("apply_order"), list)
 
 
-def _bundle_overlay_spec_from_item(item: Any, index: int, *, default_target: str = "") -> BundleOverlaySpec:
+def _bundle_overlay_spec_from_item(item: Any, index: int) -> BundleOverlaySpec:
     """Normalize a bundle apply_order entry.
 
     Backward-compatible string entries are accepted as simple overlay paths.
@@ -617,7 +642,7 @@ def _bundle_overlay_spec_from_item(item: Any, index: int, *, default_target: str
     if isinstance(item, str):
         name = item.strip()
         overlay_id = Path(name).stem
-        target = default_target.strip()
+        target = ""
         label = ""
         required = True
         after: tuple[str, ...] = ()
@@ -625,7 +650,7 @@ def _bundle_overlay_spec_from_item(item: Any, index: int, *, default_target: str
     elif isinstance(item, dict):
         name = str(item.get("path") or item.get("artifact") or item.get("overlay") or "").strip()
         overlay_id = str(item.get("id") or Path(name).stem).strip()
-        target = str(item.get("target") or item.get("validate_target") or default_target or "").strip()
+        target = str(item.get("target") or item.get("validate_target") or "").strip()
         label = str(item.get("label") or item.get("name") or item.get("description") or "").strip()
         required = bool(item.get("required", True))
         after = tuple(str(value).strip() for value in item.get("after", []) if str(value).strip()) if isinstance(item.get("after"), list) else ()
@@ -656,10 +681,9 @@ def _bundle_overlay_specs(bundle: str | Path, manifest: dict[str, Any] | None = 
     raw_order = manifest.get("apply_order") or manifest.get("overlays")
     if not isinstance(raw_order, list):
         raise RuntimeError("Overlay bundle manifest must contain an apply_order list.")
-    default_target = str(manifest.get("default_target") or manifest.get("target") or "").strip()
     specs: list[BundleOverlaySpec] = []
     for index, item in enumerate(raw_order, 1):
-        spec = _bundle_overlay_spec_from_item(item, index, default_target=default_target)
+        spec = _bundle_overlay_spec_from_item(item, index)
         specs.append(spec)
     if not specs:
         raise RuntimeError("Overlay bundle apply_order is empty.")
@@ -706,7 +730,7 @@ def _target_from_nested_overlay_manifest(overlay: Path) -> str:
         manifest = read_artifact_manifest(overlay)
     except Exception:
         return ""
-    for key in ("validate_target", "target", "default_target"):
+    for key in ("validate_target", "target"):
         value = str(manifest.get(key) or "").strip()
         if value:
             return value
@@ -717,8 +741,8 @@ def materialize_overlay_bundle_entries(bundle: str | Path, target_dir: str | Pat
     """Extract nested overlay archives listed by a bundle manifest into target_dir.
 
     Returns structured entries that preserve per-overlay target/label metadata.
-    Target fallback order is: entry.target -> bundle.default_target -> nested overlay
-    validate_target/target -> blank (caller may use the CLI target).
+    Target resolution order is: entry.target -> nested overlay
+    validate_target/target -> blank (caller must use an explicit CLI target or solution).
     """
     manifest = read_overlay_bundle_manifest(bundle)
     if not manifest:
@@ -978,7 +1002,6 @@ def create_overlay_bundle(
     name: str = "",
     description: str = "",
     targets: list[str] | None = None,
-    default_target: str = "",
     repository: dict[str, str] | None = None,
     commit_message: str = "",
     validation_required: bool = False,
@@ -1055,8 +1078,6 @@ def create_overlay_bundle(
     clean_repository = {str(key): str(value).strip() for key, value in (repository or {}).items() if str(value).strip()}
     if clean_repository:
         bundle_manifest["repository"] = clean_repository
-    if default_target.strip():
-        bundle_manifest["default_target"] = default_target.strip()
     if validation_script:
         script_path = Path(validation_script).expanduser().resolve()
         if not script_path.is_file():

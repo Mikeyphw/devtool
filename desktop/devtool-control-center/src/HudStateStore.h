@@ -34,6 +34,9 @@ public:
     Q_INVOKABLE void setSelectedRunId(const QString &runId);
     Q_INVOKABLE QVariantList stepsFor(const QVariantMap &run) const;
     Q_INVOKABLE QString focusedSummary(const QVariantMap &run) const;
+    Q_INVOKABLE void copySummary(const QVariantMap &run) const;
+    Q_INVOKABLE bool openLog(const QVariantMap &run) const;
+    Q_INVOKABLE void setStandby(bool standby);
 public slots:
     void ingestSnapshot(const QVariantList &runs);
     void ingestRun(const QVariantMap &run);
@@ -58,7 +61,9 @@ private:
     QString m_selectedRunId;
     bool m_connected = false;
     bool m_ipcConnected = false;
+    bool m_standby = false;
     QHash<QString,QJsonObject> m_ipcRuns;
+    QHash<QString,QJsonObject> m_fileRuns;
     QFileSystemWatcher m_watcher;
     QTimer m_poll;
     QSettings m_settings;

@@ -28,6 +28,7 @@ private:
     QString storagePath() const;
     void load();
     void save() const;
-    QJsonObject inspectPath(const QString &path, const QJsonObject &existing = {}) const;
+    void refreshPath(const QString &path);
+    int indexForPath(const QString &path) const;
     QVector<QJsonObject> m_items;
 };

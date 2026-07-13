@@ -970,6 +970,7 @@ class TaskerProgressSink:
         percent: float | None = None,
         warnings: int | None = None,
         errors: int | None = None,
+        metrics: dict[str, Any] | None = None,
     ) -> None:
         source = dict(phase or self.current_phase or {})
         if not source.get("name"):
@@ -1000,6 +1001,29 @@ class TaskerProgressSink:
             current["warnings"] = max(0, int(warnings))
         if errors is not None:
             current["errors"] = max(0, int(errors))
+        if metrics:
+            for metric_key in (
+                "command",
+                "unit_label",
+                "tests_passed",
+                "tests_failed",
+                "tests_skipped",
+                "tests_total",
+                "test_assemblies",
+            ):
+                value = metrics.get(metric_key)
+                if value is None:
+                    continue
+                if metric_key in {
+                    "tests_passed",
+                    "tests_failed",
+                    "tests_skipped",
+                    "tests_total",
+                    "test_assemblies",
+                }:
+                    current[metric_key] = max(0, int(value))
+                else:
+                    current[metric_key] = str(value)
         current["updated_at"] = utc_now_iso()
         self._phase_progress[key] = current
 
@@ -1022,7 +1046,19 @@ class TaskerProgressSink:
         self._record_phase_progress(phase=self.current_phase, status="running", completed=0)
         self.emit("phase_started", status="running", phase=self.current_phase, progress={"percent": None, "current": 0, "completed": 0, "total": None, "target": target}, message=_human_event_message("phase_started", phase_name=name), force=True, notify=True)
 
-    def progress(self, *, detail: str = "", completed: int | None = None, total: int | None = None, percent: float | None = None, target: str = "", warnings: int | None = None, errors: int | None = None, force: bool = False) -> None:
+    def progress(
+        self,
+        *,
+        detail: str = "",
+        completed: int | None = None,
+        total: int | None = None,
+        percent: float | None = None,
+        target: str = "",
+        warnings: int | None = None,
+        errors: int | None = None,
+        metrics: dict[str, Any] | None = None,
+        force: bool = False,
+    ) -> None:
         now = time.monotonic()
         if not force and now - self._last_update_at < self.update_interval_s:
             return
@@ -1051,6 +1087,7 @@ class TaskerProgressSink:
             percent=percent,
             warnings=warnings,
             errors=errors,
+            metrics=metrics,
         )
         self.emit("progress", status="running", phase=self.current_phase, progress=payload, totals=issue_totals, message=detail, notify=True)
 
@@ -1083,8 +1120,52 @@ class TaskerProgressSink:
             notify=True,
         )
 
+    def _finalize_successful_pipeline(self) -> None:
+        """Make the terminal success snapshot authoritative for every planned phase.
+
+        A few workflows finish after commit/validator work that does not emit a
+        normal phase_finished event.  Leaving those planned entries pending made
+        native HUDs correctly show SUCCESS but only 80% progress.
+        """
+        for planned in self.planned_phases:
+            phase = dict(planned)
+            if not phase.get("name"):
+                continue
+            key = self._phase_progress_key(phase)
+            previous = dict(self._phase_progress.get(key) or {})
+            final_total = previous.get("total")
+            final_completed = previous.get("completed")
+            if isinstance(final_total, int) and final_total >= 0:
+                final_completed = final_total
+            self._record_phase_progress(
+                phase=phase,
+                status="ok",
+                detail=str(previous.get("detail") or "Completed"),
+                completed=final_completed if isinstance(final_completed, int) else None,
+                total=final_total if isinstance(final_total, int) else None,
+                percent=100.0,
+                warnings=int(previous.get("warnings") or 0),
+                errors=int(previous.get("errors") or 0),
+            )
+
+        # Also finalize any dynamically discovered phase that was not in the
+        # original plan (custom validators and commit phases are common).
+        for key, previous_value in list(self._phase_progress.items()):
+            previous = dict(previous_value)
+            if str(previous.get("status") or "").lower() in {"failed", "cancelled", "interrupted"}:
+                continue
+            final_total = previous.get("total")
+            if isinstance(final_total, int) and final_total >= 0:
+                previous["completed"] = final_total
+            previous["status"] = "ok"
+            previous["percent"] = 100.0
+            previous["updated_at"] = utc_now_iso()
+            self._phase_progress[key] = previous
+
     def finished(self, *, ok: bool, totals: dict[str, int], results: list[OperationResult], notification: dict[str, Any] | None = None) -> None:
         cancelled = any(int(result.returncode or 0) == 130 for result in results if result.name != "apply-rollback")
+        if ok:
+            self._finalize_successful_pipeline()
         self.status = "ok" if ok else ("cancelled" if cancelled else "failed")
         completion = _completion_payload(ok=ok, totals=totals, results=results)
         if cancelled:
@@ -1165,6 +1246,7 @@ class TaskerProgressSink:
             "boot_id": self._boot_id,
             "heartbeat_at": timestamp,
             "event_id": event_id,
+            "sequence": self.sequence,
             "event_type": event_type,
             "status": status,
             "command": self.command,

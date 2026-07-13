@@ -22,6 +22,10 @@ class AppController final : public QObject {
     Q_PROPERTY(QString clipboardCandidateKind READ clipboardCandidateKind NOTIFY clipboardCandidateChanged)
     Q_PROPERTY(QString clipboardCandidateSummary READ clipboardCandidateSummary NOTIFY clipboardCandidateChanged)
     Q_PROPERTY(QString clipboardCandidateTimestamp READ clipboardCandidateTimestamp NOTIFY clipboardCandidateChanged)
+    Q_PROPERTY(QString clipboardCandidateSnapshotText READ clipboardCandidateSnapshotText NOTIFY clipboardCandidateSnapshotChanged)
+    Q_PROPERTY(QString clipboardCandidateSnapshotKind READ clipboardCandidateSnapshotKind NOTIFY clipboardCandidateSnapshotChanged)
+    Q_PROPERTY(QString clipboardCandidateSnapshotSummary READ clipboardCandidateSnapshotSummary NOTIFY clipboardCandidateSnapshotChanged)
+    Q_PROPERTY(QString clipboardCandidateSnapshotTimestamp READ clipboardCandidateSnapshotTimestamp NOTIFY clipboardCandidateSnapshotChanged)
     Q_PROPERTY(bool clipboardMonitorInstalled READ clipboardMonitorInstalled NOTIFY clipboardMonitorStatusChanged)
     Q_PROPERTY(bool clipboardMonitorActive READ clipboardMonitorActive NOTIFY clipboardMonitorStatusChanged)
     Q_PROPERTY(QString clipboardMonitorStatus READ clipboardMonitorStatus NOTIFY clipboardMonitorStatusChanged)
@@ -37,6 +41,10 @@ public:
     QString clipboardCandidateKind() const;
     QString clipboardCandidateSummary() const;
     QString clipboardCandidateTimestamp() const;
+    QString clipboardCandidateSnapshotText() const;
+    QString clipboardCandidateSnapshotKind() const;
+    QString clipboardCandidateSnapshotSummary() const;
+    QString clipboardCandidateSnapshotTimestamp() const;
     bool clipboardMonitorInstalled() const { return m_clipboardMonitorInstalled; }
     bool clipboardMonitorActive() const { return m_clipboardMonitorActive; }
     QString clipboardMonitorStatus() const { return m_clipboardMonitorStatus; }
@@ -53,6 +61,7 @@ public:
     Q_INVOKABLE void inspectArtifactRequested() { emit requestArtifactInspector(); }
     Q_INVOKABLE void cancelRun(const QString &runId);
     Q_INVOKABLE void launchHud();
+    Q_INVOKABLE void setStandby(bool standby);
 
     Q_INVOKABLE void installClipboardMonitor();
     Q_INVOKABLE void enableClipboardMonitor();
@@ -60,6 +69,8 @@ public:
     Q_INVOKABLE void removeClipboardMonitor();
     Q_INVOKABLE void refreshClipboardMonitorStatus();
     Q_INVOKABLE void scanClipboardNow();
+    Q_INVOKABLE void captureClipboardCandidate();
+    Q_INVOKABLE void clearClipboardCandidateSnapshot();
     Q_INVOKABLE void useClipboardCandidate();
     Q_INVOKABLE void clearClipboardCandidate();
     Q_INVOKABLE void runClipboardCommand();
@@ -72,7 +83,9 @@ signals:
     void requestArtifactInspector();
     void requestRunPage();
     void clipboardCandidateChanged();
+    void clipboardCandidateSnapshotChanged();
     void clipboardMonitorStatusChanged();
+    void standbyChanged(bool standby);
 
 private:
     QString clipboardServicePath() const;
@@ -90,8 +103,12 @@ private:
     QSystemTrayIcon *m_tray = nullptr;
     QHash<QString, QString> m_lastRunStatus;
     ClipboardMonitor *m_clipboardMonitor = nullptr;
-    QTimer *m_clipboardStatusTimer = nullptr;
+    QString m_clipboardCandidateSnapshotText;
+    QString m_clipboardCandidateSnapshotKind;
+    QString m_clipboardCandidateSnapshotSummary;
+    QString m_clipboardCandidateSnapshotTimestamp;
     bool m_clipboardMonitorInstalled = false;
     bool m_clipboardMonitorActive = false;
     QString m_clipboardMonitorStatus = QStringLiteral("Not installed");
+    bool m_standby = false;
 };

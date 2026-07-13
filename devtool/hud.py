@@ -327,6 +327,28 @@ def _first_dict(*values: Any) -> dict[str, Any]:
     return {}
 
 
+def _payload_progress_score(payload: dict[str, Any] | None) -> float:
+    if not isinstance(payload, dict):
+        return -1.0
+    progress = _first_dict(payload.get("progress"))
+    current = _coerce_int(payload.get("current"))
+    total = _coerce_int(payload.get("total"))
+    if current is None:
+        current = _coerce_int(progress.get("current") or progress.get("completed"))
+    if total is None:
+        total = _coerce_int(progress.get("total"))
+    percent = _coerce_int(payload.get("percent"))
+    if percent is None:
+        percent = _coerce_int(progress.get("percent"))
+    if percent is None and current is not None and total is not None and total > 0:
+        percent = int(round(current / total * 100))
+    if percent is not None:
+        return float(max(0, min(100, percent)))
+    if current is not None:
+        return float(max(0, current))
+    return -1.0
+
+
 def parse_hud_state(payload: dict[str, Any] | None) -> HudState:
     if not payload:
         return HudState()
@@ -1313,7 +1335,8 @@ def state_from_directory(directory: Path) -> HudState:
             notification_mtime = 0
         if events_mtime <= notification_mtime + 250_000_000:
             # Preserve the richer repo/phase/target fields from state.json while
-            # still letting notification.json win for title/text/progress.
+            # still letting notification.json win for title/text when it carries
+            # the newest human-facing summary.
             rich_payload = _read_json_file(directory / "state.json") or _read_json_file(directory / "latest_event.json") or {}
             if rich_payload:
                 merged = dict(rich_payload)
@@ -1322,12 +1345,25 @@ def state_from_directory(directory: Path) -> HudState:
                 for key in ("title", "text", "expanded_title", "expanded_text", "current", "total", "target"):
                     if key in notification:
                         merged[key] = notification[key]
+                if _payload_progress_score(notification) < _payload_progress_score(rich_payload):
+                    for key in ("current", "total", "percent"):
+                        if key in rich_payload:
+                            merged[key] = rich_payload[key]
                 return parse_hud_state(merged)
             return parse_hud_state(notification)
 
     candidates = [directory / "latest_event.json", directory / "state.json"]
     newest = _newest_existing(candidates)
     payload = _read_json_file(newest) if newest is not None else notification
+    best_score = _payload_progress_score(payload)
+    for candidate_path in candidates:
+        if newest is not None and candidate_path == newest:
+            continue
+        candidate = _read_json_file(candidate_path)
+        candidate_score = _payload_progress_score(candidate)
+        if candidate_score > best_score:
+            payload = candidate
+            best_score = candidate_score
     events_path = directory / "events.jsonl"
     try:
         events_newer = newest is None or events_path.stat().st_mtime_ns > newest.stat().st_mtime_ns
@@ -1336,7 +1372,9 @@ def state_from_directory(directory: Path) -> HudState:
     if events_newer:
         events = _last_jsonl_events(events_path, 1)
         if events:
-            payload = events[-1]
+            event_payload = events[-1]
+            if _payload_progress_score(event_payload) > best_score:
+                payload = event_payload
     return parse_hud_state(payload)
 
 

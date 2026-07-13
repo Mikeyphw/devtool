@@ -36,6 +36,34 @@ def _terminal_status(state: dict[str, Any]) -> bool:
     return str(state.get("status") or "").lower() in {"ok", "failed", "cancelled", "interrupted", "skipped"}
 
 
+def _state_sequence(state: dict[str, Any]) -> int:
+    try:
+        sequence = int(state.get("sequence") or 0)
+    except (TypeError, ValueError):
+        sequence = 0
+    if sequence > 0:
+        return sequence
+    event_id = str(state.get("event_id") or "")
+    try:
+        return int(event_id.rsplit("-", 1)[1])
+    except (IndexError, ValueError):
+        return 0
+
+
+def _state_is_newer(candidate: dict[str, Any], current: dict[str, Any] | None) -> bool:
+    if not current:
+        return True
+    candidate_sequence = _state_sequence(candidate)
+    current_sequence = _state_sequence(current)
+    if candidate_sequence and current_sequence and candidate_sequence != current_sequence:
+        return candidate_sequence > current_sequence
+    candidate_updated = str(candidate.get("updated_at") or "")
+    current_updated = str(current.get("updated_at") or "")
+    if candidate_updated and current_updated:
+        return candidate_updated >= current_updated
+    return True
+
+
 @dataclass(eq=False)
 class _Peer:
     sock: socket.socket
@@ -166,7 +194,7 @@ class IpcBroker:
             peer.run_id = run_id
             self.producers[run_id] = peer
             state = message.get("state")
-            if isinstance(state, dict):
+            if isinstance(state, dict) and _state_is_newer(state, self.runs.get(run_id)):
                 self.runs[run_id] = state
                 self._broadcast({"type": "run_update", "run": state})
             peer.send({"type": "registered", "run_id": run_id})
@@ -179,6 +207,8 @@ class IpcBroker:
             if not run_id:
                 return
             state["run_id"] = run_id
+            if not _state_is_newer(state, self.runs.get(run_id)):
+                return
             self.runs[run_id] = state
             self._broadcast({"type": "run_update", "run": state})
             return

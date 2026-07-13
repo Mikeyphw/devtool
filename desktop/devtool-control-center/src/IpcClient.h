@@ -36,4 +36,5 @@ private:
     QTimer m_reconnectTimer;
     QByteArray m_buffer;
     QString m_socketPath;
+    int m_reconnectAttempt = 0;
 };

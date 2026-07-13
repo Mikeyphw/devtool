@@ -129,6 +129,7 @@ class TaskerProgressTests(unittest.TestCase):
             sink.progress(detail="built 4 of 10 projects", completed=4, total=10, warnings=2, errors=1, force=True)
 
             latest = json.loads((Path(tmp) / "latest_event.json").read_text(encoding="utf-8"))
+            self.assertGreater(latest["sequence"], 0)
             self.assertEqual(latest["current"], 4)
             self.assertEqual(latest["total"], 10)
             self.assertEqual(latest["totals"], {"warnings": 2, "errors": 1})
@@ -144,6 +145,49 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertEqual(live_phase["percent"], 40.0)
             self.assertEqual(live_phase["warnings"], 2)
             self.assertEqual(live_phase["errors"], 1)
+
+    def test_progress_event_persists_live_dotnet_parser_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = TaskerProgressSink(
+                directory=Path(tmp),
+                command="apply-overlays",
+                repo_root="/repo/demo",
+                repo_name="demo",
+                enabled=True,
+                update_interval_s=0,
+            )
+            sink.phase_started(
+                "test[workspace-a]",
+                index=3,
+                total=4,
+                argv=["dotnet", "test", "WorkspaceA.sln"],
+                metadata={"workspace": "workspace-a", "bundle_target": "workspace-a-target"},
+            )
+            sink.progress(
+                detail="tests: 225 passed, 0 failed, 1 skipped across 3 assemblies",
+                completed=3,
+                total=3,
+                metrics={
+                    "command": "test",
+                    "unit_label": "test assemblies",
+                    "tests_passed": 225,
+                    "tests_failed": 0,
+                    "tests_skipped": 1,
+                    "tests_total": 226,
+                    "test_assemblies": 3,
+                },
+                force=True,
+            )
+
+            latest = json.loads((Path(tmp) / "latest_event.json").read_text(encoding="utf-8"))
+            phase = latest["phase_progress"][0]
+            self.assertEqual(phase["command"], "test")
+            self.assertEqual(phase["unit_label"], "test assemblies")
+            self.assertEqual(phase["tests_passed"], 225)
+            self.assertEqual(phase["tests_failed"], 0)
+            self.assertEqual(phase["tests_skipped"], 1)
+            self.assertEqual(phase["tests_total"], 226)
+            self.assertEqual(phase["test_assemblies"], 3)
 
     def test_send_local_http_event_posts_full_json_to_localhost(self) -> None:
         response = Mock()
@@ -220,3 +264,33 @@ def test_devtool_no_hud_hard_disables_auto_hud(tmp_path) -> None:
     ) as run:
         assert start_auto_hud(tmp_path / "hud", mode="desktop") is False
     run.assert_not_called()
+
+class TaskerTerminalProgressTests(unittest.TestCase):
+    def test_success_finalizes_every_planned_phase_at_one_hundred_percent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = TaskerProgressSink(
+                directory=Path(tmp),
+                command="apply-overlay",
+                repo_root="/repo/demo",
+                repo_name="demo",
+                enabled=True,
+                update_interval_s=0,
+            )
+            sink.started()
+            sink.plan_phases([
+                {"name": "extract"},
+                {"name": "restore[xdm]", "target": "xdm_modern"},
+                {"name": "build[xdm]", "target": "xdm_modern"},
+                {"name": "test[xdm]", "target": "xdm_modern"},
+                {"name": "commit"},
+            ])
+            sink.phase_started("test[xdm]", index=4, total=5, metadata={"bundle_target": "xdm_modern"})
+            sink.progress(completed=6, total=6, percent=100, force=True)
+            sink.finished(ok=True, totals={"warnings": 0, "errors": 0, "failed": 0, "skipped": 0}, results=[])
+
+            state = json.loads((Path(tmp) / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "ok")
+            self.assertEqual(state["progress"]["percent"], 100.0)
+            self.assertEqual(len(state["phase_progress"]), 5)
+            self.assertTrue(all(item["status"] == "ok" for item in state["phase_progress"]))
+            self.assertTrue(all(item["percent"] == 100.0 for item in state["phase_progress"]))

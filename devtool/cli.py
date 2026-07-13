@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import os
 import shlex
@@ -8,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import resource
 import tempfile
 import zipfile
 from contextlib import contextmanager
@@ -54,7 +56,9 @@ from .completion import ZSH_COMPLETION
 from .config import detect_project_kind, discover_dotnet_candidates, load_project_config, resolve_config_dict
 from .logstore import latest_log, new_log_path
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
-from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, git_commit, run_specs, write_template_config
+from .repair_apply import apply_auto_source_repairs, restore_source_backups
+from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
+from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, git_commit, run_specs, shutdown_dotnet_build_server, write_template_config
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
@@ -113,6 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
     execution.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="For test: pass --no-build to dotnet test")
     execution.add_argument("-k", "--continue-on-error", action="store_true", help="Continue with the next independent step after an error")
     execution.add_argument("--fail-fast", action="store_true", help="Stop at the first failed step")
+    execution.add_argument("--performance", action="store_true", help="Write a JSON performance report for this run")
+    execution.add_argument("--performance-file", default="", help="Performance report path (default: devtool state directory)")
 
     output = parser.add_argument_group("Output and clipboard")
     output.add_argument("-j", "--json", action="store_true", help="Shortcut for the machine envelope stdout payload")
@@ -265,7 +271,6 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_overlays.add_argument("overlays", nargs="+")
     bundle_overlays.add_argument("--name", default="")
     bundle_overlays.add_argument("--description", default="")
-    bundle_overlays.add_argument("--default-target", default="", help="Default target for entries that do not declare one")
     bundle_overlays.add_argument("--targets", default="", help="Comma-separated targets aligned with the overlay arguments; use '-' to infer")
     bundle_overlays.add_argument("--repository-name", default="", help="Repository identity stored in the bundle manifest")
     bundle_overlays.add_argument("--repository-remote", default="", help="Optional expected Git remote")
@@ -393,6 +398,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         payload = json.loads(json_text)
     except (TypeError, ValueError, json.JSONDecodeError):
         payload = {}
+    repair_lines = repair_summary_lines_from_payload(payload)
 
     warnings = int(payload.get("warnings", 0) or 0)
     errors = int(payload.get("errors", 0) or 0)
@@ -690,6 +696,9 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     if total_duration > 0:
         success_lines.append(f"Total action time: {total_duration:.2f}s")
 
+    if repair_lines:
+        success_lines.extend(("", *repair_lines))
+
     success_summary = "\n".join(success_lines).strip()
 
     def _failure_summary() -> str:
@@ -810,6 +819,8 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         if recovery_steps:
             lines.append("Recovery: " + "; ".join(recovery_steps))
         if failure_details:
+            if repair_lines:
+                lines.extend(("", *repair_lines))
             lines.extend(("", "Failure details:", failure_details))
         return "\n".join(lines).strip()
 
@@ -995,6 +1006,11 @@ def _summary_text(results: list[OperationResult]) -> str:
         for issue in result.issues:
             location = issue.file if issue.line is None or issue.file in {"", "-"} else f"{issue.file}:{issue.line}"
             parts.append(f"{indent}  {issue.severity} {issue.command} {location} {issue.code} {issue.message}")
+    repair_lines = repair_summary_lines_from_results(results)
+    if repair_lines:
+        if parts:
+            parts.append("")
+        parts.extend(repair_lines)
     return "\n".join(parts)
 
 
@@ -1387,6 +1403,7 @@ def _run_specs_for_args(
     continue_on_error: bool = False,
     log_path: Path | str | None = None,
     tasker_progress: TaskerProgressSink | None = None,
+    shutdown_dotnet: bool = True,
 ) -> tuple[list[OperationResult], str]:
     return run_specs(
         config,
@@ -1396,6 +1413,7 @@ def _run_specs_for_args(
         continue_on_error=continue_on_error,
         log_path=log_path,
         tasker_progress=tasker_progress,
+        shutdown_dotnet=shutdown_dotnet,
     )
 
 
@@ -1892,6 +1910,108 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     return _return_apply(result, text)
 
 
+def _repair_result_name() -> str:
+    return "auto-repair"
+
+
+def _repair_failure_count(results: list[OperationResult]) -> int:
+    return sum(1 for result in results if result.returncode != 0 and result.name not in {"apply-rollback"})
+
+
+def _repair_output_lines(applied: list[object], *, before_failures: int, after_failures: int, restored: bool) -> str:
+    lines = ["Auto repair pass:"]
+    if applied:
+        lines.append(f"- Applied {len(applied)} safe fix{'es' if len(applied) != 1 else ''}.")
+        for finding in applied[:3]:
+            location = str(getattr(finding, "file", "") or "-")
+            line = getattr(finding, "line", None)
+            if line is not None:
+                location = f"{location}:{line}"
+            lines.append(f"  - {location} {getattr(finding, 'code', '-')}: {getattr(finding, 'fix', '')}")
+    else:
+        lines.append("- No safe fixes were available.")
+    if restored:
+        lines.append("- Restored original source files because the retry did not reduce the error set.")
+    else:
+        lines.append(f"- Validation failures: {before_failures} -> {after_failures}")
+    return "\n".join(lines)
+
+
+def _attempt_auto_repair(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    *,
+    validation_results: list[OperationResult],
+    validation_specs: list[CommandSpec],
+    continue_on_error: bool,
+    log_path: Path | str | None,
+    tasker_progress: TaskerProgressSink | None,
+    parser: argparse.ArgumentParser,
+    shutdown_dotnet: bool = True,
+) -> tuple[list[OperationResult], str, OperationResult | None]:
+    if _repair_failure_count(validation_results) == 0:
+        return validation_results, "", None
+
+    applied, backups = apply_auto_source_repairs(config.repo_root, validation_results)
+    if not applied:
+        return validation_results, "", None
+
+    before_failures = _repair_failure_count(validation_results)
+    repair_started = datetime.now(timezone.utc)
+    try:
+        repaired_results, repaired_raw = _run_specs_for_args(
+            config,
+            validation_specs,
+            args,
+            continue_on_error=continue_on_error,
+            log_path=log_path,
+            tasker_progress=tasker_progress,
+            shutdown_dotnet=shutdown_dotnet,
+        )
+    except Exception:
+        restore_source_backups(backups)
+        raise
+
+    after_failures = _repair_failure_count(repaired_results)
+    improved = after_failures < before_failures
+    if not improved:
+        restore_source_backups(backups)
+        output = _repair_output_lines(applied, before_failures=before_failures, after_failures=after_failures, restored=True)
+        repair_result = OperationResult(
+            _repair_result_name(),
+            ["devtool", "repair"],
+            0,
+            (datetime.now(timezone.utc) - repair_started).total_seconds(),
+            output,
+            [],
+            metadata={
+                "applied_repairs": [asdict(finding) for finding in applied],
+                "restored": True,
+                "before_failures": before_failures,
+                "after_failures": after_failures,
+            },
+        )
+        combined_raw = output + ("\n\n" + repaired_raw if repaired_raw else "")
+        return validation_results + [repair_result], combined_raw, repair_result
+
+    output = _repair_output_lines(applied, before_failures=before_failures, after_failures=after_failures, restored=False)
+    repair_result = OperationResult(
+        _repair_result_name(),
+        ["devtool", "repair"],
+        0,
+        (datetime.now(timezone.utc) - repair_started).total_seconds(),
+        output,
+        [],
+        metadata={
+            "applied_repairs": [asdict(finding) for finding in applied],
+            "restored": False,
+            "before_failures": before_failures,
+            "after_failures": after_failures,
+        },
+    )
+    return [repair_result, *repaired_results], output + ("\n\n" + repaired_raw if repaired_raw else ""), repair_result
+
+
 
 
 def _tag_overlay_results(
@@ -2056,6 +2176,24 @@ def _validation_expectation_result(manifest: dict, results: list[OperationResult
     )
 
 
+def _artifact_declared_paths(manifest: dict) -> set[str]:
+    paths: set[str] = set()
+    inventory = manifest.get("inventory") if isinstance(manifest.get("inventory"), dict) else {}
+    entries = inventory.get("entries") if isinstance(inventory.get("entries"), list) else []
+    for item in entries:
+        if isinstance(item, dict):
+            path = str(item.get("path") or "").strip()
+            if path:
+                paths.add(path)
+    legacy = manifest.get("files")
+    if isinstance(legacy, list):
+        for item in legacy:
+            path = str(item).strip()
+            if path:
+                paths.add(path)
+    return paths
+
+
 def _run_sequential_overlays(
     config: ProjectConfig,
     args: argparse.Namespace,
@@ -2079,6 +2217,20 @@ def _run_sequential_overlays(
         bundle_strategy = str(bundle_policy.get("strategy") or "per-overlay").strip().lower()
         if bundle_strategy not in {"per-overlay", "after-all", "both"}:
             bundle_strategy = "per-overlay"
+
+        declared_paths: dict[int, set[str]] = {}
+        last_writer: dict[str, int] = {}
+        for entry in entries:
+            manifest = read_artifact_manifest(Path(entry["path"]))
+            index = int(entry["index"])
+            paths = _artifact_declared_paths(manifest)
+            declared_paths[index] = paths
+            for changed_path in paths:
+                last_writer[changed_path] = index
+        superseded_paths = {
+            index: {path for path in paths if last_writer.get(path) != index}
+            for index, paths in declared_paths.items()
+        }
 
         apply_artifact: object = getattr(args, "artifact", "")
         direct_artifacts = _artifact_arg_list(apply_artifact)
@@ -2109,6 +2261,8 @@ def _run_sequential_overlays(
         raw_sections.append(apply_raw)
         transaction_path = _apply_transaction_path(all_results)
         apply_ok = bool(apply_results) and all(result.returncode == 0 for result in apply_results)
+        validation_cache: set[tuple[str, str, str, bool, bool, bool]] = set()
+        dotnet_shutdown_config: ProjectConfig | None = None
 
         if apply_ok or getattr(args, "validate_only", False):
             for entry in entries:
@@ -2148,31 +2302,100 @@ def _run_sequential_overlays(
                 group_results: list[OperationResult] = []
                 if not (entry_args.skip_restore and entry_args.skip_build and entry_args.skip_test):
                     specs = _validation_specs(entry_config, entry_args, parser)
-                    validation_results, validation_raw = _run_specs_for_args(
+                    validation_key = (
+                        entry_config.restore_target,
+                        entry_config.build_target,
+                        entry_config.test_target,
+                        not entry_args.skip_restore,
+                        not entry_args.skip_build,
+                        not entry_args.skip_test,
+                    )
+                    can_reuse = entry_config.kind == "dotnet" and validation_key in validation_cache
+                    if can_reuse:
+                        message = (
+                            f"Reused the completed .NET validation for {entry_config.build_target or target}; "
+                            "the same workspace is restored, built, and tested only once per bundle."
+                        )
+                        group_results.append(OperationResult(
+                            "validation-reused",
+                            ["validation-reused", entry_config.build_target or target],
+                            0,
+                            0.0,
+                            message,
+                            [],
+                            skipped=True,
+                            metadata={"shared_validation": True, "bundle_target": target},
+                        ))
+                        raw_sections.append(f"=== Validate {label} ===\n{message}")
+                    else:
+                        validation_results, validation_raw = _run_specs_for_args(
+                            entry_config,
+                            specs,
+                            entry_args,
+                            continue_on_error=continue_on_error,
+                            log_path=log_path,
+                            tasker_progress=tasker_progress,
+                            shutdown_dotnet=False,
+                        )
+                        group_results.extend(validation_results)
+                        raw_sections.append(f"=== Validate {label} ===\n{validation_raw}")
+                        if entry_config.kind == "dotnet":
+                            dotnet_shutdown_config = entry_config
+                            if not any(result.returncode != 0 for result in validation_results):
+                                validation_cache.add(validation_key)
+
+                if not any(result.returncode != 0 for result in group_results):
+                    overridden = superseded_paths.get(int(entry["index"]), set())
+                    has_script = bool(entry_policy.get("script"))
+                    if has_script and overridden:
+                        preview = ", ".join(sorted(overridden)[:3])
+                        if len(overridden) > 3:
+                            preview += f", and {len(overridden) - 3} more"
+                        message = (
+                            "Skipped this artifact's final-tree validator because later overlays intentionally "
+                            f"replace {len(overridden)} declared path(s): {preview}. The winning overlay validator "
+                            "and shared .NET validation remain authoritative."
+                        )
+                        group_results.append(OperationResult(
+                            "artifact-validator-superseded",
+                            ["artifact-validator-superseded", str(path)],
+                            0,
+                            0.0,
+                            message,
+                            [],
+                            skipped=True,
+                            metadata={"superseded_paths": sorted(overridden)},
+                        ))
+                        raw_sections.append(f"=== Artifact validator {label} ===\n{message}")
+                    else:
+                        script_result, script_raw = _artifact_script_result(
+                            entry_config,
+                            entry_args,
+                            path,
+                            entry_manifest,
+                            target=target,
+                            solution=solution,
+                            log_path=log_path,
+                            tasker_progress=tasker_progress,
+                        )
+                        if script_result is not None:
+                            group_results.append(script_result)
+                            raw_sections.append(f"=== Artifact validator {label} ===\n{script_raw}")
+
+                if any(result.returncode != 0 for result in group_results):
+                    group_results, repair_raw, _repair_result = _attempt_auto_repair(
                         entry_config,
-                        specs,
                         entry_args,
+                        validation_results=group_results,
+                        validation_specs=_validation_specs(entry_config, entry_args, parser),
                         continue_on_error=continue_on_error,
                         log_path=log_path,
                         tasker_progress=tasker_progress,
+                        parser=parser,
+                        shutdown_dotnet=False,
                     )
-                    group_results.extend(validation_results)
-                    raw_sections.append(f"=== Validate {label} ===\n{validation_raw}")
-
-                if not any(result.returncode != 0 for result in group_results):
-                    script_result, script_raw = _artifact_script_result(
-                        entry_config,
-                        entry_args,
-                        path,
-                        entry_manifest,
-                        target=target,
-                        solution=solution,
-                        log_path=log_path,
-                        tasker_progress=tasker_progress,
-                    )
-                    if script_result is not None:
-                        group_results.append(script_result)
-                        raw_sections.append(f"=== Artifact validator {label} ===\n{script_raw}")
+                    if repair_raw:
+                        raw_sections.append(f"=== Auto repair {label} ===\n{repair_raw}")
 
                 expectation = _validation_expectation_result(entry_manifest, group_results)
                 if expectation is not None:
@@ -2203,6 +2426,16 @@ def _run_sequential_overlays(
                     final_args = argparse.Namespace(**vars(args))
                     final_args.command = "apply-overlay"
                     specs = _validation_specs(final_config, final_args, parser)
+                    final_key = (
+                        final_config.restore_target,
+                        final_config.build_target,
+                        final_config.test_target,
+                        True,
+                        True,
+                        True,
+                    )
+                    if final_config.kind == "dotnet" and final_key in validation_cache:
+                        continue
                     final_results, final_raw = _run_specs_for_args(
                         final_config,
                         specs,
@@ -2210,7 +2443,26 @@ def _run_sequential_overlays(
                         continue_on_error=continue_on_error,
                         log_path=log_path,
                         tasker_progress=tasker_progress,
+                        shutdown_dotnet=False,
                     )
+                    if final_config.kind == "dotnet":
+                        dotnet_shutdown_config = final_config
+                        if not any(result.returncode != 0 for result in final_results):
+                            validation_cache.add(final_key)
+                    if any(result.returncode != 0 for result in final_results):
+                        final_results, repair_raw, _repair_result = _attempt_auto_repair(
+                            final_config,
+                            final_args,
+                            validation_results=final_results,
+                            validation_specs=specs,
+                            continue_on_error=continue_on_error,
+                            log_path=log_path,
+                            tasker_progress=tasker_progress,
+                            parser=parser,
+                            shutdown_dotnet=False,
+                        )
+                        if repair_raw:
+                            final_raw = repair_raw
                     all_results.extend(final_results)
                     raw_sections.append(f"=== Final validation [{target}] ===\n{final_raw}")
                     if any(result.returncode != 0 for result in final_results) and not continue_on_error:
@@ -2233,6 +2485,15 @@ def _run_sequential_overlays(
                 expectation = _validation_expectation_result(bundle_manifest, all_results)
                 if expectation is not None:
                     all_results.append(expectation)
+
+        if dotnet_shutdown_config is not None:
+            shutdown_result, shutdown_raw = shutdown_dotnet_build_server(
+                dotnet_shutdown_config,
+                dry_run=bool(getattr(args, "dry_run", False)),
+                log_path=log_path,
+            )
+            all_results.append(shutdown_result)
+            raw_sections.append(shutdown_raw)
 
         rollback_enabled = bool(bundle_policy.get("rollback_on_failure", True))
         if transaction_path and rollback_enabled and _has_failed_after_apply(all_results):
@@ -2549,7 +2810,6 @@ def _doctor(config: ProjectConfig, *, fix: bool = False) -> None:
         ("xdg_data", str(devtool_xdg_dir())),
         ("python", config.python_executable),
         ("selected_target", config.selected_target or "-"),
-        ("default_target", config.default_target or "-"),
         ("restore_target", config.restore_target or "-"),
         ("build_target", config.build_target or "-"),
         ("test_target", config.test_target or "-"),
@@ -2565,7 +2825,6 @@ def _status(config: ProjectConfig) -> None:
         ("repo", str(config.repo_root)),
         ("kind", config.kind),
         ("selected_target", config.selected_target or "-"),
-        ("default_target", config.default_target or "-"),
         ("restore_target", config.restore_target or "-"),
         ("build_target", config.build_target or "-"),
         ("test_target", config.test_target or "-"),
@@ -2632,7 +2891,6 @@ def _run_bundle_command(args: argparse.Namespace) -> int:
         name=args.name,
         description=args.description,
         targets=targets or None,
-        default_target=getattr(args, "default_target", "") or "",
         repository=repository,
         commit_message=str(getattr(args, "commit_message", "") or ""),
         validation_required=bool(getattr(args, "validate", False)),
@@ -2754,6 +3012,56 @@ def _print_chroot_indicator_once(args: argparse.Namespace) -> None:
     if os.environ.get("DEVTOOL_INSIDE_TERMUX_CHROOT") == "1":
         chroot_name = os.environ.get("DEVTOOL_CHROOT_CONTEXT", "androidos")
         console.print(f"[magenta]Android chroot[/magenta] [dim]{chroot_name}[/dim]")
+
+
+
+def _write_performance_report(
+    args: argparse.Namespace,
+    results: list[OperationResult],
+    *,
+    started_at: datetime,
+    finished_at: datetime,
+    config: ProjectConfig | None,
+) -> Path | None:
+    if not bool(getattr(args, "performance", False) or os.environ.get("DEVTOOL_PERFORMANCE")):
+        return None
+    usage_self = resource.getrusage(resource.RUSAGE_SELF)
+    usage_children = resource.getrusage(resource.RUSAGE_CHILDREN)
+    phases = [
+        {
+            "name": result.name,
+            "duration_seconds": round(float(result.duration_seconds or 0.0), 6),
+            "returncode": int(result.returncode or 0),
+            "argv": list(result.argv),
+            "log_path": str(result.log_path or ""),
+        }
+        for result in results
+    ]
+    payload = {
+        "schema_version": 1,
+        "command": str(getattr(args, "command", "") or ""),
+        "repo_root": str(config.repo_root) if config is not None else str(getattr(args, "repo", "") or ""),
+        "target": str(config.selected_target) if config is not None else str(getattr(args, "target", "") or ""),
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "wall_seconds": round((finished_at - started_at).total_seconds(), 6),
+        "operation_seconds": round(sum(float(result.duration_seconds or 0.0) for result in results), 6),
+        "operation_count": len(results),
+        "spawned_process_estimate": sum(1 for result in results if result.argv),
+        "peak_rss_kib": int(usage_self.ru_maxrss),
+        "child_peak_rss_kib": int(usage_children.ru_maxrss),
+        "phases": phases,
+    }
+    requested = str(getattr(args, "performance_file", "") or "").strip()
+    path = Path(requested).expanduser() if requested else devtool_xdg_dir() / "performance-latest.json"
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+    console.print(f"[dim]Performance report:[/dim] {path}")
+    return path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3076,6 +3384,7 @@ def main(argv: list[str] | None = None) -> int:
             should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
             if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
                 skip_restore, skip_build, skip_test = _validation_skip_values(args)
+                validation_results: list[OperationResult] = []
                 if not (skip_restore and skip_build and skip_test):
                     more_results, more_raw = _run_specs_for_args(
                         config,
@@ -3085,8 +3394,26 @@ def main(argv: list[str] | None = None) -> int:
                         log_path=log_path,
                         tasker_progress=tasker_progress,
                     )
-                    results.extend(more_results)
-                    raw_output += "\n\n" + more_raw
+                    validation_results.extend(more_results)
+                    validation_raw = more_raw
+                else:
+                    validation_raw = ""
+                if any(result.returncode != 0 for result in validation_results):
+                    validation_results, repair_raw, _repair_result = _attempt_auto_repair(
+                        config,
+                        args,
+                        validation_results=validation_results,
+                        validation_specs=_validation_specs_for_args(config, args, parser),
+                        continue_on_error=continue_on_error,
+                        log_path=log_path,
+                        tasker_progress=tasker_progress,
+                        parser=parser,
+                    )
+                    if repair_raw:
+                        validation_raw = repair_raw
+                results.extend(validation_results)
+                if validation_raw:
+                    raw_output += "\n\n" + validation_raw
                 if not any(result.returncode != 0 for result in results):
                     artifact_path = resolve_artifact_path(args.artifact)
                     manifest = read_artifact_manifest(artifact_path)
@@ -3151,7 +3478,7 @@ def main(argv: list[str] | None = None) -> int:
                     index=1,
                     total=1,
                     label=overlay_label,
-                    target=config.selected_target or config.default_target or "",
+                    target=config.selected_target or "",
                     artifact=artifact_text,
                 )
             if not getattr(args, "_devtool_history_recorded", False):
@@ -3208,5 +3535,6 @@ def main(argv: list[str] | None = None) -> int:
     _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
     _maybe_copy(raw_output, summary_text, json_text, args)
     _finish_live_progress(tasker_progress, totals=totals, results=results)
+    _write_performance_report(args, results, started_at=started_at, finished_at=finished_at, config=config)
     _release_single_run_lock(args)
     return 0 if totals["failed"] == 0 else 1

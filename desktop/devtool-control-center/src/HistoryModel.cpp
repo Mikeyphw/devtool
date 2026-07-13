@@ -7,9 +7,17 @@
 #include <QStandardPaths>
 #include <utility>
 
-HistoryModel::HistoryModel(QObject *parent) : QAbstractListModel(parent) { load(); }
-int HistoryModel::rowCount(const QModelIndex &parent) const { return parent.isValid() ? 0 : m_items.size(); }
+HistoryModel::HistoryModel(QObject *parent) : QAbstractListModel(parent) {}
+int HistoryModel::rowCount(const QModelIndex &parent) const {
+    const_cast<HistoryModel *>(this)->ensureLoaded();
+    return parent.isValid() ? 0 : m_items.size();
+}
+int HistoryModel::count() const {
+    const_cast<HistoryModel *>(this)->ensureLoaded();
+    return m_items.size();
+}
 QVariant HistoryModel::data(const QModelIndex &index, int role) const {
+    const_cast<HistoryModel *>(this)->ensureLoaded();
     if (!index.isValid() || index.row() < 0 || index.row() >= m_items.size()) return {};
     const auto &o = m_items.at(index.row());
     const char *key = nullptr;
@@ -30,12 +38,18 @@ QHash<int,QByteArray> HistoryModel::roleNames() const {
             {CommandRole,"command"},{StepsRole,"steps"}};
 }
 QVariantMap HistoryModel::get(int row) const {
+    const_cast<HistoryModel *>(this)->ensureLoaded();
     if (row < 0 || row >= m_items.size()) return {};
     return m_items.at(row).toVariantMap();
 }
 QString HistoryModel::storagePath() const {
     const auto dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir); return dir + "/history.json";
+}
+void HistoryModel::ensureLoaded() {
+    if (m_loaded) return;
+    m_loaded = true;
+    load();
 }
 void HistoryModel::load() {
     QFile f(storagePath()); if (!f.open(QIODevice::ReadOnly)) return;
@@ -49,8 +63,9 @@ void HistoryModel::save() const {
     QJsonArray a; for (const auto &item : m_items) a.push_back(item);
     QFile f(storagePath()); if (f.open(QIODevice::WriteOnly|QIODevice::Truncate)) f.write(QJsonDocument(a).toJson());
 }
-void HistoryModel::clear() { beginResetModel(); m_items.clear(); endResetModel(); emit countChanged(); save(); }
+void HistoryModel::clear() { ensureLoaded(); beginResetModel(); m_items.clear(); endResetModel(); emit countChanged(); save(); }
 void HistoryModel::record(const QJsonObject &state) {
+    ensureLoaded();
     const QString id = state.value("run_id").toString(); if (id.isEmpty()) return;
     for (const auto &item : std::as_const(m_items)) if (item.value("run_id").toString() == id) return;
     QJsonObject item;

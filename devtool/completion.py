@@ -66,6 +66,8 @@ _devtool() {
     '--dry-run[print commands without running]' \
     '--continue-on-error[continue batch after errors]' \
     '--fail-fast[stop batch on first error]' \
+    '--performance[write a JSON performance report]' \
+    '--performance-file[performance report path]:file:_files' \
     '--host[force host execution]' \
     '--chroot[run command phases inside chroot via sudo chrootctl --name NAME exec -- zsh -lc]:name:' \
     '--stdout-payload[select stdout payload]:(auto summary json raw)' \
@@ -112,7 +114,6 @@ _devtool() {
         '*:overlay:_devtool_artifact_path' \
         '--name[bundle name]:name:' \
         '--description[bundle description]:description:' \
-        '--default-target[default target]:target:' \
         '--targets[comma-separated per-overlay targets]:targets:' \
         '--repository-name[repository identity]:name:' \
         '--repository-remote[expected Git remote]:remote:' \

@@ -86,3 +86,17 @@ class IpcCliTests(unittest.TestCase):
         args = build_parser().parse_args(["ipc-server", "--foreground"])
         self.assertEqual(args.command, "ipc-server")
         self.assertTrue(args.foreground)
+
+class IpcMonotonicStateTests(unittest.TestCase):
+    def test_sequence_rejects_delayed_state(self) -> None:
+        from devtool.ipc import _state_is_newer
+        current = {"run_id": "run", "sequence": 8, "updated_at": "2026-07-12T04:00:08Z"}
+        delayed = {"run_id": "run", "sequence": 7, "updated_at": "2026-07-12T04:00:09Z"}
+        self.assertFalse(_state_is_newer(delayed, current))
+        self.assertTrue(_state_is_newer(dict(delayed, sequence=9), current))
+
+    def test_event_id_sequence_is_supported_for_older_producers(self) -> None:
+        from devtool.ipc import _state_is_newer
+        current = {"event_id": "abc-00012", "updated_at": "2026-07-12T04:00:12Z"}
+        delayed = {"event_id": "abc-00011", "updated_at": "2026-07-12T04:00:13Z"}
+        self.assertFalse(_state_is_newer(delayed, current))

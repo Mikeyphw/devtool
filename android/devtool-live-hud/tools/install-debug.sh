@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/.."
-./gradlew :app:assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+apk="$root/devtool-live-hud-debug.apk"
+if [[ ! -f "$apk" ]]; then
+  "$root/build.sh" --app-dir "$root" --tracked-apk "$apk"
+fi
+sudo pm install -r "$apk"

@@ -61,6 +61,16 @@ class HudTests(unittest.TestCase):
         self.assertEqual(state.current, 4)
         self.assertEqual(state.total, 8)
 
+    def test_state_from_directory_keeps_higher_progress_when_notification_regresses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "state.json").write_text(json.dumps({"title": "Build", "current": 7, "total": 10}), encoding="utf-8")
+            (root / "notification.json").write_text(json.dumps({"title": "Build", "current": 1, "total": 2}), encoding="utf-8")
+            state = state_from_directory(root)
+        self.assertEqual(state.current, 7)
+        self.assertEqual(state.total, 10)
+        self.assertEqual(state.percent, 70)
+
     def test_recent_error_lines_highlight_failures_without_zero_failed_noise(self) -> None:
         from devtool.hud import recent_error_lines
         events = [

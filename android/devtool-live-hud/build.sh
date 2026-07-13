@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-$HOME/Code/devtool-live-hud}"
+SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
+APP_DIR="${APP_DIR:-$SCRIPT_DIR}"
 SDK_DIR="${ANDROID_HOME:-$HOME/android-sdk}"
 CMDLINE_ZIP="${CMDLINE_ZIP:-commandlinetools-linux-13114758_latest.zip}"
 if [[ -n "${CMDLINE_URL+x}" ]]; then
@@ -19,6 +20,7 @@ GRADLE_TRANSFORMS_DIR="${GRADLE_TRANSFORMS_DIR:-$HOME/.gradle/caches/8.13/transf
 GRADLE_CLEAN_TASK="${GRADLE_CLEAN_TASK:-clean}"
 GRADLE_ASSEMBLE_TASK="${GRADLE_ASSEMBLE_TASK:-assembleDebug}"
 APK_PATH="${APK_PATH:-}"
+TRACKED_APK_PATH="${TRACKED_APK_PATH:-}"
 APT_COMMAND="${APT_COMMAND:-apt}"
 SUDO_COMMAND="${SUDO_COMMAND:-sudo}"
 WGET_COMMAND="${WGET_COMMAND:-wget}"
@@ -68,7 +70,9 @@ Gradle and output:
   --assemble-task TASK         Gradle assemble task (default: assembleDebug)
   --gradle-arg ARG             Additional Gradle argument; may be repeated
   --gradle-transforms-dir PATH Cache directory removed before build
-  --apk-path PATH              Expected APK path; default is inferred from task
+  --apk-path PATH              Expected Gradle APK path; default is inferred
+  --tracked-apk PATH           Copy the built APK to this stable tracked path
+                               default: APP_DIR/devtool-live-hud-debug.apk
 
 Behavior:
   --skip-system-deps           Do not run apt update/install
@@ -87,6 +91,7 @@ Environment equivalents:
   APP_DIR, ANDROID_HOME, CMDLINE_ZIP, CMDLINE_URL, JAVA_HOME,
   ANDROID_PLATFORM, ANDROID_BUILD_TOOLS, PLATFORM_TOOLS_PACKAGE,
   GRADLE_TRANSFORMS_DIR, GRADLE_CLEAN_TASK, GRADLE_ASSEMBLE_TASK, APK_PATH,
+  TRACKED_APK_PATH,
   APT_COMMAND, SUDO_COMMAND, WGET_COMMAND, UNZIP_COMMAND, SDKMANAGER_COMMAND.
 USAGE
 }
@@ -118,6 +123,7 @@ while (($#)); do
     --gradle-arg) need_value "$@"; GRADLE_ARGS+=("$2"); shift 2 ;;
     --gradle-transforms-dir) need_value "$@"; GRADLE_TRANSFORMS_DIR="$2"; shift 2 ;;
     --apk-path) need_value "$@"; APK_PATH="$2"; shift 2 ;;
+    --tracked-apk) need_value "$@"; TRACKED_APK_PATH="$2"; shift 2 ;;
     --skip-system-deps) SKIP_SYSTEM_DEPS=true; shift ;;
     --skip-sdk-install) SKIP_SDK_INSTALL=true; shift ;;
     --skip-licenses) SKIP_LICENSES=true; shift ;;
@@ -152,6 +158,10 @@ run_shell() {
   printf '+ %s\n' "$1"
   "$DRY_RUN" || bash -lc "$1"
 }
+
+if [[ -z "$TRACKED_APK_PATH" ]]; then
+  TRACKED_APK_PATH="$APP_DIR/devtool-live-hud-debug.apk"
+fi
 
 if [[ -z "$APK_PATH" ]]; then
   case "$GRADLE_ASSEMBLE_TASK" in
@@ -214,4 +224,13 @@ run chmod +x ./gradlew
 "$RUN_CLEAN_TASK" && run ./gradlew "$GRADLE_CLEAN_TASK" "${GRADLE_ARGS[@]}"
 run ./gradlew "$GRADLE_ASSEMBLE_TASK" "${GRADLE_ARGS[@]}"
 
-printf '\nBUILD SUCCESS\nAPK:\n%s\n' "$APK_PATH"
+if ! "$DRY_RUN"; then
+  [[ -f "$APK_PATH" ]] || { echo "APK was not produced: $APK_PATH" >&2; exit 1; }
+  mkdir -p "$(dirname "$TRACKED_APK_PATH")"
+  cp -f -- "$APK_PATH" "$TRACKED_APK_PATH"
+fi
+printf '
+BUILD SUCCESS
+Gradle APK: %s
+Tracked APK: %s
+' "$APK_PATH" "$TRACKED_APK_PATH"

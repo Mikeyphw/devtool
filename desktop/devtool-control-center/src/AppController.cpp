@@ -102,10 +102,8 @@ AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h
     m_clipboardMonitor = new ClipboardMonitor(false, false, this);
     connect(m_clipboardMonitor, &ClipboardMonitor::candidateChanged, this, &AppController::clipboardCandidateChanged);
 
-    m_clipboardStatusTimer = new QTimer(this);
-    m_clipboardStatusTimer->setInterval(15000);
-    connect(m_clipboardStatusTimer, &QTimer::timeout, this, &AppController::refreshClipboardMonitorStatus);
-    m_clipboardStatusTimer->start();
+    // Service state is refreshed on startup, when Settings is opened, and
+    // after install/enable/disable actions. Avoid a permanent 15-second poll.
     QTimer::singleShot(0, this, &AppController::refreshClipboardMonitorStatus);
 
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
@@ -170,6 +168,10 @@ QString AppController::clipboardCandidateCopyText() const {
 QString AppController::clipboardCandidateKind() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateKind() : QString(); }
 QString AppController::clipboardCandidateSummary() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateSummary() : QString(); }
 QString AppController::clipboardCandidateTimestamp() const { return m_clipboardMonitor ? m_clipboardMonitor->candidateTimestamp() : QString(); }
+QString AppController::clipboardCandidateSnapshotText() const { return m_clipboardCandidateSnapshotText; }
+QString AppController::clipboardCandidateSnapshotKind() const { return m_clipboardCandidateSnapshotKind; }
+QString AppController::clipboardCandidateSnapshotSummary() const { return m_clipboardCandidateSnapshotSummary; }
+QString AppController::clipboardCandidateSnapshotTimestamp() const { return m_clipboardCandidateSnapshotTimestamp; }
 
 void AppController::saveSettings() {
     m_settings.setValue(QStringLiteral("repository"), m_repository);
@@ -213,6 +215,13 @@ void AppController::cancelRun(const QString &runId) { if (m_ipc) m_ipc->cancelRu
 void AppController::launchHud() {
     if (sendHudActivation()) return;
     QProcess::startDetached(resolveHudExecutable(), QStringList{});
+}
+
+void AppController::setStandby(bool standby) {
+    if (m_standby == standby) return;
+    m_standby = standby;
+    if (m_store) m_store->setStandby(standby);
+    emit standbyChanged(standby);
 }
 
 QString AppController::clipboardServicePath() const {
@@ -337,8 +346,38 @@ void AppController::scanClipboardNow() {
     if (m_clipboardMonitor) m_clipboardMonitor->scanCurrentClipboard();
 }
 
+void AppController::captureClipboardCandidate() {
+    const QString text = clipboardCandidateText();
+    const QString kind = clipboardCandidateKind();
+    const QString summary = clipboardCandidateSummary();
+    const QString timestamp = clipboardCandidateTimestamp();
+    if (text == m_clipboardCandidateSnapshotText
+        && kind == m_clipboardCandidateSnapshotKind
+        && summary == m_clipboardCandidateSnapshotSummary
+        && timestamp == m_clipboardCandidateSnapshotTimestamp) {
+        return;
+    }
+    m_clipboardCandidateSnapshotText = text;
+    m_clipboardCandidateSnapshotKind = kind;
+    m_clipboardCandidateSnapshotSummary = summary;
+    m_clipboardCandidateSnapshotTimestamp = timestamp;
+    emit clipboardCandidateSnapshotChanged();
+}
+
+void AppController::clearClipboardCandidateSnapshot() {
+    if (m_clipboardCandidateSnapshotText.isEmpty() && m_clipboardCandidateSnapshotKind.isEmpty() && m_clipboardCandidateSnapshotSummary.isEmpty() && m_clipboardCandidateSnapshotTimestamp.isEmpty()) {
+        return;
+    }
+    m_clipboardCandidateSnapshotText.clear();
+    m_clipboardCandidateSnapshotKind.clear();
+    m_clipboardCandidateSnapshotSummary.clear();
+    m_clipboardCandidateSnapshotTimestamp.clear();
+    emit clipboardCandidateSnapshotChanged();
+}
+
 void AppController::useClipboardCandidate() {
     if (!m_clipboardMonitor) return;
+    captureClipboardCandidate();
     if (m_clipboardMonitor->candidateKind() == QStringLiteral("artifact")) {
         setArtifact(m_clipboardMonitor->candidateText());
         emit requestMainWindow();
@@ -351,11 +390,16 @@ void AppController::useClipboardCandidate() {
 
 void AppController::clearClipboardCandidate() {
     if (m_clipboardMonitor) m_clipboardMonitor->clearCandidate();
+    clearClipboardCandidateSnapshot();
 }
 
 void AppController::runClipboardCommand() {
-    if (!m_clipboardMonitor || m_clipboardMonitor->candidateKind() != QStringLiteral("command") || m_runner->running()) return;
-    const QString command = clipboardCandidateCopyText();
+    if (m_runner->running()) return;
+    if (m_clipboardCandidateSnapshotKind != QStringLiteral("command")) {
+        captureClipboardCandidate();
+    }
+    if (m_clipboardCandidateSnapshotKind != QStringLiteral("command")) return;
+    const QString command = normalizedClipboardCommand(m_clipboardCandidateSnapshotText);
     if (command.isEmpty()) return;
     QString shell = qEnvironmentVariable("SHELL");
     if (shell.isEmpty() || !QFileInfo(shell).isExecutable()) shell = QStandardPaths::findExecutable(QStringLiteral("bash"));
@@ -365,4 +409,9 @@ void AppController::runClipboardCommand() {
     QVariantMap env;
     env[QStringLiteral("DEVTOOL_CONTROL_CENTER_ACTIVE")] = QStringLiteral("1");
     m_runner->start(shell, QStringList{QStringLiteral("-lc"), command}, workingDirectory, env);
+    m_clipboardCandidateSnapshotKind.clear();
+    m_clipboardCandidateSnapshotText.clear();
+    m_clipboardCandidateSnapshotSummary.clear();
+    m_clipboardCandidateSnapshotTimestamp.clear();
+    emit clipboardCandidateSnapshotChanged();
 }

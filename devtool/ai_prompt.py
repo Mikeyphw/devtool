@@ -49,7 +49,7 @@ def resolve_ai_prompt_options(config: ProjectConfig, args_repo: str | None, *,
     resolved_type = project_type if project_type and project_type != "auto" else config.kind
     resolved_build = build_target.strip() or config.build_target or "<build target>"
     resolved_run = run_target.strip() or config.run_target or "<run target if needed>"
-    resolved_target_name = target_name.strip() or config.selected_target or config.default_target
+    resolved_target_name = target_name.strip() or config.selected_target
     resolved_solution_target = solution_target.strip() or config.build_target or ""
     resolved_restore_target = config.restore_target or resolved_solution_target or resolved_build
     resolved_test_target = config.test_target or resolved_solution_target or resolved_build

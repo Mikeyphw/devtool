@@ -59,7 +59,7 @@ The JSON result includes artifact identity, repository/workspaces, validation, i
 Artifact schema v2 can carry the repository identity, monorepo workspace, target, solution, file inventory, validation policy, disposable validation script, and final commit message. A normal apply can therefore be reduced to:
 
 ```bash
-DEVTOOL_HUD_SINGLETON=kill devtool \
+devtool \
   --copy --auto-hud --hud-mode desktop-window --yes \
   -r "$HOME/Code/sims3tools" \
   apply-overlay "$HOME/Downloads/example_overlay.zip"
@@ -74,7 +74,7 @@ After pairing the secure bridge in the app, commands launched directly from Term
 ```bash
 cd "$HOME/Code/sims3tools"
 
-DEVTOOL_HUD_SINGLETON=kill devtool \
+devtool \
   --copy \
   --copy-via termux \
   --auto-hud \
@@ -173,12 +173,35 @@ Overlay 1/2: first_overlay.zip
 Overlay 2/2: second_overlay.zip
 ```
 
-## Install the CLI
+## Install or update Devtool
 
 ```bash
 cd "$HOME/Code/devtool"
 ./install.sh
 ```
+
+The installer detects desktop Linux versus Android/Termux and offers to build
+and install the matching native app. On desktop it packages and installs the
+Control Center, then removes the temporary `.deb` only after a successful
+installation. On Android it rebuilds the stable tracked APK only when sources
+are newer and installs it with `sudo pm install -r`.
+
+The desktop flow also offers to install the clipboard monitor service or update
+the existing user service. Non-interactive examples:
+
+```bash
+./install.sh --yes --with-app --with-clipboard-service
+./install.sh --app android --with-app
+./install.sh --without-app --without-clipboard-service
+```
+
+Generated Android builds are copied to
+`android/devtool-live-hud/devtool-live-hud-debug.apk`. That stable APK path is
+intentionally allowed by `.gitignore`, so a real generated APK can be versioned.
+
+Named targets are never selected implicitly. Legacy `default_target` and
+`[project].target` values are ignored; use `--target`, `--solution`, or embed the
+target in artifact metadata.
 
 Verify:
 

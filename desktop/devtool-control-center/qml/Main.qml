@@ -14,6 +14,11 @@ ApplicationWindow {
     color: palette.window
     title: "Devtool Control Center"
     property int pageIndex: 0
+    readonly property var pageComponents: [
+        overviewPageComponent, runPageComponent, artifactsPageComponent,
+        diagnosticsPageComponent, historyPageComponent, repositoriesPageComponent,
+        settingsPageComponent
+    ]
     Theme { id: theme }
 
     header: ToolBar {
@@ -114,19 +119,28 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             color: theme.window
-            StackLayout {
+            Loader {
+                id: pageLoader
                 anchors.fill: parent
-            currentIndex: root.pageIndex
-            OverviewPage { onOpenRun: function(run) { hudStore.selectedRunId = run.run_id; root.pageIndex = 3 } }
-            RunPage { }
-            ArtifactsPage { }
-            DiagnosticsPage { }
-            HistoryPage { }
-            RepositoriesPage { }
-            SettingsPage { }
-        }
+                asynchronous: true
+                active: root.visible
+                sourceComponent: active ? root.pageComponents[root.pageIndex] : null
+            }
+
+            Component { id: overviewPageComponent; OverviewPage { onOpenRun: function(run) { hudStore.selectedRunId = run.run_id; root.pageIndex = 3 } } }
+            Component { id: runPageComponent; RunPage { } }
+            Component { id: artifactsPageComponent; ArtifactsPage { } }
+            Component { id: diagnosticsPageComponent; DiagnosticsPage { } }
+            Component { id: historyPageComponent; HistoryPage { } }
+            Component { id: repositoriesPageComponent; RepositoriesPage { } }
+            Component { id: settingsPageComponent; SettingsPage { } }
         }
     }
+
+    onPageIndexChanged: {
+        if (pageIndex === 6) appController.refreshClipboardMonitorStatus()
+    }
+    onVisibleChanged: appController.setStandby(!visible)
 
     Connections {
         target: appController

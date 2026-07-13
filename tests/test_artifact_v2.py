@@ -94,7 +94,7 @@ class ArtifactV2Tests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertTrue((repo / solution_path).is_file())
             config_text = (repo / ".devtool.toml").read_text(encoding="utf-8")
-            self.assertIn('default_target = "new_app"', config_text)
+            self.assertNotIn("default_target", config_text)
             self.assertIn("[targets.new_app]", config_text)
             self.assertIn(f'solution = "{solution_path}"', config_text)
             config = load_project_config(str(repo), None, target_name="new_app")

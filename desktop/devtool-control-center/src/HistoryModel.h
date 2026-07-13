@@ -14,7 +14,7 @@ public:
                  SummaryRole, CommandRole, StepsRole };
     explicit HistoryModel(QObject *parent = nullptr);
     int rowCount(const QModelIndex &parent = {}) const override;
-    int count() const { return m_items.size(); }
+    int count() const;
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
     Q_INVOKABLE void clear();
@@ -24,7 +24,9 @@ signals:
     void countChanged();
 private:
     QString storagePath() const;
+    void ensureLoaded();
     void load();
     void save() const;
     QVector<QJsonObject> m_items;
+    bool m_loaded = false;
 };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QFileSystemWatcher>
 #include <QObject>
 #include <QSettings>
 #include <QString>
@@ -30,6 +31,8 @@ signals:
 
 private:
     void scheduleScan();
+    void scheduleSettingsRefresh();
+    void refreshSettingsWatch();
     void refreshFromSettings();
     bool processText(const QString &text, bool notify);
     static QString classify(const QString &text, QString *normalized, QString *summary);
@@ -39,7 +42,8 @@ private:
     QSettings m_settings;
     QClipboard *m_clipboard = nullptr;
     QTimer *m_scanTimer = nullptr;
-    QTimer *m_refreshTimer = nullptr;
+    QTimer *m_settingsRefreshTimer = nullptr;
+    QFileSystemWatcher m_settingsWatcher;
     QString m_candidateText;
     QString m_candidateKind;
     QString m_candidateSummary;

@@ -74,7 +74,7 @@ AppScrollView {
                     anchors.margins: 8
                     background: Rectangle { color: "transparent" }
                     AppTextArea {
-                        text: appController.clipboardCandidateCopyText()
+                        text: appController.clipboardCandidateSnapshotText
                         readOnly: true
                         wrapMode: TextEdit.WrapAnywhere
                         font.family: "monospace"
@@ -86,11 +86,11 @@ AppScrollView {
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
-                AppButton { text: "Cancel"; variant: "ghost"; onClicked: commandConfirmation.close() }
+                AppButton { text: "Cancel"; variant: "ghost"; onClicked: { appController.clearClipboardCandidateSnapshot(); commandConfirmation.close() } }
                 AppButton {
                     text: "Run command"
                     variant: "primary"
-                    enabled: !processRunner.running
+                    enabled: !processRunner.running && appController.clipboardCandidateSnapshotKind === "command"
                     onClicked: {
                         commandConfirmation.close()
                         appController.runClipboardCommand()
@@ -150,7 +150,15 @@ AppScrollView {
                     }
                 }
                 RowLayout {
-                    AppButton { text: "Run command…"; variant: "primary"; enabled: !processRunner.running; onClicked: commandConfirmation.open() }
+                    AppButton {
+                        text: "Run command…"
+                        variant: "primary"
+                        enabled: !processRunner.running
+                        onClicked: {
+                            appController.captureClipboardCandidate()
+                            commandConfirmation.open()
+                        }
+                    }
                     AppButton { text: "Copy"; onClicked: appController.copyText(appController.clipboardCandidateCopyText()) }
                     AppButton { text: "Dismiss"; variant: "ghost"; onClicked: appController.clearClipboardCandidate() }
                     Item { Layout.fillWidth: true }

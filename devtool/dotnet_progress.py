@@ -302,7 +302,7 @@ class DotnetProgressTracker:
         return len(self.seen_test_results)
 
     def _renderable(self) -> Panel:
-        target = (self.display_target or (self.plan.target if self.plan else "") or "default target").strip()
+        target = (self.display_target or (self.plan.target if self.plan else "") or "repository").strip()
         if self.plan is not None and not self.display_target:
             target = _repo_relative(target, self.cwd)
         if self.returncode is None:

@@ -681,6 +681,19 @@ def _run_process_live(
                 target=display_target,
                 warnings=snapshot.get("warnings"),
                 errors=snapshot.get("errors"),
+                metrics={
+                    key: snapshot.get(key)
+                    for key in (
+                        "command",
+                        "unit_label",
+                        "tests_passed",
+                        "tests_failed",
+                        "tests_skipped",
+                        "tests_total",
+                        "test_assemblies",
+                    )
+                    if snapshot.get(key) is not None
+                },
                 force=True,
             )
         tracker.update_callback = _tasker_update
@@ -863,7 +876,7 @@ def _dotnet_display_target(spec: CommandSpec, config: ProjectConfig) -> str:
     progress_cwd = str(spec.metadata.get("progress_cwd") or spec.cwd or config.repo_root)
     target_text = _dotnet_target_argument(progress_argv, progress_cwd)
     if not target_text:
-        return "default target"
+        return "repository"
     target = Path(target_text)
     if not target.is_absolute():
         target = Path(progress_cwd) / target
@@ -880,7 +893,7 @@ def _dotnet_phase_layout(specs: Sequence[CommandSpec], config: ProjectConfig) ->
         progress_argv = list(spec.metadata.get("progress_argv") or spec.argv)
         if not _contains_dotnet_cli(progress_argv):
             continue
-        target = _dotnet_display_target(spec, config) or "default target"
+        target = _dotnet_display_target(spec, config) or "repository"
         targets[index] = target
         totals[target] += 1
 
@@ -901,6 +914,7 @@ def run_specs(
     continue_on_error: bool = False,
     log_path: Path | str | None = None,
     tasker_progress: TaskerProgressSink | None = None,
+    shutdown_dotnet: bool = True,
 ) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw_sections: list[str] = []
@@ -1018,7 +1032,7 @@ def run_specs(
         if returncode != 0 and not continue_on_error:
             break
 
-    if used_dotnet:
+    if used_dotnet and shutdown_dotnet:
         shutdown_result, shutdown_raw = _shutdown_dotnet_build_server(
             config,
             dry_run=dry_run,
@@ -1028,6 +1042,16 @@ def run_specs(
         raw_sections.append(shutdown_raw)
 
     return results, "\n\n".join(raw_sections)
+
+def shutdown_dotnet_build_server(
+    config: ProjectConfig,
+    *,
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+) -> tuple[OperationResult, str]:
+    """Stop shared .NET build servers once at an outer workflow boundary."""
+    return _shutdown_dotnet_build_server(config, dry_run=dry_run, log_path=log_path)
+
 
 def _artifact_config_declaration(manifest: dict) -> dict[str, str]:
     return {

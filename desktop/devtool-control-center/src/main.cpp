@@ -17,6 +17,10 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QProcess>
+#include <QQuickWindow>
+#include <QPointer>
+#include <QSettings>
+#include <memory>
 #include <QTimer>
 #include <QUrl>
 #include <QWindow>
@@ -51,8 +55,8 @@ bool sendMessage(const QString &serverName, const QString &message) {
     return true;
 }
 
-void installActivationServer(QLocalServer *server, QWindow *mainWindow, AppController *controller) {
-    QObject::connect(server, &QLocalServer::newConnection, server, [server, mainWindow, controller] {
+void installActivationServer(QLocalServer *server, AppController *controller) {
+    QObject::connect(server, &QLocalServer::newConnection, server, [server, controller] {
         while (QLocalSocket *socket = server->nextPendingConnection()) {
             socket->setParent(server);
             if (!socket->waitForReadyRead(1000)) {
@@ -61,11 +65,7 @@ void installActivationServer(QLocalServer *server, QWindow *mainWindow, AppContr
             }
             const QString command = QString::fromUtf8(socket->readAll()).trimmed();
             if (command == QStringLiteral("show-main")) {
-                if (mainWindow) {
-                    mainWindow->show();
-                    mainWindow->raise();
-                    mainWindow->requestActivate();
-                }
+                if (controller) emit controller->requestMainWindow();
             } else if (command == QStringLiteral("show-hud")) {
                 if (controller) controller->launchHud();
             }
@@ -131,31 +131,89 @@ int main(int argc, char **argv) {
     QTimer::singleShot(150, &ipc, &IpcClient::start);
     if (exitWhenIdle) QTimer::singleShot(1200, &app, &QCoreApplication::quit);
 
-    QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty(QStringLiteral("appController"), &controller);
-    engine.rootContext()->setContextProperty(QStringLiteral("hudStore"), &hud);
-    engine.rootContext()->setContextProperty(QStringLiteral("processRunner"), &runner);
-    engine.rootContext()->setContextProperty(QStringLiteral("historyModel"), &history);
-    engine.rootContext()->setContextProperty(QStringLiteral("artifactInspector"), &inspector);
-    engine.rootContext()->setContextProperty(QStringLiteral("repositoryModel"), &repositories);
-    engine.rootContext()->setContextProperty(QStringLiteral("ipcClient"), &ipc);
-    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml")));
-    if (engine.rootObjects().isEmpty()) return 1;
+    QSettings uiSettings(QStringLiteral("mikeceead"), QStringLiteral("DevtoolControlCenter"));
+    std::unique_ptr<QQmlApplicationEngine> engine;
+    QPointer<QWindow> mainWindow;
+    QTimer unloadUiTimer;
+    unloadUiTimer.setSingleShot(true);
+    unloadUiTimer.setInterval(7000);
 
-    auto *mainWindow = qobject_cast<QWindow *>(engine.rootObjects().first());
-    QObject::connect(&controller, &AppController::requestMainWindow, mainWindow,
-                     [mainWindow] {
-                         if (!mainWindow) return;
-                         mainWindow->show();
-                         mainWindow->raise();
-                         mainWindow->requestActivate();
-                     });
+    auto saveUiState = [&] {
+        if (!mainWindow) return;
+        uiSettings.setValue(QStringLiteral("window/x"), mainWindow->x());
+        uiSettings.setValue(QStringLiteral("window/y"), mainWindow->y());
+        uiSettings.setValue(QStringLiteral("window/width"), mainWindow->width());
+        uiSettings.setValue(QStringLiteral("window/height"), mainWindow->height());
+        uiSettings.setValue(QStringLiteral("window/page"), mainWindow->property("pageIndex"));
+        uiSettings.sync();
+    };
+
+    auto loadUi = [&]() -> bool {
+        if (engine && mainWindow) return true;
+
+        auto nextEngine = std::make_unique<QQmlApplicationEngine>();
+        nextEngine->rootContext()->setContextProperty(QStringLiteral("appController"), &controller);
+        nextEngine->rootContext()->setContextProperty(QStringLiteral("hudStore"), &hud);
+        nextEngine->rootContext()->setContextProperty(QStringLiteral("processRunner"), &runner);
+        nextEngine->rootContext()->setContextProperty(QStringLiteral("historyModel"), &history);
+        nextEngine->rootContext()->setContextProperty(QStringLiteral("artifactInspector"), &inspector);
+        nextEngine->rootContext()->setContextProperty(QStringLiteral("repositoryModel"), &repositories);
+        nextEngine->rootContext()->setContextProperty(QStringLiteral("ipcClient"), &ipc);
+        nextEngine->load(QUrl(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml")));
+        if (nextEngine->rootObjects().isEmpty()) return false;
+
+        auto *window = qobject_cast<QWindow *>(nextEngine->rootObjects().first());
+        if (!window) return false;
+        mainWindow = window;
+        engine = std::move(nextEngine);
+
+        const int savedWidth = uiSettings.value(QStringLiteral("window/width"), 1260).toInt();
+        const int savedHeight = uiSettings.value(QStringLiteral("window/height"), 800).toInt();
+        window->resize(qMax(940, savedWidth), qMax(620, savedHeight));
+        if (uiSettings.contains(QStringLiteral("window/x")) && uiSettings.contains(QStringLiteral("window/y")))
+            window->setPosition(uiSettings.value(QStringLiteral("window/x")).toInt(), uiSettings.value(QStringLiteral("window/y")).toInt());
+        window->setProperty("pageIndex", uiSettings.value(QStringLiteral("window/page"), 0));
+
+        if (auto *quickWindow = qobject_cast<QQuickWindow *>(window)) {
+            quickWindow->setPersistentSceneGraph(false);
+            quickWindow->setPersistentGraphics(false);
+            QObject::connect(quickWindow, &QWindow::visibilityChanged, quickWindow,
+                             [quickWindow](QWindow::Visibility visibility) {
+                if (visibility == QWindow::Hidden || visibility == QWindow::Minimized)
+                    QTimer::singleShot(0, quickWindow, [quickWindow] { quickWindow->releaseResources(); });
+            });
+        }
+        controller.setStandby(false);
+        return true;
+    };
+
+    QObject::connect(&unloadUiTimer, &QTimer::timeout, &app, [&] {
+        if (!mainWindow || mainWindow->isVisible()) return;
+        saveUiState();
+        mainWindow.clear();
+        engine.reset();
+        // The tray, IPC client, run store and activation socket stay resident;
+        // the expensive QML object tree and scene graph are recreated on demand.
+    });
+
+    QObject::connect(&controller, &AppController::standbyChanged, &app, [&](bool standby) {
+        if (standby) unloadUiTimer.start();
+        else unloadUiTimer.stop();
+    });
+    QObject::connect(&controller, &AppController::requestMainWindow, &app, [&] {
+        unloadUiTimer.stop();
+        if (!loadUi() || !mainWindow) return;
+        mainWindow->show();
+        mainWindow->raise();
+        mainWindow->requestActivate();
+    });
+
+    if (!loadUi()) return 1;
 
     QLocalServer::removeServer(QString::fromLatin1(kMainServerName));
     auto *server = new QLocalServer(&app);
-    if (server->listen(QString::fromLatin1(kMainServerName))) {
-        installActivationServer(server, mainWindow, &controller);
-    }
+    if (server->listen(QString::fromLatin1(kMainServerName)))
+        installActivationServer(server, &controller);
 
     return app.exec();
 }
