@@ -37,6 +37,7 @@ from .config import ensure_artifact_target_config, generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
 from .diagnostics import classify_failure, parse_issues
 from .dotnet_progress import DotnetProgressTracker, dotnet_progress_plan
+from .generic_progress import GenericProgressTracker
 from .gradle_progress import GradleProgressTracker
 from .gradle_reports import collect_report_metadata
 from .transactions import create_apply_transaction, rollback_transaction
@@ -571,8 +572,20 @@ def _run_process_live(
                 target_phase_index=target_phase_index,
                 target_phase_total=target_phase_total,
             )
-        else:
+        elif dotnet_progress_plan(parser_argv, parser_cwd):
             tracker = DotnetProgressTracker(
+                parser_argv,
+                parser_cwd,
+                command_name,
+                console,
+                phase_index=phase_index,
+                phase_total=phase_total,
+                display_target=display_target,
+                target_phase_index=target_phase_index,
+                target_phase_total=target_phase_total,
+            )
+        else:
+            tracker = GenericProgressTracker(
                 parser_argv,
                 parser_cwd,
                 command_name,
@@ -585,8 +598,8 @@ def _run_process_live(
             )
     if tracker is not None and verbose:
         # In verbose mode stdout is already streamed as raw text. Keep the
-        # dotnet parser active only for Tasker/progress events; do not
-        # render a second Rich progress bar over the raw output.
+        # parser active only for Tasker/progress events; do not render a second
+        # Rich live display over the raw output.
         tracker.enabled = False
     if tracker is not None and tasker_progress is not None:
         def _tasker_update(snapshot: dict) -> None:

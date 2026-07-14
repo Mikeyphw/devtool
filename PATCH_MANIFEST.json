@@ -1,5 +1,5 @@
 {
-  "name": "devtool_typography_patched_repo",
+  "name": "devtool_desktop_startup_fixed_repo",
   "release": "1.1.0-rc.3",
   "devtool_version": "1.1.0",
   "desktop_version": "0.4.0",
@@ -8,6 +8,12 @@
   "artifact_type": "complete_repository",
   "slice": 5,
   "features": [
+    "structured Gradle event init script always disables the configuration cache",
+    "Qt Window-root accessibility attachment startup fix",
+    "HUD StandardKey.Copy multi-sequence binding fix",
+    "explicit Python root project kind with named Android HUD target",
+    "component-relative QML vector icon resource resolution",
+    "desktop startup regression tests",
     "centralized semantic Android typography roles and line-height tokens",
     "notification minimum sizes improved contrast and flexible text rows",
     "large-font notification layout selected at fontScale 1.3 or greater",
@@ -21,6 +27,12 @@
     "portable release qualification and reproducible source packaging"
   ],
   "key_files": [
+    ".devtool.toml",
+    "desktop/devtool-control-center/qml/Main.qml",
+    "desktop/devtool-control-center/qml/CompactHud.qml",
+    "desktop/devtool-control-center/qml/components/AppButton.qml",
+    "desktop/devtool-control-center/qml/components/SidebarButton.qml",
+    "tests/test_desktop_startup_regression.py",
     "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiTypography.java",
     "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiKit.java",
     "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
@@ -36,7 +48,7 @@
   ],
   "validation": {
     "full_suite": {
-      "passed": 449,
+      "passed": 465,
       "subtests_passed": 28,
       "failed": 0
     },
@@ -62,6 +74,14 @@
       "failed": 0
     },
     "real_android_build": "not run locally; Android SDK unavailable",
-    "qt_link_build": "not run locally; Qt 6 development files unavailable"
+    "qt_link_build": "not run locally; Qt 6 development files unavailable",
+    "desktop_startup_regressions": {
+      "passed": 4,
+      "failed": 0
+    },
+    "gradle_structured_event_arguments": {
+      "init_script_requires_no_configuration_cache": "passed",
+      "console_option_deduplication": "passed"
+    }
   }
 }

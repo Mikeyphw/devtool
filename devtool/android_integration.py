@@ -17,6 +17,7 @@ import sys
 from typing import Any, Iterable
 
 from . import android_build
+from .execution_environments import CHROOT, NATIVE_TERMUX, detect_current_environment
 from .models import ProjectConfig
 
 
@@ -189,6 +190,8 @@ def android_builder_arguments(config: ProjectConfig, action: str) -> list[str]:
 
     if bool(android.get("skip_sdk_install", False)):
         argv.append("--skip-sdk-install")
+    elif bool(android.get("auto_sdk", False)):
+        argv.append("--auto-sdk")
     if bool(android.get("offline", gradle.get("offline", False))):
         argv.append("--offline")
     if bool(android.get("force_setup", False)):
@@ -213,8 +216,25 @@ def android_builder_arguments(config: ProjectConfig, action: str) -> list[str]:
     # terminal and Android HUD progress, avoiding percentage guesses.
     gradle_events = bool(gradle.get("structured_events", True))
     if gradle_events and action in {"restore", "build", "test", "lint", "clean"}:
-        argv.extend(["--", "--init-script", str(stage_gradle_init_script()), "--console=plain"])
+        argv.extend([
+            "--",
+            "--init-script",
+            str(stage_gradle_init_script()),
+            "--no-configuration-cache",
+        ])
     return argv
+
+
+def _android_execution_mode(config: ProjectConfig) -> str:
+    current = detect_current_environment()
+    if current == CHROOT:
+        return "chroot"
+    if current == NATIVE_TERMUX:
+        android = _dict_option(config, "android")
+        if bool(android.get("prefer_native_termux", False)):
+            return "native-termux"
+        return "chroot" if should_prefer_android_chroot(config) else "native-termux"
+    return "host"
 
 
 def plan_android_command(config: ProjectConfig, action: str) -> AndroidCommandPlan:
@@ -234,7 +254,9 @@ def plan_android_command(config: ProjectConfig, action: str) -> AndroidCommandPl
 def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     project = inspect_android_project(config)
     wrapper_version = android_build.wrapper_distribution_version(project.root)
-    minimum_java = android_build.inferred_min_java(project)
+    requirement = android_build.infer_java_requirement(project)
+    sdk_root, sdk_source = android_build.discover_sdk_root_with_source(None, project.root)
+    android = _dict_option(config, "android")
     tasks = configured_tasks(config, "build")
     test_tasks = configured_tasks(config, "test")
     lint_tasks = configured_tasks(config, "lint")
@@ -242,10 +264,15 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("project_root", str(project.root)),
         ("project_name", project.name),
         ("project_type", "Android application" if project.android_application else "Android library/Gradle"),
+        ("execution_mode", _android_execution_mode(config)),
         ("gradle_wrapper", wrapper_version or "not declared"),
-        ("minimum_java", str(minimum_java)),
+        ("minimum_java", str(requirement.minimum) + (" exact toolchain" if requirement.exact else "")),
         ("compile_sdk", str(project.compile_sdk) if project.compile_sdk else "auto/unknown"),
         ("android_gradle_plugin", str(project.agp_major) if project.agp_major else "unknown"),
+        ("sdk_install", "manual" if bool(android.get("skip_sdk_install", False)) else "auto"),
+        ("auto_sdk", "yes" if bool(android.get("auto_sdk", False)) else "no"),
+        ("sdk_source", sdk_source or "missing"),
+        ("sdk_root", str(sdk_root) if sdk_root else "missing"),
         ("native_build", "yes" if project.native_build else "no"),
         ("ndk", project.ndk_version or "auto/none"),
         ("cmake", project.cmake_version or "auto/none"),
@@ -258,14 +285,15 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
 
 def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     project = inspect_android_project(config)
-    minimum_java = android_build.inferred_min_java(project)
+    requirement = android_build.infer_java_requirement(project)
+    android = _dict_option(config, "android")
     java_home: Path | None = None
     try:
-        java_home = android_build.find_java_home(None, minimum_java)
+        java_home = android_build.find_java_home(None, requirement.minimum, exact=requirement.exact)
     except android_build.BuildError:
         pass
 
-    sdk = android_build.discover_sdk_root(None)
+    sdk, sdk_source = android_build.discover_sdk_root_with_source(None, project.root)
     wrapper = project.root / "gradlew"
     gradle_path = wrapper if wrapper.is_file() else (Path(shutil.which("gradle")) if shutil.which("gradle") else None)
     sdkmanager = android_build.find_sdkmanager(sdk) if sdk else None
@@ -290,9 +318,22 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
 
     return [
         ("android_project", "ready" if project.android else "not Android"),
-        ("java", str(java_home) if java_home else f"missing Java {minimum_java}+"),
+        ("execution_mode", _android_execution_mode(config)),
+        (
+            "java",
+            str(java_home)
+            if java_home
+            else (
+                f"missing Java {requirement.exact}"
+                if requirement.exact is not None
+                else f"missing Java {requirement.minimum}+"
+            ),
+        ),
         ("gradle", str(gradle_path) if gradle_path else "missing wrapper/Gradle"),
+        ("sdk_install", "manual" if bool(android.get("skip_sdk_install", False)) else "auto"),
+        ("auto_sdk", "yes" if bool(android.get("auto_sdk", False)) else "no"),
         ("android_sdk", str(sdk) if sdk else "missing"),
+        ("android_sdk_source", sdk_source or "missing"),
         ("sdkmanager", str(sdkmanager) if sdkmanager else "missing/repairable"),
         ("platform", platform_status),
         ("build_tools", build_tools[0] if build_tools else "missing/repairable"),

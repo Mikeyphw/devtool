@@ -1,11 +1,26 @@
+# Python
 __pycache__/
-.pytest_cache/
 *.py[cod]
-*.egg-info/
-**/.gradle/
-**/build/
+.pytest_cache/
+.venv/
+venv/
 dist/
+*.egg-info/
+
+# Devtool runtime state
 .devtool/
 **/android-live-hud.token
+
+# .NET and Gradle outputs
+**/bin/
+**/obj/
+**/.gradle/
+**/build/
+
+# Android packages are generated except for the tracked debug HUD artifact.
 *.apk
+*.aab
 !android/devtool-live-hud/devtool-live-hud-debug.apk
+
+# Local Android SDK paths
+**/local.properties

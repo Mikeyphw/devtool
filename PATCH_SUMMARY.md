@@ -1,40 +1,45 @@
-# Devtool typography remediation patch
+# Devtool Gradle and desktop UI fixes
 
-This complete repository builds on the Slice 5 notification-parity baseline and
-implements the full typography audit across Android, the Qt Control Center, the
-compact HUD, and notification `RemoteViews`. The Android frontend is 1.7.2
-(`versionCode 20`) and the release candidate is `1.1.0-rc.3`.
+## Gradle 9 structured-event arguments
 
-## What changed
+- Whenever `devtool-events.init.gradle` is injected, DevTool also passes `--no-configuration-cache`.
+- This prevents the structured-event init script from entering Gradle's configuration-cache path.
+- The shared Gradle builder remains the single owner of the default `--console=plain` policy.
+- Direct Gradle arguments are normalized so only one console option reaches Gradle.
+- `--console value` and `--console=value` are both supported.
+- When conflicting console values are supplied, the last explicit value wins.
+- Added regression tests for the init-script/configuration-cache pairing and console deduplication.
 
-- Added centralized Android semantic roles for page titles, card titles, body,
-  captions, labels, buttons, metrics, and code.
-- Removed page-local raw Android text sizes and the global cramped line-spacing
-  multiplier. Multiline body content now uses role-specific leading.
-- Raised notification title/detail/badge/action sizes, increased secondary-text
-  contrast to approximately 5.45:1, and removed fixed-height text rows.
-- Added a simplified expanded notification for `fontScale >= 1.3` with reduced
-  phase density and one combined metric summary.
-- Preserved 48dp notification actions and 56dp Android navigation targets.
-- Replaced Android and desktop navigation/status/action font glyphs with vector
-  assets or shape-based marks.
-- Made desktop typography derive from the platform UI font and added persistent
-  100%, 125%, 150%, and 200% user scaling.
-- Increased desktop body/compact line heights, removed derived 8pt operational
-  text, reduced heading tracking, and converted headings to sentence case.
-- Switched code text to the system fixed-width font instead of requiring a Nerd
-  Font.
-- Added typography-system documentation and regression coverage for minimum
-  sizes, contrast, scale behavior, vector icons, and semantic role use.
+## Desktop QML runtime fixes
+
+- Replaced the nonexistent `theme.accentSurface` stage color with declared palette tokens.
+- Moved History dialog accessibility metadata from `Popup` to each popup's `contentItem`.
+- Added regression checks for undeclared theme tokens and invalid direct `Popup` accessibility attachments.
+
+## Screenshot-driven layout fixes
+
+### Run
+
+- Bound workflow content to the actual `AppScrollView.availableWidth`.
+- Rebuilt the step indicator as a responsive 4-column/2-column grid.
+- Prevented clipped combo boxes, compressed fields, and overlapping stage labels.
+
+### Artifacts
+
+- Grouped artifact and repository fields in a labeled input card.
+- Added a centered empty state with a primary open action.
+- Prevented hidden detail layouts from reserving the page's vertical space.
+- Kept inspected details in a bounded, fill-height area.
+
+### Repositories
+
+- “Current runs” now includes only runs whose status is actually `running`.
+- Completed and failed runs remain in command/artifact history instead of appearing as 0% active work.
 
 ## Validation
 
-- Full repository suite: **449 passed plus 28 subtests**.
-- Typography remediation module: **7 passed**.
-- Targeted typography/notification/accessibility set: **29 passed**.
-- Python compilation, shell syntax, 7 JSON files, 58 Android XML resources, and
-  the GitHub Actions workflow passed validation.
-- Portable release qualification passed.
-- Deterministic source release generation matched byte for byte.
-- Android APK compilation was not run locally because no Android SDK is
-  installed. Qt linking was not run because Qt 6 development files are absent.
+- 465 Python tests passed.
+- 28 subtests passed.
+- Python compilation passed.
+- Shell syntax validation passed.
+- QML invalid-separator scan passed.

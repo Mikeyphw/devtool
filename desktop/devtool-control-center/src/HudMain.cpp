@@ -5,6 +5,8 @@
 #include <iostream>
 #include <QApplication>
 #include <QCoreApplication>
+#include <QCursor>
+#include <QDebug>
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
@@ -123,13 +125,24 @@ QString resolveDevtoolExecutable() {
 
 bool sendMessage(const QString &serverName, const QString &message) {
     QLocalSocket socket;
-    socket.connectToServer(serverName, QIODevice::WriteOnly);
-    if (!socket.waitForConnected(300)) return false;
+    socket.connectToServer(serverName, QIODevice::ReadWrite);
+    if (!socket.waitForConnected(500)) return false;
     socket.write(message.toUtf8());
-    socket.flush();
-    socket.waitForBytesWritten(300);
-    socket.disconnectFromServer();
-    return true;
+    if (!socket.waitForBytesWritten(500)) return false;
+    if (!socket.waitForReadyRead(1000)) return false;
+    return QString::fromUtf8(socket.readAll()).trimmed() == QStringLiteral("shown");
+}
+
+void activateHudWindow(QWindow *window, bool remap = false) {
+    if (!window) return;
+    if (remap) window->hide();
+    ensureHudIsVisible(window);
+    if (window->windowState() == Qt::WindowMinimized)
+        window->setWindowState(Qt::WindowNoState);
+    window->setVisible(true);
+    window->show();
+    window->raise();
+    window->requestActivate();
 }
 
 void installActivationServer(QLocalServer *server, QWindow *window) {
@@ -142,11 +155,15 @@ void installActivationServer(QLocalServer *server, QWindow *window) {
             }
             const QString command = QString::fromUtf8(socket->readAll()).trimmed();
             if (command == QStringLiteral("show-hud") && window) {
-                ensureHudIsVisible(window);
-                window->show();
-                window->raise();
-                window->requestActivate();
+                // Remapping is intentional: Qt::Tool/Wayland windows can remain
+                // associated with another virtual desktop even while their saved
+                // coordinates are geometrically valid.
+                activateHudWindow(window, true);
+                socket->write("shown");
+                socket->flush();
+                socket->waitForBytesWritten(500);
             }
+            socket->disconnectFromServer();
             socket->deleteLater();
         }
     });
@@ -175,7 +192,10 @@ int main(int argc, char **argv) {
     app.setQuitOnLastWindowClosed(true);
     const bool exitWhenIdle = app.arguments().contains(QStringLiteral("--exit-when-idle"));
 
-    if (sendMessage(QString::fromLatin1(kHudServerName), QStringLiteral("show-hud"))) return 0;
+    if (sendMessage(QString::fromLatin1(kHudServerName), QStringLiteral("show-hud"))) {
+        std::cout << "Devtool HUD: activated existing window\n";
+        return 0;
+    }
 
     HistoryModel history;
     HudStateStore hud(&history);
@@ -197,10 +217,16 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty(QStringLiteral("hudStore"), &hud);
     engine.rootContext()->setContextProperty(QStringLiteral("uiMonospaceFont"), preferredNerdFont());
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/Hud/qml/CompactHud.qml")));
-    if (engine.rootObjects().isEmpty()) return 1;
+    if (engine.rootObjects().isEmpty()) {
+        qCritical() << "Devtool HUD: QML root failed to load";
+        return 1;
+    }
 
     auto *window = qobject_cast<QWindow *>(engine.rootObjects().first());
-    if (!window) return 1;
+    if (!window) {
+        qCritical() << "Devtool HUD: QML root is not a window";
+        return 1;
+    }
 
     bool restoringPosition = true;
     QTimer positionSaveTimer;
@@ -220,9 +246,13 @@ int main(int argc, char **argv) {
     QObject::connect(&app, &QGuiApplication::screenRemoved, &app, [window](QScreen *) {
         QTimer::singleShot(0, window, [window] { ensureHudIsVisible(window); });
     });
-    QTimer::singleShot(0, window, [window, &restoringPosition] {
-        restoreHudPosition(window);
+    const bool resetPosition = app.arguments().contains(QStringLiteral("--reset-position"));
+    QTimer::singleShot(0, window, [window, &restoringPosition, resetPosition] {
+        if (resetPosition) window->setPosition(defaultHudPosition(window));
+        else restoreHudPosition(window);
+        activateHudWindow(window);
         restoringPosition = false;
+        qInfo() << "Devtool HUD: window shown at" << window->position() << "size" << window->size();
     });
 
     if (exitWhenIdle) QTimer::singleShot(1200, &app, &QCoreApplication::quit);

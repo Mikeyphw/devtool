@@ -1977,6 +1977,25 @@ def _xdg_data_home() -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".local" / "share"
 
 
+def _desktop_hud_exec_argv() -> list[str]:
+    """Return a launcher command that survives restricted desktop PATH values."""
+    configured = os.environ.get("DEVTOOL_EXECUTABLE", "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return [str(candidate), "hud", "--mode", "desktop-window", "--follow-active"]
+
+    located = shutil.which("devtool")
+    if located:
+        return [str(Path(located).resolve()), "hud", "--mode", "desktop-window", "--follow-active"]
+
+    return [sys.executable, "-m", "devtool", "hud", "--mode", "desktop-window", "--follow-active"]
+
+
+def _desktop_entry_exec(argv: list[str]) -> str:
+    return " ".join(shlex.quote(part) for part in argv)
+
+
 def _install_desktop_hud_identity() -> Path | None:
     """Install a lightweight desktop/icon identity so GNOME can group the HUD."""
     data_home = _xdg_data_home()
@@ -1990,15 +2009,19 @@ def _install_desktop_hud_identity() -> Path | None:
   <circle cx="94" cy="52" r="10" fill="#ffd166"/>
 </svg>
 """
+    desktop_exec = _desktop_entry_exec(_desktop_hud_exec_argv())
     desktop_text = f"""[Desktop Entry]
 Type=Application
+Version=1.0
 Name=Devtool HUD
 Comment=Live devtool progress HUD
-Exec=devtool hud --mode desktop-window --follow-active
-Icon={DESKTOP_HUD_ICON_NAME}
+Exec={desktop_exec}
+Icon={icon_path}
 Terminal=false
 NoDisplay=true
+DBusActivatable=false
 Categories=Development;Utility;
+StartupNotify=false
 StartupWMClass={DESKTOP_HUD_WM_CLASS}
 """
     try:
@@ -2009,6 +2032,14 @@ StartupWMClass={DESKTOP_HUD_WM_CLASS}
         for path in (desktop_path, appid_desktop_path):
             if not path.exists() or path.read_text(encoding="utf-8", errors="ignore") != desktop_text:
                 path.write_text(desktop_text, encoding="utf-8")
+        updater = shutil.which("update-desktop-database")
+        if updater:
+            subprocess.run(
+                [updater, str(desktop_path.parent)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
         return icon_path
     except OSError:
         return None
@@ -2040,12 +2071,37 @@ def _control_center_binary() -> str | None:
     return None
 
 
+def _control_center_hud_binary() -> str | None:
+    candidates: list[str] = []
+    configured = os.environ.get("DEVTOOL_CONTROL_CENTER_HUD", "").strip()
+    if configured:
+        candidates.append(configured)
+    located = shutil.which("devtool-control-center-hud")
+    if located:
+        candidates.append(located)
+    source_root = Path(__file__).resolve().parent.parent
+    candidates.extend(
+        str(path)
+        for path in (
+            source_root / "desktop" / "devtool-control-center" / "build" / "devtool-control-center-hud",
+            Path.home() / ".local" / "bin" / "devtool-control-center-hud",
+            Path("/usr/local/bin/devtool-control-center-hud"),
+            Path("/usr/bin/devtool-control-center-hud"),
+        )
+    )
+    for candidate in candidates:
+        path = Path(candidate).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return None
+
+
 class QtCompactHud:
     """Native Qt 6 compact HUD used by the desktop-window backend."""
 
     @classmethod
     def available(cls) -> bool:
-        return _control_center_binary() is not None
+        return _control_center_hud_binary() is not None
 
     def run(
         self,
@@ -2056,15 +2112,15 @@ class QtCompactHud:
         follow_active: bool = False,
     ) -> int:
         del interval_s, follow_active
-        binary = _control_center_binary()
+        binary = _control_center_hud_binary()
         if not binary:
             raise RuntimeError(
-                "The Qt 6 desktop HUD requires devtool-control-center. "
-                "Install the Control Center package or set DEVTOOL_CONTROL_CENTER."
+                "The Qt 6 desktop HUD requires devtool-control-center-hud. "
+                "Install the Control Center HUD package or set DEVTOOL_CONTROL_CENTER_HUD."
             )
         env = os.environ.copy()
         env["DEVTOOL_TASKER_DIR"] = str(directory.expanduser())
-        argv = [binary, "--compact-hud"]
+        argv = [binary]
         if once:
             argv.append("--exit-when-idle")
         return subprocess.run(argv, env=env, check=False).returncode

@@ -24,6 +24,7 @@
 #include <QQuickWindow>
 #include <QPointer>
 #include <QSettings>
+#include <QStandardPaths>
 #include <memory>
 #include <QTimer>
 #include <QUrl>
@@ -56,7 +57,7 @@ QString resolveHudExecutable() {
         const QFileInfo file(candidate);
         if (file.isFile() && file.isExecutable()) return file.absoluteFilePath();
     }
-    return QString();
+    return QStandardPaths::findExecutable(QStringLiteral("devtool-control-center-hud"));
 }
 
 bool sendMessage(const QString &serverName, const QString &message) {
@@ -114,7 +115,7 @@ int main(int argc, char **argv) {
         QStringLiteral("io.github.mikeceead")
     );
     QCoreApplication::setApplicationName(
-        QStringLiteral("Devtool Control Center")
+        QStringLiteral("devtool-control-center")
     );
     QGuiApplication::setApplicationDisplayName(
         QStringLiteral("Devtool Control Center")
@@ -129,7 +130,7 @@ int main(int argc, char **argv) {
     if (!applicationIcon.isNull())
         QGuiApplication::setWindowIcon(applicationIcon);
 
-    app.setApplicationName(QStringLiteral("Devtool Control Center"));
+    app.setApplicationName(QStringLiteral("devtool-control-center"));
     app.setOrganizationName(QStringLiteral("mikeceead"));
     app.setDesktopFileName(QStringLiteral("io.github.mikeceead.DevtoolControlCenter"));
     app.setWindowIcon(controlCenterIcon());
@@ -143,7 +144,16 @@ int main(int argc, char **argv) {
 
     if (app.arguments().contains(QStringLiteral("--compact-hud"))) {
         if (sendMessage(QString::fromLatin1(kMainServerName), QStringLiteral("show-hud"))) return 0;
-        return QProcess::startDetached(resolveHudExecutable(), QStringList{}) ? 0 : 1;
+        const QString hudExecutable = resolveHudExecutable();
+        if (hudExecutable.isEmpty()) {
+            qCritical() << "Devtool HUD executable was not found";
+            return 1;
+        }
+        if (!QProcess::startDetached(hudExecutable, QStringList{})) {
+            qCritical() << "Devtool HUD failed to start:" << hudExecutable;
+            return 1;
+        }
+        return 0;
     }
 
     if (sendMessage(QString::fromLatin1(kMainServerName), QStringLiteral("show-main"))) return 0;

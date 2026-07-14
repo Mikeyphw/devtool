@@ -30,10 +30,10 @@ AppScrollView {
         height: Math.min(600, Overlay.overlay.height - 32)
         x: (Overlay.overlay.width - width) / 2
         y: (Overlay.overlay.height - height) / 2
-        Accessible.role: Accessible.Dialog
-        Accessible.name: "Run details"
         background: Rectangle { color: theme.elevatedSurface; radius: theme.cardRadius; border.color: theme.strongBorder; border.width: 1 }
         contentItem: ColumnLayout {
+            Accessible.role: Accessible.Dialog
+            Accessible.name: "Run details"
             anchors.fill: parent
             anchors.margins: 18
             spacing: 10
@@ -89,10 +89,10 @@ AppScrollView {
         height: Math.min(210, Overlay.overlay.height - 32)
         x: (Overlay.overlay.width - width) / 2
         y: (Overlay.overlay.height - height) / 2
-        Accessible.role: Accessible.Dialog
-        Accessible.name: "Clear all run history confirmation"
         background: Rectangle { color: theme.elevatedSurface; radius: theme.cardRadius; border.color: theme.strongBorder; border.width: 1 }
         contentItem: ColumnLayout {
+            Accessible.role: Accessible.Dialog
+            Accessible.name: "Clear all run history confirmation"
             anchors.fill: parent
             anchors.margins: 18
             spacing: 12

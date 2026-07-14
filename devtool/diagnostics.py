@@ -24,6 +24,18 @@ _ANDROID_MANIFEST_DIAGNOSTIC = re.compile(
     r"^(?P<file>.+?AndroidManifest\.xml):(?P<line>\d+):(?P<col>\d+)(?:-\d+)?\s+(?P<severity>Error|Warning):\s*(?P<message>.+)$",
     re.IGNORECASE,
 )
+_GRADLE_JAVA_TOOLCHAIN = re.compile(
+    r"Cannot find a Java installation on your machine .* matching: \{languageVersion=(?P<version>\d+),.*\}\.",
+    re.IGNORECASE,
+)
+_ANDROIDX_AAR_METADATA = re.compile(
+    r"Dependency '(?P<dependency>[^']+)' requires libraries and applications that depend on it to compile against version (?P<version>\d+) or later of the Android APIs\.",
+    re.IGNORECASE,
+)
+_ANDROIDX_AAR_CURRENT = re.compile(
+    r"(?P<project>:[A-Za-z0-9._-]+)\s+is currently compiled against android-(?P<version>\d+)\.",
+    re.IGNORECASE,
+)
 _GCC_CLANG = re.compile(
     r"^(?P<file>[^:\s][^:]*)[:](?P<line>\d+)(?::(?P<col>\d+))?:\s+"
     r"(?P<severity>warning|error|fatal error):\s+(?P<message>.+)$",
@@ -78,6 +90,8 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
     cargo_pending: Issue | None = None
     dotnet_failed_summary: tuple[int, int, int, int] | None = None
     dotnet_run_failed = False
+    aar_dependencies: list[tuple[str, int]] = []
+    aar_current: tuple[str, int] | None = None
     lines = output.splitlines()
     index = 0
 
@@ -127,6 +141,39 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 ))
                 index += 1
                 continue
+
+        match = _GRADLE_JAVA_TOOLCHAIN.search(stripped)
+        if match:
+            issues.append(Issue(
+                "error",
+                command_name,
+                "-",
+                "JAVA_TOOLCHAIN",
+                f"Gradle could not find a Java {match.group('version')} toolchain.",
+            ))
+            index += 1
+            continue
+
+        match = _ANDROIDX_AAR_METADATA.search(stripped)
+        if match:
+            dependency = match.group("dependency")
+            version = int(match.group("version"))
+            aar_dependencies.append((dependency, version))
+            issues.append(Issue(
+                "error",
+                command_name,
+                "-",
+                "AAR_METADATA",
+                f"{dependency} requires compileSdk {version} or later.",
+            ))
+            index += 1
+            continue
+
+        match = _ANDROIDX_AAR_CURRENT.search(stripped)
+        if match:
+            aar_current = (match.group("project"), int(match.group("version")))
+            index += 1
+            continue
 
         if ".py:" in stripped and (": error:" in stripped or ": warning:" in stripped or ": note:" in stripped):
             match = _MYPY.match(stripped)
@@ -358,6 +405,22 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             ))
         elif dotnet_run_failed:
             issues.append(Issue("error", command_name, "-", "VSTEST", "Test Run Failed"))
+
+    if aar_dependencies and aar_current:
+        current_project, current_compile_sdk = aar_current
+        required = max(version for _, version in aar_dependencies)
+        if current_compile_sdk < required:
+            dependency_list = ", ".join(name for name, version in aar_dependencies if version == required)
+            issues.append(Issue(
+                "error",
+                command_name,
+                current_project.lstrip(":") or "-",
+                "AAR_METADATA",
+                (
+                    f"{current_project} is compiled against android-{current_compile_sdk}, "
+                    f"but {dependency_list or 'AndroidX dependencies'} require compileSdk {required} or later."
+                ),
+            ))
 
     return _dedupe_issues(issues)
 

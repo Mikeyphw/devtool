@@ -2,6 +2,7 @@
 
 ## 1.1.0-rc.3 — 2026-07-14
 
+- Whenever `devtool-events.init.gradle` is injected, also pass `--no-configuration-cache` to avoid Gradle configuration-cache incompatibility.
 - Replaced the Android stock `InboxStyle` run notification with custom collapsed and expanded `RemoteViews` matching the approved mock.
 - Added state rail/badges, workspace and phase cards, test/warning/error/elapsed metrics, and mode-specific actions.
 - Added per-workspace HUD payloads so notification state updates independently of aggregate progress.

@@ -1,0 +1,11 @@
+[project]
+kind = "python"
+run_module = "devtool"
+
+[targets.android_hud]
+type = "android"
+root = "android/devtool-live-hud"
+
+[targets.android_hud.android]
+variant = "debug"
+prefer_native_termux = true

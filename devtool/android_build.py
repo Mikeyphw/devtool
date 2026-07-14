@@ -662,6 +662,12 @@ class ProjectInfo:
     cmake_version: str | None
 
 
+@dataclass(frozen=True)
+class JavaRequirement:
+    minimum: int
+    exact: int | None = None
+
+
 def project_files(root: Path) -> Iterable[Path]:
     names = {
         "settings.gradle",
@@ -792,6 +798,49 @@ def inspect_project(root: Path) -> ProjectInfo:
     )
 
 
+def infer_java_requirement(project: ProjectInfo) -> JavaRequirement:
+    baseline = 8
+    if project.agp_major is not None:
+        if project.agp_major >= 8:
+            baseline = 17
+        elif project.agp_major >= 7:
+            baseline = 11
+
+    text = read_project_text(project.root)
+    minimum = baseline
+    exact_versions: list[int] = []
+
+    minimum_patterns = (
+        r"JavaVersion\.VERSION_(\d+)",
+        r"JvmTarget\.JVM_(\d+)",
+        r"jvmTarget\s*=\s*['\"]?(\d+)",
+        r"sourceCompatibility\s*=\s*['\"]?(\d+)",
+        r"targetCompatibility\s*=\s*['\"]?(\d+)",
+    )
+    exact_patterns = (
+        r"JavaLanguageVersion\.of\(\s*(\d+)\s*\)",
+        r"jvmToolchain\(\s*(\d+)\s*\)",
+    )
+
+    for pattern in minimum_patterns:
+        for match in re.finditer(pattern, text):
+            try:
+                minimum = max(minimum, int(match.group(1)))
+            except (TypeError, ValueError):
+                pass
+
+    for pattern in exact_patterns:
+        for match in re.finditer(pattern, text):
+            try:
+                value = int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            minimum = max(minimum, value)
+            exact_versions.append(value)
+
+    return JavaRequirement(minimum=minimum, exact=max(exact_versions) if exact_versions else None)
+
+
 def java_major(java: Path) -> int | None:
     result = subprocess.run([str(java), "-version"], text=True, capture_output=True, check=False)
     text = f"{result.stdout}\n{result.stderr}"
@@ -804,34 +853,7 @@ def java_major(java: Path) -> int | None:
 
 
 def inferred_min_java(project: ProjectInfo) -> int:
-    baseline = 8
-    if project.agp_major is not None:
-        if project.agp_major >= 8:
-            baseline = 17
-        elif project.agp_major >= 7:
-            baseline = 11
-
-    # Gradle itself may run on an older supported JVM while individual JavaCompile
-    # tasks request a newer source/toolchain level. Detect those declarations so
-    # the selected JAVA_HOME can actually compile the project.
-    text = read_project_text(project.root)
-    declared: list[int] = []
-    patterns = (
-        r"JavaVersion\.VERSION_(\d+)",
-        r"JavaLanguageVersion\.of\(\s*(\d+)\s*\)",
-        r"jvmToolchain\(\s*(\d+)\s*\)",
-        r"JvmTarget\.JVM_(\d+)",
-        r"jvmTarget\s*=\s*['\"]?(\d+)",
-        r"sourceCompatibility\s*=\s*['\"]?(\d+)",
-        r"targetCompatibility\s*=\s*['\"]?(\d+)",
-    )
-    for pattern in patterns:
-        for match in re.finditer(pattern, text):
-            try:
-                declared.append(int(match.group(1)))
-            except (TypeError, ValueError):
-                pass
-    return max([baseline, *declared])
+    return infer_java_requirement(project).minimum
 
 
 def java_home_candidates(explicit: Path | None) -> list[Path]:
@@ -857,28 +879,88 @@ def java_home_candidates(explicit: Path | None) -> list[Path]:
     return unique
 
 
-def find_java_home(explicit: Path | None, minimum: int) -> Path:
+def find_java_home(explicit: Path | None, minimum: int, *, exact: int | None = None) -> Path:
     rejected: list[str] = []
+    accepted: list[tuple[int, int, Path]] = []
     for home in java_home_candidates(explicit):
         java = home / "bin" / "java"
         javac = home / "bin" / "javac"
         if not java.is_file() or not javac.is_file():
             continue
         major = java_major(java)
-        if major is not None and major >= minimum:
-            return home
-        rejected.append(f"{home} (Java {major or 'unknown'})")
+        if major is None:
+            rejected.append(f"{home} (Java unknown)")
+            continue
+        if major < minimum:
+            rejected.append(f"{home} (Java {major})")
+            continue
+        if exact is not None and major != exact:
+            rejected.append(f"{home} (Java {major}, needs exact Java {exact})")
+            continue
+        # Prefer the narrowest matching toolchain so we select Java 17 when the
+        # project requests an exact Java 17 toolchain and both 17 and 21 are
+        # installed.
+        accepted.append((0 if exact is not None and major == exact else 1, major, home))
+
+    if accepted:
+        accepted.sort(key=lambda item: (item[0], item[1], str(item[2])))
+        return accepted[0][2]
     details = f" Candidates checked: {', '.join(rejected)}." if rejected else ""
+    if exact is not None:
+        fail(
+            f"A JDK with Java {exact} is required for this project's declared toolchain.{details} "
+            "Use --java-home to select one."
+        )
     fail(f"A JDK with Java {minimum}+ is required.{details} Use --java-home to select one.")
 
 
-def discover_sdk_root(explicit: Path | None) -> Path | None:
+def _sdk_root_from_local_properties(project_root: Path | None) -> Path | None:
+    if project_root is None:
+        return None
+    target = (Path(project_root).expanduser() / "local.properties")
+    if not target.is_file():
+        return None
+    try:
+        text = target.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("sdk.dir="):
+            continue
+        raw = stripped.split("=", 1)[1].strip()
+        if not raw:
+            return None
+        path = Path(os.path.expandvars(os.path.expanduser(raw)))
+        if path.is_dir():
+            return path.resolve()
+        return path.expanduser().resolve()
+    return None
+
+
+def discover_sdk_root(explicit: Path | None, project_root: Path | None = None) -> Path | None:
+    sdk_root, _source = discover_sdk_root_with_source(explicit, project_root)
+    return sdk_root
+
+
+def discover_sdk_root_with_source(
+    explicit: Path | None,
+    project_root: Path | None = None,
+    *,
+    include_managed_cache: bool = False,
+    cache_root: Path | None = None,
+) -> tuple[Path | None, str | None]:
     candidates: list[Path] = []
     if explicit:
         candidates.append(explicit.expanduser())
+    local_properties = _sdk_root_from_local_properties(project_root)
+    if local_properties is not None:
+        candidates.append(local_properties)
     for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
         if os.environ.get(variable):
             candidates.append(Path(os.environ[variable]).expanduser())
+    if include_managed_cache and cache_root is not None:
+        candidates.append((cache_root / "android-sdk").expanduser())
     candidates.extend(
         [
             Path.home() / "Android" / "Sdk",
@@ -890,8 +972,25 @@ def discover_sdk_root(explicit: Path | None) -> Path | None:
     )
     for candidate in candidates:
         if candidate.is_dir():
-            return candidate.resolve()
-    return explicit.expanduser().resolve() if explicit else None
+            resolved = candidate.resolve()
+            if explicit and candidate == explicit.expanduser():
+                return resolved, "explicit --sdk-root"
+            if local_properties is not None and candidate == local_properties:
+                return resolved, "local.properties sdk.dir"
+            env_home = os.environ.get("ANDROID_HOME")
+            if env_home and candidate == Path(env_home).expanduser():
+                return resolved, "ANDROID_HOME"
+            env_root = os.environ.get("ANDROID_SDK_ROOT")
+            if env_root and candidate == Path(env_root).expanduser():
+                return resolved, "ANDROID_SDK_ROOT"
+            if include_managed_cache and cache_root is not None and candidate == (cache_root / "android-sdk").expanduser():
+                return resolved, "managed cache"
+            return resolved, "system install"
+    if explicit:
+        return explicit.expanduser().resolve(), "explicit --sdk-root"
+    if include_managed_cache and cache_root is not None:
+        return (cache_root / "android-sdk").expanduser().resolve(), "managed cache"
+    return None, None
 
 
 def sdkmanager_candidates(sdk_root: Path) -> list[Path]:
@@ -1546,6 +1645,45 @@ def copy_artifacts(
     return copied
 
 
+def normalize_gradle_arguments(arguments: Sequence[str], *, plain_console: bool = True) -> list[str]:
+    """Return Gradle arguments with at most one console option.
+
+    Devtool owns the default ``--console=plain`` policy. Integrations may add
+    init scripts and users may pass an explicit console mode after ``--``;
+    duplicate or conflicting console switches are collapsed so Gradle 9 does
+    not reject the command. The last explicit console value wins.
+    """
+    normalized: list[str] = []
+    console_value: str | None = None
+    index = 0
+    values = list(arguments)
+    while index < len(values):
+        value = str(values[index])
+        if value.startswith("--console="):
+            candidate = value.split("=", 1)[1].strip()
+            if candidate:
+                console_value = candidate
+            index += 1
+            continue
+        if value == "--console":
+            if index + 1 < len(values):
+                candidate = str(values[index + 1]).strip()
+                if candidate:
+                    console_value = candidate
+                index += 2
+                continue
+            index += 1
+            continue
+        normalized.append(value)
+        index += 1
+
+    if console_value is None and plain_console:
+        console_value = "plain"
+    if console_value is not None:
+        normalized.append(f"--console={console_value}")
+    return normalized
+
+
 def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     raw = list(sys.argv[1:] if raw_args is None else raw_args)
     extra_gradle_args: list[str] = []
@@ -1597,6 +1735,7 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ndk-version", default="auto", help="NDK version, auto, or none")
     parser.add_argument("--cmake-version", default="auto", help="CMake version, auto, or none")
     parser.add_argument("-I", "--skip-sdk-install", action="store_true", help="Never install missing SDK packages")
+    parser.add_argument("--auto-sdk", action="store_true", help="Explicitly allow automatic SDK package downloads and managed SDK creation")
 
     parser.add_argument("-j", "--java-home", type=Path, help="JDK home")
     parser.add_argument(
@@ -1739,10 +1878,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if project.cmake_version:
         info(f"Declared CMake: {project.cmake_version}")
 
-    minimum_java = args.min_java or inferred_min_java(project)
+    requirement = infer_java_requirement(project)
+    minimum_java = args.min_java or requirement.minimum
     java_home: Path | None = None
     try:
-        java_home = find_java_home(args.java_home, minimum_java)
+        java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
     except BuildError:
         java_home = None
     need_java = java_home is None
@@ -1754,7 +1894,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             offline=args.offline,
             java_version=minimum_java,
         )
-        java_home = find_java_home(args.java_home, minimum_java)
+        java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
     elif args.system_deps == "auto" and (need_java or need_certificates):
         install_missing_system_dependencies(
             need_java=need_java,
@@ -1762,8 +1902,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             offline=args.offline,
             java_version=minimum_java,
         )
-        java_home = find_java_home(args.java_home, minimum_java)
+        java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
     elif need_java:
+        if requirement.exact is not None:
+            fail(
+                f"A JDK with Java {requirement.exact} is required for this project's declared toolchain and system dependency installation is disabled. "
+                "Use --java-home or install the matching JDK."
+            )
         fail(f"A JDK with Java {minimum_java}+ is required and system dependency installation is disabled. Use --java-home or install a JDK.")
     assert java_home is not None
     env = os.environ.copy()
@@ -1771,13 +1916,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     env["PATH"] = os.pathsep.join([str(java_home / "bin"), env.get("PATH", "")])
     heading("Java")
     info(f"JAVA_HOME={java_home}")
+    if requirement.exact is not None:
+        info(f"Toolchain requirement: Java {requirement.exact}")
+    elif minimum_java:
+        info(f"Minimum Java: {minimum_java}+")
     run([java_home / "bin" / "java", "-version"], env=env, dry_run=args.dry_run)
 
     sdk_root: Path | None = None
+    sdk_source: str | None = None
     if project.android:
-        sdk_root = discover_sdk_root(args.sdk_root)
+        sdk_root, sdk_source = discover_sdk_root_with_source(args.sdk_root, project.root)
         if sdk_root is None and not args.skip_sdk_install:
             sdk_root = cache_root / "android-sdk"
+            sdk_source = "managed cache"
         if sdk_root:
             sdk_root.mkdir(parents=True, exist_ok=True)
             env["ANDROID_HOME"] = str(sdk_root)
@@ -1789,6 +1940,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     env["PATH"],
                 ]
             )
+            if sdk_source:
+                info(f"SDK path source: {sdk_source}")
+            if args.auto_sdk and not args.skip_sdk_install:
+                info("Auto SDK downloads: enabled")
         sdk_root, _, _, _, _ = ensure_android_sdk(
             project,
             sdk_root,
@@ -1847,8 +2002,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     # resulting output is stable and suitable for error parsers and CI logs.
     if args.continue_on_failure:
         command.append("--continue")
-    if args.plain_console:
-        command.append("--console=plain")
     if args.stacktrace:
         command.append("--stacktrace")
     if args.offline:
@@ -1857,7 +2010,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         command.append("--no-daemon")
     if aapt2:
         command.append(f"-Pandroid.aapt2FromMavenOverride={aapt2}")
-    command.extend(args.gradle_args)
+    command.extend(normalize_gradle_arguments(args.gradle_args, plain_console=args.plain_console))
 
     heading("Build")
     build_started = time.time()

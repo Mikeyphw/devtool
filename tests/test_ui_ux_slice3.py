@@ -52,7 +52,10 @@ def test_desktop_shell_has_narrow_mode_and_complete_keyboard_navigation() -> Non
     assert "Layout.preferredWidth: root.narrowMode ? 72 : 218" in source
     assert 'Shortcut { sequence: "Alt+7"' in source
     assert 'Shortcut { sequence: "F9"' in source
-    assert "Accessible.role: Accessible.Window" in source
+    # ApplicationWindow is a QWindow, not a QQuickItem. Accessibility belongs
+    # on the inner Item hierarchy so Qt does not reject the attachment at runtime.
+    assert "Accessible.role: Accessible.Window" not in source
+    assert 'Accessible.name: "Devtool Control Center"' in source
     assert "Accessible.name: \"Primary navigation\"" in source
 
 

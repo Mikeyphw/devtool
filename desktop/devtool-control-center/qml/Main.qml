@@ -23,10 +23,6 @@ ApplicationWindow {
     ]
     Theme { id: theme }
 
-    Accessible.role: Accessible.Window
-    Accessible.name: title
-    Accessible.description: "Desktop control center for devtool repositories, workflows, diagnostics, and history"
-
     header: ToolBar {
         implicitHeight: root.veryNarrowMode ? 56 : 64
         background: Rectangle {
@@ -97,6 +93,9 @@ ApplicationWindow {
     RowLayout {
         anchors.fill: parent
         spacing: 0
+        Accessible.role: Accessible.Pane
+        Accessible.name: "Devtool Control Center"
+        Accessible.description: "Desktop control center for devtool repositories, workflows, diagnostics, and history"
         Rectangle {
             Layout.preferredWidth: root.narrowMode ? 72 : 218
             Layout.minimumWidth: root.narrowMode ? 72 : 180

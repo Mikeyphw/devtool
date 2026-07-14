@@ -21,11 +21,7 @@ Window {
     maximumHeight: Math.max(260, Screen.availableHeight - 32)
     visible: true
     color: "transparent"
-    flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
-    Accessible.role: Accessible.Window
-    Accessible.name: "Devtool live progress"
-    Accessible.description: taskTitle() + ", " + stateLabel() + ", " + progressLabel()
-
+    flags: Qt.Window | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
     property var run: hudStore.activeRun || ({})
     property real backgroundOpacity: theme.dark ? 0.94 : 0.97
     property real panelOpacity: theme.dark ? 0.88 : 0.93
@@ -371,6 +367,9 @@ Window {
     Rectangle {
         id: shell
         anchors.fill: parent
+        Accessible.role: Accessible.Pane
+        Accessible.name: "Devtool live progress"
+        Accessible.description: root.taskTitle() + ", " + root.stateLabel() + ", " + root.progressLabel()
         radius: 18
         clip: true
         color: theme.alpha(theme.window, root.backgroundOpacity)
@@ -956,7 +955,7 @@ Window {
         }
 
         Shortcut {
-            sequence: StandardKey.Copy
+            sequences: [StandardKey.Copy]
             onActivated: {
                 hudStore.copySummary(run)
                 copiedFeedback = true

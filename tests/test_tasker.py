@@ -189,6 +189,31 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertEqual(phase["tests_total"], 226)
             self.assertEqual(phase["test_assemblies"], 3)
 
+    def test_indeterminate_progress_keeps_live_detail_without_fake_percent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = TaskerProgressSink(
+                directory=Path(tmp),
+                command="run",
+                repo_root="/repo/demo",
+                repo_name="demo",
+                enabled=True,
+                update_interval_s=0,
+            )
+            sink.started()
+            sink.phase_started("run", index=1, total=1, argv=["python", "-m", "demo"])
+            sink.progress(detail="running step 1", force=True)
+
+            notification = json.loads((Path(tmp) / "notification.json").read_text(encoding="utf-8"))
+            latest = json.loads((Path(tmp) / "latest_event.json").read_text(encoding="utf-8"))
+            state = json.loads((Path(tmp) / "state.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(notification["current"], 0)
+            self.assertIsNone(notification["total"])
+            self.assertEqual(latest["current"], 0)
+            self.assertIsNone(latest["total"])
+            self.assertIsNone(state["progress"].get("percent"))
+            self.assertIn("running step 1", notification["text"])
+
     def test_send_local_http_event_posts_full_json_to_localhost(self) -> None:
         response = Mock()
         response.status = 204

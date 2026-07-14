@@ -44,6 +44,7 @@ from .artifacts import (
     validate_artifact,
     validate_overlay_bundle,
 )
+from .cache_cleanup import cleanup_devtool_caches
 from .artifact_validation import run_artifact_validation_script
 from .artifact_inspection import inspect_artifact
 from .detect import detect_repo, render_detect_text
@@ -199,6 +200,8 @@ def build_parser() -> argparse.ArgumentParser:
         cmd = subparsers.add_parser(name, aliases=aliases)
         if name == "doctor":
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
+        if name == "clean":
+            cmd.add_argument("--caches", action="store_true", help="Also prune devtool-managed caches and transient state")
         if name == "test":
             cmd.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="Pass --no-build to dotnet test")
             cmd.add_argument("--list-tests", "--list", action="store_true", help="Discover and list tests without executing them")
@@ -3285,6 +3288,26 @@ def _print_chroot_indicator_once(args: argparse.Namespace) -> None:
         console.print(f"[magenta]Android chroot[/magenta] [dim]{chroot_name}[/dim]")
 
 
+def _build_cache_cleanup_result(*, dry_run: bool) -> OperationResult:
+    started = datetime.now(timezone.utc)
+    removed = cleanup_devtool_caches(dry_run=dry_run)
+    duration = max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+    if removed:
+        verb = "Would remove" if dry_run else "Removed"
+        output = "\n".join([f"{verb} devtool cache paths:"] + [f"- {path}" for path in removed])
+    else:
+        output = "No devtool-managed caches or transient state were found."
+    return OperationResult(
+        "cache-cleanup",
+        ["devtool", "clean", "--caches"],
+        0,
+        duration,
+        output,
+        [],
+        metadata={"cleanup": True, "cache_cleanup": True, "dry_run": dry_run},
+    )
+
+
 
 def _write_performance_report(
     args: argparse.Namespace,
@@ -3596,8 +3619,12 @@ def main(argv: list[str] | None = None) -> int:
     if tasker_progress is not None:
         tasker_progress.started()
 
+    cache_cleanup_result: OperationResult | None = None
+    if args.command in {"clean", "cl"} and bool(getattr(args, "caches", False)):
+        cache_cleanup_result = _build_cache_cleanup_result(dry_run=bool(getattr(args, "dry_run", False)))
+
     stale_transaction = find_active_transaction(config.repo_root)
-    if stale_transaction is not None and args.command not in {"history"}:
+    if stale_transaction is not None and args.command not in {"history", "clean", "cl"}:
         results = []
         raw_output = ""
         rollback_result, rollback_raw = _run_transaction_rollback(
@@ -3774,6 +3801,12 @@ def main(argv: list[str] | None = None) -> int:
             if not getattr(args, "_devtool_history_recorded", False):
                 _record_apply_history(config, args, results)
                 args._devtool_history_recorded = True
+    elif args.command in {"clean", "cl"}:
+        specs = build_specs(config, args.command)
+        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
+        if cache_cleanup_result is not None:
+            results = [cache_cleanup_result, *results]
+            raw_output = cache_cleanup_result.output + ("\n\n" + raw_output if raw_output else "")
     elif args.command in {"validate", "v", "wine-validate", "wv"}:
         if getattr(args, "watch", False):
             def _run_once() -> int:

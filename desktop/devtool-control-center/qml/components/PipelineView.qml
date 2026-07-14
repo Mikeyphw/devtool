@@ -51,8 +51,13 @@ Item {
                         : theme.border
             Accessible.role: Accessible.ProgressBar
             Accessible.name: String(modelData.label || "Workflow step")
-            Accessible.description: String(modelData.detail || modelData.status || "pending")
-            Accessible.value: Math.max(0, Math.min(100, Number(modelData.progress || 0)))
+            Accessible.description: {
+                const detail = String(modelData.detail || modelData.status || "pending")
+                const progress = Math.max(0, Math.min(100, Number(modelData.progress || 0)))
+                return modelData.status === "running"
+                        ? detail + ", " + Math.round(progress) + " percent"
+                        : detail
+            }
             property color stepColor: modelData.status === "failed" ? theme.error
                                       : modelData.status === "ok" ? theme.success
                                       : modelData.status === "running" ? theme.info

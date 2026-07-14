@@ -262,6 +262,7 @@ class DotnetRunner(ProjectRunner):
         test=True,
         selective_tests=True,
         validate=True,
+        clean=True,
         run=True,
         package=True,
     )
@@ -303,6 +304,8 @@ class DotnetRunner(ProjectRunner):
             return _maybe_explicit("run", config.run_command, env) or [
                 CommandSpec("run", ["dotnet", "run", "--project", run_target], env=env)
             ]
+        if action == "clean":
+            return [CommandSpec("clean", ["dotnet", "clean", build_target], env=env)]
         if action == "package":
             if config.package_command:
                 return [CommandSpec("package", shlex.split(config.package_command), env=env)]

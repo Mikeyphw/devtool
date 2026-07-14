@@ -36,7 +36,7 @@ def test_desktop_run_workflow_is_staged_sticky_and_complete() -> None:
     assert "property int currentStage" in qml
     assert 'readonly property var stages: ["Project", "Operation", "Tests", "Review"]' in qml
     assert "id:stickyBar" in qml
-    assert "anchors.bottom:stickyBar.top" in qml
+    assert "anchors.bottom: stickyBar.top" in qml or "anchors.bottom:stickyBar.top" in qml
     for operation in (
         "Apply overlay",
         "Apply bundle",

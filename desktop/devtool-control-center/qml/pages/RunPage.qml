@@ -106,7 +106,9 @@ Item {
             Rectangle{Layout.fillWidth:true;Layout.fillHeight:true;color:theme.recessedSurface;radius:theme.controlRadius
                 ScrollView{anchors.fill:parent;anchors.margins:8;AppTextArea{text:root.importedCommand;readOnly:true;wrapMode:TextEdit.WrapAnywhere;background:null}}
             }
-            RowLayout{Layout.fillWidth:true;AppButton{text:"Cancel";variant:"ghost";onClicked:commandConfirmation.close()};Item{Layout.fillWidth:true};AppButton {
+            RowLayout{Layout.fillWidth:true;AppButton{text:"Cancel";variant:"ghost";onClicked:commandConfirmation.close()}
+Item{Layout.fillWidth:true}
+AppButton {
                     text: "Run command"
                     variant: "primary"
                     onClicked: {
@@ -125,16 +127,27 @@ Item {
             Label{Layout.fillWidth:true;text:root.dangerExplanation();color:theme.mutedText;wrapMode:Text.Wrap}
             Label{Layout.fillWidth:true;text:appController.repository;color:theme.subtleText;font.family:theme.monospaceFamily;elide:Text.ElideMiddle}
             Item{Layout.fillHeight:true}
-            RowLayout{Layout.fillWidth:true;Item{Layout.fillWidth:true};AppButton{text:"Cancel";variant:"ghost";onClicked:dangerConfirmation.close()};AppButton{text:"Continue";variant:"danger";onClicked:{dangerConfirmation.close();root.runWorkflowNow()}}}
+            RowLayout{Layout.fillWidth:true;Item{Layout.fillWidth:true}
+AppButton{text:"Cancel";variant:"ghost";onClicked:dangerConfirmation.close()}
+AppButton{text:"Continue";variant:"danger";onClicked:{dangerConfirmation.close();root.runWorkflowNow()}}}
         }
     }
 
     AppScrollView {
-        anchors.left:parent.left;anchors.right:parent.right;anchors.top:parent.top;anchors.bottom:stickyBar.top
+        id: workflowScroll
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: stickyBar.top
+        contentHeight: workflowColumn.implicitHeight
         ColumnLayout {
-            width: parent.availableWidth; spacing:14
+            id: workflowColumn
+            width: Math.max(0, workflowScroll.availableWidth)
+            spacing: 14
             RowLayout { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;Layout.topMargin:20
-                PageHeading{text:"Run"};Item{Layout.fillWidth:true};AppButton {
+                PageHeading{text:"Run"}
+Item{Layout.fillWidth:true}
+AppButton {
                     text: "Paste from clipboard"
                     variant: "ghost"
                     onClicked: {
@@ -182,25 +195,72 @@ Item {
                     }
                 }
             }
-            RowLayout { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin
-                Repeater{model:root.stages;delegate:Rectangle{required property string modelData;required property int index;Layout.fillWidth:true;height:Math.max(40,stageLabel.implicitHeight+14);radius:8;color:index===root.currentStage?theme.accentSurface:theme.recessedSurface;Accessible.role:Accessible.StaticText;Accessible.name:"Step "+(index+1)+" of 4, "+modelData+(index===root.currentStage?", current":"")
-                    Label{id:stageLabel;anchors.centerIn:parent;text:(index+1)+" · "+modelData;color:index===root.currentStage?theme.accentText:theme.mutedText;font.weight:index===root.currentStage?Font.DemiBold:Font.Normal}
-                }}
+            GridLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: theme.pageMargin
+                Layout.rightMargin: theme.pageMargin
+                columns: root.narrowMode ? 2 : 4
+                columnSpacing: 8
+                rowSpacing: 8
+                Repeater {
+                    model: root.stages
+                    delegate: Rectangle {
+                        required property string modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        implicitHeight: Math.max(42, stageLabel.implicitHeight + 16)
+                        radius: theme.controlRadius
+                        color: index === root.currentStage ? theme.selectedSurface : theme.recessedSurface
+                        border.color: index === root.currentStage ? theme.accent : theme.border
+                        border.width: 1
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: "Step " + (index + 1) + " of 4, " + modelData + (index === root.currentStage ? ", current" : "")
+                        Label {
+                            id: stageLabel
+                            anchors.centerIn: parent
+                            width: parent.width - 16
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideRight
+                            text: (index + 1) + " · " + modelData
+                            color: index === root.currentStage ? theme.windowText : theme.mutedText
+                            font.weight: index === root.currentStage ? Font.DemiBold : Font.Normal
+                        }
+                    }
+                }
             }
 
             SurfaceCard { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===0;implicitHeight:projectForm.implicitHeight+32
                 GridLayout{id:projectForm;anchors.fill:parent;anchors.margins:16;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
-                    Label{text:"Repository";color:theme.mutedText};AppTextField{accessibleName:"Repository root";accessibleDescription:"Repository where devtool will run";Layout.fillWidth:true;text:appController.repository;onTextEdited:appController.repository=text;placeholderText:"Repository root"};AppButton{text:"Browse…";onClicked:repoDialog.open()}
-                    Label{text:"Project type";color:theme.mutedText};AppComboBox{id:projectType;accessibleName:"Project type";accessibleDescription:"Select the project runner";Layout.fillWidth:true;model:["auto","dotnet","android","gradle","python","command"]};Item{}
-                    Label{text:"Execution";color:theme.mutedText};AppComboBox{id:executionEnvironment;accessibleName:"Execution environment";accessibleDescription:"Select where devtool should execute";Layout.fillWidth:true;model:["auto","native-termux","chroot","desktop-linux","android-device","external-device"]};Item{}
+                    Label{text:"Repository";color:theme.mutedText}
+AppTextField{accessibleName:"Repository root";accessibleDescription:"Repository where devtool will run";Layout.fillWidth:true;text:appController.repository;onTextEdited:appController.repository=text;placeholderText:"Repository root"}
+AppButton{text:"Browse…";onClicked:repoDialog.open()}
+                    Label{text:"Project type";color:theme.mutedText}
+AppComboBox{id:projectType;accessibleName:"Project type";accessibleDescription:"Select the project runner";Layout.fillWidth:true;model:["auto","dotnet","android","gradle","python","command"]}
+Item{}
+                    Label{text:"Execution";color:theme.mutedText}
+AppComboBox{id:executionEnvironment;accessibleName:"Execution environment";accessibleDescription:"Select where devtool should execute";Layout.fillWidth:true;model:["auto","native-termux","chroot","desktop-linux","android-device","external-device"]}
+Item{}
                 }
             }
             SurfaceCard { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===1;implicitHeight:operationForm.implicitHeight+32
                 GridLayout{id:operationForm;anchors.fill:parent;anchors.margins:16;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
-                    Label{text:"Operation";color:theme.mutedText};AppComboBox{id:operationCombo;accessibleName:"Operation";accessibleDescription:"Select the devtool operation";Layout.fillWidth:true;model:root.operations;onCurrentTextChanged:root.operation=currentText};Label{text:"Complete desktop operation coverage";color:theme.subtleText}
-                    Label{text:"Artifact";color:theme.mutedText;visible:root.isApplyOperation()};AppTextField{accessibleName:"Overlay or bundle archive";Layout.fillWidth:true;visible:root.isApplyOperation();text:appController.artifact;onTextEdited:{appController.artifact=text;artifactVerification.restart()};placeholderText:"Overlay or bundle archive"};AppButton{text:"Browse…";visible:root.isApplyOperation();onClicked:artifactDialog.open()}
-                    Label{text:"Target";color:theme.mutedText};AppTextField{id:target;accessibleName:"Target or profile";Layout.fillWidth:true;placeholderText:"Optional target/profile"};Item{}
-                    Label{text:"Commit message";color:theme.mutedText;visible:root.isApplyOperation()||root.operation==="Commit"};AppTextField{id:message;accessibleName:"Commit message";Layout.fillWidth:true;visible:root.isApplyOperation()||root.operation==="Commit";placeholderText:"Artifact manifest may provide this"};Item{}
+                    Label{text:"Operation";color:theme.mutedText}
+AppComboBox{id:operationCombo;accessibleName:"Operation";accessibleDescription:"Select the devtool operation";Layout.fillWidth:true;model:root.operations;onCurrentTextChanged:root.operation=currentText}
+Label{text:"Complete desktop operation coverage";color:theme.subtleText}
+                    Label{text:"Artifact";color:theme.mutedText;visible:root.isApplyOperation()}
+AppTextField{accessibleName:"Overlay or bundle archive";Layout.fillWidth:true;visible:root.isApplyOperation();text:appController.artifact;onTextEdited:{
+    appController.artifact = text
+    artifactVerification.restart()
+}
+placeholderText:"Overlay or bundle archive"}
+AppButton{text:"Browse…";visible:root.isApplyOperation();onClicked:artifactDialog.open()}
+                    Label{text:"Target";color:theme.mutedText}
+AppTextField{id:target;accessibleName:"Target or profile";Layout.fillWidth:true;placeholderText:"Optional target/profile"}
+Item{}
+                    Label{text:"Commit message";color:theme.mutedText;visible:root.isApplyOperation()||root.operation==="Commit"}
+AppTextField{id:message;accessibleName:"Commit message";Layout.fillWidth:true;visible:root.isApplyOperation()||root.operation==="Commit";placeholderText:"Artifact manifest may provide this"}
+Item{}
                 }
             }
             RowLayout { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===1&&root.isApplyOperation()&&appController.artifact!=="";spacing:8
@@ -218,20 +278,36 @@ Item {
                     Label{text:root.needsTests()?"Test and validation selection":"No test selection required";color:theme.windowText;font.pointSize:theme.cardTitlePointSize;font.weight:Font.DemiBold}
                     Label{Layout.fillWidth:true;text:root.needsTests()?"Discover the real test catalog, search it, and select exact tests.":"Continue to Review.";color:theme.mutedText;wrapMode:Text.Wrap}
                     GridLayout{visible:root.needsTests();Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:10;rowSpacing:10
-                        Label{text:"Test profile";color:theme.mutedText};AppTextField{id:testProfile;accessibleName:"Test profile";Layout.fillWidth:true;placeholderText:"quick, full…"};AppButton{text:"Discover tests";variant:"primary";onClicked:root.refreshTestCatalog()}
-                        Label{text:"Search";color:theme.mutedText};AppTextField{id:testSearch;accessibleName:"Search discovered tests";accessibleDescription:"Filter by test identifier or suite";Layout.fillWidth:true;placeholderText:"Filter test IDs and suites"};Label{text:root.selectedCount()+" selected";color:theme.info}
+                        Label{text:"Test profile";color:theme.mutedText}
+AppTextField{id:testProfile;accessibleName:"Test profile";Layout.fillWidth:true;placeholderText:"quick, full…"}
+AppButton{text:"Discover tests";variant:"primary";onClicked:root.refreshTestCatalog()}
+                        Label{text:"Search";color:theme.mutedText}
+AppTextField{id:testSearch;accessibleName:"Search discovered tests";accessibleDescription:"Filter by test identifier or suite";Layout.fillWidth:true;placeholderText:"Filter test IDs and suites"}
+Label{text:root.selectedCount()+" selected";color:theme.info}
                     }
                     Label{visible:root.catalogMessage!=="";Layout.fillWidth:true;text:root.catalogMessage;color:theme.mutedText;wrapMode:Text.Wrap}
                     Rectangle{visible:root.needsTests();Layout.fillWidth:true;Layout.preferredHeight:Math.min(300,Math.max(120,testList.contentHeight+16));color:theme.recessedSurface;radius:theme.controlRadius
                         ListView{id:testList;anchors.fill:parent;anchors.margins:8;clip:true;spacing:4;model:root.filteredTests();reuseItems:true
-                            delegate:RowLayout{required property var modelData;width:testList.width;height:Math.max(48,implicitHeight);AppCheckBox{accessibleName:"Select test "+String(modelData.label||modelData.id);checked:!!root.selectedTests[modelData.id];onToggled:root.updateSelectedTest(modelData.id,checked)};ColumnLayout{Layout.fillWidth:true;Label{Layout.fillWidth:true;text:modelData.label||modelData.id;color:theme.text;elide:Text.ElideMiddle};Label{Layout.fillWidth:true;text:modelData.suite||"";color:theme.subtleText;elide:Text.ElideMiddle}}}
+                            delegate:RowLayout{required property var modelData;width:testList.width;height:Math.max(48,implicitHeight);AppCheckBox{accessibleName:"Select test "+String(modelData.label||modelData.id);checked:!!root.selectedTests[modelData.id];onToggled:root.updateSelectedTest(modelData.id,checked)}
+ColumnLayout{Layout.fillWidth:true;Label{Layout.fillWidth:true;text:modelData.label||modelData.id;color:theme.text;elide:Text.ElideMiddle}
+Label{Layout.fillWidth:true;text:modelData.suite||"";color:theme.subtleText;elide:Text.ElideMiddle}}}
                         }
                     }
                     GridLayout{visible:root.needsTests();Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:10;rowSpacing:10
-                        Label{text:"Selectors";color:theme.mutedText};AppTextField{id:testSelectors;accessibleName:"Test selectors";Layout.fillWidth:true;placeholderText:"Selected IDs or manual selectors"};AppButton{text:"Clear selection";variant:"ghost";onClicked:{root.selectedTests=({});testSelectors.text=""}}
-                        Label{text:"Tags";color:theme.mutedText};AppTextField{id:testTags;Layout.fillWidth:true};AppTextField{id:testExcludeTags;placeholderText:"Exclude tags"}
-                        Label{text:"Path / class / method";color:theme.mutedText};AppTextField{id:testPath;Layout.fillWidth:true};RowLayout{AppTextField{id:testClass;Layout.fillWidth:true;placeholderText:"Class"};AppTextField{id:testMethod;Layout.fillWidth:true;placeholderText:"Method"}}
-                        Label{text:"Instrumentation";color:theme.mutedText};RowLayout{AppCheckBox{id:listTests;text:"List matching tests"};AppCheckBox{id:instrumented;text:"Instrumentation"}};Item{}
+                        Label{text:"Selectors";color:theme.mutedText}
+AppTextField{id:testSelectors;accessibleName:"Test selectors";Layout.fillWidth:true;placeholderText:"Selected IDs or manual selectors"}
+AppButton{text:"Clear selection";variant:"ghost";onClicked:{root.selectedTests=({});testSelectors.text=""}}
+                        Label{text:"Tags";color:theme.mutedText}
+AppTextField{id:testTags;Layout.fillWidth:true}
+AppTextField{id:testExcludeTags;placeholderText:"Exclude tags"}
+                        Label{text:"Path / class / method";color:theme.mutedText}
+AppTextField{id:testPath;Layout.fillWidth:true}
+RowLayout{AppTextField{id:testClass;Layout.fillWidth:true;placeholderText:"Class"}
+AppTextField{id:testMethod;Layout.fillWidth:true;placeholderText:"Method"}}
+                        Label{text:"Instrumentation";color:theme.mutedText}
+RowLayout{AppCheckBox{id:listTests;text:"List matching tests"}
+AppCheckBox{id:instrumented;text:"Instrumentation"}}
+Item{}
                     }
                 }
             }
@@ -241,10 +317,17 @@ Item {
                     Label{text:"Review and run";color:theme.windowText;font.pointSize:theme.cardTitlePointSize;font.weight:Font.DemiBold}
                     Label{text:"External terminal execution";color:theme.mutedText}
                     GridLayout{Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:10;rowSpacing:10
-                        Label{text:"Clipboard";color:theme.mutedText};AppComboBox{id:copyMode;accessibleName:"Clipboard result mode";Layout.fillWidth:true;model:["Copy summary","Copy JSON","Do not copy"]};Item{}
-                        Label{text:"HUD mode";color:theme.mutedText};AppComboBox{id:hudMode;accessibleName:"HUD mode";Layout.fillWidth:true;model:["control-center","desktop-window","android-bridge","none"];enabled:autoHud.checked};AppCheckBox{id:autoHud;text:"Auto HUD";checked:true}
+                        Label{text:"Clipboard";color:theme.mutedText}
+AppComboBox{id:copyMode;accessibleName:"Clipboard result mode";Layout.fillWidth:true;model:["Copy summary","Copy JSON","Do not copy"]}
+Item{}
+                        Label{text:"HUD mode";color:theme.mutedText}
+AppComboBox{id:hudMode;accessibleName:"HUD mode";Layout.fillWidth:true;model:["control-center","desktop-window","android-bridge","none"];enabled:autoHud.checked}
+AppCheckBox{id:autoHud;text:"Auto HUD";checked:true}
                     }
-                    RowLayout{visible:root.isApplyOperation();AppCheckBox{id:validate;text:"Validate";checked:true};AppCheckBox{id:commit;text:"Commit";checked:true};AppCheckBox{id:keep;text:"Keep artifact"};Item{Layout.fillWidth:true}}
+                    RowLayout{visible:root.isApplyOperation();AppCheckBox{id:validate;text:"Validate";checked:true}
+AppCheckBox{id:commit;text:"Commit";checked:true}
+AppCheckBox{id:keep;text:"Keep artifact"}
+Item{Layout.fillWidth:true}}
                     Label{text:"Command preview";color:theme.windowText;font.weight:Font.DemiBold}
                     Rectangle{Layout.fillWidth:true;implicitHeight:120;color:theme.recessedSurface;radius:theme.controlRadius;Label{anchors.fill:parent;anchors.margins:12;text:root.commandText();color:theme.mutedText;font.family:theme.monospaceFamily;wrapMode:Text.WrapAnywhere}}
                     RowLayout {

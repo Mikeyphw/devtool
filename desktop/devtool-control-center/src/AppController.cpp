@@ -8,6 +8,7 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QDesktopServices>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -141,18 +142,17 @@ static QString resolveHudExecutable() {
         const QFileInfo file(candidate);
         if (file.isFile() && file.isExecutable()) return file.absoluteFilePath();
     }
-    return QString();
+    return QStandardPaths::findExecutable(QStringLiteral("devtool-control-center-hud"));
 }
 
 static bool sendHudActivation() {
     QLocalSocket socket;
-    socket.connectToServer(QStringLiteral("io.github.mikeceead.DevtoolControlCenter.hud"), QIODevice::WriteOnly);
-    if (!socket.waitForConnected(300)) return false;
+    socket.connectToServer(QStringLiteral("io.github.mikeceead.DevtoolControlCenter.hud"), QIODevice::ReadWrite);
+    if (!socket.waitForConnected(500)) return false;
     socket.write("show-hud");
-    socket.flush();
-    socket.waitForBytesWritten(300);
-    socket.disconnectFromServer();
-    return true;
+    if (!socket.waitForBytesWritten(500)) return false;
+    if (!socket.waitForReadyRead(1000)) return false;
+    return QString::fromUtf8(socket.readAll()).trimmed() == QStringLiteral("shown");
 }
 
 AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h, IpcClient *i, QObject *p)
@@ -750,8 +750,27 @@ void AppController::openUrl(const QString &url) {
 void AppController::quit() { qApp->quit(); }
 void AppController::cancelRun(const QString &runId) { if (m_ipc) m_ipc->cancelRun(runId); }
 void AppController::launchHud() {
-    if (sendHudActivation()) return;
-    QProcess::startDetached(resolveHudExecutable(), QStringList{});
+    if (sendHudActivation()) {
+        qInfo() << "Devtool HUD: activated existing window";
+        return;
+    }
+    const QString executable = resolveHudExecutable();
+    if (executable.isEmpty()) {
+        qCritical() << "Devtool HUD executable was not found beside the Control Center or on PATH";
+        if (m_tray) m_tray->showMessage(QStringLiteral("Devtool HUD could not open"),
+                                        QStringLiteral("devtool-control-center-hud was not found"),
+                                        QSystemTrayIcon::Critical, 7000);
+        return;
+    }
+    qint64 processId = 0;
+    if (!QProcess::startDetached(executable, QStringList{}, QString(), &processId)) {
+        qCritical() << "Devtool HUD failed to start:" << executable;
+        if (m_tray) m_tray->showMessage(QStringLiteral("Devtool HUD could not open"),
+                                        QStringLiteral("The HUD process failed to start"),
+                                        QSystemTrayIcon::Critical, 7000);
+        return;
+    }
+    qInfo() << "Devtool HUD started with PID" << processId;
 }
 
 void AppController::setStandby(bool standby) {

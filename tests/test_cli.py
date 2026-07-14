@@ -72,6 +72,31 @@ class CliTests(unittest.TestCase):
         args = parser.parse_args(["apply-overlay", "--delete-artifact-on-failure", "artifact.zip"])
         self.assertTrue(args.delete_artifact_on_failure)
 
+    def test_parser_accepts_clean_cache_flag(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["clean", "--caches"])
+        self.assertTrue(args.caches)
+
+    def test_clean_caches_invokes_cache_prune_before_runner_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as home:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            clean_result = __import__("devtool.models").models.OperationResult("clean", ["dotnet", "clean"], 0, 0.0, "ok", [])
+            cleanup_patch = patch("devtool.cli.cleanup_devtool_caches", return_value=["/tmp/devtool-cache"])
+            run_patch = patch("devtool.cli._run_specs_for_args", return_value=([clean_result], "clean output"))
+            with (
+                patch.dict("os.environ", {"HOME": home, "XDG_RUNTIME_DIR": ""}),
+                cleanup_patch as cleanup_mock,
+                run_patch as run_specs,
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "clean", "--caches"])
+
+        self.assertEqual(rc, 0)
+        cleanup_mock.assert_called_once_with(dry_run=False)
+        run_specs.assert_called_once()
+
     def test_parser_rejects_commit_even_on_failure_flag(self) -> None:
         parser = build_parser()
         with self.assertRaises(SystemExit):

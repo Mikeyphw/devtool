@@ -7,6 +7,7 @@ import "../components"
 Item {
     id: root
     readonly property bool narrowMode: width < 780
+    readonly property bool hasSummary: Object.keys(artifactInspector.summary).length > 0
     Theme { id: theme }
 
     FileDialog {
@@ -28,27 +29,43 @@ Item {
             Layout.fillWidth: true
             PageHeading { text: "Artifacts" }
             Item { Layout.fillWidth: true }
-            AppButton { text: "Open artifact…"; variant: "primary"; onClicked: artifactDialog.open() }
-            AppButton { text: artifactInspector.loading ? "Inspecting…" : "Refresh"; enabled: !artifactInspector.loading && artifactInspector.artifactPath !== ""; onClicked: artifactInspector.inspect(true) }
+            AppButton {
+                text: artifactInspector.loading ? "Inspecting…" : "Refresh"
+                enabled: !artifactInspector.loading && artifactInspector.artifactPath !== ""
+                onClicked: artifactInspector.inspect(true)
+            }
         }
 
-        GridLayout {
+        SurfaceCard {
             Layout.fillWidth: true
-            columns: root.narrowMode ? 1 : 2
-            AppTextField {
-                Layout.fillWidth: true
-                text: artifactInspector.artifactPath
-                placeholderText: "Choose an overlay or bundle"
-                onTextEdited: { artifactInspector.artifactPath = text; appController.artifact = text }
-                onAccepted: artifactInspector.inspect(true)
-            }
-            AppTextField {
-                Layout.fillWidth: true
-                Layout.preferredWidth: root.narrowMode ? 0 : 360
-                text: artifactInspector.repositoryPath
-                placeholderText: "Repository for preview/diff (optional)"
-                onTextEdited: artifactInspector.repositoryPath = text
-                onAccepted: artifactInspector.inspect(true)
+            implicitHeight: artifactInputs.implicitHeight + 28
+            GridLayout {
+                id: artifactInputs
+                anchors.fill: parent
+                anchors.margins: 14
+                columns: root.narrowMode ? 1 : 3
+                columnSpacing: 10
+                rowSpacing: 10
+                Label { text: "Artifact"; color: theme.mutedText }
+                AppTextField {
+                    Layout.fillWidth: true
+                    accessibleName: "Artifact archive"
+                    text: artifactInspector.artifactPath
+                    placeholderText: "Choose an overlay or bundle"
+                    onTextEdited: { artifactInspector.artifactPath = text; appController.artifact = text }
+                    onAccepted: artifactInspector.inspect(true)
+                }
+                AppButton { text: "Browse…"; variant: "primary"; onClicked: artifactDialog.open() }
+                Label { text: "Repository"; color: theme.mutedText }
+                AppTextField {
+                    Layout.fillWidth: true
+                    accessibleName: "Repository for artifact preview"
+                    text: artifactInspector.repositoryPath
+                    placeholderText: "Repository for preview and diff (optional)"
+                    onTextEdited: artifactInspector.repositoryPath = text
+                    onAccepted: artifactInspector.inspect(true)
+                }
+                Item { visible: !root.narrowMode }
             }
         }
 
@@ -70,8 +87,51 @@ Item {
             }
         }
 
+        SurfaceCard {
+            visible: !root.hasSummary && artifactInspector.error === ""
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 260
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 48, 520)
+                spacing: 10
+                Image {
+                    Layout.alignment: Qt.AlignHCenter
+                    source: "../icons/artifacts.svg"
+                    sourceSize.width: 42
+                    sourceSize.height: 42
+                    width: 42
+                    height: 42
+                    opacity: 0.8
+                    Accessible.ignored: true
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: artifactInspector.loading ? "Inspecting artifact…" : "No artifact inspected"
+                    color: theme.windowText
+                    font.pointSize: theme.cardTitlePointSize
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "Choose an overlay or bundle to review its manifest, inventory, validation, and repository diff before applying it."
+                    color: theme.mutedText
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                AppButton {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "Open artifact…"
+                    variant: "primary"
+                    onClicked: artifactDialog.open()
+                }
+            }
+        }
+
         GridLayout {
-            visible: Object.keys(artifactInspector.summary).length > 0
+            visible: root.hasSummary
             Layout.fillWidth: true
             columns: root.narrowMode ? 2 : 5
             columnSpacing: 10
@@ -109,7 +169,7 @@ Item {
         }
 
         SurfaceCard {
-            visible: Object.keys(artifactInspector.summary).length > 0
+            visible: root.hasSummary
             Layout.fillWidth: true
             implicitHeight: summaryColumn.implicitHeight + 24
             ColumnLayout {
@@ -161,7 +221,7 @@ Item {
 
         TabBar {
             id: tabs
-            visible: Object.keys(artifactInspector.summary).length > 0
+            visible: root.hasSummary
             Layout.fillWidth: true
             background: Rectangle { color: "transparent" }
             AppTabButton { text: "Inventory" }
@@ -174,7 +234,8 @@ Item {
             visible: tabs.visible
             currentIndex: tabs.currentIndex
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.fillHeight: visible
+            Layout.preferredHeight: visible ? 360 : 0
 
             SurfaceCard {
                 color: theme.recessedSurface
@@ -277,7 +338,7 @@ Item {
         }
 
         RowLayout {
-            visible: Object.keys(artifactInspector.summary).length > 0
+            visible: root.hasSummary
             Layout.fillWidth: true
             Item { Layout.fillWidth: true }
             AppButton { text: "Use in Run page"; onClicked: { appController.artifact = artifactInspector.artifactPath; appController.repository = artifactInspector.repositoryPath } }

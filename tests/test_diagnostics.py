@@ -72,6 +72,26 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(issues[0].code, "ANDROID")
         self.assertEqual(issues[0].line, 7)
 
+    def test_parse_gradle_toolchain_and_aar_metadata_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = (
+                "Could not determine the dependencies of task ':app:compileDebugJavaWithJavac'.\n"
+                "> Could not resolve all dependencies for configuration ':app:debugCompileClasspath'.\n"
+                "   > Could not resolve project :core-model.\n"
+                "      > Failed to calculate the value of task ':core-model:compileJava' property 'javaCompiler'.\n"
+                "         > Cannot find a Java installation on your machine (Linux amd64) matching: {languageVersion=17, vendor=any vendor, implementation=vendor-specific, nativeImageCapable=false}. Toolchain download repositories have not been configured.\n"
+                "Dependency 'androidx.core:core-ktx:1.19.0' requires libraries and applications that depend on it to compile against version 37 or later of the Android APIs.\n"
+                ":app is currently compiled against android-36.\n"
+            )
+            issues = parse_issues(root, "build", output)
+
+        codes = [issue.code for issue in issues]
+        self.assertIn("JAVA_TOOLCHAIN", codes)
+        self.assertIn("AAR_METADATA", codes)
+        self.assertTrue(any("Java 17 toolchain" in issue.message for issue in issues))
+        self.assertTrue(any("compileSdk 37" in issue.message for issue in issues))
+
     def test_parse_manifest_merger_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

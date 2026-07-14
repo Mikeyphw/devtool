@@ -4,6 +4,15 @@ import QtQuick.Controls
 Button {
     id: root
     property url iconSource
+
+    function resolvedIconSource() {
+        const value = String(root.iconSource || "")
+        if (!value)
+            return ""
+        const slash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"))
+        const basename = slash >= 0 ? value.substring(slash + 1) : value
+        return Qt.resolvedUrl("../icons/" + basename)
+    }
     property bool selected: false
     property bool compact: false
     property string accessibleDescription: "Open the " + text + " page"
@@ -23,7 +32,7 @@ Button {
     contentItem: Row {
         spacing: root.compact ? 0 : 12
         Image {
-            source: root.iconSource
+            source: root.resolvedIconSource()
             width: root.compact ? root.availableWidth : theme.navigationIconSize
             height: parent.height
             sourceSize.width: theme.navigationIconSize

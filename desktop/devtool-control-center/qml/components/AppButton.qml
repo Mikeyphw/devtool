@@ -6,6 +6,15 @@ Button {
     property string variant: "default"
     property bool compact: false
     property url iconSource
+
+    function resolvedIconSource() {
+        const value = String(root.iconSource || "")
+        if (!value)
+            return ""
+        const slash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"))
+        const basename = slash >= 0 ? value.substring(slash + 1) : value
+        return Qt.resolvedUrl("../icons/" + basename)
+    }
     property bool destructive: variant === "danger"
     property string accessibleName: text
     property string accessibleDescription: ""
@@ -62,7 +71,7 @@ Button {
         anchors.horizontalCenter: parent.horizontalCenter
         Image {
             visible: !!root.iconSource
-            source: root.iconSource
+            source: root.resolvedIconSource()
             width: visible ? 18 : 0
             height: 18
             sourceSize.width: 18

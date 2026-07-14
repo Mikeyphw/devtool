@@ -239,7 +239,8 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
         import devtool.hud as hud_module
         source = Path(hud_module.__file__).read_text(encoding="utf-8")
         self.assertIn("class QtCompactHud", source)
-        self.assertIn('[binary, "--compact-hud"]', source)
+        self.assertIn("_control_center_hud_binary()", source)
+        self.assertIn("argv = [binary]", source)
         self.assertIn('if mode == "desktop-window":\n        return QtCompactHud()', source)
         self.assertIn('if mode == "gtk-window":', source)
 
@@ -316,8 +317,10 @@ class QtControlCenterPackagingTests(unittest.TestCase):
 
         desktop = desktop_file.read_text(encoding="utf-8")
         self.assertIn("[Desktop Entry]", desktop)
-        self.assertIn("Exec=devtool-control-center", desktop)
+        self.assertIn("TryExec=/usr/bin/devtool-control-center", desktop)
+        self.assertIn("Exec=/usr/bin/devtool-control-center", desktop)
         self.assertIn("Icon=io.github.mikeceead.DevtoolControlCenter", desktop)
+        self.assertIn("StartupWMClass=devtool-control-center", desktop)
 
         cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn(desktop_file.name, cmake)
@@ -327,6 +330,9 @@ class QtControlCenterPackagingTests(unittest.TestCase):
         self.assertIn("required_packaging_files", package_script)
         self.assertIn(desktop_file.name, package_script)
         self.assertIn(icon_file.name, package_script)
+        self.assertIn("packaging/debian/postinst", package_script)
+        self.assertIn("gtk-update-icon-cache", (root / "packaging/debian/postinst").read_text(encoding="utf-8"))
+        self.assertTrue((root / "packaging/icons/128x128/io.github.mikeceead.DevtoolControlCenter.png").is_file())
 
     def test_debian_package_does_not_require_apt_devtool_package(self) -> None:
         root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"

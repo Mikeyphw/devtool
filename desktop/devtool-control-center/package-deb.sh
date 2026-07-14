@@ -52,7 +52,12 @@ deb_path="$out/devtool-control-center_${version}_${arch}.deb"
 required_packaging_files=(
   "$root/packaging/io.github.mikeceead.DevtoolControlCenter.desktop"
   "$root/packaging/io.github.mikeceead.DevtoolControlCenter.svg"
+  "$root/packaging/icons/64x64/io.github.mikeceead.DevtoolControlCenter.png"
+  "$root/packaging/icons/128x128/io.github.mikeceead.DevtoolControlCenter.png"
+  "$root/packaging/icons/256x256/io.github.mikeceead.DevtoolControlCenter.png"
   "$root/packaging/debian/control"
+  "$root/packaging/debian/postinst"
+  "$root/packaging/debian/postrm"
 )
 for required_file in "${required_packaging_files[@]}"; do
   [[ -f "$required_file" ]] || { printf 'error: required packaging asset is missing: %s\n' "$required_file" >&2; exit 2; }
@@ -91,6 +96,8 @@ sed \
   -e "s/^Version:.*/Version: $version/" \
   -e "s/^Architecture:.*/Architecture: $arch/" \
   "$control_file" > "$stage/DEBIAN/control"
+install -m 0755 "$root/packaging/debian/postinst" "$stage/DEBIAN/postinst"
+install -m 0755 "$root/packaging/debian/postrm" "$stage/DEBIAN/postrm"
 
 # Normalize the package tree so identical inputs and SOURCE_DATE_EPOCH produce
 # byte-for-byte identical Debian archives.
@@ -107,6 +114,8 @@ if "$verify_package"; then
   contents=$(dpkg-deb --contents "$deb_path")
   [[ "$contents" == *"./usr/bin/devtool-control-center"* ]] || { echo "error: desktop executable missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/bin/devtool-control-center-hud"* ]] || { echo "error: HUD executable missing from package" >&2; exit 1; }
+  [[ "$contents" == *"./usr/share/applications/io.github.mikeceead.DevtoolControlCenter.desktop"* ]] || { echo "error: desktop entry missing from package" >&2; exit 1; }
+  [[ "$contents" == *"./usr/share/icons/hicolor/128x128/apps/io.github.mikeceead.DevtoolControlCenter.png"* ]] || { echo "error: raster icon missing from package" >&2; exit 1; }
   package_version=$(dpkg-deb -f "$deb_path" Version)
   [[ "$package_version" == "$version" ]] || { echo "error: package version mismatch: $package_version" >&2; exit 1; }
   sha256sum -c "$deb_path.sha256"

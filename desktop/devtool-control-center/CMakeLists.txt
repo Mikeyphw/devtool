@@ -153,6 +153,14 @@ install(FILES packaging/io.github.mikeceead.DevtoolControlCenter.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES packaging/io.github.mikeceead.DevtoolControlCenter.svg
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+install(FILES packaging/io.github.mikeceead.DevtoolControlCenter.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps)
+install(FILES packaging/icons/64x64/io.github.mikeceead.DevtoolControlCenter.png
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/64x64/apps)
+install(FILES packaging/icons/128x128/io.github.mikeceead.DevtoolControlCenter.png
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps)
+install(FILES packaging/icons/256x256/io.github.mikeceead.DevtoolControlCenter.png
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
 
 if(DEVTOOL_ENABLE_TESTS)
     enable_testing()

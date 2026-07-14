@@ -56,7 +56,7 @@ class GradleProgressTracker:
     rejected_events: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
-        self.enabled = bool(self.console.is_interactive)
+        self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
         self.expected_run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
 
     def __enter__(self) -> "GradleProgressTracker":

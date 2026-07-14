@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from devtool.models import CommandSpec, ProjectConfig
+from devtool.tasker import TaskerProgressSink
 from devtool.runners import run_specs
 
 
@@ -100,6 +102,40 @@ class RunnersQuietModeTests(unittest.TestCase):
             self.assertIn("Determining projects to restore...", results[0].output)
             self.assertIn("Determining projects to restore...", raw)
             self.assertNotIn("Determining projects to restore...", stream.getvalue())
+
+    def test_generic_progress_uses_command_specific_phase_label(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.generic_progress import GenericProgressTracker
+
+        buffer = StringIO()
+        console = Console(file=buffer, force_terminal=True, width=80)
+        tracker = GenericProgressTracker(["bash", "-lc", "echo"], "/tmp", "clean", console)
+
+        with tracker:
+            tracker.update_from_line("removing stale cache")
+            tracker.finish(0)
+
+        output = buffer.getvalue()
+        self.assertIn("cleaning", output)
+        self.assertIn("removing stale cache", output)
+
+    def test_generic_progress_uses_running_command_for_arbitrary_commands(self) -> None:
+        from io import StringIO
+        from rich.console import Console
+        from devtool.generic_progress import GenericProgressTracker
+
+        buffer = StringIO()
+        console = Console(file=buffer, force_terminal=True, width=80)
+        tracker = GenericProgressTracker(["bash", "-lc", "echo"], "/tmp", "sync", console)
+
+        with tracker:
+            tracker.update_from_line("syncing remote state")
+            tracker.finish(0)
+
+        output = buffer.getvalue()
+        self.assertIn("running command", output)
+        self.assertIn("syncing remote state", output)
 
 
 if __name__ == "__main__":
@@ -223,7 +259,6 @@ class DotnetTestNoBuildFlagTests(unittest.TestCase):
 class RunnersHudLiveProgressTests(unittest.TestCase):
     def test_build_project_outputs_are_forwarded_as_live_scoped_hud_progress(self) -> None:
         import json
-        from devtool.tasker import TaskerProgressSink
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -263,3 +298,30 @@ class RunnersHudLiveProgressTests(unittest.TestCase):
             self.assertTrue(any(event.get("current") == 1 and event.get("total") == 2 for event in progress))
             self.assertTrue(any(event.get("current") == 2 and event.get("total") == 2 for event in progress))
             self.assertTrue(all(event.get("phase", {}).get("workspace") == "s3atelier" for event in progress))
+
+    def test_arbitrary_commands_publish_live_detail_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / "hud"
+            sink = TaskerProgressSink(
+                directory=state_dir,
+                command="build",
+                repo_root=str(root),
+                repo_name="demo",
+                enabled=True,
+                update_interval_s=0,
+            )
+            sink.started()
+            config = ProjectConfig(repo_root=root, kind="command")
+            spec = CommandSpec(
+                "build",
+                ["bash", "-lc", "printf 'generic step 1\\n'; sleep 0.15; printf 'generic step 2\\n'"],
+            )
+
+            results, _ = run_specs(config, [spec], verbose=False, tasker_progress=sink)
+            events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(results[0].returncode, 0)
+        progress = [event for event in events if event.get("event_type") == "progress"]
+        self.assertTrue(any("generic step 1" in event.get("message", "") for event in progress))
+        self.assertTrue(any("generic step 2" in event.get("message", "") for event in progress))

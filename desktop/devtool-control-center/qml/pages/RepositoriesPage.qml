@@ -20,6 +20,7 @@ Item {
         repoHistory = path ? historyModel.forRepository(path) : []
         repoRuns = path ? (hudStore.activeRuns || []).filter(function(run) {
             return String(run.repo_root || "") === String(path)
+                    && String(run.status || "").toLowerCase() === "running"
         }) : []
         gitRepository.repositoryPath = path
     }

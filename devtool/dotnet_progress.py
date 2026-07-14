@@ -89,7 +89,7 @@ class DotnetProgressTracker:
     def __post_init__(self) -> None:
         self.plan = dotnet_progress_plan(self.argv, self.cwd)
         self.total = self.plan.total if self.plan else None
-        self.enabled = bool(self.plan and self.console.is_interactive)
+        self.enabled = bool(self.plan and (self.console.is_terminal or self.console.is_interactive))
 
     def __enter__(self) -> "DotnetProgressTracker":
         if not self.enabled or self.plan is None:
