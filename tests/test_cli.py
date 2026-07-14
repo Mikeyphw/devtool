@@ -42,6 +42,16 @@ def _sample_ai_prompt_options(output_format: str = "markdown") -> AiPromptOption
 
 
 class CliTests(unittest.TestCase):
+
+    def test_parser_accepts_shared_execution_environment(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--execution-environment", "native-termux", "status"])
+        self.assertEqual(args.execution_environment, "native-termux")
+
+    def test_execution_environment_is_mutually_exclusive_with_legacy_chroot_flag(self) -> None:
+        parser = build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--execution-environment", "chroot", "--chroot", "androidos", "status"])
     def test_parser_accepts_alias(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["v"])

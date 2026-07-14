@@ -11,4 +11,39 @@
         <item name="android:colorAccent">@color/devtool_green</item>
         <item name="android:windowNoTitle">true</item>
     </style>
+
+    <style name="TextAppearance.Devtool.PageTitle" parent="android:style/TextAppearance.Material.Headline">
+        <item name="android:textSize">28sp</item><item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+    <style name="TextAppearance.Devtool.CardTitle" parent="android:style/TextAppearance.Material.Title">
+        <item name="android:textSize">16sp</item><item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+    <style name="TextAppearance.Devtool.Body" parent="android:style/TextAppearance.Material.Body1">
+        <item name="android:textSize">14sp</item><item name="android:fontFamily">sans-serif</item>
+    </style>
+    <style name="TextAppearance.Devtool.BodySmall" parent="android:style/TextAppearance.Material.Body1">
+        <item name="android:textSize">13sp</item><item name="android:fontFamily">sans-serif</item>
+    </style>
+    <style name="TextAppearance.Devtool.Label" parent="android:style/TextAppearance.Material.Caption">
+        <item name="android:textSize">12sp</item><item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+    <style name="TextAppearance.Devtool.Caption" parent="android:style/TextAppearance.Material.Caption">
+        <item name="android:textSize">11sp</item><item name="android:fontFamily">sans-serif</item>
+    </style>
+
+    <style name="TextAppearance.Devtool.Notification.Title" parent="android:style/TextAppearance.Material.Title">
+        <item name="android:textSize">14sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/notification_text</item>
+    </style>
+    <style name="TextAppearance.Devtool.Notification.Workspace" parent="android:style/TextAppearance.Material.Body1">
+        <item name="android:textSize">12sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/notification_text</item>
+    </style>
+    <style name="TextAppearance.Devtool.Notification.Detail" parent="android:style/TextAppearance.Material.Body1">
+        <item name="android:textSize">11sp</item><item name="android:fontFamily">sans-serif</item><item name="android:textColor">@color/notification_muted</item>
+    </style>
+    <style name="TextAppearance.Devtool.Notification.Badge" parent="android:style/TextAppearance.Material.Caption">
+        <item name="android:textSize">10sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/notification_running</item>
+    </style>
+    <style name="TextAppearance.Devtool.Notification.Action" parent="android:style/TextAppearance.Material.Button">
+        <item name="android:textSize">12sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/notification_running</item><item name="android:textAllCaps">false</item>
+    </style>
 </resources>

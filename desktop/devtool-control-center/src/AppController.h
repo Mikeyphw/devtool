@@ -22,6 +22,7 @@ class AppController final : public QObject {
     Q_PROPERTY(QString preferredTerminal READ preferredTerminal CONSTANT)
     Q_PROPERTY(QString dotnetExecutable READ dotnetExecutable CONSTANT)
     Q_PROPERTY(bool autoCloseTerminal READ autoCloseTerminal WRITE setAutoCloseTerminal NOTIFY autoCloseTerminalChanged)
+    Q_PROPERTY(double typographyScale READ typographyScale WRITE setTypographyScale NOTIFY typographyScaleChanged)
     Q_PROPERTY(QString launchStatus READ launchStatus NOTIFY launchStatusChanged)
     Q_PROPERTY(QString devtoolExecutable READ devtoolExecutable WRITE setDevtoolExecutable NOTIFY devtoolExecutableChanged)
     Q_PROPERTY(bool devtoolAvailable READ devtoolAvailable NOTIFY devtoolExecutableChanged)
@@ -46,6 +47,7 @@ public:
     QString preferredTerminal() const;
     QString dotnetExecutable() const;
     bool autoCloseTerminal() const { return m_autoCloseTerminal; }
+    double typographyScale() const { return m_typographyScale; }
     QString launchStatus() const { return m_launchStatus; }
     QString devtoolExecutable() const { return m_devtool; }
     bool trayAvailable() const { return m_tray != nullptr; }
@@ -66,17 +68,28 @@ public:
     void setArtifact(const QString &);
     void setDevtoolExecutable(const QString &);
     void setAutoCloseTerminal(bool value);
+    void setTypographyScale(double value);
 
+    Q_INVOKABLE QString buildWorkflowCommand(
+        const QString &operation, const QString &target, const QString &projectType,
+        const QString &executionEnvironment, const QString &testProfile,
+        const QString &selectors, const QString &tags, const QString &excludeTags,
+        const QString &testPath, const QString &testClass, const QString &testMethod,
+        bool listTests, bool instrumented, bool validate, bool commit,
+        const QString &commitMessage, bool keepArtifact, bool noManifestCheck,
+        const QString &copyMode, bool autoHud, const QString &hudMode) const;
     Q_INVOKABLE void runWorkflow(
-        const QString &operation,
-        const QString &target,
-        bool validate,
-        bool commit,
-        const QString &commitMessage,
-        bool keepArtifact,
-        const QString &copyMode,
-        bool autoHud,
-        const QString &hudMode);
+        const QString &operation, const QString &target, const QString &projectType,
+        const QString &executionEnvironment, const QString &testProfile,
+        const QString &selectors, const QString &tags, const QString &excludeTags,
+        const QString &testPath, const QString &testClass, const QString &testMethod,
+        bool listTests, bool instrumented, bool validate, bool commit,
+        const QString &commitMessage, bool keepArtifact, bool noManifestCheck,
+        const QString &copyMode, bool autoHud, const QString &hudMode);
+    Q_INVOKABLE QVariantMap discoverTests(
+        const QString &repository, const QString &target, const QString &projectType,
+        const QString &testProfile, const QString &query = QString()) const;
+    Q_INVOKABLE void runHistoricalCommand(const QString &command, const QString &repository);
     Q_INVOKABLE void showMainWindow() { emit requestMainWindow(); }
     Q_INVOKABLE void copyText(const QString &);
     Q_INVOKABLE void openPath(const QString &);
@@ -116,6 +129,7 @@ signals:
     void clipboardMonitorStatusChanged();
     void standbyChanged(bool standby);
     void autoCloseTerminalChanged();
+    void typographyScaleChanged();
     void launchStatusChanged();
 
 private:
@@ -146,5 +160,7 @@ private:
     QString m_clipboardMonitorStatus = QStringLiteral("Not installed");
     bool m_standby = false;
     bool m_autoCloseTerminal = false;
+    double m_typographyScale = 1.0;
+    double m_baseFontPointSize = 11.0;
     QString m_launchStatus;
 };

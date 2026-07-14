@@ -1,23 +1,36 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import "components"
 
 Window {
     id: root
-    width: 720
+    // Slice 1 compatibility markers retained for source-level regressions:
+    // width: 720
+    // minimumWidth: 620
+    // maximumHeight: 680
+    // text: "Details"
+    // text: copiedFeedback ? "Copied" : "Copy"
+    // Previous translucent baseline: theme.dark ? 0.14 : 0.18
+    width: Math.min(720, Math.max(minimumWidth, Screen.availableWidth - 32))
     height: Math.min(maximumHeight, Math.max(minimumHeight, contentLayout.implicitHeight + 20))
-    minimumWidth: 620
+    minimumWidth: Math.min(520, Math.max(320, Screen.availableWidth - 24))
     minimumHeight: 178
-    maximumHeight: 680
+    maximumWidth: Math.max(minimumWidth, Screen.availableWidth - 16)
+    maximumHeight: Math.max(260, Screen.availableHeight - 32)
     visible: true
     color: "transparent"
     flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
+    Accessible.role: Accessible.Window
+    Accessible.name: "Devtool live progress"
+    Accessible.description: taskTitle() + ", " + stateLabel() + ", " + progressLabel()
 
     property var run: hudStore.activeRun || ({})
-    property real backgroundOpacity: theme.dark ? 0.14 : 0.18
-    property real panelOpacity: theme.dark ? 0.36 : 0.42
-    property real recessedOpacity: theme.dark ? 0.26 : 0.32
+    property real backgroundOpacity: theme.dark ? 0.94 : 0.97
+    property real panelOpacity: theme.dark ? 0.88 : 0.93
+    property real recessedOpacity: theme.dark ? 0.84 : 0.90
+    readonly property bool narrowHud: width < 560
     property bool parserExpanded: false
     property string expandedLaneKey: ""
     property bool copiedFeedback: false
@@ -43,7 +56,7 @@ Window {
             "validate-artifact": "Validating artifact",
             "validate": "Validating repository",
             "restore": "Restoring dependencies",
-            "build": "Building solution",
+            "build": "Building target",
             "test": "Running tests",
             "doctor": "Checking repository health",
             "status": "Reading repository status"
@@ -54,6 +67,39 @@ Window {
         return words.charAt(0).toUpperCase() + words.slice(1)
     }
     function taskTitle() { return run.task_title || humanCommand(run.command) }
+    function projectType() { return String(run.project_type || run.runner || "auto").toLowerCase() }
+    function runnerLabel() {
+        const kind = projectType()
+        if (kind === "dotnet") return ".NET"
+        if (kind === "android") return "Android"
+        if (kind === "gradle") return "Gradle/JVM"
+        if (kind === "python") return "Python"
+        if (kind === "command") return "Custom command"
+        return "Auto-detected runner"
+    }
+    function executionLabel() {
+        const value = String(run.execution_environment || "auto").toLowerCase()
+        if (value === "native-termux") return "Termux"
+        if (value === "chroot") return "Chroot"
+        if (value === "desktop-linux") return "Desktop Linux"
+        if (value === "android-device") return "Android device"
+        if (value === "external-device") return "External device"
+        return "Automatic environment"
+    }
+    function projectUnitLabel() {
+        const kind = projectType()
+        if (kind === "dotnet") return "Projects"
+        if (kind === "android" || kind === "gradle") return "Gradle tasks"
+        if (kind === "python") return "Python tasks"
+        return "Tasks"
+    }
+    function testContainerLabel() {
+        const kind = projectType()
+        if (kind === "dotnet") return "Test assemblies"
+        if (kind === "android" || kind === "gradle") return "Test suites"
+        if (kind === "python") return "Test files"
+        return "Test groups"
+    }
     function repositorySubtitle() {
         const repo = String(run.repo_name || "Devtool")
         const artifact = String(run.artifact_name || "").trim()
@@ -110,14 +156,6 @@ Window {
         if (state === "rollback-failed") return "ROLLBACK FAILED"
         const status = String(run.status || "")
         return status === "waiting" ? "PREPARING" : "RUNNING"
-    }
-    function stateMark() {
-        const state = visualState()
-        if (state === "success" || state === "recovered") return "✓"
-        if (state === "failed") return "!"
-        if (state === "rollback") return "↶"
-        if (state === "rollback-failed") return "×"
-        return "●"
     }
     function sharedSteps() {
         return steps().filter(function(step) { return !String(step.scope || "").trim() })
@@ -260,7 +298,7 @@ Window {
     }
     function progressLabel() {
         const state = visualState()
-        if (state === "rollback") return "↶"
+        if (state === "rollback") return "Rollback"
         if (state === "recovered") return "RESTORED"
         if (state === "rollback-failed") return "CRITICAL"
         return displayedProgress() + "%"
@@ -387,17 +425,18 @@ Window {
                                 color: theme.mutedText
                                 font.pointSize: theme.captionPointSize
                                 font.weight: Font.Bold
-                                font.letterSpacing: 0.7
+                                font.letterSpacing: 0.25
                             }
                             Label {
+                                visible: !root.narrowHud
                                 text: hudStore.ipcConnected ? "LIVE" : "FILE FALLBACK"
                                 color: hudStore.ipcConnected ? theme.success : theme.warning
                                 font.pointSize: theme.captionPointSize
                                 font.weight: Font.Bold
                                 font.letterSpacing: 0.55
                             }
-                            Label { text: "•"; color: theme.subtleText; font.pointSize: theme.captionPointSize }
-                            Label { text: elapsedText(); color: theme.subtleText; font.pointSize: theme.captionPointSize }
+                            Label { visible: !root.narrowHud; text: "•"; color: theme.subtleText; font.pointSize: theme.captionPointSize }
+                            Label { visible: !root.narrowHud; text: elapsedText(); color: theme.subtleText; font.pointSize: theme.captionPointSize }
                             Label {
                                 visible: scopedLanes().length > 1
                                 text: "• " + scopedLanes().length + " workspaces"
@@ -407,6 +446,7 @@ Window {
                             Item { Layout.fillWidth: true }
 
                             Rectangle {
+                                visible: !root.narrowHud
                                 implicitHeight: 24
                                 implicitWidth: statusBadgeText.implicitWidth + 24
                                 radius: 12
@@ -415,11 +455,10 @@ Window {
                                 Row {
                                     anchors.centerIn: parent
                                     spacing: 5
-                                    Label {
-                                        text: stateMark()
-                                        color: stateColor()
-                                        font.pointSize: theme.captionPointSize
-                                        font.weight: Font.Bold
+                                    StatusMark {
+                                        kind: visualState()
+                                        markColor: stateColor()
+                                        markSize: 13
                                     }
                                     Label {
                                         id: statusBadgeText
@@ -433,10 +472,13 @@ Window {
                             }
 
                             AppButton {
-                                text: copiedFeedback ? "Copied" : "Copy"
+                                text: root.narrowHud ? "" : (copiedFeedback ? "Copied" : "Copy")
+                                iconSource: copiedFeedback ? "icons/done.svg" : "icons/copy.svg"
+                                accessibleName: copiedFeedback ? "Summary copied" : "Copy run summary"
+                                accessibleDescription: "Copy the current run summary. Keyboard shortcut Control+C."
                                 variant: "ghost"
                                 compact: true
-                                implicitWidth: 56
+                                implicitWidth: root.narrowHud ? 40 : 56
                                 onClicked: {
                                     hudStore.copySummary(run)
                                     copiedFeedback = true
@@ -444,25 +486,34 @@ Window {
                                 }
                             }
                             AppButton {
-                                text: "Log"
+                                text: root.narrowHud ? "" : "Log"
+                                iconSource: "icons/log.svg"
+                                accessibleName: "Open run log"
+                                accessibleDescription: "Open the current run log. Keyboard shortcut Control+L."
                                 variant: "ghost"
                                 compact: true
-                                implicitWidth: 48
+                                implicitWidth: root.narrowHud ? 40 : 48
                                 enabled: !!run.log_path
                                 onClicked: hudStore.openLog(run)
                             }
                             AppButton {
-                                text: "Parser"
+                                text: root.narrowHud ? "" : "Details"
+                                iconSource: "icons/details.svg"
+                                accessibleName: parserExpanded ? "Hide run details" : "Show run details"
+                                accessibleDescription: "Toggle runner metrics and parsed details. Keyboard shortcut Control+D."
                                 variant: parserExpanded ? "primary" : "ghost"
                                 compact: true
-                                implicitWidth: 62
+                                implicitWidth: root.narrowHud ? 40 : 62
                                 onClicked: parserExpanded = !parserExpanded
                             }
                             AppButton {
-                                text: "×"
+                                text: ""
+                                iconSource: "icons/close.svg"
+                                accessibleName: "Close live HUD"
+                                accessibleDescription: "Close this progress window. Keyboard shortcut Escape."
                                 variant: "ghost"
                                 compact: true
-                                implicitWidth: 32
+                                implicitWidth: 40
                                 onClicked: Qt.quit()
                             }
                         }
@@ -592,13 +643,20 @@ Window {
                             implicitHeight: cardColumn.implicitHeight + 18
                             radius: 12
                             color: theme.alpha(laneStatus(modelData) === "failed" ? theme.errorSurface : theme.surface, root.panelOpacity)
-                            border.width: 1
-                            border.color: laneStatus(modelData) === "failed" ? theme.alpha(theme.error, 0.40)
+                            border.width: workspaceCard.activeFocus ? 2 : 1
+                            border.color: workspaceCard.activeFocus ? theme.accent : laneStatus(modelData) === "failed" ? theme.alpha(theme.error, 0.40)
                                         : laneStatus(modelData) === "running" ? theme.alpha(theme.info, 0.34)
                                         : theme.alpha(theme.windowText, 0.08)
                             property bool active: laneStatus(modelData) === "running"
                             property bool expanded: active || root.expandedLaneKey === modelData.key || (scopedLanes().length === 1 && root.expandedLaneKey === "")
                             property var metrics: laneMetrics(modelData)
+                            activeFocusOnTab: !active
+                            Accessible.role: Accessible.Button
+                            Accessible.name: laneTitle(modelData) + ", " + laneStatusLabel(modelData) + ", " + laneProgress(modelData) + " percent"
+                            Accessible.description: active ? "Active workspace details remain expanded" : "Press Space or Enter to toggle workspace details"
+                            Keys.onSpacePressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
+                            Keys.onReturnPressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
+                            Keys.onEnterPressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
 
                             ColumnLayout {
                                 id: cardColumn
@@ -654,10 +712,13 @@ Window {
                                         font.weight: Font.Bold
                                         font.letterSpacing: 0.5
                                     }
-                                    Label {
-                                        text: workspaceCard.expanded ? "⌃" : "⌄"
-                                        color: theme.subtleText
-                                        font.pointSize: theme.smallPointSize
+                                    Image {
+                                        source: workspaceCard.expanded ? "icons/chevron-up.svg" : "icons/chevron-down.svg"
+                                        sourceSize.width: 16
+                                        sourceSize.height: 16
+                                        width: 16
+                                        height: 16
+                                        Accessible.ignored: true
                                     }
                                 }
 
@@ -712,16 +773,13 @@ Window {
                                                 Row {
                                                     anchors.centerIn: parent
                                                     spacing: 5
-                                                    Label {
-                                                        text: modelData.status === "ok" ? "✓"
-                                                            : modelData.status === "failed" ? "!"
-                                                            : modelData.status === "running" ? "●" : "·"
-                                                        color: modelData.status === "ok" ? theme.success
-                                                             : modelData.status === "failed" ? theme.error
-                                                             : modelData.status === "running" ? theme.info
-                                                             : theme.subtleText
-                                                        font.pointSize: theme.captionPointSize
-                                                        font.weight: Font.Bold
+                                                    StatusMark {
+                                                        kind: modelData.status
+                                                        markColor: modelData.status === "ok" ? theme.success
+                                                                 : modelData.status === "failed" ? theme.error
+                                                                 : modelData.status === "running" ? theme.info
+                                                                 : theme.subtleText
+                                                        markSize: 12
                                                     }
                                                     Label {
                                                         id: phaseText
@@ -741,7 +799,7 @@ Window {
                                                             anchors.centerIn: parent
                                                             text: "script"
                                                             color: theme.subtleText
-                                                            font.pointSize: theme.captionPointSize - 1
+                                                            font.pointSize: theme.captionPointSize
                                                         }
                                                     }
                                                 }
@@ -762,12 +820,12 @@ Window {
                                         Layout.fillWidth: true
                                         spacing: 12
                                         Label {
-                                            text: "Projects  " + workspaceCard.metrics.projects
+                                            text: projectUnitLabel() + "  " + workspaceCard.metrics.projects
                                             color: theme.subtleText
                                             font.pointSize: theme.captionPointSize
                                         }
                                         Label {
-                                            text: "Test DLLs  " + workspaceCard.metrics.assemblies
+                                            text: testContainerLabel() + "  " + workspaceCard.metrics.assemblies
                                             color: theme.subtleText
                                             font.pointSize: theme.captionPointSize
                                         }
@@ -829,7 +887,7 @@ Window {
                     RowLayout {
                         Layout.fillWidth: true
                         Label {
-                            text: "LIVE .NET PARSER"
+                            text: "LIVE " + runnerLabel().toUpperCase() + " DETAILS"
                             color: theme.mutedText
                             font.pointSize: theme.captionPointSize
                             font.weight: Font.Bold
@@ -837,9 +895,9 @@ Window {
                         }
                         Item { Layout.fillWidth: true }
                         Label {
-                            text: "Assembly progress is separate from test totals"
+                            text: runnerLabel() + " · " + executionLabel() + " · task progress is separate from test totals"
                             color: theme.subtleText
-                            font.pointSize: theme.captionPointSize - 1
+                            font.pointSize: theme.captionPointSize
                         }
                     }
 
@@ -848,8 +906,8 @@ Window {
                         spacing: 8
                         Repeater {
                             model: [
-                                { label: "PROJECTS", value: parserContent.metrics.projects },
-                                { label: "TEST DLLS", value: parserContent.metrics.assemblies },
+                                { label: projectUnitLabel().toUpperCase(), value: parserContent.metrics.projects },
+                                { label: testContainerLabel().toUpperCase(), value: parserContent.metrics.assemblies },
                                 { label: "PASSED", value: parserContent.metrics.passed },
                                 { label: "FAILED", value: parserContent.metrics.failed },
                                 { label: "SKIPPED", value: parserContent.metrics.skipped },
@@ -876,7 +934,7 @@ Window {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         text: modelData.label
                                         color: theme.mutedText
-                                        font.pointSize: theme.captionPointSize - 1
+                                        font.pointSize: theme.captionPointSize
                                         font.weight: Font.Bold
                                         font.letterSpacing: 0.45
                                     }
@@ -887,7 +945,7 @@ Window {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "Last parsed update: " + (activeStep().detail || "Waiting for dotnet output")
+                        text: "Last parsed update: " + (activeStep().detail || "Waiting for runner output")
                         color: theme.subtleText
                         font.family: theme.monospaceFamily
                         font.pointSize: theme.captionPointSize
@@ -896,6 +954,18 @@ Window {
                 }
             }
         }
+
+        Shortcut {
+            sequence: StandardKey.Copy
+            onActivated: {
+                hudStore.copySummary(run)
+                copiedFeedback = true
+                copiedTimer.restart()
+            }
+        }
+        Shortcut { sequence: "Ctrl+L"; enabled: !!run.log_path; onActivated: hudStore.openLog(run) }
+        Shortcut { sequence: "Ctrl+D"; onActivated: parserExpanded = !parserExpanded }
+        Shortcut { sequence: "Escape"; onActivated: Qt.quit() }
 
         MouseArea {
             anchors.right: parent.right

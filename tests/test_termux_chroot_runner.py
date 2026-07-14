@@ -19,7 +19,10 @@ class ChrootExecutionWrapperTests(unittest.TestCase):
         self.assertEqual(wrapped[0].argv[:6], ["sudo", "chrootctl", "--name", "androidos", "exec", "--"])
         self.assertEqual(wrapped[0].argv[6], "zsh")
         self.assertEqual(wrapped[0].argv[7], "-lc")
-        self.assertEqual(wrapped[0].argv[8], "dotnet build Demo.sln '/p:DefineConstants=A B'")
+        self.assertEqual(
+            wrapped[0].argv[8],
+            "exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos dotnet build Demo.sln '/p:DefineConstants=A B'",
+        )
         self.assertEqual(wrapped[0].metadata["execution_mode"], "chroot")
         self.assertEqual(wrapped[0].metadata["chroot"], "androidos")
         self.assertEqual(wrapped[0].metadata["progress_argv"], spec.argv)
@@ -162,7 +165,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         )
         outer = build_runner_command(config, forwarded)
         self.assertEqual(outer[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
-        self.assertEqual(outer[8], "cd /home/mike/Code/demo && exec env DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos ~/.local/bin/devtool validate --skip-test")
+        self.assertEqual(outer[8], "cd /home/mike/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos ~/.local/bin/devtool validate --skip-test")
         self.assertEqual(build_inner_command(config, forwarded), outer[8])
 
     def test_plain_log_path_drops_ansi_suffix(self) -> None:
@@ -173,7 +176,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike"}
         config, forwarded = translate_devtool_args(["validate"], env=env, cwd="/data/data/com.termux/files/home/Code/demo")
         inner = build_inner_command(config, forwarded)
-        self.assertIn("exec env DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
+        self.assertIn("exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
         self.assertNotIn("exec DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
 
 
@@ -204,7 +207,10 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             env=env,
         )
         self.assertEqual(wrapped[0].argv[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
-        self.assertEqual(wrapped[0].argv[8], "cd /home/termux/Code/demo && dotnet build /home/termux/Code/demo/Demo.sln")
+        self.assertEqual(
+            wrapped[0].argv[8],
+            "cd /home/termux/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos dotnet build /home/termux/Code/demo/Demo.sln",
+        )
         self.assertEqual(wrapped[0].metadata["execution_mode"], "termux-host-chroot")
         self.assertEqual(wrapped[0].metadata["chroot_cwd"], "/home/termux/Code/demo")
         self.assertEqual(wrapped[0].metadata["progress_argv"], spec.argv)
@@ -232,6 +238,8 @@ class TermuxChrootRunnerTests(unittest.TestCase):
                 results, _raw = run_specs(config, wrapped, verbose=False)
 
             self.assertEqual(results[0].returncode, 0)
+            self.assertEqual(results[0].metadata["execution_mode"], "termux-host-chroot")
+            self.assertEqual(results[0].metadata["chroot"], "androidos")
             plan.assert_called_once_with(original.argv, str(repo))
             kwargs = run_live.call_args.kwargs
             self.assertEqual(kwargs["progress_argv"], original.argv)

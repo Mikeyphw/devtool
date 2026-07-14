@@ -13,6 +13,12 @@ Rectangle {
     border.color: run.run_id === hudStore.selectedRunId ? theme.accent : theme.border
     border.width: 1
     implicitHeight: body.implicitHeight + 32
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Grouping
+    Accessible.name: (run.title || run.command || "Devtool run") + ", " + String(run.status || "idle")
+    Accessible.description: (run.repo_name || "Repository") + (run.target_summary ? ", " + run.target_summary : "") + ". " + (run.message || "Waiting for progress")
+    Keys.onReturnPressed: { hudStore.selectedRunId = run.run_id; root.expandRequested() }
+    Keys.onEnterPressed: { hudStore.selectedRunId = run.run_id; root.expandRequested() }
 
     ColumnLayout {
         id: body
@@ -46,7 +52,7 @@ Rectangle {
                 font.weight: Font.DemiBold
                 font.pointSize: theme.smallPointSize
             }
-            AppButton { text: "Details"; variant: "ghost"; compact: true; onClicked: { hudStore.selectedRunId = run.run_id; root.expandRequested() } }
+            AppButton { text: "Details"; accessibleDescription: "Open this run in Diagnostics"; variant: "ghost"; compact: true; onClicked: { hudStore.selectedRunId = run.run_id; root.expandRequested() } }
         }
         PipelineView { Layout.fillWidth: true; steps: run.steps || [] }
         RowLayout {

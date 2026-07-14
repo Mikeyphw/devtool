@@ -2,6 +2,16 @@ plugins {
     id 'com.android.application'
 }
 
+def releaseValue = { String name ->
+    providers.gradleProperty(name).orElse(providers.environmentVariable(name)).orNull
+}
+def releaseStoreFile = releaseValue('DEVTOOL_RELEASE_STORE_FILE')
+def releaseStorePassword = releaseValue('DEVTOOL_RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = releaseValue('DEVTOOL_RELEASE_KEY_ALIAS')
+def releaseKeyPassword = releaseValue('DEVTOOL_RELEASE_KEY_PASSWORD')
+def releaseSigningReady = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
+        .every { it != null && !it.trim().isEmpty() }
+
 android {
     namespace 'io.github.mikeceead.devtoolhud'
     compileSdk 36
@@ -11,10 +21,26 @@ android {
         applicationId 'io.github.mikeceead.devtoolhud'
         minSdk 26
         targetSdk 36
-        versionCode 14
-        versionName '1.5.7'
+        versionCode 20
+        versionName '1.7.2'
 
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
+        testInstrumentationRunnerArguments clearPackageData: 'true'
+    }
+
+    signingConfigs {
+        if (releaseSigningReady) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+                enableV1Signing true
+                enableV2Signing true
+                enableV3Signing true
+                enableV4Signing true
+            }
+        }
     }
 
     buildFeatures {
@@ -27,16 +53,74 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
         release {
+            debuggable false
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (releaseSigningReady) signingConfig signingConfigs.release
         }
+    }
+
+    testOptions {
+        animationsDisabled true
+        unitTests.returnDefaultValues = true
     }
 
     lint {
         abortOnError true
+        checkReleaseBuilds true
         warningsAsErrors false
+        htmlOutput file("${layout.buildDirectory.get()}/reports/lint/lint.html")
+        sarifOutput file("${layout.buildDirectory.get()}/reports/lint/lint.sarif")
+    }
+
+    packaging {
+        resources.excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*']
+    }
+}
+
+tasks.register('verifyReleaseSigning') {
+    group = 'verification'
+    description = 'Reject release builds unless all Devtool signing values are supplied.'
+    doLast {
+        if (!releaseSigningReady) {
+            throw new GradleException('Release signing is required. Set DEVTOOL_RELEASE_STORE_FILE, DEVTOOL_RELEASE_STORE_PASSWORD, DEVTOOL_RELEASE_KEY_ALIAS, and DEVTOOL_RELEASE_KEY_PASSWORD.')
+        }
+        if (!file(releaseStoreFile).isFile()) {
+            throw new GradleException("Release keystore does not exist: ${releaseStoreFile}")
+        }
+    }
+}
+
+tasks.matching { it.name == 'preReleaseBuild' }.configureEach {
+    dependsOn tasks.named('verifyReleaseSigning')
+}
+
+tasks.register('verifyReleaseApk') {
+    group = 'verification'
+    description = 'Build and verify the signed release APK with apksigner.'
+    dependsOn 'assembleRelease'
+    doLast {
+        def apk = file("${layout.buildDirectory.get()}/outputs/apk/release/app-release.apk")
+        if (!apk.isFile() || apk.length() == 0L) {
+            throw new GradleException("Release APK was not produced: ${apk}")
+        }
+        def sdkRoot = System.getenv('ANDROID_SDK_ROOT') ?: System.getenv('ANDROID_HOME')
+        if (sdkRoot == null || sdkRoot.trim().isEmpty()) {
+            throw new GradleException('ANDROID_SDK_ROOT or ANDROID_HOME is required to verify the release APK.')
+        }
+        def apksigner = file("${sdkRoot}/build-tools/36.0.0/apksigner")
+        if (!apksigner.canExecute()) {
+            throw new GradleException("apksigner is unavailable: ${apksigner}")
+        }
+        exec {
+            commandLine apksigner.absolutePath, 'verify', '--verbose', '--print-certs', apk.absolutePath
+        }
     }
 }
 

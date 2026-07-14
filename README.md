@@ -2,6 +2,94 @@
 
 Devtool applies project overlays, validates builds and tests, records transactions, produces handoff summaries, and can publish one live run to the desktop HUD or the Android Devtool Frontend.
 
+
+## Devtool 1.1.0: native release qualification
+
+Slice 5 adds executable release gates for every distributable. The canonical
+version contract lives in `release/versions.json`; drift between Python, Qt,
+Android, Debian, and manual-page metadata fails qualification.
+
+The Qt 6 Control Center now has CTest version and offscreen QML launch tests,
+and its Debian package is timestamp-normalized, checksummed, and payload-
+verified. Android release builds require an explicit keystore, run local JVM
+and connected smoke tests, and are verified with `apksigner`. Deterministic
+source archives can be rebuilt and compared byte for byte.
+
+Run the portable gate with `python3 tools/release-qualify.py --core-only`, or
+use `tools/make-release-candidate.sh` on a machine with the native toolchains.
+The GitHub Actions matrix independently validates Python 3.11–3.13, Qt 6,
+Android lint/unit/release, emulator instrumentation, and final packaging.
+
+See [`docs/RELEASE_QUALIFICATION.md`](docs/RELEASE_QUALIFICATION.md),
+[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md), and
+[`docs/MIGRATION_1.1.md`](docs/MIGRATION_1.1.md).
+
+## Devtool 0.15.0: verified Android artifacts, device tests, selective tests, and Python pipelines
+
+Android and Gradle builds now verify newly produced APK, AAB, AAR, and JVM
+artifacts after the build. Verification includes archive integrity, required
+members, SHA-256, variant/module metadata, APK badging and signatures when the
+Android SDK tools are available, and rejection of empty, stale, corrupt, or
+explicitly unsigned release outputs.
+
+Rooted Termux installations can run Android instrumentation tests on the
+physical device:
+
+```bash
+devtool -r "$HOME/Code/android-app" test --instrumented
+devtool -r "$HOME/Code/android-app" test --instrumented --class demo.UiTest
+devtool -r "$HOME/Code/android-app" test --instrumented --method demo.UiTest.opensEditor
+```
+
+The runner builds the app and androidTest APKs, installs both through `pm` (or
+ADB for an external serial), resolves AndroidJUnitRunner, emits structured test
+results, and removes the temporary test package unless configured otherwise.
+
+Test selection is now shared by .NET, Gradle, Android instrumentation, and
+Python:
+
+```bash
+devtool test --list-tests
+devtool test --profile quick
+devtool test --select parser --exclude-tag slow
+devtool test --failed
+devtool test --changed --changed-from origin/main
+```
+
+Python projects now receive manager-aware restore, test, lint, PEP 517 build,
+package verification, clean-install smoke testing, and optional import smoke
+testing. Existing uv, Poetry, PDM, Pipenv, and Hatch metadata is respected.
+
+See [`docs/ANDROID_PROJECTS.md`](docs/ANDROID_PROJECTS.md),
+[`docs/TEST_SELECTION.md`](docs/TEST_SELECTION.md), and
+[`docs/PYTHON_PROJECTS.md`](docs/PYTHON_PROJECTS.md).
+
+## Devtool 0.6.0: runner and execution foundations
+
+Devtool now separates project command planning from execution-environment
+selection. The current .NET, Python, and custom-command runners can execute in
+the current Linux environment, native Termux, or a configured chroot. Use:
+
+```bash
+devtool --execution-environment native-termux -r /path/to/repo validate
+devtool --chroot androidos -r /path/to/repo validate
+```
+
+Configuration can set the default independently of project type:
+
+```toml
+[execution]
+environment = "auto"
+chroot_name = "androidos"
+```
+
+`.NET` validation reuses prior phases rather than performing redundant work:
+`restore`, `build --no-restore`, then `test --no-build`. Recognizable explicit
+`dotnet build` and `dotnet test` commands receive the same validation-only
+optimization, while arbitrary wrapper scripts are left unchanged. See
+[`docs/PROJECT_RUNNERS.md`](docs/PROJECT_RUNNERS.md) and
+[`docs/EXECUTION_ENVIRONMENTS.md`](docs/EXECUTION_ENVIRONMENTS.md).
+
 ## Termux chroot repository paths
 
 When a repository exists only inside a chroot, devtool now detects that the path is not visible to the Termux host and delegates the full process automatically. Repositories mirrored from Termux home are also probed so mounts under `/home/mike`, `/home/termux`, or another chroot home resolve without manual path-map flags. The Android frontend always launches chroot workflows from a Termux-visible work directory.
@@ -224,7 +312,7 @@ Replace older commands as follows:
 
 ## Qt 6 Control Center
 
-Phase 1 of the native Linux frontend lives in `desktop/devtool-control-center`. It provides Overview, Run, History, Settings, tray integration, and a detachable compact HUD.
+The native Linux frontend lives in `desktop/devtool-control-center`. It provides Overview, Run, History, Settings, tray integration, and a detachable compact HUD.
 
 ```bash
 cd desktop/devtool-control-center
@@ -249,9 +337,9 @@ DEVTOOL_IPC_SOCKET=/path/to.sock devtool ...
 The broker supports multiple repositories, producers, and Control Center clients. State files remain available as a reconnect and compatibility fallback. Cancellation from the Control Center is delivered to the matching run and causes the active command process group to terminate transactionally.
 
 
-## Devtool Control Center Phase 3
+## Devtool Control Center native operation
 
-The Qt application now uses the native IPC broker for normal live operation, reconnect snapshots, concurrent repositories, and per-run cancellation. File-state monitoring remains available when the broker is unavailable.
+The Qt application uses the native IPC broker for normal live operation, reconnect snapshots, concurrent repositories, and per-run cancellation. File-state monitoring remains available when the broker is unavailable.
 
 
 ### Qt Control Center packaging safety
@@ -261,3 +349,51 @@ The Qt Control Center 0.3.2 builds outside the source tree by default and uses a
 ## Qt Control Center clipboard monitor
 
 The Linux Control Center can install an optional per-user clipboard monitoring service from **Settings → Clipboard monitoring**. It recognizes local devtool artifact archives and copied `devtool` commands, ignores unrelated clipboard data, and never runs detected content automatically. The service can be enabled, disabled, reinstalled, or removed from the UI.
+
+
+## Project runner architecture
+
+Project command planning is now runner-based. See [`docs/PROJECT_RUNNERS.md`](docs/PROJECT_RUNNERS.md) for the .NET, Python, and custom-command runner contract and capability model.
+
+
+## Native frontend workflow Slice 2
+
+The Qt Control Center and Android frontend now use the same four-stage Run flow:
+**Project → Operation → Tests → Review**. Navigation and execution actions stay
+fixed at the bottom of the screen, so large test catalogs and advanced options
+do not push the Run button off-screen.
+
+The desktop frontend covers apply overlay, apply bundle, validate, restore,
+build, test, lint, run, package, clean, inspect, commit, status, and doctor. Its
+Tests stage discovers the real catalog with `devtool test --list-tests`, supports
+search and exact selection, and keeps manual profile/filter controls available.
+Apply workflows expose an explicitly warned advanced `--no-manifest-check`
+override.
+
+History is searchable and filterable. Stored commands can be copied or rerun;
+desktop entries can open their log and artifact paths, while Android entries can
+be inspected or removed individually. Clearing all saved history and launching
+state-changing operations require confirmation.
+
+## Native frontend accessibility and responsiveness — Slice 3
+
+The Qt Control Center now exposes semantic accessible roles/names, visible focus
+states, tooltips, full keyboard navigation, narrow page layouts, and a
+screen-bound compact HUD with safer opacity. The Android frontend now enforces
+48 dp targets, connects labels to fields, supplies TalkBack descriptions, and
+stacks dense actions at large system font sizes. See
+`docs/UI_ACCESSIBILITY.md` for shortcuts and the 200% scaling/TalkBack manual
+verification matrix.
+
+## UI regression protection — Slice 4
+
+The terminal, Qt Control Center/HUD, and Android frontend now share a regression
+contract for runner/status terminology, concurrent-run states, rollback states,
+and large-data performance budgets. Golden Rich terminal snapshots and portable
+SVG visual-state snapshots are stored under `tests/snapshots/ui/`; update them
+with `python3 tools/update-ui-snapshots.py` only after reviewing the diff.
+
+History search now keeps a case-folded in-memory index, Android test-catalog
+items cache their search key and avoid one giant concatenated output buffer, and
+the diagnostics parser routes common diagnostic families before the generic
+regular-expression chain. See `docs/UI_REGRESSION.md`.

@@ -55,6 +55,7 @@ def load_project_config(
     target_name: str = "",
     solution_override: str = "",
     project_override: str = "",
+    kind_override: str = "",
 ) -> ProjectConfig:
     repo_root = Path(repo_root_arg or Path.cwd()).expanduser().resolve()
     config_path = find_config(repo_root, config_path_arg)
@@ -69,14 +70,16 @@ def load_project_config(
 
     project_section = _apply_project_env_overrides(dict(loaded.get("project", {})))
     env_section = _apply_runtime_env_overrides({str(k): str(v) for k, v in loaded.get("env", {}).items()})
+    execution_section = loaded.get("execution", {}) if isinstance(loaded.get("execution", {}), dict) else {}
 
-    kind = str(project_section.get("kind", "auto")).strip().lower() or "auto"
+    kind = str(kind_override or project_section.get("kind", "auto")).strip().lower() or "auto"
+    if kind not in {"auto", "dotnet", "android", "gradle", "python", "command", "unknown"}:
+        raise SystemExit(f"Unsupported project type: {kind}")
     explicit_dotnet_intent = bool(
         solution_override.strip()
         or project_override.strip()
         or str(project_section.get("solution", "")).strip()
         or str(project_section.get("project", "")).strip()
-        or isinstance(loaded.get("targets"), dict) and bool(loaded.get("targets"))
     )
     if kind == "auto":
         detected_kind = detect_project_kind(config_root)
@@ -89,6 +92,9 @@ def load_project_config(
         detected_kind = kind
 
     targets = _load_named_targets(config_root, loaded.get("targets", {}), env_section)
+    selected_target_hint = targets.get(target_name.strip()) if target_name.strip() else None
+    if selected_target_hint is not None and selected_target_hint.kind:
+        detected_kind = selected_target_hint.kind
     # Legacy [project].default_target is intentionally ignored. Devtool no longer
     # chooses a target implicitly; use --target, --solution, or artifact metadata.
 
@@ -114,8 +120,55 @@ def load_project_config(
     )
 
     effective_env = dict(env_section)
-    if resolved["selected_target"] and resolved["selected_target"] in targets:
-        effective_env.update(targets[resolved["selected_target"]].env)
+    selected_target = targets.get(resolved["selected_target"]) if resolved["selected_target"] else None
+    if selected_target is not None:
+        effective_env.update(selected_target.env)
+
+    execution_environment = str(
+        (selected_target.execution_environment if selected_target and selected_target.execution_environment else "")
+        or execution_section.get("environment", "")
+        or execution_section.get("mode", "")
+        or project_section.get("execution_environment", "")
+        or "auto"
+    ).strip().lower()
+    chroot_name = str(
+        (selected_target.chroot_name if selected_target and selected_target.chroot_name else "")
+        or execution_section.get("chroot_name", "")
+        or project_section.get("chroot_name", "")
+        or os.environ.get("DEVTOOL_TERMUX_CHROOT", "androidos")
+        or "androidos"
+    ).strip()
+    device_serial = str(
+        (selected_target.device_serial if selected_target and selected_target.device_serial else "")
+        or execution_section.get("device_serial", "")
+        or project_section.get("device_serial", "")
+    ).strip()
+
+    runner_options: dict[str, Any] = {}
+    for section_name in ("android", "gradle", "python", "tasks", "artifacts", "test_profiles", "validation"):
+        section_value = loaded.get(section_name, {})
+        if isinstance(section_value, dict):
+            runner_options[section_name] = dict(section_value)
+    if selected_target is not None:
+        for key, value in selected_target.options.items():
+            if isinstance(value, dict) and isinstance(runner_options.get(key), dict):
+                merged = dict(runner_options[key])
+                merged.update(value)
+                runner_options[key] = merged
+            else:
+                runner_options[key] = value
+    project_root = (selected_target.root if selected_target and selected_target.root else "")
+    if not project_root:
+        configured_root = str(project_section.get("root", "")).strip()
+        if configured_root:
+            project_root = _resolve_optional_path(config_root, configured_root)
+        elif detected_kind in {"android", "gradle"} and resolved["build_target"]:
+            # Auto-detection may find a nested build such as app/XDM.Android.
+            # Keep repo_root at the repository boundary while sending Gradle to
+            # the discovered project root.
+            project_root = resolved["build_target"]
+        else:
+            project_root = str(config_root)
 
     return ProjectConfig(
         repo_root=repo_root,
@@ -135,23 +188,130 @@ def load_project_config(
         config_path=config_path,
         selected_target=resolved["selected_target"],
         targets=targets,
+        execution_environment=execution_environment,
+        chroot_name=chroot_name,
+        device_serial=device_serial,
+        project_root=project_root,
+        runner_options=runner_options,
     )
 
 
 def detect_project_kind(repo_root: Path) -> str:
     dotnet_candidates = discover_dotnet_candidates(repo_root)
-    python_markers = (repo_root / "pyproject.toml").exists() or (repo_root / "setup.py").exists()
-    if dotnet_candidates and python_markers:
+    android_markers = discover_gradle_roots(repo_root, android_only=True)
+    gradle_markers = discover_gradle_roots(repo_root, android_only=False)
+    python_markers = any((repo_root / name).exists() for name in ("pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile", "uv.lock", "poetry.lock", "pdm.lock", "tox.ini", "noxfile.py", "pytest.ini"))
+    kinds = [
+        name
+        for name, present in (
+            ("dotnet", bool(dotnet_candidates)),
+            ("android", bool(android_markers)),
+            ("gradle", bool(gradle_markers and not android_markers)),
+            ("python", python_markers),
+        )
+        if present
+    ]
+    if len(kinds) > 1:
         print(
-            f"devtool: mixed dotnet/python markers found under {repo_root}. "
-            "Set [project].kind explicitly in .devtool.toml.",
+            f"devtool: mixed project markers ({', '.join(kinds)}) found under {repo_root}. "
+            "Set [project].kind explicitly in .devtool.toml or select a named target.",
             file=sys.stderr,
         )
     if dotnet_candidates:
         return "dotnet"
+    if android_markers:
+        return "android"
+    if gradle_markers:
+        return "gradle"
     if python_markers:
         return "python"
     return "unknown"
+
+
+def _gradle_root_is_android(root: Path) -> bool:
+    """Return whether a Gradle root contains an Android plugin or manifest.
+
+    Discovery deliberately ignores generated/vendor directories.  It can find
+    Android modules below a repository-level settings file without mistaking
+    their individual ``build.gradle`` files for separate project roots.
+    """
+
+    scripts = (
+        root / "build.gradle",
+        root / "build.gradle.kts",
+        root / "settings.gradle",
+        root / "settings.gradle.kts",
+    )
+    for path in scripts:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "com.android.application" in text or "com.android.library" in text:
+            return True
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            name for name in dirnames
+            if name.lower() not in _IGNORED_DOTNET_DIRS
+        ]
+        base = Path(dirpath)
+        if (
+            "AndroidManifest.xml" in filenames
+            and base.name == "main"
+            and base.parent.name == "src"
+        ):
+            return True
+        for filename in ("build.gradle", "build.gradle.kts"):
+            if filename not in filenames:
+                continue
+            try:
+                text = (base / filename).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "com.android.application" in text or "com.android.library" in text:
+                return True
+    return False
+
+
+def discover_gradle_roots(repo_root: Path, *, android_only: bool = False) -> list[Path]:
+    """Discover top-level Gradle builds anywhere below ``repo_root``.
+
+    A prior implementation only inspected the repository root and its direct
+    children, which missed common layouts such as ``app/XDM.Android``.  The
+    recursive walk stops descending once it finds a Gradle root so module build
+    files are not reported as independent projects.
+    """
+
+    candidates: list[Path] = []
+    markers = {
+        "settings.gradle",
+        "settings.gradle.kts",
+        "build.gradle",
+        "build.gradle.kts",
+        "gradlew",
+    }
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [
+            name for name in dirnames
+            if name.lower() not in _IGNORED_DOTNET_DIRS
+        ]
+        if not markers.intersection(filenames):
+            continue
+
+        root = Path(dirpath).resolve()
+        is_android = _gradle_root_is_android(root)
+        if not android_only or is_android:
+            candidates.append(root)
+
+        # A settings/build/wrapper marker establishes this project root.  Its
+        # module build files belong to the same Gradle build and must not be
+        # returned as separate targets.
+        dirnames[:] = []
+
+    return sorted(set(candidates), key=lambda path: str(path))
 
 
 def discover_dotnet_candidates(repo_root: Path) -> list[Path]:
@@ -170,6 +330,13 @@ def _default_build_target(repo_root: Path, kind: str, section: dict[str, Any]) -
         candidates = discover_dotnet_candidates(repo_root)
         if len(candidates) == 1:
             return str(candidates[0].resolve())
+        return ""
+    if kind in {"android", "gradle"}:
+        roots = discover_gradle_roots(repo_root, android_only=(kind == "android"))
+        if len(roots) == 1:
+            return str(roots[0])
+        if any((repo_root / marker).exists() for marker in ("settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts", "gradlew")):
+            return str(repo_root.resolve())
         return ""
     if kind == "python":
         if (repo_root / "pyproject.toml").exists():
@@ -196,11 +363,20 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
         test_target = _resolve_optional_path(repo_root, raw_value.get("test_target", ""))
         run_project = _resolve_optional_path(repo_root, raw_value.get("run_project", ""))
         cwd = _resolve_optional_path(repo_root, raw_value.get("cwd", ""))
+        target_root = _resolve_optional_path(repo_root, raw_value.get("root", ""))
         target_env = dict(base_env)
         for key, value in raw_value.get("env", {}).items() if isinstance(raw_value.get("env", {}), dict) else []:
             target_env[str(key)] = str(value)
+        target_kind = str(raw_value.get("type", raw_value.get("kind", ""))).strip().lower()
+        options: dict[str, Any] = {}
+        for option_name in ("android", "gradle", "python", "tasks", "artifacts", "test_profiles", "validation"):
+            option_value = raw_value.get(option_name, {})
+            if isinstance(option_value, dict):
+                options[option_name] = dict(option_value)
         targets[name] = DotnetTarget(
             name=name,
+            kind=target_kind,
+            root=target_root,
             solution=solution,
             restore_target=restore_target,
             build_target=build_target,
@@ -208,6 +384,10 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             run_project=run_project,
             cwd=cwd,
             env=target_env,
+            execution_environment=str(raw_value.get("execution_environment", raw_value.get("environment", ""))).strip().lower(),
+            chroot_name=str(raw_value.get("chroot_name", "")).strip(),
+            device_serial=str(raw_value.get("device_serial", "")).strip(),
+            options=options,
         )
     return targets
 
@@ -226,6 +406,29 @@ def _resolve_targets(
     config_project: str,
     config_run_target: str,
 ) -> dict[str, str]:
+    if selected_target_name:
+        target = targets.get(selected_target_name)
+        if target is None:
+            available = ", ".join(sorted(targets)) or "<none>"
+            raise SystemExit(f"Unknown target '{selected_target_name}'. Available targets: {available}")
+        target_kind = target.kind or kind
+        if target_kind == "dotnet":
+            return {
+                "selected_target": target.name,
+                "restore_target": target.effective_restore_target(),
+                "build_target": target.effective_build_target(),
+                "test_target": target.effective_test_target(),
+                "run_target": target.effective_run_project(),
+            }
+        project_root = target.root or target.cwd or _default_build_target(config_root, target_kind, project_section) or str(config_root)
+        return {
+            "selected_target": target.name,
+            "restore_target": target.restore_target or project_root,
+            "build_target": target.build_target or project_root,
+            "test_target": target.test_target or project_root,
+            "run_target": target.run_project or project_root,
+        }
+
     if kind != "dotnet":
         build_target = _default_build_target(config_root, kind, project_section)
         run_target = config_run_target
@@ -236,7 +439,7 @@ def _resolve_targets(
             "restore_target": build_target,
             "build_target": build_target,
             "test_target": build_target,
-            "run_target": run_target,
+            "run_target": run_target or build_target,
         }
 
     if explicit_solution or explicit_project:
@@ -253,20 +456,6 @@ def _resolve_targets(
             "build_target": build_target,
             "test_target": solution_path or build_target,
             "run_target": project_path or build_target,
-        }
-
-    chosen_name = selected_target_name
-    if chosen_name:
-        target = targets.get(chosen_name)
-        if target is None:
-            available = ", ".join(sorted(targets)) or "<none>"
-            raise SystemExit(f"Unknown target '{chosen_name}'. Available targets: {available}")
-        return {
-            "selected_target": target.name,
-            "restore_target": target.effective_restore_target(),
-            "build_target": target.effective_build_target(),
-            "test_target": target.effective_test_target(),
-            "run_target": target.effective_run_project(),
         }
 
     if config_solution or config_project:
@@ -371,6 +560,21 @@ def generate_template(repo_root: Path) -> str:
                 )
             target_blocks = '\n' + ''.join(named_blocks)
             build_target = ""
+    elif kind in {"android", "gradle"}:
+        roots = discover_gradle_roots(repo_root, android_only=(kind == "android"))
+        if len(roots) == 1:
+            build_target = str(roots[0])
+        elif len(roots) > 1:
+            named_blocks: list[str] = []
+            used_target_names: set[str] = set()
+            for candidate in roots:
+                base_name = _target_name_from_path(repo_root, candidate / "project.gradle")
+                target_name = _unique_target_name(used_target_names, base_name, candidate)
+                named_blocks.append(
+                    f"\n[targets.{target_name}]\ntype = \"{kind}\"\nroot = \"{candidate.relative_to(repo_root)}\"\n"
+                )
+            target_blocks = "\n" + "".join(named_blocks)
+            build_target = ""
     elif kind == "python":
         if (repo_root / "src").exists():
             for candidate in sorted((repo_root / "src").glob("*.py")):
@@ -384,7 +588,7 @@ def generate_template(repo_root: Path) -> str:
             run_module = "your_package"
 
     return f"""[project]
-kind = "{kind}" # auto | dotnet | python | unknown
+kind = "{kind}" # auto | dotnet | android | gradle | python | command | unknown
 build_target = "{_display(repo_root, build_target)}"
 run_target = "{run_target}"{target_blocks}
 python = "{sys.executable}"
@@ -394,6 +598,41 @@ build_command = ""
 test_command = ""
 run_command = ""
 package_command = ""
+
+[execution]
+environment = "auto" # auto | native-termux | chroot | desktop-linux | android-device | external-device
+chroot_name = "androidos"
+device_serial = ""
+
+[android]
+variant = "debug"
+aapt2_provider = "auto"
+prefer_native_termux = false
+
+[gradle]
+max_workers = 4
+offline = false
+
+[python]
+manager = "auto"
+# lint = ["ruff", "mypy"]
+# test_framework = "auto"
+
+[tasks]
+# restore = ["help"]
+# build = ["assembleDebug"]
+# clean = ["clean"]
+
+[artifacts]
+# output_directory = "artifacts/android"
+# required = true
+
+# [test_profiles.quick]
+# include = ["unit", "smoke"]
+# exclude_tags = ["slow", "network"]
+
+[validation]
+# test_profile = "full"
 
 [env]
 # Arbitrary runtime env vars for commands:
@@ -625,6 +864,7 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
         "config_path": str(config.config_path) if config.config_path else "",
         "project": {
             "kind": config.kind,
+            "project_root": config.project_root,
             "build_target": config.build_target,
             "restore_target": config.restore_target,
             "test_target": config.test_target,
@@ -637,9 +877,15 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
             "test_command": config.test_command,
             "run_command": config.run_command,
             "package_command": config.package_command,
+            "execution_environment": config.execution_environment,
+            "chroot_name": config.chroot_name,
+            "device_serial": config.device_serial,
+            "runner_options": config.runner_options,
         },
         "targets": {
             name: {
+                "type": target.kind,
+                "root": target.root,
                 "solution": target.solution,
                 "restore_target": target.restore_target,
                 "build_target": target.build_target,
@@ -647,6 +893,10 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
                 "run_project": target.run_project,
                 "cwd": target.cwd,
                 "env": dict(sorted(target.env.items())),
+                "execution_environment": target.execution_environment,
+                "chroot_name": target.chroot_name,
+                "device_serial": target.device_serial,
+                "options": target.options,
             }
             for name, target in sorted(config.targets.items())
         },

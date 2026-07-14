@@ -8,6 +8,7 @@
 #include "ProcessRunner.h"
 #include "RepositoryModel.h"
 
+#include <iostream>
 #include <QApplication>
 #include <QCoreApplication>
 #include <QIODevice>
@@ -28,7 +29,18 @@
 #include <QUrl>
 #include <QWindow>
 
+#ifndef DEVTOOL_CC_VERSION
+#define DEVTOOL_CC_VERSION "development"
+#endif
+
 namespace {
+bool hasArgument(int argc, char **argv, const char *value) {
+    for (int index = 1; index < argc; ++index) {
+        if (QString::fromLocal8Bit(argv[index]) == QString::fromLatin1(value)) return true;
+    }
+    return false;
+}
+
 constexpr const char *kMainServerName = "io.github.mikeceead.DevtoolControlCenter.main";
 
 QIcon controlCenterIcon() {
@@ -59,6 +71,8 @@ bool sendMessage(const QString &serverName, const QString &message) {
 }
 
 QString preferredNerdFont() {
+    const QString systemFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    if (!systemFixed.trimmed().isEmpty()) return systemFixed;
     const QStringList preferred {
         QStringLiteral("JetBrainsMono Nerd Font"), QStringLiteral("CaskaydiaCove Nerd Font"),
         QStringLiteral("MesloLGS NF"), QStringLiteral("FiraCode Nerd Font"),
@@ -90,6 +104,10 @@ void installActivationServer(QLocalServer *server, AppController *controller) {
 }  // namespace
 
 int main(int argc, char **argv) {
+    if (hasArgument(argc, argv, "--version")) {
+        std::cout << "Devtool Control Center " << DEVTOOL_CC_VERSION << '\n';
+        return 0;
+    }
     QApplication app(argc, argv);
 
     QCoreApplication::setOrganizationName(
@@ -115,7 +133,7 @@ int main(int argc, char **argv) {
     app.setOrganizationName(QStringLiteral("mikeceead"));
     app.setDesktopFileName(QStringLiteral("io.github.mikeceead.DevtoolControlCenter"));
     app.setWindowIcon(controlCenterIcon());
-    app.setFont(QFont(preferredNerdFont()));
+    app.setFont(QFontDatabase::systemFont(QFontDatabase::GeneralFont));
 
     if (app.arguments().contains(QStringLiteral("--clipboard-monitor"))) {
         app.setQuitOnLastWindowClosed(false);

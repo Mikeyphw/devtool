@@ -10,6 +10,8 @@ final class RunRecord {
     String phase = "Preparing";
     String detail = "";
     String repo = "";
+    String projectType = "auto";
+    String executionEnvironment = "auto";
     String workdir = "~/";
     String target = "";
     String command = "";
@@ -17,6 +19,9 @@ final class RunRecord {
     String stdout = "";
     String stderr = "";
     String error = "";
+    String launchLog = "";
+    String launchMode = "";
+    long lastProgressAtMs = 0L;
     int progress = 0;
     int warnings = 0;
     int errors = 0;
@@ -39,6 +44,8 @@ final class RunRecord {
         value.put("phase", phase);
         value.put("detail", detail);
         value.put("repo", repo);
+        value.put("project_type", projectType);
+        value.put("execution_environment", executionEnvironment);
         value.put("workdir", workdir);
         value.put("target", target);
         value.put("command", command);
@@ -46,6 +53,9 @@ final class RunRecord {
         value.put("stdout", stdout);
         value.put("stderr", stderr);
         value.put("error", error);
+        value.put("launch_log", launchLog);
+        value.put("launch_mode", launchMode);
+        value.put("last_progress_at_ms", lastProgressAtMs);
         value.put("progress", progress);
         value.put("warnings", warnings);
         value.put("errors", errors);
@@ -65,6 +75,8 @@ final class RunRecord {
         record.phase = value.optString("phase", "Preparing");
         record.detail = HudUpdate.plainText(value.optString("detail", ""));
         record.repo = value.optString("repo", "");
+        record.projectType = value.optString("project_type", "auto");
+        record.executionEnvironment = value.optString("execution_environment", "auto");
         record.workdir = value.optString("workdir", "~/");
         record.target = value.optString("target", "");
         record.command = value.optString("command", "");
@@ -72,6 +84,9 @@ final class RunRecord {
         record.stdout = HudUpdate.plainText(value.optString("stdout", ""));
         record.stderr = HudUpdate.plainText(value.optString("stderr", ""));
         record.error = HudUpdate.plainText(value.optString("error", ""));
+        record.launchLog = value.optString("launch_log", "");
+        record.launchMode = value.optString("launch_mode", "");
+        record.lastProgressAtMs = value.optLong("last_progress_at_ms", 0L);
         record.progress = value.optInt("progress", 0);
         record.warnings = value.optInt("warnings", 0);
         record.errors = value.optInt("errors", 0);

@@ -3,7 +3,10 @@ import QtQuick.Controls
 
 TextArea {
     id: root
+    property string accessibleName: placeholderText.length ? placeholderText : "Text area"
+    property string accessibleDescription: ""
     Theme { id: theme }
+    activeFocusOnTab: true
     leftPadding: 12
     rightPadding: 12
     topPadding: 10
@@ -13,6 +16,9 @@ TextArea {
     selectionColor: theme.accent
     selectedTextColor: theme.accentText
     font.pointSize: theme.bodyPointSize
+    Accessible.role: Accessible.EditableText
+    Accessible.name: accessibleName
+    Accessible.description: accessibleDescription
     background: Rectangle {
         radius: theme.controlRadius
         color: theme.recessedSurface

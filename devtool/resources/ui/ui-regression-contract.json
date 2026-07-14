@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "terminology": {
+    "product": "Devtool",
+    "runners": {
+      "dotnet": ".NET",
+      "android": "Android",
+      "gradle": "Gradle/JVM",
+      "python": "Python",
+      "command": "Custom command",
+      "auto": "Auto-detected runner"
+    },
+    "statuses": {
+      "waiting": "Waiting",
+      "running": "Running",
+      "ok": "Complete",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "rolling_back": "Rolling back",
+      "rolled_back": "Changes rolled back"
+    },
+    "operations": {
+      "restore": "Restore",
+      "build": "Build",
+      "test": "Tests",
+      "validate": "Validation",
+      "apply-overlay": "Apply overlay",
+      "apply-overlays": "Apply bundle",
+      "apply-rollback": "Rollback",
+      "commit": "Commit"
+    },
+    "forbidden_ui_phrases": [
+      "LIVE .NET PARSER",
+      "desktop GTK palette",
+      "Phase 3",
+      "Test DLLs",
+      "Building solution"
+    ]
+  },
+  "visual_scenarios": [
+    {
+      "id": "desktop-hud-multi-run",
+      "surface": "desktop_hud",
+      "title": "2 active Devtool runs",
+      "subtitle": "sims3tools · mixed runners",
+      "status": "running",
+      "progress": 64,
+      "errors": 0,
+      "warnings": 2,
+      "lines": [
+        ".NET · Build · s3atelier · 64%",
+        "Gradle · Tests · android-app · 41%",
+        "160 passed · 1 skipped"
+      ],
+      "actions": [
+        "Details",
+        "Open log",
+        "Copy summary"
+      ]
+    },
+    {
+      "id": "desktop-hud-rollback",
+      "surface": "desktop_hud",
+      "title": "Apply failed",
+      "subtitle": "Changes are being restored",
+      "status": "rolling_back",
+      "progress": 78,
+      "errors": 1,
+      "warnings": 0,
+      "lines": [
+        "Build failed · 1 error",
+        "Rollback · transaction backup",
+        "Repository will remain unchanged"
+      ],
+      "actions": [
+        "Details",
+        "Open log",
+        "Copy error"
+      ]
+    },
+    {
+      "id": "desktop-run-review",
+      "surface": "desktop_page",
+      "title": "Review and run",
+      "subtitle": "Apply overlay · s3atelier_avalonia",
+      "status": "waiting",
+      "progress": 0,
+      "errors": 0,
+      "warnings": 0,
+      "lines": [
+        "Project → Operation → Tests → Review",
+        "3 selected tests",
+        "Command preview is ready"
+      ],
+      "actions": [
+        "Back",
+        "Copy command",
+        "Run"
+      ]
+    },
+    {
+      "id": "desktop-history-search",
+      "surface": "desktop_page",
+      "title": "Run history",
+      "subtitle": "Filtered by repository and failure state",
+      "status": "failed",
+      "progress": 100,
+      "errors": 3,
+      "warnings": 1,
+      "lines": [
+        "sims3tools · Apply overlay · Failed",
+        "xdm · Validate · Complete",
+        "pattern-creator · Tests · Complete"
+      ],
+      "actions": [
+        "Rerun",
+        "Open log",
+        "Open artifact"
+      ]
+    },
+    {
+      "id": "android-notification-multi-run",
+      "surface": "android",
+      "title": "2 active Devtool runs",
+      "subtitle": "No reported errors",
+      "status": "running",
+      "progress": 53,
+      "errors": 0,
+      "warnings": 1,
+      "lines": [
+        "53% · S3Atelier.Modern.sln · Build",
+        "31% · :app:testDebugUnitTest · Tests",
+        "Tap to open run history"
+      ],
+      "actions": [
+        "Open log",
+        "Copy summary",
+        "Show HUD"
+      ]
+    },
+    {
+      "id": "android-overlay-rollback",
+      "surface": "android",
+      "title": "Changes rolled back",
+      "subtitle": "Apply overlay · failed safely",
+      "status": "rolled_back",
+      "progress": 100,
+      "errors": 1,
+      "warnings": 0,
+      "lines": [
+        "Build failed",
+        "Rollback completed",
+        "Working tree restored"
+      ],
+      "actions": [
+        "Open log",
+        "Copy error",
+        "Dismiss"
+      ]
+    }
+  ],
+  "performance_budgets_ms": {
+    "history_filter_20000": 750,
+    "diagnostics_parse_25000": 1800,
+    "test_catalog_12000": 2500
+  }
+}

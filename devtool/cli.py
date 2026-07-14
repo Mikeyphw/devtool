@@ -48,6 +48,15 @@ from .artifact_validation import run_artifact_validation_script
 from .artifact_inspection import inspect_artifact
 from .detect import detect_repo, render_detect_text
 from .execution import apply_matrix, wrap_specs_for_chroot
+from .execution_environments import (
+    AUTO as EXECUTION_AUTO,
+    CHROOT as EXECUTION_CHROOT,
+    EXECUTION_ENVIRONMENTS,
+    detect_current_environment,
+    inside_chroot,
+    preflight_execution,
+    resolve_execution_plan,
+)
 from .handoff import render_handoff
 from .watch import watch_loop
 from .clipboard import copy_text
@@ -58,10 +67,11 @@ from .logstore import latest_log, new_log_path
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
-from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, git_commit, run_specs, shutdown_dotnet_build_server, write_template_config
+from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
+from .validation_evidence import preserve_validation_evidence
 from .single_run import SingleRunLock
 
 console = create_console()
@@ -81,8 +91,8 @@ INTERACTIVE_COPY_COMMANDS = {
 
 
 PROGRESS_CAPABLE_COMMANDS = {
-    "restore", "rs", "build", "b", "test", "t", "validate", "v",
-    "wine-validate", "wv", "run", "rn", "package", "pkg",
+    "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v",
+    "wine-validate", "wv", "run", "rn", "package", "pkg", "clean", "cl",
     "apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as", "batch", "commit", "ci", "tag",
 }
 
@@ -108,6 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
     project.add_argument("--target", default="", help="Named target/profile from .devtool.toml")
     project.add_argument("--solution", default="", help="Exact solution path for restore/build/test")
     project.add_argument("--project", default="", help="Exact project path for run/validation")
+    project.add_argument(
+        "--project-type",
+        choices=["auto", "dotnet", "android", "gradle", "python", "command", "unknown"],
+        default="auto",
+        help="Override project detection for this run",
+    )
 
     execution = parser.add_argument_group("Execution")
     execution.add_argument("-v", "--verbose", action="store_true", help="Stream full command output")
@@ -154,8 +170,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     environment = parser.add_argument_group("Execution environment")
     exec_group = environment.add_mutually_exclusive_group()
-    exec_group.add_argument("--host", action="store_true", help="Force command phases to run on the host")
+    exec_group.add_argument("--host", action="store_true", help="Force command phases to run in devtool's current host environment")
     exec_group.add_argument("--chroot", default="", help="Run command phases inside a named chroot via chrootctl exec")
+    exec_group.add_argument(
+        "--execution-environment",
+        choices=EXECUTION_ENVIRONMENTS,
+        default=EXECUTION_AUTO,
+        help="Execution backend: auto, native-termux, chroot, desktop-linux, android-device, or external-device",
+    )
     environment.add_argument("--no-auto-chroot", action="store_true", help="On Termux, do not auto-route command phases through chrootctl")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -164,10 +186,13 @@ def build_parser() -> argparse.ArgumentParser:
         ("restore", ["rs"]),
         ("build", ["b"]),
         ("test", ["t"]),
+        ("lint", []),
         ("validate", ["v"]),
         ("wine-validate", ["wv"]),
         ("run", ["rn"]),
         ("package", ["pkg"]),
+        ("clean", ["cl"]),
+        ("inspect", ["info"]),
         ("status", ["st"]),
         ("doctor", ["dr"]),
     ]:
@@ -176,6 +201,21 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
         if name == "test":
             cmd.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="Pass --no-build to dotnet test")
+            cmd.add_argument("--list-tests", "--list", action="store_true", help="Discover and list tests without executing them")
+            cmd.add_argument("--profile", default="", help="Saved test profile from .devtool.toml")
+            cmd.add_argument("--select", action="append", default=[], help="Select a type, suite, tag, class, or name; repeatable")
+            cmd.add_argument("--id", dest="test_ids", action="append", default=[], help="Select an exact framework test ID; repeatable")
+            cmd.add_argument("--tag", action="append", default=[], help="Include tests with this tag/trait; repeatable")
+            cmd.add_argument("--exclude-tag", action="append", default=[], help="Exclude tests with this tag/trait; repeatable")
+            cmd.add_argument("--path", dest="test_paths", action="append", default=[], help="Select tests below a source path; repeatable")
+            cmd.add_argument("--class", dest="test_classes", action="append", default=[], help="Select a test class; repeatable")
+            cmd.add_argument("--method", dest="test_methods", action="append", default=[], help="Select a test method; repeatable")
+            cmd.add_argument("--filter", dest="test_filter", default="", help="Framework-native test filter")
+            cmd.add_argument("--task", dest="test_task", default="", help="Gradle test task override")
+            cmd.add_argument("--failed", action="store_true", help="Rerun tests that failed in the previous structured run")
+            cmd.add_argument("--changed", action="store_true", help="Select tests related to changed files")
+            cmd.add_argument("--changed-from", default="HEAD", help="Git base for --changed")
+            cmd.add_argument("--instrumented", action="store_true", help="Run Android instrumentation tests on a device")
         if name in {"validate", "wine-validate"}:
             _add_validation_skip_flags(cmd)
             if name == "validate":
@@ -186,10 +226,11 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--watch-interval", type=float, default=1.5, help="Seconds between watch polls")
             cmd.add_argument("--matrix", default="", help="Comma-separated runtime IDs or target names to validate")
             cmd.add_argument("--matrix-mode", choices=["rid", "target"], default="rid")
+            cmd.add_argument("--test-profile", default="", help="Saved test profile used by validation")
 
     ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
     ai_prompt.add_argument("--repo-name", required=True, help="Human-friendly repo name for the generated prompt")
-    ai_prompt.add_argument("--project-type", choices=["auto", "dotnet", "python", "unknown"], default="auto")
+    ai_prompt.add_argument("--project-type", choices=["auto", "dotnet", "android", "gradle", "python", "command", "unknown"], default="auto")
     ai_prompt.add_argument("--build-target", default="")
     ai_prompt.add_argument("--run-target", default="")
     ai_prompt.add_argument("--target-name", default="", help="Named monorepo target/profile to reference")
@@ -217,6 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("artifact")
         cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
         cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested by the artifact manifest")
+        cmd.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
         cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
         cmd.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
         cmd.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
@@ -952,6 +994,8 @@ def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | No
         command=str(getattr(args, "command", "devtool") or "devtool"),
         repo_root=repo_root,
         target=target,
+        project_type=(config.kind if config is not None else str(getattr(args, "project_type", "auto") or "auto")),
+        execution_environment=str(getattr(args, "execution_environment", "auto") or (config.execution_environment if config is not None else "auto")),
         notify_progress=False,
         notification_id=DEFAULT_NOTIFICATION_ID,
         run_id=str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")),
@@ -1156,6 +1200,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             target_name=target_name,
             solution_override=solution,
             project_override=project,
+            kind_override=str(getattr(args, "project_type", "auto") or "auto"),
         )
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
@@ -1173,6 +1218,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
                 target_name="",
                 solution_override=solution,
                 project_override=project,
+                kind_override=str(getattr(args, "project_type", "auto") or "auto"),
             )
         raise
 
@@ -1266,6 +1312,29 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--preview/--diff cannot be combined with validation or commit flags unless --interactive is used with --diff.")
 
 
+def _apply_artifact_validation_defaults(config: ProjectConfig, args: argparse.Namespace, manifest: dict) -> None:
+    """Apply language-neutral validation defaults declared by an artifact.
+
+    Explicit CLI choices always win. The defaults are copied into the same
+    runner/test-selection model used by direct validation, so overlays do not
+    need project-type-specific validation code.
+    """
+    policy = artifact_validation_policy(manifest)
+    if not str(getattr(args, "test_profile", "") or "").strip():
+        profile = str(policy.get("test_profile") or "").strip()
+        if profile:
+            args.test_profile = profile
+    requested = str(getattr(args, "execution_environment", "auto") or "auto").strip().lower()
+    environment = str(policy.get("execution_environment") or "").strip().lower()
+    if requested == "auto" and environment:
+        args.execution_environment = environment
+    if policy:
+        config.runner_options.setdefault("validation", {}).update({
+            key: value for key, value in policy.items()
+            if key in {"test_profile", "execution_environment"} and value
+        })
+
+
 def _validation_skip_values(args: argparse.Namespace) -> tuple[bool, bool, bool]:
     return (
         bool(getattr(args, "skip_restore", False)),
@@ -1274,7 +1343,69 @@ def _validation_skip_values(args: argparse.Namespace) -> tuple[bool, bool, bool]
     )
 
 
+def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -> None:
+    selection = dict(config.runner_options.get("test_selection", {}) or {})
+    profile = str(getattr(args, "profile", "") or getattr(args, "test_profile", "") or "").strip()
+    if not profile:
+        validation = config.runner_options.get("validation", {})
+        if isinstance(validation, dict) and args.command in {"validate", "v", "wine-validate", "wv", *APPLY_COMMANDS}:
+            profile = str(validation.get("test_profile") or "").strip()
+    if profile:
+        selection["profile"] = profile
+    mapping = {
+        "selectors": "select",
+        "ids": "test_ids",
+        "tags": "tag",
+        "exclude_tags": "exclude_tag",
+        "paths": "test_paths",
+        "classes": "test_classes",
+        "methods": "test_methods",
+    }
+    for key, attr in mapping.items():
+        values = getattr(args, attr, None)
+        if values:
+            selection[key] = list(values)
+    scalar_mapping = {
+        "filter": "test_filter",
+        "task": "test_task",
+        "changed_from": "changed_from",
+    }
+    for key, attr in scalar_mapping.items():
+        value = str(getattr(args, attr, "") or "").strip()
+        if value and not (key == "changed_from" and value == "HEAD" and not getattr(args, "changed", False)):
+            selection[key] = value
+    for key, attr in (("failed", "failed"), ("changed", "changed"), ("instrumented", "instrumented")):
+        if bool(getattr(args, attr, False)):
+            selection[key] = True
+    if selection:
+        config.runner_options["test_selection"] = selection
+
+
+def _print_test_catalog(config: ProjectConfig, args: argparse.Namespace, *, as_json: bool) -> int:
+    from .test_selection import discover_tests, resolve_test_selection, select_catalog
+    catalog = discover_tests(config)
+    selected = select_catalog(catalog, resolve_test_selection(config))
+    if as_json:
+        print(json.dumps({
+            "project_type": config.kind,
+            "discovered": len(catalog),
+            "selected": len(selected),
+            "tests": [item.as_dict() for item in selected],
+        }, indent=None if getattr(args, "machine", "") == "compact" else 2, ensure_ascii=False))
+        return 0
+    if not catalog:
+        console.print("[yellow]No source-discoverable tests found.[/yellow]")
+        return 0
+    console.print(f"[bold]Tests[/bold]  selected {len(selected)} of {len(catalog)}")
+    for item in selected:
+        tags = f" [{', '.join(item.tags)}]" if item.tags else ""
+        location = f"{item.file}:{item.line}" if item.line else item.file
+        console.print(f"  [cyan]{item.id}[/cyan]{tags} [dim]{location}[/dim]")
+    return 0
+
+
 def _validation_specs(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
+    _apply_runner_cli_options(config, args)
     skip_restore, skip_build, skip_test = _validation_skip_values(args)
     if skip_restore and skip_build and skip_test:
         parser.error("Validation would run no commands. Clear at least one skip flag.")
@@ -1292,22 +1423,78 @@ def _matrix_items(args: argparse.Namespace) -> list[str]:
     return [item.strip() for item in str(getattr(args, "matrix", "") or "").split(",") if item.strip()]
 
 
+def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
+    requested = str(getattr(args, "execution_environment", EXECUTION_AUTO) or EXECUTION_AUTO)
+    if bool(getattr(args, "instrumented", False)):
+        requested = detect_current_environment()
+    if bool(getattr(args, "host", False)):
+        requested = detect_current_environment()
+    elif str(getattr(args, "chroot", "") or "").strip():
+        requested = EXECUTION_CHROOT
+    elif requested == EXECUTION_AUTO and str(config.execution_environment or EXECUTION_AUTO) == EXECUTION_AUTO:
+        if detect_current_environment() == "native-termux" and config.kind in {"android", "gradle"}:
+            from .android_integration import should_prefer_android_chroot
+            if should_prefer_android_chroot(config):
+                requested = EXECUTION_CHROOT
+
+    chroot_name = str(
+        getattr(args, "chroot", "")
+        or getattr(args, "_devtool_chroot_name", "")
+        or config.chroot_name
+        or "androidos"
+    ).strip()
+    return resolve_execution_plan(
+        requested=requested,
+        configured=config.execution_environment,
+        chroot_name=chroot_name,
+        device_serial=config.device_serial,
+        path_map=getattr(args, "_devtool_chroot_path_map", None),
+    )
+
+
 def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec], args: argparse.Namespace) -> list[CommandSpec]:
     items = _matrix_items(args)
     if items and getattr(args, "matrix_mode", "rid") == "rid":
         specs = apply_matrix(specs, items, mode="rid")
-    if getattr(args, "chroot", "") and not getattr(args, "host", False):
+
+    plan = _execution_plan_for_args(config, args)
+    preflight = preflight_execution(
+        config.repo_root,
+        plan,
+        expected_paths=(config.restore_target, config.build_target, config.test_target),
+    )
+    failures = preflight.failures()
+    if failures and not bool(getattr(args, "dry_run", False)):
+        details = "; ".join(f"{item.name}: {item.detail}" for item in failures)
+        raise SystemExit(f"Execution environment preflight failed ({plan.effective}): {details}")
+
+    if plan.uses_chroot and plan.current != EXECUTION_CHROOT:
+        host_specs = [spec for spec in specs if str(spec.metadata.get("execution_environment") or "") == "android-device"]
+        chroot_specs = [spec for spec in specs if spec not in host_specs]
         if bool(getattr(args, "_devtool_termux_host_chroot_backend", False)):
             from .termux_chroot_runner import wrap_specs_for_termux_host_chroot
 
-            specs = wrap_specs_for_termux_host_chroot(
-                specs,
-                str(args.chroot),
+            chroot_specs = wrap_specs_for_termux_host_chroot(
+                chroot_specs,
+                plan.chroot_name,
                 repo_root=config.repo_root,
-                path_map=getattr(args, "_devtool_chroot_path_map", None),
+                path_map=[mapping.as_tuple() for mapping in plan.path_map],
             )
         else:
-            specs = wrap_specs_for_chroot(specs, args.chroot)
+            chroot_specs = wrap_specs_for_chroot(chroot_specs, plan.chroot_name)
+        # Preserve original phase ordering when host-only instrumentation follows
+        # chroot build/test phases.
+        wrapped_iter = iter(chroot_specs)
+        specs = [spec if spec in host_specs else next(wrapped_iter) for spec in specs]
+
+    for spec in specs:
+        metadata = dict(spec.metadata)
+        metadata.update(plan.metadata())
+        metadata["execution_preflight"] = [
+            {"name": item.name, "status": item.status, "detail": item.detail}
+            for item in preflight.checks
+        ]
+        spec.metadata = metadata
     return specs
 
 
@@ -1333,6 +1520,7 @@ def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, 
                 target_name=target,
                 solution_override=solution or args.solution,
                 project_override=args.project,
+                kind_override=str(getattr(args, "project_type", "auto") or "auto"),
             )
             target_specs = _validation_specs(target_config, args, parser)
             label = str(item.get("name") or target or solution or "workspace")
@@ -1354,6 +1542,7 @@ def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, 
                 target_name=item,
                 solution_override=args.solution,
                 project_override=args.project,
+                kind_override=str(getattr(args, "project_type", "auto") or "auto"),
             )
             target_specs = _validation_specs(target_config, args, parser)
             for spec in target_specs:
@@ -1371,6 +1560,7 @@ def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, 
                 target_name=item,
                 solution_override=args.solution,
                 project_override=args.project,
+                kind_override=str(getattr(args, "project_type", "auto") or "auto"),
             )
             target_specs = _validation_specs(target_config, args, parser)
             for spec in target_specs:
@@ -1721,6 +1911,7 @@ def _reload_config_after_artifact_apply(args: argparse.Namespace, fallback: Proj
             target_name=target,
             solution_override=solution,
             project_override=project,
+            kind_override=str(getattr(args, "project_type", "auto") or "auto"),
         )
     except SystemExit:
         return fallback
@@ -2213,6 +2404,7 @@ def _run_sequential_overlays(
     try:
         temp_dir, source_bundle, entries = _overlay_sequence_entries(args)
         bundle_manifest = read_artifact_manifest(source_bundle) if source_bundle is not None else {}
+        _apply_artifact_validation_defaults(config, args, bundle_manifest)
         bundle_policy = artifact_validation_policy(bundle_manifest)
         bundle_strategy = str(bundle_policy.get("strategy") or "per-overlay").strip().lower()
         if bundle_strategy not in {"per-overlay", "after-all", "both"}:
@@ -2288,10 +2480,12 @@ def _run_sequential_overlays(
                     target_name=target,
                     solution_override=solution,
                     project_override=args.project,
+                    kind_override=str(getattr(args, "project_type", "auto") or "auto"),
                 )
                 entry_args = argparse.Namespace(**vars(args))
                 entry_args.command = "apply-overlay"
                 entry_args.artifact = str(path)
+                _apply_artifact_validation_defaults(entry_config, entry_args, entry_manifest)
                 restore_enabled = entry_policy.get("restore", bundle_policy.get("restore", True))
                 build_enabled = entry_policy.get("build", bundle_policy.get("build", True))
                 test_enabled = entry_policy.get("test", bundle_policy.get("test", True))
@@ -2422,7 +2616,7 @@ def _run_sequential_overlays(
                     if not target or target in seen_targets:
                         continue
                     seen_targets.add(target)
-                    final_config = load_project_config(args.repo, args.config, target_name=target, solution_override="", project_override=args.project)
+                    final_config = load_project_config(args.repo, args.config, target_name=target, solution_override="", project_override=args.project, kind_override=str(getattr(args, "project_type", "auto") or "auto"))
                     final_args = argparse.Namespace(**vars(args))
                     final_args.command = "apply-overlay"
                     specs = _validation_specs(final_config, final_args, parser)
@@ -2497,6 +2691,11 @@ def _run_sequential_overlays(
 
         rollback_enabled = bool(bundle_policy.get("rollback_on_failure", True))
         if transaction_path and rollback_enabled and _has_failed_after_apply(all_results):
+            evidence_path = preserve_validation_evidence(
+                config.repo_root, all_results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
+            )
+            if evidence_path:
+                raw_sections.append(f"Validation evidence preserved: {evidence_path}")
             rollback_result, rollback_raw = _run_transaction_rollback(
                 transaction_path,
                 reason="bundle apply or validation failed",
@@ -2520,6 +2719,11 @@ def _run_sequential_overlays(
         if transaction_path:
             if any(result.returncode != 0 for result in all_results):
                 if rollback_enabled and not any(result.name == "apply-rollback" for result in all_results):
+                    evidence_path = preserve_validation_evidence(
+                        config.repo_root, all_results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
+                    )
+                    if evidence_path:
+                        raw_sections.append(f"Validation evidence preserved: {evidence_path}")
                     rollback_result, rollback_raw = _run_transaction_rollback(
                         transaction_path,
                         reason="post-bundle command failed",
@@ -2784,7 +2988,7 @@ def _ensure_safe_repo(repo_root: Path, *, force: bool, yes: bool, command: str) 
             raise SystemExit("Git tree is dirty. Use --yes or --force to continue.")
 
 
-def _doctor(config: ProjectConfig, *, fix: bool = False) -> None:
+def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespace | None = None) -> None:
     fixed: list[str] = []
     if fix:
         from .logstore import logs_dir, state_dir
@@ -2799,9 +3003,22 @@ def _doctor(config: ProjectConfig, *, fix: bool = False) -> None:
                 fixed.append("Termux proot os-release cache")
             except Exception:
                 pass
+    runner = get_project_runner(config)
+    capabilities = runner_capabilities(config).supported()
+    plan = _execution_plan_for_args(config, args or argparse.Namespace(host=False, chroot="", execution_environment=EXECUTION_AUTO))
+    execution_preflight = preflight_execution(config.repo_root, plan, expected_paths=(config.build_target, config.test_target))
     rows = [
         ("repo", str(config.repo_root)),
         ("kind", config.kind),
+        ("runner", runner.kind),
+        ("runner_name", runner.display_name),
+        ("capabilities", ", ".join(capabilities) if capabilities else "-"),
+        ("execution_current", plan.current),
+        ("execution_requested", plan.requested),
+        ("execution_effective", plan.effective),
+        ("execution_reason", plan.reason),
+        ("execution_preflight", "ready" if execution_preflight.ok else "failed"),
+        ("chroot", plan.chroot_name or "-"),
         ("git", "yes" if (config.repo_root / ".git").exists() else "no"),
         ("config", str(config.config_path) if config.config_path else "-"),
         ("wl-copy", "yes" if shutil.which("wl-copy") else "no"),
@@ -2817,13 +3034,25 @@ def _doctor(config: ProjectConfig, *, fix: bool = False) -> None:
         ("wine", config.env.get("SIMSTOOLKIT_WINE_PATH", os.environ.get("SIMSTOOLKIT_WINE_PATH", "")) or "-"),
         ("fixed", ", ".join(fixed) if fixed else "-"),
     ]
+    rows.extend(runner.doctor_rows(config))
     render_status_table(rows)
 
 
-def _status(config: ProjectConfig) -> None:
+def _status(config: ProjectConfig, *, args: argparse.Namespace | None = None) -> None:
+    runner = get_project_runner(config)
+    capabilities = runner_capabilities(config).supported()
+    plan = _execution_plan_for_args(config, args or argparse.Namespace(host=False, chroot="", execution_environment=EXECUTION_AUTO))
     rows = [
         ("repo", str(config.repo_root)),
         ("kind", config.kind),
+        ("runner", runner.kind),
+        ("runner_name", runner.display_name),
+        ("capabilities", ", ".join(capabilities) if capabilities else "-"),
+        ("execution_current", plan.current),
+        ("execution_requested", plan.requested),
+        ("execution_effective", plan.effective),
+        ("execution_reason", plan.reason),
+        ("chroot", plan.chroot_name or "-"),
         ("selected_target", config.selected_target or "-"),
         ("restore_target", config.restore_target or "-"),
         ("build_target", config.build_target or "-"),
@@ -2832,6 +3061,24 @@ def _status(config: ProjectConfig) -> None:
         ("git_dirty", "yes" if _git_dirty(config.repo_root) else "no"),
         ("transaction_root", str(transaction_root(config.repo_root))),
     ]
+    rows.extend(runner.inspect_rows(config))
+    render_status_table(rows)
+
+
+def _inspect_project(config: ProjectConfig, *, args: argparse.Namespace | None = None) -> None:
+    runner = get_project_runner(config)
+    rows = [
+        ("repo", str(config.repo_root)),
+        ("kind", config.kind),
+        ("runner", runner.kind),
+        ("runner_name", runner.display_name),
+        ("project_root", config.project_root or str(config.repo_root)),
+        ("selected_target", config.selected_target or "-"),
+    ]
+    specific = runner.inspect_rows(config)
+    if specific:
+        existing = {name for name, _value in rows}
+        rows.extend((name, value) for name, value in specific if name not in existing)
     render_status_table(rows)
 
 
@@ -2937,7 +3184,31 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
     native app HUD bridge, clipboard, and command summary on Android.  The old whole-
     devtool delegation remains available with DEVTOOL_AUTO_CHROOT_MODE=full.
     """
-    if bool(getattr(args, "no_auto_chroot", False)):
+    if bool(getattr(args, "no_auto_chroot", False)) or inside_chroot():
+        return None
+    requested_environment = str(getattr(args, "execution_environment", EXECUTION_AUTO) or EXECUTION_AUTO)
+    if requested_environment == EXECUTION_AUTO and not bool(getattr(args, "host", False)) and not str(getattr(args, "chroot", "") or "").strip():
+        try:
+            configured = load_project_config(
+                getattr(args, "repo", None),
+                getattr(args, "config", None),
+                target_name=str(getattr(args, "target", "") or ""),
+                solution_override=str(getattr(args, "solution", "") or ""),
+                project_override=str(getattr(args, "project", "") or ""),
+                kind_override=str(getattr(args, "project_type", "auto") or "auto"),
+            )
+            configured_environment = str(configured.execution_environment or EXECUTION_AUTO)
+            if configured_environment == EXECUTION_CHROOT:
+                requested_environment = EXECUTION_CHROOT
+                if not str(getattr(args, "chroot", "") or "").strip():
+                    args.chroot = configured.chroot_name or "androidos"
+            elif configured_environment != EXECUTION_AUTO:
+                return None
+        except (OSError, SystemExit, ValueError):
+            # Apply-time artifacts may introduce or repair configuration. The
+            # normal loader will produce the actionable error after apply.
+            pass
+    if requested_environment not in {EXECUTION_AUTO, EXECUTION_CHROOT}:
         return None
     try:
         from .termux_chroot_runner import (
@@ -3249,7 +3520,7 @@ def main(argv: list[str] | None = None) -> int:
         with _single_run_guard(config.repo_root, args):
             return _rollback(config, args)
 
-    if args.command in {"doctor", "dr", "status", "st", "release-notes", "tag"} or args.command in {"commit", "ci"}:
+    if args.command in {"doctor", "dr", "status", "st", "inspect", "info", "release-notes", "tag"} or args.command in {"commit", "ci"}:
         repo = Path(args.repo or Path.cwd()).resolve()
         if args.command in {"commit", "ci"}:
             with _single_run_guard(repo, args):
@@ -3273,12 +3544,17 @@ def main(argv: list[str] | None = None) -> int:
                 _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
                 _maybe_copy(raw_output, summary_text, json_text, args)
                 return 0 if failed == 0 else 1
-        config = load_project_config(str(repo), args.config)
+        config = load_project_config(
+            str(repo), args.config, kind_override=str(getattr(args, "project_type", "auto") or "auto")
+        )
         if args.command in {"doctor", "dr"}:
-            _doctor(config, fix=getattr(args, "fix", False))
+            _doctor(config, fix=getattr(args, "fix", False), args=args)
             return 0
         if args.command in {"status", "st"}:
-            _status(config)
+            _status(config, args=args)
+            return 0
+        if args.command in {"inspect", "info"}:
+            _inspect_project(config, args=args)
             return 0
         if args.command == "release-notes":
             print(_release_notes(config.repo_root, args.from_ref, args.to_ref))
@@ -3307,6 +3583,9 @@ def main(argv: list[str] | None = None) -> int:
                 return 0 if totals["failed"] == 0 else 1
 
     config = _load_command_config(args)
+    _apply_runner_cli_options(config, args)
+    if args.command in {"test", "t"} and bool(getattr(args, "list_tests", False)):
+        return _print_test_catalog(config, args, as_json=effective_payload == "json")
     continue_on_error = args.continue_on_error and not args.fail_fast
     log_path = new_log_path()
     _ensure_run_id(args)
@@ -3381,6 +3660,7 @@ def main(argv: list[str] | None = None) -> int:
             applied_manifest = read_artifact_manifest(args.artifact)
             if results and results[-1].returncode == 0 and not getattr(args, "validate_only", False):
                 config = _reload_config_after_artifact_apply(args, config, applied_manifest)
+            _apply_artifact_validation_defaults(config, args, applied_manifest)
             should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
             if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
                 skip_restore, skip_build, skip_test = _validation_skip_values(args)
@@ -3436,6 +3716,11 @@ def main(argv: list[str] | None = None) -> int:
             validation_policy = artifact_validation_policy(read_artifact_manifest(args.artifact))
             rollback_enabled = bool(validation_policy.get("rollback_on_failure", True))
             if transaction_path and rollback_enabled and _has_failed_after_apply(results):
+                evidence_path = preserve_validation_evidence(
+                    config.repo_root, results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
+                )
+                if evidence_path:
+                    raw_output += f"\n\nValidation evidence preserved: {evidence_path}"
                 rollback_result, rollback_raw = _run_transaction_rollback(
                     transaction_path,
                     reason="validation or artifact validation script failed after artifact apply",
@@ -3448,6 +3733,11 @@ def main(argv: list[str] | None = None) -> int:
             if transaction_path:
                 if any(result.returncode != 0 for result in results):
                     if rollback_enabled and not any(result.name == "apply-rollback" for result in results):
+                        evidence_path = preserve_validation_evidence(
+                            config.repo_root, results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
+                        )
+                        if evidence_path:
+                            raw_output += f"\n\nValidation evidence preserved: {evidence_path}"
                         rollback_result, rollback_raw = _run_transaction_rollback(
                             transaction_path,
                             reason="post-apply command failed",

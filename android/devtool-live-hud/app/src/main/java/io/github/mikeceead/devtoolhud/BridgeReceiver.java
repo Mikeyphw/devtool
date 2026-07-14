@@ -24,6 +24,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
         }
         NotificationController controller = new NotificationController(context);
         if (action.endsWith("CANCEL")) {
+            RunStore.cancelled(context, runId);
             controller.cancel(runId);
             OverlayHudService.cancel(runId);
             return;

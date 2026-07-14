@@ -59,7 +59,9 @@ public final class TermuxResultService extends IntentService {
                     exitCode, stdout, stderr, error);
             return;
         }
-        Log.i(TAG, "Execution " + executionId + " finished with exit code " + exitCode);
+        Log.i(TAG, "Execution " + executionId + " run=" + runId + " finished with exit code " + exitCode);
+        RunStore.appendDiagnostic(this, runId, "RunCommand result delivered: exit=" + exitCode
+                + " stdout=" + stdout.length() + " chars stderr=" + stderr.length() + " chars");
         HudUpdate completed = HudUpdate.commandFinished(runId, exitCode, stdout, stderr, error, overlay);
         boolean richCompletion = RunStore.finish(this, runId, exitCode, stdout, stderr, error);
         if (!richCompletion) {

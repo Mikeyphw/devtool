@@ -9,23 +9,15 @@ Item {
     SystemPalette { id: activePalette; colorGroup: SystemPalette.Active }
     SystemPalette { id: disabledPalette; colorGroup: SystemPalette.Disabled }
 
-    function luminance(color) {
-        return color.r * 0.299 + color.g * 0.587 + color.b * 0.114
-    }
-
+    function luminance(color) { return color.r * 0.299 + color.g * 0.587 + color.b * 0.114 }
     function mix(first, second, amount) {
         var t = Math.max(0, Math.min(1, amount))
-        return Qt.rgba(
-            first.r + (second.r - first.r) * t,
-            first.g + (second.g - first.g) * t,
-            first.b + (second.b - first.b) * t,
-            first.a + (second.a - first.a) * t
-        )
+        return Qt.rgba(first.r + (second.r - first.r) * t,
+                       first.g + (second.g - first.g) * t,
+                       first.b + (second.b - first.b) * t,
+                       first.a + (second.a - first.a) * t)
     }
-
-    function alpha(color, opacity) {
-        return Qt.rgba(color.r, color.g, color.b, opacity)
-    }
+    function alpha(color, opacity) { return Qt.rgba(color.r, color.g, color.b, opacity) }
 
     readonly property bool dark: luminance(activePalette.window) < 0.5
     readonly property color window: activePalette.window
@@ -63,17 +55,24 @@ Item {
     readonly property color errorSurface: mix(surface, error, dark ? 0.16 : 0.09)
     readonly property color infoSurface: mix(surface, info, dark ? 0.14 : 0.09)
 
-    readonly property real pageTitlePointSize: 24
-    readonly property real cardTitlePointSize: 14
-    readonly property real metricValuePointSize: 20
-    readonly property real bodyPointSize: 11
-    readonly property real smallPointSize: 10
-    readonly property real captionPointSize: 9
-    readonly property real titleLineHeight: 1.16
-    readonly property real bodyLineHeight: 1.25
-    readonly property real compactLineHeight: 1.18
-    readonly property int controlHeight: 38
-    readonly property int compactControlHeight: 32
+    // The UI follows the platform font. Code/path text uses the native fixed font
+    // resolved in C++, never a Nerd Font requirement.
+    readonly property string monospaceFamily: typeof uiMonospaceFont !== "undefined" && uiMonospaceFont ? uiMonospaceFont : "monospace"
+    readonly property real platformBodyPointSize: Math.max(10.0, Qt.application.font.pointSize > 0 ? Qt.application.font.pointSize : 11.0)
+    readonly property real typeScale: Math.max(1.0, Math.min(2.0, platformBodyPointSize / 11.0))
+    readonly property real pageTitlePointSize: 23.0 * typeScale
+    readonly property real cardTitlePointSize: 13.5 * typeScale
+    readonly property real metricValuePointSize: 19.0 * typeScale
+    readonly property real bodyPointSize: 11.0 * typeScale
+    readonly property real smallPointSize: 10.0 * typeScale
+    readonly property real captionPointSize: 9.5 * typeScale
+    readonly property real titleLineHeight: 1.24
+    readonly property real bodyLineHeight: 1.42
+    readonly property real compactLineHeight: 1.22
+    readonly property int navigationIconSize: Math.round(20 * Math.min(typeScale, 1.5))
+
+    readonly property int controlHeight: Math.round(38 * Math.min(typeScale, 1.35))
+    readonly property int compactControlHeight: Math.round(32 * Math.min(typeScale, 1.35))
     readonly property int cardRadius: 10
     readonly property int controlRadius: 7
     readonly property int pageMargin: 24

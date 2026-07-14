@@ -1,42 +1,40 @@
-# Devtool desktop HUD, clipboard, repositories, and artifact-safety patch
+# Devtool typography remediation patch
 
-## Desktop HUD
+This complete repository builds on the Slice 5 notification-parity baseline and
+implements the full typography audit across Android, the Qt Control Center, the
+compact HUD, and notification `RemoteViews`. The Android frontend is 1.7.2
+(`versionCode 20`) and the release candidate is `1.1.0-rc.3`.
 
-- Makes the outer HUD substantially more transparent on both dark and light backgrounds.
-- Keeps workspace cards and recessed surfaces readable with stronger outlines.
-- Retains saved HUD positioning and multi-monitor safety.
-- Applies the preferred installed Nerd Font as the default font for both the Control Center and compact HUD.
+## What changed
 
-## Clipboard command import
-
-- Preserves the full shell prelude, including `cd ... && \\`, `pushd`, environment assignments, exports, and sourced shell files.
-- Renames the form action to **Paste from clipboard**.
-- Fills repository, artifact, operation, target, validation, commit, and keep-artifact fields.
-- Shows the preserved original shell command inline.
-- Runs form-generated workflows through the preferred login shell, using zsh first, with an explicit repository `cd`.
-
-## Artifact verification
-
-- Distinguishes file existence, missing manifest, malformed JSON, and semantic validation failure.
-- Reports the exact embedded or sidecar manifest source.
-- Prevents the Run button from starting an apply until the artifact and manifest pass inline validation.
-
-## Repositories
-
-- Saved repositories remain opt-in.
-- Active runs from unsaved repositories appear temporarily as **LIVE · NOT SAVED** entries.
-- Live-only entries disappear after their runs finish unless the user explicitly saves them.
-- Keeps repository activity/history, active runs, full Git operations, and commit-to-artifact links.
-
-## Artifact deletion safety
-
-- Source artifacts and sidecars are now preserved after every failed apply, including failures before extraction.
-- Successful applies still remove artifacts by default.
-- `--delete-artifact-on-failure` is now an explicit opt-in.
-- `--keep-artifact` continues to preserve artifacts after success.
+- Added centralized Android semantic roles for page titles, card titles, body,
+  captions, labels, buttons, metrics, and code.
+- Removed page-local raw Android text sizes and the global cramped line-spacing
+  multiplier. Multiline body content now uses role-specific leading.
+- Raised notification title/detail/badge/action sizes, increased secondary-text
+  contrast to approximately 5.45:1, and removed fixed-height text rows.
+- Added a simplified expanded notification for `fontScale >= 1.3` with reduced
+  phase density and one combined metric summary.
+- Preserved 48dp notification actions and 56dp Android navigation targets.
+- Replaced Android and desktop navigation/status/action font glyphs with vector
+  assets or shape-based marks.
+- Made desktop typography derive from the platform UI font and added persistent
+  100%, 125%, 150%, and 200% user scaling.
+- Increased desktop body/compact line heights, removed derived 8pt operational
+  text, reduced heading tracking, and converted headings to sentence case.
+- Switched code text to the system fixed-width font instead of requiring a Nerd
+  Font.
+- Added typography-system documentation and regression coverage for minimum
+  sizes, contrast, scale behavior, vector icons, and semantic role use.
 
 ## Validation
 
-- 320 tests passed.
-- 13 subtests passed.
-- Python byte-compilation and shell syntax checks passed.
+- Full repository suite: **449 passed plus 28 subtests**.
+- Typography remediation module: **7 passed**.
+- Targeted typography/notification/accessibility set: **29 passed**.
+- Python compilation, shell syntax, 7 JSON files, 58 Android XML resources, and
+  the GitHub Actions workflow passed validation.
+- Portable release qualification passed.
+- Deterministic source release generation matched byte for byte.
+- Android APK compilation was not run locally because no Android SDK is
+  installed. Qt linking was not run because Qt 6 development files are absent.

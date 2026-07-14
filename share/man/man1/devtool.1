@@ -1,122 +1,594 @@
-.TH DEVTOOL 1 "2026-07-11" "devtool 0.3.3" "User Commands"
+.TH DEVTOOL 1 "2026-07-14" "devtool 1.1.0" "User Commands"
 .SH NAME
-devtool \- generic Unix developer helper CLI
+devtool \- transactional multi-project build, test, validation, and artifact tool
 .SH SYNOPSIS
 .B devtool
 .RI [ global-options ] command " [command-options]"
+.PP
+.B devtool
+.RI [ global-options ] "apply-overlay ARTIFACT" " [apply-options]"
+.PP
+.B devtool
+.RI [ global-options ] "test" " [selection-options]"
 .SH DESCRIPTION
-devtool applies artifacts, validates repositories, records transactional rollback state,
-summarizes restore/build/test output, copies results, and publishes one live run to a
-desktop HUD or the Android Devtool Frontend.
+.B devtool
+provides one runner-independent interface for inspecting, restoring, building, testing,
+linting, packaging, cleaning, and validating .NET, Android, Gradle/JVM, Python, and
+explicit command projects.
 .PP
-One mutating devtool run is allowed per repository. A second invocation fails immediately
-while the current operation owns the repository run lock. There are no concurrency modes,
-wait policies, or path-scoped leases.
-.SH COMMANDS
+It can apply overlays and snapshots transactionally, validate them with the selected
+project runner, create commits, preserve structured evidence, publish live progress to
+desktop or Android frontends, and roll back touched repository paths after failure.
+.PP
+One mutating run is allowed per repository. A second mutating invocation fails while the
+current run owns the repository lock.
+.SH PROJECT TYPES
 .TP
-.B restore | build | test | validate | wine-validate | run | package
-Run project actions from .devtool.toml or detected project defaults.
+.B dotnet
+Uses discovered or configured solutions/projects. Validation normally runs restore,
+build, and test.
 .TP
+.B android
+Uses Gradle plus Android project inspection, local JVM tests, Android Lint, Android
+artifact verification, and optional physical-device instrumentation.
+.TP
+.B gradle
+Uses Gradle for JVM projects with task discovery, structured task progress, JUnit result
+collection, lint/static-analysis tasks, and artifact discovery.
+.TP
+.B python
+Supports uv, Poetry, PDM, Pipenv, Hatch, and isolated venv/pip workflows, plus pytest,
+unittest, tox, nox, configured linters/type checkers, PEP 517 builds, and package checks.
+.TP
+.B command
+Runs explicitly configured restore, build, test, lint, package, clean, and validation
+commands.
+.PP
+Use
+.BR --project-type
+when automatic detection is ambiguous. An explicit target type in
+.I .devtool.toml
+takes precedence over detection.
+.SH PRIMARY COMMANDS
+.TP
+.B restore " | " rs
+Prepare the toolchain and restore or synchronize dependencies.
+.TP
+.B build " | " b
+Build the selected target.
+.TP
+.B test " | " t
+Run all configured tests or a selected subset. See
+.B TEST SELECTION.
+.TP
+.B lint
+Run configured lint and static-analysis tools.
+.TP
+.B validate " | " v
+Run the runner-specific validation pipeline. Also accepts the optional artifact scopes
+.B overlay
+and
+.B overlays.
+.TP
+.B wine-validate " | " wv
+Run validation with the configured Wine environment.
+.TP
+.B run " | " rn
+Run the configured application or module.
+.TP
+.B package " | " pkg
+Create configured distributable artifacts.
+.TP
+.B clean " | " cl
+Remove runner-owned generated output.
+.TP
+.B inspect " | " info
+Inspect project detection, selected runner, toolchain, variants/tasks, tests, and expected
+artifacts.
+.TP
+.B status " | " st
+Show resolved repository, target, runner, execution environment, and configuration status.
+.TP
+.B doctor " | " dr
+Diagnose devtool and project prerequisites. Use
+.B --fix
+to create safe devtool state/cache directories where supported.
+.SH ARTIFACT COMMANDS
+.TP
+.B apply-overlay " | " ao " ARTIFACT"
+Transactionally apply one overlay archive.
+.TP
+.B apply-overlays " | " aos " ARTIFACT..."
+Apply an overlay bundle or multiple ordered overlays transactionally.
+.TP
+.B apply-snapshot " | " as " ARTIFACT"
+Apply a repository snapshot transactionally.
+.TP
+.B apply overlay|overlays|snapshot
+Nested equivalents of the three apply commands.
+.TP
+.B validate-overlay " | " vo " ARTIFACT"
+Validate artifact structure and metadata without applying it.
+.TP
+.B validate-overlays " | " vos " ARTIFACT..."
+Validate a bundle or an ordered set of overlays. Use
+.B --fail-on-conflict
+to reject duplicate writes.
+.TP
+.B inspect-artifact " | " ia " ARTIFACT"
+Print artifact, bundle, inventory, validation, and optional repository-diff metadata.
+.TP
+.B bundle overlays " OVERLAY... -o OUTPUT"
+Create an overlay bundle with optional repository identity, target mapping, validation
+policy, embedded validator, and final commit metadata.
+.SH OTHER COMMANDS
+.TP
+.B batch " STEP..."
+Run ordered operations such as
 .B validate
-Run restore, build, and test. Dotnet validation uses
-.B dotnet build --no-restore
-after restore and
-.B dotnet test --no-build
-after build.
+or
+.BR apply-overlay=/path/file.zip .
 .TP
-.B apply-overlay | apply-overlays | apply-snapshot
-Apply an artifact transactionally. Options include
-.BR --validate ,
-.BR --preview ,
-.BR --diff ,
-.BR --interactive ,
-.BR --commit ,
-.BR --skip-restore ,
-.BR --skip-build ,
+.B commit " | " ci " MESSAGE"
+Create a Git commit.
+.TP
+.B tag " NAME"
+Create a Git tag; use
+.BR -m
+for an annotated tag message.
+.TP
+.B release-notes
+Generate notes between
+.B --from-ref
 and
-.BR --skip-test .
+.BR --to-ref .
 .TP
-.B batch
-Run a sequence of devtool steps.
+.B init-config
+Create a starter
+.I .devtool.toml.
 .TP
-.B status | doctor | detect | handoff | history | rollback | targets
-Inspect or maintain repository state.
+.B config show|defaults|resolve|doctor
+Inspect configuration and resolution behavior.
 .TP
-.B hud
-Run the terminal, web, studio, desktop, or Android app bridge renderer.
+.B detect
+Detect project type; use
+.B --format text|json.
 .TP
-.B android-hud-bridge
-Forward shared Termux/chroot live state to the Android app.
+.B targets " | " tg
+List named targets.
 .TP
-.B commit | tag | release-notes
-Git helper commands. Commit, tag, and rollback use the same repository run lock.
+.B logs
+Show the latest saved command log; use
+.B --print
+to emit it.
 .TP
-.B ai-prompt | completion | logs | init-config | config
-Generate workflow text, shell completion, inspect logs, or configure devtool.
-.SH ANDROID FRONTEND
-The CLI publishes Android progress only through
-.BR --hud-mode android-bridge .
-The Android app owns its live notification, optional floating overlay, visual frontend,
-history, Termux command execution, and native Tasker plug-in integration.
-.PP
-The former standalone Termux notification mode and CLI Tasker/notification flags have been
-removed. Use the app settings and Tasker plug-in action instead.
-.SH TERMUX CHROOT RUNNER
-The optional host-side commands
-.B devtool-androidos
-and
-.B devtool-termux-chroot
-forward devtool invocations into a named chroot. The command shape is:
-.PP
-.B sudo chrootctl --name androidos exec -- zsh -lc '<command>'
-.PP
-Host paths are translated for the chroot. Desktop HUD names are adapted to
-.B android-bridge
-when execution originates from Termux.
-.SH TRANSACTIONAL APPLY
-Before mutating files, devtool backs up only paths touched by the artifact. If extraction,
-restore, build, test, commit preparation, or interruption fails, the touched paths are
-restored. A successful rollback is reported as recovery while the final result retains the
-actual phase that failed.
-.PP
-A stale transaction left by a killed process is restored before the next mutating command,
-which then exits non-zero so the requested operation can be rerun.
-.SH OPTIONS
+.B history
+List structured run history.
+.TP
+.B rollback
+Rollback a commit or use
+.B --last.
+.TP
+.B handoff
+Generate a repository handoff document.
+.TP
+.B ai-prompt " | " ap
+Generate an implementation prompt with project, artifact, target, and commit metadata.
+.TP
+.B completion zsh
+Print the current zsh completion definition.
+.TP
+.B control-center " | " gui
+Launch the Qt 6 Devtool Control Center.
+.TP
+.B ipc-server
+Run or start the local Control Center IPC broker.
+.SH GLOBAL PROJECT OPTIONS
 .TP
 .BR -r , " --repo" " PATH"
 Repository root.
 .TP
+.BR -c , " --config" " FILE"
+Configuration file path.
+.TP
+.BR --target " NAME"
+Named target from
+.I .devtool.toml.
+Targets are opt-in and are never selected merely because a default target exists.
+.TP
+.BR --solution " PATH"
+Exact solution path for restore/build/test.
+.TP
+.BR --project " PATH"
+Exact project path for run or validation.
+.TP
+.BR --project-type " TYPE"
+Override detection. TYPE is
+.BR auto ,
+.BR dotnet ,
+.BR android ,
+.BR gradle ,
+.BR python ,
+.BR command ,
+or
+.BR unknown .
+.SH GLOBAL EXECUTION OPTIONS
+.TP
+.BR -v , " --verbose"
+Stream full child-process output.
+.TP
 .BR -y , " --yes"
 Assume yes for confirmations.
 .TP
-.BR --force
+.BR -f , " --force"
 Allow explicitly forced dangerous operations.
 .TP
-.BR --copy , " --copy-summary" , " --copy-json"
-Copy raw output, the rendered summary, or JSON.
+.B --dry-run
+Print resolved commands without executing them.
 .TP
-.BR --auto-hud , " --hud-mode" " MODE"
-Start or reuse the selected live HUD. Use
-.B android-bridge
-for the Android app.
+.BR -k , " --continue-on-error"
+Continue with the next independent step after an error.
 .TP
-.BR --no-hud
-Do not publish live HUD progress for this command.
+.B --fail-fast
+Stop a batch at the first failed step.
 .TP
-.BR --hud-overlay
-Request the app's user-enabled floating overlay for this run.
+.B --performance
+Write a JSON performance report.
 .TP
-.BR --hud-no-overlay
-Keep the run in the app without opening the floating overlay.
+.BR --performance-file " FILE"
+Select the performance report path.
+.SH OUTPUT AND CLIPBOARD
 .TP
-.BR --machine "[=compact|pretty]" , " --machine-file" " FILE"
-Emit or save the machine JSON envelope.
+.BR -j , " --json"
+Emit the compact machine envelope.
 .TP
-.BR --performance , " --performance-file" " FILE"
-Write wall time, per-operation durations, process count, and peak RSS metrics as JSON.
-.SH TARGET SELECTION
-Named targets are never selected implicitly. Legacy default_target and project.target values are ignored; use --target, --solution, or artifact target metadata.
+.BR --machine "[=compact|pretty]"
+Emit the clean machine envelope on standard output.
+.TP
+.BR --machine-file " FILE"
+Save the machine envelope.
+.TP
+.BR -p , " --copy"
+Copy a concise success summary or verbose failure output.
+.TP
+.BR --copy-summary , " --copy-json"
+Copy the selected structured summary without prompting.
+.TP
+.B --no-clipboard
+Disable clipboard prompts and copy behavior.
+.TP
+.BR --copy-via " BACKEND"
+Prefer
+.BR auto ,
+.BR socket ,
+.BR fifo ,
+.BR termux ,
+.BR x11 ,
+or
+.BR wayland .
+.TP
+.BR --theme " auto|plain"
+Select the summary theme.
+.TP
+.BR --stdout-payload " auto|summary|json|raw"
+Select standard-output content.
+.TP
+.BR --save-json-payload " FILE"
+Write the machine payload. The alias
+.B --json-output
+is also accepted.
+.SH EXECUTION ENVIRONMENTS
+.TP
+.B --host
+Force command phases to run in devtool's current environment.
+.TP
+.BR --chroot " NAME"
+Run command phases in a named chroot through
+.BR "sudo chrootctl --name NAME exec -- zsh -lc" .
+.TP
+.BR --execution-environment " BACKEND"
+Select
+.BR auto ,
+.BR native-termux ,
+.BR chroot ,
+.BR desktop-linux ,
+.BR android-device ,
+or
+.BR external-device .
+.TP
+.B --no-auto-chroot
+Do not automatically route incompatible Termux operations into a chroot.
+.PP
+Devtool records the selected environment in structured logs and HUD state. Chroot workers
+use a recursion guard, translate known Termux/chroot paths, and verify the mapped project
+before execution.
+.SH TEST SELECTION
+The same selection model is translated to .NET filters, Gradle/JUnit filters, Android
+instrumentation arguments, or Python framework arguments where supported.
+.TP
+.B --list-tests " | " --list
+Discover and list tests without executing them.
+.TP
+.BR --profile " NAME"
+Use a saved test profile.
+.TP
+.BR --select " VALUE"
+Select by type, suite, tag, class, or name. Repeatable.
+.TP
+.BR --id " TEST-ID"
+Select an exact framework test ID. Repeatable.
+.TP
+.BR --tag " TAG"
+Include a tag, marker, or trait. Repeatable.
+.TP
+.BR --exclude-tag " TAG"
+Exclude a tag, marker, or trait. Repeatable.
+.TP
+.BR --path " PATH"
+Select tests below a source path. Repeatable.
+.TP
+.BR --class " CLASS"
+Select a test class. Repeatable.
+.TP
+.BR --method " METHOD"
+Select a test method. Repeatable.
+.TP
+.BR --filter " EXPRESSION"
+Pass a framework-native filter.
+.TP
+.BR --task " TASK"
+Override the Gradle test task.
+.TP
+.B --failed
+Rerun tests that failed in the previous structured run.
+.TP
+.B --changed
+Select tests related to changed files.
+.TP
+.BR --changed-from " REF"
+Choose the Git base for
+.BR --changed .
+.TP
+.B --instrumented
+Run Android instrumentation tests on a device.
+.TP
+.B --no-build
+For .NET tests, use already-built output.
+.PP
+Reports keep separate discovered, selected, executed, passed, failed, skipped, and excluded
+counts. Notifications show the selected total rather than the complete catalog total.
+.SH VALIDATION
+.TP
+.B --skip-restore
+Skip dependency restore.
+.TP
+.B --skip-build
+Skip the build phase.
+.TP
+.B --skip-test
+Skip tests.
+.TP
+.BR --test-profile " NAME"
+Use a saved validation test profile.
+.TP
+.B --watch
+Rerun validation when files change.
+.TP
+.BR --watch-interval " SECONDS"
+Set the watch polling interval.
+.TP
+.BR --matrix " VALUES"
+Validate comma-separated runtime IDs or target names.
+.TP
+.BR --matrix-mode " rid|target"
+Interpret matrix values as runtime IDs or named targets.
+.PP
+Normal .NET validation is optimized as:
+.PP
+.nf
+  dotnet restore TARGET
+  dotnet build --no-restore TARGET
+  dotnet test --no-build TARGET
+.fi
+.PP
+Recognizable explicit
+.B dotnet build
+and
+.B dotnet test
+commands receive the same optimization during validation. Arbitrary wrapper scripts are
+left unchanged. A standalone
+.B devtool test
+still builds unless
+.B --no-build
+is explicitly requested.
+.PP
+Android validation prepares the toolchain, configures Gradle, compiles, runs local unit
+tests, runs Android Lint, packages artifacts, verifies them, and optionally runs physical
+device instrumentation according to target policy.
+.PP
+Python validation respects the existing environment manager and lock file, then performs
+the configured dependency synchronization, tests, lint/type checks, PEP 517 build, package
+verification, and optional clean-environment import/install checks.
+.SH APPLY OPTIONS
+.TP
+.B --validate
+Run target validation after applying.
+.TP
+.B --no-validate
+Disable validation requested by artifact metadata.
+.TP
+.B --validate-only
+Do not apply; only run the selected validation.
+.TP
+.B --preview
+Preview archive changes.
+.TP
+.B --diff
+Show a repository-relative unified diff.
+.TP
+.B --interactive
+Show the preview and request confirmation.
+.TP
+.B --no-manifest-check
+Disable devtool artifact manifest validation.
+.TP
+.B --keep-artifact
+Keep the source artifact and sidecars after a successful apply.
+.TP
+.B --delete-artifact-on-failure
+Explicitly delete a failed source artifact. By default failed artifacts are preserved for
+retry and diagnosis.
+.TP
+.BR --commit " MESSAGE"
+Commit after successful apply and optional validation.
+.TP
+.B --no-commit
+Disable a commit requested by artifact metadata.
+.TP
+.B --no-artifact-script
+Skip embedded artifact validation scripts while retaining built-in validation.
+.PP
+The validation skip flags and
+.B --test-profile
+also apply to artifact validation.
+.SH TRANSACTIONAL APPLY AND EVIDENCE
+Before mutation, devtool backs up paths touched by the artifact. If extraction, validation,
+artifact verification, commit preparation, or interruption fails, those paths are restored.
+The final result retains the original failed phase while recording whether rollback
+succeeded.
+.PP
+Validation logs, machine reports, test results, lint diagnostics, and artifact evidence are
+stored outside the repository before rollback. Generated build/cache directories are not
+transaction content. Failed input artifacts are preserved by default.
+.PP
+Runner cleanup is performed in a finalization step. .NET invokes
+.BR "dotnet build-server shutdown" ;
+Gradle stops scoped daemons; Python runner-created subprocesses are terminated.
+.SH ANDROID AND GRADLE
+The Android runner integrates the same backend used by the
+.B build-apk
+compatibility command. It supports JDK and SDK inspection/setup, Gradle wrapper or managed
+Gradle selection, ARM-compatible AAPT2 handling, Build Tools/platform/NDK/CMake discovery,
+Termux-native execution, and chroot fallback.
+.PP
+Gradle is launched with a bundled init script that emits ordered run-scoped events. Terminal,
+desktop, and Android views consume the same task and test stream. Stale, wrong-run, invalid,
+or out-of-order events are rejected.
+.PP
+JUnit XML and Android Lint XML/SARIF provide authoritative test and diagnostic totals.
+APK, AAB, AAR, JAR, WAR, and ZIP outputs can be checked for existence, freshness, integrity,
+metadata, signatures where available, and SHA-256.
+.PP
+With instrumentation enabled, devtool can build and install app/test APKs, invoke
+AndroidJUnitRunner on the current rooted device or an external ADB device, collect results,
+and select instrumentation classes or methods.
+.SH PYTHON
+The Python runner detects existing uv, Poetry, PDM, Pipenv, Hatch, or venv/pip projects and
+does not silently replace the selected manager. It supports pytest, unittest, tox, and nox,
+plus configured Ruff, Black, isort, mypy, Pyright, Pylint, and Bandit checks.
+.PP
+PEP 517 wheels and source distributions can be structurally verified, checked with Twine,
+and installed into a clean temporary environment for import and entry-point smoke tests.
+.SH HUD AND ANDROID APP BRIDGE
+.TP
+.BR --auto-hud , " --hud-auto"
+Start or reuse the selected live HUD.
+.TP
+.B --no-hud
+Do not publish live HUD progress.
+.TP
+.BR --hud-mode " MODE"
+Select desktop, android-bridge, desktop-window, gtk-window, web, studio, terminal, or another
+supported renderer.
+.TP
+.B --hud-overlay
+Also request the user-enabled Android floating overlay.
+.TP
+.B --hud-no-overlay
+Keep the run in the Android app without opening the floating overlay.
+.TP
+.B hud
+Run a HUD renderer directly. It supports state directory, mode, host, port, poll interval,
+recent-event count, one-shot, active-run following, and overlay controls.
+.TP
+.B android-hud-bridge " | " termux-hud-bridge
+Forward shared Termux/chroot state to the Android app. It supports active-run following and
+explicit overlay presentation.
+.PP
+App-launched commands record launch acceptance, Termux shell startup, authenticated bridge
+connection, runner/toolchain stages, progress, result delivery, and exit status. Foreground
+Termux mode can expose the real shell output while the same run continues updating the app.
+.SH SHELL COMPLETION
+Install the packaged zsh completion as
+.I _devtool
+in a directory from
+.BR $fpath ,
+or print it with:
+.PP
+.B devtool completion zsh
+.PP
+The completion covers all commands and aliases, global execution/output/HUD options,
+selective tests, validation profiles, Android/Gradle/Python project types, artifact apply and
+bundle operations, Control Center commands, and configuration-derived target/profile names.
+.SH RELEASE QUALIFICATION
+The source repository includes portable and native release gates. Run:
+.PP
+.B python3 tools/release-qualify.py --core-only
+.PP
+for Python tests, source compilation, shell validation, version consistency, and a deterministic
+source archive. On release hosts, use
+.B --require-qt
+and
+.B --require-android
+to convert unavailable native toolchains into failures, and
+.B --device-tests
+to run connected Android instrumentation. The canonical cross-package versions are stored in
+.I release/versions.json .
+.PP
+Android release builds require explicit
+.B DEVTOOL_RELEASE_STORE_FILE ,
+.B DEVTOOL_RELEASE_STORE_PASSWORD ,
+.B DEVTOOL_RELEASE_KEY_ALIAS ,
+and
+.B DEVTOOL_RELEASE_KEY_PASSWORD
+values. Unsigned release APKs are rejected and verified with apksigner.
+.SH FILES
+.TP
+.I .devtool.toml
+Per-repository target, runner, task, artifact, test-profile, validation, environment, and
+execution configuration.
+.TP
+.I ~/.local/state/devtool/logs
+Saved human-readable command logs.
+.TP
+.I ~/.local/state/devtool
+Structured run state, evidence, performance reports, and transaction metadata.
+.TP
+.I ~/.local/share/devtool/android
+Staged Android build backend and related shared resources.
+.TP
+.I ~/.local/state/devtool-android-hud
+Default shared Android bridge state on Termux.
+.SH ENVIRONMENT
+.TP
+.B DEVTOOL_XDG_DIR
+Override devtool runtime state storage.
+.TP
+.B DEVTOOL_RUN_ID
+Run identity shared by the CLI, Gradle event stream, Android app, and desktop HUD.
+.TP
+.B DEVTOOL_EXECUTION_CONTEXT
+Marks delegated execution, including chroot workers, and prevents recursive delegation.
+.TP
+.B DEVTOOL_HUD_SINGLETON
+Controls HUD process reuse. The value
+.B kill
+replaces an older renderer when explicitly used.
+.TP
+.B DEVTOOL_PROJECT_KIND
+Override detected project kind through environment configuration.
 .SH REMOVED OPTIONS
+The former standalone notification, Tasker, and multi-run lease options are not accepted:
 .BR --notify ,
 .BR --notify-progress ,
 .BR --tasker ,
@@ -125,29 +597,10 @@ Named targets are never selected implicitly. Legacy default_target and project.t
 .BR --concurrency ,
 .BR --lock-timeout ,
 and
-.B --no-wait
-are no longer accepted.
-.SH FILES
-.TP
-.I ~/.local/state/devtool/logs
-Saved command logs.
-.TP
-.I ~/.local/state/devtool/locks
-Single-run repository lock files.
-.TP
-.I .devtool.toml
-Per-repository configuration.
-.SH ENVIRONMENT
-.TP
-.B DEVTOOL_XDG_DIR
-Override devtool runtime state storage.
-.TP
-.B DEVTOOL_RUN_ID
-Run identity shared with the Android app or desktop HUD.
-.TP
-.B DEVTOOL_HUD_SINGLETON
-Controls reuse of the HUD process; use
-.B kill
-to replace an older renderer.
+.BR --no-wait .
+.SH EXIT STATUS
+Zero indicates success. Non-zero indicates command failure, validation failure, invalid
+configuration/artifact, unsupported execution environment, interruption, or rollback/recovery
+that requires the requested operation to be rerun.
 .SH AUTHOR
 OpenAI

@@ -9,4 +9,16 @@
     <color name="devtool_cyan">#68D8FF</color>
     <color name="devtool_yellow">#FFD166</color>
     <color name="devtool_red">#FF6978</color>
+    <color name="notification_card">#23262D</color>
+    <color name="notification_card_raised">#292D35</color>
+    <color name="notification_line">#353A44</color>
+    <color name="notification_text">#F7F8FA</color>
+    <color name="notification_muted">#AEB4BF</color>
+    <color name="notification_soft">#929CAA</color>
+    <color name="notification_running">#71C8FF</color>
+    <color name="notification_success">#78DDA8</color>
+    <color name="notification_warning">#F0BD68</color>
+    <color name="notification_error">#FF788D</color>
+    <color name="notification_rollback">#B89AFF</color>
+    <color name="notification_recovered">#73D8D0</color>
 </resources>

@@ -6,6 +6,7 @@ import "../components"
 
 Item {
     id: root
+    readonly property bool narrowMode: width < 780
     Theme { id: theme }
 
     FileDialog {
@@ -31,8 +32,9 @@ Item {
             AppButton { text: artifactInspector.loading ? "Inspecting…" : "Refresh"; enabled: !artifactInspector.loading && artifactInspector.artifactPath !== ""; onClicked: artifactInspector.inspect(true) }
         }
 
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
+            columns: root.narrowMode ? 1 : 2
             AppTextField {
                 Layout.fillWidth: true
                 text: artifactInspector.artifactPath
@@ -41,7 +43,8 @@ Item {
                 onAccepted: artifactInspector.inspect(true)
             }
             AppTextField {
-                Layout.preferredWidth: 360
+                Layout.fillWidth: true
+                Layout.preferredWidth: root.narrowMode ? 0 : 360
                 text: artifactInspector.repositoryPath
                 placeholderText: "Repository for preview/diff (optional)"
                 onTextEdited: artifactInspector.repositoryPath = text
@@ -67,16 +70,19 @@ Item {
             }
         }
 
-        RowLayout {
+        GridLayout {
             visible: Object.keys(artifactInspector.summary).length > 0
             Layout.fillWidth: true
-            spacing: 10
-            MetricCard { label: "FILES"; value: artifactInspector.summary.payload_files || 0; accent: theme.info }
-            MetricCard { label: "ADDED"; value: (artifactInspector.summary.counts || {}).add || 0; accent: theme.success }
-            MetricCard { label: "MODIFIED"; value: (artifactInspector.summary.counts || {}).modify || 0; accent: theme.warning }
-            MetricCard { label: "DELETED"; value: (artifactInspector.summary.counts || {}).delete || 0; accent: theme.error }
+            columns: root.narrowMode ? 2 : 5
+            columnSpacing: 10
+            rowSpacing: 10
+            MetricCard { Layout.fillWidth: true; label: "FILES"; value: artifactInspector.summary.payload_files || 0; accent: theme.info }
+            MetricCard { Layout.fillWidth: true; label: "ADDED"; value: (artifactInspector.summary.counts || {}).add || 0; accent: theme.success }
+            MetricCard { Layout.fillWidth: true; label: "MODIFIED"; value: (artifactInspector.summary.counts || {}).modify || 0; accent: theme.warning }
+            MetricCard { Layout.fillWidth: true; label: "DELETED"; value: (artifactInspector.summary.counts || {}).delete || 0; accent: theme.error }
             Rectangle {
                 Layout.fillWidth: true
+                Layout.columnSpan: root.narrowMode ? 2 : 1
                 implicitHeight: 74
                 radius: theme.cardRadius
                 color: ((artifactInspector.summary.validation || {}).ok) ? theme.successSurface : theme.errorSurface
@@ -119,7 +125,7 @@ Item {
                         Layout.preferredHeight: 34
                         radius: 10
                         color: theme.infoSurface
-                        Label { anchors.centerIn: parent; text: "◆"; color: theme.info; font.pointSize: theme.bodyPointSize; font.weight: Font.Bold }
+                        Image { anchors.centerIn: parent; width: 20; height: 20; source: "../icons/artifact.svg"; sourceSize.width: 20; sourceSize.height: 20; Accessible.ignored: true }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -216,7 +222,7 @@ Item {
                                         font.pointSize: theme.captionPointSize
                                     }
                                 }
-                                Label { Layout.fillWidth: true; text: modelData.path || ""; color: theme.text; elide: Text.ElideMiddle; font.family: "monospace"; font.pointSize: theme.smallPointSize }
+                                Label { Layout.fillWidth: true; text: modelData.path || ""; color: theme.text; elide: Text.ElideMiddle; font.family: theme.monospaceFamily; font.pointSize: theme.smallPointSize }
                             }
                         }
                     }
@@ -253,7 +259,7 @@ Item {
                                         Label { visible: (modelData.after || []).length || (modelData.requires || []).length; text: "After: " + (modelData.after || []).join(", ") + "   Requires: " + (modelData.requires || []).join(", "); color: theme.info; elide: Text.ElideRight; width: parent.width; font.pointSize: theme.smallPointSize }
                                     }
                                 }
-                                Label { visible: index < artifactInspector.overlays.length - 1; text: "↓"; color: theme.info; font.pointSize: theme.cardTitlePointSize; horizontalAlignment: Text.AlignHCenter; width: parent.width }
+                                Image { visible: index < artifactInspector.overlays.length - 1; source: "../icons/arrow-down.svg"; sourceSize.width: 18; sourceSize.height: 18; width: parent.width; height: 18; fillMode: Image.PreserveAspectFit; Accessible.ignored: true }
                             }
                         }
                     }
@@ -262,11 +268,11 @@ Item {
 
             SurfaceCard {
                 color: theme.recessedSurface
-                AppTextArea { anchors.fill: parent; anchors.margins: 8; readOnly: true; text: artifactInspector.diffText || "Select a repository and refresh to calculate a diff."; font.family: "monospace"; font.pointSize: theme.smallPointSize; wrapMode: TextEdit.NoWrap; background: null }
+                AppTextArea { anchors.fill: parent; anchors.margins: 8; readOnly: true; text: artifactInspector.diffText || "Select a repository and refresh to calculate a diff."; font.family: theme.monospaceFamily; font.pointSize: theme.smallPointSize; wrapMode: TextEdit.NoWrap; background: null }
             }
             SurfaceCard {
                 color: theme.recessedSurface
-                AppTextArea { anchors.fill: parent; anchors.margins: 8; readOnly: true; text: artifactInspector.manifestText; font.family: "monospace"; font.pointSize: theme.smallPointSize; wrapMode: TextEdit.NoWrap; background: null }
+                AppTextArea { anchors.fill: parent; anchors.margins: 8; readOnly: true; text: artifactInspector.manifestText; font.family: theme.monospaceFamily; font.pointSize: theme.smallPointSize; wrapMode: TextEdit.NoWrap; background: null }
             }
         }
 

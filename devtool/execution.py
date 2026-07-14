@@ -5,6 +5,7 @@ import shlex
 from dataclasses import replace
 
 from .models import CommandSpec
+from .execution_environments import chroot_environment_assignments
 
 
 def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | None = None) -> list[str]:
@@ -56,7 +57,8 @@ def wrap_specs_for_chroot(specs: list[CommandSpec], chroot_name: str) -> list[Co
         if spec.cwd:
             metadata.setdefault("progress_cwd", spec.cwd)
         command = shlex.join(spec.argv)
-        wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, name), metadata=metadata))
+        guarded = "exec env " + " ".join(shlex.quote(item) for item in chroot_environment_assignments(name)) + " " + command
+        wrapped.append(replace(spec, argv=build_chroot_exec_argv(guarded, name), metadata=metadata))
     return wrapped
 
 

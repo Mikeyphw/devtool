@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -10,6 +11,19 @@ _DOTNET_DIAGNOSTIC = re.compile(
     r"(?P<severity>warning|error) (?P<code>[A-Za-z]+\d+): (?P<message>.+?)(?: \[.*\])?$"
 )
 
+
+_KOTLIN_DIAGNOSTIC = re.compile(
+    r"^(?P<prefix>[ew]):\s+(?:file://)?(?P<file>.+?):(?:\s*\((?P<line_paren>\d+),\s*(?P<col_paren>\d+)\)|(?P<line>\d+):(?P<col>\d+))[:\s]+(?P<message>.+)$",
+    re.IGNORECASE,
+)
+_ANDROID_TOOL_DIAGNOSTIC = re.compile(
+    r"^(?P<severity>ERROR|WARNING):\s+(?P<file>.+?):(?P<line>\d+)(?::(?P<col>\d+))?:\s*(?P<message>.+)$",
+    re.IGNORECASE,
+)
+_ANDROID_MANIFEST_DIAGNOSTIC = re.compile(
+    r"^(?P<file>.+?AndroidManifest\.xml):(?P<line>\d+):(?P<col>\d+)(?:-\d+)?\s+(?P<severity>Error|Warning):\s*(?P<message>.+)$",
+    re.IGNORECASE,
+)
 _GCC_CLANG = re.compile(
     r"^(?P<file>[^:\s][^:]*)[:](?P<line>\d+)(?::(?P<col>\d+))?:\s+"
     r"(?P<severity>warning|error|fatal error):\s+(?P<message>.+)$",
@@ -47,13 +61,15 @@ def relativize(repo_root: Path, path_text: str) -> str:
     if not path_text or path_text == "-":
         return "-"
     try:
-        path = Path(path_text).expanduser()
-        if not path.is_absolute():
-            path = (repo_root / path).resolve()
-        else:
-            path = path.resolve()
-        return str(path.relative_to(repo_root))
-    except Exception:
+        # Diagnostic paths are display metadata, not filesystem authorities.
+        # Normalize lexically instead of resolving every unique path through
+        # the filesystem; large builds commonly contain tens of thousands of
+        # distinct diagnostics and Path.resolve() dominates parse time.
+        root = Path(os.path.abspath(os.path.expanduser(os.fspath(repo_root))))
+        expanded = os.path.expanduser(path_text)
+        path = Path(os.path.normpath(expanded if os.path.isabs(expanded) else os.path.join(root, expanded)))
+        return str(path.relative_to(root))
+    except (OSError, ValueError):
         return path_text
 
 
@@ -67,6 +83,84 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
 
     while index < len(lines):
         stripped = lines[index].rstrip()
+
+        # Route common diagnostic families before the generic matcher chain.
+        # Large builds often contain tens of thousands of lines; cheap prefix
+        # and extension checks prevent every line from paying for every regex.
+        if stripped.startswith("FAILED "):
+            match = _PYTEST_FAILURE.match(stripped)
+            if match:
+                issues.append(Issue(
+                    "error",
+                    command_name,
+                    relativize(repo_root, match.group("file")),
+                    "PYTEST",
+                    match.group("message").strip(),
+                ))
+                index += 1
+                continue
+
+        if stripped.upper().startswith(("ERROR: ", "WARNING: ")):
+            match = _ANDROID_TOOL_DIAGNOSTIC.match(stripped)
+            if match:
+                issues.append(Issue(
+                    match.group("severity").lower(),
+                    command_name,
+                    relativize(repo_root, match.group("file")),
+                    "ANDROID",
+                    match.group("message").strip(),
+                    line=int(match.group("line")),
+                ))
+                index += 1
+                continue
+
+        if stripped.startswith("/") and "): " in stripped:
+            match = _DOTNET_DIAGNOSTIC.match(stripped)
+            if match:
+                issues.append(Issue(
+                    severity=match.group("severity").lower(),
+                    command=command_name,
+                    file=relativize(repo_root, match.group("file")),
+                    code=match.group("code"),
+                    message=match.group("message").strip(),
+                    line=int(match.group("line")),
+                ))
+                index += 1
+                continue
+
+        if ".py:" in stripped and (": error:" in stripped or ": warning:" in stripped or ": note:" in stripped):
+            match = _MYPY.match(stripped)
+            if match:
+                severity = match.group("severity").lower()
+                if severity == "note":
+                    severity = "warning"
+                issues.append(Issue(
+                    severity,
+                    command_name,
+                    relativize(repo_root, match.group("file")),
+                    (match.group("code") or "MYPY").upper(),
+                    match.group("message").strip(),
+                    line=int(match.group("line")),
+                ))
+                index += 1
+                continue
+
+        if any(ext in stripped for ext in (".c:", ".cc:", ".cpp:", ".cxx:", ".h:", ".hpp:", ".rs:")):
+            match = _GCC_CLANG.match(stripped)
+            if match:
+                severity = match.group("severity").lower()
+                if severity == "fatal error":
+                    severity = "error"
+                issues.append(Issue(
+                    severity,
+                    command_name,
+                    relativize(repo_root, match.group("file")),
+                    "CC",
+                    match.group("message").strip(),
+                    line=int(match.group("line")),
+                ))
+                index += 1
+                continue
 
         match = _DOTNET_DIAGNOSTIC.match(stripped)
         if match:
@@ -123,6 +217,47 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
         match = _UNITTEST_FAILURE.match(stripped)
         if match:
             issues.append(Issue("error", command_name, relativize(repo_root, match.group("file")), "UNITTEST", stripped))
+            index += 1
+            continue
+
+        match = _KOTLIN_DIAGNOSTIC.match(stripped)
+        if match:
+            line_number = int(match.group("line") or match.group("line_paren"))
+            severity = "error" if match.group("prefix").lower() == "e" else "warning"
+            issues.append(Issue(
+                severity,
+                command_name,
+                relativize(repo_root, match.group("file")),
+                "KOTLIN",
+                match.group("message").strip(),
+                line=line_number,
+            ))
+            index += 1
+            continue
+
+        match = _ANDROID_TOOL_DIAGNOSTIC.match(stripped)
+        if match:
+            issues.append(Issue(
+                match.group("severity").lower(),
+                command_name,
+                relativize(repo_root, match.group("file")),
+                "ANDROID",
+                match.group("message").strip(),
+                line=int(match.group("line")),
+            ))
+            index += 1
+            continue
+
+        match = _ANDROID_MANIFEST_DIAGNOSTIC.match(stripped)
+        if match:
+            issues.append(Issue(
+                match.group("severity").lower(),
+                command_name,
+                relativize(repo_root, match.group("file")),
+                "MANIFEST",
+                match.group("message").strip(),
+                line=int(match.group("line")),
+            ))
             index += 1
             continue
 
@@ -196,7 +331,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             continue
 
         match = _GENERIC_WARN_ERR.search(stripped)
-        if match and command_name in {"build", "test", "restore", "package"}:
+        if match and command_name in {"build", "test", "restore", "package", "lint"}:
             message = match.group("message").strip()
             if stripped.strip().lower() not in {"error message:", "warning message:", "stack trace:"}:
                 issues.append(Issue(
@@ -302,6 +437,8 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return "compile_failure"
     if "test" in name or "failed!" in text or "failed " in text:
         return "test_failure"
+    if "lint" in name:
+        return "lint_failure"
     if "run" in name:
         return "runtime_failure"
     if "apply" in name or "artifact" in text or "archive" in text:

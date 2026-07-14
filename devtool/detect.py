@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .config import discover_dotnet_candidates, detect_project_kind, find_config
+from .config import discover_dotnet_candidates, discover_gradle_roots, detect_project_kind, find_config
 
 IGNORED_DIRS = {".git", ".devtool", "bin", "obj", "node_modules", "venv", ".venv", "dist", "build", "__pycache__"}
 
@@ -60,6 +60,8 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
     slns = _collect(repo_root, (".sln",))
     csprojs = _collect(repo_root, (".csproj",))
     pyprojects = [repo_root / "pyproject.toml"] if (repo_root / "pyproject.toml").exists() else []
+    gradle_roots = discover_gradle_roots(repo_root, android_only=False)
+    android_roots = discover_gradle_roots(repo_root, android_only=True)
     package_scripts = [p for p in [repo_root / "scripts" / "package-release.sh", repo_root / "build.sh", repo_root / "package.sh"] if p.exists()]
     docs = [
         p for p in [
@@ -89,6 +91,15 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
             "test_projects": [_rel(repo_root, p) for p in test_projects],
             "runnable_projects": [_rel(repo_root, p) for p in runnable_projects],
         },
+        "android": {
+            "roots": [_rel(repo_root, p) for p in android_roots],
+            "root_count": len(android_roots),
+        },
+        "gradle": {
+            "roots": [_rel(repo_root, p) for p in gradle_roots],
+            "root_count": len(gradle_roots),
+            "wrapper": any((p / "gradlew").is_file() for p in gradle_roots),
+        },
         "python": {
             "pyproject": [_rel(repo_root, p) for p in pyprojects],
             "pytest": (repo_root / "tests").exists() or (repo_root / "pytest.ini").exists(),
@@ -98,6 +109,9 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
         "tools": {
             "dotnet": shutil.which("dotnet") or "",
             "python": shutil.which("python3") or shutil.which("python") or "",
+            "java": shutil.which("java") or "",
+            "gradle": shutil.which("gradle") or "",
+            "adb": shutil.which("adb") or "",
             "git": shutil.which("git") or "",
             "wine": shutil.which("wine") or "",
         },
@@ -107,6 +121,8 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
 def render_detect_text(info: dict[str, Any]) -> str:
     dotnet = info.get("dotnet", {})
     python = info.get("python", {})
+    android = info.get("android", {})
+    gradle = info.get("gradle", {})
     lines = [
         f"repo: {info.get('repo_root', '-')}",
         f"kind: {info.get('kind', '-')}",
@@ -115,6 +131,8 @@ def render_detect_text(info: dict[str, Any]) -> str:
         f"solutions: {dotnet.get('solution_count', 0)}",
         f"projects: {dotnet.get('project_count', 0)}",
         f"test_projects: {len(dotnet.get('test_projects', []))}",
+        f"android_roots: {android.get('root_count', 0)}",
+        f"gradle_roots: {gradle.get('root_count', 0)}",
         f"python_pyproject: {'yes' if python.get('pyproject') else 'no'}",
         f"package_scripts: {len(info.get('packaging', []))}",
         f"docs: {', '.join(info.get('docs', [])) or '-'}",

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420">
+<rect width="100%" height="100%" fill="#0b1020"/>
+<rect x="34" y="28" width="652" height="364" rx="22" fill="#151b2e" stroke="#2a3350"/>
+<rect x="34" y="28" width="8" height="364" rx="4" fill="#ef4444"/>
+<text x="62" y="70" fill="#f8fafc" font-family="sans-serif" font-size="25" font-weight="700">Run history</text>
+<text x="62" y="98" fill="#aab4ca" font-family="sans-serif" font-size="15">Filtered by repository and failure state</text>
+<rect x="62" y="119" width="604" height="12" rx="6" fill="#29324a"/>
+<rect x="62" y="119" width="604" height="12" rx="6" fill="#ef4444"/>
+<text x="62" y="157" fill="#dbe4f5" font-family="monospace" font-size="14">100% · Failed</text>
+<text x="505" y="157" fill="#fca5a5" font-family="monospace" font-size="14">3 errors</text>
+<text x="600" y="157" fill="#fde68a" font-family="monospace" font-size="14">1 warnings</text>
+<text x="68" y="190" fill="#d5dcef" font-family="sans-serif" font-size="16">• sims3tools · Apply overlay · Failed</text>
+<text x="68" y="221" fill="#d5dcef" font-family="sans-serif" font-size="16">• xdm · Validate · Complete</text>
+<text x="68" y="252" fill="#d5dcef" font-family="sans-serif" font-size="16">• pattern-creator · Tests · Complete</text>
+<rect x="62" y="344" width="92" height="38" rx="11" fill="#202a44" stroke="#3c496d"/>
+<text x="108.0" y="369" text-anchor="middle" fill="#eef2ff" font-family="sans-serif" font-size="14">Rerun</text>
+<rect x="166" y="344" width="92" height="38" rx="11" fill="#202a44" stroke="#3c496d"/>
+<text x="212.0" y="369" text-anchor="middle" fill="#eef2ff" font-family="sans-serif" font-size="14">Open log</text>
+<rect x="270" y="344" width="132" height="38" rx="11" fill="#202a44" stroke="#3c496d"/>
+<text x="336.0" y="369" text-anchor="middle" fill="#eef2ff" font-family="sans-serif" font-size="14">Open artifact</text>
+<text x="672" y="396" text-anchor="end" fill="#68738d" font-family="monospace" font-size="11">desktop-history-search</text>
+</svg>

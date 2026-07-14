@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""Compatibility frontend for devtool's shared Android/Gradle builder."""
+from devtool.android_build import standalone_main
+
+raise SystemExit(standalone_main())

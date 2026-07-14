@@ -23,7 +23,7 @@ Install devtool and optionally build/install the native app for this platform.
 
 Options:
   --yes                         Accept recommended prompts.
-  --app [auto|desktop|android|none]
+  --app auto|desktop|android|none
                                 Select the app platform. With no value, auto-detect
                                 the platform and install its app.
   --with-app                    Build if needed and install the selected app.

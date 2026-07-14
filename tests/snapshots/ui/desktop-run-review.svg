@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420">
+<rect width="100%" height="100%" fill="#0b1020"/>
+<rect x="34" y="28" width="652" height="364" rx="22" fill="#151b2e" stroke="#2a3350"/>
+<rect x="34" y="28" width="8" height="364" rx="4" fill="#6b7280"/>
+<text x="62" y="70" fill="#f8fafc" font-family="sans-serif" font-size="25" font-weight="700">Review and run</text>
+<text x="62" y="98" fill="#aab4ca" font-family="sans-serif" font-size="15">Apply overlay · s3atelier_avalonia</text>
+<rect x="62" y="119" width="604" height="12" rx="6" fill="#29324a"/>
+<rect x="62" y="119" width="0" height="12" rx="6" fill="#6b7280"/>
+<text x="62" y="157" fill="#dbe4f5" font-family="monospace" font-size="14">0% · Waiting</text>
+<text x="505" y="157" fill="#fca5a5" font-family="monospace" font-size="14">0 errors</text>
+<text x="600" y="157" fill="#fde68a" font-family="monospace" font-size="14">0 warnings</text>
+<text x="68" y="190" fill="#d5dcef" font-family="sans-serif" font-size="16">• Project → Operation → Tests → Review</text>
+<text x="68" y="221" fill="#d5dcef" font-family="sans-serif" font-size="16">• 3 selected tests</text>
+<text x="68" y="252" fill="#d5dcef" font-family="sans-serif" font-size="16">• Command preview is ready</text>
+<rect x="62" y="344" width="92" height="38" rx="11" fill="#202a44" stroke="#3c496d"/>
+<text x="108.0" y="369" text-anchor="middle" fill="#eef2ff" font-family="sans-serif" font-size="14">Back</text>
+<rect x="166" y="344" width="124" height="38" rx="11" fill="#202a44" stroke="#3c496d"/>
+<text x="228.0" y="369" text-anchor="middle" fill="#eef2ff" font-family="sans-serif" font-size="14">Copy command</text>
+<rect x="302" y="344" width="92" height="38" rx="11" fill="#202a44" stroke="#3c496d"/>
+<text x="348.0" y="369" text-anchor="middle" fill="#eef2ff" font-family="sans-serif" font-size="14">Run</text>
+<text x="672" y="396" text-anchor="end" fill="#68738d" font-family="monospace" font-size="11">desktop-run-review</text>
+</svg>

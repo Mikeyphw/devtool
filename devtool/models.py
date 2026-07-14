@@ -41,7 +41,12 @@ class OperationResult:
 
 @dataclass(slots=True)
 class DotnetTarget:
+    # Historical name retained for API compatibility. The target model is now
+    # language-neutral and can describe .NET, Android/Gradle, Python, or custom
+    # command targets.
     name: str
+    kind: str = ""
+    root: str = ""
     solution: str = ""
     restore_target: str = ""
     build_target: str = ""
@@ -49,6 +54,10 @@ class DotnetTarget:
     run_project: str = ""
     cwd: str = ""
     env: dict[str, str] = field(default_factory=dict)
+    execution_environment: str = "auto"
+    chroot_name: str = ""
+    device_serial: str = ""
+    options: dict[str, Any] = field(default_factory=dict)
 
     def effective_restore_target(self) -> str:
         return self.restore_target or self.solution or self.build_target
@@ -82,6 +91,11 @@ class ProjectConfig:
     config_path: Path | None = None
     selected_target: str = ""
     targets: dict[str, DotnetTarget] = field(default_factory=dict)
+    execution_environment: str = "auto"
+    chroot_name: str = "androidos"
+    device_serial: str = ""
+    project_root: str = ""
+    runner_options: dict[str, Any] = field(default_factory=dict)
 
     def resolve_repo_relative(self, value: str) -> str:
         if not value:

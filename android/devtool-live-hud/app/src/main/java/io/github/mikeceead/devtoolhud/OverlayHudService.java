@@ -27,6 +27,10 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /** Optional, user-enabled floating HUD shown above other apps. */
 public final class OverlayHudService extends Service {
@@ -40,11 +44,11 @@ public final class OverlayHudService extends Service {
     static final String ACTION_STOP = "io.github.mikeceead.devtoolhud.OVERLAY_STOP";
 
     private static volatile OverlayHudService instance;
-    private static volatile HudUpdate pendingUpdate;
+    private static final Map<String, HudUpdate> pendingUpdates = new LinkedHashMap<>();
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private HudUpdate currentRun;
-    private Runnable removal;
+    private final LinkedHashMap<String, HudUpdate> currentRuns = new LinkedHashMap<>();
+    private final Map<String, Runnable> removals = new LinkedHashMap<>();
 
     private WindowManager windowManager;
     private WindowManager.LayoutParams windowParams;
@@ -102,17 +106,19 @@ public final class OverlayHudService extends Service {
             return;
         }
         if (isEnabled(context) && hasPermission(context)) {
-            pendingUpdate = update;
+            synchronized (pendingUpdates) {
+                pendingUpdates.remove(update.runId);
+                pendingUpdates.put(update.runId, update);
+            }
             // Do not start a foreground service from this background receiver.
-            // Android 15+ may reject it unless an overlay is already visible.
-            // The progress notification exposes an explicit “Show HUD” action.
+            // The progress notification exposes an explicit Show HUD action.
         }
     }
 
     static void cancel(String runId) {
-        HudUpdate pending = pendingUpdate;
-        if (pending != null && (runId == null || runId.isEmpty() || pending.runId.equals(runId))) {
-            pendingUpdate = null;
+        synchronized (pendingUpdates) {
+            if (runId == null || runId.isEmpty()) pendingUpdates.clear();
+            else pendingUpdates.remove(runId);
         }
         OverlayHudService active = instance;
         if (active != null) active.removeRun(runId);
@@ -135,9 +141,12 @@ public final class OverlayHudService extends Service {
             startForeground(SERVICE_NOTIFICATION_ID, notification);
         }
         createOverlay();
-        HudUpdate pending = pendingUpdate;
-        pendingUpdate = null;
-        if (pending != null) postUpdate(pending);
+        List<HudUpdate> pending;
+        synchronized (pendingUpdates) {
+            pending = new ArrayList<>(pendingUpdates.values());
+            pendingUpdates.clear();
+        }
+        for (HudUpdate update : pending) postUpdate(update);
     }
 
     @Override
@@ -160,8 +169,9 @@ public final class OverlayHudService extends Service {
     @Override
     public void onDestroy() {
         instance = null;
-        if (removal != null) handler.removeCallbacks(removal);
-        removal = null;
+        for (Runnable removal : removals.values()) handler.removeCallbacks(removal);
+        removals.clear();
+        currentRuns.clear();
         if (windowManager != null && overlayRoot != null) {
             try {
                 windowManager.removeView(overlayRoot);
@@ -182,17 +192,19 @@ public final class OverlayHudService extends Service {
 
     private void postUpdate(HudUpdate update) {
         handler.post(() -> {
-            if (removal != null) handler.removeCallbacks(removal);
-            removal = null;
-            currentRun = update;
+            Runnable previousRemoval = removals.remove(update.runId);
+            if (previousRemoval != null) handler.removeCallbacks(previousRemoval);
+            currentRuns.remove(update.runId);
+            currentRuns.put(update.runId, update);
             render();
             if (update.isTerminal()) {
                 final String completedRunId = update.runId;
-                removal = () -> {
-                    if (currentRun != null && currentRun.runId.equals(completedRunId)) currentRun = null;
-                    removal = null;
+                Runnable removal = () -> {
+                    currentRuns.remove(completedRunId);
+                    removals.remove(completedRunId);
                     render();
                 };
+                removals.put(completedRunId, removal);
                 handler.postDelayed(removal, TERMINAL_LINGER_MS);
             }
         });
@@ -200,12 +212,16 @@ public final class OverlayHudService extends Service {
 
     private void removeRun(String runId) {
         handler.post(() -> {
-            if (currentRun == null || runId == null || runId.isEmpty() || currentRun.runId.equals(runId)) {
+            if (runId == null || runId.isEmpty()) {
+                for (Runnable removal : removals.values()) handler.removeCallbacks(removal);
+                removals.clear();
+                currentRuns.clear();
+            } else {
+                Runnable removal = removals.remove(runId);
                 if (removal != null) handler.removeCallbacks(removal);
-                removal = null;
-                currentRun = null;
-                render();
+                currentRuns.remove(runId);
             }
+            render();
         });
     }
 
@@ -218,15 +234,18 @@ public final class OverlayHudService extends Service {
         overlayRoot.setPadding(dp(12), dp(10), dp(12), dp(12));
         overlayRoot.setBackground(rounded(palette.background, 18, Color.TRANSPARENT, 0));
         overlayRoot.setElevation(dp(12));
+        overlayRoot.setContentDescription("Devtool floating progress HUD");
+        overlayRoot.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
-        headerTitle = label("Devtool HUD", 15, palette.text, true);
+        headerTitle = label("Devtool HUD", UiTypography.Role.CARD_TITLE, palette.text);
+        if (Build.VERSION.SDK_INT >= 28) headerTitle.setAccessibilityHeading(true);
         header.addView(headerTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        headerCount = label("Ready", 12, palette.muted, false);
+        headerCount = label("Ready", UiTypography.Role.LABEL, palette.muted);
         headerCount.setPadding(dp(8), 0, dp(8), 0);
         header.addView(headerCount);
 
@@ -253,7 +272,8 @@ public final class OverlayHudService extends Service {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        int width = Math.min(dp(380), getResources().getDisplayMetrics().widthPixels - dp(24));
+        int preferredWidth = largeText() ? dp(520) : dp(380);
+        int width = Math.min(preferredWidth, getResources().getDisplayMetrics().widthPixels - dp(24));
         windowParams = new WindowManager.LayoutParams(
                 width,
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -305,15 +325,22 @@ public final class OverlayHudService extends Service {
     private void render() {
         if (cardsContainer == null) return;
         cardsContainer.removeAllViews();
-        if (currentRun == null) {
+        if (currentRuns.isEmpty()) {
             headerCount.setText("Ready");
-            TextView waiting = label("Waiting for a devtool run", 13, palette.muted, false);
+            TextView waiting = label("Waiting for a devtool run", UiTypography.Role.BODY_SMALL, palette.muted);
             waiting.setPadding(0, dp(10), 0, 0);
             cardsContainer.addView(waiting);
             return;
         }
-        headerCount.setText(currentRun.isTerminal() ? "Complete" : "Running");
-        cardsContainer.addView(card(currentRun));
+        int active = 0;
+        for (HudUpdate update : currentRuns.values()) if (!update.isTerminal()) active++;
+        String countText = active > 0
+                ? active + " running" + (currentRuns.size() > active ? " · " + (currentRuns.size() - active) + " complete" : "")
+                : currentRuns.size() + " complete";
+        headerCount.setText(countText);
+        headerCount.setContentDescription(countText);
+        List<HudUpdate> ordered = new ArrayList<>(currentRuns.values());
+        for (int index = ordered.size() - 1; index >= 0; index--) cardsContainer.addView(card(ordered.get(index)));
     }
 
     private View card(HudUpdate update) {
@@ -322,6 +349,8 @@ public final class OverlayHudService extends Service {
         card.setPadding(dp(10), dp(9), dp(10), dp(9));
         int accent = statusColor(update);
         card.setBackground(rounded(palette.surface, 13, Color.TRANSPARENT, 0));
+        card.setContentDescription(update.title() + ". " + update.status + ". " + update.detail + ". " + update.displayProgress() + " percent.");
+        card.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -331,22 +360,27 @@ public final class OverlayHudService extends Service {
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = label(update.title(), 14, palette.text, true);
-        title.setMaxLines(1);
+        TextView title = label(update.title(), UiTypography.Role.CARD_TITLE, palette.text);
+        title.setMaxLines(largeText() ? 2 : 1);
         titleRow.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        TextView percent = label(update.criticalText(), 13, accent, true);
+        TextView percent = label(update.criticalText(), UiTypography.Role.BODY_SMALL, accent);
         titleRow.addView(percent);
         card.addView(titleRow);
 
-        TextView detail = label(update.detail, 12, palette.text, false);
+        TextView detail = label(update.detail, UiTypography.Role.LABEL, palette.text);
         detail.setMaxLines(2);
         detail.setPadding(0, dp(4), 0, dp(6));
         card.addView(detail);
+
+        TextView runner = label(update.runnerLabel() + " · " + update.environmentLabel(), UiTypography.Role.CAPTION, palette.muted);
+        runner.setPadding(0, 0, 0, dp(5));
+        card.addView(runner);
 
         ProgressBar overallProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         overallProgress.setMax(100);
         overallProgress.setIndeterminate(update.indeterminate && update.activeStep() == null && !update.isTerminal());
         overallProgress.setProgress(update.isTerminal() ? 100 : update.displayProgress(), false);
+        overallProgress.setContentDescription(update.title() + ", " + update.displayProgress() + " percent, " + update.status);
         if (Build.VERSION.SDK_INT >= 21) {
             overallProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
             overallProgress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(accent));
@@ -359,8 +393,9 @@ public final class OverlayHudService extends Service {
         pipeline.setPadding(0, dp(2), 0, dp(2));
         LinearLayout row = null;
         int rowCount = 0;
+        int maxSegmentsPerRow = largeText() ? 2 : 4;
         for (HudUpdate.Step step : update.steps) {
-            if (row == null || rowCount == 4) {
+            if (row == null || rowCount == maxSegmentsPerRow) {
                 row = new LinearLayout(this);
                 row.setOrientation(LinearLayout.HORIZONTAL);
                 pipeline.addView(row, new LinearLayout.LayoutParams(
@@ -370,7 +405,7 @@ public final class OverlayHudService extends Service {
             LinearLayout segment = new LinearLayout(this);
             segment.setOrientation(LinearLayout.VERTICAL);
             segment.setPadding(dp(2), 0, dp(2), dp(3));
-            TextView stepLabel = label(step.label.toUpperCase(java.util.Locale.ROOT), 9, stepColor(step), true);
+            TextView stepLabel = label(step.label.toUpperCase(java.util.Locale.ROOT), UiTypography.Role.CAPTION, stepColor(step));
             stepLabel.setGravity(Gravity.CENTER);
             stepLabel.setMaxLines(1);
             stepLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -380,6 +415,7 @@ public final class OverlayHudService extends Service {
             stepProgress.setMax(100);
             stepProgress.setIndeterminate(step.running() && step.progress <= 0);
             stepProgress.setProgress((step.succeeded() || step.failed() || step.skipped()) ? 100 : step.progress, false);
+            stepProgress.setContentDescription(step.label + ", " + step.status + ", " + step.progress + " percent");
             if (Build.VERSION.SDK_INT >= 21) {
                 stepProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
                 stepProgress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
@@ -390,7 +426,7 @@ public final class OverlayHudService extends Service {
             rowCount++;
         }
         if (row != null) {
-            while (rowCount < 4) {
+            while (rowCount < maxSegmentsPerRow) {
                 android.view.View spacer = new android.view.View(this);
                 row.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
                 rowCount++;
@@ -406,7 +442,7 @@ public final class OverlayHudService extends Service {
         metrics.append("\n").append(update.errors).append(" errors · ")
                 .append(update.warnings).append(" warnings");
         if (!update.commit.isEmpty()) metrics.append("\nCommit ").append(update.commit);
-        TextView meta = label(metrics.toString(), 11, palette.muted, false);
+        TextView meta = label(metrics.toString(), UiTypography.Role.CAPTION, palette.muted);
         meta.setPadding(0, dp(6), 0, 0);
         card.addView(meta);
         return card;
@@ -452,26 +488,24 @@ public final class OverlayHudService extends Service {
                 .build();
     }
 
-    private TextView label(String value, int sp, int color, boolean bold) {
+    private TextView label(String value, UiTypography.Role role, int color) {
         TextView view = new TextView(this);
         view.setText(HudUpdate.plainText(value));
-        view.setTextSize(sp);
         view.setTextColor(color);
-        view.setTypeface(Typeface.DEFAULT, bold ? Typeface.BOLD : Typeface.NORMAL);
-        view.setLineSpacing(0, 1.08f);
+        UiTypography.apply(view, role);
         return view;
     }
 
     private Button compactButton(String value) {
         Button button = new Button(this);
         button.setText(value);
-        button.setTextSize(17);
+        UiTypography.apply(button, UiTypography.Role.CARD_TITLE);
         button.setTextColor(palette.text);
         button.setAllCaps(false);
-        button.setMinWidth(dp(38));
-        button.setMinimumWidth(dp(38));
-        button.setMinHeight(dp(34));
-        button.setMinimumHeight(dp(34));
+        button.setMinWidth(dp(48));
+        button.setMinimumWidth(dp(48));
+        button.setMinHeight(dp(48));
+        button.setMinimumHeight(dp(48));
         button.setPadding(0, 0, 0, 0);
         button.setBackgroundColor(Color.TRANSPARENT);
         return button;
@@ -492,6 +526,10 @@ public final class OverlayHudService extends Service {
         if (update.status.equals("interrupted") || update.status.equals("cancelled")) return palette.orange;
         if (update.status.equals("waiting")) return palette.muted;
         return palette.yellow;
+    }
+
+    private boolean largeText() {
+        return getResources().getConfiguration().fontScale >= 1.3f;
     }
 
     private int dp(int value) {

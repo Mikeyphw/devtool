@@ -370,7 +370,7 @@ def parse_hud_state(payload: dict[str, Any] | None) -> HudState:
     if total is None:
         total = _coerce_int(progress.get("total"))
 
-    seq = _coerce_int(payload.get("seq") or notification.get("seq"))
+    seq = _coerce_int(payload.get("sequence") or payload.get("seq") or notification.get("sequence") or notification.get("seq"))
     title = str(notification.get("title") or payload.get("title") or "devtool")
     text = str(notification.get("text") or notification.get("body") or payload.get("message") or payload.get("text") or "")
     expanded_title = str(notification.get("expanded_title") or title)
@@ -1336,63 +1336,125 @@ def snapshot_from_runtime_directory(directory: Path, *, follow_active: bool = Fa
     return snapshot
 
 
-def state_from_directory(directory: Path) -> HudState:
-    # Keep notification.json as the simple primary state file, but fall back to
-    # newer rich state/event files when notification.json is missing or clearly
-    # stale.  The stale threshold avoids flicker in tests/tools that write a
-    # static notification file and then append historical events immediately.
-    notification_path = directory / "notification.json"
-    notification = _read_json_file(notification_path)
-    if notification is not None:
+def _payload_sequence(payload: dict[str, Any] | None) -> int:
+    if not isinstance(payload, dict):
+        return -1
+    notification = _first_dict(payload.get("tasker_notification"), payload.get("notification"))
+    return int(_coerce_int(payload.get("sequence") or payload.get("seq") or notification.get("sequence") or notification.get("seq")) or -1)
+
+
+def _payload_updated_timestamp(payload: dict[str, Any] | None) -> float:
+    if not isinstance(payload, dict):
+        return -1.0
+    notification = _first_dict(payload.get("tasker_notification"), payload.get("notification"))
+    value = payload.get("updated_at") or notification.get("updated_at")
+    if not value:
+        value = payload.get("updated_at_ms") or notification.get("updated_at_ms")
         try:
-            notification_mtime = notification_path.stat().st_mtime_ns
-            events_mtime = (directory / "events.jsonl").stat().st_mtime_ns
+            numeric = float(value)
+            return numeric / 1000.0 if numeric > 10_000_000_000 else numeric
+        except (TypeError, ValueError):
+            return -1.0
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return -1.0
+
+
+def _payload_order(payload: dict[str, Any] | None, mtime_ns: int = 0) -> tuple[int, float, int]:
+    return (_payload_sequence(payload), _payload_updated_timestamp(payload), int(mtime_ns))
+
+
+def state_from_directory(directory: Path) -> HudState:
+    """Read the newest authoritative HUD snapshot without phase rewinds.
+
+    Local phase counters restart at each operation (for example build 17/17,
+    then test 1/3). Choosing a file by its percentage therefore preserves stale
+    build data. Prefer the producer's monotonic sequence, then timestamp and
+    filesystem mtime. notification.json may decorate the matching rich state,
+    but may not replace counters from a newer phase.
+    """
+    paths = {
+        "state": directory / "state.json",
+        "latest": directory / "latest_event.json",
+        "notification": directory / "notification.json",
+    }
+    loaded: dict[str, tuple[dict[str, Any], int]] = {}
+    for name, path in paths.items():
+        payload = _read_json_file(path)
+        if payload is None:
+            continue
+        try:
+            mtime = path.stat().st_mtime_ns
         except OSError:
-            events_mtime = 0
-            notification_mtime = 0
-        if events_mtime <= notification_mtime + 250_000_000:
-            # Preserve the richer repo/phase/target fields from state.json while
-            # still letting notification.json win for title/text when it carries
-            # the newest human-facing summary.
-            rich_payload = _read_json_file(directory / "state.json") or _read_json_file(directory / "latest_event.json") or {}
-            if rich_payload:
-                merged = dict(rich_payload)
-                merged["notification"] = notification
-                merged["tasker_notification"] = notification
-                for key in ("title", "text", "expanded_title", "expanded_text", "current", "total", "target"):
+            mtime = 0
+        loaded[name] = (payload, mtime)
+
+    rich_candidates = [loaded[name] for name in ("state", "latest") if name in loaded]
+    rich_payload: dict[str, Any] | None = None
+    rich_mtime = 0
+    if rich_candidates:
+        rich_payload, rich_mtime = max(rich_candidates, key=lambda item: _payload_order(item[0], item[1]))
+
+    notification_entry = loaded.get("notification")
+    if rich_payload is not None:
+        merged = dict(rich_payload)
+        if notification_entry is not None:
+            notification, notification_mtime = notification_entry
+            rich_seq = _payload_sequence(rich_payload)
+            notification_seq = _payload_sequence(notification)
+            sequenced = rich_seq >= 0 or notification_seq >= 0
+            same_or_newer_event = notification_seq >= 0 and notification_seq >= rich_seq
+
+            # A sequenced notification may decorate/override only its matching
+            # or newer rich event. This prevents an old build summary from
+            # replacing a newer test phase. Legacy unsequenced snapshots retain
+            # the historical behavior: notification supplies friendly text and
+            # target, while the higher local progress pair is kept.
+            merged["notification"] = notification
+            merged["tasker_notification"] = notification
+            if same_or_newer_event or not sequenced:
+                for key in ("title", "text", "expanded_title", "expanded_text", "target"):
                     if key in notification:
                         merged[key] = notification[key]
-                if _payload_progress_score(notification) < _payload_progress_score(rich_payload):
-                    for key in ("current", "total", "percent"):
-                        if key in rich_payload:
-                            merged[key] = rich_payload[key]
-                return parse_hud_state(merged)
-            return parse_hud_state(notification)
+            if same_or_newer_event:
+                for key in ("current", "total", "percent"):
+                    if key in notification:
+                        merged[key] = notification[key]
+            elif not sequenced and _payload_progress_score(notification) >= _payload_progress_score(rich_payload):
+                for key in ("current", "total", "percent"):
+                    if key in notification:
+                        merged[key] = notification[key]
+        selected = merged
+        selected_order = _payload_order(rich_payload, rich_mtime)
+    elif notification_entry is not None:
+        selected, selected_mtime = notification_entry
+        selected_order = _payload_order(selected, selected_mtime)
+    else:
+        selected = None
+        selected_order = (-1, -1.0, 0)
 
-    candidates = [directory / "latest_event.json", directory / "state.json"]
-    newest = _newest_existing(candidates)
-    payload = _read_json_file(newest) if newest is not None else notification
-    best_score = _payload_progress_score(payload)
-    for candidate_path in candidates:
-        if newest is not None and candidate_path == newest:
-            continue
-        candidate = _read_json_file(candidate_path)
-        candidate_score = _payload_progress_score(candidate)
-        if candidate_score > best_score:
-            payload = candidate
-            best_score = candidate_score
+    # JSONL is a recovery source only. It wins when it is genuinely newer by
+    # sequence/timestamp, never merely because a prior phase was 100% complete.
     events_path = directory / "events.jsonl"
-    try:
-        events_newer = newest is None or events_path.stat().st_mtime_ns > newest.stat().st_mtime_ns
-    except OSError:
-        events_newer = False
-    if events_newer:
-        events = _last_jsonl_events(events_path, 1)
-        if events:
-            event_payload = events[-1]
-            if _payload_progress_score(event_payload) > best_score:
-                payload = event_payload
-    return parse_hud_state(payload)
+    events = _last_jsonl_events(events_path, 1)
+    if events:
+        event = events[-1]
+        try:
+            event_mtime = events_path.stat().st_mtime_ns
+        except OSError:
+            event_mtime = 0
+        event_seq = _payload_sequence(event)
+        selected_seq = _payload_sequence(selected)
+        if event_seq >= 0 and event_seq > selected_seq:
+            selected = event
+        elif selected is None:
+            selected = event
+
+    return parse_hud_state(selected)
 
 
 def snapshot_from_directory(directory: Path, *, recent_events: int = DEFAULT_RECENT_EVENTS) -> dict[str, Any]:
@@ -1556,6 +1618,98 @@ class AndroidAppHud:
         return result
 
     @staticmethod
+    def _workspace_rows(state: HudState) -> list[dict[str, Any]]:
+        """Build the compact per-workspace model used by the Android notification.
+
+        The HTML mock showed each workspace independently.  Preserve that model in
+        the native payload instead of forcing Android to infer it from one current
+        phase and an aggregate percentage.
+        """
+        raw = state.raw if isinstance(state.raw, dict) else {}
+        pipeline = raw.get("pipeline") if isinstance(raw.get("pipeline"), list) else []
+        snapshots = raw.get("phase_progress") if isinstance(raw.get("phase_progress"), list) else []
+        phase = raw.get("phase") if isinstance(raw.get("phase"), dict) else {}
+        active_scope = str(phase.get("workspace") or phase.get("target") or state.target or "").strip()
+
+        ordered: dict[str, dict[str, Any]] = {}
+
+        def ensure(scope: str) -> dict[str, Any] | None:
+            clean = str(scope or "").strip()
+            if not clean:
+                return None
+            if clean not in ordered:
+                ordered[clean] = {
+                    "name": clean,
+                    "status": "pending",
+                    "meta": "Waiting",
+                    "progress": 0,
+                    "steps": [],
+                }
+            return ordered[clean]
+
+        for item in pipeline:
+            if not isinstance(item, dict):
+                continue
+            ensure(str(item.get("workspace") or item.get("target") or ""))
+
+        for item in snapshots:
+            if not isinstance(item, dict):
+                continue
+            row = ensure(str(item.get("workspace") or item.get("target") or ""))
+            if row is None:
+                continue
+            status = _step_status(str(item.get("status") or "pending"))
+            name = human_phase_name(str(item.get("name") or item.get("command") or "Working"))
+            percent = item.get("percent")
+            if not isinstance(percent, (int, float)):
+                current = _coerce_int(item.get("current") if item.get("current") is not None else item.get("completed"))
+                total = _coerce_int(item.get("total"))
+                percent = int(round(current / total * 100)) if current is not None and total and total > 0 else (100 if status in {"ok", "failed", "skipped"} else 0)
+            percent = max(0, min(100, int(round(float(percent)))))
+            detail = name
+            current = _coerce_int(item.get("current") if item.get("current") is not None else item.get("completed"))
+            total = _coerce_int(item.get("total"))
+            unit = str(item.get("unit_label") or "").strip()
+            if current is not None and total is not None and total > 0:
+                detail += f" · {current}/{total}" + (f" {unit}" if unit else "")
+            elif percent > 0 and status == "running":
+                detail += f" · {percent}%"
+            row["steps"].append((status, percent, detail))
+
+        if active_scope:
+            ensure(active_scope)
+
+        rows: list[dict[str, Any]] = []
+        for scope, row in ordered.items():
+            steps = list(row.pop("steps", []))
+            statuses = [item[0] for item in steps]
+            if "failed" in statuses:
+                row["status"] = "failed"
+            elif "running" in statuses or scope == active_scope and state.status == "running":
+                row["status"] = "active"
+            elif steps and all(item in {"ok", "skipped"} for item in statuses):
+                row["status"] = "done"
+            else:
+                row["status"] = "pending"
+
+            active_step = next((item for item in steps if item[0] in {"running", "failed"}), None)
+            if active_step is not None:
+                row["meta"] = active_step[2]
+            elif row["status"] == "done":
+                row["meta"] = "Complete"
+            elif row["status"] == "failed":
+                row["meta"] = "Failed"
+            else:
+                row["meta"] = "Waiting"
+
+            if steps:
+                row["progress"] = max(0, min(100, int(round(sum(item[1] for item in steps) / len(steps)))))
+            if row["status"] in {"done", "failed"}:
+                row["progress"] = 100
+            rows.append(row)
+        return rows
+
+    @staticmethod
     def _workspace_context(state: HudState) -> tuple[str, int, int]:
         raw = state.raw if isinstance(state.raw, dict) else {}
         pipeline = raw.get("pipeline") if isinstance(raw.get("pipeline"), list) else []
@@ -1602,6 +1756,28 @@ class AndroidAppHud:
         android_target = ", ".join(_compact_step_scope(item) for item in target_values) if len(target_values) > 1 else (target_values[0] if target_values else state.target)
         workspace_name, workspace_index, workspace_total = self._workspace_context(state)
         phase_progress = state.raw.get("progress") if isinstance(state.raw.get("progress"), dict) else {}
+        raw_phase = state.raw.get("phase") if isinstance(state.raw.get("phase"), dict) else {}
+        command_name = str(state.command or state.raw.get("command") or "devtool").strip().lower().replace("_", "-")
+        task_titles = {
+            "apply-overlay": "Applying overlay",
+            "ao": "Applying overlay",
+            "apply-overlays": "Applying overlay bundle",
+            "aos": "Applying overlay bundle",
+            "apply-snapshot": "Applying snapshot",
+            "restore": "Restoring dependencies",
+            "build": "Building target",
+            "test": "Running tests",
+            "validate": "Validating target",
+            "commit": "Creating commit",
+            "rollback": "Rolling back changes",
+        }
+        task_title = task_titles.get(command_name, human_phase_name(state.phase_name or state.command) or "Running Devtool")
+        raw_artifact = str(
+            state.raw.get("artifact")
+            or state.raw.get("artifact_path")
+            or state.raw.get("bundle")
+            or ""
+        ).strip()
         unit_label = ""
         raw_phase_progress = state.raw.get("phase_progress") if isinstance(state.raw.get("phase_progress"), list) else []
         for item in raw_phase_progress:
@@ -1617,13 +1793,20 @@ class AndroidAppHud:
             "sequence": int(_coerce_int(state.raw.get("sequence")) or 0),
             "updated_at_ms": self._timestamp_ms(state.raw.get("updated_at")),
             "status": status,
+            "task": task_title,
+            "artifact": raw_artifact,
             "phase": human_phase_name(state.phase_name or state.command) or human_status(status),
+            "phase_index": int(_coerce_int(raw_phase.get("index")) or 0),
+            "phase_total": int(_coerce_int(raw_phase.get("total")) or 0),
             "detail": human_detail(state.text or state.expanded_text),
             "repo": state.repo_name or (Path(state.repo_root).name if state.repo_root else "devtool"),
             "target": android_target,
+            "project_type": str(state.raw.get("project_type") or "auto"),
+            "execution_environment": str(state.raw.get("execution_environment") or "auto"),
             "workspace": workspace_name,
             "workspace_index": workspace_index,
             "workspace_total": workspace_total,
+            "workspaces_json": json.dumps(self._workspace_rows(state), separators=(",", ":")),
             "progress": overall_percent,
             "phase_progress": state.percent if state.percent is not None else 0,
             "indeterminate": state.percent is None and status not in {"ok", "failed", "skipped"},
@@ -1653,7 +1836,7 @@ class AndroidAppHud:
             payload.get("phase"), payload.get("progress"), payload.get("phase_progress"),
             payload.get("current"), payload.get("total"), payload.get("passed"),
             payload.get("failed"), payload.get("skipped"), payload.get("warnings"),
-            payload.get("errors"), payload.get("steps_json"),
+            payload.get("errors"), payload.get("steps_json"), payload.get("workspaces_json"),
         )
         if signature == self.last_signature:
             return

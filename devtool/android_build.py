@@ -1,0 +1,1909 @@
+#!/usr/bin/env python3
+"""Smart, reusable Gradle project builder.
+
+Designed for ordinary Linux hosts and ARM64 Ubuntu chroots running through
+Termux. It prefers a project's Gradle wrapper, reuses existing Java/Android SDK
+installations, installs only missing SDK packages when sdkmanager is available,
+and can obtain a native AAPT2 from ReVanced releases on ARM hosts.
+
+Examples:
+    python3 gradle-build.py ~/Code/my-app
+    python3 gradle-build.py . --aapt2 /sdcard/Download/aapt2-arm64-v8a.bin
+    python3 gradle-build.py . -A revanced -o /sdcard/Download
+    python3 gradle-build.py . --task test --task assembleDebug -- --info
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import ssl
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Mapping, Sequence
+
+APP_NAME = "gradle-build"
+DEFAULT_GRADLE_VERSION = "8.13"
+REVANCED_REPOSITORY = "ReVanced/aapt2"
+REVANCED_API = f"https://api.github.com/repos/{REVANCED_REPOSITORY}"
+ANDROID_CMDLINE_TOOLS_URL = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
+
+
+class BuildError(RuntimeError):
+    """User-actionable build failure."""
+
+
+def heading(message: str) -> None:
+    print(f"\n\033[1;34m==> {message}\033[0m", flush=True)
+
+
+def info(message: str) -> None:
+    print(f"    {message}", flush=True)
+
+
+def warn(message: str) -> None:
+    print(f"warning: {message}", file=sys.stderr, flush=True)
+
+
+def fail(message: str) -> "None":
+    raise BuildError(message)
+
+
+def shell_join(parts: Sequence[str | os.PathLike[str]]) -> str:
+    import shlex
+
+    return " ".join(shlex.quote(str(part)) for part in parts)
+
+
+def run(
+    command: Sequence[str | os.PathLike[str]],
+    *,
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    check: bool = True,
+    capture: bool = False,
+    input_text: str | None = None,
+    dry_run: bool = False,
+    quiet: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    rendered = [str(part) for part in command]
+    if not quiet:
+        print("+", shell_join(rendered), flush=True)
+    if dry_run:
+        return subprocess.CompletedProcess(rendered, 0, "", "")
+    try:
+        result = subprocess.run(
+            rendered,
+            cwd=str(cwd) if cwd else None,
+            env=dict(env) if env else None,
+            text=True,
+            input=input_text,
+            capture_output=capture,
+            check=False,
+        )
+    except PermissionError as exc:
+        fail(
+            f"Permission denied while launching {rendered[0]}. The executable may "
+            "be on a noexec mount such as /sdcard. Copy it under your Linux home "
+            f"directory or use --aapt2 so the builder stages it automatically.\n{exc}"
+        )
+    except FileNotFoundError as exc:
+        fail(f"Command not found: {rendered[0]}\n{exc}")
+
+    if capture and not quiet:
+        if result.stdout:
+            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+        if result.stderr:
+            print(result.stderr, end="" if result.stderr.endswith("\n") else "\n", file=sys.stderr)
+    if check and result.returncode != 0:
+        details = ""
+        if capture:
+            combined = "\n".join(
+                item.strip() for item in (result.stdout, result.stderr) if item and item.strip()
+            )
+            if combined:
+                details = f"\n{combined}"
+        fail(f"Command failed ({result.returncode}): {shell_join(rendered)}{details}")
+    return result
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def ensure_executable(path: Path, label: str) -> Path:
+    if not path.is_file():
+        fail(f"{label} not found: {path}")
+    mode = path.stat().st_mode
+    bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    if not mode & bits:
+        try:
+            path.chmod(mode | bits)
+            info(f"Repaired executable permissions: {path}")
+        except OSError as exc:
+            fail(f"Could not make {label} executable: {path}\n{exc}")
+    return path
+
+
+def download(
+    url: str,
+    destination: Path,
+    *,
+    offline: bool,
+    force: bool = False,
+    headers: Mapping[str, str] | None = None,
+) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_file() and destination.stat().st_size > 0 and not force:
+        info(f"Using cached download: {destination}")
+        return destination
+    if offline:
+        fail(f"Required download is not cached and --offline was used:\n{url}")
+
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    temporary.unlink(missing_ok=True)
+    request_headers = {"User-Agent": f"{APP_NAME}/1.0"}
+    request_headers.update(headers or {})
+    request = urllib.request.Request(url, headers=request_headers)
+    heading(f"Downloading {url}")
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, temporary.open("wb") as output:
+            shutil.copyfileobj(response, output)
+    except (OSError, urllib.error.URLError) as exc:
+        temporary.unlink(missing_ok=True)
+        fail(f"Download failed: {url}\n{exc}")
+    temporary.replace(destination)
+    return destination
+
+
+def github_json(url: str, *, offline: bool) -> dict:
+    if offline:
+        fail("GitHub release metadata is unavailable in --offline mode unless AAPT2 is cached.")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/1.0", **headers})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        fail(f"Could not query GitHub release metadata: {url}\n{exc}")
+
+
+def extract_zip(archive: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive) as package:
+        for member in package.infolist():
+            extracted = Path(package.extract(member, destination))
+            archived_mode = (member.external_attr >> 16) & 0o7777
+            if archived_mode and extracted.exists():
+                try:
+                    extracted.chmod(archived_mode)
+                except OSError:
+                    pass
+
+
+def root_command(command: Sequence[str]) -> list[str]:
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return list(command)
+    sudo = shutil.which("sudo")
+    if sudo:
+        return [sudo, *command]
+    fail("This setup step needs root. Install sudo, run as root, or use --skip-system-deps after installing dependencies manually.")
+
+
+def certificate_store_available() -> bool:
+    paths = ssl.get_default_verify_paths()
+    candidates = [
+        os.environ.get("SSL_CERT_FILE"),
+        paths.cafile,
+        paths.openssl_cafile,
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/pki/tls/certs/ca-bundle.crt",
+        "/etc/ssl/cert.pem",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        try:
+            if path.is_file() and path.stat().st_size > 0:
+                return True
+        except OSError:
+            pass
+    cert_dir = os.environ.get("SSL_CERT_DIR") or paths.capath or paths.openssl_capath
+    if cert_dir:
+        directory = Path(cert_dir)
+        try:
+            if directory.is_dir() and any(directory.iterdir()):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def debian_package_installed(name: str) -> bool:
+    dpkg_query = shutil.which("dpkg-query")
+    if not dpkg_query:
+        return False
+    result = subprocess.run(
+        [dpkg_query, "-W", "-f=${Status}", name],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0 and "install ok installed" in result.stdout
+
+
+def install_missing_system_dependencies(*, need_java: bool, need_certificates: bool, offline: bool, java_version: int = 17) -> None:
+    if not need_java and not need_certificates:
+        info("System dependencies are already ready")
+        return
+    if offline:
+        missing = []
+        if need_java:
+            missing.append("JDK")
+        if need_certificates:
+            missing.append("CA certificates")
+        fail("Missing system dependencies in --offline mode: " + ", ".join(missing))
+
+    if running_under_termux_python():
+        packages: list[str] = []
+        if need_java:
+            packages.append(f"openjdk-{java_version}")
+        if need_certificates:
+            packages.append("ca-certificates")
+        package_manager = shutil.which("pkg")
+        if package_manager:
+            heading("Installing missing Termux dependencies")
+            run([package_manager, "install", "-y", *packages])
+            return
+        apt = shutil.which("apt-get") or shutil.which("apt")
+        if apt:
+            heading("Installing missing Termux dependencies")
+            run([apt, "install", "-y", *packages])
+            return
+        fail("No Termux package manager was found. Install manually: " + " ".join(packages))
+
+    packages = []
+    if need_java:
+        packages.append(f"openjdk-{java_version}-jdk-headless")
+    if need_certificates and debian_package_installed("ca-certificates"):
+        updater = shutil.which("update-ca-certificates")
+        if updater:
+            heading("Refreshing CA certificate store")
+            run(root_command([updater]), check=False)
+        need_certificates = not certificate_store_available()
+    if need_certificates:
+        packages.append("ca-certificates")
+    if not packages:
+        info("System dependencies are already ready")
+        return
+    apt_get = shutil.which("apt-get")
+    if not apt_get:
+        fail("apt-get was not found. Install manually: " + " ".join(packages))
+    heading("Installing missing Linux dependencies")
+    run(root_command([apt_get, "update"]))
+    run(root_command([apt_get, "install", "-y", "--no-install-recommends", *packages]))
+
+
+def normalized_machine() -> str:
+    machine = platform.machine().lower().replace("-", "_")
+    aliases = {
+        "aarch64": "arm64",
+        "arm64": "arm64",
+        "armv8l": "arm64",
+        "armv7l": "armv7",
+        "armv7": "armv7",
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+        "i386": "x86",
+        "i686": "x86",
+    }
+    return aliases.get(machine, machine)
+
+
+@dataclass(frozen=True)
+class ChrootLaunchOptions:
+    mode: str
+    name: str
+    termux_home: Path
+
+
+def running_under_termux_python() -> bool:
+    """Return True only when this interpreter is the Termux-host Python.
+
+    Ubuntu chroots often inherit TERMUX_VERSION/PREFIX, so those variables alone
+    are not enough. Requiring the active interpreter to live under the Termux
+    prefix prevents a build already running inside a chroot from delegating
+    recursively.
+    """
+    if os.environ.get("GRADLE_BUILD_CHROOT_ACTIVE") == "1":
+        return False
+    executable = Path(sys.executable).resolve(strict=False)
+    prefixes: list[Path] = []
+    if os.environ.get("PREFIX"):
+        prefixes.append(Path(os.environ["PREFIX"]).expanduser().resolve(strict=False))
+    prefixes.append(Path("/data/data/com.termux/files/usr"))
+    for prefix in prefixes:
+        try:
+            executable.relative_to(prefix)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def parse_chroot_launch_options(raw_args: Sequence[str]) -> ChrootLaunchOptions:
+    before_gradle = list(raw_args)
+    if "--" in before_gradle:
+        before_gradle = before_gradle[: before_gradle.index("--")]
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "-x", "--chroot",
+        nargs="?",
+        const="always",
+        choices=("auto", "always", "never"),
+        default="auto",
+    )
+    parser.add_argument("-X", "--no-chroot", dest="chroot", action="store_const", const="never")
+    parser.add_argument(
+        "-N", "--chroot-name",
+        default=os.environ.get("GRADLE_BUILD_CHROOT_NAME", "androidos"),
+    )
+    parser.add_argument(
+        "-H", "--chroot-termux-home",
+        type=Path,
+        default=Path(os.environ.get("GRADLE_BUILD_CHROOT_TERMUX_HOME", "/home/termux")),
+    )
+    options, _ = parser.parse_known_args(before_gradle)
+    return ChrootLaunchOptions(
+        mode=options.chroot,
+        name=options.chroot_name,
+        termux_home=options.chroot_termux_home.expanduser(),
+    )
+
+
+def map_termux_path(value: str, termux_home: Path, chroot_termux_home: Path) -> str:
+    """Map a Termux-host path to the path exposed inside the chroot."""
+    if value == "~":
+        return str(chroot_termux_home)
+    if value.startswith("~/"):
+        return str(chroot_termux_home / value[2:])
+
+    source_prefixes = [termux_home, Path("/data/data/com.termux/files/home")]
+    candidate = Path(value)
+    if candidate.is_absolute():
+        for source in source_prefixes:
+            try:
+                relative = candidate.relative_to(source)
+                return str(chroot_termux_home / relative)
+            except ValueError:
+                continue
+    return value
+
+
+def map_termux_argument(argument: str, termux_home: Path, chroot_termux_home: Path) -> str:
+    if argument.startswith("--") and "=" in argument:
+        key, value = argument.split("=", 1)
+        return f"{key}={map_termux_path(value, termux_home, chroot_termux_home)}"
+    return map_termux_path(argument, termux_home, chroot_termux_home)
+
+
+def stage_builder_for_chroot(termux_home: Path, chroot_termux_home: Path) -> tuple[Path, Path]:
+    source = Path(__file__).resolve()
+    host_target = termux_home / ".cache" / APP_NAME / "chroot" / "gradle-build.py"
+    host_target.parent.mkdir(parents=True, exist_ok=True)
+    needs_copy = not host_target.is_file()
+    if not needs_copy:
+        try:
+            needs_copy = sha256(source) != sha256(host_target)
+        except OSError:
+            needs_copy = True
+    if needs_copy:
+        shutil.copy2(source, host_target)
+        info(f"Staged builder for chroot: {host_target}")
+    ensure_executable(host_target, "staged Gradle builder")
+    try:
+        relative = host_target.relative_to(termux_home)
+    except ValueError:
+        fail(f"Could not map staged builder into the chroot: {host_target}")
+    return host_target, chroot_termux_home / relative
+
+
+def chroot_probe_command(name: str) -> list[str]:
+    return [
+        "sudo",
+        "chrootctl",
+        "--name",
+        name,
+        "exec",
+        "--",
+        "zsh",
+        "-ilc",
+        "command -v python3 >/dev/null 2>&1",
+    ]
+
+
+def chroot_is_available(name: str) -> tuple[bool, str]:
+    if shutil.which("sudo") is None:
+        return False, "sudo is not available in Termux"
+    command = chroot_probe_command(name)
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+    except FileNotFoundError as exc:
+        return False, str(exc)
+    except subprocess.TimeoutExpired:
+        return False, f"timed out probing chroot {name}"
+    if result.returncode == 0:
+        return True, ""
+    details = "\n".join(
+        item.strip() for item in (result.stdout, result.stderr) if item and item.strip()
+    )
+    return False, details or f"chroot probe exited with code {result.returncode}"
+
+
+def maybe_reexec_in_chroot(raw_args: Sequence[str]) -> int | None:
+    """Delegate a Termux-host invocation into chrootctl when available."""
+    options = parse_chroot_launch_options(raw_args)
+    if options.mode == "never" or not running_under_termux_python():
+        return None
+
+    available, reason = chroot_is_available(options.name)
+    if not available:
+        message = f"Chroot '{options.name}' is unavailable: {reason}"
+        if options.mode == "always":
+            fail(message)
+        warn(message + ". Continuing directly in Termux.")
+        return None
+
+    termux_home = Path(os.environ.get("HOME", "/data/data/com.termux/files/home")).resolve(strict=False)
+    chroot_termux_home = options.termux_home
+    _, chroot_script = stage_builder_for_chroot(termux_home, chroot_termux_home)
+    mapped_cwd = map_termux_path(str(Path.cwd().resolve()), termux_home, chroot_termux_home)
+    mapped_args = [
+        map_termux_argument(argument, termux_home, chroot_termux_home)
+        for argument in raw_args
+    ]
+
+    inner_parts = ["python3", str(chroot_script), *mapped_args]
+    inner_command = (
+        "export GRADLE_BUILD_CHROOT_ACTIVE=1; "
+        f"cd {shell_join([mapped_cwd])} && exec {shell_join(inner_parts)}"
+    )
+    command = [
+        "sudo",
+        "chrootctl",
+        "--name",
+        options.name,
+        "exec",
+        "--",
+        "zsh",
+        "-ilc",
+        inner_command,
+    ]
+    heading(f"Delegating build to chroot: {options.name}")
+    info(f"Working directory: {mapped_cwd}")
+    print("+", shell_join(command), flush=True)
+    try:
+        completed = subprocess.run(command, check=False)
+    except FileNotFoundError as exc:
+        fail(f"Could not launch chroot command: {exc}")
+    return completed.returncode
+
+
+def arch_asset_tokens(machine: str) -> list[str]:
+    return {
+        "arm64": ["arm64-v8a", "arm64_v8a", "aarch64", "arm64"],
+        "armv7": ["armeabi-v7a", "armeabi_v7a", "armv7", "armeabi"],
+        "x86_64": ["x86_64", "x86-64", "amd64"],
+        "x86": ["x86", "i686", "i386"],
+    }.get(machine, [machine])
+
+
+def select_revanced_asset(release: dict, machine: str) -> dict:
+    assets = release.get("assets") or []
+    tokens = arch_asset_tokens(machine)
+    scored: list[tuple[int, dict]] = []
+    for asset in assets:
+        name = str(asset.get("name", ""))
+        lower = name.lower()
+        if "aapt2" not in lower:
+            continue
+        if any(word in lower for word in ("sha256", "checksum", ".sig", "source")):
+            continue
+        score = 0
+        for index, token in enumerate(tokens):
+            if token in lower:
+                score += 100 - index
+                break
+        if machine == "arm64" and "armeabi" in lower:
+            score -= 80
+        if lower.endswith(".bin"):
+            score += 10
+        elif lower.endswith(".zip"):
+            score += 5
+        if score > 0:
+            scored.append((score, asset))
+    if not scored:
+        names = ", ".join(str(asset.get("name")) for asset in assets) or "no assets"
+        fail(f"No ReVanced AAPT2 asset matched host architecture {machine}. Assets: {names}")
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def validate_aapt2(path: Path, *, dry_run: bool = False) -> Path:
+    ensure_executable(path, "AAPT2")
+    result = run([path, "version"], check=False, capture=True, dry_run=dry_run, quiet=True)
+    if not dry_run and result.returncode != 0:
+        details = "\n".join(item.strip() for item in (result.stdout, result.stderr) if item and item.strip())
+        fail(f"AAPT2 could not run: {path}\n{details}")
+    if not dry_run:
+        version_text = (result.stdout or result.stderr).strip().splitlines()
+        info(f"AAPT2 ready: {path}" + (f" ({version_text[0]})" if version_text else ""))
+    return path
+
+
+def stage_aapt2(source: Path, cache_root: Path, *, force: bool, dry_run: bool) -> Path:
+    source = source.expanduser().resolve()
+    if not source.is_file():
+        fail(f"AAPT2 source not found: {source}")
+    target_dir = cache_root / "aapt2" / "manual"
+    target = target_dir / "aapt2"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    if dry_run:
+        info(f"Would stage AAPT2 outside shared storage: {source} -> {target}")
+        return target
+    same = target.is_file() and target.stat().st_size == source.stat().st_size
+    if same and not force:
+        try:
+            same = sha256(target) == sha256(source)
+        except OSError:
+            same = False
+    if not same or force:
+        if not dry_run:
+            shutil.copy2(source, target)
+        info(f"Staged AAPT2 outside shared storage: {target}")
+    return validate_aapt2(target, dry_run=dry_run)
+
+
+def obtain_revanced_aapt2(
+    cache_root: Path,
+    *,
+    release_name: str,
+    offline: bool,
+    force: bool,
+    dry_run: bool,
+) -> Path:
+    machine = normalized_machine()
+    metadata_dir = cache_root / "aapt2" / "revanced"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    # In offline mode, prefer the newest already staged binary.
+    if offline and release_name == "latest":
+        cached = sorted(metadata_dir.glob("*/aapt2"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if cached:
+            info(f"Using cached ReVanced AAPT2: {cached[0]}")
+            return validate_aapt2(cached[0], dry_run=dry_run)
+
+    endpoint = f"{REVANCED_API}/releases/latest" if release_name == "latest" else f"{REVANCED_API}/releases/tags/{release_name}"
+    release = github_json(endpoint, offline=offline)
+    tag = str(release.get("tag_name") or release_name)
+    asset = select_revanced_asset(release, machine)
+    asset_name = str(asset["name"])
+    asset_url = str(asset["browser_download_url"])
+    release_dir = metadata_dir / tag
+    target = release_dir / "aapt2"
+    if target.is_file() and not force:
+        info(f"Using cached ReVanced AAPT2 {tag}: {target}")
+        return validate_aapt2(target, dry_run=dry_run)
+
+    archive = release_dir / asset_name
+    download(asset_url, archive, offline=offline, force=force)
+    release_dir.mkdir(parents=True, exist_ok=True)
+    if dry_run:
+        return target
+
+    if zipfile.is_zipfile(archive):
+        with tempfile.TemporaryDirectory(prefix="gradle-build-aapt2-") as temporary_dir:
+            temporary = Path(temporary_dir)
+            extract_zip(archive, temporary)
+            candidates = [
+                path for path in temporary.rglob("*")
+                if path.is_file() and "aapt2" in path.name.lower()
+            ]
+            if not candidates:
+                fail(f"ReVanced asset contained no AAPT2 executable: {archive}")
+            candidates.sort(key=lambda path: (path.name.lower() != "aapt2", len(path.parts)))
+            shutil.copy2(candidates[0], target)
+    else:
+        shutil.copy2(archive, target)
+    return validate_aapt2(target, dry_run=dry_run)
+
+
+@dataclass(frozen=True)
+class ProjectInfo:
+    root: Path
+    name: str
+    android: bool
+    android_application: bool
+    compile_sdk: int | None
+    build_tools: str | None
+    agp_major: int | None
+    native_build: bool
+    ndk_version: str | None
+    cmake_version: str | None
+
+
+def project_files(root: Path) -> Iterable[Path]:
+    names = {
+        "settings.gradle",
+        "settings.gradle.kts",
+        "build.gradle",
+        "build.gradle.kts",
+        "gradle.properties",
+        "libs.versions.toml",
+    }
+    for name in names:
+        path = root / name
+        if path.is_file():
+            yield path
+    version_catalog = root / "gradle" / "libs.versions.toml"
+    if version_catalog.is_file():
+        yield version_catalog
+    for depth in (1, 2):
+        pattern = "*/" * depth + "build.gradle*"
+        for path in root.glob(pattern):
+            if path.is_file():
+                yield path
+
+
+def read_project_text(root: Path) -> str:
+    chunks: list[str] = []
+    seen: set[Path] = set()
+    for path in project_files(root):
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            chunks.append(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return "\n".join(chunks)
+
+
+def resolve_project_root(value: Path) -> Path:
+    candidate = value.expanduser().resolve()
+    if candidate.is_file():
+        candidate = candidate.parent
+    if not candidate.is_dir():
+        fail(f"Project directory not found: {candidate}")
+    markers = ("settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts", "gradlew")
+    if not any((candidate / marker).exists() for marker in markers):
+        fail(f"No Gradle project markers were found in {candidate}")
+    return candidate
+
+
+def first_int(patterns: Sequence[str], text: str) -> int | None:
+    for pattern in patterns:
+        match = re.search(pattern, text, re.MULTILINE)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                continue
+    return None
+
+
+def project_display_name(root: Path, text: str) -> str:
+    patterns = (
+        r"rootProject\.name\s*=\s*['\"]([^'\"]+)['\"]",
+        r"rootProject\.name\s*=\s*providers\.gradleProperty\([^)]*\)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.MULTILINE)
+        if match and match.lastindex:
+            value = match.group(1).strip()
+            if value:
+                return value
+    return root.name or "gradle-project"
+
+
+def slugify_name(value: str) -> str:
+    # Turn CamelCase, spaces and punctuation into a stable artifact-friendly name.
+    value = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", value.strip())
+    value = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
+    value = re.sub(r"[-_.]{2,}", "-", value).strip("-._")
+    return value.lower() or "gradle-project"
+
+
+def inspect_project(root: Path) -> ProjectInfo:
+    text = read_project_text(root)
+    name = project_display_name(root, text)
+    android_application = bool(re.search(r"com\.android\.application|id\s*\(?\s*['\"]com\.android\.application", text))
+    android_library = bool(re.search(r"com\.android\.library|id\s*\(?\s*['\"]com\.android\.library", text))
+    android = android_application or android_library or any(root.rglob("src/main/AndroidManifest.xml"))
+    compile_sdk = first_int(
+        [
+            r"\bcompileSdk(?:Version)?\s*(?:=|\s)\s*['\"]?(\d+)",
+            r"\bcompileSdk\s*\(\s*(\d+)\s*\)",
+        ],
+        text,
+    )
+    build_tools_match = re.search(r"\bbuildToolsVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", text)
+    build_tools = build_tools_match.group(1) if build_tools_match else None
+    agp_major = first_int(
+        [
+            r"com\.android\.tools\.build:gradle:([0-9]+)",
+            r"com\.android\.(?:application|library)[^\n]*?version\s*(?:=\s*)?['\"]([0-9]+)",
+            r"agp\s*=\s*['\"]([0-9]+)",
+            r"androidGradlePlugin\s*=\s*['\"]([0-9]+)",
+        ],
+        text,
+    )
+    native_build = "externalNativeBuild" in text or any(root.rglob("CMakeLists.txt"))
+    ndk_match = re.search(r"\bndkVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", text)
+    ndk_version = ndk_match.group(1).strip() if ndk_match else None
+    cmake_match = re.search(
+        r"externalNativeBuild\s*\{.*?cmake\s*\{.*?\bversion\s*=\s*['\"]([^'\"]+)",
+        text,
+        re.DOTALL,
+    )
+    cmake_version = cmake_match.group(1).strip() if cmake_match else None
+    return ProjectInfo(
+        root,
+        name,
+        android,
+        android_application,
+        compile_sdk,
+        build_tools,
+        agp_major,
+        native_build,
+        ndk_version,
+        cmake_version,
+    )
+
+
+def java_major(java: Path) -> int | None:
+    result = subprocess.run([str(java), "-version"], text=True, capture_output=True, check=False)
+    text = f"{result.stdout}\n{result.stderr}"
+    match = re.search(r'(?:version\s+"|openjdk\s+)(\d+)(?:\.(\d+))?', text, re.IGNORECASE)
+    if not match:
+        return None
+    first = int(match.group(1))
+    second = int(match.group(2) or 0)
+    return second if first == 1 else first
+
+
+def inferred_min_java(project: ProjectInfo) -> int:
+    baseline = 8
+    if project.agp_major is not None:
+        if project.agp_major >= 8:
+            baseline = 17
+        elif project.agp_major >= 7:
+            baseline = 11
+
+    # Gradle itself may run on an older supported JVM while individual JavaCompile
+    # tasks request a newer source/toolchain level. Detect those declarations so
+    # the selected JAVA_HOME can actually compile the project.
+    text = read_project_text(project.root)
+    declared: list[int] = []
+    patterns = (
+        r"JavaVersion\.VERSION_(\d+)",
+        r"JavaLanguageVersion\.of\(\s*(\d+)\s*\)",
+        r"jvmToolchain\(\s*(\d+)\s*\)",
+        r"JvmTarget\.JVM_(\d+)",
+        r"jvmTarget\s*=\s*['\"]?(\d+)",
+        r"sourceCompatibility\s*=\s*['\"]?(\d+)",
+        r"targetCompatibility\s*=\s*['\"]?(\d+)",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            try:
+                declared.append(int(match.group(1)))
+            except (TypeError, ValueError):
+                pass
+    return max([baseline, *declared])
+
+
+def java_home_candidates(explicit: Path | None) -> list[Path]:
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(explicit.expanduser())
+    if os.environ.get("JAVA_HOME"):
+        candidates.append(Path(os.environ["JAVA_HOME"]).expanduser())
+    for executable in ("javac", "java"):
+        found = shutil.which(executable)
+        if found:
+            candidates.append(Path(found).resolve().parent.parent)
+    jvm_root = Path("/usr/lib/jvm")
+    if jvm_root.is_dir():
+        candidates.extend(path for path in jvm_root.iterdir() if path.is_dir())
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for item in candidates:
+        resolved = item.resolve(strict=False)
+        if str(resolved) not in seen:
+            seen.add(str(resolved))
+            unique.append(resolved)
+    return unique
+
+
+def find_java_home(explicit: Path | None, minimum: int) -> Path:
+    rejected: list[str] = []
+    for home in java_home_candidates(explicit):
+        java = home / "bin" / "java"
+        javac = home / "bin" / "javac"
+        if not java.is_file() or not javac.is_file():
+            continue
+        major = java_major(java)
+        if major is not None and major >= minimum:
+            return home
+        rejected.append(f"{home} (Java {major or 'unknown'})")
+    details = f" Candidates checked: {', '.join(rejected)}." if rejected else ""
+    fail(f"A JDK with Java {minimum}+ is required.{details} Use --java-home to select one.")
+
+
+def discover_sdk_root(explicit: Path | None) -> Path | None:
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(explicit.expanduser())
+    for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        if os.environ.get(variable):
+            candidates.append(Path(os.environ[variable]).expanduser())
+    candidates.extend(
+        [
+            Path.home() / "Android" / "Sdk",
+            Path.home() / "android-sdk",
+            Path.home() / ".android" / "sdk",
+            Path("/opt/android-sdk"),
+            Path("/usr/lib/android-sdk"),
+        ]
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    return explicit.expanduser().resolve() if explicit else None
+
+
+def sdkmanager_candidates(sdk_root: Path) -> list[Path]:
+    candidates = [
+        sdk_root / "cmdline-tools" / "latest" / "bin" / "sdkmanager",
+        sdk_root / "tools" / "bin" / "sdkmanager",
+    ]
+    cmdline_root = sdk_root / "cmdline-tools"
+    if cmdline_root.is_dir():
+        candidates.extend(sorted(cmdline_root.glob("*/bin/sdkmanager"), reverse=True))
+    return candidates
+
+
+def find_sdkmanager(sdk_root: Path) -> Path | None:
+    for candidate in sdkmanager_candidates(sdk_root):
+        if candidate.is_file():
+            return ensure_executable(candidate, "sdkmanager")
+    found = shutil.which("sdkmanager")
+    return ensure_executable(Path(found), "sdkmanager") if found else None
+
+
+
+def ensure_sdkmanager_available(
+    sdk_root: Path,
+    cache_root: Path,
+    *,
+    offline: bool,
+    force: bool,
+    dry_run: bool,
+) -> Path:
+    existing = find_sdkmanager(sdk_root)
+    if existing is not None and not force:
+        info(f"Reusing sdkmanager: {existing}")
+        return existing
+
+    archive = cache_root / "android" / "commandlinetools-linux-latest.zip"
+    download(ANDROID_CMDLINE_TOOLS_URL, archive, offline=offline, force=force)
+    target = sdk_root / "cmdline-tools" / "latest"
+    if dry_run:
+        info(f"Would install Android command-line tools under {target}")
+        return target / "bin" / "sdkmanager"
+
+    with tempfile.TemporaryDirectory(prefix="gradle-build-cmdline-tools-") as temporary_dir:
+        temporary = Path(temporary_dir)
+        extract_zip(archive, temporary)
+        source = temporary / "cmdline-tools"
+        if not source.is_dir():
+            candidates = [item for item in temporary.iterdir() if item.is_dir()]
+            if len(candidates) == 1:
+                source = candidates[0]
+        if not (source / "bin" / "sdkmanager").is_file():
+            fail(f"Unexpected Android command-line tools archive layout: {archive}")
+        if target.exists():
+            shutil.rmtree(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, target)
+
+    manager = target / "bin" / "sdkmanager"
+    return ensure_executable(manager, "sdkmanager")
+
+
+def installed_build_tools_versions(sdk_root: Path) -> list[str]:
+    root = sdk_root / "build-tools"
+    if not root.is_dir():
+        return []
+    def key(value: str) -> tuple[int, ...]:
+        return tuple(int(part) if part.isdigit() else 0 for part in re.split(r"[.-]", value))
+    return sorted((item.name for item in root.iterdir() if item.is_dir()), key=key, reverse=True)
+
+def source_properties_revision(directory: Path) -> str | None:
+    properties = directory / "source.properties"
+    if not properties.is_file():
+        return None
+    try:
+        text = properties.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.search(r"^Pkg\.Revision\s*=\s*(.+?)\s*$", text, re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def ndk_is_ready(sdk_root: Path, version: str) -> bool:
+    directory = sdk_root / "ndk" / version
+    return (
+        source_properties_revision(directory) == version
+        and (directory / "toolchains" / "llvm" / "prebuilt").is_dir()
+        and (directory / "build" / "cmake" / "android.toolchain.cmake").is_file()
+    )
+
+
+def executable_runs(executable: Path, *args: str) -> bool:
+    if not executable.is_file():
+        return False
+    try:
+        result = subprocess.run(
+            [str(executable), *args],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def cmake_is_ready(sdk_root: Path, version: str) -> bool:
+    directory = sdk_root / "cmake" / version
+    return (
+        source_properties_revision(directory) == version
+        and executable_runs(directory / "bin" / "cmake", "--version")
+        and executable_runs(directory / "bin" / "ninja", "--version")
+    )
+
+
+def ensure_host_cmake_compatible(
+    sdk_root: Path,
+    version: str,
+    *,
+    dry_run: bool,
+) -> None:
+    """Replace SDK x86-only CMake launchers with host-native tools on ARM."""
+    directory = sdk_root / "cmake" / version
+    sdk_cmake = directory / "bin" / "cmake"
+    sdk_ninja = directory / "bin" / "ninja"
+    if executable_runs(sdk_cmake, "--version") and executable_runs(sdk_ninja, "--version"):
+        return
+
+    machine = normalized_machine()
+    if machine not in {"arm64", "armv7"}:
+        return
+
+    host_cmake = shutil.which("cmake")
+    host_ninja = shutil.which("ninja") or shutil.which("ninja-build")
+    if not host_cmake or not host_ninja:
+        fail(
+            f"Android SDK CMake {version} is not executable on {machine}. "
+            "Install host-native tools first: sudo apt install cmake ninja-build"
+        )
+
+    replacements = {
+        sdk_cmake: Path(host_cmake).resolve(),
+        sdk_ninja: Path(host_ninja).resolve(),
+    }
+    for target, source in replacements.items():
+        if dry_run:
+            info(f"Would replace incompatible {target} with host-native {source}")
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        backup = target.with_name(target.name + ".sdk-host")
+        if target.exists() and not target.is_symlink() and not backup.exists():
+            target.rename(backup)
+        elif target.is_symlink() or target.exists():
+            target.unlink(missing_ok=True)
+        target.symlink_to(source)
+        info(f"Using host-native {target.name}: {source}")
+
+    if not dry_run and not cmake_is_ready(sdk_root, version):
+        fail(f"Host-native CMake compatibility setup failed for SDK CMake {version}")
+
+
+def remove_path(path: Path, *, dry_run: bool) -> None:
+    if not path.exists():
+        return
+    if dry_run:
+        info(f"Would remove incomplete SDK path: {path}")
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def clear_android_download_debris(sdk_root: Path, *, dry_run: bool) -> None:
+    candidates = [sdk_root / ".temp", Path.home() / ".android" / "cache"]
+    for candidate in candidates:
+        if candidate.exists():
+            if dry_run:
+                info(f"Would clear Android download cache: {candidate}")
+            else:
+                shutil.rmtree(candidate, ignore_errors=True)
+                info(f"Cleared Android download cache: {candidate}")
+
+
+def install_sdk_packages_with_repair(
+    manager: Path,
+    sdk_root: Path,
+    packages: Sequence[str],
+    *,
+    env: Mapping[str, str],
+    dry_run: bool,
+) -> None:
+    command = [manager, f"--sdk_root={sdk_root}", *packages]
+    result = run(
+        command,
+        env=env,
+        input_text="y\n" * 200,
+        check=False,
+        dry_run=dry_run,
+    )
+    if dry_run or result.returncode == 0:
+        return
+
+    warn("Android SDK package installation failed; repairing partial downloads and retrying once")
+    clear_android_download_debris(sdk_root, dry_run=False)
+    for package in packages:
+        kind, _, version = package.partition(";")
+        if kind in {"ndk", "cmake", "build-tools"} and version:
+            remove_path(sdk_root / kind / version, dry_run=False)
+        elif kind == "platforms" and version:
+            remove_path(sdk_root / "platforms" / version, dry_run=False)
+
+    retry = run(
+        command,
+        env=env,
+        input_text="y\n" * 200,
+        check=False,
+        dry_run=False,
+    )
+    if retry.returncode != 0:
+        fail(
+            "Android SDK package installation failed again after clearing partial "
+            f"downloads: {', '.join(packages)}"
+        )
+
+
+def update_local_properties(project_root: Path, sdk_root: Path) -> None:
+    target = project_root / "local.properties"
+    lines: list[str] = []
+    if target.is_file():
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    escaped = str(sdk_root).replace("\\", "\\\\")
+    replacement = f"sdk.dir={escaped}"
+    changed = False
+    output: list[str] = []
+    found = False
+    for line in lines:
+        if line.strip().startswith("sdk.dir="):
+            found = True
+            if line != replacement:
+                output.append(replacement)
+                changed = True
+            else:
+                output.append(line)
+        else:
+            output.append(line)
+    if not found:
+        output.append(replacement)
+        changed = True
+    if changed or not target.exists():
+        target.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+        info(f"Updated {target}")
+    else:
+        info(f"Reusing SDK path from {target}")
+
+
+def ensure_android_sdk(
+    project: ProjectInfo,
+    sdk_root: Path | None,
+    cache_root: Path,
+    *,
+    force_setup: bool,
+    platform_override: str,
+    build_tools_override: str,
+    ndk_override: str,
+    cmake_override: str,
+    skip_install: bool,
+    offline: bool,
+    env: Mapping[str, str],
+    dry_run: bool,
+) -> tuple[Path, str | None, str | None, str | None, str | None]:
+    if not project.android:
+        fail("Internal error: ensure_android_sdk called for a non-Android project")
+    if sdk_root is None:
+        if skip_install:
+            fail("Android SDK not found and --skip-sdk-install was used. Set ANDROID_HOME/ANDROID_SDK_ROOT or pass --sdk-root.")
+        sdk_root = cache_root / "android-sdk"
+        sdk_root.mkdir(parents=True, exist_ok=True)
+        info(f"Using managed Android SDK: {sdk_root}")
+
+    platform_id: str | None
+    if platform_override == "none":
+        platform_id = None
+    elif platform_override != "auto":
+        platform_id = platform_override if platform_override.startswith("android-") else f"android-{platform_override}"
+    else:
+        platform_id = f"android-{project.compile_sdk}" if project.compile_sdk else None
+
+    if build_tools_override == "none":
+        build_tools = None
+    elif build_tools_override != "auto":
+        build_tools = build_tools_override
+    else:
+        if project.build_tools:
+            build_tools = project.build_tools
+        else:
+            installed_versions = installed_build_tools_versions(sdk_root)
+            build_tools = installed_versions[0] if installed_versions else "35.0.0"
+
+    if ndk_override == "none":
+        ndk_version = None
+    elif ndk_override != "auto":
+        ndk_version = ndk_override
+    elif project.ndk_version:
+        ndk_version = project.ndk_version
+    elif project.native_build and project.agp_major is not None and project.agp_major >= 9:
+        # AGP 9.0 defaults to NDK r28c. Installing it here avoids AGP's opaque
+        # configuration-time auto-install path and lets us repair corrupt downloads.
+        ndk_version = "28.2.13676358"
+    else:
+        ndk_version = None
+
+    if cmake_override == "none":
+        cmake_version = None
+    elif cmake_override != "auto":
+        cmake_version = cmake_override
+    else:
+        cmake_version = project.cmake_version
+
+    missing: list[str] = []
+    incomplete_paths: list[Path] = []
+    if platform_id and not (sdk_root / "platforms" / platform_id / "android.jar").is_file():
+        missing.append(f"platforms;{platform_id}")
+        incomplete_paths.append(sdk_root / "platforms" / platform_id)
+    if build_tools and not (sdk_root / "build-tools" / build_tools).is_dir():
+        missing.append(f"build-tools;{build_tools}")
+        incomplete_paths.append(sdk_root / "build-tools" / build_tools)
+    if ndk_version and not ndk_is_ready(sdk_root, ndk_version):
+        missing.append(f"ndk;{ndk_version}")
+        incomplete_paths.append(sdk_root / "ndk" / ndk_version)
+    if cmake_version and not cmake_is_ready(sdk_root, cmake_version):
+        missing.append(f"cmake;{cmake_version}")
+        incomplete_paths.append(sdk_root / "cmake" / cmake_version)
+
+    if missing:
+        if skip_install:
+            fail("Missing Android SDK packages: " + ", ".join(missing))
+        manager = find_sdkmanager(sdk_root)
+        if manager is None:
+            manager = ensure_sdkmanager_available(
+                sdk_root,
+                cache_root,
+                offline=offline,
+                force=force_setup,
+                dry_run=dry_run,
+            )
+        if offline:
+            fail("Missing Android SDK packages in offline mode: " + ", ".join(missing))
+        heading("Installing missing Android SDK packages")
+        info(", ".join(missing))
+        run(
+            [manager, f"--sdk_root={sdk_root}", "--licenses"],
+            env=env,
+            input_text="y\n" * 200,
+            check=False,
+            dry_run=dry_run,
+        )
+        for path in incomplete_paths:
+            remove_path(path, dry_run=dry_run)
+        install_sdk_packages_with_repair(
+            manager,
+            sdk_root,
+            missing,
+            env=env,
+            dry_run=dry_run,
+        )
+        if cmake_version:
+            ensure_host_cmake_compatible(sdk_root, cmake_version, dry_run=dry_run)
+        if not dry_run:
+            validation_failures: list[str] = []
+            if ndk_version and not ndk_is_ready(sdk_root, ndk_version):
+                validation_failures.append(f"NDK {ndk_version}")
+            if cmake_version and not cmake_is_ready(sdk_root, cmake_version):
+                validation_failures.append(f"CMake {cmake_version}")
+            if validation_failures:
+                fail("SDK package validation failed after installation: " + ", ".join(validation_failures))
+    else:
+        if cmake_version:
+            ensure_host_cmake_compatible(sdk_root, cmake_version, dry_run=dry_run)
+        heading("Android SDK is already ready")
+        if platform_id:
+            info(f"Platform: {platform_id}")
+        if build_tools:
+            info(f"Build Tools: {build_tools}")
+        if ndk_version:
+            info(f"NDK: {ndk_version}")
+        if cmake_version:
+            info(f"CMake: {cmake_version}")
+    update_local_properties(project.root, sdk_root)
+    return sdk_root, platform_id, build_tools, ndk_version, cmake_version
+
+
+def wrapper_distribution_version(project_root: Path) -> str | None:
+    properties = project_root / "gradle" / "wrapper" / "gradle-wrapper.properties"
+    if not properties.is_file():
+        return None
+    text = properties.read_text(encoding="utf-8", errors="replace")
+    match = re.search(r"gradle-([0-9][^-]*)-(?:bin|all)\.zip", text)
+    return match.group(1) if match else None
+
+
+def gradle_version(command: Path) -> str | None:
+    result = subprocess.run([str(command), "--version"], text=True, capture_output=True, check=False)
+    match = re.search(r"^Gradle\s+([^\s]+)", f"{result.stdout}\n{result.stderr}", re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def managed_gradle(
+    version: str,
+    cache_root: Path,
+    *,
+    offline: bool,
+    force: bool,
+) -> Path:
+    home = cache_root / "gradle" / f"gradle-{version}"
+    launcher = home / "bin" / "gradle"
+    if launcher.is_file() and not force:
+        return ensure_executable(launcher, "Gradle launcher")
+    archive = cache_root / "downloads" / f"gradle-{version}-bin.zip"
+    download(
+        f"https://services.gradle.org/distributions/gradle-{version}-bin.zip",
+        archive,
+        offline=offline,
+        force=force,
+    )
+    if home.exists():
+        shutil.rmtree(home)
+    home.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="gradle-build-gradle-") as temporary_dir:
+        temporary = Path(temporary_dir)
+        extract_zip(archive, temporary)
+        extracted = temporary / f"gradle-{version}"
+        if not extracted.is_dir():
+            fail(f"Unexpected Gradle archive layout: {archive}")
+        shutil.copytree(extracted, home)
+    return ensure_executable(launcher, "Gradle launcher")
+
+
+def version_key(value: str | None) -> tuple[int, ...]:
+    """Return a numeric comparison key for versions such as 8.13 or 8.13.2."""
+    if not value:
+        return ()
+    match = re.match(r"\s*(\d+(?:\.\d+)*)", value)
+    if not match:
+        return ()
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def gradle_version_matches(actual: str | None, requested: str) -> bool:
+    """Require the requested Gradle feature version, allowing patch releases.
+
+    For example, requested 8.13 accepts 8.13 and 8.13.1, but rejects 8.6 and
+    8.14. This is intentionally conservative for Android Gradle Plugin builds.
+    """
+    actual_key = version_key(actual)
+    requested_key = version_key(requested)
+    if not actual_key or not requested_key:
+        return False
+    width = len(requested_key)
+    return actual_key[:width] == requested_key
+
+
+def select_gradle(
+    project_root: Path,
+    *,
+    explicit: str | None,
+    version: str | None,
+    cache_root: Path,
+    offline: bool,
+    force: bool,
+) -> Path:
+    wrapper = project_root / "gradlew"
+    requested = version or wrapper_distribution_version(project_root) or DEFAULT_GRADLE_VERSION
+
+    if explicit:
+        candidate = Path(explicit).expanduser()
+        if not candidate.is_absolute():
+            found = shutil.which(explicit)
+            if not found:
+                fail(f"Gradle command not found: {explicit}")
+            candidate = Path(found)
+        candidate = ensure_executable(candidate.resolve(), "Gradle launcher")
+        actual = gradle_version(candidate)
+        if not gradle_version_matches(actual, requested):
+            fail(
+                f"Explicit Gradle launcher is incompatible: {candidate} reports "
+                f"{actual or 'an unknown version'}, but this build requires Gradle "
+                f"{requested}. Choose another launcher or pass --gradle-version."
+            )
+        info(f"Using explicit compatible Gradle: {candidate} ({actual})")
+        return candidate
+
+    if wrapper.is_file():
+        wrapper_version = wrapper_distribution_version(project_root)
+        if wrapper_version and not gradle_version_matches(wrapper_version, requested):
+            warn(
+                f"Project wrapper declares Gradle {wrapper_version}, while Gradle "
+                f"{requested} is requested. The wrapper remains authoritative."
+            )
+        info(
+            f"Using project Gradle wrapper: {wrapper}"
+            + (f" ({wrapper_version})" if wrapper_version else "")
+        )
+        return ensure_executable(wrapper, "Gradle wrapper")
+
+    system = shutil.which("gradle")
+    if system:
+        system_path = ensure_executable(Path(system), "Gradle launcher")
+        actual = gradle_version(system_path)
+        if gradle_version_matches(actual, requested):
+            info(f"Using compatible Gradle from PATH: {system_path} ({actual})")
+            return system_path
+        warn(
+            f"Ignoring incompatible Gradle from PATH: {system_path} "
+            f"({actual or 'unknown'}); Gradle {requested} is required."
+        )
+
+    info(f"Using managed Gradle {requested}")
+    return managed_gradle(requested, cache_root, offline=offline, force=force)
+
+
+def default_tasks(project: ProjectInfo) -> list[str]:
+    if project.android_application:
+        return ["assembleDebug"]
+    if project.android:
+        return ["assemble"]
+    return ["build"]
+
+
+def discover_artifacts(root: Path, since: float) -> list[Path]:
+    patterns = (
+        "**/build/outputs/**/*.apk",
+        "**/build/outputs/**/*.aab",
+        "**/build/outputs/**/*.aar",
+        "**/build/libs/*.jar",
+        "**/build/libs/*.war",
+        "**/build/distributions/*.zip",
+        "**/build/distributions/*.tar",
+    )
+    found: dict[str, Path] = {}
+    for pattern in patterns:
+        for path in root.glob(pattern):
+            if not path.is_file():
+                continue
+            try:
+                if path.stat().st_mtime + 2 < since:
+                    continue
+            except OSError:
+                continue
+            found[str(path.resolve())] = path.resolve()
+    return sorted(found.values(), key=lambda path: (path.suffix, str(path)))
+
+
+def artifact_module(source: Path, project_root: Path) -> str:
+    try:
+        relative = source.relative_to(project_root)
+    except ValueError:
+        return "artifact"
+    parts = list(relative.parts)
+    try:
+        build_index = parts.index("build")
+    except ValueError:
+        return "artifact"
+    if build_index == 0:
+        return "app"
+    return "-".join(parts[:build_index]) or "app"
+
+
+def artifact_variant(source: Path) -> str:
+    """Infer a useful build variant/classifier from standard Gradle output paths."""
+    parts = source.parts
+    stem = source.stem
+    stem_lower = stem.lower()
+    for marker in ("apk", "bundle", "aar"):
+        if marker in parts:
+            index = parts.index(marker)
+            if index + 1 < len(parts) - 1:
+                candidate = parts[index + 1]
+                if candidate not in {"outputs", "intermediates"}:
+                    classifier = slugify_name(candidate)
+                    if "unsigned" in stem_lower and "unsigned" not in classifier:
+                        classifier += "-unsigned"
+                    return classifier
+    for prefix in ("app-", "application-", "bundle-"):
+        if stem.lower().startswith(prefix):
+            return slugify_name(stem[len(prefix):])
+    if stem.lower() in {"app", "application", "bundle", "artifact"}:
+        return ""
+    return slugify_name(stem)
+
+
+def planned_artifact_names(
+    artifacts: Sequence[Path],
+    project_root: Path,
+    project_name: str,
+    output_name: str | None,
+) -> list[str]:
+    project_slug = slugify_name(project_name)
+    modules = [artifact_module(source, project_root) for source in artifacts]
+    meaningful_modules = {module for module in modules if module not in {"app", "artifact"}}
+    multiple_modules = len(meaningful_modules) > 1
+    names: list[str] = []
+    used: set[str] = set()
+
+    for source, module in zip(artifacts, modules):
+        suffix = source.suffix.lower()
+        variant = artifact_variant(source)
+        if output_name:
+            requested = Path(output_name).name
+            requested_path = Path(requested)
+            base = requested_path.stem if requested_path.suffix else requested
+            explicit_suffix = requested_path.suffix.lower()
+            if explicit_suffix and len(artifacts) == 1:
+                suffix = explicit_suffix
+            base_slug = slugify_name(base)
+        else:
+            base_slug = project_slug
+
+        descriptors: list[str] = []
+        module_slug = slugify_name(module)
+        if module not in {"app", "artifact"} and (multiple_modules or module_slug not in base_slug):
+            descriptors.append(module_slug)
+        if variant and variant not in base_slug and variant not in descriptors:
+            descriptors.append(variant)
+
+        candidate_base = "-".join([base_slug, *descriptors])
+        candidate = f"{candidate_base}{suffix}"
+        serial = 2
+        while candidate in used:
+            candidate = f"{candidate_base}-{serial}{suffix}"
+            serial += 1
+        used.add(candidate)
+        names.append(candidate)
+    return names
+
+
+def copy_artifacts(
+    artifacts: Sequence[Path],
+    project_root: Path,
+    project_name: str,
+    output_dir: Path,
+    output_name: str | None = None,
+) -> list[Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    names = planned_artifact_names(artifacts, project_root, project_name, output_name)
+    for source, name in zip(artifacts, names):
+        destination = output_dir / name
+        if destination.resolve() != source:
+            shutil.copy2(source, destination)
+        copied.append(destination)
+    return copied
+
+
+def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
+    raw = list(sys.argv[1:] if raw_args is None else raw_args)
+    extra_gradle_args: list[str] = []
+    if "--" in raw:
+        separator = raw.index("--")
+        extra_gradle_args = raw[separator + 1 :]
+        raw = raw[:separator]
+
+    parser = argparse.ArgumentParser(
+        description="Smart generic Gradle builder for JVM and Android projects.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("project", nargs="?", type=Path, default=Path.cwd(), help="Gradle project directory")
+    parser.add_argument("-p", "--project-dir", type=Path, help="Gradle project directory (named form)")
+    parser.add_argument(
+        "-x", "--chroot",
+        nargs="?",
+        const="always",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="When launched by Termux, automatically build inside chrootctl; omit the value to require it",
+    )
+    parser.add_argument("-X", "--no-chroot", dest="chroot", action="store_const", const="never", help="Never delegate from Termux to a chroot")
+    parser.add_argument("-N", "--chroot-name", default=os.environ.get("GRADLE_BUILD_CHROOT_NAME", "androidos"), help="chrootctl chroot name")
+    parser.add_argument(
+        "-H", "--chroot-termux-home",
+        type=Path,
+        default=Path(os.environ.get("GRADLE_BUILD_CHROOT_TERMUX_HOME", "/home/termux")),
+        help="Path where the Termux home is mounted inside the chroot",
+    )
+    parser.add_argument("-t", "--task", action="append", dest="tasks", help="Gradle task; repeat for multiple tasks")
+    parser.add_argument("-c", "--clean", action="store_true", help="Run clean before requested/default tasks")
+    parser.add_argument("-o", "--output-dir", type=Path, help="Copy newly produced artifacts here")
+    parser.add_argument("-n", "--output-name", help="Base filename for copied artifacts; extension is inferred unless a single artifact is built")
+    parser.add_argument("-Q", "--no-artifact-scan", action="store_true", help="Do not scan for produced APK/AAB/AAR/JAR artifacts")
+
+    parser.add_argument("-a", "--aapt2", type=Path, help="Use this AAPT2 binary; shared-storage files are staged automatically")
+    parser.add_argument(
+        "-A", "--aapt2-provider",
+        choices=("auto", "revanced", "none"),
+        default="auto",
+        help="AAPT2 source when --aapt2 is omitted; auto uses ReVanced on ARM Android builds",
+    )
+    parser.add_argument("-R", "--aapt2-release", default="latest", help="ReVanced AAPT2 tag or latest")
+
+    parser.add_argument("-s", "--sdk-root", type=Path, help="Android SDK root")
+    parser.add_argument("-P", "--android-platform", default="auto", help="android-36, 36, auto, or none")
+    parser.add_argument("-B", "--build-tools", default="auto", help="Build Tools version, auto, or none")
+    parser.add_argument("--ndk-version", default="auto", help="NDK version, auto, or none")
+    parser.add_argument("--cmake-version", default="auto", help="CMake version, auto, or none")
+    parser.add_argument("-I", "--skip-sdk-install", action="store_true", help="Never install missing SDK packages")
+
+    parser.add_argument("-j", "--java-home", type=Path, help="JDK home")
+    parser.add_argument(
+        "-D", "--system-deps",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="Install missing Java/CA packages only when needed, always refresh them, or never install them",
+    )
+    parser.add_argument("-K", "--skip-system-deps", dest="system_deps", action="store_const", const="never", help="Alias for --system-deps never")
+    parser.add_argument("-J", "--min-java", type=int, help="Minimum Java version; inferred when omitted")
+    parser.add_argument("-g", "--gradle-command", help="Explicit Gradle or gradlew executable")
+    parser.add_argument("-G", "--gradle-version", help="Managed Gradle version when no wrapper is available")
+    parser.add_argument("-k", "--cache-dir", type=Path, default=Path.home() / ".cache" / APP_NAME)
+    parser.add_argument("-w", "--max-workers", type=int, default=max(1, min(4, os.cpu_count() or 2)))
+    parser.add_argument("-O", "--offline", action="store_true", help="Disable downloads and Gradle network access")
+    parser.add_argument("-f", "--force-setup", action="store_true", help="Refresh managed Gradle/AAPT2 downloads")
+    parser.add_argument("-m", "--no-daemon", action="store_true", help="Pass --no-daemon to Gradle")
+    parser.add_argument(
+        "-S", "--stacktrace",
+        dest="stacktrace",
+        action="store_true",
+        default=True,
+        help="Show Gradle stacktraces (enabled by default)",
+    )
+    parser.add_argument(
+        "--no-stacktrace",
+        dest="stacktrace",
+        action="store_false",
+        help="Do not pass --stacktrace to Gradle",
+    )
+    parser.add_argument(
+        "--fail-fast",
+        dest="continue_on_failure",
+        action="store_false",
+        default=True,
+        help="Stop after the first task failure instead of passing --continue",
+    )
+    parser.add_argument(
+        "--rich-console",
+        dest="plain_console",
+        action="store_false",
+        default=True,
+        help="Use Gradle's rich console instead of --console=plain",
+    )
+    parser.add_argument("-y", "--dry-run", action="store_true", help="Print setup/build commands without running them")
+    args = parser.parse_args(raw)
+    if args.project_dir:
+        args.project = args.project_dir
+    if args.max_workers < 1:
+        parser.error("--max-workers must be at least 1")
+    args.gradle_args = extra_gradle_args
+    return args
+
+
+def gradle_process_pids() -> list[int]:
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid=,uid=,args="],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return []
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    protected = {os.getpid(), os.getppid()}
+    pids: list[int] = []
+    signatures = (
+        "org.gradle.launcher.daemon.bootstrap.GradleDaemon",
+        "org.gradle.wrapper.GradleWrapperMain",
+        "org.gradle.launcher.GradleMain",
+    )
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid, process_uid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        if pid in protected or (uid is not None and process_uid != uid):
+            continue
+        if any(signature in parts[2] for signature in signatures):
+            pids.append(pid)
+    return pids
+
+
+def stop_gradle_processes(
+    gradle: Path,
+    project_root: Path,
+    env: Mapping[str, str],
+    *,
+    dry_run: bool,
+) -> None:
+    heading("Gradle cleanup")
+    run([gradle, "--stop"], cwd=project_root, env=env, check=False, dry_run=dry_run)
+    if dry_run:
+        return
+    pids = gradle_process_pids()
+    for pid in pids:
+        try:
+            os.kill(pid, 15)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.time() + 2.0
+    while time.time() < deadline and gradle_process_pids():
+        time.sleep(0.1)
+    remaining = gradle_process_pids()
+    for pid in remaining:
+        try:
+            os.kill(pid, 9)
+        except (ProcessLookupError, PermissionError):
+            pass
+    info(f"Stopped {len(set(pids + remaining))} remaining Gradle process(es)")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    delegated = maybe_reexec_in_chroot(raw_args)
+    if delegated is not None:
+        return delegated
+    args = parse_args(raw_args)
+    project_root = resolve_project_root(args.project)
+    project = inspect_project(project_root)
+    cache_root = args.cache_dir.expanduser().resolve()
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    heading("Project inspection")
+    info(f"Project: {project_root}")
+    info(f"Project name: {project.name}")
+    info(f"Type: {'Android application' if project.android_application else 'Android Gradle project' if project.android else 'Gradle/JVM project'}")
+    if project.compile_sdk:
+        info(f"compileSdk: {project.compile_sdk}")
+    if project.agp_major:
+        info(f"Android Gradle Plugin major: {project.agp_major}")
+    if project.native_build:
+        info("Native build: yes")
+    if project.ndk_version:
+        info(f"Declared NDK: {project.ndk_version}")
+    if project.cmake_version:
+        info(f"Declared CMake: {project.cmake_version}")
+
+    minimum_java = args.min_java or inferred_min_java(project)
+    java_home: Path | None = None
+    try:
+        java_home = find_java_home(args.java_home, minimum_java)
+    except BuildError:
+        java_home = None
+    need_java = java_home is None
+    need_certificates = not certificate_store_available()
+    if args.system_deps == "always":
+        install_missing_system_dependencies(
+            need_java=True,
+            need_certificates=need_certificates,
+            offline=args.offline,
+            java_version=minimum_java,
+        )
+        java_home = find_java_home(args.java_home, minimum_java)
+    elif args.system_deps == "auto" and (need_java or need_certificates):
+        install_missing_system_dependencies(
+            need_java=need_java,
+            need_certificates=need_certificates,
+            offline=args.offline,
+            java_version=minimum_java,
+        )
+        java_home = find_java_home(args.java_home, minimum_java)
+    elif need_java:
+        fail(f"A JDK with Java {minimum_java}+ is required and system dependency installation is disabled. Use --java-home or install a JDK.")
+    assert java_home is not None
+    env = os.environ.copy()
+    env["JAVA_HOME"] = str(java_home)
+    env["PATH"] = os.pathsep.join([str(java_home / "bin"), env.get("PATH", "")])
+    heading("Java")
+    info(f"JAVA_HOME={java_home}")
+    run([java_home / "bin" / "java", "-version"], env=env, dry_run=args.dry_run)
+
+    sdk_root: Path | None = None
+    if project.android:
+        sdk_root = discover_sdk_root(args.sdk_root)
+        if sdk_root is None and not args.skip_sdk_install:
+            sdk_root = cache_root / "android-sdk"
+        if sdk_root:
+            sdk_root.mkdir(parents=True, exist_ok=True)
+            env["ANDROID_HOME"] = str(sdk_root)
+            env["ANDROID_SDK_ROOT"] = str(sdk_root)
+            env["PATH"] = os.pathsep.join(
+                [
+                    str(sdk_root / "cmdline-tools" / "latest" / "bin"),
+                    str(sdk_root / "platform-tools"),
+                    env["PATH"],
+                ]
+            )
+        sdk_root, _, _, _, _ = ensure_android_sdk(
+            project,
+            sdk_root,
+            cache_root,
+            force_setup=args.force_setup,
+            platform_override=args.android_platform,
+            build_tools_override=args.build_tools,
+            ndk_override=args.ndk_version,
+            cmake_override=args.cmake_version,
+            skip_install=args.skip_sdk_install,
+            offline=args.offline,
+            env=env,
+            dry_run=args.dry_run,
+        )
+
+    aapt2: Path | None = None
+    if project.android:
+        if args.aapt2:
+            aapt2 = stage_aapt2(args.aapt2, cache_root, force=args.force_setup, dry_run=args.dry_run)
+        elif args.aapt2_provider == "revanced" or (
+            args.aapt2_provider == "auto" and normalized_machine() in {"arm64", "armv7"}
+        ):
+            aapt2 = obtain_revanced_aapt2(
+                cache_root,
+                release_name=args.aapt2_release,
+                offline=args.offline,
+                force=args.force_setup,
+                dry_run=args.dry_run,
+            )
+        elif args.aapt2_provider == "none":
+            info("Using the AAPT2 selected by Android Gradle Plugin")
+
+    gradle = select_gradle(
+        project_root,
+        explicit=args.gradle_command,
+        version=args.gradle_version,
+        cache_root=cache_root,
+        offline=args.offline,
+        force=args.force_setup,
+    )
+    heading("Gradle")
+    info(f"Launcher: {gradle}")
+    run([gradle, "--version"], cwd=project_root, env=env, dry_run=args.dry_run)
+
+    tasks = list(args.tasks or default_tasks(project))
+    if args.clean and "clean" not in tasks:
+        tasks.insert(0, "clean")
+    command: list[str | os.PathLike[str]] = [
+        gradle,
+        *tasks,
+        f"--max-workers={args.max_workers}",
+        f"-Dorg.gradle.java.installations.paths={java_home}",
+        "-Dorg.gradle.java.installations.auto-detect=false",
+    ]
+    # Diagnostics are enabled by default so independent tasks continue and the
+    # resulting output is stable and suitable for error parsers and CI logs.
+    if args.continue_on_failure:
+        command.append("--continue")
+    if args.plain_console:
+        command.append("--console=plain")
+    if args.stacktrace:
+        command.append("--stacktrace")
+    if args.offline:
+        command.append("--offline")
+    if args.no_daemon:
+        command.append("--no-daemon")
+    if aapt2:
+        command.append(f"-Pandroid.aapt2FromMavenOverride={aapt2}")
+    command.extend(args.gradle_args)
+
+    heading("Build")
+    build_started = time.time()
+    try:
+        run(command, cwd=project_root, env=env, dry_run=args.dry_run)
+
+        if args.no_artifact_scan or args.dry_run:
+            return 0
+        artifacts = discover_artifacts(project_root, build_started)
+        heading("Artifacts")
+        if not artifacts:
+            info("Build succeeded; no new standard artifacts were detected.")
+            return 0
+        for artifact in artifacts:
+            info(str(artifact))
+        if args.output_dir:
+            copied = copy_artifacts(
+                artifacts,
+                project_root,
+                project.name,
+                args.output_dir.expanduser().resolve(),
+                args.output_name,
+            )
+            heading("Copied artifacts")
+            for artifact in copied:
+                info(str(artifact))
+        return 0
+    finally:
+        stop_gradle_processes(
+            gradle,
+            project_root,
+            env,
+            dry_run=args.dry_run,
+        )
+
+
+def standalone_main(argv: Sequence[str] | None = None) -> int:
+    try:
+        return main(argv)
+    except BuildError as exc:
+        print(f"\nerror: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(standalone_main())

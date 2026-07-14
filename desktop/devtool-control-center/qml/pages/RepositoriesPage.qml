@@ -6,6 +6,7 @@ import "../components"
 
 Item {
     id: root
+    readonly property bool narrowMode: width < 900
     Theme { id: theme }
     property int selectedRow: -1
     property var selectedRepo: ({})
@@ -91,14 +92,18 @@ Item {
             wrapMode: Text.Wrap
         }
 
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 12
+            columns: root.narrowMode ? 1 : 2
+            columnSpacing: 12
+            rowSpacing: 12
 
             SurfaceCard {
-                Layout.preferredWidth: 310
-                Layout.fillHeight: true
+                Layout.fillWidth: root.narrowMode
+                Layout.preferredWidth: root.narrowMode ? 0 : 310
+                Layout.preferredHeight: root.narrowMode ? 220 : -1
+                Layout.fillHeight: !root.narrowMode
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -121,6 +126,12 @@ Item {
                             color: index === root.selectedRow ? theme.selectedSurface : "transparent"
                             border.color: index === root.selectedRow ? theme.accent : "transparent"
                             border.width: 1
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: (name || path) + ", " + (branch || "No branch") + ", " + status
+                            Accessible.description: "Select this repository"
+                            Keys.onReturnPressed: root.selectRepository(index)
+                            Keys.onEnterPressed: root.selectRepository(index)
                             MouseArea { anchors.fill: parent; onClicked: root.selectRepository(index) }
                             RowLayout {
                                 anchors.fill: parent
@@ -164,12 +175,15 @@ Item {
                     anchors.fill: parent
                     spacing: 0
 
-                    RowLayout {
+                    GridLayout {
                         Layout.fillWidth: true
                         Layout.margins: 14
-                        spacing: 10
+                        columns: root.narrowMode ? 1 : 4
+                        columnSpacing: 10
+                        rowSpacing: 8
                         ColumnLayout {
                             Layout.fillWidth: true
+                            Layout.columnSpan: root.narrowMode ? 1 : 1
                             Label { text: root.selectedRepo.name || "Select a repository"; color: theme.windowText; font.pointSize: theme.cardTitlePointSize; font.weight: Font.DemiBold }
                             Label { Layout.fillWidth: true; text: root.selectedRepo.path || ""; color: theme.mutedText; font.family: theme.monospaceFamily; font.pointSize: theme.smallPointSize; elide: Text.ElideMiddle }
                         }

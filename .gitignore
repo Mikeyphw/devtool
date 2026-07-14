@@ -1,28 +1,11 @@
-# Python
 __pycache__/
-*.py[cod]
 .pytest_cache/
-.venv/
-
-# Native/CMake
-**/build/
-cmake-build-*/
-CMakeFiles/
-CMakeCache.txt
-
-# Android/Gradle
+*.py[cod]
+*.egg-info/
 **/.gradle/
-*.apk
-*.aab
-
-# Devtool runtime state
+**/build/
+dist/
 .devtool/
 **/android-live-hud.token
-
-# Editor and OS files
-.idea/
-.vscode/
-.DS_Store
-*.egg-info/
-dist/
+*.apk
 !android/devtool-live-hud/devtool-live-hud-debug.apk

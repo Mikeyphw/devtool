@@ -1,24 +1,6 @@
 #compdef devtool
 
-_devtool_steps() {
-  local -a steps
-  steps=(
-    'restore:restore dependencies'
-    'build:build project'
-    'test:run tests'
-    'validate:restore+build+test'
-    'wine-validate:validate with wine env'
-    'run:run project'
-    'package:package project'
-    'apply-overlay=:apply overlay artifact'
-    'apply-overlays=:apply overlay bundle artifact'
-    'apply-snapshot=:apply snapshot artifact'
-    'inspect-artifact=:inspect artifact metadata, inventory, bundle graph, and diff'
-    'commit=:git commit message'
-    'tag=:create git tag'
-  )
-  _describe -t steps 'batch step' steps
-}
+# Devtool zsh completion. Keep this file synchronized with devtool/completion.py.
 
 _devtool_repo_path() {
   if (( $+commands[fzf] )); then
@@ -33,11 +15,192 @@ _devtool_repo_path() {
 _devtool_artifact_path() {
   if (( $+commands[fzf] )); then
     local selected
-    selected=$(find ~/Downloads . -maxdepth 4 \( -name '*.zip' -o -name '*.tar' -o -name '*.tar.gz' -o -name '*.tgz' -o -name '*.tar.xz' -o -name '*.txz' -o -name '*.tar.zst' -o -name '*.tzst' -o -name '*.tar.bz2' -o -name '*.tbz2' \) 2>/dev/null | fzf --prompt='artifact> ' --height=40% --reverse) || return 1
+    selected=$(find ~/Downloads . -maxdepth 4 -type f \
+      \( -name '*.zip' -o -name '*.tar' -o -name '*.tar.gz' -o -name '*.tgz' \
+         -o -name '*.tar.xz' -o -name '*.txz' -o -name '*.tar.zst' -o -name '*.tzst' \
+         -o -name '*.tar.bz2' -o -name '*.tbz2' \) 2>/dev/null |
+      fzf --prompt='artifact> ' --height=40% --reverse) || return 1
     compadd -- "$selected"
   else
     _files
   fi
+}
+
+_devtool_targets() {
+  local repo config
+  local -a targets
+  repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
+  config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
+  if [[ -r $config ]]; then
+    targets=(${(f)"$(sed -nE 's/^\[targets\.([^].]+)\].*/\1/p' "$config" 2>/dev/null)"})
+  fi
+  if (( ${#targets} )); then
+    _describe -t targets 'target' targets
+  else
+    _message 'target name from .devtool.toml'
+  fi
+}
+
+_devtool_test_profiles() {
+  local repo config
+  local -a profiles
+  repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
+  config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
+  if [[ -r $config ]]; then
+    profiles=(${(fu)"$(sed -nE \
+      -e 's/^\[test_profiles\.([^].]+)\].*/\1/p' \
+      -e 's/^\[targets\.[^]]+\.test_profiles\.([^].]+)\].*/\1/p' \
+      "$config" 2>/dev/null)"})
+  fi
+  if (( ${#profiles} )); then
+    _describe -t test-profiles 'test profile' profiles
+  else
+    _message 'saved test profile'
+  fi
+}
+
+_devtool_steps() {
+  local -a steps
+  steps=(
+    'restore:restore dependencies'
+    'build:build project'
+    'test:run tests'
+    'lint:run lint and static analysis'
+    'validate:run the target validation pipeline'
+    'wine-validate:validate with Wine environment settings'
+    'run:run project'
+    'package:package project'
+    'clean:clean generated outputs'
+    'apply-overlay=:apply one overlay artifact'
+    'apply-overlays=:apply an overlay bundle or ordered overlays'
+    'apply-snapshot=:apply a repository snapshot'
+    'commit=:create a Git commit'
+    'tag=:create a Git tag'
+  )
+  _describe -t steps 'batch step' steps
+}
+
+_devtool_commands() {
+  local -a commands
+  commands=(
+    'restore:restore project dependencies'
+    'rs:alias for restore'
+    'build:build the selected project'
+    'b:alias for build'
+    'test:run or discover selected tests'
+    't:alias for test'
+    'lint:run configured lint and static-analysis tools'
+    'validate:run runner-specific validation'
+    'v:alias for validate'
+    'wine-validate:run validation with Wine environment settings'
+    'wv:alias for wine-validate'
+    'run:run the selected project'
+    'rn:alias for run'
+    'package:package the selected project'
+    'pkg:alias for package'
+    'clean:clean generated project output'
+    'cl:alias for clean'
+    'inspect:inspect project type, runner, toolchain, tasks, and artifacts'
+    'info:alias for inspect'
+    'status:show resolved repository and runner status'
+    'st:alias for status'
+    'doctor:diagnose devtool and project prerequisites'
+    'dr:alias for doctor'
+    'apply-overlay:transactionally apply one overlay'
+    'ao:alias for apply-overlay'
+    'apply-overlays:transactionally apply a bundle or ordered overlays'
+    'aos:alias for apply-overlays'
+    'apply-snapshot:transactionally apply a snapshot'
+    'as:alias for apply-snapshot'
+    'apply:nested apply command'
+    'validate-overlay:validate an overlay archive'
+    'vo:alias for validate-overlay'
+    'validate-overlays:validate a bundle or ordered overlays'
+    'vos:alias for validate-overlays'
+    'inspect-artifact:inspect artifact metadata, inventory, validation, and diff'
+    'ia:alias for inspect-artifact'
+    'bundle:create artifact bundles'
+    'batch:run an ordered batch of operations'
+    'commit:create a Git commit'
+    'ci:alias for commit'
+    'tag:create a Git tag'
+    'release-notes:generate release notes between Git refs'
+    'init-config:create .devtool.toml'
+    'config:inspect resolved configuration'
+    'detect:detect project type and targets'
+    'targets:list named targets'
+    'tg:alias for targets'
+    'logs:show the latest saved run log'
+    'history:list structured run history'
+    'rollback:rollback a recorded commit'
+    'handoff:generate a repository handoff'
+    'ai-prompt:generate an implementation prompt'
+    'ap:alias for ai-prompt'
+    'completion:print shell completion'
+    'hud:run a live HUD renderer'
+    'android-hud-bridge:bridge Termux or chroot progress to Android'
+    'termux-hud-bridge:alias for android-hud-bridge'
+    'control-center:launch the Qt 6 Control Center'
+    'gui:alias for control-center'
+    'ipc-server:run the Control Center IPC broker'
+  )
+  _describe -t commands 'devtool command' commands
+}
+
+_devtool_test_args() {
+  _arguments \
+    '--no-build[do not rebuild before dotnet test]' \
+    '(--list --list-tests)'{--list,--list-tests}'[discover and list tests without executing]' \
+    '--profile[saved test profile]:profile:_devtool_test_profiles' \
+    '*--select[select a type, suite, tag, class, or name]:selector:' \
+    '*--id[select an exact framework test ID]:test id:' \
+    '*--tag[include a test tag or trait]:tag:' \
+    '*--exclude-tag[exclude a test tag or trait]:tag:' \
+    '*--path[select tests below a source path]:path:_files' \
+    '*--class[select a test class]:class:' \
+    '*--method[select a test method]:method:' \
+    '--filter[framework-native test filter]:filter:' \
+    '--task[Gradle test task override]:task:' \
+    '--failed[rerun tests that failed in the previous structured run]' \
+    '--changed[select tests related to changed files]' \
+    '--changed-from[Git base for changed test selection]:revision:' \
+    '--instrumented[run Android instrumentation tests on a device]'
+}
+
+_devtool_validation_args() {
+  _arguments \
+    '--skip-restore[skip dependency restore]' \
+    '--skip-build[skip project build]' \
+    '--skip-test[skip project tests]' \
+    '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
+    '--watch[rerun validation when files change]' \
+    '--watch-interval[seconds between watch polls]:seconds:' \
+    '--matrix[comma-separated runtime IDs or target names]:matrix:' \
+    '--matrix-mode[matrix interpretation]:mode:(rid target)' \
+    '--fail-on-conflict[fail when nested overlays write the same path]' \
+    '1:validation scope:(overlay overlays)' \
+    '2:artifact:_devtool_artifact_path'
+}
+
+_devtool_apply_args() {
+  _arguments \
+    '--validate[run validation after applying]' \
+    '--no-validate[disable validation requested by the artifact manifest]' \
+    '--test-profile[saved test profile for artifact validation]:profile:_devtool_test_profiles' \
+    '--validate-only[skip apply and run validation only]' \
+    '--preview[preview archive changes without applying]' \
+    '--diff[show a repository-relative unified diff]' \
+    '--interactive[show preview and ask before applying]' \
+    '--no-manifest-check[disable devtool artifact manifest validation]' \
+    '--keep-artifact[keep the source artifact after successful apply]' \
+    '--delete-artifact-on-failure[delete the source artifact after failed apply]' \
+    '--skip-restore[skip restore during validation]' \
+    '--skip-build[skip build during validation]' \
+    '--skip-test[skip tests during validation]' \
+    '--commit[commit after successful apply and validation]:message:' \
+    '--no-commit[disable a commit requested by the artifact manifest]' \
+    '--no-artifact-script[skip embedded artifact validation scripts]' \
+    '*:artifact:_devtool_artifact_path'
 }
 
 _devtool() {
@@ -46,111 +209,205 @@ _devtool() {
 
   _arguments -C \
     '(-r --repo)'{-r,--repo}'[repository root]:repo:_devtool_repo_path' \
-    '(-c --config)'{-c,--config}'[config path]:config:_files' \
-    '--target[named target/profile from .devtool.toml]:target:' \
-    '--solution[exact solution path]:solution:_files' \
-    '--project[exact project path]:project:_files' \
-    '(-v --verbose)'{-v,--verbose}'[stream full output]' \
-    '(-j --json)'{-j,--json}'[emit compact machine envelope]' \
-    '--machine[emit machine envelope on stdout]:(compact pretty)' \
-    '--machine-file[write machine envelope to file]:file:_files' \
+    '(-c --config)'{-c,--config}'[configuration file]:config:_files' \
+    '--target[named target/profile from .devtool.toml]:target:_devtool_targets' \
+    '--solution[exact solution path for restore/build/test]:solution:_files' \
+    '--project[exact project path for run/validation]:project:_files' \
+    '--project-type[override project detection]:type:(auto dotnet android gradle python command unknown)' \
+    '(-v --verbose)'{-v,--verbose}'[stream full command output]' \
     '(-y --yes)'{-y,--yes}'[assume yes for confirmations]' \
     '(-f --force)'{-f,--force}'[force dangerous actions]' \
-    '--no-build[for test: pass --no-build to dotnet test]' \
-    '--copy[always copy raw output]' \
-    '--copy-summary[always copy rendered summary]' \
-    '--copy-json[always copy JSON summary]' \
-    '--copy-via[clipboard backend]:(auto socket fifo termux x11 wayland)' \
-    '--no-clipboard[never prompt for clipboard]' \
-    '--dry-run[print commands without running]' \
-    '--continue-on-error[continue batch after errors]' \
-    '--fail-fast[stop batch on first error]' \
+    '--dry-run[print commands without executing]' \
+    '--no-build[for test, do not rebuild before dotnet test]' \
+    '(-k --continue-on-error)'{-k,--continue-on-error}'[continue with the next independent step after an error]' \
+    '--fail-fast[stop the batch at the first failed step]' \
     '--performance[write a JSON performance report]' \
     '--performance-file[performance report path]:file:_files' \
-    '--host[force host execution]' \
-    '--chroot[run command phases inside chroot via sudo chrootctl --name NAME exec -- zsh -lc]:name:' \
-    '--stdout-payload[select stdout payload]:(auto summary json raw)' \
-    '--save-json-payload[write machine JSON payload]:file:_files' \
-    '1:command:(restore build test validate wine-validate run package commit apply-overlay apply-snapshot batch logs status doctor config init-config completion tag release-notes ai-prompt detect handoff hud control-center gui history rollback targets v wv b t ao as)' \
-    '*::arg:->args'
+    '(-j --json)'{-j,--json}'[emit the compact machine envelope]' \
+    '--machine[emit the machine envelope]:format:(compact pretty)' \
+    '--machine-file[write the machine envelope]:file:_files' \
+    '(-p --copy)'{-p,--copy}'[copy summary on success or verbose output on failure]' \
+    '--copy-summary[copy the concise summary without prompting]' \
+    '--copy-json[copy the JSON summary without prompting]' \
+    '--no-clipboard[disable clipboard prompts and copy behavior]' \
+    '--copy-via[preferred clipboard backend]:backend:(auto socket fifo termux x11 wayland)' \
+    '--theme[summary theme]:theme:(auto plain)' \
+    '--stdout-payload[select stdout content]:payload:(auto summary json raw)' \
+    '(--save-json-payload --json-output)'{--save-json-payload,--json-output}'[write machine JSON payload]:file:_files' \
+    '(--auto-hud --hud-auto --no-hud)'{--auto-hud,--hud-auto}'[auto-start or reuse the selected HUD]' \
+    '(--auto-hud --hud-auto --no-hud)--no-hud[do not publish live HUD progress]' \
+    '--hud-mode[HUD backend]:mode:(desktop android-bridge desktop-window gtk-window web studio terminal)' \
+    '(--hud-overlay --hud-no-overlay)--hud-overlay[also show the run in the Android floating overlay]' \
+    '(--hud-overlay --hud-no-overlay)--hud-no-overlay[keep the run in the app without opening the overlay]' \
+    '(--host --chroot --execution-environment)--host[force the current host environment]' \
+    '(--host --chroot --execution-environment)--chroot[run command phases in a named chroot]:name:' \
+    '(--host --chroot --execution-environment)--execution-environment[execution backend]:backend:(auto native-termux chroot desktop-linux android-device external-device)' \
+    '--no-auto-chroot[disable automatic Termux-to-chroot routing]' \
+    '1:command:->command' \
+    '*::argument:->args'
 
-  case $words[1] in
-    test|t)
-      _arguments '--no-build[pass --no-build to dotnet test]'
+  case $state in
+    command)
+      _devtool_commands
       ;;
-    validate|v|wine-validate|wv)
-      _arguments \
-        '--skip-restore[skip restore during validation]' \
-        '--skip-build[skip build during validation]' \
-        '--skip-test[skip test during validation]' \
-        '--watch[rerun validation when files change]' \
-        '--watch-interval[seconds between watch polls]:seconds:' \
-        '--matrix[comma-separated runtime IDs or targets]:matrix:' \
-        '--matrix-mode[matrix interpretation]:(rid target)'
-      ;;
-    apply-overlay|ao|apply-snapshot|as)
-      _arguments \
-        '--validate[run validation after apply]' \
-        '--validate-only[skip apply and only run validation]' \
-        '--preview[preview archive changes without applying]' \
-        '--diff[show repo-relative unified diff without applying]' \
-        '--interactive[show preview/diff and ask before applying]' \
-        '--no-manifest-check[disable artifact manifest validation]' \
-        '--keep-artifact[keep the source artifact and sidecars after apply]' \
-        '--delete-artifact-on-failure[deprecated: artifacts are now deleted after failure by default]' \
-        '--skip-restore[skip restore during validation]' \
-        '--skip-build[skip build during validation]' \
-        '--skip-test[skip test during validation]' \
-        '--commit[commit with this message after successful apply and validation]:message:' \
-        '1:artifact:_devtool_artifact_path'
-      ;;
-    batch)
-      _devtool_steps
-      ;;
-    config)
-      _values 'config subcommand' show defaults resolve doctor
-      ;;
-    completion)
-      _values 'shell' zsh
-      ;;
-    detect)
-      _arguments '--format[output format]:(text json)'
-      ;;
-    handoff)
-      _arguments '(-o --output)'{-o,--output}'[write handoff to file]:file:_files'
-      ;;
-    hud)
-      _arguments \
-        '--mode[HUD renderer]:(auto android-bridge android-gui termux-gui terminal web studio desktop desktop-window desktop-notify v3 v4 v5 v6 console dashboard all unix gnome)' \
-        '--host[host/IP for web/studio modes]:host:' \
-        '--port[port for web/studio modes]:port:' \
-        '--poll-interval[seconds between refreshes]:seconds:' \
-        '--recent-events[number of recent events]:count:' \
-        '--once[render/update once and exit]'
-      ;;
-    history)
-      _arguments '--limit[number of entries]:limit:'
-      ;;
-    rollback)
-      _arguments '--last[rollback last recorded commit]' '1:commit:'
-      ;;
-    ai-prompt|ap)
-      _arguments \
-        '--repo-name[repo name]:name:' \
-        '--project-type[project type]:(auto dotnet python unknown)' \
-        '--build-target[build target]:path:_files' \
-        '--run-target[run target]:path:_files' \
-        '--target-name[named target/profile]:target:' \
-        '--solution-target[solution target]:solution:_files' \
-        '--delivery-mode[delivery mode]:(overlay snapshot)' \
-        '--artifact-type[artifact type]:(zip tar)' \
-        '--overlay-count[successful overlay count]:count:' \
-        '--commit-message[default commit message]:message:' \
-        '--wine[prefer wine validate wording]' \
-        '(-o --output)'{-o,--output}'[write prompt to file]:file:_files' \
-        '--format[output format]:(markdown text)'
-      ;;
-    *)
+    args)
+      case $line[1] in
+        test|t)
+          _devtool_test_args
+          ;;
+        validate|v)
+          _devtool_validation_args
+          ;;
+        wine-validate|wv)
+          _arguments \
+            '--skip-restore[skip dependency restore]' \
+            '--skip-build[skip project build]' \
+            '--skip-test[skip project tests]' \
+            '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
+            '--watch[rerun validation when files change]' \
+            '--watch-interval[seconds between watch polls]:seconds:' \
+            '--matrix[comma-separated runtime IDs or target names]:matrix:' \
+            '--matrix-mode[matrix interpretation]:mode:(rid target)'
+          ;;
+        doctor|dr)
+          _arguments '--fix[create safe devtool state and cache directories]'
+          ;;
+        apply-overlay|ao|apply-overlays|aos|apply-snapshot|as)
+          _devtool_apply_args
+          ;;
+        apply)
+          if (( ${#line} < 2 )); then
+            _values 'apply action' overlay overlays snapshot
+          else
+            _devtool_apply_args
+          fi
+          ;;
+        validate-overlay|vo)
+          _arguments \
+            '--fail-on-conflict[for bundles, fail when nested overlays write the same path]' \
+            '1:artifact:_devtool_artifact_path'
+          ;;
+        validate-overlays|vos)
+          _arguments \
+            '--fail-on-conflict[fail when nested overlays write the same path]' \
+            '*:artifact:_devtool_artifact_path'
+          ;;
+        inspect-artifact|ia)
+          _arguments \
+            '--diff[include a repository-relative unified diff]' \
+            '--diff-context[number of context lines]:lines:' \
+            '--max-diff-lines[maximum emitted diff lines]:lines:' \
+            '1:artifact:_devtool_artifact_path'
+          ;;
+        bundle)
+          if (( ${#line} < 2 )); then
+            _values 'bundle action' overlays
+          else
+            _arguments \
+              '--name[bundle name]:name:' \
+              '--description[bundle description]:description:' \
+              '--targets[comma-separated per-overlay targets]:targets:' \
+              '--repository-name[repository identity]:name:' \
+              '--repository-remote[expected Git remote]:remote:' \
+              '--repository-branch[expected Git branch]:branch:' \
+              '--commit-message[embedded final commit message]:message:' \
+              '--validate[require validation when applied]' \
+              '--validation-strategy[validation strategy]:strategy:(per-overlay after-all both)' \
+              '--validation-script[embed a disposable validation script]:file:_files' \
+              '--validation-runner[script runner]:runner:(bash sh python3)' \
+              '--validation-timeout[script timeout in seconds]:seconds:' \
+              '(-o --out)'{-o,--out}'[output bundle archive]:file:_files' \
+              '*:overlay:_devtool_artifact_path'
+          fi
+          ;;
+        batch)
+          _devtool_steps
+          ;;
+        ai-prompt|ap)
+          _arguments \
+            '--repo-name[human-friendly repository name]:name:' \
+            '--project-type[project type]:type:(auto dotnet android gradle python command unknown)' \
+            '--build-target[build target]:path:_files' \
+            '--run-target[run target]:path:_files' \
+            '--target-name[named target/profile]:target:_devtool_targets' \
+            '--solution-target[solution target]:solution:_files' \
+            '--delivery-mode[artifact delivery mode]:mode:(overlay snapshot)' \
+            '--artifact-type[artifact archive type]:type:(zip tar tar.gz tgz tar.xz txz tar.bz2 tbz2 tar.zst tzst)' \
+            '--overlay-count[successful overlay count]:count:' \
+            '--commit-message[default commit message]:message:' \
+            '--wine[prefer wine-validate wording]' \
+            '(-o --output)'{-o,--output}'[write prompt to file]:file:_files' \
+            '--format[output format]:format:(markdown text)'
+          ;;
+        commit|ci)
+          _arguments '1:commit message:'
+          ;;
+        init-config)
+          _arguments '--force[overwrite an existing configuration]' '1:repository:_devtool_repo_path'
+          ;;
+        logs)
+          _arguments '--print[print the selected log]' '1:log:(latest)'
+          ;;
+        tag)
+          _arguments '(-m --message)'{-m,--message}'[annotated tag message]:message:' '1:tag name:'
+          ;;
+        release-notes)
+          _arguments '--from-ref[starting Git ref]:revision:' '--to-ref[ending Git ref]:revision:'
+          ;;
+        completion)
+          _values 'shell' zsh
+          ;;
+        config)
+          _values 'config action' show defaults resolve doctor
+          ;;
+        detect)
+          _arguments '--format[output format]:format:(text json)'
+          ;;
+        handoff)
+          _arguments '(-o --output)'{-o,--output}'[write handoff to file]:file:_files'
+          ;;
+        hud)
+          _arguments \
+            '--state-dir[HUD state directory]:directory:_files -/' \
+            '--mode[HUD renderer]:mode:(auto android-gui android-bridge termux-gui terminal web studio desktop desktop-window gtk-window desktop-notify v3 v4 v5 v6 console dashboard all unix gnome)' \
+            '--host[host or IP for web/studio modes]:host:' \
+            '--port[port for web/studio modes]:port:' \
+            '--poll-interval[seconds between refreshes]:seconds:' \
+            '--recent-events[number of recent events]:count:' \
+            '--once[render or update once and exit]' \
+            '--follow-active[follow the global active HUD directory]' \
+            '(--overlay --no-overlay)--overlay[also publish to the Android floating overlay]' \
+            '(--overlay --no-overlay)--no-overlay[do not open the floating overlay]'
+          ;;
+        android-hud-bridge|termux-hud-bridge)
+          _arguments \
+            '--state-dir[shared Android bridge state directory]:directory:_files -/' \
+            '--poll-interval[seconds between refreshes]:seconds:' \
+            '--recent-events[number of recent events]:count:' \
+            '--once[render or update once and exit]' \
+            '(--follow-active --no-follow-active)--follow-active[follow the active HUD pointer]' \
+            '(--follow-active --no-follow-active)--no-follow-active[read the shared bridge directory directly]' \
+            '(--overlay --no-overlay)--overlay[also publish to the Android floating overlay]' \
+            '(--overlay --no-overlay)--no-overlay[do not open the floating overlay]'
+          ;;
+        history)
+          _arguments '--limit[maximum number of entries]:count:'
+          ;;
+        rollback)
+          _arguments '--last[rollback the last recorded commit]' '1:commit:'
+          ;;
+        control-center|gui)
+          _arguments '--binary[override the Control Center executable]:file:_files'
+          ;;
+        ipc-server)
+          _arguments \
+            '--socket[override the Unix socket path]:socket:_files' \
+            '--state-dir[load initial snapshots from a state directory]:directory:_files -/' \
+            '--foreground[run the broker in the foreground]'
+          ;;
+        *)
+          ;;
+      esac
       ;;
   esac
 }

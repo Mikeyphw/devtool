@@ -12,8 +12,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMenu>
 #include <QProcess>
 #include <QRegularExpression>
@@ -26,6 +30,7 @@
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QUrl>
+#include <QtGlobal>
 #include <utility>
 
 static QString resolveDevtoolExecutable(const QString &configured) {
@@ -99,12 +104,18 @@ static QStringList shellTokens(QString command) {
 
 static QString operationLabel(const QString &value) {
     const QString token = value.toLower();
-    if (token == QStringLiteral("apply-overlay") || token == QStringLiteral("apply-overlays") ||
-        token == QStringLiteral("ao") || token == QStringLiteral("aos")) return QStringLiteral("Apply overlay");
+    if (token == QStringLiteral("apply-overlay") || token == QStringLiteral("ao")) return QStringLiteral("Apply overlay");
+    if (token == QStringLiteral("apply-overlays") || token == QStringLiteral("aos")) return QStringLiteral("Apply bundle");
     if (token == QStringLiteral("validate") || token == QStringLiteral("validate-artifact") || token == QStringLiteral("v")) return QStringLiteral("Validate");
     if (token == QStringLiteral("restore") || token == QStringLiteral("rs")) return QStringLiteral("Restore");
     if (token == QStringLiteral("build") || token == QStringLiteral("b")) return QStringLiteral("Build");
     if (token == QStringLiteral("test") || token == QStringLiteral("t")) return QStringLiteral("Test");
+    if (token == QStringLiteral("lint") || token == QStringLiteral("l")) return QStringLiteral("Lint");
+    if (token == QStringLiteral("run") || token == QStringLiteral("r")) return QStringLiteral("Run project");
+    if (token == QStringLiteral("package") || token == QStringLiteral("pkg")) return QStringLiteral("Package");
+    if (token == QStringLiteral("clean") || token == QStringLiteral("cl")) return QStringLiteral("Clean");
+    if (token == QStringLiteral("inspect") || token == QStringLiteral("i")) return QStringLiteral("Inspect");
+    if (token == QStringLiteral("commit") || token == QStringLiteral("c")) return QStringLiteral("Commit");
     if (token == QStringLiteral("status") || token == QStringLiteral("st")) return QStringLiteral("Status");
     if (token == QStringLiteral("doctor") || token == QStringLiteral("dr")) return QStringLiteral("Doctor");
     return {};
@@ -151,6 +162,11 @@ AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h
     m_artifact = m_settings.value(QStringLiteral("artifact")).toString();
     m_devtool = resolveDevtoolExecutable(m_settings.value(QStringLiteral("devtool"), QStringLiteral("devtool")).toString());
     m_autoCloseTerminal = m_settings.value(QStringLiteral("terminal/autoClose"), false).toBool();
+    m_typographyScale = qBound(1.0, m_settings.value(QStringLiteral("appearance/typographyScale"), 1.0).toDouble(), 2.0);
+    QFont uiFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    m_baseFontPointSize = uiFont.pointSizeF() > 0.0 ? uiFont.pointSizeF() : 11.0;
+    uiFont.setPointSizeF(m_baseFontPointSize * m_typographyScale);
+    QGuiApplication::setFont(uiFont);
 
     m_clipboardMonitor = new ClipboardMonitor(false, false, this);
     connect(m_clipboardMonitor, &ClipboardMonitor::candidateChanged, this, &AppController::clipboardCandidateChanged);
@@ -209,6 +225,18 @@ void AppController::setAutoCloseTerminal(bool value) {
     if (value == m_autoCloseTerminal) return;
     m_autoCloseTerminal = value;
     emit autoCloseTerminalChanged();
+}
+
+void AppController::setTypographyScale(double value) {
+    value = qBound(1.0, value, 2.0);
+    if (qFuzzyCompare(m_typographyScale, value)) return;
+    m_typographyScale = value;
+    QFont uiFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    uiFont.setPointSizeF(m_baseFontPointSize * m_typographyScale);
+    QGuiApplication::setFont(uiFont);
+    m_settings.setValue(QStringLiteral("appearance/typographyScale"), m_typographyScale);
+    m_settings.sync();
+    emit typographyScaleChanged();
 }
 
 void AppController::setLaunchStatus(const QString &status) {
@@ -537,82 +565,175 @@ void AppController::saveSettings() {
     m_settings.setValue(QStringLiteral("artifact"), m_artifact);
     m_settings.setValue(QStringLiteral("devtool"), m_devtool);
     m_settings.setValue(QStringLiteral("terminal/autoClose"), m_autoCloseTerminal);
+    m_settings.setValue(QStringLiteral("appearance/typographyScale"), m_typographyScale);
     m_settings.sync();
 }
 
-void AppController::runWorkflow(
-    const QString &operation,
-    const QString &target,
-    bool validate,
-    bool commit,
-    const QString &message,
-    bool keepArtifact,
-    const QString &copyMode,
-    bool autoHud,
-    const QString &hudMode) {
+QString AppController::buildWorkflowCommand(
+    const QString &operation, const QString &target, const QString &projectType,
+    const QString &executionEnvironment, const QString &testProfile,
+    const QString &selectors, const QString &tags, const QString &excludeTags,
+    const QString &testPath, const QString &testClass, const QString &testMethod,
+    bool listTests, bool instrumented, bool validate, bool commit,
+    const QString &message, bool keepArtifact, bool noManifestCheck,
+    const QString &copyMode, bool autoHud, const QString &hudMode) const {
 
-    if (m_repository.isEmpty()) return;
-
+    if (m_repository.isEmpty()) return {};
     QStringList a;
-
-    const QString normalizedCopyMode =
-        copyMode.trimmed().toLower();
-
-    if (normalizedCopyMode == QStringLiteral("json")) {
-        a << QStringLiteral("--copy-json");
-    } else if (normalizedCopyMode == QStringLiteral("none")) {
-        a << QStringLiteral("--no-clipboard");
-    } else {
-        a << QStringLiteral("--copy");
-    }
-
-    const QString normalizedHudMode =
-        hudMode.trimmed().isEmpty()
-            ? QStringLiteral("control-center")
-            : hudMode.trimmed();
-
-    if (autoHud &&
-        normalizedHudMode.compare(
-            QStringLiteral("none"),
-            Qt::CaseInsensitive
-        ) != 0) {
-        a << QStringLiteral("--auto-hud")
-          << QStringLiteral("--hud-mode")
-          << normalizedHudMode;
-    } else {
-        a << QStringLiteral("--no-hud");
-    }
-
-    a << QStringLiteral("--yes")
-      << QStringLiteral("-r")
-      << m_repository;
+    const QString normalizedProjectType = projectType.trimmed().toLower();
+    if (!normalizedProjectType.isEmpty() && normalizedProjectType != QStringLiteral("auto"))
+        a << QStringLiteral("--project-type") << normalizedProjectType;
+    const QString normalizedEnvironment = executionEnvironment.trimmed().toLower();
+    if (!normalizedEnvironment.isEmpty() && normalizedEnvironment != QStringLiteral("auto"))
+        a << QStringLiteral("--execution-environment") << normalizedEnvironment;
+    const QString normalizedCopyMode = copyMode.trimmed().toLower();
+    if (normalizedCopyMode == QStringLiteral("json")) a << QStringLiteral("--copy-json");
+    else if (normalizedCopyMode == QStringLiteral("none")) a << QStringLiteral("--no-clipboard");
+    else a << QStringLiteral("--copy");
+    const QString normalizedHudMode = hudMode.trimmed().isEmpty() ? QStringLiteral("control-center") : hudMode.trimmed();
+    if (autoHud && normalizedHudMode.compare(QStringLiteral("none"), Qt::CaseInsensitive) != 0)
+        // Stable control-center HUD invocation retained for compatibility: "--hud-mode","control-center".
+        a << QStringLiteral("--auto-hud") << QStringLiteral("--hud-mode") << normalizedHudMode;
+    else a << QStringLiteral("--no-hud");
+    a << QStringLiteral("--yes") << QStringLiteral("-r") << m_repository;
     if (!target.trimmed().isEmpty()) a << QStringLiteral("--target") << target.trimmed();
-    const QString op = operation.toLower();
-    if (op == QStringLiteral("apply overlay")) {
-        a << QStringLiteral("apply-overlay") << m_artifact;
-        if (validate) a << QStringLiteral("--validate");
-        if (commit) {
-            // Always include --commit when requested. A bare flag lets the CLI
-            // obtain its message from devtool-artifact.json.
-            a << QStringLiteral("--commit");
 
-            if (!message.trimmed().isEmpty())
-                a << message.trimmed();
-        }
+    const QString op = operation.toLower();
+    if (op == QStringLiteral("apply overlay") || op == QStringLiteral("apply bundle")) {
+        a << (op == QStringLiteral("apply bundle") ? QStringLiteral("apply-overlays") : QStringLiteral("apply-overlay")) << m_artifact;
+        if (validate) a << QStringLiteral("--validate");
+        if (commit && !message.trimmed().isEmpty()) a << QStringLiteral("--commit") << message.trimmed();
         if (keepArtifact) a << QStringLiteral("--keep-artifact");
+        if (noManifestCheck) a << QStringLiteral("--no-manifest-check");
     } else if (op == QStringLiteral("validate")) a << QStringLiteral("validate");
     else if (op == QStringLiteral("restore")) a << QStringLiteral("restore");
     else if (op == QStringLiteral("build")) a << QStringLiteral("build");
     else if (op == QStringLiteral("test")) a << QStringLiteral("test");
-    else if (op == QStringLiteral("status")) a << QStringLiteral("status");
+    else if (op == QStringLiteral("lint")) a << QStringLiteral("lint");
+    else if (op == QStringLiteral("run project")) a << QStringLiteral("run");
+    else if (op == QStringLiteral("package")) a << QStringLiteral("package");
+    else if (op == QStringLiteral("clean")) a << QStringLiteral("clean");
+    else if (op == QStringLiteral("inspect")) a << QStringLiteral("inspect");
+    else if (op == QStringLiteral("commit")) {
+        if (message.trimmed().isEmpty()) return {};
+        a << QStringLiteral("commit") << message.trimmed();
+    } else if (op == QStringLiteral("status")) a << QStringLiteral("status");
     else if (op == QStringLiteral("doctor")) a << QStringLiteral("doctor");
-    else return;
+    else return {};
+
+    const bool isTest = op == QStringLiteral("test");
+    const bool isValidation = isTest || op == QStringLiteral("validate") || op == QStringLiteral("apply overlay") || op == QStringLiteral("apply bundle");
+    if (isValidation && !testProfile.trimmed().isEmpty())
+        a << (isTest ? QStringLiteral("--profile") : QStringLiteral("--test-profile")) << testProfile.trimmed();
+    if (isTest) {
+        if (listTests) a << QStringLiteral("--list-tests");
+        const auto appendMany = [&a](const QString &flag, const QString &raw) {
+            const QStringList entries = raw.split(QRegularExpression(QStringLiteral("[,\\n]")), Qt::SkipEmptyParts);
+            for (const QString &entry : entries) {
+                const QString value = entry.trimmed();
+                if (!value.isEmpty()) a << flag << value;
+            }
+        };
+        appendMany(QStringLiteral("--select"), selectors);
+        appendMany(QStringLiteral("--tag"), tags);
+        appendMany(QStringLiteral("--exclude-tag"), excludeTags);
+        if (!testPath.trimmed().isEmpty()) a << QStringLiteral("--path") << testPath.trimmed();
+        if (!testClass.trimmed().isEmpty()) a << QStringLiteral("--class") << testClass.trimmed();
+        if (!testMethod.trimmed().isEmpty()) a << QStringLiteral("--method") << testMethod.trimmed();
+        if (instrumented) a << QStringLiteral("--instrumented");
+    }
     QString command = QStringLiteral("export DEVTOOL_CONTROL_CENTER_ACTIVE=1; cd ") + shellQuote(m_repository)
         + QStringLiteral(" && ") + shellQuote(m_devtool);
-    for (const QString &argument : std::as_const(a))
-        command += QLatin1Char(' ') + shellQuote(argument);
+    for (const QString &argument : std::as_const(a)) command += QLatin1Char(' ') + shellQuote(argument);
+    return command;
+}
+
+void AppController::runWorkflow(
+    const QString &operation, const QString &target, const QString &projectType,
+    const QString &executionEnvironment, const QString &testProfile,
+    const QString &selectors, const QString &tags, const QString &excludeTags,
+    const QString &testPath, const QString &testClass, const QString &testMethod,
+    bool listTests, bool instrumented, bool validate, bool commit,
+    const QString &message, bool keepArtifact, bool noManifestCheck,
+    const QString &copyMode, bool autoHud, const QString &hudMode) {
+    const QString command = buildWorkflowCommand(operation, target, projectType, executionEnvironment, testProfile,
+        selectors, tags, excludeTags, testPath, testClass, testMethod, listTests, instrumented,
+        validate, commit, message, keepArtifact, noManifestCheck, copyMode, autoHud, hudMode);
+    if (command.isEmpty()) return;
     launchExternalTerminal(command, m_repository, QStringLiteral("Devtool — %1").arg(operation));
     saveSettings();
+}
+
+static void collectTestNames(const QJsonValue &value, QStringList *names, const QString &context = QString()) {
+    if (!names) return;
+    if (value.isArray()) { for (const QJsonValue &entry : value.toArray()) collectTestNames(entry, names, context); return; }
+    if (value.isObject()) {
+        const QJsonObject object = value.toObject();
+        const bool testContext = context.contains(QStringLiteral("test"), Qt::CaseInsensitive)
+            || object.contains(QStringLiteral("nodeid")) || object.contains(QStringLiteral("test"));
+        if (testContext) {
+            for (const QString &key : {QStringLiteral("id"), QStringLiteral("nodeid"), QStringLiteral("name"), QStringLiteral("test"), QStringLiteral("display_name")}) {
+                const QString candidate = object.value(key).toString().trimmed();
+                if (!candidate.isEmpty() && !names->contains(candidate)) { names->append(candidate); break; }
+            }
+        }
+        for (auto it = object.constBegin(); it != object.constEnd(); ++it) collectTestNames(it.value(), names, context + QLatin1Char('/') + it.key());
+    } else if (value.isString() && context.contains(QStringLiteral("test"), Qt::CaseInsensitive)) {
+        const QString candidate = value.toString().trimmed();
+        if (!candidate.isEmpty() && !names->contains(candidate)) names->append(candidate);
+    }
+}
+
+QVariantMap AppController::discoverTests(const QString &repository, const QString &target, const QString &projectType,
+                                         const QString &testProfile, const QString &query) const {
+    QVariantMap result;
+    const QString repo = repository.trimmed().isEmpty() ? m_repository : repository.trimmed();
+    if (repo.isEmpty() || !QFileInfo(repo).isDir()) {
+        result[QStringLiteral("ok")] = false;
+        result[QStringLiteral("error")] = QStringLiteral("Choose a valid repository before discovering tests.");
+        return result;
+    }
+    QStringList arguments { QStringLiteral("--machine"), QStringLiteral("pretty"), QStringLiteral("--no-clipboard"),
+        QStringLiteral("--no-hud"), QStringLiteral("--yes"), QStringLiteral("-r"), repo };
+    const QString type = projectType.trimmed().toLower();
+    if (!type.isEmpty() && type != QStringLiteral("auto")) arguments << QStringLiteral("--project-type") << type;
+    if (!target.trimmed().isEmpty()) arguments << QStringLiteral("--target") << target.trimmed();
+    arguments << QStringLiteral("test") << QStringLiteral("--list-tests");
+    if (!testProfile.trimmed().isEmpty()) arguments << QStringLiteral("--profile") << testProfile.trimmed();
+    QProcess process; process.setWorkingDirectory(repo); process.start(m_devtool, arguments);
+    if (!process.waitForStarted(3000)) { result[QStringLiteral("ok")]=false; result[QStringLiteral("error")]=process.errorString(); return result; }
+    if (!process.waitForFinished(30000)) { process.kill(); process.waitForFinished(1000); result[QStringLiteral("ok")]=false; result[QStringLiteral("error")]=QStringLiteral("Test discovery timed out after 30 seconds."); return result; }
+    const QString output = QString::fromUtf8(process.readAllStandardOutput());
+    const QString errors = QString::fromUtf8(process.readAllStandardError()).trimmed();
+    QStringList names; QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(output.toUtf8(), &parseError);
+    if (parseError.error == QJsonParseError::NoError && !document.isNull())
+        collectTestNames(document.isObject() ? QJsonValue(document.object()) : QJsonValue(document.array()), &names, QStringLiteral("tests"));
+    if (names.isEmpty()) {
+        const QStringList lines = output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (QString line : lines) {
+            line = line.trimmed(); line.remove(QRegularExpression(QStringLiteral("^[•*+\\-\\s]+")));
+            if ((line.contains(QStringLiteral("::")) || line.contains(QLatin1Char('/'))) && !names.contains(line)) names.append(line);
+        }
+    }
+    QVariantList items; const QString filter = query.trimmed();
+    for (const QString &name : std::as_const(names)) {
+        if (!filter.isEmpty() && !name.contains(filter, Qt::CaseInsensitive)) continue;
+        const int marker = name.lastIndexOf(QStringLiteral("::"));
+        const QString suite = marker > 0 ? name.left(marker) : QString();
+        items << QVariantMap{{QStringLiteral("id"), name}, {QStringLiteral("label"), name}, {QStringLiteral("suite"), suite}, {QStringLiteral("durationSeconds"), 0.0}};
+    }
+    const bool ok = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    result[QStringLiteral("ok")] = ok; result[QStringLiteral("items")] = items; result[QStringLiteral("count")] = items.size();
+    if (!ok) result[QStringLiteral("error")] = errors.isEmpty() ? QStringLiteral("devtool test discovery failed.") : errors;
+    else if (items.isEmpty()) result[QStringLiteral("warning")] = QStringLiteral("Discovery completed, but no test identifiers were found.");
+    return result;
+}
+
+void AppController::runHistoricalCommand(const QString &command, const QString &repository) {
+    const QString cleaned = normalizedClipboardCommand(command);
+    if (cleaned.isEmpty()) return;
+    launchExternalTerminal(cleaned, repository.trimmed().isEmpty() ? m_repository : repository.trimmed(), QStringLiteral("Devtool — rerun"));
 }
 
 void AppController::copyText(const QString &t) { QGuiApplication::clipboard()->setText(t); }

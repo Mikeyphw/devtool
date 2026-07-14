@@ -18,11 +18,16 @@ final class RunStore {
     private static final String KEY_RUNS = "runs";
     private static final int MAX_RUNS = 40;
     private static final int MAX_OUTPUT = 16_000;
+    private static final int MAX_LAUNCH_LOG = 12_000;
     private static final long ACTIVE_STALE_MS = 12L * 60L * 60L * 1000L;
 
     private RunStore() {}
 
     static synchronized void started(Context context, String runId, String command, String workdir) {
+        started(context, runId, command, workdir, true, "root bridge");
+    }
+
+    static synchronized void started(Context context, String runId, String command, String workdir, boolean background, String shell) {
         RunRecord record = find(context, runId);
         if (record == null) record = new RunRecord();
         record.runId = runId;
@@ -36,18 +41,28 @@ final class RunStore {
         record.indeterminate = true;
         record.startedAtMs = System.currentTimeMillis();
         record.updatedAtMs = record.startedAtMs;
+        record.lastProgressAtMs = 0L;
+        record.launchMode = background ? "background" : "foreground";
+        record.launchLog = "";
+        appendLine(record, "RunCommand request created");
+        appendLine(record, "mode=" + record.launchMode + " shell=" + shell + " workdir=" + workdir);
+        appendLine(record, "run_id=" + runId + " waiting for authenticated HUD bridge updates");
         upsert(context, record);
     }
 
     static synchronized void update(Context context, HudUpdate update) {
         RunRecord record = find(context, update.runId);
         if (record == null) record = new RunRecord();
+        String previousPhase = record.phase;
+        int previousProgress = record.progress;
         record.runId = update.runId;
         record.title = update.title();
         record.status = update.status;
         record.phase = update.phase;
         record.detail = update.detail;
         record.repo = update.repo;
+        record.projectType = update.projectType;
+        record.executionEnvironment = update.executionEnvironment;
         record.target = update.target;
         record.summary = update.summary;
         record.progress = update.displayProgress();
@@ -58,7 +73,44 @@ final class RunStore {
         record.startedAtMs = update.startedAtMs;
         record.durationMs = update.durationMs;
         record.updatedAtMs = System.currentTimeMillis();
+        if (update.sequence > 0L || !update.status.equals("waiting") || !update.phase.equals("Termux")) {
+            record.lastProgressAtMs = update.updatedAtMs;
+        }
+        boolean meaningfulLog = !previousPhase.equals(update.phase)
+                || previousProgress / 10 != update.displayProgress() / 10
+                || update.isTerminal();
+        if (meaningfulLog) {
+            appendLine(record, "bridge seq=" + update.sequence + " phase=" + update.phase
+                    + " overall=" + update.displayProgress() + "% local=" + update.current + "/" + update.total);
+        }
         upsert(context, record);
+    }
+
+    static synchronized void cancelled(Context context, String runId) {
+        RunRecord record = find(context, runId);
+        if (record == null) return;
+        record.status = "cancelled";
+        record.phase = "Cancelled";
+        record.title = "Devtool run cancelled";
+        record.indeterminate = false;
+        record.updatedAtMs = System.currentTimeMillis();
+        record.durationMs = Math.max(0L, record.updatedAtMs - record.startedAtMs);
+        appendLine(record, "Run cancellation received");
+        upsert(context, record);
+    }
+
+    static synchronized void appendDiagnostic(Context context, String runId, String message) {
+        RunRecord record = find(context, runId);
+        if (record == null) return;
+        appendLine(record, message);
+        record.updatedAtMs = System.currentTimeMillis();
+        upsert(context, record);
+    }
+
+    static synchronized boolean stillPreparing(Context context, String runId) {
+        RunRecord record = find(context, runId);
+        return record != null && !record.terminal() && record.lastProgressAtMs <= 0L
+                && (record.status.equals("waiting") || record.phase.equals("Preparing"));
     }
 
     static synchronized boolean finish(Context context, String runId, int exitCode,
@@ -75,14 +127,15 @@ final class RunStore {
             record.phase = "Finished";
             record.title = ok ? "Devtool run completed" : "Devtool run failed";
             record.detail = firstUseful(error, stderr, stdout, record.detail);
-        record.progress = 100;
-        record.indeterminate = false;
+            record.progress = 100;
+            record.indeterminate = false;
         }
         record.stdout = limit(HudUpdate.plainText(stdout));
         record.stderr = limit(HudUpdate.plainText(stderr));
         record.error = limit(HudUpdate.plainText(error));
         record.updatedAtMs = System.currentTimeMillis();
         record.durationMs = Math.max(0L, record.updatedAtMs - record.startedAtMs);
+        appendLine(record, "Termux result received: exit=" + exitCode + (clean(error).isEmpty() ? "" : " error=" + clean(error)));
         upsert(context, record);
         return hadRichCompletion;
     }
@@ -106,12 +159,31 @@ final class RunStore {
         return null;
     }
 
+    static synchronized List<RunRecord> activeAll(Context context) {
+        long now = System.currentTimeMillis();
+        List<RunRecord> result = new ArrayList<>();
+        for (RunRecord record : all(context)) {
+            if (!record.terminal() && now - record.updatedAtMs < ACTIVE_STALE_MS) result.add(record);
+        }
+        return result;
+    }
+
     static synchronized RunRecord find(Context context, String runId) {
         if (runId == null || runId.trim().isEmpty()) return null;
         for (RunRecord record : read(context)) {
             if (record.runId.equals(runId)) return record;
         }
         return null;
+    }
+
+    static synchronized boolean remove(Context context, String runId) {
+        if (runId == null || runId.trim().isEmpty()) return false;
+        List<RunRecord> records = read(context);
+        boolean removed = records.removeIf(record -> record.runId.equals(runId));
+        if (!removed) return false;
+        write(context, records);
+        notifyChanged(context, runId);
+        return true;
     }
 
     static synchronized void clear(Context context) {
@@ -170,6 +242,15 @@ final class RunStore {
             if (!clean.isEmpty()) return clean.length() > 400 ? clean.substring(0, 397) + "…" : clean;
         }
         return "Command finished";
+    }
+
+    private static void appendLine(RunRecord record, String message) {
+        String clean = HudUpdate.plainText(message);
+        if (clean.isEmpty()) return;
+        String stamp = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.ROOT).format(new java.util.Date());
+        String combined = record.launchLog.isEmpty() ? stamp + "  " + clean : record.launchLog + "\n" + stamp + "  " + clean;
+        if (combined.length() > MAX_LAUNCH_LOG) combined = combined.substring(combined.length() - MAX_LAUNCH_LOG);
+        record.launchLog = combined;
     }
 
     private static String limit(String value) {

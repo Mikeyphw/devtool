@@ -5,14 +5,26 @@ Button {
     id: root
     property string variant: "default"
     property bool compact: false
+    property url iconSource
     property bool destructive: variant === "danger"
+    property string accessibleName: text
+    property string accessibleDescription: ""
+    property string toolTipText: accessibleDescription
     hoverEnabled: true
-    implicitHeight: compact ? theme.compactControlHeight : theme.controlHeight
+    activeFocusOnTab: true
+    implicitHeight: Math.max(compact ? theme.compactControlHeight : theme.controlHeight, 40)
     implicitWidth: Math.max(compact ? 72 : 92, contentItem.implicitWidth + leftPadding + rightPadding)
     leftPadding: compact ? 10 : 14
     rightPadding: compact ? 10 : 14
     topPadding: 0
     bottomPadding: 0
+
+    Accessible.role: Accessible.Button
+    Accessible.name: accessibleName
+    Accessible.description: accessibleDescription
+    ToolTip.visible: hovered && toolTipText.length > 0
+    ToolTip.text: toolTipText
+    ToolTip.delay: 500
 
     Theme { id: theme }
 
@@ -45,14 +57,29 @@ Button {
         return theme.elevatedSurface
     }
 
-    contentItem: Label {
-        text: root.text
-        color: root.foregroundColor()
-        font.pointSize: theme.bodyPointSize
-        font.weight: root.variant === "primary" ? Font.DemiBold : Font.Medium
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
+    contentItem: Row {
+        spacing: root.iconSource && root.text ? 7 : 0
+        anchors.horizontalCenter: parent.horizontalCenter
+        Image {
+            visible: !!root.iconSource
+            source: root.iconSource
+            width: visible ? 18 : 0
+            height: 18
+            sourceSize.width: 18
+            sourceSize.height: 18
+            fillMode: Image.PreserveAspectFit
+            opacity: root.enabled ? 1.0 : 0.55
+            Accessible.ignored: true
+        }
+        Label {
+            visible: root.text.length > 0
+            text: root.text
+            color: root.foregroundColor()
+            font.pointSize: theme.bodyPointSize
+            font.weight: root.variant === "primary" ? Font.DemiBold : Font.Medium
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
     }
 
     background: Rectangle {

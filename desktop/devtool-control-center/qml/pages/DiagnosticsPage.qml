@@ -5,6 +5,7 @@ import "../components"
 
 Item {
     id: root
+    readonly property bool narrowMode: width < 760
     Theme { id: theme }
 
     ColumnLayout {
@@ -18,7 +19,9 @@ Item {
             Item { Layout.fillWidth: true }
             AppComboBox {
                 id: runPicker
-                Layout.preferredWidth: 360
+                accessibleName: "Diagnostic run selector"
+                Layout.fillWidth: root.narrowMode
+                Layout.preferredWidth: root.narrowMode ? 240 : 360
                 model: hudStore.activeRuns
                 textRole: "title"
                 function selectedIndex() {
@@ -36,10 +39,13 @@ Item {
             }
         }
 
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
-            AppTextField { id: search; Layout.fillWidth: true; placeholderText: "Search code, message, file, or phase" }
-            AppComboBox { id: severity; Layout.preferredWidth: 150; model: ["All", "error", "warning", "info"] }
+            columns: root.narrowMode ? 1 : 3
+            columnSpacing: 10
+            rowSpacing: 10
+            AppTextField { id: search; accessibleName: "Search diagnostics"; Layout.fillWidth: true; placeholderText: "Search code, message, file, or phase" }
+            AppComboBox { id: severity; accessibleName: "Diagnostic severity filter"; Layout.fillWidth: root.narrowMode; Layout.preferredWidth: root.narrowMode ? 0 : 150; model: ["All", "error", "warning", "info"] }
             AppButton {
                 text: "Copy all"
                 enabled: hudStore.diagnostics.length > 0
@@ -52,9 +58,13 @@ Item {
             }
         }
 
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
+            columns: root.narrowMode ? 2 : 3
+            columnSpacing: 10
+            rowSpacing: 8
             Rectangle {
+                Layout.fillWidth: true
                 Layout.preferredWidth: 160
                 height: 58
                 radius: theme.controlRadius
@@ -63,6 +73,7 @@ Item {
                 Label { anchors.centerIn: parent; text: "ERRORS  " + (hudStore.activeRun.errors || 0); color: theme.error; font.weight: Font.DemiBold; font.pointSize: theme.smallPointSize }
             }
             Rectangle {
+                Layout.fillWidth: true
                 Layout.preferredWidth: 180
                 height: 58
                 radius: theme.controlRadius
@@ -70,7 +81,7 @@ Item {
                 border.color: theme.alpha(theme.warning, 0.35)
                 Label { anchors.centerIn: parent; text: "WARNINGS  " + (hudStore.activeRun.warnings || 0); color: theme.warning; font.weight: Font.DemiBold; font.pointSize: theme.smallPointSize }
             }
-            Label { Layout.fillWidth: true; text: hudStore.activeRun.message || "No active diagnostic context"; color: theme.mutedText; elide: Text.ElideRight; font.pointSize: theme.bodyPointSize }
+            Label { Layout.fillWidth: true; Layout.columnSpan: root.narrowMode ? 2 : 1; text: hudStore.activeRun.message || "No active diagnostic context"; color: theme.mutedText; elide: Text.ElideRight; font.pointSize: theme.bodyPointSize; Accessible.name: text }
         }
 
         ListView {
@@ -130,7 +141,7 @@ Item {
                             text: (modelData.file || "") + (modelData.line ? ":" + modelData.line : "") + (modelData.phase ? " · " + modelData.phase : "")
                             color: theme.mutedText
                             elide: Text.ElideMiddle
-                            font.family: "monospace"
+                            font.family: theme.monospaceFamily
                             font.pointSize: theme.smallPointSize
                         }
                     }

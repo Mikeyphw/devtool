@@ -6,6 +6,9 @@ Item {
     property var steps: []
     implicitHeight: 76
     clip: true
+    Accessible.role: Accessible.Grouping
+    Accessible.name: "Run pipeline"
+    Accessible.description: (root.steps || []).length + " workflow steps"
     Theme { id: theme }
 
     ListView {
@@ -46,6 +49,10 @@ Item {
                         : modelData.status === "ok" ? theme.alpha(theme.success, 0.52)
                         : modelData.status === "running" ? theme.alpha(theme.info, 0.72)
                         : theme.border
+            Accessible.role: Accessible.ProgressBar
+            Accessible.name: String(modelData.label || "Workflow step")
+            Accessible.description: String(modelData.detail || modelData.status || "pending")
+            Accessible.value: Math.max(0, Math.min(100, Number(modelData.progress || 0)))
             property color stepColor: modelData.status === "failed" ? theme.error
                                       : modelData.status === "ok" ? theme.success
                                       : modelData.status === "running" ? theme.info
@@ -77,19 +84,25 @@ Item {
                         width: parent.width - statusLabel.implicitWidth - 8
                         text: modelData.label
                         color: theme.text
-                        font.pointSize: theme.smallPointSize - 1
+                        font.pointSize: theme.smallPointSize
                         font.weight: modelData.status === "running" ? Font.DemiBold : Font.Medium
                         elide: Text.ElideRight
                     }
-                    Label {
+                    Row {
                         id: statusLabel
-                        text: modelData.status === "ok" ? "✓"
-                            : modelData.status === "failed" ? "!"
-                            : modelData.status === "running" ? Math.round(modelData.progress) + "%"
-                            : modelData.status === "skipped" ? "—" : "·"
-                        color: stepRect.stepColor
-                        font.weight: Font.Bold
-                        font.pointSize: theme.smallPointSize - 1
+                        spacing: 4
+                        StatusMark {
+                            kind: modelData.status
+                            markColor: stepRect.stepColor
+                            markSize: 12
+                        }
+                        Label {
+                            visible: modelData.status === "running"
+                            text: Math.round(modelData.progress) + "%"
+                            color: stepRect.stepColor
+                            font.weight: Font.DemiBold
+                            font.pointSize: theme.smallPointSize
+                        }
                     }
                 }
 
@@ -97,7 +110,7 @@ Item {
                     width: parent.width
                     text: modelData.detail || (modelData.status === "ok" ? "Completed" : modelData.status === "pending" ? "Waiting" : "In progress")
                     color: theme.subtleText
-                    font.pointSize: theme.captionPointSize - 1
+                    font.pointSize: theme.captionPointSize
                     elide: Text.ElideRight
                 }
 

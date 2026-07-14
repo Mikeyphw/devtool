@@ -1,4 +1,4 @@
-# Devtool Control Center — Qt 6 Phase 3
+# Devtool Control Center — Qt 6
 
 Native Linux Qt 6/QML frontend modeled after the Android companion app and adapted for desktop workflows.
 
@@ -53,16 +53,16 @@ Build, install, and delete the generated `.deb` only after installation succeeds
 ./package-deb.sh --install --delete-after-install
 ```
 
-The package is written to `dist/devtool-control-center_0.3.8_<arch>.deb`. Set `VERSION`, `ARCH`, `BUILD_DIR`, or `OUT_DIR` to override defaults.
+The package is written to `dist/devtool-control-center_0.4.0_<arch>.deb`. Set `VERSION`, `ARCH`, `BUILD_DIR`, or `OUT_DIR` to override defaults.
 
-## Phase 3 native protocol
+## Native protocol
 
-Version 0.3.8 connects to devtool 0.5.9 through a per-user Unix-domain socket. It receives snapshots and incremental run updates without polling, reconnects automatically, supports multiple clients, and can cancel the exact active run. If IPC is unavailable, the existing state-file watcher remains active as a recovery fallback.
+Version 0.4.0 connects to devtool 0.5.9 through a per-user Unix-domain socket. It receives snapshots and incremental run updates without polling, reconnects automatically, supports multiple clients, and can cancel the exact active run. If IPC is unavailable, the existing state-file watcher remains active as a recovery fallback.
 
 
 ## Qt 6.4 compatibility
 
-Version 0.3.8 builds on Qt 6.4 by avoiding APIs introduced in Qt 6.5, using explicit QVariant fallbacks, and loading the embedded entry point from `qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml`.
+Version 0.4.0 builds on Qt 6.4 by avoiding APIs introduced in Qt 6.5, using explicit QVariant fallbacks, and loading the embedded entry point from `qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml`.
 
 
 ## Build-directory and clock-skew safety
@@ -113,3 +113,47 @@ at 75 ms intervals. The full output remains in the normal devtool log.
 Clipboard monitoring is event-driven through `QClipboard::dataChanged`. It
 requires a recognized, case-sensitive devtool invocation and rejects copied
 result reports such as `Devtool failed.` or `Devtool completed successfully.`.
+
+
+## Workflow runner and actionable History
+
+The Run page uses four stages—Project, Operation, Tests, and Review—with a
+sticky action bar. It covers the complete common desktop lifecycle: apply
+single overlay, apply bundle, validate, restore, build, test, lint, run,
+package, clean, inspect, commit, status, and doctor.
+
+The Tests stage calls `devtool test --list-tests`, parses structured or plain
+output, and provides search plus exact test selection. Apply operations verify
+the artifact manifest by default; an advanced, visibly warned control maps to
+`--no-manifest-check` when recovery work requires bypassing that check.
+
+History can be filtered by text, status, and repository. Run details expose
+copy, rerun, open-log, and open-artifact actions. State-changing runs and
+clear-all History require explicit confirmation.
+
+## Accessibility and narrow layouts
+
+Shared controls expose accessible roles, names, descriptions, tooltips, and
+keyboard focus. The shell switches to compact navigation below 900 px and keeps
+Run, History, Artifacts, Diagnostics, and Repositories usable down to the 640 px
+window minimum. The compact HUD is constrained to the available screen and uses
+more opaque surfaces for reliable contrast. Keyboard shortcuts and the manual
+200% scaling checklist are documented in `../../docs/UI_ACCESSIBILITY.md`.
+
+## UI regression contract
+
+Slice 4 adds golden terminal/SVG visual-state snapshots, explicit multi-run and
+rollback-state fixtures, and terminology checks shared with Python and Android.
+History maintains a case-folded in-memory search index so filtering remains
+linear without rebuilding a combined string for every query. Performance guards
+cover 20,000 History records, 25,000 diagnostics, and 12,000 test IDs. See
+`../../docs/UI_REGRESSION.md`.
+
+
+## 0.4.0 release qualification
+
+Both executables support `--version`. Configure with `-DDEVTOOL_ENABLE_TESTS=ON`
+and run `ctest --test-dir <build> --output-on-failure` to execute isolated
+offscreen QML launch tests. `package-deb.sh --verify` validates metadata, both
+installed binaries, and its SHA-256 sidecar. `SOURCE_DATE_EPOCH` controls the
+normalized package timestamp for reproducible release builds.

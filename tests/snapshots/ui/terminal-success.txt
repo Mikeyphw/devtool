@@ -1,0 +1,19 @@
+╭──────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                      │
+│  ✓ Completed successfully                                                            │
+│                                                                                      │
+│  Actions      4 completed, 0 skipped                                                 │
+│  Duration     5.60s                                                                  │
+│  Tests        12 passed, 0 failed, 1 skipped (13 total)                              │
+│  Diagnostics  0 warnings, 0 errors                                                   │
+│  Commit       abc1234                                                                │
+│                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+                                        Actions
+
+      Action                      Result   Duration   Details
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✓   Restore dependencies        Done        1.20s
+  ✓   Build                       Done        2.40s
+  ✓   Run tests                   Done        1.80s
+  ✓   Commit changes              Done        200ms

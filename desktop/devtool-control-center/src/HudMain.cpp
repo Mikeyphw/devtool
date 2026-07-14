@@ -2,6 +2,7 @@
 #include "HudStateStore.h"
 #include "IpcClient.h"
 
+#include <iostream>
 #include <QApplication>
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -21,9 +22,21 @@
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
+#include <QtGlobal>
 #include <QWindow>
 
+#ifndef DEVTOOL_CC_VERSION
+#define DEVTOOL_CC_VERSION "development"
+#endif
+
 namespace {
+bool hasArgument(int argc, char **argv, const char *value) {
+    for (int index = 1; index < argc; ++index) {
+        if (QString::fromLocal8Bit(argv[index]) == QString::fromLatin1(value)) return true;
+    }
+    return false;
+}
+
 constexpr const char *kHudServerName = "io.github.mikeceead.DevtoolControlCenter.hud";
 constexpr const char *kHudPositionKey = "hud/windowPosition";
 constexpr int kHudScreenMargin = 24;
@@ -31,6 +44,8 @@ constexpr int kMinimumVisibleWidth = 96;
 constexpr int kMinimumVisibleHeight = 64;
 
 QString preferredNerdFont() {
+    const QString systemFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    if (!systemFixed.trimmed().isEmpty()) return systemFixed;
     const QStringList preferred {
         QStringLiteral("JetBrainsMono Nerd Font"), QStringLiteral("CaskaydiaCove Nerd Font"),
         QStringLiteral("MesloLGS NF"), QStringLiteral("FiraCode Nerd Font"),
@@ -139,6 +154,10 @@ void installActivationServer(QLocalServer *server, QWindow *window) {
 }  // namespace
 
 int main(int argc, char **argv) {
+    if (hasArgument(argc, argv, "--version")) {
+        std::cout << "Devtool Control Center " << DEVTOOL_CC_VERSION << " (HUD)\n";
+        return 0;
+    }
     QSurfaceFormat format = QSurfaceFormat::defaultFormat();
     format.setAlphaBufferSize(8);
     QSurfaceFormat::setDefaultFormat(format);
@@ -148,8 +167,13 @@ int main(int argc, char **argv) {
     app.setOrganizationName(QStringLiteral("mikeceead"));
     app.setDesktopFileName(QStringLiteral("io.github.mikeceead.DevtoolControlCenter"));
     app.setWindowIcon(hudIcon());
-    app.setFont(QFont(preferredNerdFont()));
+    QFont uiFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    const double basePointSize = uiFont.pointSizeF() > 0.0 ? uiFont.pointSizeF() : 11.0;
+    const double typographyScale = qBound(1.0, hudSettings().value(QStringLiteral("appearance/typographyScale"), 1.0).toDouble(), 2.0);
+    uiFont.setPointSizeF(basePointSize * typographyScale);
+    app.setFont(uiFont);
     app.setQuitOnLastWindowClosed(true);
+    const bool exitWhenIdle = app.arguments().contains(QStringLiteral("--exit-when-idle"));
 
     if (sendMessage(QString::fromLatin1(kHudServerName), QStringLiteral("show-hud"))) return 0;
 
@@ -200,6 +224,8 @@ int main(int argc, char **argv) {
         restoreHudPosition(window);
         restoringPosition = false;
     });
+
+    if (exitWhenIdle) QTimer::singleShot(1200, &app, &QCoreApplication::quit);
 
     QLocalServer::removeServer(QString::fromLatin1(kHudServerName));
     auto *server = new QLocalServer(&app);

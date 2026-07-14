@@ -12,6 +12,8 @@ Rectangle {
     border.color: theme.border
     implicitHeight: 82
     implicitWidth: 132
+    Accessible.role: Accessible.StaticText
+    Accessible.name: root.label + ", " + root.value
     Column {
         anchors.fill: parent
         anchors.margins: 14
@@ -29,8 +31,7 @@ Rectangle {
             color: theme.mutedText
             font.pointSize: theme.captionPointSize
             font.weight: Font.DemiBold
-            font.capitalization: Font.AllUppercase
-            font.letterSpacing: 0.95
+            font.letterSpacing: 0.20
             lineHeight: theme.compactLineHeight
         }
     }

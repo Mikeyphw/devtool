@@ -5,6 +5,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 
 import java.security.SecureRandom;
 
@@ -22,6 +25,8 @@ final class TermuxCommandRunner {
     private static final String EXTRA_DESCRIPTION = "com.termux.RUN_COMMAND_COMMAND_DESCRIPTION";
     private static final String TERMUX_PREFIX = "/data/data/com.termux/files/usr";
     private static final SecureRandom IDS = new SecureRandom();
+    private static final String TAG = "DevtoolTermuxLaunch";
+    private static final long PROGRESS_WATCHDOG_MS = 7000L;
 
     static final class LaunchResult {
         final boolean started;
@@ -102,18 +107,56 @@ final class TermuxCommandRunner {
                 .putExtra(EXTRA_DESCRIPTION, "Runs a user-configured devtool command and returns its result.");
         try {
             context.startService(request);
+            Log.i(TAG, "RunCommand accepted run=" + runId + " mode=" + (background ? "background" : "foreground")
+                    + " shell=" + resolveShell() + " workdir=" + TermuxPaths.normalizeWorkdir(workdir));
+            if (!background && (bridgeOperation == null || bridgeOperation.isEmpty())) {
+                new Handler(Looper.getMainLooper()).postDelayed(() -> openTermux(context), 250L);
+            }
             if (bridgeOperation == null || bridgeOperation.isEmpty()) {
                 String normalizedWorkdir = TermuxPaths.normalizeWorkdir(workdir);
                 HudUpdate started = HudUpdate.commandStarted(runId, cleanCommand, normalizedWorkdir, overlay);
-                RunStore.started(context, runId, cleanCommand, normalizedWorkdir);
+                RunStore.started(context, runId, cleanCommand, normalizedWorkdir, background, resolveShell());
                 new NotificationController(context).post(started);
                 OverlayHudService.publish(context, started);
+                scheduleProgressWatchdog(context, runId, cleanCommand, normalizedWorkdir, background, overlay, started.startedAtMs);
             }
             return new LaunchResult(true, executionId, "");
         } catch (RuntimeException error) {
+            Log.e(TAG, "Could not start RunCommand run=" + runId, error);
             return new LaunchResult(false, executionId,
                     error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
         }
+    }
+
+    static boolean openTermux(Context context) {
+        Intent launch = context.getPackageManager().getLaunchIntentForPackage(TERMUX_PACKAGE);
+        if (launch == null) return false;
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        try {
+            context.startActivity(launch);
+            return true;
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Could not bring Termux to foreground", error);
+            return false;
+        }
+    }
+
+    private static void scheduleProgressWatchdog(
+            Context context, String runId, String command, String workdir,
+            boolean background, boolean overlay, long startedAtMs) {
+        Context app = context.getApplicationContext();
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (!RunStore.stillPreparing(app, runId)) return;
+            String message = background
+                    ? "No live bridge update after 7 seconds; the command may still be running in Termux background mode"
+                    : "No live bridge update after 7 seconds; check the visible Termux session";
+            RunStore.appendDiagnostic(app, runId, message);
+            HudUpdate waiting = HudUpdate.commandWaiting(
+                    runId, command, workdir, background, overlay, startedAtMs);
+            RunStore.update(app, waiting);
+            new NotificationController(app).post(waiting);
+            OverlayHudService.publish(app, waiting);
+        }, PROGRESS_WATCHDOG_MS);
     }
 
     private static String buildShellCommand(Context context, String runId, String command, boolean overlay) {
@@ -123,6 +166,20 @@ final class TermuxCommandRunner {
                 .append(shellQuote(BridgeSecrets.getOrCreateToken(context))).append("; ");
         shell.append("export DEVTOOL_HUD_OVERLAY=").append(overlay ? "1" : "0").append("; ");
         shell.append("export DEVTOOL_ANDROID_HUD_AUTOSTART=1; ");
+        String bridgePackage = context.getPackageName();
+        shell.append("export DEVTOOL_ANDROID_HUD_PACKAGE=")
+                .append(shellQuote(bridgePackage)).append("; ");
+        // A shell-start acknowledgement distinguishes a command that has not
+        // launched from one whose devtool bridge is still warming up.
+        shell.append("/system/bin/am broadcast --user 0 -n ")
+                .append(shellQuote(bridgePackage + "/.BridgeReceiver"))
+                .append(" -a ").append(shellQuote(bridgePackage + ".UPDATE"))
+                .append(" --es token ").append(shellQuote(BridgeSecrets.getOrCreateToken(context)))
+                .append(" --es run_id ").append(shellQuote(runId))
+                .append(" --es status waiting --es task ").append(shellQuote("Starting Devtool"))
+                .append(" --es phase Termux --es detail ").append(shellQuote("Termux shell started; waiting for devtool progress"))
+                .append(" --ei progress 0 --ei phase_progress 0 --ez indeterminate true")
+                .append(" --el updated_at_ms $(date +%s)000 >/dev/null 2>&1 || true; ");
         shell.append(command);
         return shell.toString();
     }

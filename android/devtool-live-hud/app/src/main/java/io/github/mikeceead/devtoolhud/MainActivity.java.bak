@@ -1,0 +1,1226 @@
+package io.github.mikeceead.devtoolhud;
+
+import android.Manifest;
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.NotificationManager;
+import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.graphics.Typeface;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.provider.Settings;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.View;
+import android.view.WindowInsets;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.Spinner;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.text.DateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+public final class MainActivity extends Activity {
+    private static final int REQUEST_NOTIFICATIONS = 41;
+    private static final int REQUEST_TERMUX = 42;
+    private static final int REQUEST_ROOT_MODULE_EXPORT = 43;
+    private static final String[] PAGES = {"Overview", "Run", "History", "Settings"};
+
+    private UiKit ui;
+    private int currentPage;
+    private TextView statusView;
+    private TextView tokenView;
+    private TextView commandPreview;
+    private Spinner operationInput;
+    private Spinner projectTypeInput;
+    private Spinner executionModeInput;
+    private EditText repoInput;
+    private EditText runWorkdirInput;
+    private EditText targetInput;
+    private EditText artifactInput;
+    private EditText commitInput;
+    private EditText customInput;
+    private EditText environmentInput;
+    private EditText extraGlobalInput;
+    private EditText extraOperationInput;
+    private EditText chrootInput;
+    private EditText testProfileInput;
+    private EditText testSelectorsInput;
+    private EditText testTagsInput;
+    private EditText testExcludeTagsInput;
+    private EditText testPathInput;
+    private EditText testClassInput;
+    private EditText testMethodInput;
+    private Switch chrootToggle;
+    private Switch rootBridgeToggle;
+    private Switch copyToggle;
+    private Switch copyViaTermuxToggle;
+    private Switch autoHudToggle;
+    private Switch validateToggle;
+    private Switch commitToggle;
+    private Switch yesToggle;
+    private Switch runOverlayToggle;
+    private Switch listTestsToggle;
+    private Switch instrumentedToggle;
+    private EditText rawCommandInput;
+    private EditText workdirInput;
+    private Switch foregroundToggle;
+    private Switch overlayDefaultToggle;
+    private boolean receiverRegistered;
+    private DevtoolRunConfig runDraft;
+    private boolean syncingExecutionControls;
+    private int runStage;
+    private LinearLayout runProjectSection;
+    private LinearLayout runOperationSection;
+    private LinearLayout runTestsSection;
+    private LinearLayout runReviewSection;
+    private Button runBackButton;
+    private Button runNextButton;
+    private Button runExecuteButton;
+    private TextView runStageLabel;
+    private EditText testCatalogSearch;
+    private LinearLayout testCatalogList;
+    private List<TestCatalog.Item> testCatalogItems = new ArrayList<>();
+    private final Set<String> selectedTestIds = new LinkedHashSet<>();
+    private String historyQuery = "";
+    private String historyStatus = "all";
+
+    private final BroadcastReceiver runUpdates = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (currentPage != 1) rebuildUi();
+        }
+    };
+
+    @Override
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        new NotificationController(this);
+        currentPage = getIntent().hasExtra("run_id") ? 2 : AppSettings.page(this);
+        rebuildUi();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && intent.hasExtra("run_id")) {
+            currentPage = 2;
+            AppSettings.setPage(this, currentPage);
+            rebuildUi();
+        }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        if (!receiverRegistered) {
+            IntentFilter filter = new IntentFilter(RunStore.ACTION_UPDATED);
+            filter.addAction(BridgeTokenManager.ACTION_UPDATED);
+            filter.addAction(RootBridgeManager.ACTION_UPDATED);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(runUpdates, filter, Context.RECEIVER_NOT_EXPORTED);
+            else registerReceiver(runUpdates, filter);
+            receiverRegistered = true;
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        captureRunDraft();
+        if (receiverRegistered) {
+            unregisterReceiver(runUpdates);
+            receiverRegistered = false;
+        }
+        super.onStop();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (ui != null && (currentPage == 0 || currentPage == 3)) rebuildUi();
+        else if (statusView != null) refreshStatus();
+    }
+
+    private void rebuildUi() {
+        ui = new UiKit(this);
+        getWindow().setStatusBarColor(ui.palette.background);
+        getWindow().setNavigationBarColor(ui.palette.background);
+        setContentView(buildRoot());
+        refreshStatus();
+    }
+
+    private View buildRoot() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(ui.palette.background);
+        root.setFocusableInTouchMode(true);
+        root.setContentDescription(PAGES[currentPage] + ". " + pageSubtitle());
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            int top;
+            int bottom;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
+                top = bars.top;
+                bottom = bars.bottom;
+            } else {
+                top = insets.getSystemWindowInsetTop();
+                bottom = insets.getSystemWindowInsetBottom();
+            }
+            view.setPadding(0, top, 0, bottom);
+            return insets;
+        });
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.VERTICAL);
+        header.setPadding(ui.dp(20), ui.dp(18), ui.dp(20), ui.dp(14));
+        header.addView(ui.text("DEVTOOL", UiTypography.Role.LABEL, ui.palette.cyan));
+        TextView title = ui.text(PAGES[currentPage], UiTypography.Role.PAGE_TITLE, ui.palette.text);
+        title.setPadding(0, ui.dp(2), 0, ui.dp(2));
+        if (Build.VERSION.SDK_INT >= 28) title.setAccessibilityHeading(true);
+        title.setContentDescription(PAGES[currentPage] + " page");
+        header.addView(title);
+        header.addView(ui.text(pageSubtitle(), UiTypography.Role.BODY, ui.palette.muted));
+        root.addView(header);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(ui.palette.background);
+        scroll.addView(buildPage());
+        root.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        if (currentPage == 1) root.addView(buildRunActionBar());
+        root.addView(buildBottomNavigation());
+        return root;
+    }
+
+    private View buildBottomNavigation() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(ui.dp(10), ui.dp(7), ui.dp(10), ui.dp(7));
+        row.setBackgroundColor(ui.palette.surface);
+        int[] symbols = {R.drawable.ic_nav_overview, R.drawable.ic_nav_run, R.drawable.ic_nav_history, R.drawable.ic_nav_settings};
+        for (int index = 0; index < PAGES.length; index++) {
+            final int page = index;
+            Button button = ui.navButton(symbols[index], PAGES[index], index == currentPage, v -> {
+                currentPage = page;
+                AppSettings.setPage(this, page);
+                rebuildUi();
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            params.setMargins(ui.dp(2), 0, ui.dp(2), 0);
+            button.setLayoutParams(params);
+            row.addView(button);
+        }
+        return row;
+    }
+
+    private String pageSubtitle() {
+        if (currentPage == 1) return "Build and run a devtool workflow without writing shell commands.";
+        if (currentPage == 2) return "Review recent runs, results and captured output.";
+        if (currentPage == 3) return "Manage appearance, permissions, pairing and advanced execution.";
+        return "See readiness, current work and the next useful action at a glance.";
+    }
+
+    private View buildPage() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(ui.dp(16), ui.dp(2), ui.dp(16), ui.dp(28));
+        if (currentPage == 1) buildRunPage(content);
+        else if (currentPage == 2) buildHistoryPage(content);
+        else if (currentPage == 3) buildSettingsPage(content);
+        else buildOverviewPage(content);
+        return content;
+    }
+
+    private void buildOverviewPage(LinearLayout content) {
+        content.addView(ui.sectionTitle("Readiness"));
+        LinearLayout readiness = ui.surface();
+        int ready = readinessCount();
+        readiness.addView(ui.text(ready + " of 4 core services ready", UiTypography.Role.LARGE_VALUE, ready == 4 ? ui.palette.green : ui.palette.text));
+        TextView readinessDetail = ui.text(ready == 4 ? "Android, Termux and the secure HUD bridge are connected."
+                        : "Complete the highlighted tiles below before relying on live background progress.", UiTypography.Role.BODY_SMALL, ui.palette.muted);
+        readinessDetail.setPadding(0, ui.dp(5), 0, 0);
+        readiness.addView(readinessDetail);
+        content.addView(readiness);
+
+        addCoreTiles(content, false);
+        content.addView(ui.sectionTitle("Optional root access"));
+        content.addView(rootBridgeTile());
+
+        content.addView(ui.sectionTitle("Latest run"));
+        RunRecord latest = RunStore.latest(this);
+        if (latest == null) {
+            LinearLayout empty = ui.surface();
+            empty.addView(ui.text("No devtool runs yet", UiTypography.Role.LARGE_VALUE, ui.palette.text));
+            empty.addView(ui.text("Open Run to build a command visually or use the advanced raw-command launcher.", UiTypography.Role.BODY, ui.palette.muted));
+            empty.addView(ui.button("Create a run", ui.palette.cyan, v -> switchPage(1)));
+            content.addView(empty);
+        } else {
+            content.addView(runCard(latest, true));
+        }
+
+        content.addView(ui.sectionTitle("Quick actions"));
+        content.addView(ui.quickTile(R.drawable.ic_repository, "Repository status", "Inspect the configured repository", ui.palette.green, v -> runQuick("status")));
+        content.addView(ui.quickTile(R.drawable.ic_validate, "Validate target", "Restore, build and test efficiently", ui.palette.cyan, v -> runQuick("validate")));
+        content.addView(ui.quickTile(R.drawable.ic_workflow, "Build a workflow", "Apply overlays, test or commit", ui.palette.yellow, v -> switchPage(1)));
+        content.addView(ui.quickTile(R.drawable.ic_nav_history, "Run history", "Review output and rerun commands", ui.palette.muted, v -> switchPage(2)));
+
+        List<RunRecord> records = RunStore.all(this);
+        if (records.size() > 1) {
+            content.addView(ui.sectionTitle("Recent"));
+            for (int i = 1; i < Math.min(records.size(), 4); i++) content.addView(runCard(records.get(i), false));
+        }
+    }
+
+    private void buildRunPage(LinearLayout content) {
+        DevtoolRunConfig saved = runDraft != null ? runDraft.copy() : AppSettings.runDraft(this);
+        if (saved == null) saved = AppSettings.runConfig(this);
+        runDraft = saved.copy();
+        selectedTestIds.clear();
+        for (String id : saved.testSelectors.split("[,\\n]")) if (!id.trim().isEmpty()) selectedTestIds.add(id.trim());
+        testCatalogItems = TestCatalog.fromRuns(RunStore.all(this));
+
+        runProjectSection = ui.surface();
+        runProjectSection.addView(ui.sectionTitle("1 · Project"));
+        runProjectSection.addView(ui.button("Paste and import command", ui.palette.cyan, v -> importBuilderCommandFromClipboard()));
+        projectTypeInput = spinner(DevtoolCommandBuilder.PROJECT_TYPES, saved.projectType, "Project type");
+        runProjectSection.addView(label("Project type")); runProjectSection.addView(projectTypeInput);
+        repoInput = field(runProjectSection, "Repository", saved.repo, "Termux or chroot repository path", false);
+        targetInput = field(runProjectSection, "Target", saved.target, "Configured devtool target", false);
+        content.addView(runProjectSection);
+
+        runOperationSection = ui.surface();
+        runOperationSection.addView(ui.sectionTitle("2 · Operation"));
+        operationInput = spinner(DevtoolCommandBuilder.OPERATIONS, saved.operation, "Operation");
+        runOperationSection.addView(label("Operation")); runOperationSection.addView(operationInput);
+        artifactInput = field(runOperationSection, "Overlay / bundle", saved.artifact, "$HOME/Downloads/example_overlay.zip", false);
+        commitInput = field(runOperationSection, "Commit message", saved.commitMessage, "Required for explicit commit", false);
+        customInput = field(runOperationSection, "Custom subcommand and arguments", saved.customArguments, "Used only when operation is custom", true);
+        executionModeInput = spinner(DevtoolCommandBuilder.EXECUTION_ENVIRONMENTS, saved.executionEnvironment, "Execution environment");
+        runOperationSection.addView(label("Execution environment")); runOperationSection.addView(executionModeInput);
+        rootBridgeToggle = toggle(runOperationSection, "Use optional root bridge", saved.useRootBridge);
+        rootBridgeToggle.setEnabled(RootBridgeManager.isReady(this)); if (!RootBridgeManager.isReady(this)) rootBridgeToggle.setChecked(false);
+        chrootToggle = toggle(runOperationSection, "Run through androidos chroot", saved.useChroot);
+        chrootInput = field(runOperationSection, "Chroot name", saved.chrootName, "androidos", false);
+        runWorkdirInput = field(runOperationSection, "Termux working directory", saved.workdir, "Auto: repository, or ~/ for chroot", false);
+        validateToggle = toggle(runOperationSection, "Validate after apply", saved.validate);
+        commitToggle = toggle(runOperationSection, "Commit after apply", saved.commit);
+        content.addView(runOperationSection);
+
+        runTestsSection = ui.surface();
+        runTestsSection.addView(ui.sectionTitle("Test selection"));
+        runTestsSection.addView(ui.text("Discover the real devtool test catalog, search it, and select tests without typing framework IDs.", UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        testProfileInput = field(runTestsSection, "Saved profile", saved.testProfile, "quick, full, parser…", false);
+        runTestsSection.addView(ui.button("Discover tests", ui.palette.cyan, v -> discoverTestsOnAndroid()));
+        testCatalogSearch = ui.input("", "Search discovered tests", false); runTestsSection.addView(testCatalogSearch);
+        testCatalogList = new LinearLayout(this); testCatalogList.setOrientation(LinearLayout.VERTICAL); runTestsSection.addView(testCatalogList);
+        testSelectorsInput = field(runTestsSection, "Selectors", saved.testSelectors, "Selected IDs or manual selectors", true);
+        testTagsInput = field(runTestsSection, "Include tags", saved.testTags, "fast, manifest", false);
+        testExcludeTagsInput = field(runTestsSection, "Exclude tags", saved.testExcludeTags, "slow, network", false);
+        testPathInput = field(runTestsSection, "Source path", saved.testPath, "tests/parser", false);
+        testClassInput = field(runTestsSection, "Test class", saved.testClass, "ManifestParserTests", false);
+        testMethodInput = field(runTestsSection, "Test method", saved.testMethod, "ValidManifest", false);
+        listTestsToggle = toggle(runTestsSection, "List matching tests instead of running", saved.listTests);
+        instrumentedToggle = toggle(runTestsSection, "Android instrumentation tests", saved.instrumented);
+        content.addView(runTestsSection);
+
+        runReviewSection = ui.surface();
+        runReviewSection.addView(ui.sectionTitle("4 · Review"));
+        copyToggle = toggle(runReviewSection, "Copy result", saved.copy);
+        copyViaTermuxToggle = toggle(runReviewSection, "Use Termux clipboard route", saved.copyViaTermux);
+        autoHudToggle = toggle(runReviewSection, "Live Android progress", saved.autoHud);
+        foregroundToggle = toggle(runReviewSection, "Open Termux in foreground while running", !AppSettings.runInBackground(this));
+        yesToggle = toggle(runReviewSection, "Non-interactive --yes", saved.assumeYes);
+        runOverlayToggle = toggle(runReviewSection, "Show floating HUD", saved.overlay);
+        environmentInput = field(runReviewSection, "Environment assignments", saved.environmentAssignments, "NAME=value", false);
+        extraGlobalInput = field(runReviewSection, "Additional global arguments", saved.extraGlobalArguments, "Flags before the subcommand", true);
+        extraOperationInput = field(runReviewSection, "Additional operation arguments", saved.extraOperationArguments, "Arguments after the subcommand", true);
+        commandPreview = ui.text("", UiTypography.Role.BODY_SMALL, ui.palette.text); commandPreview.setTypeface(Typeface.MONOSPACE); commandPreview.setTextIsSelectable(true); commandPreview.setPadding(ui.dp(12),ui.dp(10),ui.dp(12),ui.dp(10)); commandPreview.setBackground(ui.flat(ui.palette.surfaceRaised,10)); commandPreview.setContentDescription("Generated devtool command preview");
+        runReviewSection.addView(ui.sectionTitle("Command preview"));
+        runReviewSection.addView(commandPreview);
+        runReviewSection.addView(ui.secondaryButton("Copy command", v -> copyText("Devtool command", commandPreview.getText().toString())));
+        runReviewSection.addView(ui.secondaryButton("Save as defaults", v -> { saveRunConfig(); AppSettings.clearRunDraft(this); runDraft=readRunConfig().copy(); Toast.makeText(this,"Run defaults saved",Toast.LENGTH_SHORT).show(); }));
+        content.addView(runReviewSection);
+
+        operationInput.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> { updateOperationVisibility(); updatePreview(); }));
+        projectTypeInput.setOnItemSelectedListener(new SimpleItemSelectedListener(this::updatePreview));
+        executionModeInput.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> { syncExecutionControls(false); updatePreview(); }));
+        watchPreview(repoInput, runWorkdirInput, targetInput, artifactInput, commitInput, customInput, chrootInput,
+                testProfileInput, testSelectorsInput, testTagsInput, testExcludeTagsInput, testPathInput, testClassInput, testMethodInput,
+                environmentInput, extraGlobalInput, extraOperationInput);
+        testCatalogSearch.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){} public void onTextChanged(CharSequence s,int a,int b,int c){populateTestCatalog();} public void afterTextChanged(Editable s){}});
+        chrootToggle.setOnCheckedChangeListener((button,checked)->{syncExecutionControls(true);updatePreview();});
+        for(Switch value:new Switch[]{rootBridgeToggle,copyToggle,copyViaTermuxToggle,autoHudToggle,foregroundToggle,validateToggle,commitToggle,yesToggle,runOverlayToggle,listTestsToggle,instrumentedToggle}) value.setOnCheckedChangeListener((button,checked)->updatePreview());
+        syncExecutionControls(false); updateOperationVisibility(); updatePreview(); populateTestCatalog(); showRunStage(runStage);
+    }
+
+    private void buildHistoryPage(LinearLayout content) {
+        content.addView(ui.sectionTitle("Search and filters"));
+        LinearLayout filters=ui.surface(); EditText search=ui.input(historyQuery,"Search command, repository, target or output",false);search.setContentDescription("Search run history by command, repository, target, or output"); filters.addView(search);
+        Spinner status=spinner(new String[]{"all","ok","failed","cancelled","interrupted","skipped"},historyStatus,"History status filter"); filters.addView(label("Status"));filters.addView(status);content.addView(filters);
+        content.addView(ui.sectionTitle("Runs")); LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);content.addView(list);
+        Runnable refresh=()->populateHistoryList(list,RunStore.all(this),search.getText().toString(),String.valueOf(status.getSelectedItem()));
+        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){historyQuery=s.toString();refresh.run();}public void afterTextChanged(Editable s){}});
+        status.setOnItemSelectedListener(new SimpleItemSelectedListener(()->{historyStatus=String.valueOf(status.getSelectedItem());refresh.run();})); refresh.run();
+        LinearLayout actions=ui.surface();actions.addView(ui.secondaryButton("Clear run history",v->new AlertDialog.Builder(this).setTitle("Clear all run history?").setMessage("This removes saved run metadata. Repositories, artifacts and external logs are not deleted.").setNegativeButton("Cancel",null).setPositiveButton("Clear",(d,w)->{RunStore.clear(this);rebuildUi();}).show()));content.addView(actions);
+    }
+
+    private void buildSettingsPage(LinearLayout content) {
+        content.addView(ui.sectionTitle("Appearance"));
+        LinearLayout appearance = ui.surface();
+        Switch monet = ui.toggle("Use Android Monet colors", AppSettings.useMonet(this));
+        monet.setOnCheckedChangeListener((button, checked) -> {
+            AppSettings.setUseMonet(this, checked);
+            rebuildUi();
+        });
+        appearance.addView(monet);
+        appearance.addView(ui.text("Off uses the shared Devtool desktop palette. On follows wallpaper colors on Android 12+.", UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        content.addView(appearance);
+
+        content.addView(ui.sectionTitle("Permissions and integrations"));
+        addCoreTiles(content, true);
+        content.addView(ui.sectionTitle("Optional root bridge"));
+        content.addView(rootBridgeTile());
+        if (Build.VERSION.SDK_INT >= 36) content.addView(promotedTile());
+
+        content.addView(ui.sectionTitle("Diagnostics"));
+        content.addView(ui.quickTile(R.drawable.ic_notification_status, "Test notification", "Send a sample progress notification", ui.palette.green,
+                v -> new NotificationController(this).post(HudUpdate.sample())));
+        content.addView(ui.quickTile(R.drawable.ic_hud, "Test floating HUD", "Show a sample overlay card", ui.palette.cyan, v -> testOverlay()));
+        content.addView(ui.quickTile(R.drawable.ic_terminal, "Open Termux", "Bring the current Termux session to the foreground", ui.palette.cyan,
+                v -> { if (!TermuxCommandRunner.openTermux(this)) Toast.makeText(this, "Termux could not be opened", Toast.LENGTH_LONG).show(); }));
+
+        content.addView(ui.sectionTitle("Command runner"));
+        content.addView(ui.text("Advanced raw commands always use the rootless Termux backend. The optional root bridge accepts only visual-builder devtool workflows.", UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        LinearLayout runner = ui.surface();
+        rawCommandInput = ui.input(AppSettings.command(this), "Raw devtool command", true);
+        workdirInput = ui.input(AppSettings.workdir(this), "Termux working directory", false);
+        foregroundToggle = ui.toggle("Open Termux in foreground while command runs", !AppSettings.runInBackground(this));
+        overlayDefaultToggle = ui.toggle("Request floating HUD by default", AppSettings.overlayByDefault(this));
+        runner.addView(rawCommandInput);
+        runner.addView(ui.secondaryButton("Paste command from clipboard", v -> pasteRawCommandFromClipboard()));
+        runner.addView(workdirInput);
+        runner.addView(foregroundToggle);
+        runner.addView(ui.text("When disabled, Termux runs in the background and the notification/log view becomes the primary progress surface.", UiTypography.Role.LABEL, ui.palette.muted));
+        runner.addView(overlayDefaultToggle);
+        runner.addView(ui.button("Save runner settings", ui.palette.green, v -> saveCommandSettings()));
+        runner.addView(ui.secondaryButton("Run raw command", v -> runConfiguredCommand()));
+        content.addView(runner);
+
+        content.addView(ui.sectionTitle("Secure bridge"));
+        LinearLayout bridge = ui.surface();
+        tokenView = ui.text(BridgeSecrets.getOrCreateToken(this), UiTypography.Role.BODY_SMALL, ui.palette.text);
+        tokenView.setTextIsSelectable(true);
+        tokenView.setTypeface(Typeface.MONOSPACE);
+        tokenView.setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10));
+        tokenView.setBackground(ui.flat(ui.palette.surfaceRaised, 10));
+        bridge.addView(tokenView);
+        bridge.addView(ui.secondaryButton("Copy bridge token", v -> copyToken()));
+        bridge.addView(ui.secondaryButton("Regenerate bridge token", v -> {
+            tokenView.setText(BridgeSecrets.regenerateToken(this));
+            Toast.makeText(this, "Token regenerated", Toast.LENGTH_LONG).show();
+            rebuildUi();
+        }));
+        content.addView(bridge);
+    }
+
+    private Spinner spinner(String[] values, String selected, String accessibilityLabel) {
+        Spinner spinner = new Spinner(this);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, values);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter); spinner.setSelection(indexOf(values, selected));
+        spinner.setBackground(ui.flat(ui.palette.surfaceRaised, 10)); spinner.setPadding(ui.dp(8), ui.dp(4), ui.dp(8), ui.dp(4));
+        spinner.setMinimumHeight(ui.dp(48));
+        spinner.setContentDescription(accessibilityLabel);
+        return spinner;
+    }
+
+    private View buildRunActionBar() {
+        LinearLayout bar=new LinearLayout(this);bar.setOrientation(ui.largeText()?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(ui.dp(12),ui.dp(8),ui.dp(12),ui.dp(8));bar.setBackgroundColor(ui.palette.surface);
+        runBackButton=ui.secondaryButton("Back",v->showRunStage(runStage-1));runStageLabel=ui.text("", UiTypography.Role.LABEL, ui.palette.muted);runStageLabel.setGravity(Gravity.CENTER);
+        runNextButton=ui.secondaryButton("Next",v->showRunStage(runStage+1));runExecuteButton=ui.button("Run devtool",ui.palette.green,v->requestRunBuiltCommand());
+        runBackButton.setContentDescription("Previous workflow step"); runNextButton.setContentDescription("Next workflow step"); runExecuteButton.setContentDescription("Run reviewed devtool workflow");
+        if(ui.largeText()){
+            bar.addView(runStageLabel,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
+            bar.addView(runBackButton,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
+            bar.addView(runNextButton,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
+            bar.addView(runExecuteButton,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
+        }else{
+            bar.addView(runBackButton,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));bar.addView(runStageLabel,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1.4f));bar.addView(runNextButton,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));bar.addView(runExecuteButton,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1.2f));
+        }
+        showRunStage(runStage);return bar;
+    }
+
+    private void showRunStage(int stage) {
+        runStage=Math.max(0,Math.min(3,stage));if(runProjectSection!=null)runProjectSection.setVisibility(runStage==0?View.VISIBLE:View.GONE);if(runOperationSection!=null)runOperationSection.setVisibility(runStage==1?View.VISIBLE:View.GONE);if(runTestsSection!=null)runTestsSection.setVisibility(runStage==2?View.VISIBLE:View.GONE);if(runReviewSection!=null)runReviewSection.setVisibility(runStage==3?View.VISIBLE:View.GONE);
+        if(runStageLabel!=null){String stageText="Step "+(runStage+1)+" of 4\n"+new String[]{"Project","Operation","Tests","Review"}[runStage];runStageLabel.setText(stageText);runStageLabel.setContentDescription(stageText.replace("\n",", "));runStageLabel.announceForAccessibility(stageText.replace("\n",", "));}if(runBackButton!=null)runBackButton.setEnabled(runStage>0);if(runNextButton!=null)runNextButton.setVisibility(runStage<3?View.VISIBLE:View.GONE);if(runExecuteButton!=null)runExecuteButton.setVisibility(runStage==3?View.VISIBLE:View.GONE);captureRunDraft();
+    }
+
+    private void updateOperationVisibility() {
+        if(operationInput==null)return;String operation=String.valueOf(operationInput.getSelectedItem());boolean apply=operation.equals("apply-overlay")||operation.equals("apply-overlays");boolean commitOperation=operation.equals("commit");
+        if(artifactInput!=null)artifactInput.setVisibility(apply?View.VISIBLE:View.GONE);if(commitInput!=null)commitInput.setVisibility(apply||commitOperation?View.VISIBLE:View.GONE);if(customInput!=null)customInput.setVisibility(operation.equals("custom")?View.VISIBLE:View.GONE);if(validateToggle!=null)validateToggle.setVisibility(apply?View.VISIBLE:View.GONE);if(commitToggle!=null)commitToggle.setVisibility(apply?View.VISIBLE:View.GONE);
+        boolean tests=operation.equals("test")||operation.equals("validate")||apply;if(!tests&&runStage==2)showRunStage(3);
+    }
+
+    private void populateTestCatalog() {
+        if(testCatalogList==null)return;testCatalogList.removeAllViews();String query=testCatalogSearch==null?"":testCatalogSearch.getText().toString();List<TestCatalog.Item> filtered=TestCatalog.filter(testCatalogItems,query);int limit=Math.min(filtered.size(),200);
+        for(int i=0;i<limit;i++){TestCatalog.Item item=filtered.get(i);CheckBox check=new CheckBox(this);check.setText(item.id);check.setTextColor(ui.palette.text);UiTypography.apply(check, UiTypography.Role.BODY_SMALL);check.setMinHeight(ui.dp(48));check.setMinimumHeight(ui.dp(48));check.setContentDescription("Select test "+item.id+(item.suite.isEmpty()?"":" from "+item.suite));check.setChecked(selectedTestIds.contains(item.id));check.setOnCheckedChangeListener((button,checked)->{if(checked)selectedTestIds.add(item.id);else selectedTestIds.remove(item.id);if(testSelectorsInput!=null)testSelectorsInput.setText(String.join(", ",selectedTestIds));updatePreview();});testCatalogList.addView(check);}
+        if(filtered.isEmpty())testCatalogList.addView(ui.text("No discovered tests match this search.", UiTypography.Role.LABEL, ui.palette.muted));else if(filtered.size()>limit)testCatalogList.addView(ui.text("Showing the first "+limit+" of "+filtered.size()+" matches.", UiTypography.Role.LABEL, ui.palette.muted));
+    }
+
+    private void discoverTestsOnAndroid() {
+        try{DevtoolRunConfig config=readRunConfig().copy();config.operation="test";config.listTests=true;config.testSelectors="";config.testTags="";config.testExcludeTags="";config.testPath="";config.testClass="";config.testMethod="";String command=DevtoolCommandBuilder.build(config);runRaw(command,resolvedWorkdir(config),config.overlay,config.useRootBridge);Toast.makeText(this,"Test discovery started. Return to Tests after it finishes.",Toast.LENGTH_LONG).show();}catch(RuntimeException error){Toast.makeText(this,"Could not start discovery: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    private void populateHistoryList(LinearLayout parent,List<RunRecord> records,String query,String status){parent.removeAllViews();String needle=query==null?"":query.trim().toLowerCase(Locale.ROOT);String wanted=status==null?"all":status.trim().toLowerCase(Locale.ROOT);int shown=0;for(RunRecord record:records){if(!wanted.equals("all")&&!record.status.equalsIgnoreCase(wanted))continue;String hay=join("\n",record.title,record.repo,record.target,record.command,record.summary,record.detail,record.error,record.stderr,record.stdout).toLowerCase(Locale.ROOT);if(!needle.isEmpty()&&!hay.contains(needle))continue;parent.addView(compactHistoryCard(record));shown++;}if(shown==0){LinearLayout empty=ui.surface();empty.addView(ui.text(records.isEmpty()?"No history yet":"No runs match the current search and filter.", UiTypography.Role.CARD_TITLE, ui.palette.text));if(records.isEmpty())empty.addView(ui.button("Create a run",ui.palette.cyan,v->switchPage(1)));parent.addView(empty);}}
+
+    private View compactHistoryCard(RunRecord record){LinearLayout card=ui.surface();card.setContentDescription(record.title+". Status "+record.status+". "+(record.summary.isEmpty()?record.detail:record.summary));LinearLayout heading=new LinearLayout(this);heading.setOrientation(LinearLayout.HORIZONTAL);TextView title=ui.text(record.title, UiTypography.Role.CARD_TITLE, ui.palette.text);title.setMaxLines(ui.largeText()?2:1);heading.addView(title,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));heading.addView(ui.text(record.status.toUpperCase(Locale.ROOT), UiTypography.Role.CAPTION, statusColor(record.status)));card.addView(heading);card.addView(ui.text(join(" · ",record.repo,record.target,humanProjectType(record.projectType),DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT).format(new Date(record.updatedAtMs))), UiTypography.Role.LABEL, ui.palette.muted));card.addView(ui.text(record.summary.isEmpty()?record.detail:record.summary, UiTypography.Role.BODY_SMALL, ui.palette.text));LinearLayout actions=new LinearLayout(this);actions.setOrientation(ui.largeText()?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);Button details=ui.secondaryButton("Details",v->showRunDetails(record));details.setContentDescription("Show details for "+record.title);Button rerun=ui.secondaryButton("Run again",v->runRaw(record.command,record.workdir,AppSettings.overlayByDefault(this),AppSettings.runConfig(this).useRootBridge));rerun.setContentDescription("Run "+record.title+" again");rerun.setEnabled(!record.command.isEmpty());Button delete=ui.secondaryButton("Delete",v->new AlertDialog.Builder(this).setTitle("Delete this run?").setMessage("This removes saved run metadata. It does not delete repository files.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->{RunStore.remove(this,record.runId);rebuildUi();}).show());delete.setContentDescription("Delete history record for "+record.title);if(ui.largeText()){actions.addView(details);actions.addView(rerun);actions.addView(delete);}else{actions.addView(details,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));actions.addView(rerun,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));actions.addView(delete,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));}card.addView(actions);return card;}
+
+    private void showRunDetails(RunRecord record){String output=join("\n\n",record.summary,record.detail,record.error,record.stderr,record.stdout,record.launchLog);new AlertDialog.Builder(this).setTitle(record.title+" · "+record.status.toUpperCase(Locale.ROOT)).setMessage(join("\n",record.command,"",output)).setNegativeButton("Close",null).setNeutralButton("Copy command",(d,w)->copyText("Devtool command",record.command)).setPositiveButton("Run again",(d,w)->runRaw(record.command,record.workdir,AppSettings.overlayByDefault(this),AppSettings.runConfig(this).useRootBridge)).show();}
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        boolean ctrl = event.isCtrlPressed();
+        boolean alt = event.isAltPressed();
+        if (ctrl && keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_4) {
+            switchPage(keyCode - KeyEvent.KEYCODE_1);
+            return true;
+        }
+        if (currentPage == 1 && alt && keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+            showRunStage(runStage - 1);
+            return true;
+        }
+        if (currentPage == 1 && alt && keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            showRunStage(runStage + 1);
+            return true;
+        }
+        if (currentPage == 1 && ctrl && keyCode == KeyEvent.KEYCODE_ENTER && runStage == 3) {
+            requestRunBuiltCommand();
+            return true;
+        }
+        if (ctrl && keyCode == KeyEvent.KEYCODE_F) {
+            if (currentPage == 1 && testCatalogSearch != null) testCatalogSearch.requestFocus();
+            return true;
+        }
+        return super.onKeyUp(keyCode, event);
+    }
+
+    private int readinessCount() {
+        int ready = 0;
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null && manager.areNotificationsEnabled()) ready++;
+        if (TermuxCommandRunner.isInstalled(this)) ready++;
+        if (TermuxCommandRunner.hasPermission(this)) ready++;
+        if (BridgeTokenManager.isReady(this)) ready++;
+        return ready;
+    }
+
+    private void addCoreTiles(LinearLayout content, boolean includeFloatingHud) {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        boolean notifications = manager != null && manager.areNotificationsEnabled();
+        content.addView(ui.tile(R.drawable.ic_notification_status, "Notifications",
+                notifications ? "Live progress and final results can be posted." : "Required for background progress updates.",
+                notifications ? "Ready" : "Needs access",
+                notifications ? ui.palette.green : ui.palette.yellow,
+                notifications ? "Manage" : "Grant access", true,
+                v -> requestNotifications()));
+
+        boolean overlayPermission = OverlayHudService.hasPermission(this);
+        content.addView(ui.tile(R.drawable.ic_hud, "Display over apps",
+                overlayPermission ? "The optional floating HUD can appear above other apps." : "Required only when you use the floating HUD.",
+                overlayPermission ? "Ready" : "Optional",
+                overlayPermission ? ui.palette.green : ui.palette.cyan,
+                overlayPermission ? "Manage" : "Grant access", true,
+                v -> openOverlaySettings()));
+
+        boolean termuxInstalled = TermuxCommandRunner.isInstalled(this);
+        boolean termuxPermission = TermuxCommandRunner.hasPermission(this);
+        String termuxState = !termuxInstalled ? "Missing" : (termuxPermission ? "Ready" : "Needs access");
+        String termuxAction = !termuxInstalled ? "Open app info" : (termuxPermission ? "Manage" : "Grant access");
+        content.addView(ui.tile(R.drawable.ic_terminal, "Termux command access",
+                !termuxInstalled ? "Termux was not detected on this device."
+                        : (termuxPermission ? "The frontend can start and monitor devtool commands."
+                        : "Allow this app to invoke Termux RunCommandService."),
+                termuxState,
+                termuxPermission && termuxInstalled ? ui.palette.green : ui.palette.yellow,
+                termuxAction, true,
+                v -> {
+                    if (!termuxInstalled) openOwnAppDetails();
+                    else requestTermuxPermission();
+                }));
+
+        String bridgeState = BridgeTokenManager.state(this);
+        boolean bridgeReady = bridgeState.equals("connected");
+        boolean bridgeWorking = bridgeState.equals("working");
+        content.addView(ui.tile(R.drawable.ic_link, "Termux bridge token",
+                BridgeTokenManager.detail(this), bridgeStateLabel(bridgeState),
+                bridgeReady ? ui.palette.green : (bridgeState.equals("outdated") ? ui.palette.yellow : ui.palette.cyan),
+                BridgeTokenManager.actionLabel(this), !bridgeWorking && !bridgeState.equals("termux-missing"),
+                v -> bridgeTokenAction()));
+
+        if (includeFloatingHud) {
+            boolean running = OverlayHudService.isRunning();
+            boolean enabled = OverlayHudService.isEnabled(this);
+            String state = running ? "Running" : (enabled ? "Enabled" : "Off");
+            String action = running || enabled ? "Disable" : "Enable";
+            content.addView(ui.tile(R.drawable.ic_hud, "Floating HUD",
+                    running ? "The overlay is active and ready to show live runs."
+                            : "Notifications remain the reliable background fallback.",
+                    state, running ? ui.palette.green : ui.palette.cyan,
+                    action, true, v -> {
+                        if (running || enabled) OverlayHudService.setEnabled(this, false);
+                        else enableOverlay();
+                        rebuildUi();
+                    }));
+        }
+    }
+
+    private View rootBridgeTile() {
+        String state = RootBridgeManager.state(this);
+        int color = state.equals("ready") ? ui.palette.green
+                : (state.equals("denied") || state.equals("error") ? ui.palette.red
+                : (state.equals("unpaired") || state.equals("outdated") ? ui.palette.yellow : ui.palette.cyan));
+        return ui.tile(R.drawable.ic_root, "Devtool Root Bridge", RootBridgeManager.detail(this),
+                RootBridgeManager.stateLabel(this), color, RootBridgeManager.actionLabel(this),
+                RootBridgeManager.actionEnabled(this), v -> rootBridgeAction());
+    }
+
+    private void rootBridgeAction() {
+        String state = RootBridgeManager.state(this);
+        if (state.equals("missing")) {
+            exportRootModule();
+        } else if (state.equals("unpaired") || state.equals("outdated")) {
+            RootBridgeManager.pair(this);
+        } else {
+            RootBridgeManager.refresh(this);
+        }
+        rebuildUi();
+    }
+
+    private void exportRootModule() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .setType("application/zip")
+                .putExtra(Intent.EXTRA_TITLE, RootBridgeManager.MODULE_ZIP_NAME)
+                .addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(intent, REQUEST_ROOT_MODULE_EXPORT);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_ROOT_MODULE_EXPORT || resultCode != RESULT_OK
+                || data == null || data.getData() == null) return;
+        try (InputStream input = getResources().openRawResource(R.raw.devtool_root_bridge_module);
+             OutputStream output = getContentResolver().openOutputStream(data.getData(), "w")) {
+            if (output == null) throw new IllegalStateException("Unable to open selected destination");
+            byte[] buffer = new byte[32 * 1024];
+            int count;
+            while ((count = input.read(buffer)) >= 0) output.write(buffer, 0, count);
+            output.flush();
+            Toast.makeText(this, "Module ZIP exported. Install it in your root manager and reboot.", Toast.LENGTH_LONG).show();
+        } catch (Exception error) {
+            Toast.makeText(this, "Module export failed: " + error.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private View promotedTile() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        boolean ready = manager != null && canPostPromotedNotifications(manager);
+        return ui.tile(R.drawable.ic_promoted, "Promoted live updates",
+                ready ? "Android may elevate eligible progress notifications." : "Optional Android 16 live-update presentation.",
+                ready ? "Ready" : "Optional", ready ? ui.palette.green : ui.palette.cyan,
+                "Manage", true, v -> openPromotedSettings());
+    }
+
+    private static String bridgeStateLabel(String state) {
+        if (state.equals("connected")) return "Connected";
+        if (state.equals("outdated")) return "Update needed";
+        if (state.equals("working")) return "Checking";
+        if (state.equals("permission-needed")) return "Needs access";
+        if (state.equals("termux-missing")) return "Unavailable";
+        return "Not installed";
+    }
+
+    private void bridgeTokenAction() {
+        String state = BridgeTokenManager.state(this);
+        if (state.equals("permission-needed")) {
+            requestTermuxPermission();
+            return;
+        }
+        if (state.equals("termux-missing")) {
+            Toast.makeText(this, "Termux is not installed or not visible to the app", Toast.LENGTH_LONG).show();
+            return;
+        }
+        TermuxCommandRunner.LaunchResult result = BridgeTokenManager.performPrimaryAction(this);
+        Toast.makeText(this, result.started ? "Termux bridge check started" : result.error,
+                result.started ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+        rebuildUi();
+    }
+
+    private View runCard(RunRecord record, boolean actions) {
+        LinearLayout card = ui.surface();
+        card.setContentDescription(record.title + ". Status " + record.status + ". " + (record.summary.isEmpty() ? record.detail : record.summary));
+        card.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = ui.text(record.title, UiTypography.Role.CARD_TITLE, ui.palette.text);
+        heading.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView badge = ui.text(record.status.toUpperCase(), UiTypography.Role.CAPTION, statusColor(record.status));
+        badge.setPadding(ui.dp(9), ui.dp(5), ui.dp(9), ui.dp(5));
+        badge.setBackground(ui.flat(ui.palette.surfaceRaised, 999));
+        heading.addView(badge);
+        card.addView(heading);
+
+        String context = join(" · ", record.phase, humanProjectType(record.projectType), humanExecutionEnvironment(record.executionEnvironment), record.repo, record.target);
+        if (!context.isEmpty()) {
+            TextView contextView = ui.text(context, UiTypography.Role.BODY_SMALL, ui.palette.muted);
+            contextView.setPadding(0, ui.dp(5), 0, 0);
+            card.addView(contextView);
+        }
+        if (!record.detail.isEmpty()) {
+            TextView detail = ui.text(record.detail, UiTypography.Role.BODY, ui.palette.text);
+            detail.setPadding(0, ui.dp(8), 0, 0);
+            card.addView(detail);
+        }
+        LinearLayout pipeline = new LinearLayout(this);
+        pipeline.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams pipelineParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        pipelineParams.setMargins(0, ui.dp(12), 0, ui.dp(4));
+        pipeline.setLayoutParams(pipelineParams);
+        java.util.List<HudUpdate.Step> steps = HudUpdate.parseSteps(
+                record.stepsJson, record.phase, record.status, record.progress);
+        LinearLayout row = null;
+        int rowCount = 0;
+        int maxSegmentsPerRow = ui.largeText() ? 2 : 4;
+        for (HudUpdate.Step step : steps) {
+            if (row == null || rowCount == maxSegmentsPerRow) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                pipeline.addView(row, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+                rowCount = 0;
+            }
+            LinearLayout segment = new LinearLayout(this);
+            segment.setOrientation(LinearLayout.VERTICAL);
+            segment.setPadding(ui.dp(2), 0, ui.dp(2), ui.dp(3));
+            TextView stepLabel = ui.text(step.label.toUpperCase(java.util.Locale.ROOT), UiTypography.Role.CAPTION, stepColor(step));
+            stepLabel.setGravity(Gravity.CENTER);
+            stepLabel.setMaxLines(1);
+            stepLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            segment.addView(stepLabel, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            ProgressBar stepProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            stepProgress.setMax(100);
+            stepProgress.setIndeterminate(step.running() && step.progress <= 0);
+            stepProgress.setProgress((step.succeeded() || step.failed() || step.skipped()) ? 100 : step.progress);
+            stepProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
+            stepProgress.setContentDescription(step.label + ", " + step.status + ", " + step.progress + " percent");
+            stepProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(ui.palette.surfaceRaised));
+            segment.addView(stepProgress, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ui.dp(6)));
+            row.addView(segment, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            rowCount++;
+        }
+        if (row != null) {
+            while (rowCount < maxSegmentsPerRow) {
+                android.view.View spacer = new android.view.View(this);
+                row.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+                rowCount++;
+            }
+        }
+        card.addView(pipeline);
+
+        String time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                .format(new Date(record.updatedAtMs));
+        card.addView(ui.text(record.errors + " errors · " + record.warnings + " warnings · " + time, UiTypography.Role.LABEL, ui.palette.muted));
+
+        if (actions) {
+            if (!record.command.isEmpty()) {
+                card.addView(ui.secondaryButton("Run again", v -> runRaw(record.command, record.workdir, AppSettings.overlayByDefault(this), AppSettings.runConfig(this).useRootBridge)));
+                card.addView(ui.secondaryButton("Copy command", v -> copyText("Devtool command", record.command)));
+            }
+            if (!record.terminal() && record.runId.startsWith("root-")) {
+                card.addView(ui.secondaryButton("Cancel root run", v -> {
+                    RootBridgeManager.cancel(this, record.runId);
+                    Toast.makeText(this, "Cancellation requested", Toast.LENGTH_SHORT).show();
+                }));
+            }
+            if (record.runId.startsWith("termux-")) {
+                card.addView(ui.secondaryButton("Open Termux", v -> {
+                    if (!TermuxCommandRunner.openTermux(this)) Toast.makeText(this, "Termux could not be opened", Toast.LENGTH_LONG).show();
+                }));
+            }
+            if (!record.launchLog.isEmpty()) {
+                TextView launchLog = ui.text(record.launchLog, UiTypography.Role.CAPTION, ui.palette.muted);
+                launchLog.setTypeface(Typeface.MONOSPACE);
+                launchLog.setTextIsSelectable(true);
+                launchLog.setPadding(ui.dp(10), ui.dp(8), ui.dp(10), ui.dp(8));
+                launchLog.setBackground(ui.flat(ui.palette.surfaceRaised, 8));
+                card.addView(ui.text("Execution log", UiTypography.Role.LABEL, ui.palette.cyan));
+                card.addView(launchLog);
+                card.addView(ui.secondaryButton("Copy execution log", v -> copyText("Devtool execution log", record.launchLog)));
+            }
+            if (!record.summary.isEmpty()) card.addView(ui.secondaryButton("Copy success summary", v -> copyText("Devtool success summary", record.summary)));
+            String output = join("\n", record.error, record.stderr, record.stdout);
+            if (!output.isEmpty()) card.addView(ui.secondaryButton("Copy output", v -> copyText("Devtool output", output)));
+        }
+        return card;
+    }
+
+    private void runQuick(String operation) {
+        DevtoolRunConfig config = AppSettings.runConfig(this);
+        config.operation = operation;
+        config.validate = false;
+        config.commit = false;
+        AppSettings.setRunConfig(this, config);
+        try {
+            runRaw(DevtoolCommandBuilder.build(config), resolvedWorkdir(config), config.overlay, config.useRootBridge);
+        } catch (IllegalArgumentException error) {
+            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private boolean dangerousOperation(String operation) { return operation.equals("apply-overlay")||operation.equals("apply-overlays")||operation.equals("restore")||operation.equals("clean")||operation.equals("commit"); }
+    private String dangerousOperationMessage(String operation) { if(operation.startsWith("apply-"))return "This writes artifact files into the selected repository and may create a commit.";if(operation.equals("restore"))return "Restore may replace generated or working files.";if(operation.equals("clean"))return "Clean removes build outputs and generated caches.";return "This operation changes repository state."; }
+    private void requestRunBuiltCommand(){try{DevtoolRunConfig config=readRunConfig();DevtoolCommandBuilder.build(config);if(!dangerousOperation(config.operation)){runBuiltCommand();return;}new AlertDialog.Builder(this).setTitle("Confirm "+config.operation).setMessage(dangerousOperationMessage(config.operation)+"\n\nRepository: "+config.repo).setNegativeButton("Cancel",null).setPositiveButton("Continue",(d,w)->runBuiltCommand()).show();}catch(IllegalArgumentException error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}}
+
+    private void runBuiltCommand() {
+        try {
+            DevtoolRunConfig config = readRunConfig();
+            String command = DevtoolCommandBuilder.build(config);
+            AppSettings.setRunConfig(this, config);
+            AppSettings.clearRunDraft(this);
+            runDraft = config.copy();
+            AppSettings.setCommand(this, command);
+            String workdir = resolvedWorkdir(config);
+            AppSettings.setWorkdir(this, workdir);
+            if (foregroundToggle != null) AppSettings.setRunInBackground(this, !foregroundToggle.isChecked());
+            runRaw(command, workdir, config.overlay, config.useRootBridge);
+        } catch (IllegalArgumentException error) {
+            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private String resolvedWorkdir(DevtoolRunConfig config) {
+        String configured = config.workdir == null ? "" : config.workdir.trim();
+        if (config.useChroot) {
+            // Termux RUN_COMMAND validates its work directory before the shell
+            // starts, so a chroot-only path such as /home/mike/Code/project is
+            // invalid here even though it exists after entering the chroot.
+            // Keep the repository path in the devtool command and launch from
+            // the Termux home unless the user supplied a Termux-visible path.
+            if (configured.isEmpty() || configured.startsWith("/home/")
+                    || configured.startsWith("/root/")) return "~/";
+        }
+        if (!configured.isEmpty()) return configured;
+        return config.repo;
+    }
+
+    private void runRaw(String command, String workdir, boolean overlay, boolean useRootBridge) {
+        TermuxCommandRunner.LaunchResult result = useRootBridge
+                ? RootBridgeManager.run(this, command, workdir, overlay)
+                : TermuxCommandRunner.run(this, command, workdir, AppSettings.runInBackground(this), overlay, null);
+        Toast.makeText(this,
+                result.started ? "Started in " + (AppSettings.runInBackground(this) ? "background" : "foreground") + " · run " + result.executionId : result.error,
+                result.started ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+        if (result.started) switchPage(0);
+    }
+
+    private DevtoolRunConfig readRunConfig() {
+        DevtoolRunConfig config = new DevtoolRunConfig();
+        config.operation = String.valueOf(operationInput.getSelectedItem());
+        config.projectType = String.valueOf(projectTypeInput.getSelectedItem());
+        config.executionEnvironment = String.valueOf(executionModeInput.getSelectedItem());
+        config.repo = repoInput.getText().toString();
+        config.workdir = runWorkdirInput.getText().toString();
+        config.target = targetInput.getText().toString();
+        config.artifact = artifactInput.getText().toString();
+        config.commitMessage = commitInput.getText().toString();
+        config.customArguments = customInput.getText().toString();
+        config.environmentAssignments = environmentInput.getText().toString();
+        config.extraGlobalArguments = extraGlobalInput.getText().toString();
+        config.extraOperationArguments = extraOperationInput.getText().toString();
+        config.chrootName = chrootInput.getText().toString();
+        config.testProfile = testProfileInput.getText().toString();
+        config.testSelectors = testSelectorsInput.getText().toString();
+        config.testTags = testTagsInput.getText().toString();
+        config.testExcludeTags = testExcludeTagsInput.getText().toString();
+        config.testPath = testPathInput.getText().toString();
+        config.testClass = testClassInput.getText().toString();
+        config.testMethod = testMethodInput.getText().toString();
+        config.useChroot = chrootToggle.isChecked();
+        config.useRootBridge = rootBridgeToggle != null && rootBridgeToggle.isChecked();
+        config.copy = copyToggle.isChecked();
+        config.copyViaTermux = copyViaTermuxToggle.isChecked();
+        config.autoHud = autoHudToggle.isChecked();
+        config.validate = validateToggle.isChecked();
+        config.commit = commitToggle.isChecked();
+        config.assumeYes = yesToggle.isChecked();
+        config.overlay = runOverlayToggle.isChecked();
+        config.listTests = listTestsToggle.isChecked();
+        config.instrumented = instrumentedToggle.isChecked();
+        return config;
+    }
+
+    private void saveRunConfig() {
+        AppSettings.setRunConfig(this, readRunConfig());
+        if (foregroundToggle != null) AppSettings.setRunInBackground(this, !foregroundToggle.isChecked());
+    }
+
+    private void importBuilderCommandFromClipboard() {
+        String command = clipboardText();
+        if (command == null) return;
+        try {
+            DevtoolCommandImporter.ImportResult imported = DevtoolCommandImporter.parse(command);
+            applyImportedConfig(imported.config);
+            AppSettings.setWorkdir(this, imported.workdir);
+            AppSettings.setCommand(this, command);
+            Toast.makeText(this, imported.notice, Toast.LENGTH_LONG).show();
+        } catch (IllegalArgumentException error) {
+            AppSettings.setCommand(this, command);
+            Toast.makeText(this, error.getMessage() + ". Saved in the raw runner instead.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void applyImportedConfig(DevtoolRunConfig config) {
+        operationInput.setSelection(indexOf(DevtoolCommandBuilder.OPERATIONS, config.operation));
+        projectTypeInput.setSelection(indexOf(DevtoolCommandBuilder.PROJECT_TYPES, config.projectType));
+        executionModeInput.setSelection(indexOf(DevtoolCommandBuilder.EXECUTION_ENVIRONMENTS, config.executionEnvironment));
+        repoInput.setText(config.repo);
+        runWorkdirInput.setText(config.workdir);
+        targetInput.setText(config.target);
+        artifactInput.setText(config.artifact);
+        commitInput.setText(config.commitMessage);
+        customInput.setText(config.customArguments);
+        environmentInput.setText(config.environmentAssignments);
+        extraGlobalInput.setText(config.extraGlobalArguments);
+        extraOperationInput.setText(config.extraOperationArguments);
+        chrootInput.setText(config.chrootName);
+        testProfileInput.setText(config.testProfile);
+        testSelectorsInput.setText(config.testSelectors);
+        testTagsInput.setText(config.testTags);
+        testExcludeTagsInput.setText(config.testExcludeTags);
+        testPathInput.setText(config.testPath);
+        testClassInput.setText(config.testClass);
+        testMethodInput.setText(config.testMethod);
+        chrootToggle.setChecked(config.useChroot);
+        if (rootBridgeToggle != null) rootBridgeToggle.setChecked(config.useRootBridge && RootBridgeManager.isReady(this));
+        copyToggle.setChecked(config.copy);
+        copyViaTermuxToggle.setChecked(config.copyViaTermux);
+        autoHudToggle.setChecked(config.autoHud);
+        validateToggle.setChecked(config.validate);
+        commitToggle.setChecked(config.commit);
+        yesToggle.setChecked(config.assumeYes);
+        runOverlayToggle.setChecked(config.overlay);
+        listTestsToggle.setChecked(config.listTests);
+        instrumentedToggle.setChecked(config.instrumented);
+        runDraft = config.copy();
+        AppSettings.setRunDraft(this, runDraft);
+        updatePreview();
+    }
+
+    private void pasteRawCommandFromClipboard() {
+        String command = clipboardText();
+        if (command == null) return;
+        rawCommandInput.setText(command);
+        Toast.makeText(this, "Command pasted", Toast.LENGTH_SHORT).show();
+    }
+
+    private String clipboardText() {
+        ClipboardTextReader.Result result = ClipboardTextReader.read(this);
+        if (!result.ok()) {
+            Toast.makeText(this, result.error, Toast.LENGTH_LONG).show();
+            return null;
+        }
+        return result.text;
+    }
+
+    private void updatePreview() {
+        if (commandPreview == null || operationInput == null) return;
+        DevtoolRunConfig config = readRunConfig();
+        runDraft = config.copy();
+        AppSettings.setRunDraft(this, runDraft);
+        try {
+            commandPreview.setText(DevtoolCommandBuilder.build(config));
+            commandPreview.setTextColor(ui.palette.text);
+        } catch (IllegalArgumentException error) {
+            commandPreview.setText("Configuration issue: " + error.getMessage());
+            commandPreview.setTextColor(ui.palette.red);
+        }
+    }
+
+    private void captureRunDraft() {
+        if (currentPage != 1 || operationInput == null || repoInput == null) return;
+        try {
+            runDraft = readRunConfig().copy();
+            AppSettings.setRunDraft(this, runDraft);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void syncExecutionControls(boolean chrootChanged) {
+        if (syncingExecutionControls || executionModeInput == null || chrootToggle == null) return;
+        syncingExecutionControls = true;
+        try {
+            String environment = String.valueOf(executionModeInput.getSelectedItem());
+            if (chrootChanged && chrootToggle.isChecked() && !environment.equals("chroot")) {
+                executionModeInput.setSelection(indexOf(DevtoolCommandBuilder.EXECUTION_ENVIRONMENTS, "chroot"));
+                environment = "chroot";
+            } else if (!chrootChanged) {
+                chrootToggle.setChecked(environment.equals("chroot"));
+            }
+            if (!environment.equals("chroot") && chrootToggle.isChecked()) chrootToggle.setChecked(false);
+            if (chrootInput != null) chrootInput.setEnabled(chrootToggle.isChecked());
+            if (copyViaTermuxToggle != null) {
+                copyViaTermuxToggle.setEnabled(copyToggle != null && copyToggle.isChecked());
+                if (!copyViaTermuxToggle.isEnabled()) copyViaTermuxToggle.setChecked(false);
+            }
+        } finally {
+            syncingExecutionControls = false;
+        }
+    }
+
+    private EditText field(LinearLayout parent, String label, String value, String hint, boolean multiline) {
+        TextView labelView = label(label);
+        EditText input = ui.input(value, hint, multiline);
+        ui.labelInput(labelView, input, label, hint);
+        parent.addView(labelView);
+        parent.addView(input);
+        return input;
+    }
+
+    private TextView label(String value) {
+        TextView label = ui.text(value, UiTypography.Role.LABEL, ui.palette.muted);
+        label.setPadding(0, ui.dp(12), 0, 0);
+        return label;
+    }
+
+    private Switch toggle(LinearLayout parent, String label, boolean value) {
+        Switch toggle = ui.toggle(label, value);
+        parent.addView(toggle);
+        return toggle;
+    }
+
+    private void watchPreview(EditText... fields) {
+        TextWatcher watcher = new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { updatePreview(); }
+            @Override public void afterTextChanged(Editable s) {}
+        };
+        for (EditText field : fields) field.addTextChangedListener(watcher);
+    }
+
+    private void saveCommandSettings() {
+        AppSettings.setCommand(this, rawCommandInput.getText().toString());
+        AppSettings.setWorkdir(this, workdirInput.getText().toString());
+        AppSettings.setRunInBackground(this, foregroundToggle == null || !foregroundToggle.isChecked());
+        AppSettings.setOverlayByDefault(this, overlayDefaultToggle.isChecked());
+        Toast.makeText(this, "Runner settings saved", Toast.LENGTH_SHORT).show();
+    }
+
+    private void runConfiguredCommand() {
+        saveCommandSettings();
+        runRaw(AppSettings.command(this), AppSettings.workdir(this), AppSettings.overlayByDefault(this), false);
+    }
+
+    private void refreshStatus() {
+        if (statusView == null) return;
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        boolean notifications = manager.areNotificationsEnabled();
+        String promoted = Build.VERSION.SDK_INT >= 36
+                ? (canPostPromotedNotifications(manager) ? "enabled" : "not enabled")
+                : "Android 16+";
+        statusView.setText(
+                "Notifications  " + yesNo(notifications) +
+                "\nPromoted updates  " + promoted +
+                "\nOverlay permission  " + yesNo(OverlayHudService.hasPermission(this)) +
+                "\nFloating HUD  " + (OverlayHudService.isRunning() ? "running" :
+                        (OverlayHudService.isEnabled(this) ? "enabled" : "disabled")) +
+                "\nTermux installed  " + yesNo(TermuxCommandRunner.isInstalled(this)) +
+                "\nTermux command permission  " + yesNo(TermuxCommandRunner.hasPermission(this)) +
+                "\nOptional root bridge  " + RootBridgeManager.stateLabel(this));
+        if (tokenView != null) tokenView.setText(BridgeSecrets.getOrCreateToken(this));
+    }
+
+    private int stepColor(HudUpdate.Step step) {
+        if (step.failed()) return ui.palette.red;
+        if (step.succeeded()) return ui.palette.green;
+        if (step.running()) return ui.palette.yellow;
+        return ui.palette.muted;
+    }
+
+    private int statusColor(String status) {
+        if (status.equals("ok")) return ui.palette.green;
+        if (status.equals("failed") || status.equals("cancelled") || status.equals("interrupted")) return ui.palette.red;
+        if (status.equals("waiting")) return ui.palette.yellow;
+        return ui.palette.cyan;
+    }
+
+    private void switchPage(int page) {
+        captureRunDraft();
+        currentPage = page;
+        AppSettings.setPage(this, page);
+        rebuildUi();
+    }
+
+    private static int indexOf(String[] values, String wanted) {
+        for (int i = 0; i < values.length; i++) if (values[i].equals(wanted)) return i;
+        return 0;
+    }
+
+    private static String humanProjectType(String value) {
+        String type = value == null ? "auto" : value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (type.equals("dotnet")) return ".NET";
+        if (type.equals("android")) return "Android";
+        if (type.equals("gradle")) return "Gradle/JVM";
+        if (type.equals("python")) return "Python";
+        if (type.equals("command")) return "Custom command";
+        return "Auto-detected";
+    }
+
+    private static String humanExecutionEnvironment(String value) {
+        String environment = value == null ? "auto" : value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (environment.equals("native-termux")) return "Termux";
+        if (environment.equals("chroot")) return "Chroot";
+        if (environment.equals("desktop-linux")) return "Desktop Linux";
+        if (environment.equals("android-device")) return "Android device";
+        if (environment.equals("external-device")) return "External device";
+        return "Automatic environment";
+    }
+
+    private static String yesNo(boolean value) { return value ? "ready" : "needed"; }
+
+    private static String join(String separator, String... values) {
+        StringBuilder result = new StringBuilder();
+        for (String value : values) {
+            String clean = value == null ? "" : value.trim();
+            if (clean.isEmpty()) continue;
+            if (result.length() > 0) result.append(separator);
+            result.append(clean);
+        }
+        return result.toString();
+    }
+
+    private boolean canPostPromotedNotifications(NotificationManager manager) {
+        try {
+            Object value = NotificationManager.class.getMethod("canPostPromotedNotifications").invoke(manager);
+            return Boolean.TRUE.equals(value);
+        } catch (ReflectiveOperationException ignored) {
+            return false;
+        }
+    }
+
+    private void requestNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
+        } else openNotificationSettings();
+    }
+
+    private void requestTermuxPermission() {
+        if (Build.VERSION.SDK_INT >= 23 && !TermuxCommandRunner.hasPermission(this)) {
+            requestPermissions(new String[]{TermuxCommandRunner.RUN_COMMAND_PERMISSION}, REQUEST_TERMUX);
+        } else openOwnAppDetails();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        rebuildUi();
+    }
+
+    private void enableOverlay() {
+        if (!OverlayHudService.hasPermission(this)) {
+            openOverlaySettings();
+            return;
+        }
+        OverlayHudService.setEnabled(this, true);
+        refreshStatus();
+    }
+
+    private void testOverlay() {
+        if (!OverlayHudService.hasPermission(this)) {
+            openOverlaySettings();
+            return;
+        }
+        OverlayHudService.setEnabled(this, true);
+        OverlayHudService.publish(this, HudUpdate.sampleOverlay());
+    }
+
+    private void openOverlaySettings() {
+        startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName())));
+    }
+
+    private void openNotificationSettings() {
+        startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
+    }
+
+    private void openPromotedSettings() {
+        Intent intent = new Intent("android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS")
+                .setData(Uri.parse("package:" + getPackageName()));
+        try {
+            startActivity(intent);
+        } catch (RuntimeException ignored) {
+            openNotificationSettings();
+        }
+    }
+
+    private void openOwnAppDetails() {
+        startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName())));
+    }
+
+    private void copyToken() {
+        copyText("Devtool Live HUD token", BridgeSecrets.getOrCreateToken(this));
+    }
+
+    private void copyText(String label, String value) {
+        try {
+            ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+            if (clipboard == null) {
+                Toast.makeText(this, "Clipboard is unavailable", Toast.LENGTH_LONG).show();
+                return;
+            }
+            clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
+            Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show();
+        } catch (RuntimeException error) {
+            Toast.makeText(this, "Could not copy to the clipboard", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private static final class SimpleItemSelectedListener implements android.widget.AdapterView.OnItemSelectedListener {
+        private final Runnable action;
+        SimpleItemSelectedListener(Runnable action) { this.action = action; }
+        @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { action.run(); }
+        @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { action.run(); }
+    }
+}

@@ -131,6 +131,38 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.run_target, str((root / "apps" / "foo" / "Foo.App.csproj").resolve()))
             self.assertEqual(config.targets["foo"].cwd, str((root / "apps" / "foo").resolve()))
 
+
+    def test_execution_environment_configuration_and_target_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "App.sln").write_text("", encoding="utf-8")
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='dotnet'\n"
+                "\n[execution]\nenvironment='native-termux'\nchroot_name='androidos'\ndevice_serial='host-device'\n"
+                "\n[targets.app]\nsolution='App.sln'\nexecution_environment='chroot'\nchroot_name='ubuntu'\ndevice_serial='target-device'\n",
+                encoding="utf-8",
+            )
+
+            base = load_project_config(str(root), None)
+            selected = load_project_config(str(root), None, target_name="app")
+
+        self.assertEqual(base.execution_environment, "native-termux")
+        self.assertEqual(base.chroot_name, "androidos")
+        self.assertEqual(base.device_serial, "host-device")
+        self.assertEqual(selected.execution_environment, "chroot")
+        self.assertEqual(selected.chroot_name, "ubuntu")
+        self.assertEqual(selected.device_serial, "target-device")
+
+    def test_generated_template_documents_execution_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "App.sln").write_text("", encoding="utf-8")
+            text = generate_template(root)
+
+        self.assertIn("[execution]", text)
+        self.assertIn('environment = "auto"', text)
+        self.assertIn('chroot_name = "androidos"', text)
+
     def test_bad_toml_exits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -121,6 +121,7 @@ _ACTION_LABELS = {
     "build": "Build",
     "test": "Run tests",
     "wine-test": "Run Wine tests",
+    "lint": "Run lint",
     "package": "Package",
     "run": "Run",
     "git-add": "Stage changes",
@@ -171,6 +172,18 @@ def _human_duration(seconds: float) -> str:
 
 
 def _extract_test_totals(results: list[OperationResult]) -> tuple[int, int, int, int] | None:
+    structured = [
+        result.metadata.get("tests")
+        for result in results
+        if isinstance(result.metadata, dict) and isinstance(result.metadata.get("tests"), dict)
+    ]
+    if structured:
+        passed = sum(int(item.get("passed") or 0) for item in structured)
+        failed = sum(int(item.get("failed") or 0) for item in structured)
+        skipped = sum(int(item.get("skipped") or 0) for item in structured)
+        total = sum(int(item.get("total") or 0) for item in structured)
+        return passed, failed, skipped, total
+
     output = "\n".join(result.output or "" for result in results if "test" in result.name.lower())
     if not output:
         output = "\n".join(result.output or "" for result in results)

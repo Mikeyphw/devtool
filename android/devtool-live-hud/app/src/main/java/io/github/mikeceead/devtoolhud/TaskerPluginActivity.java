@@ -45,10 +45,9 @@ public final class TaskerPluginActivity extends Activity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(ui.dp(20), ui.dp(18), ui.dp(20), ui.dp(24));
         content.setBackgroundColor(ui.palette.background);
-        TextView title = ui.text("Run devtool", 25, ui.palette.text, true);
+        TextView title = ui.text("Run devtool", UiTypography.Role.PAGE_TITLE, ui.palette.text);
         content.addView(title);
-        TextView subtitle = ui.text("Choose the rootless Termux backend or the optional paired root bridge. Tasker waits for completion and receives the result.",
-                14, ui.palette.muted, false);
+        TextView subtitle = ui.text("Choose the rootless Termux backend or the optional paired root bridge. Tasker waits for completion and receives the result.", UiTypography.Role.BODY, ui.palette.muted);
         subtitle.setPadding(0, ui.dp(6), 0, ui.dp(12));
         content.addView(subtitle);
 

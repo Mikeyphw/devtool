@@ -334,6 +334,8 @@ def artifact_validation_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     policy.setdefault("build", True)
     policy.setdefault("test", True)
     policy.setdefault("rollback_on_failure", True)
+    policy.setdefault("test_profile", "")
+    policy.setdefault("execution_environment", "")
     return policy
 
 
@@ -420,6 +422,14 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
     if "rollback_on_failure" in raw and not isinstance(raw.get("rollback_on_failure"), bool):
         ok = False
         messages.append("validation.rollback_on_failure must be a boolean.")
+    if "test_profile" in raw and not isinstance(raw.get("test_profile"), str):
+        ok = False
+        messages.append("validation.test_profile must be a string.")
+    if "execution_environment" in raw:
+        environment = str(raw.get("execution_environment") or "").strip().lower()
+        if environment and environment not in {"auto", "native-termux", "chroot", "desktop-linux", "android-device", "external-device"}:
+            ok = False
+            messages.append(f"Unsupported validation.execution_environment: {environment!r}.")
     if bundle:
         strategy = str(raw.get("strategy") or "per-overlay").strip().lower()
         if strategy not in {"per-overlay", "after-all", "both"}:

@@ -27,6 +27,12 @@ from rich.text import Text
 
 from .clipboard import copy_text
 from .execution import build_chroot_exec_argv
+from .execution_environments import (
+    chroot_environment_assignments,
+    default_termux_chroot_path_map,
+    translate_guest_path,
+    translate_host_path,
+)
 from .models import CommandSpec
 
 _PATH_VALUE_FLAGS = {
@@ -59,8 +65,8 @@ HOST_ONLY_COMMANDS = {
     "ai-prompt", "ap", "bundle", "config", "init-config",
 }
 AUTO_CHROOT_COMMANDS = {
-    "restore", "rs", "build", "b", "test", "t", "validate", "v", "wine-validate", "wv",
-    "run", "rn", "package", "pkg", "apply-overlay", "ao", "apply-overlays", "aos",
+    "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v", "wine-validate", "wv",
+    "run", "rn", "package", "pkg", "clean", "cl", "inspect", "info", "apply-overlay", "ao", "apply-overlays", "aos",
     "apply-snapshot", "as", "batch", "commit", "ci", "tag", "status", "st",
     "doctor", "dr", "rollback", "history", "targets", "tg", "detect", "handoff",
 }
@@ -87,89 +93,20 @@ class RunnerConfig:
 
 
 def _split_path_map(raw: str) -> list[tuple[str, str]]:
-    mappings: list[tuple[str, str]] = []
-    for chunk in raw.replace(";", ",").split(","):
-        item = chunk.strip()
-        if not item or "=" not in item:
-            continue
-        host, chroot = item.split("=", 1)
-        host = os.path.expanduser(host.strip()).rstrip("/")
-        chroot = chroot.strip().rstrip("/") or "/"
-        if host:
-            mappings.append((host, chroot))
-    mappings.sort(key=lambda pair: len(pair[0]), reverse=True)
-    return mappings
+    from .execution_environments import _split_path_map as shared_split
+    return [item.as_tuple() for item in shared_split(raw)]
 
 
 def default_path_map(env: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
-    env = env or os.environ
-    mappings: list[tuple[str, str]] = []
-    mappings.extend(_split_path_map(env.get("DEVTOOL_TERMUX_CHROOT_PATH_MAP", "")))
-
-    termux_home = env.get("HOME", "").strip()
-    chroot_home = env.get("DEVTOOL_TERMUX_CHROOT_HOME", "").strip()
-    if not chroot_home:
-        # On Android/Termux hosts, the Termux home is normally bind-mounted
-        # into the Ubuntu chroot as /home/termux.  Older builds guessed a
-        # Linux user home such as /home/mike, which made host-side artifact
-        # paths point at the wrong place when only toolchain phases need the
-        # chroot.  Keep DEVTOOL_TERMUX_CHROOT_HOME/USER as explicit overrides.
-        explicit_user = env.get("DEVTOOL_TERMUX_CHROOT_USER", "").strip()
-        if explicit_user:
-            chroot_home = f"/home/{explicit_user}"
-        elif termux_home.startswith("/data/data/com.termux/files/home"):
-            chroot_home = "/home/termux"
-        else:
-            chroot_user = env.get("DEVTOOL_TERMUX_CHROOT_USER", "mike").strip() or "mike"
-            chroot_home = f"/home/{chroot_user}"
-    if termux_home and chroot_home:
-        mappings.append((os.path.expanduser(termux_home).rstrip("/"), chroot_home.rstrip("/")))
-
-    for identity in ("/sdcard", "/storage", "/mnt", "/tmp"):
-        mappings.append((identity, identity))
-
-    seen: set[str] = set()
-    unique: list[tuple[str, str]] = []
-    for host, chroot in sorted(mappings, key=lambda pair: len(pair[0]), reverse=True):
-        if host in seen:
-            continue
-        seen.add(host)
-        unique.append((host, chroot))
-    return unique
+    return [item.as_tuple() for item in default_termux_chroot_path_map(env)]
 
 
 def _translate_path(value: str, mappings: Iterable[tuple[str, str]], *, cwd: str | None = None) -> str:
-    if not value:
-        return value
-    original = value
-    expanded = os.path.expanduser(value)
-    if not os.path.isabs(expanded):
-        base = cwd or os.getcwd()
-        expanded = os.path.abspath(os.path.join(base, expanded))
-    for host_prefix, chroot_prefix in mappings:
-        if expanded == host_prefix:
-            return chroot_prefix or "/"
-        if expanded.startswith(host_prefix + "/"):
-            suffix = expanded[len(host_prefix):]
-            return (chroot_prefix.rstrip("/") or "/") + suffix
-    if os.path.isabs(original):
-        return expanded
-    return expanded
+    return translate_host_path(value, mappings, cwd=cwd)
 
 
 def _translate_chroot_path_to_host(value: str, mappings: Iterable[tuple[str, str]]) -> str | None:
-    if not value:
-        return None
-    for host_prefix, chroot_prefix in sorted(mappings, key=lambda pair: len(pair[1]), reverse=True):
-        host_prefix = host_prefix.rstrip("/") or "/"
-        chroot_prefix = chroot_prefix.rstrip("/") or "/"
-        if value == chroot_prefix:
-            return host_prefix
-        if value.startswith(chroot_prefix + "/"):
-            suffix = value[len(chroot_prefix):]
-            return (host_prefix.rstrip("/") or "/") + suffix
-    return None
-
+    return translate_guest_path(value, mappings)
 
 def _strip_flag_value(argv: list[str], flag: str) -> tuple[list[str], str]:
     stripped: list[str] = []
@@ -388,6 +325,7 @@ def build_inner_command(config: RunnerConfig, forwarded: list[str]) -> str:
     devtool_argv = [config.tool, *forwarded]
     env_prefix = [
         "env",
+        "DEVTOOL_EXECUTION_CONTEXT=chroot",
         "DEVTOOL_INSIDE_TERMUX_CHROOT=1",
         f"DEVTOOL_CHROOT_CONTEXT={config.chroot_name}",
     ]
@@ -681,7 +619,8 @@ def wrap_specs_for_termux_host_chroot(
         host_cwd = str(spec.cwd or host_repo or os.getcwd())
         chroot_cwd = _translate_path(host_cwd, mappings, cwd=os.getcwd())
         argv = translate_argv_paths_for_chroot(list(spec.argv), mappings=mappings, cwd=host_cwd)
-        command = "cd " + shlex.quote(chroot_cwd or "/") + " && " + shlex.join(argv)
+        assignments = " ".join(shlex.quote(item) for item in chroot_environment_assignments(chroot_name))
+        command = "cd " + shlex.quote(chroot_cwd or "/") + " && exec env " + assignments + " " + shlex.join(argv)
         metadata = dict(spec.metadata)
         metadata["execution_mode"] = "termux-host-chroot"
         metadata["chroot"] = chroot_name

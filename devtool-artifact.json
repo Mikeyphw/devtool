@@ -1,10 +1,12 @@
 {
   "schema_version": 2,
   "type": "snapshot",
-  "name": "devtool 0.5.9 Qt HUD and clipboard execution",
-  "description": "Complete devtool source repository with Qt 6 desktop HUD, reviewed clipboard command execution, and scrollable palette-aware Control Center pages.",
-  "version": "0.5.9",
-  "android_version": "1.5.5",
+  "name": "devtool 1.1.0 RC3 typography remediation repository",
+  "description": "Complete Devtool repository with responsive semantic typography, accessible Android notification layouts, scalable desktop type, and vector iconography across all frontends.",
+  "version": "1.1.0",
+  "desktop_version": "0.4.0",
+  "android_version": "1.7.2",
+  "android_version_code": 20,
   "repository": {
     "name": "devtool"
   },
@@ -27,16 +29,13 @@
     "rollback_on_failure": true
   },
   "highlights": [
-    "Installable per-user clipboard monitor service for devtool commands and local artifacts",
-    "Artifact schema v2 inventory and repository identity",
-    "Embedded target, validation policy, and commit message",
-    "Atomic monorepo overlay bundles with dependency ordering",
-    "Disposable artifact validators executed from TMPDIR",
-    "Live target-scoped restore, build, and test HUD progress",
-    "Multi-workspace pipelines rendered as distinct operation segments",
-    "Live parser warning and error totals on desktop and Android",
-    "Wrapped four-column desktop and Android progress layouts",
-    "Focused failure clipboard reports",
-    "Automatic commits reconcile devtool artifact history"
+    "Semantic Android typography roles with role-specific line heights",
+    "Readable notification sizing contrast and large-font reflow layout",
+    "Desktop typography scaling from 100% through 200%",
+    "Platform UI and fixed-width font integration",
+    "Vector navigation status phase and action iconography",
+    "Sentence-case hierarchy with reduced tracking",
+    "Typography contrast scaling and icon regression protection",
+    "Android frontend 1.7.2"
   ]
 }

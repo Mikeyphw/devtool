@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "layout": "mock-v1",
+  "surfaces": {
+    "collapsed": ["brand", "state", "task", "workspace", "progress"],
+    "expanded": ["artifact", "workspace_position", "phases", "workspace_stack", "metrics", "actions"]
+  },
+  "states": {
+    "running": "LIVE",
+    "success": "COMPLETE",
+    "warning": "COMPLETE",
+    "failed": "FAILED",
+    "rollback": "ROLLBACK",
+    "recovered": "RECOVERED",
+    "rollback_failed": "CRITICAL"
+  },
+  "actions": {
+    "running": ["Open log", "Copy summary", "Cancel"],
+    "success": ["Open app", "Copy summary", "Dismiss"],
+    "failed": ["Open log", "Copy error", "Retry"],
+    "rollback": ["Open log", "Copy status", "Keep visible"],
+    "recovered": ["Open log", "Copy summary", "Dismiss"],
+    "rollback_failed": ["Open log", "Copy recovery", "Keep visible"]
+  }
+}

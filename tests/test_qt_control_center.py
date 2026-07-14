@@ -177,8 +177,8 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
         self.assertIn('text: "Run command…"', run_page)
         self.assertIn('text: "Run command"', run_page)
         self.assertIn('text: "Cleaned command"', run_page)
-        self.assertIn("font.letterSpacing: 0.7", run_page)
-        self.assertNotRegex(run_page, r"(?m)^\s*letterSpacing:\s*0\.7\s*$")
+        self.assertIn("font.letterSpacing: 0.25", run_page)
+        self.assertNotIn("font.letterSpacing: 0.7", run_page)
         self.assertIn("clipboardCandidateSnapshotText", run_page)
         self.assertIn("captureClipboardCandidate()", run_page)
         self.assertIn("commandConfirmation", run_page)
@@ -210,7 +210,10 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
         self.assertIn("workspaceColumn", compact_hud)
         self.assertIn("laneProgress(lane)", compact_hud)
         self.assertIn("aggregateParserMetrics()", compact_hud)
-        self.assertIn('text: "Parser"', compact_hud)
+        self.assertIn('text: "Details"', compact_hud)
+        self.assertIn("runnerLabel()", compact_hud)
+        self.assertIn("projectUnitLabel()", compact_hud)
+        self.assertNotIn("LIVE .NET PARSER", compact_hud)
         self.assertIn("visible: parserExpanded", compact_hud)
         self.assertIn("hudStore.copySummary(run)", compact_hud)
         self.assertIn("hudStore.openLog(run)", compact_hud)
@@ -477,17 +480,32 @@ class QtControlCenterRepositoryUxSourceTests(unittest.TestCase):
         self.assertNotIn("processRunner.output", run_page)
         self.assertIn("Close terminal automatically", settings)
 
-    def test_nerd_font_and_high_transparency_are_applied(self) -> None:
+    def test_system_fonts_and_high_transparency_are_applied(self) -> None:
         root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
         main_source = (root / "src" / "main.cpp").read_text(encoding="utf-8")
         hud_source = (root / "src" / "HudMain.cpp").read_text(encoding="utf-8")
         theme = (root / "qml" / "components" / "Theme.qml").read_text(encoding="utf-8")
         compact = (root / "qml" / "CompactHud.qml").read_text(encoding="utf-8")
 
-        self.assertIn("preferredNerdFont", main_source)
-        self.assertIn("preferredNerdFont", hud_source)
-        self.assertIn("app.setFont(QFont(preferredNerdFont()))", main_source)
-        self.assertIn("app.setFont(QFont(preferredNerdFont()))", hud_source)
+        self.assertIn("QFontDatabase::GeneralFont", main_source)
+        self.assertIn("QFontDatabase::GeneralFont", hud_source)
+        self.assertIn("uiMonospaceFont", main_source)
+        self.assertIn("uiMonospaceFont", hud_source)
+        self.assertNotIn("app.setFont(QFont(preferredNerdFont()))", main_source)
+        self.assertNotIn("app.setFont(QFont(preferredNerdFont()))", hud_source)
         self.assertIn("monospaceFamily", theme)
         self.assertIn("theme.dark ? 0.14 : 0.18", compact)
         self.assertIn("panelOpacity", compact)
+
+
+class QtControlCenterMultiProjectUiTests(unittest.TestCase):
+    def test_run_page_exposes_multi_project_and_test_selection(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        qml = (root / "qml" / "pages" / "RunPage.qml").read_text(encoding="utf-8")
+        controller = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
+        header = (root / "src" / "AppController.h").read_text(encoding="utf-8")
+        for value in ("Project type", "Execution", "Test profile", "Selectors", "Instrumentation", "Command preview"):
+            self.assertIn(value, qml)
+        for flag in ("--project-type", "--execution-environment", "--test-profile", "--select", "--instrumented"):
+            self.assertIn(flag, controller)
+        self.assertIn("buildWorkflowCommand", header)

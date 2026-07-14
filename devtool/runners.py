@@ -37,9 +37,22 @@ from .config import ensure_artifact_target_config, generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
 from .diagnostics import classify_failure, parse_issues
 from .dotnet_progress import DotnetProgressTracker, dotnet_progress_plan
+from .gradle_progress import GradleProgressTracker
+from .gradle_reports import collect_report_metadata
 from .transactions import create_apply_transaction, rollback_transaction
 from .logstore import write_log
 from .models import CommandSpec, OperationResult, ProjectConfig
+from .project_runners import (
+    DotnetRunner as _DotnetRunner,
+    GenericCommandRunner as _GenericCommandRunner,
+    PythonRunner as _PythonRunner,
+    add_no_build_to_dotnet_test_spec as _runner_add_no_build_to_dotnet_test_spec,
+    add_no_build_to_dotnet_test_specs as _runner_add_no_build_to_dotnet_test_specs,
+    add_no_restore_to_dotnet_build_spec as _runner_add_no_restore_to_dotnet_build_spec,
+    get_project_runner as _resolve_project_runner,
+    is_dotnet_build_argv as _runner_is_dotnet_build_argv,
+    is_dotnet_test_argv as _runner_is_dotnet_test_argv,
+)
 from .tasker import TaskerProgressSink
 
 console = create_console()
@@ -105,19 +118,27 @@ def _prepare_termux_dotnet(argv: list[str]) -> tuple[list[str], str | None]:
 
 
 
+def get_project_runner(config: ProjectConfig):
+    """Return the command planner for ``config``.
+
+    Kept in this module as the public compatibility entry point while runner
+    implementations live in :mod:`devtool.project_runners`.
+    """
+
+    return _resolve_project_runner(config)
+
+
+def runner_capabilities(config: ProjectConfig):
+    return get_project_runner(config).capabilities_for(config)
+
+
 def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
+    runner = get_project_runner(config)
     if action == "validate":
-        return build_validation_specs(config)
+        return runner.build_validation_specs(config)
     if action == "wine-validate":
-        return build_validation_specs(config, wine=True)
-
-    if config.kind == "dotnet":
-        return _dotnet_specs(config, action)
-    if config.kind == "python":
-        return _python_specs(config, action)
-
-    # unknown kind relies on explicit commands
-    return _generic_specs(config, action)
+        return runner.build_validation_specs(config, wine=True)
+    return runner.build_specs(config, action)
 
 
 def build_validation_specs(
@@ -128,38 +149,13 @@ def build_validation_specs(
     skip_build: bool = False,
     skip_test: bool = False,
 ) -> list[CommandSpec]:
-    specs: list[CommandSpec] = []
-    ran_restore = False
-    if not skip_restore:
-        specs.extend(build_specs(config, "restore"))
-        ran_restore = True
-    if not skip_build:
-        build_phase_specs = build_specs(config, "build")
-        if config.kind == "dotnet" and ran_restore:
-            build_phase_specs = [
-                _add_no_restore_to_dotnet_build_spec(spec, allow_explicit=True)
-                for spec in build_phase_specs
-            ]
-        specs.extend(build_phase_specs)
-    if not skip_test:
-        test_specs = build_specs(config, "wine-test" if wine else "test")
-        if config.kind == "dotnet" and not skip_build:
-            test_specs = [
-                _add_no_build_to_dotnet_test_spec(spec, allow_explicit=True)
-                for spec in test_specs
-            ]
-        specs.extend(test_specs)
-    if not specs:
-        raise SystemExit("Validation would run no commands. Clear at least one skip flag.")
-    return specs
-
-
-def _maybe_explicit(command_name: str, text: str, env: dict[str, str] | None = None) -> list[CommandSpec]:
-    if text:
-        return [CommandSpec(command_name, shlex.split(text), env=env or {}, metadata={"explicit": True})]
-    return []
-
-
+    return get_project_runner(config).build_validation_specs(
+        config,
+        wine=wine,
+        skip_restore=skip_restore,
+        skip_build=skip_build,
+        skip_test=skip_test,
+    )
 
 
 def _contains_dotnet_cli(argv: Sequence[str]) -> bool:
@@ -167,152 +163,41 @@ def _contains_dotnet_cli(argv: Sequence[str]) -> bool:
 
 
 def _is_dotnet_build_argv(argv: list[str]) -> bool:
-    for index, value in enumerate(argv):
-        if Path(value).name == "dotnet" and index + 1 < len(argv):
-            return argv[index + 1] == "build"
-    return False
+    return _runner_is_dotnet_build_argv(argv)
 
 
 def _add_no_restore_to_dotnet_build_spec(spec: CommandSpec, *, allow_explicit: bool = False) -> CommandSpec:
-    if spec.metadata.get("explicit") and not allow_explicit:
-        return spec
-    if not _is_dotnet_build_argv(spec.argv) or "--no-restore" in spec.argv:
-        return spec
-    argv = list(spec.argv)
-    for index, value in enumerate(argv):
-        if Path(value).name == "dotnet" and index + 1 < len(argv) and argv[index + 1] == "build":
-            argv.insert(index + 2, "--no-restore")
-            metadata = dict(spec.metadata)
-            metadata["validation_no_restore"] = True
-            return CommandSpec(spec.name, argv, env=spec.env, cwd=spec.cwd, destructive=spec.destructive, metadata=metadata)
-    return spec
+    return _runner_add_no_restore_to_dotnet_build_spec(spec, allow_explicit=allow_explicit)
+
 
 def _is_dotnet_test_argv(argv: list[str]) -> bool:
-    for index, value in enumerate(argv):
-        if Path(value).name == "dotnet" and index + 1 < len(argv):
-            return argv[index + 1] == "test"
-    return False
+    return _runner_is_dotnet_test_argv(argv)
 
 
 def _add_no_build_to_dotnet_test_spec(spec: CommandSpec, *, allow_explicit: bool = False) -> CommandSpec:
-    if spec.metadata.get("explicit") and not allow_explicit:
-        return spec
-    if not _is_dotnet_test_argv(spec.argv):
-        return spec
-    if "--no-build" in spec.argv:
-        return spec
-    argv = list(spec.argv)
-    for index, value in enumerate(argv):
-        if Path(value).name == "dotnet" and index + 1 < len(argv) and argv[index + 1] == "test":
-            argv.insert(index + 2, "--no-build")
-            metadata = dict(spec.metadata)
-            metadata["validation_no_build"] = True
-            return CommandSpec(spec.name, argv, env=spec.env, cwd=spec.cwd, destructive=spec.destructive, metadata=metadata)
-    return spec
+    return _runner_add_no_build_to_dotnet_test_spec(spec, allow_explicit=allow_explicit)
 
 
 def add_no_build_to_dotnet_test_specs(specs: list[CommandSpec], *, allow_explicit: bool = True) -> tuple[list[CommandSpec], int]:
-    """Return specs with --no-build added to dotnet test commands.
-
-    This is used by the public ``devtool test --no-build`` flag, so explicit
-    dotnet test commands are eligible too. Non-dotnet test commands are left
-    unchanged and reported via the returned count.
-    """
-
-    updated: list[CommandSpec] = []
-    changed = 0
-    for spec in specs:
-        new_spec = _add_no_build_to_dotnet_test_spec(spec, allow_explicit=allow_explicit)
-        if new_spec.argv != spec.argv:
-            changed += 1
-            metadata = dict(new_spec.metadata)
-            metadata["user_no_build"] = True
-            new_spec = CommandSpec(new_spec.name, new_spec.argv, env=new_spec.env, cwd=new_spec.cwd, destructive=new_spec.destructive, metadata=metadata)
-        updated.append(new_spec)
-    return updated, changed
+    return _runner_add_no_build_to_dotnet_test_specs(specs, allow_explicit=allow_explicit)
 
 
 def _dotnet_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
-    env = config.env
-    restore_target = config.restore_target or config.build_target
-    build_target = config.build_target or restore_target
-    test_target = config.test_target or build_target
-    run_target = config.resolve_repo_relative(config.run_target) if config.run_target else build_target
+    """Backward-compatible private wrapper for older integrations/tests."""
 
-    if not any([restore_target, build_target, test_target, run_target]) and action in {"restore", "build", "test", "wine-test", "run"}:
-        raise SystemExit("No dotnet target resolved. Use --target, --solution, --project, or configure .devtool.toml.")
-
-    if action == "restore":
-        return _maybe_explicit("restore", config.restore_command, env) or [CommandSpec("restore", ["dotnet", "restore", restore_target], env=env)]
-    if action == "build":
-        return _maybe_explicit("build", config.build_command, env) or [CommandSpec("build", ["dotnet", "build", build_target], env=env)]
-    if action == "test":
-        return _maybe_explicit("test", config.test_command, env) or [CommandSpec("test", ["dotnet", "test", test_target], env=env)]
-    if action == "wine-test":
-        return _maybe_explicit("wine-test", config.test_command, env) or [CommandSpec("wine-test", ["dotnet", "test", test_target], env=env)]
-    if action == "run":
-        return _maybe_explicit("run", config.run_command, env) or [CommandSpec("run", ["dotnet", "run", "--project", run_target], env=env)]
-    if action == "package":
-        if config.package_command:
-            return [CommandSpec("package", shlex.split(config.package_command), env=env)]
-        if (config.repo_root / "scripts" / "package-release.sh").exists():
-            return [CommandSpec("package", ["bash", "./scripts/package-release.sh"], env=env)]
-        raise SystemExit("No package command configured.")
-    raise SystemExit(f"Unsupported action for dotnet: {action}")
+    return _DotnetRunner().build_specs(config, action)
 
 
 def _python_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
-    env = config.env
-    py = config.python_executable
-    repo = config.repo_root
+    """Backward-compatible private wrapper for older integrations/tests."""
 
-    if action == "restore":
-        if config.restore_command:
-            return [CommandSpec("restore", shlex.split(config.restore_command), env=env)]
-        if (repo / "requirements-dev.txt").exists():
-            return [CommandSpec("restore", [py, "-m", "pip", "install", "-r", "requirements-dev.txt"], env=env)]
-        if (repo / "requirements.txt").exists():
-            return [CommandSpec("restore", [py, "-m", "pip", "install", "-r", "requirements.txt"], env=env)]
-        return [CommandSpec("restore", [py, "-m", "pip", "install", "-e", "."], env=env)]
-    if action == "build":
-        return _maybe_explicit("build", config.build_command, env) or [CommandSpec("build", [py, "-m", "build"], env=env)]
-    if action == "test":
-        if config.test_command:
-            return [CommandSpec("test", shlex.split(config.test_command), env=env)]
-        if (repo / "pytest.ini").exists() or (repo / "pyproject.toml").exists() or (repo / "tests").exists():
-            return [CommandSpec("test", [py, "-m", "pytest"], env=env)]
-        return [CommandSpec("test", [py, "-m", "unittest", "discover"], env=env)]
-    if action == "wine-test":
-        # usually same as test; env may include wine-related variables for parity tools
-        return _python_specs(config, "test")
-    if action == "run":
-        if config.run_command:
-            return [CommandSpec("run", shlex.split(config.run_command), env=env)]
-        if config.run_module:
-            return [CommandSpec("run", [py, "-m", config.run_module], env=env)]
-        if config.run_target:
-            return [CommandSpec("run", [py, config.resolve_repo_relative(config.run_target)], env=env)]
-        raise SystemExit("No Python run target configured. Set run_command, run_module, or run_target.")
-    if action == "package":
-        if config.package_command:
-            return [CommandSpec("package", shlex.split(config.package_command), env=env)]
-        return [CommandSpec("package", [py, "-m", "build"], env=env)]
-    raise SystemExit(f"Unsupported action for python: {action}")
+    return _PythonRunner().build_specs(config, action)
 
 
 def _generic_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
-    mapping = {
-        "restore": config.restore_command,
-        "build": config.build_command,
-        "test": config.test_command,
-        "wine-test": config.test_command,
-        "run": config.run_command,
-        "package": config.package_command,
-    }
-    text = mapping.get(action, "")
-    if not text:
-        raise SystemExit(f"No command configured for action '{action}'")
-    return [CommandSpec(action, shlex.split(text), env=config.env)]
+    """Backward-compatible private wrapper for older integrations/tests."""
+
+    return _GenericCommandRunner().build_specs(config, action)
 
 
 def _interesting_output_line(line: str) -> bool:
@@ -634,6 +519,7 @@ def _run_process_live(
     display_target: str = "",
     target_phase_index: int | None = None,
     target_phase_total: int | None = None,
+    progress_parser: str = "",
 ) -> tuple[int, str]:
     try:
         proc = subprocess.Popen(
@@ -671,17 +557,32 @@ def _run_process_live(
     assert proc.stdout is not None
     parser_argv = list(progress_argv or argv)
     parser_cwd = progress_cwd or cwd
-    tracker = DotnetProgressTracker(
-        parser_argv,
-        parser_cwd,
-        command_name,
-        console,
-        phase_index=phase_index,
-        phase_total=phase_total,
-        display_target=display_target,
-        target_phase_index=target_phase_index,
-        target_phase_total=target_phase_total,
-    ) if (not verbose or tasker_progress is not None) else None
+    tracker = None
+    if not verbose or tasker_progress is not None:
+        if progress_parser == "gradle":
+            tracker = GradleProgressTracker(
+                parser_argv,
+                parser_cwd,
+                command_name,
+                console,
+                phase_index=phase_index,
+                phase_total=phase_total,
+                display_target=display_target,
+                target_phase_index=target_phase_index,
+                target_phase_total=target_phase_total,
+            )
+        else:
+            tracker = DotnetProgressTracker(
+                parser_argv,
+                parser_cwd,
+                command_name,
+                console,
+                phase_index=phase_index,
+                phase_total=phase_total,
+                display_target=display_target,
+                target_phase_index=target_phase_index,
+                target_phase_total=target_phase_total,
+            )
     if tracker is not None and verbose:
         # In verbose mode stdout is already streamed as raw text. Keep the
         # dotnet parser active only for Tasker/progress events; do not
@@ -709,6 +610,8 @@ def _run_process_live(
                         "tests_skipped",
                         "tests_total",
                         "test_assemblies",
+                        "current_task",
+                        "current_test",
                     )
                     if snapshot.get(key) is not None
                 },
@@ -799,6 +702,40 @@ def _run_process_live(
             tasker_progress.clear_cancel()
         with contextlib.suppress(Exception):
             proc.stdout.close()
+
+
+def _shutdown_gradle_daemons(
+    config: ProjectConfig,
+    *,
+    project_root: str,
+    dry_run: bool,
+    log_path: Path | str | None,
+) -> tuple[OperationResult, str]:
+    root = Path(project_root or config.project_root or config.repo_root).resolve()
+    wrapper = root / "gradlew"
+    argv = [str(wrapper), "--stop"] if wrapper.is_file() else ["gradle", "--stop"]
+    command_line = "$ " + " ".join(shlex.quote(value) for value in argv)
+    if dry_run:
+        output = "Gradle daemon shutdown skipped during dry-run."
+        log_file = str(write_log(command_line + "\n" + output, log_path, append=log_path is not None))
+        return OperationResult("gradle-daemon-shutdown", argv, 0, 0.0, output, [], skipped=True, log_path=log_file, metadata={"cleanup": True}), command_line + "\n" + output
+    started = time.perf_counter()
+    env = os.environ.copy()
+    env.update(config.env)
+    try:
+        completed = subprocess.run(argv, cwd=str(root), env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False, timeout=30)
+        code = completed.returncode
+        output = completed.stdout or ""
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        code = 127
+        output = str(exc)
+    raw = command_line + ("\n" + output if output else "")
+    log_file = str(write_log(raw, log_path, append=log_path is not None))
+    return OperationResult(
+        "gradle-daemon-shutdown", argv, code, time.perf_counter() - started, output,
+        parse_issues(config.repo_root, "gradle-daemon-shutdown", output),
+        log_path=log_file, failure_kind="cleanup_failure" if code else "", metadata={"cleanup": True},
+    ), raw
 
 
 def _shutdown_dotnet_build_server(
@@ -937,6 +874,17 @@ def run_specs(
     results: list[OperationResult] = []
     raw_sections: list[str] = []
     used_dotnet = any(_contains_dotnet_cli(spec.argv) for spec in specs)
+    used_gradle = any(
+        str(spec.metadata.get("progress_parser") or "") == "gradle"
+        or any(Path(str(value)).name in {"gradle", "gradlew"} for value in spec.argv)
+        for spec in specs
+    )
+    gradle_project_root = next((
+        str(spec.metadata.get("project_root") or spec.cwd or config.project_root or config.repo_root)
+        for spec in specs
+        if str(spec.metadata.get("progress_parser") or "") == "gradle"
+           or any(Path(str(value)).name in {"gradle", "gradlew"} for value in spec.argv)
+    ), str(config.project_root or config.repo_root))
     dotnet_layout = _dotnet_phase_layout(specs, config)
 
     if tasker_progress is not None and not dry_run:
@@ -961,7 +909,7 @@ def run_specs(
         if dry_run:
             output = "$ " + " ".join(effective_argv)
             log_file = str(write_log(output, log_path, append=log_path is not None))
-            results.append(OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file))
+            results.append(OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file, metadata=dict(spec.metadata)))
             raw_sections.append(output)
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
@@ -972,12 +920,14 @@ def run_specs(
         env.update(spec.env)
 
         started = time.perf_counter()
+        started_wall = time.time()
         returncode = 1
         output = ""
         try:
             cwd = spec.cwd or str(config.repo_root)
             progress_argv = list(spec.metadata.get("progress_argv") or effective_argv)
             progress_cwd = str(spec.metadata.get("progress_cwd") or cwd)
+            progress_parser = str(spec.metadata.get("progress_parser") or "")
             if verbose:
                 console.print(f"[cyan]$ {' '.join(shlex.quote(a) for a in effective_argv)}[/cyan]")
                 returncode, output = _run_process_live(
@@ -994,9 +944,10 @@ def run_specs(
                     display_target=display_target,
                     target_phase_index=target_phase_index,
                     target_phase_total=target_phase_total,
+                    progress_parser=progress_parser,
                 )
             else:
-                if dotnet_progress_plan(progress_argv, progress_cwd):
+                if progress_parser == "gradle" or dotnet_progress_plan(progress_argv, progress_cwd):
                     returncode, output = _run_process_live(
                         effective_argv,
                         cwd=cwd,
@@ -1011,6 +962,7 @@ def run_specs(
                         display_target=display_target,
                         target_phase_index=target_phase_index,
                         target_phase_total=target_phase_total,
+                        progress_parser=progress_parser,
                     )
                 else:
                     with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
@@ -1025,12 +977,82 @@ def run_specs(
                             phase_total=len(specs),
                             progress_argv=progress_argv,
                             progress_cwd=progress_cwd,
+                            progress_parser=progress_parser,
                         )
         finally:
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
         duration = time.perf_counter() - started
         issues = parse_issues(config.repo_root, spec.name, output)
+        result_metadata = dict(spec.metadata)
+        report_parser = str(result_metadata.get("report_parser") or "")
+        if report_parser:
+            report_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
+            collection = collect_report_metadata(
+                report_root,
+                repo_root=config.repo_root,
+                parser=report_parser,
+                tasks=result_metadata.get("gradle_tasks") or (),
+                started_at=started_wall,
+                command_name=spec.name,
+                output=output,
+                report_path=str(result_metadata.get("test_report") or result_metadata.get("package_report") or ""),
+            )
+            if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation"}:
+                tests = dict(collection.metadata)
+                catalog_discovered = result_metadata.get("test_catalog_discovered")
+                catalog_selected = result_metadata.get("test_catalog_selected")
+                if catalog_discovered is not None:
+                    tests["discovered"] = int(catalog_discovered)
+                if catalog_selected is not None:
+                    tests["selected"] = int(catalog_selected)
+                result_metadata["tests"] = tests
+                if tests.get("report_files") or report_parser == "android-instrumentation":
+                    test_prefix = "Devtool Gradle tests: " if report_parser == "gradle-junit" else f"Devtool tests ({tests.get('framework', report_parser)}): "
+                    output = (output.rstrip() + "\n" if output else "") + (
+                        test_prefix
+                        + f"{tests.get('passed', 0)} passed, "
+                        + f"{tests.get('failed', 0)} failed, "
+                        + f"{tests.get('skipped', 0)} skipped, "
+                        + f"{tests.get('total', 0)} total.\n"
+                    )
+                try:
+                    from .test_selection import save_failed_test_ids
+                    failed_ids = [issue.message.split(":", 1)[0] for issue in collection.issues if issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION"}]
+                    save_failed_test_ids(config.repo_root, failed_ids)
+                except Exception:
+                    pass
+            elif report_parser == "android-lint":
+                result_metadata["lint"] = collection.metadata
+                if collection.metadata.get("report_files"):
+                    output = (output.rstrip() + "\n" if output else "") + (
+                        "Devtool Android Lint: "
+                        f"{collection.metadata.get('errors', 0)} errors, "
+                        f"{collection.metadata.get('warnings', 0)} warnings.\n"
+                    )
+            elif report_parser == "python-package":
+                result_metadata["packages"] = collection.metadata
+                output = (output.rstrip() + "\n" if output else "") + (
+                    "Devtool Python packages: "
+                    f"{collection.metadata.get('valid', 0)} valid, "
+                    f"{collection.metadata.get('invalid', 0)} invalid.\n"
+                )
+            issues.extend(collection.issues)
+
+        if bool(result_metadata.get("collect_artifacts") or result_metadata.get("verify_artifacts")) and config.kind in {"android", "gradle"}:
+            from .android_artifacts import collect_and_verify_android_artifacts
+            artifact_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
+            artifact_metadata, artifact_issues = collect_and_verify_android_artifacts(
+                config, project_root=artifact_root, started_at=started_wall
+            )
+            result_metadata["artifacts"] = artifact_metadata
+            issues.extend(artifact_issues)
+            output = (output.rstrip() + "\n" if output else "") + (
+                "Devtool artifacts: "
+                f"{artifact_metadata.get('valid', 0)} valid, "
+                f"{artifact_metadata.get('invalid', 0)} invalid, "
+                f"{artifact_metadata.get('count', 0)} total.\n"
+            )
         if returncode == 0 and any(issue.severity == "error" for issue in issues):
             output = (output.rstrip() + "\n" if output else "") + (
                 "Devtool detected error diagnostics even though the process exited 0; "
@@ -1041,7 +1063,7 @@ def run_specs(
         command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         raw_text = command_line + "\n" + output
         log_file = str(write_log(raw_text, log_path, append=log_path is not None))
-        result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind)
+        result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind, metadata=result_metadata)
         results.append(result)
         if tasker_progress is not None and not dry_run:
             tasker_progress.phase_finished(result)
@@ -1049,6 +1071,13 @@ def run_specs(
 
         if returncode != 0 and not continue_on_error:
             break
+
+    if used_gradle:
+        gradle_result, gradle_raw = _shutdown_gradle_daemons(
+            config, project_root=gradle_project_root, dry_run=dry_run, log_path=log_path
+        )
+        results.append(gradle_result)
+        raw_sections.append(gradle_raw)
 
     if used_dotnet and shutdown_dotnet:
         shutdown_result, shutdown_raw = _shutdown_dotnet_build_server(

@@ -63,6 +63,37 @@ AppScrollView {
                     wrapMode: Text.Wrap
                     font.pointSize: theme.captionPointSize
                 }
+                SectionHeading { text: "Typography"; Layout.topMargin: 6 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { Layout.fillWidth: true; text: "Text size"; color: theme.text; font.pointSize: theme.bodyPointSize }
+                    AppComboBox {
+                        id: typographyScalePicker
+                        Layout.preferredWidth: 170
+                        model: ["100%", "125%", "150%", "200%"]
+                        accessibleName: "Interface text size"
+                        accessibleDescription: "Scale interface typography independently of window size"
+                        Component.onCompleted: {
+                            var values = [1.0, 1.25, 1.5, 2.0]
+                            var best = 0
+                            var distance = 99
+                            for (var i = 0; i < values.length; ++i) {
+                                var next = Math.abs(values[i] - appController.typographyScale)
+                                if (next < distance) { best = i; distance = next }
+                            }
+                            currentIndex = best
+                        }
+                        onActivated: appController.typographyScale = [1.0, 1.25, 1.5, 2.0][currentIndex]
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "The selected scale is stored for both the control center and compact HUD. System font and display scaling still apply."
+                    color: theme.subtleText
+                    wrapMode: Text.Wrap
+                    font.pointSize: theme.captionPointSize
+                    lineHeight: theme.bodyLineHeight
+                }
                 SectionHeading { text: "Live state directory"; Layout.topMargin: 6 }
                 RowLayout {
                     Layout.fillWidth: true

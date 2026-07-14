@@ -468,8 +468,21 @@ def _result_to_json(result: OperationResult) -> dict[str, Any]:
 
 
 def _completion_test_totals(results: list[OperationResult]) -> dict[str, int]:
-    """Aggregate test totals from command output for final HUD/notification state."""
+    """Aggregate authoritative structured reports before console fallbacks."""
     import re
+
+    structured = [
+        result.metadata.get("tests")
+        for result in results
+        if isinstance(result.metadata, dict) and isinstance(result.metadata.get("tests"), dict)
+    ]
+    if structured:
+        return {
+            "failed": sum(int(item.get("failed") or 0) for item in structured),
+            "passed": sum(int(item.get("passed") or 0) for item in structured),
+            "skipped": sum(int(item.get("skipped") or 0) for item in structured),
+            "total": sum(int(item.get("total") or 0) for item in structured),
+        }
 
     text = "\n".join(result.output or "" for result in results if result.name in {"test", "tests", "wine-test"})
     modern = list(re.finditer(
@@ -689,6 +702,7 @@ def _human_phase_name(value: str) -> str:
         "restore": "Restore",
         "build": "Build",
         "test": "Tests",
+        "lint": "Lint",
         "validate": "Validation",
         "apply-overlay": "Apply overlay",
         "apply-snapshot": "Apply snapshot",
@@ -760,6 +774,8 @@ class TaskerProgressSink:
     repo_root: str
     repo_name: str
     target: str = ""
+    project_type: str = "auto"
+    execution_environment: str = "auto"
     targets: list[str] = field(default_factory=list)
     planned_phases: list[dict[str, Any]] = field(default_factory=list)
     enabled: bool = True
@@ -1237,6 +1253,19 @@ class TaskerProgressSink:
         simple_notification = _simple_notification_payload(notification_payload, message=message, current=current, total=total)
         if display_target:
             simple_notification["target"] = display_target
+        # Keep the lightweight notification snapshot ordered with the rich
+        # state. Android/desktop readers can then select the newest phase by
+        # sequence instead of incorrectly preferring a stale phase merely
+        # because its local percentage was higher.
+        simple_notification.update({
+            "run_id": self.run_id,
+            "sequence": self.sequence,
+            "updated_at": timestamp,
+            "status": status,
+            "command": self.command,
+            "phase": phase if phase is not None else self.current_phase,
+        })
+
         state = {
             "schema_version": 1,
             "producer": "devtool",
@@ -1253,6 +1282,8 @@ class TaskerProgressSink:
             "repo_root": self.repo_root,
             "repo_name": self.repo_name,
             "target": display_target,
+            "project_type": self.project_type,
+            "execution_environment": self.execution_environment,
             "targets": list(self.targets),
             "pipeline": list(self.planned_phases),
             "phase_progress": [dict(item) for item in self._phase_progress.values()],
@@ -1343,6 +1374,8 @@ def build_tasker_sink(
     command: str,
     repo_root: Path,
     target: str = "",
+    project_type: str = "auto",
+    execution_environment: str = "auto",
     notify_progress: bool = False,
     notification_id: str = DEFAULT_NOTIFICATION_ID,
     run_id: str = "",
@@ -1357,6 +1390,8 @@ def build_tasker_sink(
         repo_root=str(repo),
         repo_name=repo.name,
         target=target,
+        project_type=(project_type or "auto").strip().lower(),
+        execution_environment=(execution_environment or "auto").strip().lower(),
         enabled=enabled,
         notify_progress=False,
         notification_id=notification_id,

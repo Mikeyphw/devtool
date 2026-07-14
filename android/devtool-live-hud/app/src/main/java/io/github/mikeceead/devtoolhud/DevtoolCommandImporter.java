@@ -74,7 +74,16 @@ final class DevtoolCommandImporter {
             switch (token) {
                 case "--chroot":
                     config.useChroot = true;
+                    config.executionEnvironment = "chroot";
                     config.chrootName = requireValue(tokens, ++index, token);
+                    index++;
+                    continue;
+                case "--project-type":
+                    config.projectType = requireValue(tokens, ++index, token);
+                    index++;
+                    continue;
+                case "--execution-environment":
+                    config.executionEnvironment = requireValue(tokens, ++index, token);
                     index++;
                     continue;
                 case "--copy":
@@ -173,6 +182,51 @@ final class DevtoolCommandImporter {
                 notices.add("Trailing shell command was not imported");
                 break;
             }
+            if (token.equals("--profile") || token.equals("--test-profile")) {
+                config.testProfile = requireValue(tokens, ++index, token);
+                index++;
+                continue;
+            }
+            if (token.equals("--select")) {
+                config.testSelectors = appendCsv(config.testSelectors, requireValue(tokens, ++index, token));
+                index++;
+                continue;
+            }
+            if (token.equals("--tag")) {
+                config.testTags = appendCsv(config.testTags, requireValue(tokens, ++index, token));
+                index++;
+                continue;
+            }
+            if (token.equals("--exclude-tag")) {
+                config.testExcludeTags = appendCsv(config.testExcludeTags, requireValue(tokens, ++index, token));
+                index++;
+                continue;
+            }
+            if (token.equals("--path")) {
+                config.testPath = requireValue(tokens, ++index, token);
+                index++;
+                continue;
+            }
+            if (token.equals("--class")) {
+                config.testClass = requireValue(tokens, ++index, token);
+                index++;
+                continue;
+            }
+            if (token.equals("--method")) {
+                config.testMethod = requireValue(tokens, ++index, token);
+                index++;
+                continue;
+            }
+            if (token.equals("--list-tests") || token.equals("--list")) {
+                config.listTests = true;
+                index++;
+                continue;
+            }
+            if (token.equals("--instrumented")) {
+                config.instrumented = true;
+                index++;
+                continue;
+            }
             if (token.equals("--validate")) {
                 config.validate = true;
                 index++;
@@ -214,6 +268,8 @@ final class DevtoolCommandImporter {
     private static DevtoolRunConfig emptyConfig() {
         DevtoolRunConfig config = new DevtoolRunConfig();
         config.operation = "status";
+        config.projectType = "auto";
+        config.executionEnvironment = "auto";
         config.repo = "";
         config.workdir = "";
         config.target = "";
@@ -224,6 +280,13 @@ final class DevtoolCommandImporter {
         config.extraGlobalArguments = "";
         config.extraOperationArguments = "";
         config.chrootName = "androidos";
+        config.testProfile = "";
+        config.testSelectors = "";
+        config.testTags = "";
+        config.testExcludeTags = "";
+        config.testPath = "";
+        config.testClass = "";
+        config.testMethod = "";
         config.useChroot = false;
         config.copy = false;
         config.copyViaTermux = false;
@@ -232,7 +295,16 @@ final class DevtoolCommandImporter {
         config.commit = false;
         config.assumeYes = false;
         config.overlay = true;
+        config.listTests = false;
+        config.instrumented = false;
         return config;
+    }
+
+    private static String appendCsv(String current, String value) {
+        String clean = value == null ? "" : value.trim();
+        if (clean.isEmpty()) return current == null ? "" : current;
+        String existing = current == null ? "" : current.trim();
+        return existing.isEmpty() ? clean : existing + ", " + clean;
     }
 
     static List<String> tokenize(String source) {

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "$0")" && pwd)
-version=${VERSION:-0.3.8}
+version=${VERSION:-0.4.0}
 arch=${ARCH:-$(dpkg --print-architecture)}
 cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}
 build=${BUILD_DIR:-"$cache_root/devtool-control-center/package-build-${version}-${arch}"}
@@ -10,6 +10,8 @@ out=${OUT_DIR:-"$root/dist"}
 install_after_build=false
 delete_after_install=false
 skip_build=false
+verify_package=false
+source_date_epoch=${SOURCE_DATE_EPOCH:-1784030400}
 
 usage() {
   cat <<'EOF'
@@ -19,9 +21,10 @@ Options:
   --install               Install the generated package after building it.
   --delete-after-install  Delete the .deb only after installation succeeds.
   --skip-build            Package an existing BUILD_DIR without rebuilding.
+  --verify                Verify metadata, payload, and checksum after packaging.
   -h, --help              Show this help.
 
-Environment: VERSION, ARCH, BUILD_DIR, OUT_DIR, KEEP_PACKAGE_BUILD.
+Environment: VERSION, ARCH, BUILD_DIR, OUT_DIR, KEEP_PACKAGE_BUILD, SOURCE_DATE_EPOCH.
 EOF
 }
 
@@ -30,6 +33,7 @@ while (($#)); do
     --install) install_after_build=true; shift ;;
     --delete-after-install) delete_after_install=true; shift ;;
     --skip-build) skip_build=true; shift ;;
+    --verify) verify_package=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'error: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -88,8 +92,27 @@ sed \
   -e "s/^Architecture:.*/Architecture: $arch/" \
   "$control_file" > "$stage/DEBIAN/control"
 
-dpkg-deb --root-owner-group --build "$stage" "$deb_path"
-printf '\nBuilt package: %s\n' "$deb_path"
+# Normalize the package tree so identical inputs and SOURCE_DATE_EPOCH produce
+# byte-for-byte identical Debian archives.
+find "$stage" -print0 | xargs -0 touch -h -d "@$source_date_epoch"
+dpkg-deb --root-owner-group --uniform-compression -Zxz --build "$stage" "$deb_path"
+sha256sum "$deb_path" > "$deb_path.sha256"
+printf '
+Built package: %s
+Checksum: %s.sha256
+' "$deb_path" "$deb_path"
+
+if "$verify_package"; then
+  dpkg-deb --info "$deb_path" >/dev/null
+  contents=$(dpkg-deb --contents "$deb_path")
+  [[ "$contents" == *"./usr/bin/devtool-control-center"* ]] || { echo "error: desktop executable missing from package" >&2; exit 1; }
+  [[ "$contents" == *"./usr/bin/devtool-control-center-hud"* ]] || { echo "error: HUD executable missing from package" >&2; exit 1; }
+  package_version=$(dpkg-deb -f "$deb_path" Version)
+  [[ "$package_version" == "$version" ]] || { echo "error: package version mismatch: $package_version" >&2; exit 1; }
+  sha256sum -c "$deb_path.sha256"
+  printf 'Package verification passed.
+'
+fi
 
 if "$install_after_build"; then
   if command -v apt-get >/dev/null 2>&1; then

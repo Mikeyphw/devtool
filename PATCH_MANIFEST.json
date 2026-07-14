@@ -1,0 +1,67 @@
+{
+  "name": "devtool_typography_patched_repo",
+  "release": "1.1.0-rc.3",
+  "devtool_version": "1.1.0",
+  "desktop_version": "0.4.0",
+  "android_version": "1.7.2",
+  "android_version_code": 20,
+  "artifact_type": "complete_repository",
+  "slice": 5,
+  "features": [
+    "centralized semantic Android typography roles and line-height tokens",
+    "notification minimum sizes improved contrast and flexible text rows",
+    "large-font notification layout selected at fontScale 1.3 or greater",
+    "system-derived desktop type scale with 100 125 150 and 200 percent presets",
+    "vector Android and QML navigation status phase and action icons",
+    "sentence-case headings reduced tracking and readable compact leading",
+    "system fixed-width font fallback without Nerd Font dependency",
+    "typography contrast scaling and icon regression tests",
+    "custom Android notification parity and per-workspace live updates",
+    "canonical cross-package release version contract",
+    "portable release qualification and reproducible source packaging"
+  ],
+  "key_files": [
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiTypography.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiKit.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+    "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+    "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+    "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+    "desktop/devtool-control-center/qml/components/Theme.qml",
+    "desktop/devtool-control-center/qml/components/StatusMark.qml",
+    "desktop/devtool-control-center/src/AppController.cpp",
+    "docs/TYPOGRAPHY_SYSTEM.md",
+    "tests/test_typography_remediation.py",
+    "release/versions.json"
+  ],
+  "validation": {
+    "full_suite": {
+      "passed": 449,
+      "subtests_passed": 28,
+      "failed": 0
+    },
+    "typography_tests": {
+      "passed": 7,
+      "failed": 0
+    },
+    "targeted_typography_notification_accessibility": {
+      "passed": 29,
+      "failed": 0
+    },
+    "python_compileall": "passed",
+    "workflow_yaml": "passed",
+    "shell_syntax": "passed",
+    "source_reproducibility": "passed",
+    "portable_release_qualification": "passed",
+    "android_resource_xml": {
+      "passed": 58,
+      "failed": 0
+    },
+    "json": {
+      "passed": 7,
+      "failed": 0
+    },
+    "real_android_build": "not run locally; Android SDK unavailable",
+    "qt_link_build": "not run locally; Qt 6 development files unavailable"
+  }
+}

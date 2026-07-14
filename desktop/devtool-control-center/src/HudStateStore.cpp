@@ -52,7 +52,7 @@ static QString humanCommand(QString command) {
     if (command == "inspect-artifact") return "Inspecting artifact";
     if (command == "validate-artifact" || command == "validate") return "Validating repository";
     if (command == "restore") return "Restoring dependencies";
-    if (command == "build") return "Building solution";
+    if (command == "build") return "Building target";
     if (command == "test") return "Running tests";
     if (command == "doctor") return "Checking repository health";
     if (command == "status") return "Reading repository status";
@@ -426,6 +426,13 @@ QJsonObject HudStateStore::normalize(QJsonObject state) const {
     state["rollback_failed"] = completion.value("rollback_failed").toBool();
     state["failure_phase"] = completion.value("failure_phase");
     state["tests"] = completion.value("tests");
+    QString projectType = state.value("project_type").toString().trimmed().toLower();
+    if (projectType.isEmpty()) projectType = state.value("runner").toString().trimmed().toLower();
+    if (projectType.isEmpty()) projectType = QStringLiteral("auto");
+    state["project_type"] = projectType;
+    QString executionEnvironment = state.value("execution_environment").toString().trimmed().toLower();
+    if (executionEnvironment.isEmpty()) executionEnvironment = QStringLiteral("auto");
+    state["execution_environment"] = executionEnvironment;
     state["task_title"] = humanCommand(state.value("command").toString());
     state["title"] = state.value("artifact_name").toString(state.value("command").toString("devtool"));
 

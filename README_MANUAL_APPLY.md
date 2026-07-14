@@ -1,23 +1,21 @@
-# Desktop external-terminal and artifact-import patch
+# Manual apply
 
-This patch:
+This archive is the complete Devtool 1.1.0 repository after UI/UX Slices 1–4
+and Slice 5 native release qualification. Extract it as a replacement source
+tree; it is not a partial overlay.
 
-- prepends `~/.local/share/mise/shims` to PATH so desktop-launched devtool runs find the mise-managed .NET SDK;
-- prefers Kitty, then WezTerm, Foot, Konsole, GNOME Terminal, XFCE Terminal, and xterm;
-- uses zsh when available;
-- removes the embedded Run-page terminal and launches a real external terminal;
-- adds a persistent auto-close-terminal option;
-- uses a native Qt directory chooser for Add repository;
-- reads artifact inspection metadata after clipboard import and fills target, validation, commit message, and checkboxes unless the copied command explicitly overrides them.
-
-Apply from the repository root:
+After extraction, run:
 
 ```bash
-unzip -o "$HOME/Downloads/devtool_desktop_external_terminal_manifest_patch.zip" \
-  -d "$HOME/Code/devtool"
-
-rm -rf "$HOME/.cache/devtool-control-center/package-build-0.3.8-amd64"
-
-cd "$HOME/Code/devtool/desktop/devtool-control-center"
-./package-deb.sh --install --delete-after-install
+python3 -m pip install -e . pytest
+python3 tools/release-qualify.py --core-only
 ```
+
+On a release host with Qt 6 and Android SDK 36, use:
+
+```bash
+python3 tools/release-qualify.py --require-qt --require-android --device-tests
+```
+
+Android release tasks require explicit `DEVTOOL_RELEASE_*` signing values. See
+`docs/RELEASE_QUALIFICATION.md` and `docs/RELEASE_CHECKLIST.md`.

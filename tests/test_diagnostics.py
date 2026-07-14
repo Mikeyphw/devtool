@@ -45,6 +45,46 @@ class DiagnosticTests(unittest.TestCase):
             issues = parse_issues(root, "build", output)
             self.assertEqual(issues[0].code, "CC")
 
+    def test_parse_kotlin_android_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "app/src/main/java/demo/Main.kt"
+            source.parent.mkdir(parents=True)
+            source.write_text("fun main() {}", encoding="utf-8")
+            output = f"e: file://{source}:12:5 Unresolved reference: missing\n"
+            issues = parse_issues(root, "build", output)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "KOTLIN")
+        self.assertEqual(issues[0].file, "app/src/main/java/demo/Main.kt")
+        self.assertEqual(issues[0].line, 12)
+
+    def test_parse_aapt2_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            resource = root / "app/src/main/res/layout/main.xml"
+            resource.parent.mkdir(parents=True)
+            resource.write_text("<bad>", encoding="utf-8")
+            output = f"ERROR: {resource}:7:3: AAPT: error: resource missing.\n"
+            issues = parse_issues(root, "build", output)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "ANDROID")
+        self.assertEqual(issues[0].line, 7)
+
+    def test_parse_manifest_merger_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / "app/src/main/AndroidManifest.xml"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text("<manifest/>", encoding="utf-8")
+            output = f"{manifest}:4:9-27 Error: Attribute application@name is invalid\n"
+            issues = parse_issues(root, "build", output)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "MANIFEST")
+        self.assertEqual(issues[0].line, 4)
+
     def test_parse_cargo_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

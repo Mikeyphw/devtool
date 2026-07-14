@@ -577,3 +577,59 @@ def test_android_forwarder_retries_failed_broadcast() -> None:
     hud.update(state, directory=Path("/tmp/retry"))
     assert hud.last_signature is not None
     assert len(calls) == 2
+
+
+
+def test_state_reader_prefers_newer_sequence_over_higher_stale_phase_percentage(tmp_path: Path) -> None:
+    import json
+
+    # Old build phase is complete, but the newer test phase has restarted its
+    # local counter at 1/3. The reader must follow sequence 12, not 100%.
+    (tmp_path / "notification.json").write_text(json.dumps({
+        "run_id": "phase-reset",
+        "sequence": 11,
+        "updated_at": "2026-07-13T12:00:00Z",
+        "title": "Build complete",
+        "text": "17/17 projects",
+        "current": 17,
+        "total": 17,
+    }), encoding="utf-8")
+    (tmp_path / "state.json").write_text(json.dumps({
+        "run_id": "phase-reset",
+        "sequence": 12,
+        "updated_at": "2026-07-13T12:00:01Z",
+        "status": "running",
+        "command": "apply-overlay",
+        "phase": {"name": "test", "index": 3, "total": 4},
+        "message": "Running test assembly 1 of 3",
+        "current": 1,
+        "total": 3,
+    }), encoding="utf-8")
+
+    state = state_from_directory(tmp_path)
+    assert state.phase_name == "test"
+    assert state.current == 1
+    assert state.total == 3
+    assert state.seq == 12
+
+
+def test_notification_snapshot_contains_authoritative_sequence(tmp_path: Path) -> None:
+    import json
+    from devtool.tasker import TaskerProgressSink
+
+    sink = TaskerProgressSink(
+        directory=tmp_path,
+        command="build",
+        repo_root="/repo",
+        repo_name="repo",
+        run_id="android-sequence",
+    )
+    sink.prepare_hud()
+    sink.phase_started("build", index=1, total=1)
+    sink.progress(completed=2, total=5, detail="built 2 projects", metrics={"unit_label": "projects"})
+
+    notification = json.loads((tmp_path / "notification.json").read_text(encoding="utf-8"))
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert notification["run_id"] == "android-sequence"
+    assert notification["sequence"] == state["sequence"]
+    assert notification["updated_at"] == state["updated_at"]

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/notification_root" android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:paddingStart="16dp" android:paddingTop="11dp"
+    android:paddingEnd="14dp" android:paddingBottom="11dp" android:background="@drawable/notification_card_running">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+        <ImageView android:id="@+id/notification_app_icon" android:layout_width="36dp" android:layout_height="36dp" android:padding="8dp"
+            android:src="@drawable/ic_devtool_notification" android:tint="@color/notification_running" android:background="@drawable/notification_badge_running" android:contentDescription="@null" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:layout_marginStart="10dp">
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+                <TextView style="@style/TextAppearance.Devtool.Notification.Detail" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Devtool" android:textColor="@color/notification_text" android:fontFamily="sans-serif-medium" />
+                <ImageView android:id="@+id/notification_state_dot" android:layout_width="10dp" android:layout_height="10dp" android:layout_marginStart="6dp" android:src="@drawable/ic_notification_state_dot" android:tint="@color/notification_running" android:contentDescription="@null" />
+                <TextView android:id="@+id/notification_state_label" style="@style/TextAppearance.Devtool.Notification.Badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="LIVE" android:letterSpacing="0.04" />
+            </LinearLayout>
+            <TextView android:id="@+id/notification_task_title" style="@style/TextAppearance.Devtool.Notification.Title" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="2" android:ellipsize="end" android:text="Applying overlay bundle" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="8dp">
+        <TextView android:id="@+id/notification_compact_status" style="@style/TextAppearance.Devtool.Notification.Detail" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="2" android:ellipsize="end" />
+        <TextView android:id="@+id/notification_progress_label" style="@style/TextAppearance.Devtool.Notification.Workspace" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textColor="@color/notification_running" />
+    </LinearLayout>
+    <ProgressBar android:id="@+id/notification_progress" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="5dp" android:layout_marginTop="7dp" android:max="100" android:progress="0" android:progressTint="@color/notification_running" android:progressBackgroundTint="#3A3E47" />
+</LinearLayout>

@@ -1,0 +1,116 @@
+import groovy.json.JsonOutput
+import java.util.concurrent.atomic.AtomicLong
+
+// Machine-readable Gradle lifecycle events for devtool. Every line is prefixed
+// so normal Gradle output remains readable and parsers can ignore everything
+// else. The listener uses public Gradle APIs available across Gradle 7/8/9.
+def devtoolSequence = new AtomicLong(0L)
+def devtoolTaskTotal = new AtomicLong(0L)
+def devtoolTaskCompleted = new AtomicLong(0L)
+def devtoolTestsPassed = new AtomicLong(0L)
+def devtoolTestsFailed = new AtomicLong(0L)
+def devtoolTestsSkipped = new AtomicLong(0L)
+def devtoolRunId = System.getenv('DEVTOOL_RUN_ID') ?: ''
+
+def devtoolEmit = { String kind, Map payload = [:] ->
+    def event = [
+        sequence: devtoolSequence.incrementAndGet(),
+        timestamp: new Date().format("yyyy-MM-dd'T'HH:mm:ss.SSSXXX"),
+        kind: kind,
+        run_id: devtoolRunId,
+    ]
+    event.putAll(payload)
+    println("DEVTOOL_EVENT " + JsonOutput.toJson(event))
+}
+
+gradle.taskGraph.whenReady { graph ->
+    devtoolTaskTotal.set(graph.allTasks.size() as long)
+    devtoolEmit('task-graph', [total: devtoolTaskTotal.get(), tasks: graph.allTasks.collect { it.path }])
+}
+
+gradle.addListener(new TaskExecutionListener() {
+    void beforeExecute(Task task) {
+        devtoolEmit('task-start', [
+            task: task.path,
+            current: Math.min(devtoolTaskCompleted.get() + 1L, Math.max(devtoolTaskTotal.get(), 1L)),
+            completed: devtoolTaskCompleted.get(),
+            total: devtoolTaskTotal.get(),
+        ])
+    }
+
+    void afterExecute(Task task, TaskState state) {
+        def completed = devtoolTaskCompleted.incrementAndGet()
+        def outcome = state.failure != null ? 'failed' : (state.skipped ? 'skipped' : (state.upToDate ? 'up-to-date' : (state.noSource ? 'no-source' : 'success')))
+        devtoolEmit('task-finish', [
+            task: task.path,
+            completed: completed,
+            total: devtoolTaskTotal.get(),
+            outcome: outcome,
+            didWork: state.didWork,
+            failure: state.failure?.message,
+        ])
+    }
+})
+
+gradle.addListener(new TestListener() {
+    void beforeSuite(TestDescriptor suite) {
+        if (suite.parent == null) {
+            devtoolEmit('test-suite-start', [suite: suite.displayName ?: suite.name])
+        }
+    }
+
+    void afterSuite(TestDescriptor suite, TestResult result) {
+        if (suite.parent == null) {
+            devtoolEmit('test-suite-finish', [
+                suite: suite.displayName ?: suite.name,
+                passed: devtoolTestsPassed.get(),
+                failed: devtoolTestsFailed.get(),
+                skipped: devtoolTestsSkipped.get(),
+                total: devtoolTestsPassed.get() + devtoolTestsFailed.get() + devtoolTestsSkipped.get(),
+                result: result.resultType?.toString()?.toLowerCase(),
+            ])
+        }
+    }
+
+    void beforeTest(TestDescriptor descriptor) {
+        devtoolEmit('test-start', [
+            test: descriptor.className ? descriptor.className + '.' + descriptor.name : descriptor.name,
+            passed: devtoolTestsPassed.get(),
+            failed: devtoolTestsFailed.get(),
+            skipped: devtoolTestsSkipped.get(),
+        ])
+    }
+
+    void afterTest(TestDescriptor descriptor, TestResult result) {
+        def resultType = result.resultType?.toString()
+        if (resultType == 'SUCCESS') {
+            devtoolTestsPassed.incrementAndGet()
+        } else if (resultType == 'SKIPPED') {
+            devtoolTestsSkipped.incrementAndGet()
+        } else {
+            devtoolTestsFailed.incrementAndGet()
+        }
+        devtoolEmit('test-finish', [
+            test: descriptor.className ? descriptor.className + '.' + descriptor.name : descriptor.name,
+            outcome: resultType?.toLowerCase(),
+            passed: devtoolTestsPassed.get(),
+            failed: devtoolTestsFailed.get(),
+            skipped: devtoolTestsSkipped.get(),
+            total: devtoolTestsPassed.get() + devtoolTestsFailed.get() + devtoolTestsSkipped.get(),
+            durationMs: Math.max(0L, result.endTime - result.startTime),
+        ])
+    }
+})
+
+gradle.buildFinished { result ->
+    devtoolEmit('build-finish', [
+        success: result.failure == null,
+        failure: result.failure?.message,
+        completed: devtoolTaskCompleted.get(),
+        total: devtoolTaskTotal.get(),
+        passed: devtoolTestsPassed.get(),
+        failed: devtoolTestsFailed.get(),
+        skipped: devtoolTestsSkipped.get(),
+        testsTotal: devtoolTestsPassed.get() + devtoolTestsFailed.get() + devtoolTestsSkipped.get(),
+    ])
+}

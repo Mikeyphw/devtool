@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "release": "1.1.0-rc.3",
+  "devtool": "1.1.0",
+  "desktop": "0.4.0",
+  "android": {
+    "version_name": "1.7.2",
+    "version_code": 20,
+    "application_id": "io.github.mikeceead.devtoolhud"
+  },
+  "minimums": {
+    "python": "3.11",
+    "qt": "6.4",
+    "android_min_sdk": 26,
+    "android_target_sdk": 36,
+    "java": 17
+  }
+}

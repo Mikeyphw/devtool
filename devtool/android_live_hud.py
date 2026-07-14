@@ -10,6 +10,15 @@ from typing import Any
 PACKAGE = "io.github.mikeceead.devtoolhud"
 COMPONENT = f"{PACKAGE}/.BridgeReceiver"
 ACTION_PREFIX = PACKAGE
+
+
+def active_package() -> str:
+    value = os.environ.get("DEVTOOL_ANDROID_HUD_PACKAGE", "").strip()
+    return value or PACKAGE
+
+
+def active_component() -> str:
+    return f"{active_package()}/.BridgeReceiver"
 DEFAULT_TOKEN_FILE = Path.home() / ".config" / "devtool" / "android-live-hud.token"
 
 
@@ -48,7 +57,7 @@ class AndroidLiveHudBridge:
             checked = True
             try:
                 result = subprocess.run(
-                    [candidate, "path", PACKAGE],
+                    [candidate, "path", active_package()],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     text=True,
@@ -85,9 +94,9 @@ class AndroidLiveHudBridge:
             "--user",
             "0",
             "-n",
-            COMPONENT,
+            active_component(),
             "-a",
-            f"{ACTION_PREFIX}.{action.upper()}",
+            f"{active_package()}.{action.upper()}",
             "--es",
             "token",
             token,

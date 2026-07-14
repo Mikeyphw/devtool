@@ -31,7 +31,9 @@ def test_manifest_declares_opt_in_overlay_service() -> None:
 def test_overlay_service_uses_application_overlay_and_multi_run_cards() -> None:
     source = (APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud" / "OverlayHudService.java").read_text(encoding="utf-8")
     assert "TYPE_APPLICATION_OVERLAY" in source
-    assert "private HudUpdate currentRun" in source
+    assert "LinkedHashMap<String, HudUpdate> currentRuns" in source
+    assert "Map<String, HudUpdate> pendingUpdates" in source
+    assert "currentRuns.put(update.runId, update)" in source
     assert "TERMINAL_LINGER_MS" in source
     assert "FOREGROUND_SERVICE_TYPE_SPECIAL_USE" in source
 
@@ -97,7 +99,8 @@ def test_overlay_receiver_does_not_restart_foreground_service_in_background() ->
     publish = source[source.index("static void publish"):source.index("static void cancel")]
     assert "setEnabled(context, true)" not in publish
     notification = (APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud" / "NotificationController.java").read_text(encoding="utf-8")
-    assert '"Show HUD"' in notification
+    assert ".setCustomContentView(compact)" in notification
+    assert 'new ActionSpec("Cancel"' in notification
 
 
 def test_root_gitignore_excludes_generated_android_and_devtool_state() -> None:
@@ -150,7 +153,7 @@ def test_android_frontend_has_visual_run_builder_history_and_shared_run_identity
     runner = (source_dir / "TermuxCommandRunner.java").read_text(encoding="utf-8")
     for page in ("Overview", "Run", "History", "Settings"):
         assert page in main
-    for operation in ("apply-overlay", "apply-overlays", "validate", "build", "test", "status"):
+    for operation in ("apply-overlay", "apply-overlays", "validate", "build", "test", "lint", "status"):
         assert operation in builder
     assert "RunStore.started" in runner
     assert "DEVTOOL_RUN_ID" in runner
@@ -168,7 +171,7 @@ def test_android_frontend_can_paste_and_visually_import_shell_commands() -> None
     assert "Paste command from clipboard" in _java_source("TaskerPluginActivity.java")
     assert "DevtoolCommandImporter.parse" in main
     config = _java_source("DevtoolRunConfig.java")
-    assert "DEVTOOL_HUD_SINGLETON=kill" in config
+    assert "DEVTOOL_HUD_SINGLETON=kill" not in config
     assert 'token.equals("cd")' in importer
     assert 'globalExtras.add("--hud-mode")' in importer
     assert "extraGlobalArguments" in settings
@@ -259,7 +262,8 @@ def test_android_hud_uses_dynamic_operation_segments_and_live_issue_counts() -> 
     assert "for (HudUpdate.Step step : update.steps)" in overlay
     assert 'append(update.errors).append(" errors · ")' in overlay
     assert "update.steps.size()" in notification
-    assert "Notification.ProgressStyle.Segment" in notification
+    assert "RemoteViews compact" in notification
+    assert ".setCustomBigContentView(expanded)" in notification
     assert "displayProgress()" in notification
     assert "displayProgress()" in run_store
 
@@ -305,5 +309,56 @@ def test_android_clipboard_paste_is_guarded_against_first_access_crashes() -> No
 
 def test_android_app_version_bumped_for_notification_bridge_update() -> None:
     build = (APP / "app" / "build.gradle").read_text(encoding="utf-8")
-    assert "versionCode 14" in build
-    assert "versionName '1.5.7'" in build
+    assert "versionCode 20" in build
+    assert "versionName '1.7.2'" in build
+
+
+
+def test_android_notification_uses_exact_local_counters_and_overall_progress() -> None:
+    notification = _java_source("NotificationController.java")
+    update = _java_source("HudUpdate.java")
+    assert "update.notificationCompactStatus()" in notification
+    assert "update.displayProgress()" in notification
+    assert "Notification.InboxStyle" in notification  # multi-run group summary only
+    assert 'new ActionSpec("Cancel"' in notification
+    assert 'new ActionSpec("Retry"' in notification
+    assert 'current + "/" + total + " " + noun' in update
+    assert 'return "Running lint"' in update
+    assert '"Workspace " + Math.max(1, workspaceIndex) + " of " + workspaceTotal' in update
+    assert '"Tests · "' in update
+    assert '"Health · "' in update
+
+
+def test_app_launched_termux_runs_have_bridge_ack_watchdog_logs_and_foreground_mode() -> None:
+    runner = _java_source("TermuxCommandRunner.java")
+    main = _java_source("MainActivity.java")
+    store = _java_source("RunStore.java")
+    builder = _java_source("DevtoolCommandBuilder.java")
+    assert "PROGRESS_WATCHDOG_MS" in runner
+    assert '"Termux shell started; waiting for devtool progress"' in runner
+    assert "RunStore.appendDiagnostic" in runner
+    assert "openTermux(context)" in runner
+    assert "Open Termux in foreground while running" in main
+    assert "Execution log" in main
+    assert "launchLog" in store
+    assert 'parts.add("android-bridge")' in builder
+
+
+def test_termux_result_delivery_is_recorded_for_background_diagnostics() -> None:
+    result = _java_source("TermuxResultService.java")
+    assert "RunCommand result delivered" in result
+    assert "RunStore.appendDiagnostic" in result
+
+
+def test_android_builder_exposes_project_environment_and_selective_tests() -> None:
+    builder = _java_source("DevtoolCommandBuilder.java")
+    config = _java_source("DevtoolRunConfig.java")
+    settings = _java_source("AppSettings.java")
+    main = _java_source("MainActivity.java")
+    for token in ("--project-type", "--execution-environment", "--test-profile", "--select", "--tag", "--exclude-tag", "--instrumented", "--list-tests"):
+        assert token in builder
+    for field in ("projectType", "executionEnvironment", "testProfile", "testSelectors", "instrumented"):
+        assert field in config
+        assert field in settings
+    assert 'sectionTitle("Test selection")' in main
+    assert "Command preview" in main

@@ -36,6 +36,7 @@ CLEAN_BUILD_DIRS=true
 CLEAN_GRADLE_TRANSFORMS=true
 RUN_CLEAN_TASK=true
 DRY_RUN=false
+VERIFY_SIGNATURE=false
 
 usage() {
   cat <<'USAGE'
@@ -72,7 +73,8 @@ Gradle and output:
   --gradle-transforms-dir PATH Cache directory removed before build
   --apk-path PATH              Expected Gradle APK path; default is inferred
   --tracked-apk PATH           Copy the built APK to this stable tracked path
-                               default: APP_DIR/devtool-live-hud-debug.apk
+                               default: debug/release filename selected by task
+  --verify-signature           Verify the APK with build-tools apksigner
 
 Behavior:
   --skip-system-deps           Do not run apt update/install
@@ -124,6 +126,7 @@ while (($#)); do
     --gradle-transforms-dir) need_value "$@"; GRADLE_TRANSFORMS_DIR="$2"; shift 2 ;;
     --apk-path) need_value "$@"; APK_PATH="$2"; shift 2 ;;
     --tracked-apk) need_value "$@"; TRACKED_APK_PATH="$2"; shift 2 ;;
+    --verify-signature) VERIFY_SIGNATURE=true; shift ;;
     --skip-system-deps) SKIP_SYSTEM_DEPS=true; shift ;;
     --skip-sdk-install) SKIP_SDK_INSTALL=true; shift ;;
     --skip-licenses) SKIP_LICENSES=true; shift ;;
@@ -160,7 +163,10 @@ run_shell() {
 }
 
 if [[ -z "$TRACKED_APK_PATH" ]]; then
-  TRACKED_APK_PATH="$APP_DIR/devtool-live-hud-debug.apk"
+  case "$GRADLE_ASSEMBLE_TASK" in
+    *Release*) TRACKED_APK_PATH="$APP_DIR/devtool-live-hud-release.apk" ; VERIFY_SIGNATURE=true ;;
+    *) TRACKED_APK_PATH="$APP_DIR/devtool-live-hud-debug.apk" ;;
+  esac
 fi
 
 if [[ -z "$APK_PATH" ]]; then
@@ -225,12 +231,19 @@ run chmod +x ./gradlew
 run ./gradlew "$GRADLE_ASSEMBLE_TASK" "${GRADLE_ARGS[@]}"
 
 if ! "$DRY_RUN"; then
-  [[ -f "$APK_PATH" ]] || { echo "APK was not produced: $APK_PATH" >&2; exit 1; }
+  [[ -s "$APK_PATH" ]] || { echo "APK was not produced or is empty: $APK_PATH" >&2; exit 1; }
+  if "$VERIFY_SIGNATURE"; then
+    apksigner="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
+    [[ -x "$apksigner" ]] || { echo "apksigner is unavailable: $apksigner" >&2; exit 1; }
+    "$apksigner" verify --verbose --print-certs "$APK_PATH"
+  fi
   mkdir -p "$(dirname "$TRACKED_APK_PATH")"
   cp -f -- "$APK_PATH" "$TRACKED_APK_PATH"
+  sha256sum "$TRACKED_APK_PATH" > "$TRACKED_APK_PATH.sha256"
 fi
 printf '
 BUILD SUCCESS
 Gradle APK: %s
 Tracked APK: %s
-' "$APK_PATH" "$TRACKED_APK_PATH"
+Checksum: %s.sha256
+' "$APK_PATH" "$TRACKED_APK_PATH" "$TRACKED_APK_PATH"

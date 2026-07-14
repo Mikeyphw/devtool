@@ -6,7 +6,8 @@ Label {
     color: theme.mutedText
     font.pointSize: theme.smallPointSize
     font.weight: Font.DemiBold
-    font.capitalization: Font.AllUppercase
-    font.letterSpacing: 0.85
+    font.letterSpacing: 0.20
     lineHeight: theme.compactLineHeight
+    Accessible.role: Accessible.Heading
+    Accessible.name: text
 }
