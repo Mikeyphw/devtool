@@ -253,6 +253,58 @@ def add_no_build_to_dotnet_test_specs(
     return updated, changed
 
 
+def _dotnet_variant_options(config: ProjectConfig) -> dict[str, str]:
+    options = config.runner_options.get("dotnet", {})
+    options = dict(options) if isinstance(options, dict) else {}
+    values = {
+        "configuration": str(options.get("configuration") or "").strip(),
+        "framework": str(options.get("framework") or "").strip(),
+        "runtime": str(options.get("runtime") or "").strip(),
+    }
+    variant = str(config.variant or "").strip().lower()
+    if variant and not values["configuration"] and variant in {"debug", "release"}:
+        values["configuration"] = variant[:1].upper() + variant[1:]
+    return {key: value for key, value in values.items() if value}
+
+
+def _dotnet_insert_option(argv: list[str], verb_index: int, flags: tuple[str, ...], flag: str, value: str) -> list[str]:
+    if any(item in argv for item in flags):
+        return argv
+    updated = list(argv)
+    updated[verb_index + 1:verb_index + 1] = [flag, value]
+    return updated
+
+
+def apply_dotnet_variant_to_spec(config: ProjectConfig, spec: CommandSpec) -> CommandSpec:
+    values = _dotnet_variant_options(config)
+    if not values:
+        return spec
+
+    argv = list(spec.argv)
+    metadata = dict(spec.metadata)
+    for verb in ("restore", "build", "test", "run", "clean"):
+        verb_index = _dotnet_verb_index(argv, verb)
+        if verb_index is None:
+            continue
+        if values.get("runtime"):
+            argv = _dotnet_insert_option(argv, verb_index, ("-r", "--runtime"), "-r", values["runtime"])
+        if verb in {"build", "test", "run", "clean"} and values.get("configuration"):
+            argv = _dotnet_insert_option(argv, verb_index, ("-c", "--configuration"), "-c", values["configuration"])
+        if verb in {"build", "test", "run"} and values.get("framework"):
+            argv = _dotnet_insert_option(argv, verb_index, ("-f", "--framework"), "-f", values["framework"])
+        metadata["variant"] = config.variant
+        metadata["dotnet_variant"] = values
+        break
+    return CommandSpec(
+        spec.name,
+        argv,
+        env=spec.env,
+        cwd=spec.cwd,
+        destructive=spec.destructive,
+        metadata=metadata,
+    )
+
+
 class DotnetRunner(ProjectRunner):
     kind = "dotnet"
     display_name = ".NET"
@@ -286,26 +338,29 @@ class DotnetRunner(ProjectRunner):
             )
 
         if action == "restore":
-            return _maybe_explicit("restore", config.restore_command, env) or [
+            specs = _maybe_explicit("restore", config.restore_command, env) or [
                 CommandSpec("restore", ["dotnet", "restore", restore_target], env=env)
             ]
+            return [apply_dotnet_variant_to_spec(config, spec) for spec in specs]
         if action == "build":
-            return _maybe_explicit("build", config.build_command, env) or [
+            specs = _maybe_explicit("build", config.build_command, env) or [
                 CommandSpec("build", ["dotnet", "build", build_target], env=env)
             ]
+            return [apply_dotnet_variant_to_spec(config, spec) for spec in specs]
         if action in {"test", "wine-test"}:
             from .test_selection import apply_test_selection
             name = "wine-test" if action == "wine-test" else "test"
             specs = _maybe_explicit(name, config.test_command, env) or [
                 CommandSpec(name, ["dotnet", "test", test_target], env=env)
             ]
-            return [apply_test_selection(config, spec) for spec in specs]
+            return [apply_test_selection(config, apply_dotnet_variant_to_spec(config, spec)) for spec in specs]
         if action == "run":
-            return _maybe_explicit("run", config.run_command, env) or [
+            specs = _maybe_explicit("run", config.run_command, env) or [
                 CommandSpec("run", ["dotnet", "run", "--project", run_target], env=env)
             ]
+            return [apply_dotnet_variant_to_spec(config, spec) for spec in specs]
         if action == "clean":
-            return [CommandSpec("clean", ["dotnet", "clean", build_target], env=env)]
+            return [apply_dotnet_variant_to_spec(config, CommandSpec("clean", ["dotnet", "clean", build_target], env=env))]
         if action == "package":
             if config.package_command:
                 return [CommandSpec("package", shlex.split(config.package_command), env=env)]
@@ -382,7 +437,7 @@ class AndroidGradleRunner(ProjectRunner):
             root = android_project_root(config)
             argv = [
                 sys.executable, "-m", "devtool.android_instrumentation", str(root),
-                "--variant", str(android.get("variant") or "debug"),
+                "--variant", str(config.variant or android.get("variant") or "debug"),
                 "--device-serial", str(config.device_serial or android.get("device_serial") or ""),
                 "--install-command", str(android.get("install_command") or "sudo pm install -r -t"),
                 "--am-command", str(android.get("am_command") or "sudo am instrument"),

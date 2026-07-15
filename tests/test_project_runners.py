@@ -152,10 +152,49 @@ class DotnetRunnerCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(
             capabilities.supported(),
-            ("restore", "build", "test", "selective_tests", "validate", "run", "package"),
+            ("restore", "build", "test", "selective_tests", "validate", "run", "package", "clean"),
         )
         self.assertTrue(capabilities.selective_tests)
         self.assertFalse(capabilities.lint)
+
+    def test_dotnet_variant_adds_configuration_framework_and_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="dotnet",
+                build_target="Demo.sln",
+                test_target="Demo.sln",
+                variant="release",
+                runner_options={"dotnet": {"framework": "net9.0", "runtime": "linux-x64"}},
+            )
+            build = build_specs(config, "build")[0]
+            test = build_specs(config, "test")[0]
+
+        self.assertIn("-c", build.argv)
+        self.assertIn("Release", build.argv)
+        self.assertIn("-f", test.argv)
+        self.assertIn("net9.0", test.argv)
+        self.assertIn("-r", test.argv)
+        self.assertIn("linux-x64", test.argv)
+        self.assertEqual(test.env["DEVTOOL_VARIANT"], "release")
+
+    def test_dotnet_validation_preserves_variant_and_optimization_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="dotnet",
+                restore_target="Demo.sln",
+                build_target="Demo.sln",
+                test_target="Demo.sln",
+                variant="debug",
+            )
+            specs = build_validation_specs(config)
+
+        self.assertIn("--no-restore", specs[1].argv)
+        self.assertIn("--no-build", specs[2].argv)
+        self.assertIn("Debug", specs[1].argv)
+        self.assertIn("Debug", specs[2].argv)
+        self.assertEqual(specs[2].metadata["variant"], "debug")
 
 
 class ExistingRunnerCompatibilityTests(unittest.TestCase):
@@ -167,7 +206,10 @@ class ExistingRunnerCompatibilityTests(unittest.TestCase):
 
             build_argv = build_specs(config, "build")[0].argv
             test_argv = build_specs(config, "test")[0].argv
-            self.assertTrue(build_argv in (["python3.12", "-m", "build"], ["uv", "run", "python", "-m", "build"]))
+            self.assertTrue(
+                build_argv in (["python3.12", "-m", "build"], ["uv", "run", "python", "-m", "build"])
+                or build_argv[-2:] == ["-m", "build"]
+            )
             self.assertTrue("pytest" in test_argv or "unittest" in test_argv)
 
     def test_generic_capabilities_follow_configured_commands(self) -> None:

@@ -15,8 +15,8 @@ from unittest.mock import patch
 from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, build_parser, main
-from devtool.config import ProjectConfig
+from devtool.cli import _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, _validation_specs_for_args, build_parser, main
+from devtool.config import ProjectConfig, load_project_config
 from devtool.logstore import latest_log, write_log
 from devtool.models import CommandSpec, Issue, OperationResult
 from devtool.summary import build_json_summary
@@ -47,6 +47,34 @@ class CliTests(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["--execution-environment", "native-termux", "status"])
         self.assertEqual(args.execution_environment, "native-termux")
+
+    def test_parser_accepts_variant_matrix_mode(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--target", "api", "validate", "--matrix", "debug,release", "--matrix-mode", "variant"])
+        self.assertEqual(args.matrix_mode, "variant")
+
+    def test_variant_matrix_expands_validation_per_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "App.sln").write_text("", encoding="utf-8")
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='dotnet'\n"
+                "\n[targets.api]\nsolution='App.sln'\n"
+                "\n[targets.api.variants.debug.dotnet]\nconfiguration='Debug'\n"
+                "\n[targets.api.variants.release.dotnet]\nconfiguration='Release'\n",
+                encoding="utf-8",
+            )
+            parser = build_parser()
+            args = parser.parse_args([
+                "-r", str(root), "--target", "api",
+                "validate", "--matrix", "debug,release", "--matrix-mode", "variant",
+            ])
+            config = load_project_config(str(root), None, target_name="api")
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual([spec.metadata["matrix"] for spec in specs], ["debug", "debug", "debug", "release", "release", "release"])
+        self.assertIn("Debug", specs[1].argv)
+        self.assertIn("Release", specs[4].argv)
 
     def test_execution_environment_is_mutually_exclusive_with_legacy_chroot_flag(self) -> None:
         parser = build_parser()

@@ -34,6 +34,41 @@ dotnet test --no-build <target>
 
 Recognizable explicit `dotnet build` and `dotnet test` commands receive the same validation-only optimization. Standalone `devtool test` behavior is unchanged.
 
+## Variants
+
+Targets select the project or app; variants select the build/test flavor inside
+that target.
+
+```bash
+devtool --target mobile --variant release build
+devtool --target mobile validate --matrix debug,release --matrix-mode variant
+```
+
+Variants are declared per target and merge into the same runner option sections
+used by normal configuration:
+
+```toml
+[targets.mobile]
+type = "android"
+root = "apps/android"
+
+[targets.mobile.variants.release.android]
+variant = "release"
+
+[targets.api]
+type = "dotnet"
+solution = "src/App.sln"
+
+[targets.api.variants.release.dotnet]
+configuration = "Release"
+framework = "net9.0"
+```
+
+For .NET, built-in `debug` and `release` variants map to `-c Debug` and
+`-c Release` when no explicit .NET variant configuration is provided. Android
+variants feed existing Gradle task inference, such as `assembleRelease`,
+`testReleaseUnitTest`, and `lintRelease`.
+
 ## Adding a runner
 
 1. Subclass `ProjectRunner`.

@@ -63,6 +63,7 @@ class CompletionAndManpageTests(unittest.TestCase):
             ".SH PYTHON",
             ".SH SHELL COMPLETION",
             "--project-type",
+            "--variant",
             "--execution-environment",
             "--test-profile",
             "--instrumented",

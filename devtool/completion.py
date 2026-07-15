@@ -61,6 +61,24 @@ _devtool_test_profiles() {
   fi
 }
 
+_devtool_variants() {
+  local repo config
+  local -a variants
+  repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
+  config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
+  if [[ -r $config ]]; then
+    variants=(${(fu)"$(sed -nE \
+      -e 's/^\[variants\.([^].]+)\].*/\1/p' \
+      -e 's/^\[targets\.[^]]+\.variants\.([^].]+)(\.|]).*/\1/p' \
+      "$config" 2>/dev/null)"})
+  fi
+  if (( ${#variants} )); then
+    _describe -t variants 'variant' variants
+  else
+    _message 'build/test variant'
+  fi
+}
+
 _devtool_steps() {
   local -a steps
   steps=(
@@ -177,8 +195,8 @@ _devtool_validation_args() {
     '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
     '--watch[rerun validation when files change]' \
     '--watch-interval[seconds between watch polls]:seconds:' \
-    '--matrix[comma-separated runtime IDs or target names]:matrix:' \
-    '--matrix-mode[matrix interpretation]:mode:(rid target)' \
+    '--matrix[comma-separated runtime IDs, target names, or variants]:matrix:' \
+    '--matrix-mode[matrix interpretation]:mode:(rid target variant)' \
     '--fail-on-conflict[fail when nested overlays write the same path]' \
     '1:validation scope:(overlay overlays)' \
     '2:artifact:_devtool_artifact_path'
@@ -213,6 +231,7 @@ _devtool() {
     '(-r --repo)'{-r,--repo}'[repository root]:repo:_devtool_repo_path' \
     '(-c --config)'{-c,--config}'[configuration file]:config:_files' \
     '--target[named target/profile from .devtool.toml]:target:_devtool_targets' \
+    '--variant[build/test variant within the selected target]:variant:_devtool_variants' \
     '--solution[exact solution path for restore/build/test]:solution:_files' \
     '--project[exact project path for run/validation]:project:_files' \
     '--project-type[override project detection]:type:(auto dotnet android gradle python command unknown)' \
@@ -268,11 +287,14 @@ _devtool() {
             '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
             '--watch[rerun validation when files change]' \
             '--watch-interval[seconds between watch polls]:seconds:' \
-            '--matrix[comma-separated runtime IDs or target names]:matrix:' \
-            '--matrix-mode[matrix interpretation]:mode:(rid target)'
+            '--matrix[comma-separated runtime IDs, target names, or variants]:matrix:' \
+            '--matrix-mode[matrix interpretation]:mode:(rid target variant)'
           ;;
         doctor|dr)
           _arguments '--fix[create safe devtool state and cache directories]'
+          ;;
+        clean|cl)
+          _arguments '--caches[also prune devtool-managed caches and transient state]'
           ;;
         apply-overlay|ao|apply-overlays|aos|apply-snapshot|as)
           _devtool_apply_args

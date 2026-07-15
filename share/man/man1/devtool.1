@@ -196,6 +196,9 @@ Named target from
 .I .devtool.toml.
 Targets are opt-in and are never selected merely because a default target exists.
 .TP
+.BR --variant " NAME"
+Build/test variant within the selected target.
+.TP
 .BR --solution " PATH"
 Exact solution path for restore/build/test.
 .TP
@@ -378,10 +381,10 @@ Rerun validation when files change.
 Set the watch polling interval.
 .TP
 .BR --matrix " VALUES"
-Validate comma-separated runtime IDs or target names.
+Validate comma-separated runtime IDs, target names, or variants.
 .TP
-.BR --matrix-mode " rid|target"
-Interpret matrix values as runtime IDs or named targets.
+.BR --matrix-mode " rid|target|variant"
+Interpret matrix values as runtime IDs, named targets, or build/test variants.
 .PP
 Normal .NET validation is optimized as:
 .PP

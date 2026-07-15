@@ -349,6 +349,36 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         self.assertEqual(test_spec.metadata["report_parser"], "gradle-junit")
         self.assertEqual(lint_spec.metadata["report_parser"], "android-lint")
 
+    def test_cli_variant_overrides_android_option_for_inferred_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            staged = root / "state" / "build-apk"
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                variant="release",
+                runner_options={"android": {"variant": "debug"}},
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "DEVTOOL_ANDROID_BUILDER": str(staged),
+                    "DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "state" / "events.gradle"),
+                },
+                clear=False,
+            ):
+                build = build_specs(config, "build")[0]
+                test = build_specs(config, "test")[0]
+                lint = build_specs(config, "lint")[0]
+
+        self.assertIn("assembleRelease", build.argv)
+        self.assertIn("testReleaseUnitTest", test.argv)
+        self.assertIn("lintRelease", lint.argv)
+        self.assertEqual(build.metadata["variant"], "release")
+        self.assertEqual(build.env["DEVTOOL_VARIANT"], "release")
+
 
     def test_structured_gradle_events_do_not_duplicate_console_option(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

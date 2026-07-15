@@ -139,7 +139,7 @@ def configured_tasks(config: ProjectConfig, action: str) -> list[str]:
     if action == "clean":
         return ["clean"]
     android = _dict_option(config, "android")
-    variant = str(android.get("variant", "debug") or "debug").strip()
+    variant = str(config.variant or android.get("variant", "debug") or "debug").strip()
     variant_title = variant[:1].upper() + variant[1:]
     if action == "build":
         if project.android_application:

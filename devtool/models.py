@@ -58,6 +58,7 @@ class DotnetTarget:
     chroot_name: str = ""
     device_serial: str = ""
     options: dict[str, Any] = field(default_factory=dict)
+    variants: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def effective_restore_target(self) -> str:
         return self.restore_target or self.solution or self.build_target
@@ -90,6 +91,7 @@ class ProjectConfig:
     env: dict[str, str] = field(default_factory=dict)
     config_path: Path | None = None
     selected_target: str = ""
+    variant: str = ""
     targets: dict[str, DotnetTarget] = field(default_factory=dict)
     execution_environment: str = "auto"
     chroot_name: str = "androidos"

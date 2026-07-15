@@ -53,6 +53,7 @@ def load_project_config(
     config_path_arg: str | None,
     *,
     target_name: str = "",
+    variant_name: str = "",
     solution_override: str = "",
     project_override: str = "",
     kind_override: str = "",
@@ -99,6 +100,7 @@ def load_project_config(
     # chooses a target implicitly; use --target, --solution, or artifact metadata.
 
     selected_target_name = target_name.strip()
+    selected_variant_name = (variant_name.strip() or str(project_section.get("variant", "")).strip())
     explicit_solution = solution_override.strip()
     explicit_project = project_override.strip()
     config_solution = str(project_section.get("solution", "")).strip()
@@ -145,18 +147,30 @@ def load_project_config(
     ).strip()
 
     runner_options: dict[str, Any] = {}
-    for section_name in ("android", "gradle", "python", "tasks", "artifacts", "test_profiles", "validation"):
+    for section_name in ("android", "gradle", "python", "dotnet", "tasks", "artifacts", "test_profiles", "validation"):
         section_value = loaded.get(section_name, {})
         if isinstance(section_value, dict):
             runner_options[section_name] = dict(section_value)
     if selected_target is not None:
         for key, value in selected_target.options.items():
-            if isinstance(value, dict) and isinstance(runner_options.get(key), dict):
-                merged = dict(runner_options[key])
-                merged.update(value)
-                runner_options[key] = merged
-            else:
-                runner_options[key] = value
+            runner_options[key] = _merge_option_value(runner_options.get(key), value)
+        if selected_variant_name:
+            variant_options = selected_target.variants.get(selected_variant_name)
+            if isinstance(variant_options, dict):
+                for key, value in variant_options.items():
+                    if key == "env" and isinstance(value, dict):
+                        effective_env.update({str(k): str(v) for k, v in value.items()})
+                    else:
+                        runner_options[key] = _merge_option_value(runner_options.get(key), value)
+    elif selected_variant_name:
+        top_variants = loaded.get("variants", {}) if isinstance(loaded.get("variants", {}), dict) else {}
+        variant_options = top_variants.get(selected_variant_name) if isinstance(top_variants, dict) else None
+        if isinstance(variant_options, dict):
+            for key, value in variant_options.items():
+                if key == "env" and isinstance(value, dict):
+                    effective_env.update({str(k): str(v) for k, v in value.items()})
+                elif isinstance(value, dict):
+                    runner_options[key] = _merge_option_value(runner_options.get(key), value)
     project_root = (selected_target.root if selected_target and selected_target.root else "")
     if not project_root:
         configured_root = str(project_section.get("root", "")).strip()
@@ -187,6 +201,7 @@ def load_project_config(
         env=effective_env,
         config_path=config_path,
         selected_target=resolved["selected_target"],
+        variant=selected_variant_name,
         targets=targets,
         execution_environment=execution_environment,
         chroot_name=chroot_name,
@@ -346,6 +361,35 @@ def _default_build_target(repo_root: Path, kind: str, section: dict[str, Any]) -
     return ""
 
 
+def _merge_option_value(current: Any, incoming: Any) -> Any:
+    if isinstance(current, dict) and isinstance(incoming, dict):
+        merged = dict(current)
+        for key, value in incoming.items():
+            merged[key] = _merge_option_value(merged.get(key), value)
+        return merged
+    return incoming
+
+
+def _load_target_variants(raw_value: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw_variants = raw_value.get("variants", {})
+    if not isinstance(raw_variants, dict):
+        return {}
+    variants: dict[str, dict[str, Any]] = {}
+    for raw_name, raw_options in raw_variants.items():
+        if not isinstance(raw_name, str) or not isinstance(raw_options, dict):
+            continue
+        name = raw_name.strip()
+        if not name:
+            continue
+        options: dict[str, Any] = {}
+        for option_name in ("android", "gradle", "python", "dotnet", "tasks", "artifacts", "test_profiles", "validation", "env"):
+            option_value = raw_options.get(option_name, {})
+            if isinstance(option_value, dict):
+                options[option_name] = dict(option_value)
+        variants[name] = options
+    return variants
+
+
 def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str]) -> dict[str, DotnetTarget]:
     if not isinstance(section, dict):
         return {}
@@ -369,7 +413,7 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             target_env[str(key)] = str(value)
         target_kind = str(raw_value.get("type", raw_value.get("kind", ""))).strip().lower()
         options: dict[str, Any] = {}
-        for option_name in ("android", "gradle", "python", "tasks", "artifacts", "test_profiles", "validation"):
+        for option_name in ("android", "gradle", "python", "dotnet", "tasks", "artifacts", "test_profiles", "validation"):
             option_value = raw_value.get(option_name, {})
             if isinstance(option_value, dict):
                 options[option_name] = dict(option_value)
@@ -388,6 +432,7 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             chroot_name=str(raw_value.get("chroot_name", "")).strip(),
             device_serial=str(raw_value.get("device_serial", "")).strip(),
             options=options,
+            variants=_load_target_variants(raw_value),
         )
     return targets
 
@@ -590,7 +635,8 @@ def generate_template(repo_root: Path) -> str:
     return f"""[project]
 kind = "{kind}" # auto | dotnet | android | gradle | python | command | unknown
 build_target = "{_display(repo_root, build_target)}"
-run_target = "{run_target}"{target_blocks}
+run_target = "{run_target}"
+variant = ""{target_blocks}
 python = "{sys.executable}"
 run_module = "{run_module}"
 restore_command = ""
@@ -617,6 +663,11 @@ offline = false
 manager = "auto"
 # lint = ["ruff", "mypy"]
 # test_framework = "auto"
+
+[dotnet]
+# configuration = "Debug"
+# framework = "net9.0"
+# runtime = "linux-x64"
 
 [tasks]
 # restore = ["help"]
@@ -870,6 +921,7 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
             "test_target": config.test_target,
             "run_target": config.run_target,
             "selected_target": config.selected_target,
+            "variant": config.variant,
             "python": config.python_executable,
             "run_module": config.run_module,
             "restore_command": config.restore_command,
@@ -897,6 +949,7 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
                 "chroot_name": target.chroot_name,
                 "device_serial": target.device_serial,
                 "options": target.options,
+                "variants": target.variants,
             }
             for name, target in sorted(config.targets.items())
         },

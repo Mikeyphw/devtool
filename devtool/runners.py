@@ -136,10 +136,10 @@ def runner_capabilities(config: ProjectConfig):
 def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
     runner = get_project_runner(config)
     if action == "validate":
-        return runner.build_validation_specs(config)
+        return _apply_config_metadata(config, runner.build_validation_specs(config))
     if action == "wine-validate":
-        return runner.build_validation_specs(config, wine=True)
-    return runner.build_specs(config, action)
+        return _apply_config_metadata(config, runner.build_validation_specs(config, wine=True))
+    return _apply_config_metadata(config, runner.build_specs(config, action))
 
 
 def build_validation_specs(
@@ -150,13 +150,29 @@ def build_validation_specs(
     skip_build: bool = False,
     skip_test: bool = False,
 ) -> list[CommandSpec]:
-    return get_project_runner(config).build_validation_specs(
+    return _apply_config_metadata(config, get_project_runner(config).build_validation_specs(
         config,
         wine=wine,
         skip_restore=skip_restore,
         skip_build=skip_build,
         skip_test=skip_test,
-    )
+    ))
+
+
+def _apply_config_metadata(config: ProjectConfig, specs: list[CommandSpec]) -> list[CommandSpec]:
+    if not config.variant and not config.selected_target:
+        return specs
+    for spec in specs:
+        metadata = dict(spec.metadata)
+        if config.selected_target:
+            metadata.setdefault("target", config.selected_target)
+        if config.variant:
+            metadata.setdefault("variant", config.variant)
+            env = dict(spec.env)
+            env.setdefault("DEVTOOL_VARIANT", config.variant)
+            spec.env = env
+        spec.metadata = metadata
+    return specs
 
 
 def _contains_dotnet_cli(argv: Sequence[str]) -> bool:

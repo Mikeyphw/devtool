@@ -438,6 +438,10 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
     catalog = discover_tests(config)
     selected_catalog = select_catalog(catalog, selection)
     metadata["test_selection"] = selection.as_dict()
+    if config.selected_target:
+        metadata["target"] = config.selected_target
+    if config.variant:
+        metadata["variant"] = config.variant
     if catalog:
         metadata["test_catalog_discovered"] = len(catalog)
         metadata["test_catalog_selected"] = len(selected_catalog) if selection.active() else len(catalog)

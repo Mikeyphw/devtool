@@ -117,6 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     project.add_argument("-r", "--repo", default=None, help="Repository root")
     project.add_argument("-c", "--config", default=None, help="Config file path")
     project.add_argument("--target", default="", help="Named target/profile from .devtool.toml")
+    project.add_argument("--variant", default="", help="Build/test variant within the selected target")
     project.add_argument("--solution", default="", help="Exact solution path for restore/build/test")
     project.add_argument("--project", default="", help="Exact project path for run/validation")
     project.add_argument(
@@ -227,8 +228,8 @@ def build_parser() -> argparse.ArgumentParser:
                 cmd.add_argument("--fail-on-conflict", action="store_true", help="For overlay bundles, fail if multiple nested overlays write the same file")
             cmd.add_argument("--watch", action="store_true", help="Rerun validation when files change")
             cmd.add_argument("--watch-interval", type=float, default=1.5, help="Seconds between watch polls")
-            cmd.add_argument("--matrix", default="", help="Comma-separated runtime IDs or target names to validate")
-            cmd.add_argument("--matrix-mode", choices=["rid", "target"], default="rid")
+            cmd.add_argument("--matrix", default="", help="Comma-separated runtime IDs, target names, or variants to validate")
+            cmd.add_argument("--matrix-mode", choices=["rid", "target", "variant"], default="rid")
             cmd.add_argument("--test-profile", default="", help="Saved test profile used by validation")
 
     ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
@@ -1201,6 +1202,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             args.repo,
             args.config,
             target_name=target_name,
+            variant_name=str(getattr(args, "variant", "") or ""),
             solution_override=solution,
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
@@ -1219,6 +1221,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
                 args.repo,
                 args.config,
                 target_name="",
+                variant_name=str(getattr(args, "variant", "") or ""),
                 solution_override=solution,
                 project_override=project,
                 kind_override=str(getattr(args, "project_type", "auto") or "auto"),
@@ -1391,6 +1394,8 @@ def _print_test_catalog(config: ProjectConfig, args: argparse.Namespace, *, as_j
     if as_json:
         print(json.dumps({
             "project_type": config.kind,
+            "target": config.selected_target,
+            "variant": config.variant,
             "discovered": len(catalog),
             "selected": len(selected),
             "tests": [item.as_dict() for item in selected],
@@ -1521,6 +1526,7 @@ def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, 
                 args.repo,
                 args.config,
                 target_name=target,
+                variant_name=str(getattr(args, "variant", "") or ""),
                 solution_override=solution or args.solution,
                 project_override=args.project,
                 kind_override=str(getattr(args, "project_type", "auto") or "auto"),
@@ -1543,6 +1549,7 @@ def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, 
                 args.repo,
                 args.config,
                 target_name=item,
+                variant_name=str(getattr(args, "variant", "") or ""),
                 solution_override=args.solution,
                 project_override=args.project,
                 kind_override=str(getattr(args, "project_type", "auto") or "auto"),
@@ -1561,6 +1568,7 @@ def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, 
                 args.repo,
                 args.config,
                 target_name=item,
+                variant_name=str(getattr(args, "variant", "") or ""),
                 solution_override=args.solution,
                 project_override=args.project,
                 kind_override=str(getattr(args, "project_type", "auto") or "auto"),
@@ -1570,6 +1578,27 @@ def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, 
                 spec.name = f"{spec.name}[{item}]"
                 spec.metadata["matrix"] = item
                 spec.metadata["matrix_mode"] = "target"
+            specs.extend(target_specs)
+        return specs
+    if items and getattr(args, "matrix_mode", "rid") == "variant":
+        specs: list[CommandSpec] = []
+        target_name = str(getattr(args, "target", "") or "")
+        for item in items:
+            variant_config = load_project_config(
+                args.repo,
+                args.config,
+                target_name=target_name,
+                variant_name=item,
+                solution_override=args.solution,
+                project_override=args.project,
+                kind_override=str(getattr(args, "project_type", "auto") or "auto"),
+            )
+            target_specs = _validation_specs(variant_config, args, parser)
+            for spec in target_specs:
+                spec.name = f"{spec.name}[{item}]"
+                spec.metadata["matrix"] = item
+                spec.metadata["matrix_mode"] = "variant"
+                spec.metadata["variant"] = item
             specs.extend(target_specs)
         return specs
     specs = _validation_specs(config, args, parser)
@@ -1912,6 +1941,7 @@ def _reload_config_after_artifact_apply(args: argparse.Namespace, fallback: Proj
             args.repo,
             args.config,
             target_name=target,
+            variant_name=str(getattr(args, "variant", "") or ""),
             solution_override=solution,
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
@@ -2481,6 +2511,7 @@ def _run_sequential_overlays(
                     args.repo,
                     args.config,
                     target_name=target,
+                    variant_name=str(getattr(args, "variant", "") or ""),
                     solution_override=solution,
                     project_override=args.project,
                     kind_override=str(getattr(args, "project_type", "auto") or "auto"),
@@ -2619,7 +2650,15 @@ def _run_sequential_overlays(
                     if not target or target in seen_targets:
                         continue
                     seen_targets.add(target)
-                    final_config = load_project_config(args.repo, args.config, target_name=target, solution_override="", project_override=args.project, kind_override=str(getattr(args, "project_type", "auto") or "auto"))
+                    final_config = load_project_config(
+                        args.repo,
+                        args.config,
+                        target_name=target,
+                        variant_name=str(getattr(args, "variant", "") or ""),
+                        solution_override="",
+                        project_override=args.project,
+                        kind_override=str(getattr(args, "project_type", "auto") or "auto"),
+                    )
                     final_args = argparse.Namespace(**vars(args))
                     final_args.command = "apply-overlay"
                     specs = _validation_specs(final_config, final_args, parser)
@@ -3030,6 +3069,7 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
         ("xdg_data", str(devtool_xdg_dir())),
         ("python", config.python_executable),
         ("selected_target", config.selected_target or "-"),
+        ("variant", config.variant or "-"),
         ("restore_target", config.restore_target or "-"),
         ("build_target", config.build_target or "-"),
         ("test_target", config.test_target or "-"),
@@ -3057,6 +3097,7 @@ def _status(config: ProjectConfig, *, args: argparse.Namespace | None = None) ->
         ("execution_reason", plan.reason),
         ("chroot", plan.chroot_name or "-"),
         ("selected_target", config.selected_target or "-"),
+        ("variant", config.variant or "-"),
         ("restore_target", config.restore_target or "-"),
         ("build_target", config.build_target or "-"),
         ("test_target", config.test_target or "-"),
@@ -3077,6 +3118,7 @@ def _inspect_project(config: ProjectConfig, *, args: argparse.Namespace | None =
         ("runner_name", runner.display_name),
         ("project_root", config.project_root or str(config.repo_root)),
         ("selected_target", config.selected_target or "-"),
+        ("variant", config.variant or "-"),
     ]
     specific = runner.inspect_rows(config)
     if specific:
@@ -3196,6 +3238,7 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
                 getattr(args, "repo", None),
                 getattr(args, "config", None),
                 target_name=str(getattr(args, "target", "") or ""),
+                variant_name=str(getattr(args, "variant", "") or ""),
                 solution_override=str(getattr(args, "solution", "") or ""),
                 project_override=str(getattr(args, "project", "") or ""),
                 kind_override=str(getattr(args, "project_type", "auto") or "auto"),
@@ -3568,7 +3611,7 @@ def main(argv: list[str] | None = None) -> int:
                 _maybe_copy(raw_output, summary_text, json_text, args)
                 return 0 if failed == 0 else 1
         config = load_project_config(
-            str(repo), args.config, kind_override=str(getattr(args, "project_type", "auto") or "auto")
+            str(repo), args.config, variant_name=str(getattr(args, "variant", "") or ""), kind_override=str(getattr(args, "project_type", "auto") or "auto")
         )
         if args.command in {"doctor", "dr"}:
             _doctor(config, fix=getattr(args, "fix", False), args=args)

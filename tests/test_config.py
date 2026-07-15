@@ -153,6 +153,29 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(selected.chroot_name, "ubuntu")
         self.assertEqual(selected.device_serial, "target-device")
 
+    def test_named_target_variant_options_override_target_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            android = root / "apps" / "android"
+            android.mkdir(parents=True)
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='auto'\n"
+                "\n[android]\nvariant='debug'\n"
+                "\n[targets.mobile]\ntype='android'\nroot='apps/android'\n"
+                "\n[targets.mobile.android]\nvariant='debug'\n"
+                "\n[targets.mobile.variants.release.android]\nvariant='release'\n"
+                "\n[targets.mobile.variants.release.gradle]\nmax_workers=2\n"
+                "\n[targets.mobile.variants.release.env]\nDEV_FLAVOR='release'\n",
+                encoding="utf-8",
+            )
+
+            config = load_project_config(str(root), None, target_name="mobile", variant_name="release")
+
+        self.assertEqual(config.variant, "release")
+        self.assertEqual(config.runner_options["android"]["variant"], "release")
+        self.assertEqual(config.runner_options["gradle"]["max_workers"], 2)
+        self.assertEqual(config.env["DEV_FLAVOR"], "release")
+
     def test_generated_template_documents_execution_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

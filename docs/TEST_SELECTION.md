@@ -13,6 +13,7 @@ devtool test --path tests/parser
 devtool test --failed
 devtool test --changed --changed-from origin/main
 devtool test --profile quick
+devtool --variant release test --profile quick
 ```
 
 The source catalog records a stable test ID, suite/class, project/module,
@@ -61,3 +62,8 @@ devtool apply-overlay patch.zip --validate --test-profile full
 
 Reports preserve the distinction between discovered, selected, executed,
 passed, failed, skipped, and excluded tests.
+
+When a variant is selected, test command planning records it in command
+metadata and applies the runner's variant behavior before translating test
+selectors. For example, Android `--variant release` infers
+`testReleaseUnitTest`, while .NET `--variant release` adds `-c Release`.
