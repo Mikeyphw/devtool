@@ -71,6 +71,7 @@ from .repair_policy import repair_summary_lines_from_payload, repair_summary_lin
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
+from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
 from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
 from .validation_evidence import preserve_validation_evidence
 from .single_run import SingleRunLock
@@ -1464,6 +1465,8 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
     items = _matrix_items(args)
     if items and getattr(args, "matrix_mode", "rid") == "rid":
         specs = apply_matrix(specs, items, mode="rid")
+
+    specs = apply_toolchain_wrapper(config, specs)
 
     plan = _execution_plan_for_args(config, args)
     preflight = preflight_execution(
@@ -3077,6 +3080,7 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
         ("wine", config.env.get("SIMSTOOLKIT_WINE_PATH", os.environ.get("SIMSTOOLKIT_WINE_PATH", "")) or "-"),
         ("fixed", ", ".join(fixed) if fixed else "-"),
     ]
+    rows.extend(toolchain_doctor_rows(config))
     rows.extend(runner.doctor_rows(config))
     render_status_table(rows)
 

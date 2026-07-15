@@ -83,6 +83,18 @@ environment = "auto"
 chroot_name = "androidos"
 ```
 
+Projects can optionally run planned build/test commands through
+[`mise`](https://mise.jdx.dev/) without making it a devtool dependency:
+
+```toml
+[toolchain]
+manager = "auto" # auto | mise | none
+```
+
+`auto` uses `mise exec -- ...` only when `mise` is available and the project
+contains `mise.toml`, `.mise.toml`, or `.tool-versions`. `DEVTOOL_TOOLCHAIN`
+can override the config for one run.
+
 `.NET` validation reuses prior phases rather than performing redundant work:
 `restore`, `build --no-restore`, then `test --no-build`. Recognizable explicit
 `dotnet build` and `dotnet test` commands receive the same validation-only

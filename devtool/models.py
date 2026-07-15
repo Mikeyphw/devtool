@@ -97,6 +97,7 @@ class ProjectConfig:
     chroot_name: str = "androidos"
     device_serial: str = ""
     project_root: str = ""
+    toolchain_manager: str = "auto"
     runner_options: dict[str, Any] = field(default_factory=dict)
 
     def resolve_repo_relative(self, value: str) -> str:

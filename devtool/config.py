@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import DotnetTarget, ProjectConfig
+from .toolchains import normalize_toolchain_manager
 
 CONFIG_NAME = ".devtool.toml"
 PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
@@ -72,6 +73,7 @@ def load_project_config(
     project_section = _apply_project_env_overrides(dict(loaded.get("project", {})))
     env_section = _apply_runtime_env_overrides({str(k): str(v) for k, v in loaded.get("env", {}).items()})
     execution_section = loaded.get("execution", {}) if isinstance(loaded.get("execution", {}), dict) else {}
+    toolchain_section = loaded.get("toolchain", {}) if isinstance(loaded.get("toolchain", {}), dict) else {}
 
     kind = str(kind_override or project_section.get("kind", "auto")).strip().lower() or "auto"
     if kind not in {"auto", "dotnet", "android", "gradle", "python", "command", "unknown"}:
@@ -145,6 +147,16 @@ def load_project_config(
         or execution_section.get("device_serial", "")
         or project_section.get("device_serial", "")
     ).strip()
+    try:
+        toolchain_manager = normalize_toolchain_manager(
+            str(
+                toolchain_section.get("manager", "")
+                or project_section.get("toolchain", "")
+                or "auto"
+            )
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     runner_options: dict[str, Any] = {}
     for section_name in ("android", "gradle", "python", "dotnet", "tasks", "artifacts", "test_profiles", "validation"):
@@ -207,6 +219,7 @@ def load_project_config(
         chroot_name=chroot_name,
         device_serial=device_serial,
         project_root=project_root,
+        toolchain_manager=toolchain_manager,
         runner_options=runner_options,
     )
 
@@ -649,6 +662,9 @@ package_command = ""
 environment = "auto" # auto | native-termux | chroot | desktop-linux | android-device | external-device
 chroot_name = "androidos"
 device_serial = ""
+
+[toolchain]
+manager = "auto" # auto | mise | none
 
 [android]
 variant = "debug"
