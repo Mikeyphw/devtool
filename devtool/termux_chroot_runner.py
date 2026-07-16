@@ -34,6 +34,7 @@ from .execution_environments import (
     translate_host_path,
 )
 from .models import CommandSpec
+from .xdg import cache_dir, state_dir
 
 _PATH_VALUE_FLAGS = {
     "-r", "--repo", "-c", "--config", "--solution", "--project",
@@ -964,7 +965,7 @@ def run_auto_chroot(argv: list[str], *, env: Mapping[str, str] | None = None, cw
     forwarded, machine_path, cleanup_machine_path = prepare_host_clipboard_run(config, adapted_forwarded)
     cmd = build_runner_command(config, forwarded)
 
-    log_root = Path(env.get("DEVTOOL_TERMUX_CHROOT_LOG_DIR", "~/.cache/devtool/termux-chroot-runner")).expanduser()
+    log_root = Path(env.get("DEVTOOL_TERMUX_CHROOT_LOG_DIR", str(cache_dir() / "termux-chroot-runner"))).expanduser()
     log_root.mkdir(parents=True, exist_ok=True)
     raw_logfile = log_root / f"devtool-chroot-{_stamp()}.ansi.log"
     plain_logfile = _plain_log_path_for(raw_logfile)
@@ -981,7 +982,7 @@ def run_auto_chroot(argv: list[str], *, env: Mapping[str, str] | None = None, cw
         bridge_dir = child_env.get("DEVTOOL_HUD_BRIDGE_DIR", "/home/termux/.local/state/devtool-android-hud")
         child_env["DEVTOOL_HUD_BRIDGE_DIR"] = bridge_dir
         child_env.setdefault("DEVTOOL_HUD_SINGLETON", "kill")
-        host_bridge_dir = Path(env.get("DEVTOOL_ANDROID_HUD_STATE_DIR", "~/.local/state/devtool-android-hud")).expanduser()
+        host_bridge_dir = Path(env.get("DEVTOOL_ANDROID_HUD_STATE_DIR", str(state_dir().parent / "devtool-android-hud"))).expanduser()
         _start_android_hud_bridge(raw_logfile, host_bridge_dir)
 
     _make_live_rule(raw_logfile)
@@ -1047,7 +1048,7 @@ def prepare_host_clipboard_run(config: RunnerConfig, forwarded: list[str]) -> tu
         translated_back = _translate_chroot_path_to_host(machine_path, config.path_map) if config.translate_paths else machine_path
         host_machine_path = Path(translated_back).expanduser() if translated_back else None
     else:
-        host_root = Path(os.environ.get("DEVTOOL_TERMUX_CHROOT_RUNNER_STATE", "~/.cache/devtool/termux-chroot-runner")).expanduser()
+        host_root = Path(os.environ.get("DEVTOOL_TERMUX_CHROOT_RUNNER_STATE", str(cache_dir() / "termux-chroot-runner"))).expanduser()
         host_root.mkdir(parents=True, exist_ok=True)
         handle = tempfile.NamedTemporaryFile(prefix="machine-", suffix=".json", dir=host_root, delete=False)
         handle.close()

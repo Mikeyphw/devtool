@@ -385,6 +385,16 @@ def parse_chroot_launch_options(raw_args: Sequence[str]) -> ChrootLaunchOptions:
     )
 
 
+def devtool_cache_dir() -> Path:
+    override = os.environ.get("DEVTOOL_XDG_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    raw = os.environ.get("XDG_CACHE_HOME", "").strip()
+    if raw:
+        return Path(raw).expanduser() / "devtool"
+    return Path.home() / ".cache" / "devtool"
+
+
 def map_termux_path(value: str, termux_home: Path, chroot_termux_home: Path) -> str:
     """Map a Termux-host path to the path exposed inside the chroot."""
     if value == "~":
@@ -413,7 +423,7 @@ def map_termux_argument(argument: str, termux_home: Path, chroot_termux_home: Pa
 
 def stage_builder_for_chroot(termux_home: Path, chroot_termux_home: Path) -> tuple[Path, Path]:
     source = Path(__file__).resolve()
-    host_target = termux_home / ".cache" / APP_NAME / "chroot" / "gradle-build.py"
+    host_target = devtool_cache_dir() / APP_NAME / "chroot" / "gradle-build.py"
     host_target.parent.mkdir(parents=True, exist_ok=True)
     needs_copy = not host_target.is_file()
     if not needs_copy:
@@ -1748,7 +1758,7 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-J", "--min-java", type=int, help="Minimum Java version; inferred when omitted")
     parser.add_argument("-g", "--gradle-command", help="Explicit Gradle or gradlew executable")
     parser.add_argument("-G", "--gradle-version", help="Managed Gradle version when no wrapper is available")
-    parser.add_argument("-k", "--cache-dir", type=Path, default=Path.home() / ".cache" / APP_NAME)
+    parser.add_argument("-k", "--cache-dir", type=Path, default=devtool_cache_dir() / APP_NAME)
     parser.add_argument("-w", "--max-workers", type=int, default=max(1, min(4, os.cpu_count() or 2)))
     parser.add_argument("-O", "--offline", action="store_true", help="Disable downloads and Gradle network access")
     parser.add_argument("-f", "--force-setup", action="store_true", help="Refresh managed Gradle/AAPT2 downloads")

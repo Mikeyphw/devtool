@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from pathlib import Path
 import re
+import shutil
+
+from .xdg import state_dir as _xdg_state_dir
 
 
 def state_dir() -> Path:
-    return Path.home() / ".local" / "state" / "devtool"
+    return _xdg_state_dir()
 
 
 def logs_dir() -> Path:
@@ -17,6 +21,32 @@ def logs_dir() -> Path:
 
 def new_log_path() -> Path:
     return logs_dir() / f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.log"
+
+
+def _is_phone_termux() -> bool:
+    prefix = os.environ.get("PREFIX", "")
+    home = os.environ.get("HOME", "")
+    return bool(
+        os.environ.get("TERMUX_VERSION")
+        or os.environ.get("TERMUX_APP_PID")
+        or prefix.startswith("/data/data/com.termux/")
+        or home.startswith("/data/data/com.termux/files/home")
+    )
+
+
+def _mirror_log_to_phone(path: Path) -> None:
+    if not _is_phone_termux() or path.suffix != ".log":
+        return
+    mirror_root = Path(os.environ.get("DEVTOOL_PHONE_LOG_MIRROR_DIR", "/sdcard/.logs/devtool")).expanduser()
+    try:
+        resolved = path.resolve(strict=False)
+        logs_root = logs_dir().resolve(strict=False)
+        if not (resolved == logs_root or logs_root in resolved.parents):
+            return
+        mirror_root.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, mirror_root / path.name)
+    except OSError:
+        pass
 
 
 _SECRET_ASSIGNMENT = re.compile(
@@ -44,6 +74,7 @@ def write_log(text: str, path: Path | str | None = None, *, append: bool = False
             handle.write(text)
     else:
         target.write_text(text, encoding="utf-8")
+    _mirror_log_to_phone(target)
     return target
 
 

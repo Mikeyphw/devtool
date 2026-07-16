@@ -14,14 +14,7 @@ from typing import Any
 
 from .artifacts import preview_artifact, read_delete_manifest
 from .models import OperationResult
-
-
-
-def _xdg_data_home() -> Path:
-    raw = os.environ.get("XDG_DATA_HOME")
-    if raw:
-        return Path(raw).expanduser()
-    return Path.home() / ".local" / "share"
+from .xdg import data_dir
 
 
 def devtool_xdg_dir() -> Path:
@@ -30,10 +23,7 @@ def devtool_xdg_dir() -> Path:
     DEVTOOL_XDG_DIR is intentionally supported for tests, Termux, and power users
     that want the complete devtool state tree in a non-default location.
     """
-    raw = os.environ.get("DEVTOOL_XDG_DIR")
-    if raw:
-        return Path(raw).expanduser()
-    return _xdg_data_home() / "devtool"
+    return data_dir()
 
 
 def _repo_key(repo_root: Path) -> str:

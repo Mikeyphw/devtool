@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .xdg import state_dir
+
 
 def default_ipc_socket_path() -> Path:
     override = os.environ.get("DEVTOOL_IPC_SOCKET", "").strip()
@@ -23,9 +25,7 @@ def default_ipc_socket_path() -> Path:
     runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     if runtime:
         return Path(runtime).expanduser() / "devtool" / "control-center.sock"
-    state = os.environ.get("XDG_STATE_HOME", "").strip()
-    root = Path(state).expanduser() if state else Path.home() / ".local" / "state"
-    return root / "devtool" / "control-center.sock"
+    return state_dir() / "control-center.sock"
 
 
 def _json_line(payload: dict[str, Any]) -> bytes:

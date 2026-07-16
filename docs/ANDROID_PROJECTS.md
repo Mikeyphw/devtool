@@ -84,10 +84,10 @@ build-apk . --task assembleDebug --output-dir "$HOME/Downloads"
 ```
 
 The implementation is `devtool.android_build`. Devtool stages a self-contained
-copy under:
+copy under the devtool XDG data directory:
 
 ```text
-$HOME/.local/share/devtool/android/build-apk
+${DEVTOOL_XDG_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/devtool}/android/build-apk
 ```
 
 The backend provides:
@@ -103,10 +103,10 @@ The backend provides:
 
 ## Exact Gradle progress
 
-Devtool stages a bundled init script under:
+Devtool stages a bundled init script under the same XDG data root:
 
 ```text
-$HOME/.local/share/devtool/gradle/devtool-events.init.gradle
+${DEVTOOL_XDG_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/devtool}/gradle/devtool-events.init.gradle
 ```
 
 The script emits ordered `DEVTOOL_EVENT` JSON lines for:

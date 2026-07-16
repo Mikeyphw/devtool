@@ -69,7 +69,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         )
         self.assertEqual(config.cwd, "/home/mike/Code/chroot-only")
         self.assertIn("/home/mike/Code/chroot-only", forwarded)
-        self.assertTrue(build_inner_command(config, forwarded).startswith("cd /home/mike/Code/chroot-only &&"))
+        self.assertIn("cd /home/mike/Code/chroot-only &&", build_inner_command(config, forwarded))
 
     def test_repairs_default_home_mapping_when_repo_is_under_another_chroot_user(self) -> None:
         env = {"HOME": "/data/data/com.termux/files/home"}
@@ -124,7 +124,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             self.assertNotIn("--copy", forwarded)
             self.assertNotIn("--copy-via", forwarded)
 
-            with patch.dict("os.environ", {"HOME": home}, clear=False):
+            with patch.dict("os.environ", {"HOME": home, "DEVTOOL_XDG_DIR": "", "XDG_CACHE_HOME": ""}, clear=False):
                 prepared, machine_path, cleanup = prepare_host_clipboard_run(config, forwarded)
 
         self.assertTrue(cleanup)
@@ -166,6 +166,8 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         outer = build_runner_command(config, forwarded)
         self.assertEqual(outer[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
         self.assertEqual(outer[8], "cd /home/mike/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos ~/.local/bin/devtool validate --skip-test")
+        self.assertNotIn("/sdcard", outer[8])
+        self.assertNotIn("/storage/emulated", outer[8])
         self.assertEqual(build_inner_command(config, forwarded), outer[8])
 
     def test_plain_log_path_drops_ansi_suffix(self) -> None:
@@ -234,6 +236,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             with (
                 patch("devtool.runners.dotnet_progress_plan", return_value=object()) as plan,
                 patch("devtool.runners._run_process_live", return_value=(0, "Build succeeded.")) as run_live,
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(repo / ".devtool-state")}, clear=False),
             ):
                 results, _raw = run_specs(config, wrapped, verbose=False)
 

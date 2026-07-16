@@ -284,6 +284,33 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         self.assertTrue(all(spec.metadata["progress_parser"] == "gradle" for spec in validation))
         self.assertTrue(init_script_exists)
 
+    def test_android_builder_and_gradle_init_default_to_xdg_data_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+            xdg = root / "xdg"
+            with patch.dict(
+                os.environ,
+                {
+                    "DEVTOOL_XDG_DIR": str(xdg),
+                    "DEVTOOL_ANDROID_BUILDER": "",
+                    "DEVTOOL_GRADLE_INIT_SCRIPT": "",
+                },
+                clear=False,
+            ):
+                build = build_specs(config, "build")[0]
+                init_index = build.argv.index("--init-script")
+                builder = Path(build.argv[1])
+                init_script = Path(build.argv[init_index + 1])
+                builder_exists = builder.is_file()
+                init_script_exists = init_script.is_file()
+
+        self.assertEqual(builder, xdg / "android" / "build-apk")
+        self.assertEqual(init_script, xdg / "gradle" / "devtool-events.init.gradle")
+        self.assertTrue(builder_exists)
+        self.assertTrue(init_script_exists)
+
     def test_configured_tasks_override_inference(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

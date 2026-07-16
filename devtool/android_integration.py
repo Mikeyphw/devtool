@@ -5,7 +5,7 @@ from __future__ import annotations
 The heavy toolchain implementation remains executable as a self-contained
 script so it can be copied from Termux into a mounted chroot.  This module owns
 configuration translation, lightweight inspection/doctor data, and staging the
-script in a stable path beneath the user's home directory.
+script in a stable XDG data path.
 """
 
 from dataclasses import dataclass
@@ -19,6 +19,7 @@ from typing import Any, Iterable
 from . import android_build
 from .execution_environments import CHROOT, NATIVE_TERMUX, detect_current_environment
 from .models import ProjectConfig
+from .xdg import data_dir
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,15 +47,15 @@ def _state_builder_path() -> Path:
     explicit = os.environ.get("DEVTOOL_ANDROID_BUILDER", "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return Path.home() / ".local" / "share" / "devtool" / "android" / "build-apk"
+    return data_dir() / "android" / "build-apk"
 
 
 def stage_android_builder(*, destination: Path | None = None) -> Path:
     """Install the self-contained builder in a chroot-visible home path.
 
     A normal Python console-script under Termux's ``$PREFIX`` is not visible in
-    most chroots.  The staged copy lives under ``$HOME`` so the shared path map
-    can translate it to ``/home/<user>/.local/share/devtool/...``.
+    most chroots.  The staged copy lives under the devtool XDG data directory,
+    which should be inside the Termux home mapping for Android chroot use.
     """
 
     source = Path(android_build.__file__).resolve()
@@ -82,7 +83,7 @@ def _state_gradle_init_path() -> Path:
     explicit = os.environ.get("DEVTOOL_GRADLE_INIT_SCRIPT", "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return Path.home() / ".local" / "share" / "devtool" / "gradle" / "devtool-events.init.gradle"
+    return data_dir() / "gradle" / "devtool-events.init.gradle"
 
 
 def stage_gradle_init_script(*, destination: Path | None = None) -> Path:

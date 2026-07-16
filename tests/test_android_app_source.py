@@ -134,6 +134,13 @@ def test_termux_run_command_expands_shell_home_in_workdir() -> None:
     assert 'HOME = "/data/data/com.termux/files/home"' in paths
 
 
+def test_termux_run_command_does_not_precreate_public_storage_log_directory() -> None:
+    runner = _java_source("TermuxCommandRunner.java")
+    assert ".logs/build-apk" not in runner
+    assert "/storage/emulated" not in runner
+    assert "shell.append(command)" in runner
+
+
 def test_termux_pending_intent_identity_is_not_reused() -> None:
     runner = _java_source("TermuxCommandRunner.java")
     assert "SecureRandom" in runner

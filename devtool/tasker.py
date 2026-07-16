@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .xdg import state_dir
+
 from .ipc import IpcPublisher, ensure_ipc_server
 
 from .console_utils import resolve_cli_path
@@ -58,10 +60,7 @@ def default_tasker_dir() -> str:
         return override
     if _is_termux_android():
         return ANDROID_TASKER_DIR
-    xdg_state = os.environ.get("XDG_STATE_HOME")
-    if xdg_state:
-        return str(Path(xdg_state) / "devtool")
-    return str(Path.home() / ".local" / "state" / "devtool")
+    return str(state_dir())
 
 
 DEFAULT_TASKER_DIR = default_tasker_dir()

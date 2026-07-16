@@ -5,17 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
+from .xdg import cache_dir, data_dir, state_dir
+
 
 def default_cache_root() -> Path:
-    return Path.home() / ".cache" / "devtool"
+    return cache_dir()
 
 
 def default_state_root() -> Path:
-    return Path.home() / ".local" / "state" / "devtool"
+    return state_dir()
 
 
 def default_share_root() -> Path:
-    return Path.home() / ".local" / "share" / "devtool"
+    return data_dir()
 
 
 def _remove_path(path: Path, *, dry_run: bool) -> bool:

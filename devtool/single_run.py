@@ -10,18 +10,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Any
 
+from .xdg import state_dir
+
 
 def _state_home() -> Path:
-    override = os.environ.get("DEVTOOL_XDG_DIR", "").strip()
-    if override:
-        return Path(override).expanduser()
     runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     if runtime:
         return Path(runtime).expanduser() / "devtool"
-    state = os.environ.get("XDG_STATE_HOME", "").strip()
-    if state:
-        return Path(state).expanduser() / "devtool"
-    return Path.home() / ".local" / "state" / "devtool"
+    return state_dir()
 
 
 def _repo_key(repo_root: Path) -> str:

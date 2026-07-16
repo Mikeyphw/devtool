@@ -18,6 +18,7 @@ from devtool import __version__
 from devtool.cli import _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, _validation_specs_for_args, build_parser, main
 from devtool.config import ProjectConfig, load_project_config
 from devtool.logstore import latest_log, write_log
+from devtool.xdg import cache_dir, data_dir, state_dir
 from devtool.models import CommandSpec, Issue, OperationResult
 from devtool.summary import build_json_summary
 
@@ -124,6 +125,52 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         cleanup_mock.assert_called_once_with(dry_run=False)
         run_specs.assert_called_once()
+
+    def test_logstore_honors_devtool_xdg_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "state")}, clear=False):
+                path = write_log("hello")
+        self.assertTrue(str(path).startswith(str(Path(tmp) / "state" / "logs")))
+
+    def test_xdg_helpers_honor_standard_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(
+                "os.environ",
+                {
+                    "DEVTOOL_XDG_DIR": "",
+                    "XDG_STATE_HOME": str(root / "state"),
+                    "XDG_DATA_HOME": str(root / "data"),
+                    "XDG_CACHE_HOME": str(root / "cache"),
+                },
+                clear=False,
+            ):
+                self.assertEqual(state_dir(), root / "state" / "devtool")
+                self.assertEqual(data_dir(), root / "data" / "devtool")
+                self.assertEqual(cache_dir(), root / "cache" / "devtool")
+
+    def test_phone_log_mirror_is_best_effort_copy_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mirror = root / "sdcard-logs"
+            with patch.dict(
+                "os.environ",
+                {
+                    "DEVTOOL_XDG_DIR": str(root / "xdg"),
+                    "DEVTOOL_PHONE_LOG_MIRROR_DIR": str(mirror),
+                    "HOME": "/data/data/com.termux/files/home",
+                    "PREFIX": "/data/data/com.termux/files/usr",
+                },
+                clear=False,
+            ):
+                path = write_log("phone log")
+                mirrored = mirror / path.name
+                mirrored_exists = mirrored.is_file()
+                mirrored_text = mirrored.read_text(encoding="utf-8") if mirrored_exists else ""
+
+        self.assertTrue(str(path).startswith(str(root / "xdg" / "logs")))
+        self.assertTrue(mirrored_exists)
+        self.assertEqual(mirrored_text, "phone log")
 
     def test_parser_rejects_commit_even_on_failure_flag(self) -> None:
         parser = build_parser()

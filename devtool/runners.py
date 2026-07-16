@@ -43,6 +43,7 @@ from .gradle_reports import collect_report_metadata
 from .transactions import create_apply_transaction, rollback_transaction
 from .logstore import write_log
 from .models import CommandSpec, OperationResult, ProjectConfig
+from .xdg import state_dir
 from .project_runners import (
     DotnetRunner as _DotnetRunner,
     GenericCommandRunner as _GenericCommandRunner,
@@ -97,7 +98,7 @@ def _termux_proot_etc_dir() -> Path:
     if prefix:
         base = Path(prefix) / "var" / "devtool" / "proot"
     else:
-        base = Path.home() / ".local" / "state" / "devtool" / "proot"
+        base = state_dir() / "proot"
     etc_dir = base / "etc"
     etc_dir.mkdir(parents=True, exist_ok=True)
     os_release = etc_dir / "os-release"
