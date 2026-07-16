@@ -150,7 +150,7 @@ _devtool_commands() {
     'detect:detect project type and targets'
     'targets:list named targets'
     'tg:alias for targets'
-    'logs:show the latest saved run log'
+    'logs:list, open, or tail devtool logs'
     'history:list structured run history'
     'rollback:rollback a recorded commit'
     'handoff:generate a repository handoff'
@@ -370,7 +370,16 @@ _devtool() {
           _arguments '--force[overwrite an existing configuration]' '1:repository:_devtool_repo_path'
           ;;
         logs)
-          _arguments '--print[print the selected log]' '1:log:(latest)'
+          _arguments \
+            '--print[print the latest log]' \
+            '--limit[number of logs to show]:count:' \
+            '--pager[pager]:pager:(auto bat cat)' \
+            '--lines[lines to show before following]:count:' \
+            '--no-follow[print selected active log tail and exit]' \
+            '--fzf[use fzf selection]' \
+            '--no-fzf[disable fzf selection]' \
+            '1:logs command:(latest list ls open show tail follow)' \
+            '*:log path:_files'
           ;;
         tag)
           _arguments '(-m --message)'{-m,--message}'[annotated tag message]:message:' '1:tag name:'

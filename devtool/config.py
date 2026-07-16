@@ -75,7 +75,9 @@ def load_project_config(
     execution_section = loaded.get("execution", {}) if isinstance(loaded.get("execution", {}), dict) else {}
     toolchain_section = loaded.get("toolchain", {}) if isinstance(loaded.get("toolchain", {}), dict) else {}
 
-    kind = str(kind_override or project_section.get("kind", "auto")).strip().lower() or "auto"
+    override_kind = str(kind_override or "").strip().lower()
+    config_kind = str(project_section.get("kind", "auto")).strip().lower() or "auto"
+    kind = override_kind if override_kind and override_kind != "auto" else config_kind
     if kind not in {"auto", "dotnet", "android", "gradle", "python", "command", "unknown"}:
         raise SystemExit(f"Unsupported project type: {kind}")
     explicit_dotnet_intent = bool(

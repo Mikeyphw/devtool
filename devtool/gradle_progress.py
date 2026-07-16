@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Gradle lifecycle progress driven by DEVTOOL_EVENT JSON lines."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any, Callable
 
 from rich.console import Console, Group
@@ -21,6 +22,16 @@ _EVENT_KINDS = {
     "test-suite-finish", "test-start", "test-finish", "build-finish",
 }
 _COUNTER_FIELDS = {"sequence", "current", "completed", "total", "passed", "failed", "skipped", "testsTotal", "durationMs"}
+_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\a]*(?:\a|\x1b\\)")
+_TASK_LINE_RE = re.compile(r"^>\s*Task\s+(?P<task>\S+)(?:\s+(?P<outcome>[A-Z][A-Z_-]+))?")
+_HEADING_RE = re.compile(r"^==>\s*(?P<heading>.+)")
+_LIFECYCLE_PREFIXES = (
+    "Calculating task graph",
+    "Reusing configuration cache",
+    "Configuration cache",
+    "BUILD SUCCESSFUL",
+    "BUILD FAILED",
+)
 
 
 @dataclass(slots=True)
@@ -54,6 +65,8 @@ class GradleProgressTracker:
     last_sequence: int = field(init=False, default=0)
     expected_run_id: str = field(init=False, default="")
     rejected_events: int = field(init=False, default=0)
+    structured_events_seen: bool = field(init=False, default=False)
+    fallback_lines: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
@@ -129,11 +142,14 @@ class GradleProgressTracker:
         if event is None:
             if prefixed:
                 self.rejected_events += 1
+                return
+            self._update_from_plain_gradle_line(line)
             return
         event_run_id = str(event.get("run_id") or "").strip()
         if self.expected_run_id and event_run_id != self.expected_run_id:
             self.rejected_events += 1
             return
+        self.structured_events_seen = True
         sequence = int(event.get("sequence") or 0)
         if sequence and sequence <= self.last_sequence:
             return
@@ -181,6 +197,44 @@ class GradleProgressTracker:
             if not event.get("success"):
                 self.errors = max(1, self.errors)
         self._publish()
+
+    def _update_from_plain_gradle_line(self, line: str) -> None:
+        if self.structured_events_seen:
+            return
+        text = _ANSI_RE.sub("", line).strip()
+        if not text:
+            return
+        match = _TASK_LINE_RE.match(text)
+        if match:
+            task = match.group("task") or ""
+            outcome = (match.group("outcome") or "").lower().replace("_", "-")
+            self.current_task = task
+            if self.total is None:
+                self.completed = (self.completed or 0) + 1
+            detail = task or "Gradle task"
+            if outcome:
+                detail += f": {outcome}"
+                if outcome == "failed":
+                    self.errors += 1
+            self.detail = detail
+            self.fallback_lines += 1
+            self._publish()
+            return
+
+        heading = _HEADING_RE.match(text)
+        if heading:
+            self.detail = heading.group("heading")
+            self.fallback_lines += 1
+            self._publish()
+            return
+
+        if any(text.startswith(prefix) for prefix in _LIFECYCLE_PREFIXES):
+            self.detail = text
+            if text.startswith("BUILD FAILED"):
+                self.errors = max(1, self.errors)
+            self.fallback_lines += 1
+            self._publish()
+            return
 
     def _update_tests(self, event: dict[str, Any]) -> None:
         self.tests_passed = int(event.get("passed") or 0)

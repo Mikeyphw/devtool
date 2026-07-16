@@ -64,6 +64,7 @@ from .clipboard import copy_text
 from .console_utils import create_console, resolve_cli_path
 from .completion import ZSH_COMPLETION
 from .config import detect_project_kind, discover_dotnet_candidates, load_project_config, resolve_config_dict
+from .log_commands import choose_active_log, format_log_entries, list_log_entries, open_log, resolve_log_path, tail_log
 from .logstore import latest_log, new_log_path
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
@@ -338,8 +339,22 @@ def build_parser() -> argparse.ArgumentParser:
     init_cfg.add_argument("--force", action="store_true")
 
     logs_cmd = subparsers.add_parser("logs")
-    logs_cmd.add_argument("which", choices=["latest"], default="latest", nargs="?")
-    logs_cmd.add_argument("--print", action="store_true")
+    logs_cmd.add_argument("--print", action="store_true", help="Print the latest log; kept for compatibility")
+    logs_sub = logs_cmd.add_subparsers(dest="logs_command")
+    logs_latest = logs_sub.add_parser("latest")
+    logs_latest.add_argument("--print", action="store_true")
+    logs_list = logs_sub.add_parser("list", aliases=["ls"])
+    logs_list.add_argument("--limit", type=int, default=25)
+    logs_open = logs_sub.add_parser("open", aliases=["show"])
+    logs_open.add_argument("selector", nargs="?", default="", help="Log path, 'latest', or empty for interactive selection")
+    logs_open.add_argument("--pager", choices=["auto", "bat", "cat"], default="auto")
+    logs_open.add_argument("--fzf", dest="fzf", action="store_true", default=True)
+    logs_open.add_argument("--no-fzf", dest="fzf", action="store_false")
+    logs_tail = logs_sub.add_parser("tail", aliases=["follow"])
+    logs_tail.add_argument("--lines", type=int, default=200)
+    logs_tail.add_argument("--no-follow", action="store_true", help="Print the selected active log tail and exit")
+    logs_tail.add_argument("--fzf", dest="fzf", action="store_true", default=True)
+    logs_tail.add_argument("--no-fzf", dest="fzf", action="store_false")
 
     tag_cmd = subparsers.add_parser("tag")
     tag_cmd.add_argument("name")
@@ -3469,15 +3484,37 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     if args.command in {"logs"}:
-        path = latest_log()
-        if not path:
-            console.print("[yellow]No logs found.[/yellow]")
+        logs_command = str(getattr(args, "logs_command", "") or "latest")
+        if logs_command in {"latest"}:
+            path = latest_log()
+            if not path:
+                console.print("[yellow]No logs found.[/yellow]")
+                return 0
+            if getattr(args, "print", False):
+                print(path.read_text(encoding="utf-8"))
+            else:
+                console.print(str(path))
             return 0
-        if args.print:
-            print(path.read_text(encoding="utf-8"))
-        else:
-            console.print(str(path))
-        return 0
+        if logs_command in {"list", "ls"}:
+            entries = list_log_entries()
+            limit = max(1, int(getattr(args, "limit", 25) or 25))
+            for line in format_log_entries(entries[-limit:]):
+                console.print(line)
+            return 0
+        if logs_command in {"open", "show"}:
+            path = resolve_log_path(str(getattr(args, "selector", "") or ""), use_fzf=bool(getattr(args, "fzf", True)))
+            if not path:
+                console.print("[yellow]No log selected.[/yellow]")
+                return 1
+            return open_log(path, pager=str(getattr(args, "pager", "auto") or "auto"))
+        if logs_command in {"tail", "follow"}:
+            path = choose_active_log(use_fzf=bool(getattr(args, "fzf", True)))
+            if not path:
+                console.print("[yellow]No active devtool run with a log was found.[/yellow]")
+                return 1
+            return tail_log(path, lines=int(getattr(args, "lines", 200) or 200), follow=not bool(getattr(args, "no_follow", False)))
+        console.print(f"[red]Unknown logs command: {logs_command}[/red]")
+        return 2
 
     if args.command == "init-config":
         target = write_template_config(Path(args.repo_root), force=args.force)
@@ -3661,6 +3698,8 @@ def main(argv: list[str] | None = None) -> int:
     _ensure_run_id(args)
     _single_run_lock = _acquire_single_run_lock(config, args)
     tasker_progress = _live_progress_for_args(args, config)
+    if tasker_progress is not None:
+        tasker_progress.log_path = str(log_path)
 
     started_at = datetime.now(timezone.utc)
     if tasker_progress is not None:

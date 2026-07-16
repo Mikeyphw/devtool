@@ -41,7 +41,7 @@ from .generic_progress import GenericProgressTracker
 from .gradle_progress import GradleProgressTracker
 from .gradle_reports import collect_report_metadata
 from .transactions import create_apply_transaction, rollback_transaction
-from .logstore import write_log
+from .logstore import redact_sensitive_text, write_log
 from .models import CommandSpec, OperationResult, ProjectConfig
 from .xdg import state_dir
 from .project_runners import (
@@ -538,7 +538,32 @@ def _run_process_live(
     target_phase_index: int | None = None,
     target_phase_total: int | None = None,
     progress_parser: str = "",
+    live_log_path: Path | str | None = None,
+    live_log_header: str = "",
 ) -> tuple[int, str]:
+    live_log_handle = None
+    if live_log_path is not None:
+        try:
+            if live_log_header:
+                write_log(live_log_header, live_log_path, append=True)
+            live_log_handle = Path(live_log_path).open("a", encoding="utf-8")
+        except OSError:
+            live_log_handle = None
+
+    def _append_live_log(line: str) -> None:
+        if live_log_handle is None:
+            return
+        try:
+            live_log_handle.write(redact_sensitive_text(line))
+            live_log_handle.flush()
+        except OSError:
+            pass
+
+    def _close_live_log() -> None:
+        if live_log_handle is not None:
+            with contextlib.suppress(Exception):
+                live_log_handle.close()
+
     try:
         proc = subprocess.Popen(
             argv,
@@ -565,10 +590,15 @@ def _run_process_live(
                 check=False,
             )
             output = completed.stdout or ""
+            if live_log_handle is not None and output:
+                _append_live_log(output)
             if verbose and output:
                 print(output, end="", flush=True)
+            _close_live_log()
             return completed.returncode, output
         except OSError:
+            _append_live_log(str(exc))
+            _close_live_log()
             return 127, str(exc)
 
     output_parts: list[str] = []
@@ -694,6 +724,7 @@ def _run_process_live(
         if tracker is None:
             for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout, completion_idle_grace=completion_idle_grace, completion_status_detector=completion_detector):
                 output_parts.append(line)
+                _append_live_log(line)
                 print(line, end="", flush=True)
             code = _wait_process_returncode(proc)
             if tasker_progress is not None and tasker_progress.cancel_requested():
@@ -703,6 +734,7 @@ def _run_process_live(
         with tracker:
             for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout, completion_idle_grace=completion_idle_grace, completion_status_detector=completion_detector):
                 output_parts.append(line)
+                _append_live_log(line)
                 # Non-verbose mode intentionally keeps command stdout/stderr captured only.
                 # Dotnet commands get a parsed Rich progress display instead of raw output.
                 # Use --verbose when the full restore/build/test stream is needed live.
@@ -730,6 +762,7 @@ def _run_process_live(
             cancel_watcher.join(timeout=0.25)
         if tasker_progress is not None:
             tasker_progress.clear_cancel()
+        _close_live_log()
         with contextlib.suppress(Exception):
             proc.stdout.close()
 
@@ -953,6 +986,8 @@ def run_specs(
         started_wall = time.time()
         returncode = 1
         output = ""
+        process_output = ""
+        command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         try:
             cwd = spec.cwd or str(config.repo_root)
             progress_argv = list(spec.metadata.get("progress_argv") or effective_argv)
@@ -975,6 +1010,8 @@ def run_specs(
                     target_phase_index=target_phase_index,
                     target_phase_total=target_phase_total,
                     progress_parser=progress_parser,
+                    live_log_path=log_path,
+                    live_log_header=command_line + "\n" if log_path is not None else "",
                 )
             else:
                 if progress_parser == "gradle" or dotnet_progress_plan(progress_argv, progress_cwd):
@@ -993,6 +1030,8 @@ def run_specs(
                         target_phase_index=target_phase_index,
                         target_phase_total=target_phase_total,
                         progress_parser=progress_parser,
+                        live_log_path=log_path,
+                        live_log_header=command_line + "\n" if log_path is not None else "",
                     )
                 else:
                     with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
@@ -1008,10 +1047,13 @@ def run_specs(
                             progress_argv=progress_argv,
                             progress_cwd=progress_cwd,
                             progress_parser=progress_parser,
+                            live_log_path=log_path,
+                            live_log_header=command_line + "\n" if log_path is not None else "",
                         )
         finally:
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
+        process_output = output
         duration = time.perf_counter() - started
         issues = parse_issues(config.repo_root, spec.name, output)
         result_metadata = dict(spec.metadata)
@@ -1090,9 +1132,15 @@ def run_specs(
             )
             returncode = 1
         failure_kind = classify_failure(spec.name, output, returncode)
-        command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         raw_text = command_line + "\n" + output
-        log_file = str(write_log(raw_text, log_path, append=log_path is not None))
+        if log_path is not None:
+            if output != process_output:
+                extra_output = output[len(process_output):] if output.startswith(process_output) else output
+                if extra_output:
+                    write_log(extra_output, log_path, append=True)
+            log_file = str(log_path)
+        else:
+            log_file = str(write_log(raw_text, log_path, append=False))
         result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind, metadata=result_metadata)
         results.append(result)
         if tasker_progress is not None and not dry_run:

@@ -31,6 +31,26 @@ def test_run_specs_does_not_wait_forever_for_stdout_held_by_grandchild(tmp_path:
     assert "tests finished" in raw
 
 
+def test_run_specs_streams_child_output_to_shared_log(tmp_path: Path) -> None:
+    script = tmp_path / "emit.py"
+    script.write_text("print('live line', flush=True)\n", encoding="utf-8")
+    log_path = tmp_path / "run.log"
+    config = ProjectConfig(kind="generic", repo_root=tmp_path)
+
+    results, raw = run_specs(
+        config,
+        [CommandSpec("build", [sys.executable, str(script)])],
+        verbose=False,
+        log_path=log_path,
+    )
+
+    text = log_path.read_text(encoding="utf-8")
+    assert results[0].returncode == 0
+    assert "live line" in raw
+    assert "live line" in text
+    assert text.count("$ ") == 1
+
+
 def test_dotnet_test_final_summary_hang_is_stopped_as_success(tmp_path: Path, monkeypatch) -> None:
     fake_dotnet = tmp_path / "dotnet"
     fake_dotnet.write_text(

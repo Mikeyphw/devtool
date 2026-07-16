@@ -775,6 +775,7 @@ class TaskerProgressSink:
     target: str = ""
     project_type: str = "auto"
     execution_environment: str = "auto"
+    log_path: str = ""
     targets: list[str] = field(default_factory=list)
     planned_phases: list[dict[str, Any]] = field(default_factory=list)
     enabled: bool = True
@@ -1291,6 +1292,7 @@ class TaskerProgressSink:
             "updated_at": timestamp,
             "finished_at": timestamp if event_type == "finished" else None,
             "message": message,
+            "log_path": self.log_path,
             "current": current,
             "total": total,
             "phase": phase if phase is not None else self.current_phase,

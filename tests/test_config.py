@@ -49,6 +49,26 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(kind, "dotnet")
             self.assertIn("explicitly", stream.getvalue())
 
+    def test_auto_kind_override_does_not_mask_explicit_config_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            android = root / "app" / "XDM.Android"
+            android.mkdir(parents=True)
+            (root / "App.sln").write_text("", encoding="utf-8")
+            (android / "settings.gradle.kts").write_text('include(":app")\n', encoding="utf-8")
+            (android / "build.gradle.kts").write_text(
+                'plugins { id("com.android.application") version "8.8.0" apply false }\n',
+                encoding="utf-8",
+            )
+            (root / ".devtool.toml").write_text("[project]\nkind='android'\n", encoding="utf-8")
+            stream = io.StringIO()
+
+            with redirect_stderr(stream):
+                config = load_project_config(str(root), None, kind_override="auto")
+
+            self.assertEqual(config.kind, "android")
+            self.assertNotIn("mixed project markers", stream.getvalue())
+
     def test_generate_template_contains_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

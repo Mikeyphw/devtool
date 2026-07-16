@@ -38,10 +38,23 @@ class GradleProgressTests(unittest.TestCase):
         tracker.update_from_line(self.event(1, "task-graph", total=99))
         self.assertEqual(tracker.total, 5)
 
-    def test_ignores_non_event_output(self) -> None:
+    def test_plain_gradle_output_updates_detail_when_events_are_absent(self) -> None:
         tracker = self.make_tracker()
+        snapshots: list[dict] = []
+        tracker.update_callback = snapshots.append
         tracker.update_from_line("> Task :app:compileDebugKotlin")
+        self.assertEqual(tracker.current_task, ":app:compileDebugKotlin")
+        self.assertEqual(tracker.detail, ":app:compileDebugKotlin")
+        self.assertEqual(tracker.fallback_lines, 1)
         self.assertEqual(tracker.last_sequence, 0)
+        self.assertTrue(snapshots)
+
+    def test_structured_events_take_precedence_over_plain_gradle_output(self) -> None:
+        tracker = self.make_tracker()
+        tracker.update_from_line(self.event(1, "task-graph", total=5))
+        tracker.update_from_line("> Task :app:compileDebugKotlin")
+        self.assertEqual(tracker.detail, "Gradle task graph ready: 5 tasks")
+        self.assertEqual(tracker.fallback_lines, 0)
 
 
 if __name__ == "__main__":

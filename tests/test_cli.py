@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -17,7 +18,8 @@ from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
 from devtool.cli import _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, _validation_specs_for_args, build_parser, main
 from devtool.config import ProjectConfig, load_project_config
-from devtool.logstore import latest_log, write_log
+from devtool.log_commands import choose_active_log, parse_log_filename
+from devtool.logstore import write_log
 from devtool.xdg import cache_dir, data_dir, state_dir
 from devtool.models import CommandSpec, Issue, OperationResult
 from devtool.summary import build_json_summary
@@ -265,11 +267,68 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("git add -A", text)
 
     def test_logs_latest_prints(self) -> None:
-        write_log("hello")
-        stream = io.StringIO()
-        with redirect_stdout(stream):
-            rc = main(["logs", "latest", "--print"])
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "state")}, clear=False):
+            write_log("hello")
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                rc = main(["logs", "latest", "--print"])
         self.assertEqual(rc, 0)
+
+    def test_logs_compat_prints_latest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "state")}, clear=False):
+            write_log("hello")
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                rc = main(["logs", "--print"])
+        self.assertEqual(rc, 0)
+        self.assertIn("hello", stream.getvalue())
+
+    def test_log_filename_timestamp_formats_for_selection(self) -> None:
+        date, time = parse_log_filename(Path("20260716-152523-546390.log"))
+        self.assertEqual(date, "2026-07-16")
+        self.assertEqual(time, "15:25:23")
+
+    def test_logs_list_prints_iso_date_and_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "state")}, clear=False):
+            log_dir = Path(tmp) / "state" / "logs"
+            log_dir.mkdir(parents=True)
+            (log_dir / "20260716-152523-546390.log").write_text("hello", encoding="utf-8")
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                rc = main(["logs", "list"])
+        self.assertEqual(rc, 0)
+        self.assertIn("2026-07-16 15:25:23", stream.getvalue())
+
+    def test_logs_open_uses_cat_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "state")}, clear=False):
+            path = write_log("hello")
+            with patch("devtool.log_commands.subprocess.call", return_value=0) as call:
+                rc = main(["logs", "open", "latest", "--pager", "cat"])
+        self.assertEqual(rc, 0)
+        call.assert_called_once_with(["cat", str(path)])
+
+    def test_logs_tail_reports_no_active_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "state")}, clear=False):
+            rc = main(["logs", "tail", "--no-follow"])
+        self.assertEqual(rc, 1)
+
+    def test_active_log_selection_uses_run_state_log_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "state")}, clear=False):
+            state = Path(tmp) / "state"
+            runs = state / "runs"
+            logs = state / "logs"
+            runs.mkdir(parents=True)
+            logs.mkdir(parents=True)
+            log_path = logs / "20260716-152523-546390.log"
+            log_path.write_text("live", encoding="utf-8")
+            (runs / "run.json").write_text(
+                json.dumps({"run_id": "run", "pid": os.getpid(), "command": "build", "status": "running", "log_path": str(log_path)}),
+                encoding="utf-8",
+            )
+
+            selected = choose_active_log(use_fzf=False)
+
+        self.assertEqual(selected, log_path)
 
     def test_batch_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
