@@ -26,6 +26,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .clipboard import copy_text
+from .apply_notifications import ApplyNotification, post_apply_notification
 from .execution import build_chroot_exec_argv
 from .execution_environments import (
     chroot_environment_assignments,
@@ -840,6 +841,68 @@ def _adapt_forwarded_for_chroot(forwarded: list[str]) -> tuple[list[str], dict[s
     return out, meta
 
 
+def _apply_command_from_argv(argv: list[str]) -> tuple[str, str]:
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            break
+        if token.startswith("--") and "=" in token:
+            index += 1
+            continue
+        if token in _FLAGS_WITH_VALUES:
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        command = token
+        if command == "apply" and index + 1 < len(argv):
+            subcommand = argv[index + 1]
+            mapped = {
+                "overlay": "apply-overlay",
+                "overlays": "apply-overlays",
+                "snapshot": "apply-snapshot",
+            }.get(subcommand, "")
+            if mapped:
+                artifact = argv[index + 2] if index + 2 < len(argv) else ""
+                return mapped, artifact
+        if command in _APPLY_COMMANDS:
+            artifact = argv[index + 1] if index + 1 < len(argv) else ""
+            return command, artifact
+        return "", ""
+    return "", ""
+
+
+def _apply_notification_enabled_for_argv(argv: list[str], env: Mapping[str, str]) -> bool:
+    if env.get("DEVTOOL_APPLY_NOTIFICATION", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    return "--no-apply-notification" not in argv
+
+
+def _post_chroot_apply_notification(argv: list[str], rc: int, plain: str, env: Mapping[str, str]) -> None:
+    if not _apply_notification_enabled_for_argv(argv, env):
+        return
+    command, artifact = _apply_command_from_argv(argv)
+    if not command:
+        return
+    label = "snapshot" if command in {"apply-snapshot", "as"} else ("overlay bundle" if command in {"apply-overlays", "aos"} else "overlay")
+    artifact_name = Path(artifact).name if artifact else label
+    lower = plain.lower()
+    rolled_back = "rolled back" in lower or "rollback" in lower and rc != 0
+    if rolled_back:
+        title = f"Devtool {label} rolled back"
+        status = "Rolled back"
+    elif rc == 0:
+        title = f"Devtool {label} applied"
+        status = "Applied"
+    else:
+        title = f"Devtool {label} failed"
+        status = "Failed"
+    body = f"{artifact_name} · exit {rc}"
+    post_apply_notification(ApplyNotification(title=title, body=body, toast=f"{status}: {artifact_name}"))
+
+
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -978,6 +1041,8 @@ def run_auto_chroot(argv: list[str], *, env: Mapping[str, str] | None = None, cw
     child_env["DEVTOOL_AUTO_CHROOT_ACTIVE"] = "1"
     child_env["DEVTOOL_AUTO_CHROOT"] = "0"
     child_env["DEVTOOL_CHROOT_CONTEXT"] = config.chroot_name
+    if _apply_command_from_argv(forwarded)[0] and _apply_notification_enabled_for_argv(forwarded, env):
+        child_env["DEVTOOL_APPLY_NOTIFICATION"] = "0"
     if meta.get("needs_android_bridge") == "1" and meta.get("hud_disabled") != "1":
         bridge_dir = child_env.get("DEVTOOL_HUD_BRIDGE_DIR", "/home/termux/.local/state/devtool-android-hud")
         child_env["DEVTOOL_HUD_BRIDGE_DIR"] = bridge_dir
@@ -995,6 +1060,7 @@ def run_auto_chroot(argv: list[str], *, env: Mapping[str, str] | None = None, cw
     analysis = _analyze_plain_log(plain)
     if rc == 0 and _truthy_env("DEVTOOL_FAIL_ON_PARSED_ERRORS", "1") and (analysis.get("errors", 0) or analysis.get("failed_tests", 0)):
         rc = 1
+    _post_chroot_apply_notification(forwarded, rc, plain, env)
     copied: bool | None = None
     if config.copy_mode:
         # Failed runs often do not produce the machine summary. Avoid noisy JSON

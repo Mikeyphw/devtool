@@ -63,7 +63,7 @@ filtering, repeated case conversion, or giant concatenated buffers.
 
 ## Native screenshot matrix
 
-Where Qt 6 and the Android SDK/emulator are available, capture the same scenario
+Where Qt 5 and the Android SDK/emulator are available, capture the same scenario
 IDs at:
 
 - Desktop: 640×720, 900×720, and 1440×900; 100% and 200% scaling.

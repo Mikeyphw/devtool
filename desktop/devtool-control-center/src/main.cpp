@@ -21,6 +21,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QProcess>
+#include <QQuickStyle>
 #include <QQuickWindow>
 #include <QPointer>
 #include <QSettings>
@@ -28,6 +29,7 @@
 #include <memory>
 #include <QTimer>
 #include <QUrl>
+#include <QtGlobal>
 #include <QWindow>
 
 #ifndef DEVTOOL_CC_VERSION
@@ -45,7 +47,7 @@ bool hasArgument(int argc, char **argv, const char *value) {
 constexpr const char *kMainServerName = "io.github.mikeceead.DevtoolControlCenter.main";
 
 QIcon controlCenterIcon() {
-    return QIcon(QStringLiteral(":/icons/devtool-control-center.svg"));
+    return QIcon(QStringLiteral(":/qt/qml/Devtool/ControlCenter/icons/devtool-control-center.svg"));
 }
 
 QString resolveHudExecutable() {
@@ -79,7 +81,11 @@ QString preferredNerdFont() {
         QStringLiteral("MesloLGS NF"), QStringLiteral("FiraCode Nerd Font"),
         QStringLiteral("Symbols Nerd Font Mono"), QStringLiteral("Noto Sans Mono")
     };
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     const QStringList available = QFontDatabase::families();
+#else
+    const QStringList available = QFontDatabase().families();
+#endif
     for (const QString &family : preferred) if (available.contains(family)) return family;
     return QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
 }
@@ -109,6 +115,8 @@ int main(int argc, char **argv) {
         std::cout << "Devtool Control Center " << DEVTOOL_CC_VERSION << '\n';
         return 0;
     }
+    QQuickStyle::setStyle(QStringLiteral("Default"));
+    QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
     QApplication app(argc, argv);
 
     QCoreApplication::setOrganizationName(
@@ -215,6 +223,9 @@ int main(int argc, char **argv) {
         if (engine && mainWindow) return true;
 
         auto nextEngine = std::make_unique<QQmlApplicationEngine>();
+        nextEngine->addImportPath(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/qml"));
+        nextEngine->addImportPath(QStringLiteral("qrc:/qt/qml"));
+        nextEngine->addImportPath(QStringLiteral("qrc:/qt-project.org/imports"));
         nextEngine->rootContext()->setContextProperty(QStringLiteral("appController"), &controller);
         nextEngine->rootContext()->setContextProperty(QStringLiteral("hudStore"), &hud);
         nextEngine->rootContext()->setContextProperty(QStringLiteral("processRunner"), &runner);
@@ -241,7 +252,9 @@ int main(int argc, char **argv) {
 
         if (auto *quickWindow = qobject_cast<QQuickWindow *>(window)) {
             quickWindow->setPersistentSceneGraph(false);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
             quickWindow->setPersistentGraphics(false);
+#endif
             QObject::connect(quickWindow, &QWindow::visibilityChanged, quickWindow,
                              [quickWindow](QWindow::Visibility visibility) {
                 if (visibility == QWindow::Hidden || visibility == QWindow::Minimized)

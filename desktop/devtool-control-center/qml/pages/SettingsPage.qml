@@ -1,13 +1,17 @@
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
-import QtQuick.Dialogs
-import "../components"
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
+import Devtool.ControlCenter.Components 1.0
 
 AppScrollView {
     id: root
     Theme { id: theme }
-    FolderDialog { id: stateDialog; onAccepted: hudStore.stateDirectory = selectedFolder.toString().replace("file://", "") }
+    PathPickerDialog {
+        id: stateDialog
+        selectFolder: true
+        initialPath: hudStore.stateDirectory
+        onAccepted: function(path) { hudStore.stateDirectory = path }
+    }
 
     ColumnLayout {
         width: root.availableWidth
@@ -141,7 +145,7 @@ AppScrollView {
                     Layout.fillWidth: true
                     Label {
                         Layout.fillWidth: true
-                        text: "Appearance follows the active Qt 6 style, system palette, accent color, font, and display scaling. Override the control style with QT_QUICK_CONTROLS_STYLE or -style."
+                        text: "Appearance follows the active Qt 5 style, system palette, accent color, font, and display scaling. Override the control style with QT_QUICK_CONTROLS_STYLE or -style."
                         color: theme.mutedText
                         wrapMode: Text.Wrap
                         font.pointSize: theme.smallPointSize

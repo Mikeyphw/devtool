@@ -1,0 +1,8 @@
+module Devtool.ControlCenter.Pages
+OverviewPage 1.0 OverviewPage.qml
+RunPage 1.0 RunPage.qml
+HistoryPage 1.0 HistoryPage.qml
+ArtifactsPage 1.0 ArtifactsPage.qml
+DiagnosticsPage 1.0 DiagnosticsPage.qml
+RepositoriesPage 1.0 RepositoriesPage.qml
+SettingsPage 1.0 SettingsPage.qml

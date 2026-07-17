@@ -9,7 +9,7 @@ Slice 5 adds executable release gates for every distributable. The canonical
 version contract lives in `release/versions.json`; drift between Python, Qt,
 Android, Debian, and manual-page metadata fails qualification.
 
-The Qt 6 Control Center now has CTest version and offscreen QML launch tests,
+The Qt 5 Control Center now has CTest version and offscreen QML launch tests,
 and its Debian package is timestamp-normalized, checksummed, and payload-
 verified. Android release builds require an explicit keystore, run local JVM
 and connected smoke tests, and are verified with `apksigner`. Deterministic
@@ -17,7 +17,7 @@ source archives can be rebuilt and compared byte for byte.
 
 Run the portable gate with `python3 tools/release-qualify.py --core-only`, or
 use `tools/make-release-candidate.sh` on a machine with the native toolchains.
-The GitHub Actions matrix independently validates Python 3.11–3.13, Qt 6,
+The GitHub Actions matrix independently validates Python 3.11–3.13, Qt 5,
 Android lint/unit/release, emulator instrumentation, and final packaging.
 
 See [`docs/RELEASE_QUALIFICATION.md`](docs/RELEASE_QUALIFICATION.md),
@@ -358,7 +358,7 @@ Replace older commands as follows:
 ```
 
 
-## Qt 6 Control Center
+## Qt 5 Control Center
 
 The native Linux frontend lives in `desktop/devtool-control-center`. It provides Overview, Run, History, Settings, tray integration, and a detachable compact HUD.
 

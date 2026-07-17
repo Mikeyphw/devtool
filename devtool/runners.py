@@ -42,7 +42,7 @@ from .gradle_progress import GradleProgressTracker
 from .gradle_reports import collect_report_metadata
 from .transactions import create_apply_transaction, rollback_transaction
 from .logstore import redact_sensitive_text, write_log
-from .models import CommandSpec, OperationResult, ProjectConfig
+from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .xdg import state_dir
 from .project_runners import (
     DotnetRunner as _DotnetRunner,
@@ -1076,6 +1076,7 @@ def run_specs(
             report_parser = str(result_metadata.get("report_parser") or "").strip()
             report_parsers = [report_parser] if report_parser else []
         report_parsers = list(dict.fromkeys(report_parsers))
+        nonfatal_report_issues: list[Issue] = []
         if report_parsers:
             report_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
             for report_parser in report_parsers:
@@ -1121,6 +1122,7 @@ def run_specs(
                             f"{collection.metadata.get('errors', 0)} errors, "
                             f"{collection.metadata.get('warnings', 0)} warnings.\n"
                         )
+                    nonfatal_report_issues.extend(collection.issues)
                 elif report_parser == "python-package":
                     result_metadata["packages"] = collection.metadata
                     output = (output.rstrip() + "\n" if output else "") + (
@@ -1135,7 +1137,10 @@ def run_specs(
             from .android_artifacts import collect_and_verify_android_artifacts
             artifact_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
             artifact_metadata, artifact_issues = collect_and_verify_android_artifacts(
-                config, project_root=artifact_root, started_at=started_wall
+                config,
+                project_root=artifact_root,
+                started_at=started_wall,
+                tasks=result_metadata.get("gradle_tasks") or (),
             )
             result_metadata["artifacts"] = artifact_metadata
             issues.extend(artifact_issues)
@@ -1145,7 +1150,12 @@ def run_specs(
                 f"{artifact_metadata.get('invalid', 0)} invalid, "
                 f"{artifact_metadata.get('count', 0)} total.\n"
             )
-        if returncode == 0 and any(issue.severity == "error" for issue in issues):
+        nonfatal_issue_ids = {id(issue) for issue in nonfatal_report_issues}
+        has_fatal_error_diagnostics = any(
+            issue.severity == "error" and id(issue) not in nonfatal_issue_ids
+            for issue in issues
+        )
+        if returncode == 0 and has_fatal_error_diagnostics:
             output = (output.rstrip() + "\n" if output else "") + (
                 "Devtool detected error diagnostics even though the process exited 0; "
                 "treating this command as failed.\n"

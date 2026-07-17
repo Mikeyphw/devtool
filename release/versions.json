@@ -10,7 +10,7 @@
   },
   "minimums": {
     "python": "3.11",
-    "qt": "6.4",
+    "qt": "5.15",
     "android_min_sdk": 26,
     "android_target_sdk": 36,
     "java": 17

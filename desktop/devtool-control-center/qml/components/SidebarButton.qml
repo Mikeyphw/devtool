@@ -1,5 +1,5 @@
-import QtQuick
-import QtQuick.Controls
+import QtQuick 2.15
+import QtQuick.Controls 2.15
 
 Button {
     id: root
@@ -11,7 +11,7 @@ Button {
             return ""
         const slash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"))
         const basename = slash >= 0 ? value.substring(slash + 1) : value
-        return Qt.resolvedUrl("../icons/" + basename)
+        return "qrc:/qt/qml/Devtool/ControlCenter/icons/" + basename
     }
     property bool selected: false
     property bool compact: false

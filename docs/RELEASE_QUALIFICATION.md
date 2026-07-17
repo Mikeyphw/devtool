@@ -81,7 +81,7 @@ prefix. It writes `release-artifacts.json` and `SHA256SUMS` next to the archive.
 `.github/workflows/release-qualification.yml` runs:
 
 - Python 3.11, 3.12, and 3.13 portable gates;
-- Qt 6 compile/link, CTest offscreen launch, and Debian packaging;
+- Qt 5 compile/link, CTest offscreen launch, and Debian packaging;
 - Android lint, JVM tests, ephemeral-key signed release, and signature checks;
 - Android emulator instrumentation;
 - deterministic source release generation after all preceding jobs pass.

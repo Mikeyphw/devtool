@@ -1,8 +1,7 @@
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
-import QtQuick.Dialogs
-import "../components"
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
+import Devtool.ControlCenter.Components 1.0
 
 Item {
     id: root
@@ -87,8 +86,19 @@ Item {
     Connections { target: artifactInspector; function onInspectionChanged(){root.applyArtifactManifestDefaults()} }
     Component.onCompleted: artifactVerification.restart()
 
-    FolderDialog { id: repoDialog; onAccepted: appController.repository=selectedFolder.toString().replace("file://","") }
-    FileDialog { id: artifactDialog; nameFilters:["Archives (*.zip *.tar *.gz *.zst)","All files (*)"]; onAccepted:{appController.artifact=selectedFile.toString().replace("file://","");artifactVerification.restart()} }
+    PathPickerDialog {
+        id: repoDialog
+        selectFolder: true
+        initialPath: appController.repository
+        onAccepted: function(path) { appController.repository = path }
+    }
+    PathPickerDialog {
+        id: artifactDialog
+        selectFolder: false
+        initialPath: appController.artifact
+        nameFilters: ["Archives (*.zip *.tar *.gz *.zst)", "All files (*)"]
+        onAccepted: function(path) { appController.artifact = path; artifactVerification.restart() }
+    }
 
     Popup {
         id: commandConfirmation; parent: Overlay.overlay; modal: true; focus: true; closePolicy: Popup.CloseOnEscape|Popup.CloseOnPressOutside

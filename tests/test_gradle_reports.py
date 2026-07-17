@@ -117,6 +117,36 @@ class GradleReportTests(unittest.TestCase):
         self.assertEqual(results[0].metadata["tests"]["total"], 3)
         self.assertIn("Devtool Gradle tests", results[0].output)
 
+    def test_run_specs_keeps_successful_android_lint_report_errors_nonfatal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "app/build/reports/lint-results-debug.xml"
+            script = root / "make_lint_report.py"
+            script.write_text(
+                "from pathlib import Path\n"
+                f"p=Path({str(report)!r}); p.parent.mkdir(parents=True, exist_ok=True); p.write_text({LINT!r})\n",
+                encoding="utf-8",
+            )
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+            spec = CommandSpec(
+                "build",
+                ["python3", str(script)],
+                cwd=str(root),
+                metadata={
+                    "project_root": str(root),
+                    "gradle_tasks": ["lintDebug"],
+                    "report_parser": "android-lint",
+                },
+            )
+            results, raw = run_specs(config, [spec], verbose=False, shutdown_dotnet=False)
+
+        self.assertEqual(results[0].returncode, 0)
+        self.assertEqual(results[0].metadata["lint"]["errors"], 1)
+        self.assertEqual(results[0].metadata["lint"]["warnings"], 1)
+        self.assertEqual({issue.code for issue in results[0].issues}, {"NewApi", "ManifestTypo"})
+        self.assertIn("Devtool Android Lint: 1 errors, 1 warnings.", results[0].output)
+        self.assertNotIn("detected error diagnostics", raw)
+
 
 if __name__ == "__main__":
     unittest.main()

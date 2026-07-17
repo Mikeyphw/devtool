@@ -65,12 +65,12 @@ for required_file in "${required_packaging_files[@]}"; do
 done
 
 required_qml_packages=(
-  qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtqml-workerscript
-  qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtquick-templates
-  qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-dialogs
+  qml-module-qtqml qml-module-qtqml-models2 qml-module-qtqml-workerscript2
+  qml-module-qtquick2 qml-module-qtquick-window2 qml-module-qtquick-templates2
+  qml-module-qtquick-controls2 qml-module-qtquick-layouts qml-module-qtquick-dialogs
 )
 required_build_packages=(
-  cmake ninja-build g++ qt6-base-dev qt6-declarative-dev
+  cmake ninja-build g++ qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev
 )
 control_file="$root/packaging/debian/control"
 depends_line=$(grep '^Depends:' "$control_file" || true)
@@ -143,7 +143,7 @@ fi
 
 if "$install_after_build"; then
   if command -v apt-get >/dev/null 2>&1; then
-    install_cmd=(apt-get install -y "$deb_path")
+    install_cmd=(apt-get install --reinstall -y "$deb_path")
   elif command -v dpkg >/dev/null 2>&1; then
     install_cmd=(dpkg -i "$deb_path")
   else

@@ -15,6 +15,7 @@ class QtControlCenterTests(unittest.TestCase):
     def test_control_center_aliases(self) -> None:
         self.assertEqual(choose_hud_mode("control-center"), "control-center")
         self.assertEqual(choose_hud_mode("qt"), "control-center")
+        self.assertEqual(choose_hud_mode("qt5"), "control-center")
         self.assertEqual(choose_hud_mode("qt6"), "control-center")
 
     def test_control_center_mode_publishes_without_spawning_child(self) -> None:
@@ -48,14 +49,16 @@ class QtControlCenterTests(unittest.TestCase):
         ]
         self.assertTrue(all(path.is_file() for path in required))
         cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-        self.assertIn("Qt6::Quick", cmake)
-        self.assertIn("Qt6::Widgets", cmake)
-        self.assertIn("QT_RESOURCE_ALIAS", cmake)
-        self.assertIn("resources/devtool-control-center.svg", cmake)
-        self.assertIn("resources/devtool-control-center-tray.svg", cmake)
+        self.assertIn("Qt5::Quick", cmake)
+        self.assertIn("Qt5::Widgets", cmake)
+        self.assertIn("qt5_add_resources", cmake)
+        self.assertIn("resources/devtool-control-center.qrc", cmake)
         self.assertIn("devtool-control-center-hud", cmake)
+        qrc = (root / "resources" / "devtool-control-center.qrc").read_text(encoding="utf-8")
+        self.assertIn('alias="devtool-control-center.svg"', qrc)
+        self.assertIn('alias="devtool-control-center-tray.svg"', qrc)
         common_target = cmake.split("add_library(devtool-control-center-common STATIC", 1)[1].split(")", 1)[0]
-        hud_target = cmake.split("qt_add_executable(devtool-control-center-hud", 1)[1].split(")", 1)[0]
+        hud_target = cmake.split("add_executable(devtool-control-center-hud", 1)[1].split(")", 1)[0]
         for source in ("HudStateStore.cpp", "HistoryModel.cpp", "IpcClient.cpp"):
             self.assertIn(source, common_target)
             self.assertNotIn(source, hud_target)
@@ -76,7 +79,8 @@ class QtControlCenterPhaseTwoSourceTests(unittest.TestCase):
         self.assertTrue(all(path.is_file() for path in required))
         cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn("ArtifactInspector.cpp", cmake)
-        self.assertIn("RepositoriesPage.qml", cmake)
+        qrc = (root / "resources" / "devtool-control-center.qrc").read_text(encoding="utf-8")
+        self.assertIn("RepositoriesPage.qml", qrc)
         main_qml = (root / "qml" / "Main.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Artifacts"', main_qml)
         self.assertIn('text: "Diagnostics"', main_qml)
@@ -86,7 +90,7 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
         self.assertTrue((root / "src" / "IpcClient.cpp").is_file())
         cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-        self.assertIn("Qt6::Network", cmake)
+        self.assertIn("Qt5::Network", cmake)
         self.assertIn("IpcClient.cpp", cmake)
         main_cpp = (root / "src" / "main.cpp").read_text(encoding="utf-8")
         self.assertIn('"ipc-server"', main_cpp)
@@ -106,7 +110,7 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
         self.assertNotIn("toString(status)", app_source)
         self.assertNotIn("loadFromModule", main_source)
         self.assertIn("qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml", main_source)
-        self.assertIn("RESOURCE_PREFIX /qt/qml", cmake)
+        self.assertIn("resources/devtool-control-center.qrc", cmake)
         self.assertIn("qCeil(percent)", hud_source)
         self.assertIn('object.value("percent").toDouble(-1.0)', hud_source)
         self.assertIn('targetLabels.join(" • ")', hud_source)
@@ -136,9 +140,9 @@ class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
         self.assertNotIn("app.setPalette", main_cpp)
         self.assertNotIn("QQuickStyle::setStyle", main_cpp)
 
-        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        qrc = (root / "resources" / "devtool-control-center.qrc").read_text(encoding="utf-8")
         for path in required:
-            self.assertIn(path.name, cmake)
+            self.assertIn(path.name, qrc)
 
         for page in (root / "qml" / "pages").glob("*.qml"):
             source = page.read_text(encoding="utf-8")
@@ -308,7 +312,7 @@ class QtControlCenterPackagingTests(unittest.TestCase):
         self.assertNotIn('build=${BUILD_DIR:-"$root/build"}', build_script)
 
         self.assertIn('package-build-${version}-${arch}', package_script)
-        self.assertIn('rm -rf "$build"', package_script)
+        self.assertIn('"$rm_bin" -rf "$build"', package_script)
         self.assertIn('BUILD_DIR="$build" "$root/build.sh"', package_script)
         self.assertNotIn('if [[ ! -x "$build/devtool-control-center" ]]', package_script)
 
@@ -354,22 +358,22 @@ class QtControlCenterPackagingTests(unittest.TestCase):
         control = (root / "packaging" / "debian" / "control").read_text(encoding="utf-8")
         depends = next(line for line in control.splitlines() if line.startswith("Depends:"))
         required = {
-            "qml6-module-qtqml",
-            "qml6-module-qtqml-models",
-            "qml6-module-qtqml-workerscript",
-            "qml6-module-qtquick",
-            "qml6-module-qtquick-window",
-            "qml6-module-qtquick-templates",
-            "qml6-module-qtquick-controls",
-            "qml6-module-qtquick-layouts",
-            "qml6-module-qtquick-dialogs",
+            "qml-module-qtqml",
+            "qml-module-qtqml-models2",
+            "qml-module-qtqml-workerscript2",
+            "qml-module-qtquick2",
+            "qml-module-qtquick-window2",
+            "qml-module-qtquick-templates2",
+            "qml-module-qtquick-controls2",
+            "qml-module-qtquick-layouts",
+            "qml-module-qtquick-dialogs",
         }
         declared = {item.strip() for item in depends.split(":", 1)[1].split(",")}
         self.assertTrue(required.issubset(declared))
 
         package_script = (root / "package-deb.sh").read_text(encoding="utf-8")
         self.assertIn("required_qml_packages", package_script)
-        self.assertIn("qml6-module-qtqml-workerscript", package_script)
+        self.assertIn("qml-module-qtqml-workerscript2", package_script)
 
 class QtControlCenterClipboardMonitorTests(unittest.TestCase):
     def test_clipboard_monitor_service_sources_are_packaged(self) -> None:

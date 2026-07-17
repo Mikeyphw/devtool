@@ -7,8 +7,7 @@ set(CMAKE_AUTOMOC ON)
 include(GNUInstallDirs)
 option(DEVTOOL_ENABLE_TESTS "Enable native smoke tests" ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Widgets Network)
-qt_standard_project_setup(REQUIRES 6.4)
+find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Widgets Network)
 
 # Compile the state/history/IPC implementation once. Both desktop binaries
 # use these sources, and compiling them independently was one of the largest
@@ -23,10 +22,12 @@ add_library(devtool-control-center-common STATIC
 )
 target_include_directories(devtool-control-center-common PUBLIC src)
 target_link_libraries(devtool-control-center-common PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Network
+    Qt5::Core Qt5::Gui Qt5::Network
 )
 
-qt_add_executable(devtool-control-center
+qt5_add_resources(devtool_control_center_resources resources/devtool-control-center.qrc)
+
+add_executable(devtool-control-center
     src/main.cpp
     src/AppController.cpp
     src/AppController.h
@@ -40,110 +41,22 @@ qt_add_executable(devtool-control-center
     src/RepositoryModel.h
     src/GitRepositoryController.cpp
     src/GitRepositoryController.h
+    ${devtool_control_center_resources}
 )
 
-qt_add_executable(devtool-control-center-hud
+add_executable(devtool-control-center-hud
     src/HudMain.cpp
-)
-
-qt_add_qml_module(devtool-control-center
-    URI Devtool.ControlCenter
-    RESOURCE_PREFIX /qt/qml
-    VERSION 1.0
-    QML_FILES
-        qml/Main.qml
-        qml/CompactHud.qml
-        qml/components/Theme.qml
-        qml/components/AppScrollView.qml
-        qml/components/AppButton.qml
-        qml/components/AppTextField.qml
-        qml/components/AppTextArea.qml
-        qml/components/AppComboBox.qml
-        qml/components/AppCheckBox.qml
-        qml/components/AppTabButton.qml
-        qml/components/PageHeading.qml
-        qml/components/SectionHeading.qml
-        qml/components/SurfaceCard.qml
-        qml/components/MetricCard.qml
-        qml/components/PipelineView.qml
-        qml/components/RunCard.qml
-        qml/components/SidebarButton.qml
-        qml/components/StatusMark.qml
-        qml/pages/OverviewPage.qml
-        qml/pages/RunPage.qml
-        qml/pages/HistoryPage.qml
-        qml/pages/ArtifactsPage.qml
-        qml/pages/DiagnosticsPage.qml
-        qml/pages/RepositoriesPage.qml
-        qml/pages/SettingsPage.qml
-    RESOURCES
-        qml/icons/overview.svg
-        qml/icons/run.svg
-        qml/icons/artifacts.svg
-        qml/icons/diagnostics.svg
-        qml/icons/history.svg
-        qml/icons/repositories.svg
-        qml/icons/settings.svg
-        qml/icons/artifact.svg
-        qml/icons/arrow-down.svg
-        qml/icons/copy.svg
-        qml/icons/done.svg
-        qml/icons/close.svg
-        qml/icons/chevron-up.svg
-        qml/icons/chevron-down.svg
-        qml/icons/log.svg
-        qml/icons/details.svg
-)
-
-qt_add_qml_module(devtool-control-center-hud
-    URI Devtool.ControlCenter.Hud
-    RESOURCE_PREFIX /qt/qml
-    VERSION 1.0
-    QML_FILES
-        qml/CompactHud.qml
-        qml/components/Theme.qml
-        qml/components/AppButton.qml
-        qml/components/PipelineView.qml
-        qml/components/StatusMark.qml
-    RESOURCES
-        qml/icons/copy.svg
-        qml/icons/done.svg
-        qml/icons/close.svg
-        qml/icons/chevron-up.svg
-        qml/icons/chevron-down.svg
-        qml/icons/log.svg
-        qml/icons/details.svg
-)
-
-set_source_files_properties(resources/devtool-control-center.svg PROPERTIES
-    QT_RESOURCE_ALIAS "devtool-control-center.svg"
-)
-set_source_files_properties(resources/devtool-control-center-tray.svg PROPERTIES
-    QT_RESOURCE_ALIAS "devtool-control-center-tray.svg"
-)
-
-qt_add_resources(devtool-control-center devtool_icons
-    PREFIX /icons
-    FILES
-        resources/devtool-control-center.svg
-        resources/devtool-control-center-tray.svg
-)
-
-qt_add_resources(devtool-control-center-hud devtool_icons
-    PREFIX /icons
-    FILES
-        resources/devtool-control-center.svg
-        resources/devtool-control-center-tray.svg
+    ${devtool_control_center_resources}
 )
 
 target_link_libraries(devtool-control-center PRIVATE
     devtool-control-center-common
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Network
+    Qt5::Core Qt5::Gui Qt5::Qml Qt5::Quick Qt5::QuickControls2 Qt5::Widgets Qt5::Network
 )
 
 target_link_libraries(devtool-control-center-hud PRIVATE
     devtool-control-center-common
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Network
+    Qt5::Core Qt5::Gui Qt5::Qml Qt5::Quick Qt5::QuickControls2 Qt5::Widgets Qt5::Network
 )
 
 target_compile_definitions(devtool-control-center PRIVATE

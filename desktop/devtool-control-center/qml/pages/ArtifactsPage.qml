@@ -1,8 +1,7 @@
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
-import QtQuick.Dialogs
-import "../components"
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
+import Devtool.ControlCenter.Components 1.0
 
 Item {
     id: root
@@ -10,11 +9,13 @@ Item {
     readonly property bool hasSummary: Object.keys(artifactInspector.summary).length > 0
     Theme { id: theme }
 
-    FileDialog {
+    PathPickerDialog {
         id: artifactDialog
+        selectFolder: false
+        initialPath: artifactInspector.artifactPath
         nameFilters: ["Devtool artifacts (*.zip *.tar *.gz *.zst)", "All files (*)"]
-        onAccepted: {
-            artifactInspector.artifactPath = selectedFile.toString().replace("file://", "")
+        onAccepted: function(path) {
+            artifactInspector.artifactPath = path
             appController.artifact = artifactInspector.artifactPath
             artifactInspector.inspect(true)
         }
@@ -98,7 +99,7 @@ Item {
                 spacing: 10
                 Image {
                     Layout.alignment: Qt.AlignHCenter
-                    source: "../icons/artifacts.svg"
+                    source: "qrc:/qt/qml/Devtool/ControlCenter/icons/artifacts.svg"
                     sourceSize.width: 42
                     sourceSize.height: 42
                     width: 42
@@ -185,7 +186,7 @@ Item {
                         Layout.preferredHeight: 34
                         radius: 10
                         color: theme.infoSurface
-                        Image { anchors.centerIn: parent; width: 20; height: 20; source: "../icons/artifact.svg"; sourceSize.width: 20; sourceSize.height: 20; Accessible.ignored: true }
+                        Image { anchors.centerIn: parent; width: 20; height: 20; source: "qrc:/qt/qml/Devtool/ControlCenter/icons/artifact.svg"; sourceSize.width: 20; sourceSize.height: 20; Accessible.ignored: true }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -320,7 +321,7 @@ Item {
                                         Label { visible: (modelData.after || []).length || (modelData.requires || []).length; text: "After: " + (modelData.after || []).join(", ") + "   Requires: " + (modelData.requires || []).join(", "); color: theme.info; elide: Text.ElideRight; width: parent.width; font.pointSize: theme.smallPointSize }
                                     }
                                 }
-                                Image { visible: index < artifactInspector.overlays.length - 1; source: "../icons/arrow-down.svg"; sourceSize.width: 18; sourceSize.height: 18; width: parent.width; height: 18; fillMode: Image.PreserveAspectFit; Accessible.ignored: true }
+                                Image { visible: index < artifactInspector.overlays.length - 1; source: "qrc:/qt/qml/Devtool/ControlCenter/icons/arrow-down.svg"; sourceSize.width: 18; sourceSize.height: 18; width: parent.width; height: 18; fillMode: Image.PreserveAspectFit; Accessible.ignored: true }
                             }
                         }
                     }

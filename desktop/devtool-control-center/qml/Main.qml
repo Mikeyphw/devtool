@@ -1,8 +1,8 @@
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
-import "components"
-import "pages"
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
+import Devtool.ControlCenter.Components 1.0
+import Devtool.ControlCenter.Pages 1.0
 
 ApplicationWindow {
     id: root
@@ -23,13 +23,12 @@ ApplicationWindow {
     ]
     Theme { id: theme }
 
-    header: ToolBar {
+    header: Rectangle {
         implicitHeight: root.veryNarrowMode ? 56 : 64
-        background: Rectangle {
-            color: theme.elevatedSurface
-            border.color: theme.border
-            border.width: 1
-        }
+        color: theme.elevatedSurface
+        border.color: theme.border
+        border.width: 1
+
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: root.veryNarrowMode ? 10 : 16
@@ -40,7 +39,7 @@ ApplicationWindow {
                 color: theme.windowText
                 font.pointSize: root.veryNarrowMode ? theme.cardTitlePointSize : theme.pageTitlePointSize
                 font.weight: Font.DemiBold
-                font.letterSpacing: -0.2
+                font.letterSpacing: 0
                 lineHeight: theme.titleLineHeight
                 Accessible.role: Accessible.Heading
                 Accessible.name: text
@@ -59,7 +58,7 @@ ApplicationWindow {
                     color: theme.info
                     font.pointSize: theme.smallPointSize
                     font.weight: Font.DemiBold
-                    font.letterSpacing: 0.25
+                    font.letterSpacing: 0
                     lineHeight: theme.compactLineHeight
                 }
             }
@@ -118,13 +117,13 @@ ApplicationWindow {
                     Column {
                         width: parent.width
                         spacing: 5
-                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "icons/overview.svg"; text: "Overview"; selected: root.pageIndex === 0; onClicked: root.pageIndex = 0 }
-                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "icons/run.svg"; text: "Run"; selected: root.pageIndex === 1; onClicked: root.pageIndex = 1 }
-                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "icons/artifacts.svg"; text: "Artifacts"; selected: root.pageIndex === 2; onClicked: root.pageIndex = 2 }
-                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "icons/diagnostics.svg"; text: "Diagnostics"; selected: root.pageIndex === 3; onClicked: root.pageIndex = 3 }
-                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "icons/history.svg"; text: "History"; selected: root.pageIndex === 4; onClicked: root.pageIndex = 4 }
-                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "icons/repositories.svg"; text: "Repositories"; selected: root.pageIndex === 5; onClicked: root.pageIndex = 5 }
-                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "icons/settings.svg"; text: "Settings"; selected: root.pageIndex === 6; onClicked: root.pageIndex = 6 }
+                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/overview.svg"; text: "Overview"; selected: root.pageIndex === 0; onClicked: root.pageIndex = 0 }
+                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/run.svg"; text: "Run"; selected: root.pageIndex === 1; onClicked: root.pageIndex = 1 }
+                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/artifacts.svg"; text: "Artifacts"; selected: root.pageIndex === 2; onClicked: root.pageIndex = 2 }
+                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/diagnostics.svg"; text: "Diagnostics"; selected: root.pageIndex === 3; onClicked: root.pageIndex = 3 }
+                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/history.svg"; text: "History"; selected: root.pageIndex === 4; onClicked: root.pageIndex = 4 }
+                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/repositories.svg"; text: "Repositories"; selected: root.pageIndex === 5; onClicked: root.pageIndex = 5 }
+                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/settings.svg"; text: "Settings"; selected: root.pageIndex === 6; onClicked: root.pageIndex = 6 }
                     }
                 }
                 AppButton {

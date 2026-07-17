@@ -1,11 +1,14 @@
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
-import QtQuick.Window
-import "components"
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
+import QtQuick.Window 2.15
+import Devtool.ControlCenter.Components 1.0
 
 Window {
     id: root
+    function hudAvailableWidth() {
+        return Screen.availableWidth > 0 ? Screen.availableWidth : 1920
+    }
     // Slice 1 compatibility markers retained for source-level regressions:
     // width: 720
     // minimumWidth: 620
@@ -13,11 +16,11 @@ Window {
     // text: "Details"
     // text: copiedFeedback ? "Copied" : "Copy"
     // Previous translucent baseline: theme.dark ? 0.14 : 0.18
-    width: Math.min(720, Math.max(minimumWidth, Screen.availableWidth - 32))
-    height: Math.min(maximumHeight, Math.max(minimumHeight, contentLayout.implicitHeight + 20))
-    minimumWidth: Math.min(520, Math.max(320, Screen.availableWidth - 24))
-    minimumHeight: 178
-    maximumWidth: Math.max(minimumWidth, Screen.availableWidth - 16)
+    width: Math.min(720, Math.max(minimumWidth, hudAvailableWidth() - 32))
+    height: Math.min(maximumHeight, Math.max(minimumHeight, contentLayout.implicitHeight + 32))
+    minimumWidth: Math.min(520, Math.max(320, hudAvailableWidth() - 24))
+    minimumHeight: 224
+    maximumWidth: Math.max(minimumWidth, hudAvailableWidth() - 16)
     maximumHeight: Math.max(260, Screen.availableHeight - 32)
     visible: true
     color: "transparent"
@@ -404,15 +407,15 @@ Window {
         border.width: 1
 
         ColumnLayout {
-            id: contentLayout
-            anchors.fill: parent
-            anchors.margins: 10
-            spacing: 8
+        id: contentLayout
+        anchors.fill: parent
+        anchors.margins: 12
+        spacing: 10
 
             Rectangle {
                 id: headerCard
                 Layout.fillWidth: true
-                Layout.preferredHeight: headerContent.implicitHeight + 22
+                Layout.preferredHeight: headerContent.implicitHeight + 28
                 radius: 16
                 color: theme.alpha(stateSurface(), root.panelOpacity)
                 border.color: theme.alpha(stateColor(), visualState() === "running" ? 0.18 : 0.34)
@@ -428,8 +431,8 @@ Window {
                 RowLayout {
                     id: headerContent
                     anchors.fill: parent
-                    anchors.margins: 11
-                    spacing: 10
+                    anchors.margins: 13
+                    spacing: 12
 
                     Rectangle {
                         Layout.preferredWidth: 4
@@ -451,7 +454,7 @@ Window {
                                 color: theme.mutedText
                                 font.pointSize: theme.captionPointSize
                                 font.weight: Font.Bold
-                                font.letterSpacing: 0.25
+                                font.letterSpacing: 0
                             }
                             Label {
                                 visible: !root.narrowHud
@@ -459,15 +462,16 @@ Window {
                                 color: hudStore.ipcConnected ? theme.success : theme.warning
                                 font.pointSize: theme.captionPointSize
                                 font.weight: Font.Bold
-                                font.letterSpacing: 0.55
+                                font.letterSpacing: 0
                             }
-                            Label { visible: !root.narrowHud; text: "•"; color: theme.subtleText; font.pointSize: theme.captionPointSize }
-                            Label { visible: !root.narrowHud; text: elapsedText(); color: theme.subtleText; font.pointSize: theme.captionPointSize }
+                            Label { visible: !root.narrowHud; text: "•"; color: theme.subtleText; font.pointSize: theme.captionPointSize; font.letterSpacing: 0 }
+                            Label { visible: !root.narrowHud; text: elapsedText(); color: theme.subtleText; font.pointSize: theme.captionPointSize; font.letterSpacing: 0 }
                             Label {
                                 visible: scopedLanes().length > 1
                                 text: "• " + scopedLanes().length + " workspaces"
                                 color: theme.subtleText
                                 font.pointSize: theme.captionPointSize
+                                font.letterSpacing: 0
                             }
                             Item { Layout.fillWidth: true }
 
@@ -492,19 +496,19 @@ Window {
                                         color: stateColor()
                                         font.pointSize: theme.captionPointSize
                                         font.weight: Font.Bold
-                                        font.letterSpacing: 0.55
+                                        font.letterSpacing: 0
                                     }
                                 }
                             }
 
                             AppButton {
-                                text: root.narrowHud ? "" : (copiedFeedback ? "Copied" : "Copy")
-                                iconSource: copiedFeedback ? "icons/done.svg" : "icons/copy.svg"
+                                text: ""
+                                iconSource: copiedFeedback ? "qrc:/qt/qml/Devtool/ControlCenter/icons/done.svg" : "qrc:/qt/qml/Devtool/ControlCenter/icons/copy.svg"
                                 accessibleName: copiedFeedback ? "Summary copied" : "Copy run summary"
                                 accessibleDescription: "Copy the current run summary. Keyboard shortcut Control+C."
                                 variant: "ghost"
                                 compact: true
-                                implicitWidth: root.narrowHud ? 40 : 56
+                                implicitWidth: 40
                                 onClicked: {
                                     hudStore.copySummary(run)
                                     copiedFeedback = true
@@ -512,29 +516,29 @@ Window {
                                 }
                             }
                             AppButton {
-                                text: root.narrowHud ? "" : "Log"
-                                iconSource: "icons/log.svg"
+                                text: ""
+                                iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/log.svg"
                                 accessibleName: "Open run log"
                                 accessibleDescription: "Open the current run log. Keyboard shortcut Control+L."
                                 variant: "ghost"
                                 compact: true
-                                implicitWidth: root.narrowHud ? 40 : 48
+                                implicitWidth: 40
                                 enabled: !!run.log_path
                                 onClicked: hudStore.openLog(run)
                             }
                             AppButton {
-                                text: root.narrowHud ? "" : "Details"
-                                iconSource: "icons/details.svg"
+                                text: ""
+                                iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/details.svg"
                                 accessibleName: parserExpanded ? "Hide run details" : "Show run details"
                                 accessibleDescription: "Toggle runner metrics and parsed details. Keyboard shortcut Control+D."
                                 variant: parserExpanded ? "primary" : "ghost"
                                 compact: true
-                                implicitWidth: root.narrowHud ? 40 : 62
+                                implicitWidth: 40
                                 onClicked: parserExpanded = !parserExpanded
                             }
                             AppButton {
                                 text: ""
-                                iconSource: "icons/close.svg"
+                                iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/close.svg"
                                 accessibleName: "Close live HUD"
                                 accessibleDescription: "Close this progress window. Keyboard shortcut Escape."
                                 variant: "ghost"
@@ -548,9 +552,10 @@ Window {
                             Layout.fillWidth: true
                             text: taskTitle()
                             color: theme.windowText
-                            font.pointSize: theme.pageTitlePointSize - 4
+                            font.pointSize: theme.pageTitlePointSize - 2
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
+                            lineHeight: theme.titleLineHeight
                         }
 
                         Label {
@@ -559,6 +564,7 @@ Window {
                             color: theme.subtleText
                             font.pointSize: theme.captionPointSize
                             elide: Text.ElideMiddle
+                            lineHeight: theme.compactLineHeight
                         }
 
                         RowLayout {
@@ -569,6 +575,7 @@ Window {
                                 color: theme.windowText
                                 font.pointSize: theme.smallPointSize
                                 font.weight: Font.DemiBold
+                                font.letterSpacing: 0
                             }
                             Label {
                                 Layout.fillWidth: true
@@ -576,12 +583,14 @@ Window {
                                 color: theme.subtleText
                                 font.pointSize: theme.smallPointSize
                                 elide: Text.ElideRight
+                                lineHeight: theme.compactLineHeight
                             }
                             Label {
                                 text: progressLabel()
                                 color: stateColor()
                                 font.pointSize: theme.cardTitlePointSize - 1
                                 font.weight: Font.Bold
+                                font.letterSpacing: 0
                             }
                         }
 
@@ -636,6 +645,7 @@ Window {
                                              : theme.subtleText
                                         font.pointSize: theme.captionPointSize
                                         font.weight: Font.DemiBold
+                                        font.letterSpacing: 0
                                     }
                                 }
                             }
@@ -721,6 +731,7 @@ Window {
                                             font.pointSize: theme.smallPointSize
                                             font.weight: Font.DemiBold
                                             elide: Text.ElideMiddle
+                                            font.letterSpacing: 0
                                         }
                                         Label {
                                             Layout.fillWidth: true
@@ -728,6 +739,7 @@ Window {
                                             color: theme.subtleText
                                             font.pointSize: theme.captionPointSize
                                             elide: Text.ElideMiddle
+                                            font.letterSpacing: 0
                                         }
                                     }
 
@@ -736,10 +748,10 @@ Window {
                                         color: laneColor(modelData)
                                         font.pointSize: theme.captionPointSize
                                         font.weight: Font.Bold
-                                        font.letterSpacing: 0.5
+                                        font.letterSpacing: 0
                                     }
                                     Image {
-                                        source: workspaceCard.expanded ? "icons/chevron-up.svg" : "icons/chevron-down.svg"
+                                        source: workspaceCard.expanded ? "qrc:/qt/qml/Devtool/ControlCenter/icons/chevron-up.svg" : "qrc:/qt/qml/Devtool/ControlCenter/icons/chevron-down.svg"
                                         sourceSize.width: 16
                                         sourceSize.height: 16
                                         width: 16
@@ -771,6 +783,7 @@ Window {
                                         color: laneColor(modelData)
                                         font.pointSize: theme.captionPointSize
                                         font.weight: Font.Bold
+                                        font.letterSpacing: 0
                                     }
                                 }
 
@@ -917,13 +930,14 @@ Window {
                             color: theme.mutedText
                             font.pointSize: theme.captionPointSize
                             font.weight: Font.Bold
-                            font.letterSpacing: 0.65
+                            font.letterSpacing: 0
                         }
                         Item { Layout.fillWidth: true }
                         Label {
                             text: runnerLabel() + " · " + executionLabel() + " · task progress is separate from test totals"
                             color: theme.subtleText
                             font.pointSize: theme.captionPointSize
+                            lineHeight: theme.compactLineHeight
                         }
                     }
 
@@ -955,6 +969,7 @@ Window {
                                         color: modelData.label === "FAILED" && Number(modelData.value) > 0 ? theme.error : theme.windowText
                                         font.pointSize: theme.cardTitlePointSize - 1
                                         font.weight: Font.Bold
+                                        font.letterSpacing: 0
                                     }
                                     Label {
                                         anchors.horizontalCenter: parent.horizontalCenter
@@ -962,7 +977,7 @@ Window {
                                         color: theme.mutedText
                                         font.pointSize: theme.captionPointSize
                                         font.weight: Font.Bold
-                                        font.letterSpacing: 0.45
+                                        font.letterSpacing: 0
                                     }
                                 }
                             }
@@ -975,6 +990,7 @@ Window {
                         color: theme.subtleText
                         font.family: theme.monospaceFamily
                         font.pointSize: theme.captionPointSize
+                        lineHeight: theme.compactLineHeight
                         elide: Text.ElideMiddle
                     }
                 }

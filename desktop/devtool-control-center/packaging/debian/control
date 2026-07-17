@@ -3,9 +3,9 @@ Version: 0.4.0
 Section: devel
 Priority: optional
 Architecture: any
-Depends: qml6-module-qtqml, qml6-module-qtqml-models, qml6-module-qtqml-workerscript, qml6-module-qtquick, qml6-module-qtquick-window, qml6-module-qtquick-templates, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtquick-dialogs, libqt6quick6, libqt6widgets6, libqt6network6
+Depends: qml-module-qtqml, qml-module-qtqml-models2, qml-module-qtqml-workerscript2, qml-module-qtquick2, qml-module-qtquick-window2, qml-module-qtquick-templates2, qml-module-qtquick-controls2, qml-module-qtquick-layouts, qml-module-qtquick-dialogs, libqt5quick5, libqt5widgets5, libqt5network5
 Suggests: python3-pip, pipx, libnotify-bin
 Maintainer: Mike Silva <mike.ceead@gmail.com>
-Description: Native Qt 6 control center for devtool
+Description: Native Qt 5 control center for devtool
  Run workflows, monitor live segmented progress, review history, and use a compact desktop HUD.
  The devtool CLI is discovered from PATH or common per-user Python installation paths and is configured separately.

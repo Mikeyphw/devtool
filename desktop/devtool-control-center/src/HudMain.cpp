@@ -18,6 +18,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QProcess>
+#include <QQuickStyle>
 #include <QScreen>
 #include <QSettings>
 #include <QSurfaceFormat>
@@ -53,7 +54,11 @@ QString preferredNerdFont() {
         QStringLiteral("MesloLGS NF"), QStringLiteral("FiraCode Nerd Font"),
         QStringLiteral("Symbols Nerd Font Mono"), QStringLiteral("Noto Sans Mono")
     };
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     const QStringList available = QFontDatabase::families();
+#else
+    const QStringList available = QFontDatabase().families();
+#endif
     for (const QString &family : preferred) if (available.contains(family)) return family;
     return QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
 }
@@ -110,7 +115,7 @@ void saveHudPosition(const QWindow *window) {
 }
 
 QIcon hudIcon() {
-    return QIcon(QStringLiteral(":/icons/devtool-control-center-tray.svg"));
+    return QIcon(QStringLiteral(":/qt/qml/Devtool/ControlCenter/icons/devtool-control-center-tray.svg"));
 }
 
 QString resolveDevtoolExecutable() {
@@ -175,6 +180,8 @@ int main(int argc, char **argv) {
         std::cout << "Devtool Control Center " << DEVTOOL_CC_VERSION << " (HUD)\n";
         return 0;
     }
+    QQuickStyle::setStyle(QStringLiteral("Default"));
+    QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
     QSurfaceFormat format = QSurfaceFormat::defaultFormat();
     format.setAlphaBufferSize(8);
     QSurfaceFormat::setDefaultFormat(format);
@@ -214,9 +221,12 @@ int main(int argc, char **argv) {
     QTimer::singleShot(150, &ipc, &IpcClient::start);
 
     QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/qml"));
+    engine.addImportPath(QStringLiteral("qrc:/qt/qml"));
+    engine.addImportPath(QStringLiteral("qrc:/qt-project.org/imports"));
     engine.rootContext()->setContextProperty(QStringLiteral("hudStore"), &hud);
     engine.rootContext()->setContextProperty(QStringLiteral("uiMonospaceFont"), preferredNerdFont());
-    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/Hud/qml/CompactHud.qml")));
+    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/Devtool/ControlCenter/qml/CompactHud.qml")));
     if (engine.rootObjects().isEmpty()) {
         qCritical() << "Devtool HUD: QML root failed to load";
         return 1;
@@ -226,6 +236,11 @@ int main(int argc, char **argv) {
     if (!window) {
         qCritical() << "Devtool HUD: QML root is not a window";
         return 1;
+    }
+
+    window->setMinimumSize(QSize(320, 224));
+    if (window->width() < 320 || window->height() < 224) {
+        window->resize(qMax(window->width(), 720), qMax(window->height(), 224));
     }
 
     bool restoringPosition = true;
@@ -251,6 +266,7 @@ int main(int argc, char **argv) {
         if (resetPosition) window->setPosition(defaultHudPosition(window));
         else restoreHudPosition(window);
         activateHudWindow(window);
+        if (window->height() < 224) window->resize(window->width(), 224);
         restoringPosition = false;
         qInfo() << "Devtool HUD: window shown at" << window->position() << "size" << window->size();
     });

@@ -1,8 +1,7 @@
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
-import QtQuick.Dialogs
-import "../components"
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
+import Devtool.ControlCenter.Components 1.0
 
 Item {
     id: root
@@ -29,14 +28,18 @@ Item {
         if (selectedRow >= 0) selectRepository(selectedRow)
     }
 
-    function addRepositoryFromNativeDialog() {
-        const path = appController.chooseRepositoryDirectory(appController.repository || "")
-        if (!path) return
-        repositoryModel.addRepository(path)
-        for (let row = 0; row < repositoryModel.count; ++row) {
-            if (String(repositoryModel.get(row).path || "") === String(path)) {
-                selectRepository(row)
-                return
+    PathPickerDialog {
+        id: repositoryDialog
+        selectFolder: true
+        initialPath: appController.repository || ""
+        onAccepted: function(path) {
+            if (!path) return
+            repositoryModel.addRepository(path)
+            for (let row = 0; row < repositoryModel.count; ++row) {
+                if (String(repositoryModel.get(row).path || "") === String(path)) {
+                    selectRepository(row)
+                    return
+                }
             }
         }
     }
@@ -82,7 +85,7 @@ Item {
             PageHeading { text: "Repositories" }
             Item { Layout.fillWidth: true }
             AppButton { text: "Refresh"; onClicked: { repositoryModel.refresh(); gitRepository.refresh(); root.refreshActivity() } }
-            AppButton { text: "Add repository…"; variant: "primary"; onClicked: root.addRepositoryFromNativeDialog() }
+            AppButton { text: "Add repository…"; variant: "primary"; onClicked: repositoryDialog.open() }
         }
 
         Label {

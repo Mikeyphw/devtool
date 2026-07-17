@@ -14,6 +14,7 @@ import tomllib
 from unittest.mock import patch
 
 from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
+from devtool.apply_notifications import build_apply_notification
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
 from devtool.cli import _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, _validation_specs_for_args, build_parser, main
@@ -103,6 +104,25 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.keep_artifact)
         args = parser.parse_args(["apply-overlay", "--delete-artifact-on-failure", "artifact.zip"])
         self.assertTrue(args.delete_artifact_on_failure)
+
+    def test_parser_accepts_apply_notification_opt_out(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["apply", "snapshot", "--no-apply-notification", "artifact.zip"])
+        self.assertTrue(args.no_apply_notification)
+
+    def test_apply_notification_summary_is_concise(self) -> None:
+        args = SimpleNamespace(command="apply-overlay", artifact="demo_overlay.zip")
+        config = ProjectConfig(repo_root=Path("/tmp/demo"), kind="dotnet")
+        results = [
+            OperationResult("apply-overlay", ["apply-overlay"], 0, 1.2, "ok", []),
+            OperationResult("git-commit", ["git", "commit"], 0, 0.3, "ok", [], metadata={"commit_hash": "abcdef1234567890"}),
+        ]
+        notification = build_apply_notification(args, config, results, {"failed": 0, "warnings": 1, "errors": 0})
+        self.assertEqual(notification.title, "Devtool overlay applied")
+        self.assertIn("demo", notification.body)
+        self.assertIn("demo_overlay.zip", notification.body)
+        self.assertIn("commit abcdef123456", notification.body)
+        self.assertEqual(notification.toast, "Applied: demo_overlay.zip")
 
     def test_parser_accepts_clean_cache_flag(self) -> None:
         parser = build_parser()

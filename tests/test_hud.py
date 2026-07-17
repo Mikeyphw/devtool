@@ -71,6 +71,23 @@ class HudTests(unittest.TestCase):
         self.assertEqual(state.total, 10)
         self.assertEqual(state.percent, 70)
 
+    def test_qt_compact_hud_strips_inherited_kvantum_style(self) -> None:
+        from devtool.hud import QtCompactHud
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict("os.environ", {"QT_STYLE_OVERRIDE": "kvantum"}, clear=False), \
+                 patch("devtool.hud._control_center_hud_binary", return_value="/usr/bin/devtool-control-center-hud"), \
+                 patch("devtool.hud.subprocess.run") as run:
+                run.return_value.returncode = 0
+                rc = QtCompactHud().run(directory=root, interval_s=0.1, once=True)
+
+        self.assertEqual(rc, 0)
+        env = run.call_args.kwargs["env"]
+        self.assertNotIn("QT_STYLE_OVERRIDE", env)
+        self.assertEqual(env["DEVTOOL_TASKER_DIR"], str(root))
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/devtool-control-center-hud", "--exit-when-idle"])
+
     def test_recent_error_lines_highlight_failures_without_zero_failed_noise(self) -> None:
         from devtool.hud import recent_error_lines
         events = [

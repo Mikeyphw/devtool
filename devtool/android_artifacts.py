@@ -13,7 +13,7 @@ import subprocess
 from typing import Any, Iterable
 import zipfile
 
-from .android_build import discover_artifacts, artifact_variant
+from .android_build import discover_artifacts, artifact_variant, slugify_name
 from .diagnostics import relativize
 from .models import Issue, ProjectConfig
 
@@ -219,14 +219,67 @@ def _configured_output_dir(config: ProjectConfig) -> Path | None:
     return path.resolve()
 
 
+_ANDROID_ARTIFACT_TASK_PREFIXES = ("assemble", "bundle", "package")
+_ANDROID_BUILD_TYPES = ("debug", "release")
+
+
+def _task_name(raw_task: object) -> str:
+    task = str(raw_task or "").strip()
+    if not task:
+        return ""
+    return task.rsplit(":", 1)[-1]
+
+
+def _expected_android_variants(tasks: Iterable[object]) -> set[str]:
+    variants: set[str] = set()
+    for raw_task in tasks:
+        task = _task_name(raw_task)
+        suffix = ""
+        for prefix in _ANDROID_ARTIFACT_TASK_PREFIXES:
+            if task.startswith(prefix) and len(task) > len(prefix):
+                suffix = task[len(prefix):]
+                break
+        if not suffix:
+            continue
+        full = slugify_name(suffix)
+        if not full:
+            continue
+        variants.add(full)
+        for build_type in _ANDROID_BUILD_TYPES:
+            marker = build_type.capitalize()
+            if suffix.endswith(marker):
+                flavor = suffix[: -len(marker)]
+                if flavor:
+                    variants.add(slugify_name(flavor))
+                break
+    return variants
+
+
+def _filter_cached_artifacts_for_tasks(paths: Iterable[Path], tasks: Iterable[object]) -> list[Path]:
+    expected_variants = _expected_android_variants(tasks)
+    if not expected_variants:
+        return list(paths)
+    filtered: list[Path] = []
+    for path in paths:
+        suffix = path.suffix.lower()
+        if suffix not in {".apk", ".aab"}:
+            filtered.append(path)
+            continue
+        if artifact_variant(path) in expected_variants:
+            filtered.append(path)
+    return filtered
+
+
 def collect_and_verify_android_artifacts(
     config: ProjectConfig,
     *,
     project_root: Path,
     started_at: float | None,
+    tasks: Iterable[object] = (),
 ) -> tuple[dict[str, Any], list[Issue]]:
     since = float(started_at or 0.0)
     discovered = discover_artifacts(project_root, since)
+    used_cached_outputs = False
     output_dir = _configured_output_dir(config)
     if output_dir and output_dir.is_dir():
         for pattern in ("*.apk", "*.aab", "*.aar", "*.jar", "*.war", "*.zip"):
@@ -237,6 +290,16 @@ def collect_and_verify_android_artifacts(
                 except OSError:
                     continue
     unique = sorted({path.resolve() for path in discovered if path.is_file()})
+    artifact_options = config.runner_options.get("artifacts", {})
+    required = (
+        bool(artifact_options.get("required", config.kind == "android"))
+        if isinstance(artifact_options, dict)
+        else config.kind == "android"
+    )
+    if required and not unique:
+        cached = sorted({path.resolve() for path in discover_artifacts(project_root, 0.0) if path.is_file()})
+        unique = _filter_cached_artifacts_for_tasks(cached, tasks)
+        used_cached_outputs = bool(unique)
     records: list[AndroidArtifactRecord] = []
     issues: list[Issue] = []
     for path in unique:
@@ -248,7 +311,6 @@ def collect_and_verify_android_artifacts(
         records.append(record)
         issues.extend(record_issues)
 
-    required = bool((config.runner_options.get("artifacts") or {}).get("required", config.kind == "android")) if isinstance(config.runner_options.get("artifacts", {}), dict) else config.kind == "android"
     if required and not records:
         issues.append(Issue(
             "error",
@@ -262,6 +324,7 @@ def collect_and_verify_android_artifacts(
         "valid": sum(1 for item in records if item.valid),
         "invalid": sum(1 for item in records if not item.valid),
         "required": required,
+        "used_cached_outputs": used_cached_outputs,
         "items": [item.as_dict() for item in records],
     }
     return metadata, issues

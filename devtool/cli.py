@@ -19,6 +19,7 @@ from pathlib import Path
 from rich.prompt import Confirm
 
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
+from .apply_notifications import notify_apply_finished
 from .artifacts import (
     SUPPORTED_ARCHIVE_SUFFIXES,
     append_history,
@@ -167,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     hud = parser.add_argument_group("HUD and app bridge")
     hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the selected HUD while progress is emitted (default)")
     hud.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not publish live HUD progress for this command")
-    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-bridge, desktop-window (Qt 6), gtk-window (legacy), web, studio, or terminal")
+    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-bridge, desktop-window (Qt 5), gtk-window (legacy), web, studio, or terminal")
     hud_presentation = hud.add_mutually_exclusive_group()
     hud_presentation.add_argument("--hud-overlay", action="store_true", help="On Android, also show the run in the user-enabled floating overlay HUD")
     hud_presentation.add_argument("--hud-no-overlay", action="store_true", help="On Android, keep the update in the app without opening the floating overlay")
@@ -272,6 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
         cmd.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
         cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
+        cmd.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
         _add_validation_skip_flags(cmd)
         cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
         cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
@@ -295,6 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
         sub.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
         sub.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
+        sub.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
         _add_validation_skip_flags(sub)
         sub.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
         sub.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
@@ -413,7 +416,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("targets", aliases=["tg"])
 
-    control_center = subparsers.add_parser("control-center", aliases=["gui"], help="Launch the Qt 6 Devtool Control Center")
+    control_center = subparsers.add_parser("control-center", aliases=["gui"], help="Launch the Qt 5 Devtool Control Center")
     control_center.add_argument("--binary", default="", help="Override the devtool-control-center executable")
 
     ipc_server = subparsers.add_parser("ipc-server", help="Run or start the local Control Center IPC broker")
@@ -3761,6 +3764,8 @@ def main(argv: list[str] | None = None) -> int:
         _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
         _maybe_copy(raw_output, summary_text, json_text, args)
         _finish_live_progress(tasker_progress, totals=totals, results=results)
+        if args.command in APPLY_COMMANDS:
+            notify_apply_finished(args, config, results, totals)
         _release_single_run_lock(args)
         return 1
 
@@ -3962,6 +3967,8 @@ def main(argv: list[str] | None = None) -> int:
     _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
     _maybe_copy(raw_output, summary_text, json_text, args)
     _finish_live_progress(tasker_progress, totals=totals, results=results)
+    if args.command in APPLY_COMMANDS:
+        notify_apply_finished(args, config, results, totals)
     _write_performance_report(args, results, started_at=started_at, finished_at=finished_at, config=config)
     _release_single_run_lock(args)
     return 0 if totals["failed"] == 0 else 1

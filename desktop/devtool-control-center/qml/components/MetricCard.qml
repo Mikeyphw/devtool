@@ -1,5 +1,5 @@
-import QtQuick
-import QtQuick.Controls
+import QtQuick 2.15
+import QtQuick.Controls 2.15
 
 Rectangle {
     id: root
@@ -23,7 +23,7 @@ Rectangle {
             color: root.accent
             font.pointSize: theme.metricValuePointSize
             font.weight: Font.DemiBold
-            font.letterSpacing: -0.15
+            font.letterSpacing: 0
             lineHeight: theme.compactLineHeight
         }
         Label {
@@ -31,7 +31,7 @@ Rectangle {
             color: theme.mutedText
             font.pointSize: theme.captionPointSize
             font.weight: Font.DemiBold
-            font.letterSpacing: 0.20
+            font.letterSpacing: 0
             lineHeight: theme.compactLineHeight
         }
     }

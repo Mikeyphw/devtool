@@ -5,7 +5,7 @@
     {"id": "python-compile", "group": "core", "required": true, "description": "Python sources compile"},
     {"id": "python-tests", "group": "core", "required": true, "description": "Complete Python/source-contract test suite passes"},
     {"id": "shell-syntax", "group": "core", "required": true, "description": "All shipped shell entry points pass bash syntax validation"},
-    {"id": "qt-configure", "group": "qt", "required": false, "description": "Qt 6 project configures with CMake"},
+    {"id": "qt-configure", "group": "qt", "required": false, "description": "Qt 5 project configures with CMake"},
     {"id": "qt-build", "group": "qt", "required": false, "description": "Both native Qt executables compile and link"},
     {"id": "qt-smoke", "group": "qt", "required": false, "description": "CTest launches both QML applications offscreen"},
     {"id": "android-lint", "group": "android", "required": false, "description": "Android release lint passes"},

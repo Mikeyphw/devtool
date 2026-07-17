@@ -109,7 +109,7 @@ def sha256_file(path: Path) -> str:
 
 
 def android_sdk_available(environment: Mapping[str, str] | None = None) -> bool:
-    env = environment or os.environ
+    env = os.environ if environment is None else environment
     sdk = env.get("ANDROID_SDK_ROOT") or env.get("ANDROID_HOME")
     if not sdk:
         return False
@@ -118,13 +118,13 @@ def android_sdk_available(environment: Mapping[str, str] | None = None) -> bool:
 
 
 def qt_available() -> bool:
-    if any(shutil.which(command) for command in ("qtpaths6", "qmake6", "qml6")):
+    if any(shutil.which(command) for command in ("qtpaths", "qmake", "qml", "qmlscene")):
         return True
     candidates = (
-        Path("/usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6Config.cmake"),
-        Path("/usr/lib/aarch64-linux-gnu/cmake/Qt6/Qt6Config.cmake"),
-        Path("/usr/local/lib/cmake/Qt6/Qt6Config.cmake"),
-        Path.home() / ".local/lib/cmake/Qt6/Qt6Config.cmake",
+        Path("/usr/lib/x86_64-linux-gnu/cmake/Qt5/Qt5Config.cmake"),
+        Path("/usr/lib/aarch64-linux-gnu/cmake/Qt5/Qt5Config.cmake"),
+        Path("/usr/local/lib/cmake/Qt5/Qt5Config.cmake"),
+        Path.home() / ".local/lib/cmake/Qt5/Qt5Config.cmake",
     )
     return any(path.is_file() for path in candidates)
 
@@ -226,7 +226,7 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
                 _skip("qt-smoke", "Qt configuration failed", required=require_qt),
             ])
     elif include_qt:
-        detail = "Qt 6 development files were not detected"
+        detail = "Qt 5 development files were not detected"
         report.results.extend([_skip("qt-configure", detail, required=require_qt), _skip("qt-build", detail, required=require_qt), _skip("qt-smoke", detail, required=require_qt)])
 
     android_root = root / "android" / "devtool-live-hud"

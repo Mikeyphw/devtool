@@ -313,6 +313,22 @@ final class HudUpdate {
     boolean failedState() { return status.equals("failed"); }
     boolean rollbackState() { return phase.toLowerCase(Locale.ROOT).contains("rollback"); }
 
+    boolean isApplyOperation() {
+        String haystack = (task + " " + phase + " " + artifact + " " + summary).toLowerCase(Locale.ROOT);
+        return haystack.contains("overlay") || haystack.contains("snapshot");
+    }
+
+    String applyToastText() {
+        String subject = !artifact.isEmpty() ? shortName(artifact)
+                : task.toLowerCase(Locale.ROOT).contains("snapshot") ? "snapshot"
+                : task.toLowerCase(Locale.ROOT).contains("bundle") ? "overlay bundle"
+                : "overlay";
+        if (rollbackState()) return "Rolled back: " + subject;
+        if (failedState()) return "Failed: " + subject;
+        if (succeeded()) return "Applied: " + subject;
+        return "Devtool: " + subject;
+    }
+
     int displayProgress() {
         if (succeeded()) return 100;
         return progress;

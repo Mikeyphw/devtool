@@ -176,7 +176,7 @@ AppController::AppController(HudStateStore *s, ProcessRunner *r, HistoryModel *h
     QTimer::singleShot(0, this, &AppController::refreshClipboardMonitorStatus);
 
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
-        m_tray = new QSystemTrayIcon(QIcon(QStringLiteral(":/icons/devtool-control-center-tray.svg")), this);
+        m_tray = new QSystemTrayIcon(QIcon(QStringLiteral(":/qt/qml/Devtool/ControlCenter/icons/devtool-control-center-tray.svg")), this);
         auto *menu = new QMenu;
         menu->addAction(QStringLiteral("Open"), this, [this] { emit requestMainWindow(); });
         menu->addAction(QStringLiteral("Artifacts"), this, [this] { emit requestMainWindow(); emit requestArtifactInspector(); });

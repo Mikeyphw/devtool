@@ -160,7 +160,7 @@ _devtool_commands() {
     'hud:run a live HUD renderer'
     'android-hud-bridge:bridge Termux or chroot progress to Android'
     'termux-hud-bridge:alias for android-hud-bridge'
-    'control-center:launch the Qt 6 Control Center'
+    'control-center:launch the Qt 5 Control Center'
     'gui:alias for control-center'
     'ipc-server:run the Control Center IPC broker'
   )

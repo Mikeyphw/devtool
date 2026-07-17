@@ -40,14 +40,14 @@ def test_slice5_versions_are_canonical_and_consistent() -> None:
             "version_code": 20,
             "application_id": "io.github.mikeceead.devtoolhud",
         },
-        "minimums": {
-            "python": "3.11",
-            "qt": "6.4",
-            "android_min_sdk": 26,
-            "android_target_sdk": 36,
-            "java": 17,
-        },
-    }
+            "minimums": {
+                "python": "3.11",
+                "qt": "5.15",
+                "android_min_sdk": 26,
+                "android_target_sdk": 36,
+                "java": 17,
+            },
+        }
     assert validate_version_consistency(ROOT) == []
 
 
@@ -70,7 +70,7 @@ def test_release_qualifier_has_explicit_toolchain_skip_and_require_semantics() -
     source = read(ROOT / "devtool" / "release_qualification.py")
     for token in (
         "require_qt", "require_android", "run_device_tests",
-        "Qt 6 development files were not detected",
+        "Qt 5 development files were not detected",
         "Android SDK platform 36 and build-tools 36.0.0 were not detected",
         "release signing environment is incomplete",
     ):

@@ -19,6 +19,15 @@ class AndroidArtifactVerificationTests(unittest.TestCase):
             archive.writestr("classes.dex", b"dex")
         return path
 
+    def _apk_at(self, root: Path, relative: str, *, manifest: bool = True) -> Path:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path, "w") as archive:
+            if manifest:
+                archive.writestr("AndroidManifest.xml", b"manifest")
+            archive.writestr("classes.dex", b"dex")
+        return path
+
     def test_apk_structural_verification_and_hash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -53,4 +62,55 @@ class AndroidArtifactVerificationTests(unittest.TestCase):
 
         self.assertEqual(metadata["count"], 1)
         self.assertEqual(metadata["valid"], 1)
+        self.assertFalse(issues)
+
+    def test_required_collection_accepts_up_to_date_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            apk = self._apk(root)
+            old_mtime = apk.stat().st_mtime
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={"artifacts": {"required": True}},
+            )
+            with patch("devtool.android_artifacts._tool_from_sdk", return_value=None):
+                metadata, issues = collect_and_verify_android_artifacts(
+                    config, project_root=root, started_at=old_mtime + 60.0
+                )
+
+        self.assertEqual(metadata["count"], 1)
+        self.assertEqual(metadata["valid"], 1)
+        self.assertTrue(metadata["used_cached_outputs"])
+        self.assertFalse(issues)
+
+    def test_cached_fallback_ignores_unrequested_android_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            official = self._apk_at(root, "app/build/outputs/apk/official/debug/app-official-debug.apk")
+            spoofed = self._apk_at(
+                root,
+                "app/build/outputs/apk/spoofed/debug/app-spoofed-debug.apk",
+                manifest=False,
+            )
+            started_at = max(official.stat().st_mtime, spoofed.stat().st_mtime) + 60.0
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={"artifacts": {"required": True}},
+            )
+            with patch("devtool.android_artifacts._tool_from_sdk", return_value=None):
+                metadata, issues = collect_and_verify_android_artifacts(
+                    config,
+                    project_root=root,
+                    started_at=started_at,
+                    tasks=[":app:assembleOfficialDebug", ":app:testOfficialDebugUnitTest", ":app:lintOfficialDebug"],
+                )
+
+        self.assertEqual(metadata["count"], 1)
+        self.assertEqual(metadata["valid"], 1)
+        self.assertTrue(metadata["used_cached_outputs"])
+        self.assertEqual(metadata["items"][0]["path"], "app/build/outputs/apk/official/debug/app-official-debug.apk")
         self.assertFalse(issues)

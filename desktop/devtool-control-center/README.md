@@ -1,6 +1,6 @@
-# Devtool Control Center — Qt 6
+# Devtool Control Center — Qt 5
 
-Native Linux Qt 6/QML frontend modeled after the Android companion app and adapted for desktop workflows.
+Native Linux Qt 5/QML frontend modeled after the Android companion app and adapted for desktop workflows.
 
 ## Included
 
@@ -22,12 +22,13 @@ Native Linux Qt 6/QML frontend modeled after the Android companion app and adapt
 Ubuntu 24.04 or newer:
 
 ```bash
-sudo apt install cmake ninja-build g++ qt6-base-dev qt6-declarative-dev \
-  qml6-module-qtqml qml6-module-qtqml-models \
-  qml6-module-qtqml-workerscript qml6-module-qtquick \
-  qml6-module-qtquick-window qml6-module-qtquick-templates \
-  qml6-module-qtquick-controls qml6-module-qtquick-layouts \
-  qml6-module-qtquick-dialogs
+sudo apt install cmake ninja-build g++ qtbase5-dev qtdeclarative5-dev \
+  qtquickcontrols2-5-dev \
+  qml-module-qtqml qml-module-qtqml-models2 \
+  qml-module-qtqml-workerscript2 qml-module-qtquick2 \
+  qml-module-qtquick-window2 qml-module-qtquick-templates2 \
+  qml-module-qtquick-controls2 qml-module-qtquick-layouts \
+  qml-module-qtquick-dialogs
 ./build.sh
 ```
 
@@ -60,9 +61,9 @@ The package is written to `dist/devtool-control-center_0.4.0_<arch>.deb`. Set `V
 Version 0.4.0 connects to devtool 0.5.9 through a per-user Unix-domain socket. It receives snapshots and incremental run updates without polling, reconnects automatically, supports multiple clients, and can cancel the exact active run. If IPC is unavailable, the existing state-file watcher remains active as a recovery fallback.
 
 
-## Qt 6.4 compatibility
+## Qt 5.15 compatibility
 
-Version 0.4.0 builds on Qt 6.4 by avoiding APIs introduced in Qt 6.5, using explicit QVariant fallbacks, and loading the embedded entry point from `qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml`.
+Version 0.4.0 builds on Qt 5.15 by avoiding APIs introduced in Qt 6, using explicit QVariant fallbacks, and loading the embedded entry point from `qrc:/qt/qml/Devtool/ControlCenter/qml/Main.qml`.
 
 
 ## Build-directory and clock-skew safety
@@ -80,7 +81,7 @@ The Debian package explicitly depends on the QtQml base, Models, and WorkerScrip
 
 ## System appearance
 
-Control Center follows the active Qt 6 system palette, application font, accent color, display scaling, and Qt Quick Controls style. It no longer forces a private dark palette or the Fusion style. Use the standard `-style` argument or `QT_QUICK_CONTROLS_STYLE` environment variable to override the platform-selected controls style at startup. The custom cards and controls derive their colors from `SystemPalette`, so both light and dark system themes remain coherent.
+Control Center follows the active Qt 5 system palette, application font, accent color, display scaling, and Qt Quick Controls style. It no longer forces a private dark palette or the Fusion style. Use the standard `-style` argument or `QT_QUICK_CONTROLS_STYLE` environment variable to override the platform-selected controls style at startup. The custom cards and controls derive their colors from `SystemPalette`, so both light and dark system themes remain coherent.
 
 
 ## Optional clipboard monitoring service
@@ -95,7 +96,7 @@ Clipboard monitoring still never auto-runs content. A detected devtool command a
 
 ## Compact Qt HUD
 
-`devtool --hud-mode desktop-window` now launches the Qt 6 compact HUD. The previous GTK renderer is retained only as the explicit legacy mode `--hud-mode gtk-window`; automatic desktop selection never falls back to GTK.
+`devtool --hud-mode desktop-window` now launches the Qt 5 compact HUD. The previous GTK renderer is retained only as the explicit legacy mode `--hud-mode gtk-window`; automatic desktop selection never falls back to GTK.
 
 ## Standby and background efficiency
 

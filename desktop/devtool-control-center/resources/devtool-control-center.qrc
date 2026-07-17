@@ -1,0 +1,52 @@
+<RCC>
+  <qresource prefix="/qt/qml/Devtool/ControlCenter">
+    <file alias="qml/Main.qml">../qml/Main.qml</file>
+    <file alias="qml/CompactHud.qml">../qml/CompactHud.qml</file>
+    <file alias="Components/Theme.qml">../qml/components/Theme.qml</file>
+    <file alias="Components/AppScrollView.qml">../qml/components/AppScrollView.qml</file>
+    <file alias="Components/qmldir">../qml/components/qmldir</file>
+    <file alias="Components/AppButton.qml">../qml/components/AppButton.qml</file>
+    <file alias="Components/AppTextField.qml">../qml/components/AppTextField.qml</file>
+    <file alias="Components/AppTextArea.qml">../qml/components/AppTextArea.qml</file>
+    <file alias="Components/AppComboBox.qml">../qml/components/AppComboBox.qml</file>
+    <file alias="Components/AppCheckBox.qml">../qml/components/AppCheckBox.qml</file>
+    <file alias="Components/AppTabButton.qml">../qml/components/AppTabButton.qml</file>
+    <file alias="Components/PageHeading.qml">../qml/components/PageHeading.qml</file>
+    <file alias="Components/SectionHeading.qml">../qml/components/SectionHeading.qml</file>
+    <file alias="Components/SurfaceCard.qml">../qml/components/SurfaceCard.qml</file>
+    <file alias="Components/MetricCard.qml">../qml/components/MetricCard.qml</file>
+    <file alias="Components/PipelineView.qml">../qml/components/PipelineView.qml</file>
+    <file alias="Components/RunCard.qml">../qml/components/RunCard.qml</file>
+    <file alias="Components/PathPickerDialog.qml">../qml/components/PathPickerDialog.qml</file>
+    <file alias="Components/SidebarButton.qml">../qml/components/SidebarButton.qml</file>
+    <file alias="Components/StatusMark.qml">../qml/components/StatusMark.qml</file>
+    <file alias="Pages/OverviewPage.qml">../qml/pages/OverviewPage.qml</file>
+    <file alias="Pages/qmldir">../qml/pages/qmldir</file>
+    <file alias="Pages/RunPage.qml">../qml/pages/RunPage.qml</file>
+    <file alias="Pages/HistoryPage.qml">../qml/pages/HistoryPage.qml</file>
+    <file alias="Pages/ArtifactsPage.qml">../qml/pages/ArtifactsPage.qml</file>
+    <file alias="Pages/DiagnosticsPage.qml">../qml/pages/DiagnosticsPage.qml</file>
+    <file alias="Pages/RepositoriesPage.qml">../qml/pages/RepositoriesPage.qml</file>
+    <file alias="Pages/SettingsPage.qml">../qml/pages/SettingsPage.qml</file>
+  </qresource>
+  <qresource prefix="/qt/qml/Devtool/ControlCenter/icons">
+    <file alias="devtool-control-center.svg">devtool-control-center.svg</file>
+    <file alias="devtool-control-center-tray.svg">devtool-control-center-tray.svg</file>
+    <file alias="overview.svg">../qml/icons/overview.svg</file>
+    <file alias="run.svg">../qml/icons/run.svg</file>
+    <file alias="artifacts.svg">../qml/icons/artifacts.svg</file>
+    <file alias="diagnostics.svg">../qml/icons/diagnostics.svg</file>
+    <file alias="history.svg">../qml/icons/history.svg</file>
+    <file alias="repositories.svg">../qml/icons/repositories.svg</file>
+    <file alias="settings.svg">../qml/icons/settings.svg</file>
+    <file alias="artifact.svg">../qml/icons/artifact.svg</file>
+    <file alias="arrow-down.svg">../qml/icons/arrow-down.svg</file>
+    <file alias="copy.svg">../qml/icons/copy.svg</file>
+    <file alias="done.svg">../qml/icons/done.svg</file>
+    <file alias="close.svg">../qml/icons/close.svg</file>
+    <file alias="chevron-up.svg">../qml/icons/chevron-up.svg</file>
+    <file alias="chevron-down.svg">../qml/icons/chevron-down.svg</file>
+    <file alias="log.svg">../qml/icons/log.svg</file>
+    <file alias="details.svg">../qml/icons/details.svg</file>
+  </qresource>
+</RCC>

@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from devtool.android_build import (
+    JavaRequirement,
+    ProjectInfo,
     artifact_variant,
     default_tasks,
     discover_sdk_root,
     discover_sdk_root_with_source,
     find_java_home,
     inspect_project,
+    main as android_build_main,
     normalize_gradle_arguments,
     planned_artifact_names,
     select_revanced_asset,
@@ -212,6 +216,82 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         self.assertEqual(command[7], "-ilc")
         self.assertIn("GRADLE_BUILD_CHROOT_ACTIVE=1", command[8])
         self.assertIn("/home/termux/Code/demo", command[8])
+
+    def test_gradle_build_continues_across_independent_task_failures_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            java_home = root / "jdk"
+            gradle = root / "gradlew"
+            commands: list[list[str]] = []
+
+            def fake_run(argv, *args, **kwargs):
+                commands.append([str(value) for value in argv])
+                return subprocess.CompletedProcess(commands[-1], 0, "", "")
+
+            project = ProjectInfo(
+                root=root,
+                name="demo",
+                android=False,
+                android_application=False,
+                compile_sdk=None,
+                build_tools=None,
+                agp_major=None,
+                native_build=False,
+                ndk_version=None,
+                cmake_version=None,
+            )
+            with (
+                patch("devtool.android_build.maybe_reexec_in_chroot", return_value=None),
+                patch("devtool.android_build.resolve_project_root", return_value=root),
+                patch("devtool.android_build.inspect_project", return_value=project),
+                patch("devtool.android_build.infer_java_requirement", return_value=JavaRequirement(17)),
+                patch("devtool.android_build.find_java_home", return_value=java_home),
+                patch("devtool.android_build.select_gradle", return_value=gradle),
+                patch("devtool.android_build.run", side_effect=fake_run),
+            ):
+                rc = android_build_main([str(root), "--task", "build", "--no-artifact-scan"])
+
+        self.assertEqual(rc, 0)
+        build_command = commands[-1]
+        self.assertIn("--continue", build_command)
+        self.assertIn("--stacktrace", build_command)
+
+    def test_gradle_build_fail_fast_disables_continue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            java_home = root / "jdk"
+            gradle = root / "gradlew"
+            commands: list[list[str]] = []
+
+            def fake_run(argv, *args, **kwargs):
+                commands.append([str(value) for value in argv])
+                return subprocess.CompletedProcess(commands[-1], 0, "", "")
+
+            project = ProjectInfo(
+                root=root,
+                name="demo",
+                android=False,
+                android_application=False,
+                compile_sdk=None,
+                build_tools=None,
+                agp_major=None,
+                native_build=False,
+                ndk_version=None,
+                cmake_version=None,
+            )
+            with (
+                patch("devtool.android_build.maybe_reexec_in_chroot", return_value=None),
+                patch("devtool.android_build.resolve_project_root", return_value=root),
+                patch("devtool.android_build.inspect_project", return_value=project),
+                patch("devtool.android_build.infer_java_requirement", return_value=JavaRequirement(17)),
+                patch("devtool.android_build.find_java_home", return_value=java_home),
+                patch("devtool.android_build.select_gradle", return_value=gradle),
+                patch("devtool.android_build.run", side_effect=fake_run),
+            ):
+                rc = android_build_main([str(root), "--task", "build", "--no-artifact-scan", "--fail-fast"])
+
+        self.assertEqual(rc, 0)
+        self.assertNotIn("--continue", commands[-1])
 
 
 class AndroidConfigAndRunnerTests(unittest.TestCase):

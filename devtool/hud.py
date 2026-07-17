@@ -2100,7 +2100,7 @@ def _control_center_hud_binary() -> str | None:
 
 
 class QtCompactHud:
-    """Native Qt 6 compact HUD used by the desktop-window backend."""
+    """Native Qt 5 compact HUD used by the desktop-window backend."""
 
     @classmethod
     def available(cls) -> bool:
@@ -2118,10 +2118,13 @@ class QtCompactHud:
         binary = _control_center_hud_binary()
         if not binary:
             raise RuntimeError(
-                "The Qt 6 desktop HUD requires devtool-control-center-hud. "
+                "The Qt 5 desktop HUD requires devtool-control-center-hud. "
                 "Install the Control Center HUD package or set DEVTOOL_CONTROL_CENTER_HUD."
             )
         env = os.environ.copy()
+        # A stale Qt style override can abort startup before the window is shown.
+        if env.get("QT_STYLE_OVERRIDE", "").strip().lower() == "kvantum":
+            env.pop("QT_STYLE_OVERRIDE", None)
         env["DEVTOOL_TASKER_DIR"] = str(directory.expanduser())
         argv = [binary]
         if once:
@@ -2689,7 +2692,7 @@ def choose_hud_mode(requested: str) -> str:
         "termux-gui": "android-bridge", "termuxgui": "android-bridge",
         "android": "android-bridge", "android-gui": "android-bridge",
         "android-overlay": "android-bridge",
-        "qt": "control-center", "qt6": "control-center",
+        "qt": "control-center", "qt5": "control-center", "qt6": "control-center",
         "qt-control-center": "control-center", "control-centre": "control-center",
         "android-chroot": "android-bridge", "termux-bridge": "android-bridge",
         "termux-chroot": "android-bridge", "android-hud-bridge": "android-bridge",
