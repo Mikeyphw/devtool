@@ -749,18 +749,44 @@ def _human_detail(value: str) -> str:
     return text
 
 
-def _human_event_message(event_type: str, *, status: str = "", phase_name: str = "", message: str = "") -> str:
+def _coalesced_dotnet_validation_detail(metadata: dict[str, Any]) -> str:
+    if not bool(metadata.get("coalesced_dotnet_validation")):
+        return ""
+    components = [str(item).strip() for item in metadata.get("validation_components") or [] if str(item).strip()]
+    if not components:
+        components = ["restore", "build", "test"]
+    component_text = " + ".join(components)
+    return f"{component_text} via dotnet test"
+
+
+def _human_event_message(
+    event_type: str,
+    *,
+    status: str = "",
+    phase_name: str = "",
+    message: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> str:
     human_phase = _human_phase_name(phase_name) if phase_name else "devtool"
     clean = _human_detail(message)
     normalized = (event_type or "").replace("_", "-")
     status_key = (status or "").lower()
+    detail = _coalesced_dotnet_validation_detail(metadata or {})
     if normalized == "phase-started":
+        if detail:
+            return f"Starting {human_phase}: {detail}"
         return f"Starting {human_phase}"
     if normalized == "phase-finished":
         if status_key == "failed":
+            if detail:
+                return f"{human_phase} failed: {detail}"
             return f"{human_phase} failed"
         if status_key == "skipped":
+            if detail:
+                return f"{human_phase} skipped: {detail}"
             return f"{human_phase} skipped"
+        if detail:
+            return f"{human_phase} completed: {detail}"
         return f"{human_phase} completed"
     if normalized == "finished":
         return "Devtool finished successfully" if status_key == "ok" else "Devtool finished with errors"
@@ -1060,7 +1086,7 @@ class TaskerProgressSink:
             "started_at": utc_now_iso(),
         }
         self._record_phase_progress(phase=self.current_phase, status="running", completed=0)
-        self.emit("phase_started", status="running", phase=self.current_phase, progress={"percent": None, "current": 0, "completed": 0, "total": None, "target": target}, message=_human_event_message("phase_started", phase_name=name), force=True, notify=True)
+        self.emit("phase_started", status="running", phase=self.current_phase, progress={"percent": None, "current": 0, "completed": 0, "total": None, "target": target}, message=_human_event_message("phase_started", phase_name=name, metadata=metadata), force=True, notify=True)
 
     def progress(
         self,
@@ -1131,7 +1157,7 @@ class TaskerProgressSink:
             status="running" if result.returncode == 0 else "failed",
             phase=phase,
             result=_result_to_json(result),
-            message=_human_event_message("phase_finished", status=status, phase_name=result.name),
+            message=_human_event_message("phase_finished", status=status, phase_name=result.name, metadata=result.metadata),
             force=True,
             notify=True,
         )

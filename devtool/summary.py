@@ -151,7 +151,19 @@ _COMMIT_PATTERNS = (
 )
 
 
-def _action_label(name: str) -> str:
+def _coalesced_dotnet_validation_label(metadata: dict[str, object]) -> str:
+    if not bool(metadata.get("coalesced_dotnet_validation")):
+        return ""
+    components = [str(item).strip() for item in metadata.get("validation_components") or [] if str(item).strip()]
+    if not components:
+        components = ["restore", "build", "test"]
+    return ".NET validation (" + " + ".join(components) + " via dotnet test)"
+
+
+def _action_label(name: str, metadata: dict[str, object] | None = None) -> str:
+    explicit = _coalesced_dotnet_validation_label(metadata or {})
+    if explicit:
+        return explicit
     base = name.strip()
     # Preserve useful target suffixes such as "build [S3pe.Modern.sln]".
     prefix, separator, suffix = base.partition(" [")
@@ -415,7 +427,7 @@ def _overlay_panel(info: dict[str, object], results: list[OperationResult], targ
         mark, result_status, result_style = _result_status(result)
         actions.add_row(
             Text(mark, style=result_style),
-            Text(_action_label(result.name), style="bold"),
+            Text(_action_label(result.name, result.metadata), style="bold"),
             Text(result_status, style=result_style),
             Text(_human_duration(result.duration_seconds), style="dim"),
             _result_detail(result),
@@ -519,7 +531,7 @@ def _render_wide_results(results: list[OperationResult], target_console: Console
         symbol, status, style = _result_status(result)
         op_table.add_row(
             Text(symbol, style=style),
-            _cell(_action_label(result.name)),
+            _cell(_action_label(result.name, result.metadata)),
             Text(status, style=style),
             Text(_human_duration(result.duration_seconds), style="dim"),
             _result_detail(result),
@@ -534,7 +546,7 @@ def _render_compact_results(results: list[OperationResult], target_console: Cons
     table.add_column(justify="right", no_wrap=True)
     for result in results:
         symbol, _status, style = _result_status(result)
-        label = Text(_action_label(result.name), style="bold")
+        label = Text(_action_label(result.name, result.metadata), style="bold")
         detail = _result_detail(result)
         if detail.plain:
             label.append("\n")

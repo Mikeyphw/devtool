@@ -173,6 +173,28 @@ class SummaryRenderingTests(unittest.TestCase):
         self.assertIn("Auto-fix candidates", output)
         self.assertIn("System.IO.Path.GetFullPath", output)
 
+    def test_render_summary_explains_coalesced_dotnet_validation(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=120)
+        result = OperationResult(
+            name="dotnet-validation",
+            argv=["dotnet", "test", "Demo.sln"],
+            returncode=0,
+            duration_seconds=1.0,
+            output="Passed! - Failed: 0, Passed: 4, Skipped: 0, Total: 4",
+            issues=[],
+            metadata={
+                "coalesced_dotnet_validation": True,
+                "validation_components": ["restore", "build", "test"],
+            },
+        )
+
+        render_summary([result], console_obj=console)
+        output = stream.getvalue()
+
+        self.assertIn(".NET validation (restore + build", output)
+        self.assertIn("test via dotnet test)", output)
+
     def test_build_json_summary_includes_repairs(self) -> None:
         result = OperationResult(
             name="build",

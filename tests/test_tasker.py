@@ -189,6 +189,35 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertEqual(phase["tests_total"], 226)
             self.assertEqual(phase["test_assemblies"], 3)
 
+    def test_coalesced_dotnet_validation_events_explain_implicit_phases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = TaskerProgressSink(
+                directory=Path(tmp),
+                command="validate",
+                repo_root="/repo/demo",
+                repo_name="demo",
+                enabled=True,
+                update_interval_s=0,
+            )
+            metadata = {
+                "coalesced_dotnet_validation": True,
+                "validation_components": ["restore", "build", "test"],
+            }
+
+            sink.phase_started(
+                "dotnet-validation",
+                index=1,
+                total=1,
+                argv=["dotnet", "test", "Demo.sln"],
+                metadata=metadata,
+            )
+            started = json.loads((Path(tmp) / "latest_event.json").read_text(encoding="utf-8"))
+            sink.phase_finished(OperationResult("dotnet-validation", ["dotnet", "test", "Demo.sln"], 0, 1.0, "", [], metadata=metadata))
+            finished = json.loads((Path(tmp) / "latest_event.json").read_text(encoding="utf-8"))
+
+            self.assertIn("restore + build + test via dotnet test", started["message"])
+            self.assertIn("restore + build + test via dotnet test", finished["message"])
+
     def test_indeterminate_progress_keeps_live_detail_without_fake_percent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             sink = TaskerProgressSink(

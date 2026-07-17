@@ -12,6 +12,7 @@ delete_after_install=false
 skip_build=false
 verify_package=false
 source_date_epoch=${SOURCE_DATE_EPOCH:-1784030400}
+rm_bin=${RM_BIN:-/bin/rm}
 
 usage() {
   cat <<'EOF'
@@ -45,7 +46,7 @@ if "$delete_after_install" && ! "$install_after_build"; then
 fi
 
 stage=$(mktemp -d "${TMPDIR:-/tmp}/devtool-control-center-deb.XXXXXX")
-trap 'rm -rf "$stage"' EXIT
+trap '"$rm_bin" -rf "$stage"' EXIT
 
 deb_path="$out/devtool-control-center_${version}_${arch}.deb"
 
@@ -68,6 +69,9 @@ required_qml_packages=(
   qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtquick-templates
   qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-dialogs
 )
+required_build_packages=(
+  cmake ninja-build g++ qt6-base-dev qt6-declarative-dev
+)
 control_file="$root/packaging/debian/control"
 depends_line=$(grep '^Depends:' "$control_file" || true)
 for qml_package in "${required_qml_packages[@]}"; do
@@ -77,13 +81,27 @@ for qml_package in "${required_qml_packages[@]}"; do
   fi
 done
 
+if ! "$skip_build" && command -v dpkg-query >/dev/null 2>&1; then
+  missing_build_packages=()
+  for build_package in "${required_build_packages[@]}"; do
+    if ! dpkg-query -W -f='${db:Status-Abbrev}' "$build_package" 2>/dev/null | grep -q '^ii '; then
+      missing_build_packages+=("$build_package")
+    fi
+  done
+  if ((${#missing_build_packages[@]})); then
+    printf 'error: missing required build package(s): %s\n' "${missing_build_packages[*]}" >&2
+    printf 'Install them with:\n  sudo apt install %s\n' "${missing_build_packages[*]}" >&2
+    exit 2
+  fi
+fi
+
 printf '== Devtool Control Center package ==\n'
 printf 'Version: %s\nArchitecture: %s\nBuild: %s\nOutput: %s\n\n' "$version" "$arch" "$build" "$deb_path"
 
 if ! "$skip_build"; then
   # A clean out-of-source build prevents stale QML-generated files and CMake
   # CONFIGURE_DEPENDS loops after source-tree upgrades.
-  if [[ ${KEEP_PACKAGE_BUILD:-0} != 1 ]]; then rm -rf "$build"; fi
+  if [[ ${KEEP_PACKAGE_BUILD:-0} != 1 ]]; then "$rm_bin" -rf "$build"; fi
   BUILD_DIR="$build" "$root/build.sh"
 elif [[ ! -f "$build/cmake_install.cmake" ]]; then
   printf 'error: --skip-build requested but BUILD_DIR is not configured: %s\n' "$build" >&2
@@ -142,7 +160,7 @@ if "$install_after_build"; then
   printf 'Installed Devtool Control Center successfully.\n'
 
   if "$delete_after_install"; then
-    rm -f -- "$deb_path"
+    "$rm_bin" -f -- "$deb_path"
     printf 'Deleted package artifact after successful installation: %s\n' "$deb_path"
   fi
 fi
