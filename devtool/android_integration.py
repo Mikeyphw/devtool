@@ -44,11 +44,25 @@ def android_project_root(config: ProjectConfig) -> Path:
     return path.resolve()
 
 
+def _android_runtime_dir() -> Path:
+    """Runtime assets stored in Termux HOME and mapped into the chroot."""
+    explicit = os.environ.get("DEVTOOL_ANDROID_RUNTIME_DIR", "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return (
+        Path.home()
+        / ".local"
+        / "share"
+        / "devtool"
+        / "runtime"
+    ).resolve()
+
+
 def _state_builder_path() -> Path:
     explicit = os.environ.get("DEVTOOL_ANDROID_BUILDER", "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return data_dir() / "android" / "build-apk"
+    return _android_runtime_dir() / "android" / "build-apk"
 
 
 def stage_android_builder(*, destination: Path | None = None) -> Path:
@@ -84,7 +98,7 @@ def _state_gradle_init_path() -> Path:
     explicit = os.environ.get("DEVTOOL_GRADLE_INIT_SCRIPT", "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return data_dir() / "gradle" / "devtool-events.init.gradle"
+    return _android_runtime_dir() / "gradle" / "devtool-events.init.gradle"
 
 
 def stage_gradle_init_script(*, destination: Path | None = None) -> Path:

@@ -1484,9 +1484,12 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
     if items and getattr(args, "matrix_mode", "rid") == "rid":
         specs = apply_matrix(specs, items, mode="rid")
 
-    specs = apply_toolchain_wrapper(config, specs)
-
     plan = _execution_plan_for_args(config, args)
+
+    # Toolchain discovery occurs in the current host process. Do not inject a
+    # host-only mise wrapper into commands that will execute inside a chroot.
+    if not (plan.uses_chroot and plan.current != EXECUTION_CHROOT):
+        specs = apply_toolchain_wrapper(config, specs)
     preflight = preflight_execution(
         config.repo_root,
         plan,
