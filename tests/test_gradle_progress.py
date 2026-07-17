@@ -5,7 +5,7 @@ import unittest
 
 from rich.console import Console
 
-from devtool.gradle_progress import GradleProgressTracker
+from devtool.gradle_progress import GradleProgressTracker, GradleTaskCountColumn
 
 
 class GradleProgressTests(unittest.TestCase):
@@ -51,10 +51,24 @@ class GradleProgressTests(unittest.TestCase):
 
     def test_structured_events_take_precedence_over_plain_gradle_output(self) -> None:
         tracker = self.make_tracker()
+        snapshots: list[dict] = []
+        tracker.update_callback = snapshots.append
         tracker.update_from_line(self.event(1, "task-graph", total=5))
         tracker.update_from_line("> Task :app:compileDebugKotlin")
         self.assertEqual(tracker.detail, "Gradle task graph ready: 5 tasks")
+        self.assertTrue(snapshots[-1]["force"])
         self.assertEqual(tracker.fallback_lines, 0)
+
+    def test_terminal_task_count_column_always_includes_total_or_discovery_marker(self) -> None:
+        from rich.progress import Progress
+
+        progress = Progress()
+        task_id = progress.add_task("Gradle", total=None, completed=3)
+        task = progress.tasks[task_id]
+        column = GradleTaskCountColumn()
+        self.assertEqual(column.render(task).plain, "3/? tasks")
+        progress.update(task_id, total=8, completed=3)
+        self.assertEqual(column.render(progress.tasks[task_id]).plain, "3/8 tasks")
 
 
 if __name__ == "__main__":

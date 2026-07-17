@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 from dataclasses import replace
 
@@ -57,7 +58,11 @@ def wrap_specs_for_chroot(specs: list[CommandSpec], chroot_name: str) -> list[Co
         if spec.cwd:
             metadata.setdefault("progress_cwd", spec.cwd)
         command = shlex.join(spec.argv)
-        guarded = "exec env " + " ".join(shlex.quote(item) for item in chroot_environment_assignments(name)) + " " + command
+        assignments = list(chroot_environment_assignments(name))
+        for key, value in sorted(spec.env.items()):
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(key)):
+                assignments.append(f"{key}={value}")
+        guarded = "exec env " + " ".join(shlex.quote(item) for item in assignments) + " " + command
         wrapped.append(replace(spec, argv=build_chroot_exec_argv(guarded, name), metadata=metadata))
     return wrapped
 

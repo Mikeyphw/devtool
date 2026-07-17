@@ -10,36 +10,40 @@ option(DEVTOOL_ENABLE_TESTS "Enable native smoke tests" ON)
 find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Widgets Network)
 qt_standard_project_setup(REQUIRES 6.4)
 
+# Compile the state/history/IPC implementation once. Both desktop binaries
+# use these sources, and compiling them independently was one of the largest
+# avoidable costs in incremental Control Center builds.
+add_library(devtool-control-center-common STATIC
+    src/HudStateStore.cpp
+    src/HudStateStore.h
+    src/HistoryModel.cpp
+    src/HistoryModel.h
+    src/IpcClient.cpp
+    src/IpcClient.h
+)
+target_include_directories(devtool-control-center-common PUBLIC src)
+target_link_libraries(devtool-control-center-common PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Network
+)
+
 qt_add_executable(devtool-control-center
     src/main.cpp
     src/AppController.cpp
     src/AppController.h
     src/ClipboardMonitor.cpp
     src/ClipboardMonitor.h
-    src/HudStateStore.cpp
-    src/HudStateStore.h
     src/ProcessRunner.cpp
     src/ProcessRunner.h
-    src/HistoryModel.cpp
-    src/HistoryModel.h
     src/ArtifactInspector.cpp
     src/ArtifactInspector.h
     src/RepositoryModel.cpp
     src/RepositoryModel.h
     src/GitRepositoryController.cpp
     src/GitRepositoryController.h
-    src/IpcClient.cpp
-    src/IpcClient.h
 )
 
 qt_add_executable(devtool-control-center-hud
     src/HudMain.cpp
-    src/HudStateStore.cpp
-    src/HudStateStore.h
-    src/HistoryModel.cpp
-    src/HistoryModel.h
-    src/IpcClient.cpp
-    src/IpcClient.h
 )
 
 qt_add_qml_module(devtool-control-center
@@ -133,10 +137,12 @@ qt_add_resources(devtool-control-center-hud devtool_icons
 )
 
 target_link_libraries(devtool-control-center PRIVATE
+    devtool-control-center-common
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Network
 )
 
 target_link_libraries(devtool-control-center-hud PRIVATE
+    devtool-control-center-common
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Network
 )
 

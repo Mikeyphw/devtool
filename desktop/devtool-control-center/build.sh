@@ -38,6 +38,24 @@ if [[ -f "$build/CMakeCache.txt" ]]; then
   fi
 fi
 
-cmake -S "$root" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE="$build_type" "$@"
+configure_args=(-G Ninja -DCMAKE_BUILD_TYPE="$build_type")
+if command -v ccache >/dev/null 2>&1 && [[ -z ${CMAKE_CXX_COMPILER_LAUNCHER:-} ]]; then
+  configure_args+=( -DCMAKE_CXX_COMPILER_LAUNCHER=ccache )
+fi
+
+needs_configure=1
+if [[ -f "$build/CMakeCache.txt" && -f "$build/build.ninja" && $# -eq 0 ]]; then
+  cached_type=$(sed -n 's/^CMAKE_BUILD_TYPE:STRING=//p' "$build/CMakeCache.txt" | tail -n 1)
+  if [[ "$cached_type" == "$build_type" ]]; then
+    needs_configure=0
+  fi
+fi
+
+if (( needs_configure )); then
+  cmake -S "$root" -B "$build" "${configure_args[@]}" "$@"
+fi
+
+# Ninja automatically regenerates its files when CMake inputs changed, so a
+# warm build can skip the explicit configure pass without missing updates.
 cmake --build "$build" --parallel "${BUILD_JOBS:-$(nproc)}"
 printf 'Built: %s\n' "$build/devtool-control-center"

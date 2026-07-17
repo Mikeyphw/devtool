@@ -13,7 +13,7 @@ from rich.console import Console, Group
 from rich.errors import LiveError
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TaskID, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, ProgressColumn, SpinnerColumn, Task, TaskID, TextColumn, TimeElapsedColumn
 from rich.text import Text
 
 _EVENT_PREFIX = "DEVTOOL_EVENT "
@@ -32,6 +32,16 @@ _LIFECYCLE_PREFIXES = (
     "BUILD SUCCESSFUL",
     "BUILD FAILED",
 )
+
+
+class GradleTaskCountColumn(ProgressColumn):
+    """Render an explicit completed/total task count, including discovery state."""
+
+    def render(self, task: Task) -> Text:
+        completed = max(0, int(task.completed or 0))
+        if task.total is None:
+            return Text(f"{completed}/? tasks", style="progress.data.speed")
+        return Text(f"{completed}/{max(0, int(task.total))} tasks", style="progress.data.speed")
 
 
 @dataclass(slots=True)
@@ -79,8 +89,7 @@ class GradleProgressTracker:
             SpinnerColumn(style="cyan"),
             TextColumn("[bold]{task.description}"),
             BarColumn(bar_width=None, complete_style="cyan", finished_style="green"),
-            MofNCompleteColumn(),
-            TextColumn("[dim]tasks[/dim]"),
+            GradleTaskCountColumn(),
             TimeElapsedColumn(),
             console=self.console,
             expand=True,
@@ -196,7 +205,7 @@ class GradleProgressTracker:
             self.detail = "Gradle build completed" if event.get("success") else "Gradle build failed"
             if not event.get("success"):
                 self.errors = max(1, self.errors)
-        self._publish()
+        self._publish(force=kind in {"task-graph", "build-finish"})
 
     def _update_from_plain_gradle_line(self, line: str) -> None:
         if self.structured_events_seen:
@@ -290,7 +299,9 @@ class GradleProgressTracker:
         if self.live is not None:
             self.live.update(self._renderable())
         if self.update_callback is not None:
-            self.update_callback(self.snapshot())
+            snapshot = self.snapshot()
+            snapshot["force"] = force
+            self.update_callback(snapshot)
 
     def _description(self) -> str:
         if self.phase_index is not None and self.phase_total:

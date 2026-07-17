@@ -25,7 +25,7 @@ class RunnersTermuxTests(unittest.TestCase):
                 self.assertEqual(argv[1], "-b")
                 self.assertTrue(argv[2].endswith("/etc:/etc"))
                 self.assertEqual(argv[3], "/data/data/com.termux/files/usr/bin/dotnet")
-                self.assertIn(argv[4:], (["build", "Demo.sln"], ["build-server", "shutdown"]))
+                self.assertEqual(argv[4:], ["build", "Demo.sln"])
                 calls.append(argv[4:])
 
                 os_release_path = Path(argv[2].split(":", 1)[0]) / "os-release"
@@ -49,8 +49,8 @@ class RunnersTermuxTests(unittest.TestCase):
 
             self.assertEqual(results[0].returncode, 0)
             self.assertEqual(results[0].argv[0], "proot")
-            self.assertEqual(results[-1].name, "dotnet-build-server-shutdown")
-            self.assertEqual(calls, [["build", "Demo.sln"], ["build-server", "shutdown"]])
+            self.assertEqual([result.name for result in results], ["build"])
+            self.assertEqual(calls, [["build", "Demo.sln"]])
 
     def test_run_specs_honors_termux_dotnet_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -79,8 +79,8 @@ class RunnersTermuxTests(unittest.TestCase):
                 results, _ = run_specs(config, [spec], verbose=False)
 
             self.assertEqual(results[0].returncode, 0)
-            self.assertEqual(results[-1].name, "dotnet-build-server-shutdown")
-            self.assertEqual(calls, [["test", "Demo.sln"], ["build-server", "shutdown"]])
+            self.assertEqual([result.name for result in results], ["test"])
+            self.assertEqual(calls, [["test", "Demo.sln"]])
 
 
 class RunnersQuietModeTests(unittest.TestCase):
@@ -142,7 +142,7 @@ if __name__ == "__main__":
     unittest.main()
 
 class DotnetValidationNoBuildTests(unittest.TestCase):
-    def test_validation_adds_no_build_to_implicit_dotnet_test_after_build(self) -> None:
+    def test_validation_coalesces_implicit_dotnet_build_and_test(self) -> None:
         from devtool.runners import build_validation_specs
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,9 +157,10 @@ class DotnetValidationNoBuildTests(unittest.TestCase):
 
             specs = build_validation_specs(config)
 
-        test_specs = [spec for spec in specs if spec.name == "test"]
-        self.assertEqual(len(test_specs), 1)
-        self.assertIn("--no-build", test_specs[0].argv)
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].name, "dotnet-validation")
+        self.assertNotIn("--no-build", specs[0].argv)
+        self.assertTrue(specs[0].metadata["contains_build"])
 
     def test_validation_does_not_add_no_build_when_build_is_skipped(self) -> None:
         from devtool.runners import build_validation_specs

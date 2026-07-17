@@ -234,7 +234,7 @@ _devtool() {
     '--variant[build/test variant within the selected target]:variant:_devtool_variants' \
     '--solution[exact solution path for restore/build/test]:solution:_files' \
     '--project[exact project path for run/validation]:project:_files' \
-    '--project-type[override project detection]:type:(auto dotnet android gradle python command unknown)' \
+    '--project-type[override project detection]:type:(auto dotnet android gradle python node rust go maven cmake meson make command unknown)' \
     '(-v --verbose)'{-v,--verbose}'[stream full command output]' \
     '(-y --yes)'{-y,--yes}'[assume yes for confirmations]' \
     '(-f --force)'{-f,--force}'[force dangerous actions]' \
@@ -350,7 +350,7 @@ _devtool() {
         ai-prompt|ap)
           _arguments \
             '--repo-name[human-friendly repository name]:name:' \
-            '--project-type[project type]:type:(auto dotnet android gradle python command unknown)' \
+            '--project-type[project type]:type:(auto dotnet android gradle python node rust go maven cmake meson make command unknown)' \
             '--build-target[build target]:path:_files' \
             '--run-target[run target]:path:_files' \
             '--target-name[named target/profile]:target:_devtool_targets' \

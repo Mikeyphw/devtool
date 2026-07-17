@@ -10,6 +10,15 @@ from .models import DotnetTarget, ProjectConfig
 from .toolchains import normalize_toolchain_manager
 
 CONFIG_NAME = ".devtool.toml"
+SUPPORTED_PROJECT_KINDS = {
+    "auto", "dotnet", "android", "gradle", "python", "node", "rust",
+    "go", "maven", "cmake", "meson", "make", "command", "unknown",
+}
+RUNNER_OPTION_SECTIONS = (
+    "android", "gradle", "python", "dotnet", "node", "rust", "go",
+    "maven", "cmake", "meson", "make", "build", "tasks", "artifacts",
+    "test_profiles", "validation",
+)
 PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
 RUNTIME_ENV_PREFIX = "DEVTOOL_ENV_"
 _IGNORED_DOTNET_DIRS = {
@@ -78,7 +87,9 @@ def load_project_config(
     override_kind = str(kind_override or "").strip().lower()
     config_kind = str(project_section.get("kind", "auto")).strip().lower() or "auto"
     kind = override_kind if override_kind and override_kind != "auto" else config_kind
-    if kind not in {"auto", "dotnet", "android", "gradle", "python", "command", "unknown"}:
+    if kind == "generic":
+        kind = "command"
+    if kind not in SUPPORTED_PROJECT_KINDS:
         raise SystemExit(f"Unsupported project type: {kind}")
     explicit_dotnet_intent = bool(
         solution_override.strip()
@@ -161,7 +172,7 @@ def load_project_config(
         raise SystemExit(str(exc)) from exc
 
     runner_options: dict[str, Any] = {}
-    for section_name in ("android", "gradle", "python", "dotnet", "tasks", "artifacts", "test_profiles", "validation"):
+    for section_name in RUNNER_OPTION_SECTIONS:
         section_value = loaded.get(section_name, {})
         if isinstance(section_value, dict):
             runner_options[section_name] = dict(section_value)
@@ -230,31 +241,36 @@ def detect_project_kind(repo_root: Path) -> str:
     dotnet_candidates = discover_dotnet_candidates(repo_root)
     android_markers = discover_gradle_roots(repo_root, android_only=True)
     gradle_markers = discover_gradle_roots(repo_root, android_only=False)
-    python_markers = any((repo_root / name).exists() for name in ("pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile", "uv.lock", "poetry.lock", "pdm.lock", "tox.ini", "noxfile.py", "pytest.ini"))
-    kinds = [
-        name
-        for name, present in (
-            ("dotnet", bool(dotnet_candidates)),
-            ("android", bool(android_markers)),
-            ("gradle", bool(gradle_markers and not android_markers)),
-            ("python", python_markers),
-        )
-        if present
-    ]
+    markers = {
+        "dotnet": bool(dotnet_candidates),
+        "android": bool(android_markers),
+        "gradle": bool(gradle_markers and not android_markers),
+        "python": any((repo_root / name).exists() for name in (
+            "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
+            "Pipfile", "uv.lock", "poetry.lock", "pdm.lock", "tox.ini",
+            "noxfile.py", "pytest.ini",
+        )),
+        "node": (repo_root / "package.json").is_file(),
+        "rust": (repo_root / "Cargo.toml").is_file(),
+        "go": (repo_root / "go.mod").is_file() or (repo_root / "go.work").is_file(),
+        "maven": (repo_root / "pom.xml").is_file() or (repo_root / "mvnw").is_file(),
+        "cmake": (repo_root / "CMakeLists.txt").is_file(),
+        "meson": (repo_root / "meson.build").is_file(),
+        "make": any((repo_root / name).is_file() for name in ("Makefile", "makefile", "GNUmakefile")),
+    }
+    kinds = [name for name, present in markers.items() if present]
     if len(kinds) > 1:
         print(
             f"devtool: mixed project markers ({', '.join(kinds)}) found under {repo_root}. "
             "Set [project].kind explicitly in .devtool.toml or select a named target.",
             file=sys.stderr,
         )
-    if dotnet_candidates:
-        return "dotnet"
-    if android_markers:
-        return "android"
-    if gradle_markers:
-        return "gradle"
-    if python_markers:
-        return "python"
+    for kind in (
+        "dotnet", "android", "gradle", "python", "node", "rust", "go",
+        "maven", "cmake", "meson", "make",
+    ):
+        if markers[kind]:
+            return kind
     return "unknown"
 
 
@@ -373,6 +389,18 @@ def _default_build_target(repo_root: Path, kind: str, section: dict[str, Any]) -
             return str((repo_root / "pyproject.toml").resolve())
         if (repo_root / "setup.py").exists():
             return str((repo_root / "setup.py").resolve())
+    marker_by_kind = {
+        "node": "package.json",
+        "rust": "Cargo.toml",
+        "go": "go.mod" if (repo_root / "go.mod").exists() else "go.work",
+        "maven": "pom.xml",
+        "cmake": "CMakeLists.txt",
+        "meson": "meson.build",
+        "make": next((name for name in ("Makefile", "makefile", "GNUmakefile") if (repo_root / name).exists()), ""),
+    }
+    marker = marker_by_kind.get(kind, "")
+    if marker and (repo_root / marker).exists():
+        return str(repo_root.resolve())
     return ""
 
 
@@ -397,7 +425,7 @@ def _load_target_variants(raw_value: dict[str, Any]) -> dict[str, dict[str, Any]
         if not name:
             continue
         options: dict[str, Any] = {}
-        for option_name in ("android", "gradle", "python", "dotnet", "tasks", "artifacts", "test_profiles", "validation", "env"):
+        for option_name in (*RUNNER_OPTION_SECTIONS, "env"):
             option_value = raw_options.get(option_name, {})
             if isinstance(option_value, dict):
                 options[option_name] = dict(option_value)
@@ -428,7 +456,7 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             target_env[str(key)] = str(value)
         target_kind = str(raw_value.get("type", raw_value.get("kind", ""))).strip().lower()
         options: dict[str, Any] = {}
-        for option_name in ("android", "gradle", "python", "dotnet", "tasks", "artifacts", "test_profiles", "validation"):
+        for option_name in RUNNER_OPTION_SECTIONS:
             option_value = raw_value.get(option_name, {})
             if isinstance(option_value, dict):
                 options[option_name] = dict(option_value)
@@ -648,7 +676,7 @@ def generate_template(repo_root: Path) -> str:
             run_module = "your_package"
 
     return f"""[project]
-kind = "{kind}" # auto | dotnet | android | gradle | python | command | unknown
+kind = "{kind}" # auto | dotnet | android | gradle | python | node | rust | go | maven | cmake | meson | make | command | unknown
 build_target = "{_display(repo_root, build_target)}"
 run_target = "{run_target}"
 variant = ""{target_blocks}
@@ -686,6 +714,35 @@ manager = "auto"
 # configuration = "Debug"
 # framework = "net9.0"
 # runtime = "linux-x64"
+coalesce_validation = true
+explicit_restore = false
+stop_after_run = false
+
+
+[build]
+max_workers = "auto" # CPU/memory-aware; DEVTOOL_MAX_WORKERS overrides
+
+[node]
+manager = "auto" # auto | npm | pnpm | yarn | bun
+coalesce_validation = true
+
+[rust]
+coalesce_validation = true
+
+[go]
+coalesce_validation = true
+
+[maven]
+coalesce_validation = true
+
+[cmake]
+build_directory = ".devtool/build/cmake"
+
+[meson]
+build_directory = ".devtool/build/meson"
+
+[make]
+# build_target = "all"
 
 [tasks]
 # restore = ["help"]

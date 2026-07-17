@@ -430,7 +430,8 @@ def _append_gradle_arg(argv: list[str], *values: str) -> None:
 
 def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpec:
     selection = resolve_test_selection(config)
-    if not selection.active() or spec.name not in {"test", "instrumentation"}:
+    contains_tests = bool(spec.metadata.get("contains_tests", False))
+    if not selection.active() or (spec.name not in {"test", "instrumentation"} and not contains_tests):
         return spec
 
     argv = list(spec.argv)

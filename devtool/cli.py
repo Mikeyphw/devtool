@@ -69,7 +69,7 @@ from .logstore import latest_log, new_log_path
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
-from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
+from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
@@ -124,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     project.add_argument("--project", default="", help="Exact project path for run/validation")
     project.add_argument(
         "--project-type",
-        choices=["auto", "dotnet", "android", "gradle", "python", "command", "unknown"],
+        choices=["auto", "dotnet", "android", "gradle", "python", "node", "rust", "go", "maven", "cmake", "meson", "make", "command", "unknown"],
         default="auto",
         help="Override project detection for this run",
     )
@@ -236,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
     ai_prompt.add_argument("--repo-name", required=True, help="Human-friendly repo name for the generated prompt")
-    ai_prompt.add_argument("--project-type", choices=["auto", "dotnet", "android", "gradle", "python", "command", "unknown"], default="auto")
+    ai_prompt.add_argument("--project-type", choices=["auto", "dotnet", "android", "gradle", "python", "node", "rust", "go", "maven", "cmake", "meson", "make", "command", "unknown"], default="auto")
     ai_prompt.add_argument("--build-target", default="")
     ai_prompt.add_argument("--run-target", default="")
     ai_prompt.add_argument("--target-name", default="", help="Named monorepo target/profile to reference")
@@ -1643,7 +1643,7 @@ def _run_specs_for_args(
     continue_on_error: bool = False,
     log_path: Path | str | None = None,
     tasker_progress: TaskerProgressSink | None = None,
-    shutdown_dotnet: bool = True,
+    shutdown_dotnet: bool | None = None,
 ) -> tuple[list[OperationResult], str]:
     return run_specs(
         config,
@@ -1776,14 +1776,30 @@ def _artifact_commit_paths(args: argparse.Namespace, repo_root: Path | None = No
                         for value in values:
                             add_path(value)
 
+    def add_history_path(value: str) -> None:
+        # Most repositories intentionally ignore devtool's runtime state. Do not
+        # force that state into an artifact commit merely because path-scoped Git
+        # staging uses -f for declared payload files. Tracked or non-ignored
+        # history registries are still reconciled exactly as before.
+        if repo_root is not None:
+            check = subprocess.run(
+                ["git", "check-ignore", "-q", "--", value],
+                cwd=repo_root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if check.returncode == 0:
+                return
+        add_path(value)
+
     # Artifact history is devtool-owned repository metadata. Stage the complete
-    # registry rather than only this run's record so earlier failed/manual runs
-    # cannot leave artifacts.json or append-only records dirty after a later
-    # successful automatic commit. The directory pathspec also captures tracked
-    # deletions and any records created before this process started.
-    add_path(".devtool/artifacts.json")
+    # registry when the repository tracks it, rather than only this run's record,
+    # so earlier failed/manual runs cannot leave it dirty after a later automatic
+    # commit. Ignored runtime history remains local.
+    add_history_path(".devtool/artifacts.json")
     if repo_root is None or (repo_root / ".devtool" / "artifacts.d").exists():
-        add_path(".devtool/artifacts.d")
+        add_history_path(".devtool/artifacts.d")
 
     return paths
 
@@ -2189,7 +2205,7 @@ def _attempt_auto_repair(
     log_path: Path | str | None,
     tasker_progress: TaskerProgressSink | None,
     parser: argparse.ArgumentParser,
-    shutdown_dotnet: bool = True,
+    shutdown_dotnet: bool | None = None,
 ) -> tuple[list[OperationResult], str, OperationResult | None]:
     if _repair_failure_count(validation_results) == 0:
         return validation_results, "", None
@@ -2586,7 +2602,8 @@ def _run_sequential_overlays(
                         group_results.extend(validation_results)
                         raw_sections.append(f"=== Validate {label} ===\n{validation_raw}")
                         if entry_config.kind == "dotnet":
-                            dotnet_shutdown_config = entry_config
+                            if dotnet_build_server_shutdown_enabled(entry_config):
+                                dotnet_shutdown_config = entry_config
                             if not any(result.returncode != 0 for result in validation_results):
                                 validation_cache.add(validation_key)
 
@@ -2700,7 +2717,8 @@ def _run_sequential_overlays(
                         shutdown_dotnet=False,
                     )
                     if final_config.kind == "dotnet":
-                        dotnet_shutdown_config = final_config
+                        if dotnet_build_server_shutdown_enabled(final_config):
+                            dotnet_shutdown_config = final_config
                         if not any(result.returncode != 0 for result in final_results):
                             validation_cache.add(final_key)
                     if any(result.returncode != 0 for result in final_results):

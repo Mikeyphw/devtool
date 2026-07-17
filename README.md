@@ -24,6 +24,32 @@ See [`docs/RELEASE_QUALIFICATION.md`](docs/RELEASE_QUALIFICATION.md),
 [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md), and
 [`docs/MIGRATION_1.1.md`](docs/MIGRATION_1.1.md).
 
+## Devtool 1.1.0-rc.6: optimized builds for every first-class project kind
+
+Devtool now auto-detects and optimizes .NET, Android/Gradle, JVM Gradle,
+Python, Node.js, Rust/Cargo, Go, Maven, CMake, Meson, and Make projects. A
+shared CPU/memory-aware policy gives desktop builds higher safe parallelism
+while limiting native Termux and Android-hosted chroots to avoid swapping,
+thermal slowdown, and Android process reclamation.
+
+Cargo, Go, Maven, .NET, and Gradle validation use coalesced lifecycle commands
+where one invocation provides equivalent coverage. CMake and Meson retain warm
+out-of-tree build state; Node and Python reuse incremental dependency and
+environment caches. Chroot execution now exports those policies inside
+`chrootctl`.
+
+```toml
+[build]
+max_workers = "auto"
+
+[execution]
+environment = "auto" # desktop-linux | native-termux | chroot
+```
+
+Override one run with `DEVTOOL_MAX_WORKERS=3`. See
+[`docs/BUILD_OPTIMIZATION.md`](docs/BUILD_OPTIMIZATION.md) and
+[`docs/PROJECT_RUNNERS.md`](docs/PROJECT_RUNNERS.md).
+
 ## Devtool 0.15.0: verified Android artifacts, device tests, selective tests, and Python pipelines
 
 Android and Gradle builds now verify newly produced APK, AAB, AAR, and JVM
@@ -67,8 +93,8 @@ See [`docs/ANDROID_PROJECTS.md`](docs/ANDROID_PROJECTS.md),
 ## Devtool 0.6.0: runner and execution foundations
 
 Devtool now separates project command planning from execution-environment
-selection. The current .NET, Python, and custom-command runners can execute in
-the current Linux environment, native Termux, or a configured chroot. Use:
+selection. Every first-class project runner can execute in the current Linux
+environment, native Termux, or a configured chroot. Use:
 
 ```bash
 devtool --execution-environment native-termux -r /path/to/repo validate
@@ -95,10 +121,14 @@ manager = "auto" # auto | mise | none
 contains `mise.toml`, `.mise.toml`, or `.tool-versions`. `DEVTOOL_TOOLCHAIN`
 can override the config for one run.
 
-`.NET` validation reuses prior phases rather than performing redundant work:
-`restore`, `build --no-restore`, then `test --no-build`. Recognizable explicit
-`dotnet build` and `dotnet test` commands receive the same validation-only
-optimization, while arbitrary wrapper scripts are left unchanged. See
+`.NET` validation avoids redundant process launches. When build and test use
+the same solution/project, devtool runs one `dotnet test` command because it
+already restores and builds that target. Different targets use an implicit-restore
+`dotnet build` followed by the safest applicable test command. Recognizable
+explicit commands preserve their ordering and receive only safe
+`--no-restore`/`--no-build` normalization. Shared .NET build servers remain warm
+by default; set `[dotnet].stop_after_run = true` only when memory reclamation is
+more important than the next build. See
 [`docs/PROJECT_RUNNERS.md`](docs/PROJECT_RUNNERS.md) and
 [`docs/EXECUTION_ENVIRONMENTS.md`](docs/EXECUTION_ENVIRONMENTS.md).
 
@@ -205,15 +235,21 @@ Set `DEVTOOL_NO_HUD=1` to hard-disable all HUD publication and rendering. This e
 
 ## Validation sequence
 
-For .NET targets, validation uses:
+For the common .NET case where build and test use the same target, validation uses:
 
 ```bash
-dotnet restore ...
-dotnet build --no-restore ...
-dotnet test --no-build ...
+dotnet test ...
 ```
 
-The same normalization is applied to recognizable explicit .NET build and test commands.
+`dotnet test` performs restore and build before executing tests. When build and
+test targets differ, devtool keeps separate commands and avoids `--no-build`
+unless the earlier build is known to cover the same target. Set
+`[dotnet].coalesce_validation = false` or `[dotnet].explicit_restore = true` for
+workflows that require separate phases, such as authenticated-feed CI jobs.
+
+The Qt Control Center build keeps its Ninja directory under the XDG cache, skips
+an unnecessary warm CMake configure pass, uses `ccache` when available, and
+compiles the common HUD/history/IPC implementation only once for both binaries.
 
 ## Android frontend
 

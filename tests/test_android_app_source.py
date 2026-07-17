@@ -369,3 +369,24 @@ def test_android_builder_exposes_project_environment_and_selective_tests() -> No
         assert field in settings
     assert 'sectionTitle("Test selection")' in main
     assert "Command preview" in main
+
+
+def test_android_notification_and_app_preserve_gradle_task_totals() -> None:
+    update = _java_source("HudUpdate.java")
+    notification = _java_source("NotificationController.java")
+    main = _java_source("MainActivity.java")
+    record = _java_source("RunRecord.java")
+    store = _java_source("RunStore.java")
+
+    assert 'intent.getIntExtra("current", -1)' in update
+    assert 'intent.getIntExtra("total", -1)' in update
+    assert 'intent.getStringExtra("unit_label")' in update
+    assert 'return current + "/" + total' in update
+    assert 'update.current + "/" + update.total' in notification
+    assert 'record.current + "/" + record.total + " " + unit + " · " + record.progress + "%"' in main
+    assert 'value.put("current", current)' in record
+    assert 'value.put("total", total)' in record
+    assert 'value.put("unit_label", unitLabel)' in record
+    assert 'record.current = update.current' in store
+    assert 'record.total = update.total' in store
+    assert 'record.unitLabel = update.unitLabel' in store

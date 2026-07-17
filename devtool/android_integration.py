@@ -16,6 +16,7 @@ import shutil
 import sys
 from typing import Any, Iterable
 
+from .build_optimization import resolve_build_policy
 from . import android_build
 from .execution_environments import CHROOT, NATIVE_TERMUX, detect_current_environment
 from .models import ProjectConfig
@@ -165,14 +166,24 @@ def _append_option(argv: list[str], flag: str, value: Any) -> None:
     argv.extend([flag, str(value)])
 
 
-def android_builder_arguments(config: ProjectConfig, action: str) -> list[str]:
+def android_builder_arguments_for_tasks(
+    config: ProjectConfig,
+    tasks: Iterable[str],
+    *,
+    scan_artifacts: bool,
+) -> list[str]:
     root = android_project_root(config)
     android = _dict_option(config, "android")
     gradle = _dict_option(config, "gradle")
     artifacts = _dict_option(config, "artifacts")
 
     argv = [str(root), "--no-chroot"]
-    for task in configured_tasks(config, action):
+    seen_tasks: set[str] = set()
+    for raw_task in tasks:
+        task = str(raw_task or "").strip()
+        if not task or task in seen_tasks:
+            continue
+        seen_tasks.add(task)
         argv.extend(["--task", task])
 
     _append_option(argv, "--java-home", android.get("java_home") or gradle.get("java_home"))
@@ -186,8 +197,9 @@ def android_builder_arguments(config: ProjectConfig, action: str) -> list[str]:
     _append_option(argv, "--cmake-version", android.get("cmake_version", "auto"))
     _append_option(argv, "--gradle-command", gradle.get("command"))
     _append_option(argv, "--gradle-version", gradle.get("version"))
-    _append_option(argv, "--max-workers", gradle.get("max_workers") or android.get("max_workers"))
+    _append_option(argv, "--max-workers", gradle.get("max_workers") or android.get("max_workers") or resolve_build_policy(config, config.kind).max_workers)
     _append_option(argv, "--system-deps", android.get("system_deps", "auto"))
+    _append_option(argv, "--daemon-idle-timeout-ms", gradle.get("daemon_idle_timeout_ms", 900_000))
 
     if bool(android.get("skip_sdk_install", False)):
         argv.append("--skip-sdk-install")
@@ -199,10 +211,14 @@ def android_builder_arguments(config: ProjectConfig, action: str) -> list[str]:
         argv.append("--force-setup")
     if bool(gradle.get("no_daemon", False)):
         argv.append("--no-daemon")
+    if bool(gradle.get("parallel", config.kind == "android")):
+        argv.append("--parallel")
+    if bool(gradle.get("build_cache", True)):
+        argv.append("--build-cache")
     if bool(gradle.get("fail_fast", False)):
         argv.append("--fail-fast")
 
-    if action in {"restore", "clean", "test", "lint"}:
+    if not scan_artifacts:
         argv.append("--no-artifact-scan")
     else:
         output_dir = artifacts.get("output_directory") or artifacts.get("output_dir")
@@ -214,9 +230,8 @@ def android_builder_arguments(config: ProjectConfig, action: str) -> list[str]:
 
     # The builder treats arguments after ``--`` as direct Gradle arguments.
     # The staged init script emits the exact task/test lifecycle consumed by
-    # terminal and Android HUD progress, avoiding percentage guesses.
-    gradle_events = bool(gradle.get("structured_events", True))
-    if gradle_events and action in {"restore", "build", "test", "lint", "clean"}:
+    # terminal and native HUD progress, avoiding percentage guesses.
+    if bool(gradle.get("structured_events", True)):
         argv.extend([
             "--",
             "--init-script",
@@ -224,6 +239,14 @@ def android_builder_arguments(config: ProjectConfig, action: str) -> list[str]:
             "--no-configuration-cache",
         ])
     return argv
+
+
+def android_builder_arguments(config: ProjectConfig, action: str) -> list[str]:
+    return android_builder_arguments_for_tasks(
+        config,
+        configured_tasks(config, action),
+        scan_artifacts=action == "build",
+    )
 
 
 def _android_execution_mode(config: ProjectConfig) -> str:

@@ -329,7 +329,7 @@ final class HudUpdate {
         if (failedState()) return "Failed";
         if (status.equals("interrupted") || status.equals("cancelled")) return "Interrupted";
         if (status.equals("waiting")) return "Preparing";
-        return phase;
+        return humanPhase(phase);
     }
 
     String title() {
@@ -359,6 +359,9 @@ final class HudUpdate {
 
     String subText() {
         StringBuilder text = new StringBuilder();
+        if (current >= 0 && total > 0) {
+            text.append(current).append("/").append(total).append(" ").append(unitLabel).append(" · ");
+        }
         text.append(displayProgress()).append("% · ").append(elapsedText());
         if (errors > 0) text.append(" · ").append(errors).append(" error").append(errors == 1 ? "" : "s");
         else if (warnings > 0) text.append(" · ").append(warnings).append(" warning").append(warnings == 1 ? "" : "s");
@@ -487,6 +490,7 @@ final class HudUpdate {
         if (mode.equals("recovered")) return "RESTORED";
         if (mode.equals("failed") && rollbackState()) return "CRITICAL";
         if (mode.equals("stopped")) return "STOPPED";
+        if (current >= 0 && total > 0) return current + "/" + total;
         return displayProgress() + "%";
     }
 
@@ -597,6 +601,16 @@ final class HudUpdate {
         long elapsed = durationMs > 0 ? durationMs : Math.max(0L, System.currentTimeMillis() - startedAtMs);
         long seconds = elapsed / 1000L;
         return String.format(Locale.ROOT, "%02d:%02d", seconds / 60L, seconds % 60L);
+    }
+
+
+    private static String humanPhase(String phase) {
+        String value = clean(phase, "Working");
+        String lower = value.toLowerCase(Locale.ROOT).replace('_', '-');
+        if (lower.equals("dotnet-validation")) return ".NET validation";
+        if (lower.equals("android-validation")) return "Android validation";
+        if (lower.equals("gradle-validation")) return "Gradle validation";
+        return value;
     }
 
     private static String humanTask(String phase) {

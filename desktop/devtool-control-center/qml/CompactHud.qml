@@ -266,6 +266,32 @@ Window {
         for (let i = 0; i < values.length; ++i) if (values[i].status === "pending") return values[i]
         return values.length ? values[values.length - 1] : ({ phaseLabel: "Waiting", detail: "No operation reported yet" })
     }
+    function stepTaskCount(step, includeUnit) {
+        if (!step) return ""
+        const completed = Number(step.completed)
+        const total = Number(step.total)
+        if (completed < 0 || total <= 0) return ""
+        const unit = String(step.unitLabel || "tasks")
+        return Math.round(completed) + "/" + Math.round(total) + (includeUnit ? " " + unit : "")
+    }
+    function laneTaskCount(lane, includeUnit) {
+        const values = lane && lane.steps ? lane.steps : []
+        for (let i = 0; i < values.length; ++i) {
+            if (String(values[i].status || "") === "running") {
+                const label = stepTaskCount(values[i], includeUnit)
+                if (label) return label
+            }
+        }
+        for (let i = values.length - 1; i >= 0; --i) {
+            const label = stepTaskCount(values[i], includeUnit)
+            if (label) return label
+        }
+        return ""
+    }
+    function laneProgressLabel(lane) {
+        const count = laneTaskCount(lane, true)
+        return count ? count + " · " + laneProgress(lane) + "%" : laneProgress(lane) + "%"
+    }
     function activeLaneIndex() {
         const lanes = scopedLanes()
         for (let i = 0; i < lanes.length; ++i) if (laneStatus(lanes[i]) === "running") return i
@@ -297,7 +323,8 @@ Window {
         if (state === "rollback") return "Rollback"
         if (state === "recovered") return "RESTORED"
         if (state === "rollback-failed") return "CRITICAL"
-        return displayedProgress() + "%"
+        const count = stepTaskCount(activeStep(), true)
+        return count ? count + " · " + displayedProgress() + "%" : displayedProgress() + "%"
     }
     function elapsedText() {
         if (!run.started_at) return "00:00"
@@ -651,7 +678,7 @@ Window {
                             property var metrics: laneMetrics(modelData)
                             activeFocusOnTab: !active
                             Accessible.role: Accessible.Button
-                            Accessible.name: laneTitle(modelData) + ", " + laneStatusLabel(modelData) + ", " + laneProgress(modelData) + " percent"
+                            Accessible.name: laneTitle(modelData) + ", " + laneStatusLabel(modelData) + ", " + laneProgressLabel(modelData)
                             Accessible.description: active ? "Active workspace details remain expanded" : "Press Space or Enter to toggle workspace details"
                             Keys.onSpacePressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
                             Keys.onReturnPressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
@@ -740,7 +767,7 @@ Window {
                                         }
                                     }
                                     Label {
-                                        text: laneProgress(modelData) + "%"
+                                        text: laneProgressLabel(modelData)
                                         color: laneColor(modelData)
                                         font.pointSize: theme.captionPointSize
                                         font.weight: Font.Bold

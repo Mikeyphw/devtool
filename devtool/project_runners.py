@@ -12,12 +12,16 @@ the execution engine.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 from pathlib import Path
+import json
 import os
+import re
 import shlex
 import shutil
 import sys
 from typing import Iterable
 
+from .build_optimization import optimized_build_env, resolve_build_policy
+from .execution_environments import detect_current_environment
 from .models import CommandSpec, ProjectConfig
 
 
@@ -53,6 +57,42 @@ class RunnerCapabilities:
 
     def unsupported(self) -> tuple[str, ...]:
         return tuple(name for name, enabled in self.as_dict().items() if not enabled)
+
+
+
+
+def _optimized_env(config: ProjectConfig, kind: str) -> dict[str, str]:
+    return optimized_build_env(config, kind, config.env)
+
+
+def _project_root(config: ProjectConfig) -> Path:
+    return Path(config.project_root or config.repo_root).expanduser().resolve()
+
+
+def _validation_metadata(specs: list[CommandSpec], scope: str) -> list[CommandSpec]:
+    total = len(specs)
+    for index, spec in enumerate(specs, start=1):
+        metadata = dict(spec.metadata)
+        metadata.update({
+            "validation_pipeline": True,
+            "validation_phase_index": index,
+            "validation_phase_total": total,
+            "validation_scope": scope,
+        })
+        spec.metadata = metadata
+    return specs
+
+
+def _tool_metadata(kind: str, root: Path, **extra: object) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "runner": kind,
+        "project_type": kind,
+        "project_root": str(root),
+        "progress_parser": "generic",
+        "progress_tool": kind,
+    }
+    metadata.update(extra)
+    return metadata
 
 
 class ProjectRunner(ABC):
@@ -201,6 +241,31 @@ def add_no_restore_to_dotnet_build_spec(
     )
 
 
+def add_no_restore_to_dotnet_test_spec(
+    spec: CommandSpec,
+    *,
+    allow_explicit: bool = False,
+) -> CommandSpec:
+    if spec.metadata.get("explicit") and not allow_explicit:
+        return spec
+    verb_index = _dotnet_verb_index(spec.argv, "test")
+    if verb_index is None or "--no-restore" in spec.argv or "--no-build" in spec.argv:
+        return spec
+
+    argv = list(spec.argv)
+    argv.insert(verb_index + 1, "--no-restore")
+    metadata = dict(spec.metadata)
+    metadata["validation_no_restore"] = True
+    return CommandSpec(
+        spec.name,
+        argv,
+        env=spec.env,
+        cwd=spec.cwd,
+        destructive=spec.destructive,
+        metadata=metadata,
+    )
+
+
 def add_no_build_to_dotnet_test_spec(
     spec: CommandSpec,
     *,
@@ -320,7 +385,7 @@ class DotnetRunner(ProjectRunner):
     )
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
-        env = config.env
+        env = _optimized_env(config, self.kind)
         restore_target = config.restore_target or config.build_target
         build_target = config.build_target or restore_target
         test_target = config.test_target or build_target
@@ -368,6 +433,132 @@ class DotnetRunner(ProjectRunner):
                 return [CommandSpec("package", ["bash", "./scripts/package-release.sh"], env=env)]
             raise SystemExit("No package command configured.")
         raise SystemExit(f"Unsupported action for dotnet: {action}")
+
+    @staticmethod
+    def _same_target(config: ProjectConfig, left: str, right: str) -> bool:
+        if not left or not right:
+            return False
+        left_path = Path(left).expanduser()
+        right_path = Path(right).expanduser()
+        if not left_path.is_absolute():
+            left_path = config.repo_root / left_path
+        if not right_path.is_absolute():
+            right_path = config.repo_root / right_path
+        try:
+            return left_path.resolve() == right_path.resolve()
+        except OSError:
+            return os.path.normcase(os.path.normpath(str(left_path))) == os.path.normcase(os.path.normpath(str(right_path)))
+
+    @staticmethod
+    def _dotnet_options(config: ProjectConfig) -> dict[str, object]:
+        value = config.runner_options.get("dotnet", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def build_validation_specs(
+        self,
+        config: ProjectConfig,
+        *,
+        wine: bool = False,
+        skip_restore: bool = False,
+        skip_build: bool = False,
+        skip_test: bool = False,
+    ) -> list[CommandSpec]:
+        options = self._dotnet_options(config)
+        explicit_restore = bool(options.get("explicit_restore", False))
+        coalesce = bool(options.get("coalesce_validation", True))
+        has_explicit_commands = any((config.restore_command, config.build_command, config.test_command))
+
+        # Preserve custom command ordering and side effects. Direct dotnet
+        # commands still receive the legacy --no-restore/--no-build flags.
+        if has_explicit_commands or explicit_restore:
+            return super().build_validation_specs(
+                config,
+                wine=wine,
+                skip_restore=skip_restore,
+                skip_build=skip_build,
+                skip_test=skip_test,
+            )
+
+        restore_target = config.restore_target or config.build_target
+        build_target = config.build_target or restore_target
+        test_target = config.test_target or build_target
+        specs: list[CommandSpec] = []
+
+        # dotnet test already restores and builds the supplied solution/project.
+        # When build and test use the same target, one process is equivalent to
+        # the previous restore + build + test pipeline and preserves compiler,
+        # MSBuild, and NuGet state in a single invocation.
+        if (
+            coalesce
+            and not skip_build
+            and not skip_test
+            and self._same_target(config, build_target, test_target)
+        ):
+            spec = self.build_specs(config, "wine-test" if wine else "test")[0]
+            if skip_restore:
+                spec = add_no_restore_to_dotnet_test_spec(spec, allow_explicit=True)
+            metadata = dict(spec.metadata)
+            metadata.update({
+                "coalesced_dotnet_validation": True,
+                "validation_components": [
+                    *([] if skip_restore else ["restore"]),
+                    "build",
+                    "test",
+                ],
+                "contains_build": True,
+                "contains_tests": True,
+                "implicit_restore": not skip_restore,
+            })
+            spec = CommandSpec(
+                "dotnet-validation",
+                spec.argv,
+                env=spec.env,
+                cwd=spec.cwd,
+                destructive=spec.destructive,
+                metadata=metadata,
+            )
+            specs.append(spec)
+        else:
+            build_ran = False
+            if not skip_build:
+                build_spec = self.build_specs(config, "build")[0]
+                if skip_restore:
+                    build_spec = add_no_restore_to_dotnet_build_spec(build_spec, allow_explicit=True)
+                else:
+                    build_spec.metadata["implicit_restore"] = True
+                build_spec.metadata["validation_components"] = [
+                    *([] if skip_restore else ["restore"]),
+                    "build",
+                ]
+                specs.append(build_spec)
+                build_ran = True
+            elif not skip_restore and skip_test:
+                specs.extend(self.build_specs(config, "restore"))
+
+            if not skip_test:
+                test_spec = self.build_specs(config, "wine-test" if wine else "test")[0]
+                if build_ran and self._same_target(config, build_target, test_target):
+                    test_spec = add_no_build_to_dotnet_test_spec(test_spec, allow_explicit=True)
+                elif skip_restore:
+                    test_spec = add_no_restore_to_dotnet_test_spec(test_spec, allow_explicit=True)
+                else:
+                    test_spec.metadata["implicit_restore"] = True
+                test_spec.metadata["contains_tests"] = True
+                specs.append(test_spec)
+
+        if not specs:
+            raise SystemExit("Validation would run no commands. Clear at least one skip flag.")
+        total = len(specs)
+        for index, spec in enumerate(specs, start=1):
+            metadata = dict(spec.metadata)
+            metadata.update({
+                "validation_pipeline": True,
+                "validation_phase_index": index,
+                "validation_phase_total": total,
+                "validation_scope": "dotnet-desktop",
+            })
+            spec.metadata = metadata
+        return specs
 
     def optimize_build_after_restore(
         self,
@@ -460,7 +651,7 @@ class AndroidGradleRunner(ProjectRunner):
                 for value in selection.exclude_tags:
                     argv.extend(["--not-annotation", value])
             spec = CommandSpec(
-                "instrumentation", argv, env=config.env, cwd=str(root),
+                "instrumentation", argv, env=_optimized_env(config, self.kind), cwd=str(root),
                 metadata={
                     "runner": self.kind,
                     "project_type": self.kind,
@@ -478,7 +669,7 @@ class AndroidGradleRunner(ProjectRunner):
             "test": config.test_command,
         }.get(action, "")
         if explicit:
-            specs = _maybe_explicit(action, explicit, config.env)
+            specs = _maybe_explicit(action, explicit, _optimized_env(config, self.kind))
             for spec in specs:
                 spec.metadata.update({
                     "runner": self.kind,
@@ -507,7 +698,7 @@ class AndroidGradleRunner(ProjectRunner):
             CommandSpec(
                 action,
                 argv,
-                env=config.env,
+                env=_optimized_env(config, self.kind),
                 cwd=str(plan.project_root),
                 metadata={
                     "runner": self.kind,
@@ -535,19 +726,95 @@ class AndroidGradleRunner(ProjectRunner):
         skip_build: bool = False,
         skip_test: bool = False,
     ) -> list[CommandSpec]:
-        specs: list[CommandSpec] = []
-        if not skip_restore:
-            specs.extend(self.build_specs(config, "restore"))
-        if not skip_build:
-            specs.extend(self.build_specs(config, "build"))
-        if not skip_test:
-            specs.extend(self.build_specs(config, "test"))
+        from .android_integration import (
+            android_builder_arguments_for_tasks,
+            android_project_root,
+            configured_tasks,
+            plan_android_command,
+        )
+        from .test_selection import apply_test_selection
 
-        # Android Lint is part of the default Android validation gate. Pure JVM
-        # Gradle projects only run lint when the target explicitly names a task.
-        from .android_integration import configured_tasks
-        if configured_tasks(config, "lint"):
-            specs.extend(self.build_specs(config, "lint"))
+        # Explicit shell commands may carry action-specific setup or side
+        # effects, so preserve the legacy multi-command pipeline for them.
+        has_explicit_commands = any((
+            not skip_restore and bool(config.restore_command),
+            not skip_build and bool(config.build_command),
+            not skip_test and bool(config.test_command),
+        ))
+        specs: list[CommandSpec] = []
+        if has_explicit_commands:
+            if not skip_restore:
+                specs.extend(self.build_specs(config, "restore"))
+            if not skip_build:
+                specs.extend(self.build_specs(config, "build"))
+            if not skip_test:
+                specs.extend(self.build_specs(config, "test"))
+            if configured_tasks(config, "lint"):
+                specs.extend(self.build_specs(config, "lint"))
+        else:
+            tasks: list[str] = []
+            components: list[str] = []
+
+            if not skip_restore:
+                restore_tasks = configured_tasks(config, "restore")
+                # The default restore task is Gradle `help`, which performs a
+                # full configuration pass but contributes no validation once
+                # real build/test/lint tasks run in the same invocation.
+                if restore_tasks and restore_tasks != ["help"]:
+                    tasks.extend(restore_tasks)
+                    components.append("restore")
+            if not skip_build:
+                tasks.extend(configured_tasks(config, "build"))
+                components.append("build")
+            if not skip_test:
+                tasks.extend(configured_tasks(config, "test"))
+                components.append("test")
+            lint_tasks = configured_tasks(config, "lint")
+            if lint_tasks:
+                tasks.extend(lint_tasks)
+                components.append("lint")
+
+            unique_tasks = list(dict.fromkeys(task for task in tasks if task))
+            if unique_tasks:
+                plan_action = "build" if "build" in components else components[0]
+                plan = plan_android_command(config, plan_action)
+                report_parsers: list[str] = []
+                if "test" in components:
+                    report_parsers.append("gradle-junit")
+                if "lint" in components:
+                    report_parsers.append("android-lint")
+                metadata = {
+                    "runner": self.kind,
+                    "project_type": self.kind,
+                    "gradle_tasks": unique_tasks,
+                    "android_builder": str(plan.builder),
+                    "project_root": str(android_project_root(config)),
+                    "collect_artifacts": "build" in components,
+                    "verify_artifacts": "build" in components,
+                    "progress_parser": "gradle",
+                    "report_parser": report_parsers[0] if report_parsers else "",
+                    "report_parsers": report_parsers,
+                    "validation_components": components,
+                    "contains_tests": "test" in components,
+                    "coalesced_gradle_validation": True,
+                }
+                spec = CommandSpec(
+                    "android-validation" if self.kind == "android" else "gradle-validation",
+                    [
+                        *plan.argv_prefix,
+                        *android_builder_arguments_for_tasks(
+                            config,
+                            unique_tasks,
+                            scan_artifacts="build" in components,
+                        ),
+                    ],
+                    env=_optimized_env(config, self.kind),
+                    cwd=str(plan.project_root),
+                    metadata=metadata,
+                )
+                if "test" in components:
+                    spec = apply_test_selection(config, spec)
+                specs.append(spec)
 
         android_options = config.runner_options.get("android", {})
         android_options = dict(android_options) if isinstance(android_options, dict) else {}
@@ -591,6 +858,7 @@ class AndroidGradleRunner(ProjectRunner):
             })
             spec.metadata = metadata
         return specs
+
 
 
 class JvmGradleRunner(AndroidGradleRunner):
@@ -707,7 +975,7 @@ class PythonRunner(ProjectRunner):
         spec = CommandSpec(
             "test",
             argv,
-            env=config.env,
+            env=_optimized_env(config, self.kind),
             cwd=str(root),
             metadata={
                 "runner": self.kind,
@@ -746,13 +1014,13 @@ class PythonRunner(ProjectRunner):
                 command = shlex.split(tool)
             argv = [*prefix, *command]
             specs.append(CommandSpec(
-                f"lint:{tool}", argv, env=config.env, cwd=str(self._root(config)),
+                f"lint:{tool}", argv, env=_optimized_env(config, self.kind), cwd=str(self._root(config)),
                 metadata={"runner": self.kind, "project_type": self.kind, "lint_tool": tool},
             ))
         return specs
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
-        env = config.env
+        env = _optimized_env(config, self.kind)
         root = self._root(config)
         info = self._info(config)
         prefix = self._run_prefix(config)
@@ -772,7 +1040,9 @@ class PythonRunner(ProjectRunner):
                 return [CommandSpec("restore", ["hatch", "env", "create"], env=env, cwd=str(root))]
             venv_python = self._venv_python(config)
             venv_root = str(Path(venv_python).parent.parent)
-            specs = [CommandSpec("venv", [config.python_executable, "-m", "venv", venv_root], env=env, cwd=str(root))]
+            specs: list[CommandSpec] = []
+            if not Path(venv_python).is_file():
+                specs.append(CommandSpec("venv", [config.python_executable, "-m", "venv", venv_root], env=env, cwd=str(root)))
             if (root / "requirements-dev.txt").exists():
                 install = [venv_python, "-m", "pip", "install", "-r", "requirements-dev.txt"]
             elif (root / "requirements.txt").exists():
@@ -853,6 +1123,620 @@ class PythonRunner(ProjectRunner):
         return specs
 
 
+
+class NodeRunner(ProjectRunner):
+    kind = "node"
+    display_name = "Node.js"
+
+    def _root(self, config: ProjectConfig) -> Path:
+        return _project_root(config)
+
+    def _options(self, config: ProjectConfig) -> dict[str, object]:
+        value = config.runner_options.get("node", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _package(self, config: ProjectConfig) -> dict[str, object]:
+        path = self._root(config) / "package.json"
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return dict(value) if isinstance(value, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _scripts(self, config: ProjectConfig) -> dict[str, str]:
+        scripts = self._package(config).get("scripts", {})
+        return {str(k): str(v) for k, v in scripts.items()} if isinstance(scripts, dict) else {}
+
+    def _manager(self, config: ProjectConfig) -> str:
+        options = self._options(config)
+        configured = str(options.get("manager") or "auto").strip().lower()
+        if configured != "auto":
+            return configured
+        package_manager = str(self._package(config).get("packageManager") or "").split("@", 1)[0].strip().lower()
+        if package_manager in {"npm", "pnpm", "yarn", "bun"}:
+            return package_manager
+        root = self._root(config)
+        for filename, manager in (
+            ("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn"),
+            ("bun.lockb", "bun"), ("bun.lock", "bun"), ("package-lock.json", "npm"),
+        ):
+            if (root / filename).exists():
+                return manager
+        return "npm"
+
+    def _script_argv(self, config: ProjectConfig, script: str) -> list[str]:
+        manager = self._manager(config)
+        if manager == "npm":
+            return ["npm", "run", script]
+        return [manager, "run", script]
+
+    def capabilities_for(self, config: ProjectConfig) -> RunnerCapabilities:
+        scripts = self._scripts(config)
+        return RunnerCapabilities(
+            restore=True,
+            build="build" in scripts or bool(config.build_command),
+            test="test" in scripts or bool(config.test_command),
+            validate=bool(scripts) or any((config.restore_command, config.build_command, config.test_command)),
+            lint=any(name in scripts for name in ("lint", "check")),
+            run=any(name in scripts for name in ("start", "dev")) or bool(config.run_command),
+            package=True,
+            clean="clean" in scripts,
+            inspect=True,
+            doctor=True,
+        )
+
+    def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        package = self._package(config)
+        return [
+            ("project_root", str(self._root(config))),
+            ("project_type", "Node.js"),
+            ("package_manager", self._manager(config)),
+            ("package", str(package.get("name") or "")),
+            ("scripts", ", ".join(sorted(self._scripts(config))) or "none"),
+        ]
+
+    def doctor_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        manager = self._manager(config)
+        return [(manager, f"READY: {shutil.which(manager)}" if shutil.which(manager) else "MISSING")]
+
+    def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
+        root = self._root(config)
+        env = _optimized_env(config, self.kind)
+        scripts = self._scripts(config)
+        manager = self._manager(config)
+        options = self._options(config)
+        explicit = {
+            "restore": config.restore_command, "build": config.build_command,
+            "test": config.test_command, "wine-test": config.test_command,
+            "run": config.run_command, "package": config.package_command,
+        }.get(action, "")
+        if explicit:
+            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+        if action == "restore":
+            if manager == "npm":
+                clean = bool(options.get("clean_install", False)) and (root / "package-lock.json").exists()
+                argv = ["npm", "ci" if clean else "install", "--prefer-offline", "--no-audit", "--no-fund"]
+            elif manager == "pnpm":
+                argv = ["pnpm", "install", "--prefer-offline"]
+                if (root / "pnpm-lock.yaml").exists():
+                    argv.append("--frozen-lockfile")
+            elif manager == "yarn":
+                argv = ["yarn", "install"]
+                if (root / "yarn.lock").exists():
+                    argv.append("--immutable" if (root / ".yarnrc.yml").exists() else "--frozen-lockfile")
+            elif manager == "bun":
+                argv = ["bun", "install"]
+                if (root / "bun.lockb").exists() or (root / "bun.lock").exists():
+                    argv.append("--frozen-lockfile")
+            else:
+                raise SystemExit(f"Unsupported Node package manager: {manager}")
+            return [CommandSpec("restore", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, package_manager=manager))]
+        script = {"build": "build", "test": "test", "wine-test": "test", "lint": "lint", "clean": "clean"}.get(action)
+        if action == "lint" and "lint" not in scripts and "check" in scripts:
+            script = "check"
+        if script:
+            if script not in scripts:
+                raise SystemExit(f"package.json has no '{script}' script.")
+            return [CommandSpec(action.replace("wine-", ""), self._script_argv(config, script), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, node_script=script))]
+        if action == "run":
+            script = "start" if "start" in scripts else "dev" if "dev" in scripts else ""
+            if not script:
+                raise SystemExit("package.json has no start/dev script and no run_command is configured.")
+            return [CommandSpec("run", self._script_argv(config, script), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, node_script=script))]
+        if action == "package":
+            argv = [manager, "pack"] if manager != "yarn" else ["yarn", "pack"]
+            return [CommandSpec("package", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root))]
+        raise SystemExit(f"Unsupported Node action: {action}")
+
+    def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
+        specs: list[CommandSpec] = []
+        if not skip_restore:
+            specs.extend(self.build_specs(config, "restore"))
+        if not skip_build and self.supports(config, "build"):
+            specs.extend(self.build_specs(config, "build"))
+        if not skip_test and self.supports(config, "test"):
+            specs.extend(self.build_specs(config, "test"))
+        if self.supports(config, "lint"):
+            specs.extend(self.build_specs(config, "lint"))
+        if not specs:
+            raise SystemExit("Validation would run no Node commands. Clear a skip flag or configure scripts.")
+        return _validation_metadata(specs, "node-incremental")
+
+
+class RustRunner(ProjectRunner):
+    kind = "rust"
+    display_name = "Rust/Cargo"
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True)
+
+    def _root(self, config: ProjectConfig) -> Path:
+        return _project_root(config)
+
+    def _options(self, config: ProjectConfig) -> dict[str, object]:
+        value = config.runner_options.get("rust", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _base(self, config: ProjectConfig) -> list[str]:
+        root = self._root(config)
+        cargo = root / "cargo"
+        return [str(cargo)] if cargo.is_file() else ["cargo"]
+
+    def _common(self, config: ProjectConfig) -> list[str]:
+        root = self._root(config)
+        argv: list[str] = []
+        if (root / "Cargo.lock").exists():
+            argv.append("--locked")
+        if str(config.variant or self._options(config).get("profile") or "").lower() == "release":
+            argv.append("--release")
+        return argv
+
+    def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
+        root = self._root(config)
+        env = _optimized_env(config, self.kind)
+        workers = resolve_build_policy(config, self.kind).max_workers
+        explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
+        if explicit:
+            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+        base = self._base(config)
+        common = self._common(config)
+        if action == "restore":
+            argv = [*base, "fetch", *( ["--locked"] if (root / "Cargo.lock").exists() else [])]
+        elif action == "build":
+            argv = [*base, "build", *common, "--jobs", str(workers)]
+        elif action in {"test", "wine-test"}:
+            argv = [*base, "test", "--all-targets", *common, "--jobs", str(workers)]
+        elif action == "lint":
+            argv = [*base, "clippy", "--all-targets", "--all-features", *common, "--jobs", str(workers), "--", "-D", "warnings"]
+        elif action == "run":
+            argv = [*base, "run", *common, "--jobs", str(workers)]
+        elif action == "package":
+            argv = [*base, "package", *( ["--locked"] if (root / "Cargo.lock").exists() else [])]
+        elif action == "clean":
+            argv = [*base, "clean"]
+        else:
+            raise SystemExit(f"Unsupported Rust action: {action}")
+        return [CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))]
+
+    def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
+        options = self._options(config)
+        explicit = any((config.restore_command, config.build_command, config.test_command))
+        if explicit:
+            return super().build_validation_specs(config, wine=wine, skip_restore=skip_restore, skip_build=skip_build, skip_test=skip_test)
+        specs: list[CommandSpec] = []
+        if not skip_test and (not skip_build and bool(options.get("coalesce_validation", True))):
+            spec = self.build_specs(config, "test")[0]
+            spec.name = "cargo-validation"
+            spec.metadata.update({"validation_components": ["restore", "build", "test"], "contains_build": True, "contains_tests": True})
+            specs.append(spec)
+        else:
+            if not skip_build:
+                specs.extend(self.build_specs(config, "build"))
+            elif not skip_restore:
+                specs.extend(self.build_specs(config, "restore"))
+            if not skip_test:
+                specs.extend(self.build_specs(config, "test"))
+        if bool(options.get("lint", False)):
+            specs.extend(self.build_specs(config, "lint"))
+        if not specs:
+            raise SystemExit("Validation would run no Rust commands. Clear a skip flag.")
+        return _validation_metadata(specs, "rust-incremental")
+
+    def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [("project_root", str(self._root(config))), ("project_type", "Rust/Cargo"), ("lock_file", "Cargo.lock" if (self._root(config) / "Cargo.lock").exists() else "none")]
+
+    def doctor_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [("cargo", f"READY: {shutil.which('cargo')}" if shutil.which("cargo") else "MISSING")]
+
+
+class GoRunner(ProjectRunner):
+    kind = "go"
+    display_name = "Go"
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True)
+
+    def _root(self, config: ProjectConfig) -> Path:
+        return _project_root(config)
+
+    def _options(self, config: ProjectConfig) -> dict[str, object]:
+        value = config.runner_options.get("go", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _packages(self, config: ProjectConfig) -> list[str]:
+        value = self._options(config).get("packages", ["./..."])
+        if isinstance(value, str):
+            return shlex.split(value) or ["./..."]
+        if isinstance(value, (list, tuple)):
+            return [str(item) for item in value if str(item).strip()] or ["./..."]
+        return ["./..."]
+
+    def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
+        root = self._root(config)
+        env = _optimized_env(config, self.kind)
+        workers = resolve_build_policy(config, self.kind).max_workers
+        explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
+        if explicit:
+            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+        packages = self._packages(config)
+        if action == "restore":
+            argv = ["go", "mod", "download"]
+        elif action == "build":
+            argv = ["go", "build", "-p", str(workers), *packages]
+        elif action in {"test", "wine-test"}:
+            argv = ["go", "test", "-p", str(workers), *packages]
+        elif action == "lint":
+            argv = ["go", "vet", *packages]
+        elif action == "run":
+            target = str(self._options(config).get("run_target") or config.run_target or ".")
+            argv = ["go", "run", target]
+        elif action == "package":
+            argv = ["go", "build", "-p", str(workers), *packages]
+        elif action == "clean":
+            argv = ["go", "clean", "-cache", "-testcache"]
+        else:
+            raise SystemExit(f"Unsupported Go action: {action}")
+        return [CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))]
+
+    def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
+        options = self._options(config)
+        explicit = any((config.restore_command, config.build_command, config.test_command))
+        if explicit:
+            return super().build_validation_specs(config, wine=wine, skip_restore=skip_restore, skip_build=skip_build, skip_test=skip_test)
+        specs: list[CommandSpec] = []
+        if not skip_test and not skip_build and bool(options.get("coalesce_validation", True)):
+            spec = self.build_specs(config, "test")[0]
+            spec.name = "go-validation"
+            spec.metadata.update({"validation_components": ["restore", "build", "test"], "contains_build": True, "contains_tests": True})
+            specs.append(spec)
+        else:
+            if not skip_build:
+                specs.extend(self.build_specs(config, "build"))
+            elif not skip_restore and (self._root(config) / "go.mod").exists():
+                specs.extend(self.build_specs(config, "restore"))
+            if not skip_test:
+                specs.extend(self.build_specs(config, "test"))
+        if bool(options.get("vet", True)):
+            specs.extend(self.build_specs(config, "lint"))
+        if not specs:
+            raise SystemExit("Validation would run no Go commands. Clear a skip flag.")
+        return _validation_metadata(specs, "go-incremental")
+
+    def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [("project_root", str(self._root(config))), ("project_type", "Go"), ("workspace", "go.work" if (self._root(config) / "go.work").exists() else "go.mod")]
+
+    def doctor_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [("go", f"READY: {shutil.which('go')}" if shutil.which("go") else "MISSING")]
+
+
+class MavenRunner(ProjectRunner):
+    kind = "maven"
+    display_name = "Maven"
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
+
+    def _root(self, config: ProjectConfig) -> Path:
+        return _project_root(config)
+
+    def _options(self, config: ProjectConfig) -> dict[str, object]:
+        value = config.runner_options.get("maven", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _base(self, config: ProjectConfig) -> list[str]:
+        root = self._root(config)
+        wrapper = root / "mvnw"
+        command = str(wrapper) if wrapper.is_file() else "mvn"
+        workers = resolve_build_policy(config, self.kind).max_workers
+        args = [command, "--no-transfer-progress", "-T", str(workers)]
+        profiles = self._options(config).get("profiles", [])
+        if isinstance(profiles, str) and profiles.strip():
+            args.extend(["-P", profiles.strip()])
+        elif isinstance(profiles, (list, tuple)) and profiles:
+            args.extend(["-P", ",".join(str(item) for item in profiles if str(item).strip())])
+        return args
+
+    def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
+        root = self._root(config)
+        env = _optimized_env(config, self.kind)
+        explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "package": config.package_command}.get(action, "")
+        if explicit:
+            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+        goals = {
+            "restore": ["dependency:go-offline"], "build": ["package", "-DskipTests"],
+            "test": ["test"], "wine-test": ["test"], "package": ["package"],
+            "clean": ["clean"], "verify": ["verify"],
+        }.get(action)
+        if goals is None:
+            raise SystemExit(f"Unsupported Maven action: {action}")
+        return [CommandSpec(action.replace("wine-", ""), [*self._base(config), *goals], env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))]
+
+    def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
+        options = self._options(config)
+        explicit = any((config.restore_command, config.build_command, config.test_command))
+        if explicit:
+            return super().build_validation_specs(config, wine=wine, skip_restore=skip_restore, skip_build=skip_build, skip_test=skip_test)
+        specs: list[CommandSpec] = []
+        if not skip_build and not skip_test and bool(options.get("coalesce_validation", True)):
+            spec = self.build_specs(config, "verify")[0]
+            spec.name = "maven-validation"
+            spec.metadata.update({"validation_components": ["restore", "build", "test"], "contains_build": True, "contains_tests": True})
+            specs.append(spec)
+        else:
+            if not skip_build:
+                specs.extend(self.build_specs(config, "build"))
+            elif not skip_restore:
+                specs.extend(self.build_specs(config, "restore"))
+            if not skip_test:
+                specs.extend(self.build_specs(config, "test"))
+        if not specs:
+            raise SystemExit("Validation would run no Maven commands. Clear a skip flag.")
+        return _validation_metadata(specs, "maven-reactor")
+
+    def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [("project_root", str(self._root(config))), ("project_type", "Maven"), ("wrapper", "yes" if (self._root(config) / "mvnw").exists() else "no")]
+
+    def doctor_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        command = str(self._root(config) / "mvnw") if (self._root(config) / "mvnw").exists() else shutil.which("mvn")
+        return [("maven", f"READY: {command}" if command else "MISSING")]
+
+
+class CMakeRunner(ProjectRunner):
+    kind = "cmake"
+    display_name = "CMake"
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
+
+    def _root(self, config: ProjectConfig) -> Path:
+        return _project_root(config)
+
+    def _options(self, config: ProjectConfig) -> dict[str, object]:
+        value = config.runner_options.get("cmake", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _build_dir(self, config: ProjectConfig) -> Path:
+        value = str(self._options(config).get("build_directory") or ".devtool/build/cmake")
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = self._root(config) / path
+        variant = str(config.variant or self._options(config).get("configuration") or "Debug")
+        if "{variant}" in str(path):
+            path = Path(str(path).replace("{variant}", variant))
+        return path.resolve()
+
+    def _configure_spec(self, config: ProjectConfig) -> CommandSpec:
+        root = self._root(config)
+        build_dir = self._build_dir(config)
+        options = self._options(config)
+        argv = ["cmake", "-S", str(root), "-B", str(build_dir)]
+        policy = resolve_build_policy(config, self.kind)
+        native_tool_detection = policy.environment == detect_current_environment()
+        generator = str(options.get("generator") or ("Ninja" if native_tool_detection and shutil.which("ninja") else "")).strip()
+        if generator:
+            argv.extend(["-G", generator])
+        configuration = str(config.variant or options.get("configuration") or "Debug")
+        argv.extend([f"-DCMAKE_BUILD_TYPE={configuration}", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"])
+        if bool(options.get("ccache", True)) and native_tool_detection and shutil.which("ccache"):
+            argv.extend(["-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"])
+        extra = options.get("configure_args", [])
+        if isinstance(extra, str):
+            argv.extend(shlex.split(extra))
+        elif isinstance(extra, (list, tuple)):
+            argv.extend(str(item) for item in extra)
+        return CommandSpec("configure", argv, env=_optimized_env(config, self.kind), cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))
+
+    def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
+        root = self._root(config)
+        build_dir = self._build_dir(config)
+        env = _optimized_env(config, self.kind)
+        workers = resolve_build_policy(config, self.kind).max_workers
+        explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "package": config.package_command}.get(action, "")
+        if explicit:
+            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+        configured = (build_dir / "CMakeCache.txt").exists()
+        if action == "restore":
+            return [self._configure_spec(config)]
+        if action == "build":
+            specs = [] if configured else [self._configure_spec(config)]
+            argv = ["cmake", "--build", str(build_dir), "--parallel", str(workers)]
+            configuration = str(config.variant or self._options(config).get("configuration") or "Debug")
+            argv.extend(["--config", configuration])
+            specs.append(CommandSpec("build", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir))))
+            return specs
+        if action in {"test", "wine-test"}:
+            argv = ["ctest", "--test-dir", str(build_dir), "--parallel", str(workers), "--output-on-failure"]
+            return [CommandSpec("test", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+        if action == "package":
+            return [CommandSpec("package", ["cpack", "--config", str(build_dir / "CPackConfig.cmake")], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+        if action == "clean":
+            return [CommandSpec("clean", ["cmake", "--build", str(build_dir), "--target", "clean", "--parallel", str(workers)], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+        raise SystemExit(f"Unsupported CMake action: {action}")
+
+    def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
+        specs: list[CommandSpec] = []
+        configured = (self._build_dir(config) / "CMakeCache.txt").exists()
+        if not configured and (not skip_restore or not skip_build or not skip_test):
+            specs.append(self._configure_spec(config))
+        if not skip_build:
+            build_specs = self.build_specs(config, "build")
+            specs.extend(spec for spec in build_specs if spec.name != "configure")
+        if not skip_test:
+            specs.extend(self.build_specs(config, "test"))
+        if not specs:
+            raise SystemExit("Validation would run no CMake commands. Clear a skip flag.")
+        return _validation_metadata(specs, "cmake-incremental")
+
+    def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [("project_root", str(self._root(config))), ("project_type", "CMake"), ("build_directory", str(self._build_dir(config))), ("configured", "yes" if (self._build_dir(config) / "CMakeCache.txt").exists() else "no")]
+
+    def doctor_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [(tool, f"READY: {shutil.which(tool)}" if shutil.which(tool) else "MISSING") for tool in ("cmake", "ctest")]
+
+
+class MesonRunner(ProjectRunner):
+    kind = "meson"
+    display_name = "Meson"
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
+
+    def _root(self, config: ProjectConfig) -> Path:
+        return _project_root(config)
+
+    def _options(self, config: ProjectConfig) -> dict[str, object]:
+        value = config.runner_options.get("meson", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _build_dir(self, config: ProjectConfig) -> Path:
+        value = str(self._options(config).get("build_directory") or ".devtool/build/meson")
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = self._root(config) / path
+        return path.resolve()
+
+    def _configured(self, config: ProjectConfig) -> bool:
+        build_dir = self._build_dir(config)
+        return (build_dir / "build.ninja").exists() or (build_dir / "meson-private" / "coredata.dat").exists()
+
+    def _setup(self, config: ProjectConfig) -> CommandSpec:
+        root = self._root(config)
+        build_dir = self._build_dir(config)
+        argv = ["meson", "setup", str(build_dir), str(root)]
+        buildtype = str(config.variant or self._options(config).get("buildtype") or "debug").lower()
+        argv.extend(["--buildtype", buildtype])
+        return CommandSpec("configure", argv, env=_optimized_env(config, self.kind), cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))
+
+    def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
+        root = self._root(config)
+        build_dir = self._build_dir(config)
+        env = _optimized_env(config, self.kind)
+        workers = resolve_build_policy(config, self.kind).max_workers
+        explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "package": config.package_command}.get(action, "")
+        if explicit:
+            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+        if action == "restore":
+            return [self._setup(config)]
+        if action == "build":
+            specs = [] if self._configured(config) else [self._setup(config)]
+            specs.append(CommandSpec("build", ["meson", "compile", "-C", str(build_dir), "-j", str(workers)], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir))))
+            return specs
+        if action in {"test", "wine-test"}:
+            return [CommandSpec("test", ["meson", "test", "-C", str(build_dir), "--num-processes", str(workers), "--print-errorlogs"], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+        if action == "package":
+            return [CommandSpec("package", ["meson", "dist", "-C", str(build_dir), "--no-tests"], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+        if action == "clean":
+            return [CommandSpec("clean", ["meson", "compile", "-C", str(build_dir), "--clean"], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+        raise SystemExit(f"Unsupported Meson action: {action}")
+
+    def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
+        specs: list[CommandSpec] = []
+        if not self._configured(config) and (not skip_restore or not skip_build or not skip_test):
+            specs.append(self._setup(config))
+        if not skip_build:
+            specs.extend(spec for spec in self.build_specs(config, "build") if spec.name != "configure")
+        if not skip_test:
+            specs.extend(self.build_specs(config, "test"))
+        if not specs:
+            raise SystemExit("Validation would run no Meson commands. Clear a skip flag.")
+        return _validation_metadata(specs, "meson-incremental")
+
+    def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [("project_root", str(self._root(config))), ("project_type", "Meson"), ("build_directory", str(self._build_dir(config))), ("configured", "yes" if self._configured(config) else "no")]
+
+    def doctor_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [(tool, f"READY: {shutil.which(tool)}" if shutil.which(tool) else "MISSING") for tool in ("meson", "ninja")]
+
+
+class MakeRunner(ProjectRunner):
+    kind = "make"
+    display_name = "Make"
+
+    def _root(self, config: ProjectConfig) -> Path:
+        return _project_root(config)
+
+    def _options(self, config: ProjectConfig) -> dict[str, object]:
+        value = config.runner_options.get("make", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _targets(self, config: ProjectConfig) -> set[str]:
+        root = self._root(config)
+        path = next((root / name for name in ("Makefile", "makefile", "GNUmakefile") if (root / name).is_file()), None)
+        if path is None:
+            return set()
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return set()
+        return {match.group(1) for match in re.finditer(r"^(?![.#%\t ])([A-Za-z0-9_.-]+)\s*:(?!=)", text, re.MULTILINE)}
+
+    def capabilities_for(self, config: ProjectConfig) -> RunnerCapabilities:
+        targets = self._targets(config)
+        return RunnerCapabilities(
+            restore=bool(config.restore_command), build=True,
+            test="test" in targets or bool(config.test_command), validate=True,
+            lint=any(name in targets for name in ("lint", "check")),
+            run=bool(config.run_command), package=any(name in targets for name in ("package", "dist")) or bool(config.package_command),
+            clean="clean" in targets, inspect=True, doctor=True,
+        )
+
+    def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
+        root = self._root(config)
+        env = _optimized_env(config, self.kind)
+        workers = resolve_build_policy(config, self.kind).max_workers
+        explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
+        if explicit:
+            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+        targets = self._targets(config)
+        target = ""
+        if action == "build":
+            target = str(self._options(config).get("build_target") or "")
+        elif action in {"test", "wine-test"}:
+            target = "test"
+        elif action == "lint":
+            target = "lint" if "lint" in targets else "check"
+        elif action == "package":
+            target = "package" if "package" in targets else "dist"
+        elif action == "clean":
+            target = "clean"
+        else:
+            raise SystemExit(f"Unsupported Make action: {action}")
+        if target and target not in targets and action != "build":
+            raise SystemExit(f"Makefile has no '{target}' target.")
+        argv = ["make", "-j", str(workers), *( [target] if target else [])]
+        return [CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root, make_target=target))]
+
+    def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
+        specs: list[CommandSpec] = []
+        if not skip_restore and config.restore_command:
+            specs.extend(self.build_specs(config, "restore"))
+        if not skip_build:
+            specs.extend(self.build_specs(config, "build"))
+        if not skip_test and self.supports(config, "test"):
+            specs.extend(self.build_specs(config, "test"))
+        if self.supports(config, "lint"):
+            specs.extend(self.build_specs(config, "lint"))
+        if not specs:
+            raise SystemExit("Validation would run no Make commands. Clear a skip flag.")
+        return _validation_metadata(specs, "make-incremental")
+
+    def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [("project_root", str(self._root(config))), ("project_type", "Make"), ("targets", ", ".join(sorted(self._targets(config))) or "unknown")]
+
+    def doctor_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
+        return [("make", f"READY: {shutil.which('make')}" if shutil.which("make") else "MISSING")]
+
+
 class GenericCommandRunner(ProjectRunner):
     kind = "command"
     display_name = "Custom commands"
@@ -884,7 +1768,13 @@ class GenericCommandRunner(ProjectRunner):
         text = str(getattr(config, attribute, "") or "") if attribute else ""
         if not text:
             raise SystemExit(f"No command configured for action '{action}'")
-        return [CommandSpec(action, shlex.split(text), env=config.env, metadata={"explicit": True})]
+        return [CommandSpec(
+            action,
+            shlex.split(text),
+            env=_optimized_env(config, "command"),
+            cwd=str(_project_root(config)),
+            metadata={"explicit": True, "runner": "command", "project_type": "command", "progress_parser": "generic"},
+        )]
 
 
 class RunnerRegistry:
@@ -913,7 +1803,11 @@ class RunnerRegistry:
 
 
 DEFAULT_RUNNER_REGISTRY = RunnerRegistry(
-    [DotnetRunner(), AndroidGradleRunner(), JvmGradleRunner(), PythonRunner()],
+    [
+        DotnetRunner(), AndroidGradleRunner(), JvmGradleRunner(), PythonRunner(),
+        NodeRunner(), RustRunner(), GoRunner(), MavenRunner(), CMakeRunner(),
+        MesonRunner(), MakeRunner(),
+    ],
     fallback=GenericCommandRunner(),
 )
 

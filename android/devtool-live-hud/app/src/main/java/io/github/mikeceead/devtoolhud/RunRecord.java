@@ -23,6 +23,9 @@ final class RunRecord {
     String launchMode = "";
     long lastProgressAtMs = 0L;
     int progress = 0;
+    int current = -1;
+    int total = -1;
+    String unitLabel = "items";
     int warnings = 0;
     int errors = 0;
     String stepsJson = "";
@@ -57,6 +60,9 @@ final class RunRecord {
         value.put("launch_mode", launchMode);
         value.put("last_progress_at_ms", lastProgressAtMs);
         value.put("progress", progress);
+        value.put("current", current);
+        value.put("total", total);
+        value.put("unit_label", unitLabel);
         value.put("warnings", warnings);
         value.put("errors", errors);
         value.put("steps_json", stepsJson);
@@ -88,6 +94,9 @@ final class RunRecord {
         record.launchMode = value.optString("launch_mode", "");
         record.lastProgressAtMs = value.optLong("last_progress_at_ms", 0L);
         record.progress = value.optInt("progress", 0);
+        record.current = value.optInt("current", -1);
+        record.total = value.optInt("total", -1);
+        record.unitLabel = value.optString("unit_label", "items");
         record.warnings = value.optInt("warnings", 0);
         record.errors = value.optInt("errors", 0);
         record.stepsJson = value.optString("steps_json", "");

@@ -8,7 +8,11 @@ dist/
 *.egg-info/
 
 # Devtool runtime state
-.devtool/
+# Keep the artifact registry commit-safe while ignoring all other local state.
+.devtool/*
+!.devtool/artifacts.json
+!.devtool/artifacts.d/
+!.devtool/artifacts.d/**
 **/android-live-hud.token
 
 # .NET and Gradle outputs
@@ -24,3 +28,7 @@ dist/
 
 # Local Android SDK paths
 **/local.properties
+
+# Root bridge source is tracked even though generated build directories are ignored.
+!root-module/devtool-bridge/bin/
+!root-module/devtool-bridge/bin/devtool-root-bridge

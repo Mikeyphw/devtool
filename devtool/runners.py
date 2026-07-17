@@ -675,7 +675,7 @@ def _run_process_live(
                     )
                     if snapshot.get(key) is not None
                 },
-                force=False,
+                force=bool(snapshot.get("force", False)),
             )
         tracker.update_callback = _tasker_update
     def _interrupt_process() -> None:
@@ -923,6 +923,13 @@ def _dotnet_phase_layout(specs: Sequence[CommandSpec], config: ProjectConfig) ->
     return layout
 
 
+def dotnet_build_server_shutdown_enabled(config: ProjectConfig) -> bool:
+    """Return whether devtool should stop shared .NET build servers after a run."""
+    value = config.runner_options.get("dotnet", {})
+    options = dict(value) if isinstance(value, dict) else {}
+    return bool(options.get("stop_after_run", False))
+
+
 def run_specs(
     config: ProjectConfig,
     specs: list[CommandSpec],
@@ -932,11 +939,16 @@ def run_specs(
     continue_on_error: bool = False,
     log_path: Path | str | None = None,
     tasker_progress: TaskerProgressSink | None = None,
-    shutdown_dotnet: bool = True,
+    shutdown_dotnet: bool | None = None,
 ) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw_sections: list[str] = []
     used_dotnet = any(_contains_dotnet_cli(spec.argv) for spec in specs)
+    stop_dotnet_after_run = (
+        dotnet_build_server_shutdown_enabled(config)
+        if shutdown_dotnet is None
+        else bool(shutdown_dotnet)
+    )
     used_gradle = any(
         str(spec.metadata.get("progress_parser") or "") == "gradle"
         or any(Path(str(value)).name in {"gradle", "gradlew"} for value in spec.argv)
@@ -1057,59 +1069,67 @@ def run_specs(
         duration = time.perf_counter() - started
         issues = parse_issues(config.repo_root, spec.name, output)
         result_metadata = dict(spec.metadata)
-        report_parser = str(result_metadata.get("report_parser") or "")
-        if report_parser:
+        configured_report_parsers = result_metadata.get("report_parsers")
+        if isinstance(configured_report_parsers, (list, tuple)):
+            report_parsers = [str(value).strip() for value in configured_report_parsers if str(value).strip()]
+        else:
+            report_parser = str(result_metadata.get("report_parser") or "").strip()
+            report_parsers = [report_parser] if report_parser else []
+        report_parsers = list(dict.fromkeys(report_parsers))
+        if report_parsers:
             report_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
-            collection = collect_report_metadata(
-                report_root,
-                repo_root=config.repo_root,
-                parser=report_parser,
-                tasks=result_metadata.get("gradle_tasks") or (),
-                started_at=started_wall,
-                command_name=spec.name,
-                output=output,
-                report_path=str(result_metadata.get("test_report") or result_metadata.get("package_report") or ""),
-            )
-            if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation"}:
-                tests = dict(collection.metadata)
-                catalog_discovered = result_metadata.get("test_catalog_discovered")
-                catalog_selected = result_metadata.get("test_catalog_selected")
-                if catalog_discovered is not None:
-                    tests["discovered"] = int(catalog_discovered)
-                if catalog_selected is not None:
-                    tests["selected"] = int(catalog_selected)
-                result_metadata["tests"] = tests
-                if tests.get("report_files") or report_parser == "android-instrumentation":
-                    test_prefix = "Devtool Gradle tests: " if report_parser == "gradle-junit" else f"Devtool tests ({tests.get('framework', report_parser)}): "
-                    output = (output.rstrip() + "\n" if output else "") + (
-                        test_prefix
-                        + f"{tests.get('passed', 0)} passed, "
-                        + f"{tests.get('failed', 0)} failed, "
-                        + f"{tests.get('skipped', 0)} skipped, "
-                        + f"{tests.get('total', 0)} total.\n"
-                    )
-                try:
-                    from .test_selection import save_failed_test_ids
-                    failed_ids = [issue.message.split(":", 1)[0] for issue in collection.issues if issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION"}]
-                    save_failed_test_ids(config.repo_root, failed_ids)
-                except Exception:
-                    pass
-            elif report_parser == "android-lint":
-                result_metadata["lint"] = collection.metadata
-                if collection.metadata.get("report_files"):
-                    output = (output.rstrip() + "\n" if output else "") + (
-                        "Devtool Android Lint: "
-                        f"{collection.metadata.get('errors', 0)} errors, "
-                        f"{collection.metadata.get('warnings', 0)} warnings.\n"
-                    )
-            elif report_parser == "python-package":
-                result_metadata["packages"] = collection.metadata
-                output = (output.rstrip() + "\n" if output else "") + (
-                    "Devtool Python packages: "
-                    f"{collection.metadata.get('valid', 0)} valid, "
-                    f"{collection.metadata.get('invalid', 0)} invalid.\n"
+            for report_parser in report_parsers:
+                collection = collect_report_metadata(
+                    report_root,
+                    repo_root=config.repo_root,
+                    parser=report_parser,
+                    tasks=result_metadata.get("gradle_tasks") or (),
+                    started_at=started_wall,
+                    command_name=spec.name,
+                    output=output,
+                    report_path=str(result_metadata.get("test_report") or result_metadata.get("package_report") or ""),
                 )
-            issues.extend(collection.issues)
+                if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation"}:
+                    tests = dict(collection.metadata)
+                    catalog_discovered = result_metadata.get("test_catalog_discovered")
+                    catalog_selected = result_metadata.get("test_catalog_selected")
+                    if catalog_discovered is not None:
+                        tests["discovered"] = int(catalog_discovered)
+                    if catalog_selected is not None:
+                        tests["selected"] = int(catalog_selected)
+                    result_metadata["tests"] = tests
+                    if tests.get("report_files") or report_parser == "android-instrumentation":
+                        test_prefix = "Devtool Gradle tests: " if report_parser == "gradle-junit" else f"Devtool tests ({tests.get('framework', report_parser)}): "
+                        output = (output.rstrip() + "\n" if output else "") + (
+                            test_prefix
+                            + f"{tests.get('passed', 0)} passed, "
+                            + f"{tests.get('failed', 0)} failed, "
+                            + f"{tests.get('skipped', 0)} skipped, "
+                            + f"{tests.get('total', 0)} total.\n"
+                        )
+                    try:
+                        from .test_selection import save_failed_test_ids
+                        failed_ids = [issue.message.split(":", 1)[0] for issue in collection.issues if issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION"}]
+                        save_failed_test_ids(config.repo_root, failed_ids)
+                    except Exception:
+                        pass
+                elif report_parser == "android-lint":
+                    result_metadata["lint"] = collection.metadata
+                    if collection.metadata.get("report_files"):
+                        output = (output.rstrip() + "\n" if output else "") + (
+                            "Devtool Android Lint: "
+                            f"{collection.metadata.get('errors', 0)} errors, "
+                            f"{collection.metadata.get('warnings', 0)} warnings.\n"
+                        )
+                elif report_parser == "python-package":
+                    result_metadata["packages"] = collection.metadata
+                    output = (output.rstrip() + "\n" if output else "") + (
+                        "Devtool Python packages: "
+                        f"{collection.metadata.get('valid', 0)} valid, "
+                        f"{collection.metadata.get('invalid', 0)} invalid.\n"
+                    )
+                issues.extend(collection.issues)
+
 
         if bool(result_metadata.get("collect_artifacts") or result_metadata.get("verify_artifacts")) and config.kind in {"android", "gradle"}:
             from .android_artifacts import collect_and_verify_android_artifacts
@@ -1150,14 +1170,17 @@ def run_specs(
         if returncode != 0 and not continue_on_error:
             break
 
-    if used_gradle:
+    gradle_options = config.runner_options.get("gradle", {})
+    gradle_options = dict(gradle_options) if isinstance(gradle_options, dict) else {}
+    stop_gradle_after_run = bool(gradle_options.get("stop_after_run", False))
+    if used_gradle and stop_gradle_after_run:
         gradle_result, gradle_raw = _shutdown_gradle_daemons(
             config, project_root=gradle_project_root, dry_run=dry_run, log_path=log_path
         )
         results.append(gradle_result)
         raw_sections.append(gradle_raw)
 
-    if used_dotnet and shutdown_dotnet:
+    if used_dotnet and stop_dotnet_after_run:
         shutdown_result, shutdown_raw = _shutdown_dotnet_build_server(
             config,
             dry_run=dry_run,
@@ -1593,7 +1616,11 @@ def git_commit(
     if pathspecs is None:
         add_argv = ["git", "add", "-A"]
     elif pathspecs:
-        add_argv = ["git", "add", "-A", "--", *pathspecs]
+        # Artifact-scoped commits must be able to add payload files that the
+        # repository normally ignores (for example generated bridge binaries).
+        # The caller supplies the exact artifact-owned path list, so force only
+        # those paths instead of widening the commit to the whole worktree.
+        add_argv = ["git", "add", "-f", "-A", "--", *pathspecs]
     else:
         output = "No artifact paths changed; skipped git add and git commit."
         results = [

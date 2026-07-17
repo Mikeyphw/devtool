@@ -54,9 +54,12 @@ class QtControlCenterTests(unittest.TestCase):
         self.assertIn("resources/devtool-control-center.svg", cmake)
         self.assertIn("resources/devtool-control-center-tray.svg", cmake)
         self.assertIn("devtool-control-center-hud", cmake)
+        common_target = cmake.split("add_library(devtool-control-center-common STATIC", 1)[1].split(")", 1)[0]
         hud_target = cmake.split("qt_add_executable(devtool-control-center-hud", 1)[1].split(")", 1)[0]
         for source in ("HudStateStore.cpp", "HistoryModel.cpp", "IpcClient.cpp"):
-            self.assertIn(source, hud_target)
+            self.assertIn(source, common_target)
+            self.assertNotIn(source, hud_target)
+        self.assertIn("devtool-control-center-common", cmake)
         controller = (root / "src" / "AppController.cpp").read_text(encoding="utf-8")
         self.assertIn('"--hud-mode","control-center"', controller)
 
@@ -299,6 +302,9 @@ class QtControlCenterPackagingTests(unittest.TestCase):
         self.assertIn('XDG_CACHE_HOME', build_script)
         self.assertIn('normalize_future_mtimes', build_script)
         self.assertIn('CMAKE_HOME_DIRECTORY:INTERNAL=', build_script)
+        self.assertIn('CMAKE_CXX_COMPILER_LAUNCHER=ccache', build_script)
+        self.assertIn('needs_configure=0', build_script)
+        self.assertIn('cmake --build "$build"', build_script)
         self.assertNotIn('build=${BUILD_DIR:-"$root/build"}', build_script)
 
         self.assertIn('package-build-${version}-${arch}', package_script)

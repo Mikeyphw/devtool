@@ -72,3 +72,16 @@ def test_artifacts_page_has_top_aligned_inputs_and_an_empty_state() -> None:
 def test_repository_current_runs_only_include_running_states() -> None:
     source = read(QML / "pages" / "RepositoriesPage.qml")
     assert 'String(run.status || "").toLowerCase() === "running"' in source
+
+
+def test_desktop_hud_and_pipeline_show_completed_over_total_tasks() -> None:
+    compact = read(QML / "CompactHud.qml")
+    pipeline = read(QML / "components" / "PipelineView.qml")
+
+    assert "function stepTaskCount(step, includeUnit)" in compact
+    assert "function laneProgressLabel(lane)" in compact
+    assert 'return count ? count + " · " + displayedProgress() + "%"' in compact
+    assert 'text: laneProgressLabel(modelData)' in compact
+    assert "function progressText(step, includeUnit)" in pipeline
+    assert 'return Math.round(completed) + "/" + Math.round(total)' in pipeline
+    assert 'text: root.progressText(modelData, false)' in pipeline

@@ -4,6 +4,7 @@ ROOT=$(cd "$(dirname "$0")" && pwd)
 SRC="$ROOT/root-module/devtool-bridge"
 OUT="${1:-$ROOT/devtool_root_bridge_module.zip}"
 command -v zip >/dev/null 2>&1 || { echo "zip is required" >&2; exit 1; }
+chmod 0755 "$SRC/bin/devtool-root-bridge"
 rm -f "$OUT"
 (
   cd "$SRC"

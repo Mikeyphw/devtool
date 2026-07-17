@@ -12,6 +12,13 @@ Registered runners are:
 - `AndroidGradleRunner`
 - `JvmGradleRunner`
 - `PythonRunner`
+- `NodeRunner`
+- `RustRunner`
+- `GoRunner`
+- `MavenRunner`
+- `CMakeRunner`
+- `MesonRunner`
+- `MakeRunner`
 - `GenericCommandRunner` (fallback)
 
 The public compatibility functions `build_specs()` and `build_validation_specs()` remain available from `devtool.runners`. Existing callers do not need to change.
@@ -24,15 +31,43 @@ A capability remains false until the corresponding behavior is implemented. Andr
 
 ## Validation optimization
 
-`DotnetRunner` owns the existing optimized validation pipeline:
+`DotnetRunner` owns desktop/.NET validation optimization. When the build and
+test targets resolve to the same solution or project, it plans one command:
 
 ```text
-dotnet restore <target>
-dotnet build --no-restore <target>
-dotnet test --no-build <target>
+dotnet test <target>
 ```
 
-Recognizable explicit `dotnet build` and `dotnet test` commands receive the same validation-only optimization. Standalone `devtool test` behavior is unchanged.
+The .NET CLI restores and builds that target before running tests, so separate
+restore and build processes add no validation coverage. When targets differ,
+devtool keeps a build and test command and only adds `--no-build` when the
+targets are known to be identical. `--skip-restore` now also disables implicit
+restore by adding `--no-restore`.
+
+Custom commands preserve their original ordering. Set these target options when
+a workflow requires the legacy shape or aggressive memory cleanup:
+
+```toml
+[dotnet]
+coalesce_validation = false
+explicit_restore = true
+stop_after_run = true
+```
+
+Shared MSBuild/Roslyn servers are retained by default so later local or chroot
+builds can reuse them. Standalone `devtool test` behavior remains unchanged.
+
+Other first-class runners apply equivalent safe optimizations:
+
+- Cargo and Go coalesce compile/test validation into one test invocation.
+- Maven uses one parallel `verify` reactor.
+- CMake and Meson retain out-of-tree build state and omit warm configure/setup passes.
+- Node uses incremental prefer-offline installs rather than destructive clean installs by default.
+- Make uses detected targets and memory-aware parallelism.
+- Python reuses an existing managed virtual environment instead of recreating it.
+
+All runners receive the shared desktop/Termux/chroot resource policy described
+in [`BUILD_OPTIMIZATION.md`](BUILD_OPTIMIZATION.md).
 
 ## Variants
 
@@ -80,8 +115,8 @@ variants feed existing Gradle task inference, such as `assembleRelease`,
 
 ## Execution environments
 
-Runner selection is independent from execution-environment selection. A .NET,
-Python, or custom-command runner can execute in native Termux, a chroot, or
+Runner selection is independent from execution-environment selection. Every first-class
+runner can execute in native Termux, a chroot, or
 desktop Linux through the shared model documented in
 [`EXECUTION_ENVIRONMENTS.md`](EXECUTION_ENVIRONMENTS.md).
 

@@ -1,14 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Callable
 
 from rich.console import Console, Group
 from rich.errors import LiveError
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import SpinnerColumn, Progress, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, ProgressColumn, SpinnerColumn, Task, TextColumn, TimeElapsedColumn
 from rich.text import Text
+
+
+_FRACTION_RE = re.compile(r"(?:^|[\[(\s])(?P<completed>\d+)\s*/\s*(?P<total>\d+)(?:[\])\s]|$)")
+_PERCENT_RE = re.compile(r"(?<!\d)(?P<percent>\d{1,3})%")
+_MAVEN_REACTOR_RE = re.compile(r"\bBuilding\s+.+?\s+(?P<completed>\d+)\s*/\s*(?P<total>\d+)\b", re.IGNORECASE)
+
+
+class GenericCountColumn(ProgressColumn):
+    def render(self, task: Task) -> Text:
+        if task.total is None:
+            return Text("?/ ?", style="progress.data.speed")
+        return Text(f"{int(task.completed or 0)}/{int(task.total)}", style="progress.data.speed")
 
 
 @dataclass(slots=True)
@@ -30,6 +43,10 @@ class GenericProgressTracker:
     detail: str = field(init=False, default="Starting")
     returncode: int | None = field(init=False, default=None)
     last_line: str = field(init=False, default="")
+    completed: int | None = field(init=False, default=None)
+    total: int | None = field(init=False, default=None)
+    percent: float | None = field(init=False, default=None)
+    unit_label: str = field(init=False, default="tasks")
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
@@ -41,6 +58,8 @@ class GenericProgressTracker:
             SpinnerColumn(style="cyan"),
             TextColumn("[bold]{task.description}"),
             TextColumn("[dim]{task.fields[phase_label]}[/dim]"),
+            BarColumn(bar_width=None),
+            GenericCountColumn(),
             TimeElapsedColumn(),
             console=self.console,
             expand=True,
@@ -67,18 +86,15 @@ class GenericProgressTracker:
             self.live.stop()
 
     def update_from_line(self, line: str) -> None:
-        if not self.enabled and self.update_callback is None:
-            return
         text = line.strip()
         if not text:
             return
         self.last_line = text
         self.detail = text
+        self._update_counters(text)
         self._publish()
 
     def finish(self, returncode: int) -> None:
-        if not self.enabled and self.update_callback is None:
-            return
         self.returncode = returncode
         status = f"{self.command_name} ok" if returncode == 0 else f"{self.command_name} failed rc={returncode}"
         if self.detail and self.detail != status:
@@ -93,19 +109,42 @@ class GenericProgressTracker:
             "target": self.display_target or self.cwd,
             "detail": self.detail,
             "phase_name": self._phase_label(),
-            "completed": None,
-            "total": None,
-            "percent": None,
+            "completed": self.completed,
+            "total": self.total,
+            "percent": self.percent,
             "warnings": 0,
             "errors": 0,
-            "unit_label": "items",
+            "unit_label": self.unit_label,
             "returncode": self.returncode,
             "last_line": self.last_line,
         }
 
+    def _update_counters(self, text: str) -> None:
+        match = _MAVEN_REACTOR_RE.search(text) or _FRACTION_RE.search(text)
+        if match:
+            completed = max(0, int(match.group("completed")))
+            total = max(1, int(match.group("total")))
+            if completed <= total:
+                self.completed = completed
+                self.total = total
+                self.percent = min(100.0, completed * 100.0 / total)
+                return
+        match = _PERCENT_RE.search(text)
+        if match:
+            value = max(0, min(100, int(match.group("percent"))))
+            self.percent = float(value)
+            self.completed = value
+            self.total = 100
+            self.unit_label = "percent"
+
     def _publish(self, *, force: bool = False) -> None:
         if self.progress is not None and self.task_id is not None:
-            self.progress.update(self.task_id, phase_label=self._phase_label())
+            self.progress.update(
+                self.task_id,
+                phase_label=self._phase_label(),
+                completed=float(self.completed or 0),
+                total=float(self.total) if self.total is not None else None,
+            )
         if self.live is not None:
             self.live.update(self._renderable())
         if self.update_callback is not None:

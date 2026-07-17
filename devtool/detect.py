@@ -60,6 +60,13 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
     slns = _collect(repo_root, (".sln",))
     csprojs = _collect(repo_root, (".csproj",))
     pyprojects = [repo_root / "pyproject.toml"] if (repo_root / "pyproject.toml").exists() else []
+    node_manifest = repo_root / "package.json"
+    rust_manifest = repo_root / "Cargo.toml"
+    go_manifest = repo_root / ("go.work" if (repo_root / "go.work").exists() else "go.mod")
+    maven_manifest = repo_root / "pom.xml"
+    cmake_manifest = repo_root / "CMakeLists.txt"
+    meson_manifest = repo_root / "meson.build"
+    make_manifest = next((repo_root / name for name in ("Makefile", "makefile", "GNUmakefile") if (repo_root / name).exists()), repo_root / "Makefile")
     gradle_roots = discover_gradle_roots(repo_root, android_only=False)
     android_roots = discover_gradle_roots(repo_root, android_only=True)
     package_scripts = [p for p in [repo_root / "scripts" / "package-release.sh", repo_root / "build.sh", repo_root / "package.sh"] if p.exists()]
@@ -104,6 +111,13 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
             "pyproject": [_rel(repo_root, p) for p in pyprojects],
             "pytest": (repo_root / "tests").exists() or (repo_root / "pytest.ini").exists(),
         },
+        "node": {"manifest": _rel(repo_root, node_manifest) if node_manifest.exists() else ""},
+        "rust": {"manifest": _rel(repo_root, rust_manifest) if rust_manifest.exists() else ""},
+        "go": {"manifest": _rel(repo_root, go_manifest) if go_manifest.exists() else ""},
+        "maven": {"manifest": _rel(repo_root, maven_manifest) if maven_manifest.exists() else ""},
+        "cmake": {"manifest": _rel(repo_root, cmake_manifest) if cmake_manifest.exists() else ""},
+        "meson": {"manifest": _rel(repo_root, meson_manifest) if meson_manifest.exists() else ""},
+        "make": {"manifest": _rel(repo_root, make_manifest) if make_manifest.exists() else ""},
         "packaging": [_rel(repo_root, p) for p in package_scripts],
         "docs": [_rel(repo_root, p) for p in docs],
         "tools": {
@@ -114,6 +128,17 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
             "adb": shutil.which("adb") or "",
             "git": shutil.which("git") or "",
             "wine": shutil.which("wine") or "",
+            "node": shutil.which("node") or "",
+            "npm": shutil.which("npm") or "",
+            "pnpm": shutil.which("pnpm") or "",
+            "yarn": shutil.which("yarn") or "",
+            "bun": shutil.which("bun") or "",
+            "cargo": shutil.which("cargo") or "",
+            "go": shutil.which("go") or "",
+            "mvn": shutil.which("mvn") or "",
+            "cmake": shutil.which("cmake") or "",
+            "meson": shutil.which("meson") or "",
+            "make": shutil.which("make") or "",
         },
     }
 
@@ -134,6 +159,13 @@ def render_detect_text(info: dict[str, Any]) -> str:
         f"android_roots: {android.get('root_count', 0)}",
         f"gradle_roots: {gradle.get('root_count', 0)}",
         f"python_pyproject: {'yes' if python.get('pyproject') else 'no'}",
+        f"node_manifest: {info.get('node', {}).get('manifest') or '-'}",
+        f"rust_manifest: {info.get('rust', {}).get('manifest') or '-'}",
+        f"go_manifest: {info.get('go', {}).get('manifest') or '-'}",
+        f"maven_manifest: {info.get('maven', {}).get('manifest') or '-'}",
+        f"cmake_manifest: {info.get('cmake', {}).get('manifest') or '-'}",
+        f"meson_manifest: {info.get('meson', {}).get('manifest') or '-'}",
+        f"make_manifest: {info.get('make', {}).get('manifest') or '-'}",
         f"package_scripts: {len(info.get('packaging', []))}",
         f"docs: {', '.join(info.get('docs', [])) or '-'}",
     ]

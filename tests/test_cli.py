@@ -75,9 +75,10 @@ class CliTests(unittest.TestCase):
             config = load_project_config(str(root), None, target_name="api")
             specs = _validation_specs_for_args(config, args, parser)
 
-        self.assertEqual([spec.metadata["matrix"] for spec in specs], ["debug", "debug", "debug", "release", "release", "release"])
-        self.assertIn("Debug", specs[1].argv)
-        self.assertIn("Release", specs[4].argv)
+        self.assertEqual([spec.metadata["matrix"] for spec in specs], ["debug", "release"])
+        self.assertTrue(all(spec.metadata["coalesced_dotnet_validation"] for spec in specs))
+        self.assertIn("Debug", specs[0].argv)
+        self.assertIn("Release", specs[1].argv)
 
     def test_execution_environment_is_mutually_exclusive_with_legacy_chroot_flag(self) -> None:
         parser = build_parser()
@@ -1270,6 +1271,74 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertIn(".devtool/artifacts.d/old-failure.json", committed)
             self.assertIn("new.txt", committed)
 
+    def test_auto_commit_force_adds_declared_ignored_payload_without_runtime_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "devtool@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Devtool Tests"], cwd=repo, check=True)
+
+            (repo / ".gitignore").write_text(
+                ".devtool/\nroot-module/devtool-bridge/bin/\n",
+                encoding="utf-8",
+            )
+            (repo / "base.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "Base"], cwd=repo, check=True)
+
+            payload_path = "root-module/devtool-bridge/bin/devtool-root-bridge"
+            payload = repo / payload_path
+            payload.parent.mkdir(parents=True)
+            payload.write_text("#!/system/bin/sh\n", encoding="utf-8")
+
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr(payload_path, payload.read_bytes())
+
+            args = SimpleNamespace(
+                command="apply-overlay",
+                commit="Apply ignored artifact payload",
+                artifact=str(artifact),
+                verbose=False,
+                dry_run=False,
+                validate=False,
+                validate_only=False,
+                preview=False,
+                _devtool_history_recorded=False,
+                _devtool_artifact_type="overlay",
+                _devtool_artifact_preview={"changes": [{"kind": "add", "path": payload_path}]},
+                _devtool_artifact_manifest={},
+                _devtool_artifact_sha="",
+            )
+            results = [OperationResult("apply-overlay", ["apply-overlay"], 0, 0.0, "ok", [])]
+            config = ProjectConfig(repo_root=repo, kind="unknown")
+
+            updated, _raw = _maybe_commit_after_apply(config, args, results, "apply ok")
+
+            add_result = next(result for result in updated if result.name == "git-add")
+            self.assertEqual(add_result.returncode, 0)
+            self.assertIn("-f", add_result.argv)
+            self.assertTrue(any(result.name == "git-commit" and result.returncode == 0 for result in updated))
+            committed = subprocess.run(
+                ["git", "show", "--pretty=", "--name-only", "HEAD"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout.splitlines()
+            self.assertIn(payload_path, committed)
+            self.assertFalse(any(path.startswith(".devtool/") for path in committed))
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout
+            self.assertEqual(status, "")
+
     def test_apply_overlay_validate_skips_commit_when_validation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1343,11 +1412,11 @@ class ValidationDotnetFlagTests(unittest.TestCase):
             config = ProjectConfig(repo_root=root, kind="dotnet", build_target="App.sln")
             specs = build_validation_specs(config)
 
-        self.assertEqual(specs[0].argv, ["dotnet", "restore", "App.sln"])
-        self.assertEqual(specs[1].argv, ["dotnet", "build", "--no-restore", "App.sln"])
-        self.assertEqual(specs[2].argv, ["dotnet", "test", "--no-build", "App.sln"])
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].argv, ["dotnet", "test", "App.sln"])
+        self.assertTrue(specs[0].metadata["coalesced_dotnet_validation"])
 
-    def test_dotnet_validate_skip_restore_does_not_add_no_restore_to_build(self) -> None:
+    def test_dotnet_validate_skip_restore_disables_implicit_restore(self) -> None:
         from devtool.config import ProjectConfig
         from devtool.runners import build_validation_specs
         import tempfile
@@ -1358,8 +1427,9 @@ class ValidationDotnetFlagTests(unittest.TestCase):
             config = ProjectConfig(repo_root=root, kind="dotnet", build_target="App.sln")
             specs = build_validation_specs(config, skip_restore=True)
 
-        self.assertEqual(specs[0].argv, ["dotnet", "build", "App.sln"])
-        self.assertEqual(specs[1].argv, ["dotnet", "test", "--no-build", "App.sln"])
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].argv, ["dotnet", "test", "--no-restore", "App.sln"])
+        self.assertFalse(specs[0].metadata["implicit_restore"])
 
 
 def test_hud_overlay_can_be_requested_by_environment(monkeypatch, tmp_path) -> None:

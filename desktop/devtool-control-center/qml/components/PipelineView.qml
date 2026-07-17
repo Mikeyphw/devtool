@@ -9,6 +9,16 @@ Item {
     Accessible.role: Accessible.Grouping
     Accessible.name: "Run pipeline"
     Accessible.description: (root.steps || []).length + " workflow steps"
+    function progressText(step, includeUnit) {
+        const completed = Number((step || {}).completed)
+        const total = Number((step || {}).total)
+        const percent = Math.round(Math.max(0, Math.min(100, Number((step || {}).progress || 0))))
+        if (completed >= 0 && total > 0) {
+            const unit = String((step || {}).unitLabel || "tasks")
+            return Math.round(completed) + "/" + Math.round(total) + (includeUnit ? " " + unit : "") + " · " + percent + "%"
+        }
+        return percent + "%"
+    }
     Theme { id: theme }
 
     ListView {
@@ -55,7 +65,7 @@ Item {
                 const detail = String(modelData.detail || modelData.status || "pending")
                 const progress = Math.max(0, Math.min(100, Number(modelData.progress || 0)))
                 return modelData.status === "running"
-                        ? detail + ", " + Math.round(progress) + " percent"
+                        ? detail + ", " + root.progressText(modelData, true)
                         : detail
             }
             property color stepColor: modelData.status === "failed" ? theme.error
@@ -103,7 +113,7 @@ Item {
                         }
                         Label {
                             visible: modelData.status === "running"
-                            text: Math.round(modelData.progress) + "%"
+                            text: root.progressText(modelData, false)
                             color: stepRect.stepColor
                             font.weight: Font.DemiBold
                             font.pointSize: theme.smallPointSize

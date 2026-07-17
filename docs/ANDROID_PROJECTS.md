@@ -24,6 +24,10 @@ install_command = "sudo pm install -r -t"
 [targets.mobile.gradle]
 max_workers = 4
 structured_events = true
+parallel = true
+build_cache = true
+daemon_idle_timeout_ms = 900000
+# stop_after_run = true # opt-in for low-memory devices only
 
 [targets.mobile.tasks]
 restore = ["help"]
@@ -50,14 +54,14 @@ devtool -r "$HOME/Code/project" --target mobile validate
 
 ## Validation pipeline
 
-Android validation runs:
+Android validation plans build, local JVM/unit-test, and Android Lint tasks, then runs them in one Gradle invocation whenever the target uses normal Gradle tasks. This avoids repeating Java, SDK, wrapper, dependency, and project configuration work for each phase. Explicit shell commands remain separate because they may have action-specific side effects.
 
 ```text
-restore/configure
-build/package
-local JVM/unit tests
-Android Lint
+single Gradle invocation: build/package + local JVM/unit tests + Android Lint
+optional second invocation: connected instrumentation tests
 ```
+
+The inferred `help` restore task is omitted from combined validation because the real tasks already configure the project. A non-default explicit restore task is retained.
 
 For a `debug` Android target, inferred defaults are:
 
@@ -69,7 +73,9 @@ lintDebug
 ```
 
 The selected variant controls the inferred task names. Explicit `[tasks]`
-entries always win.
+entries always win. Gradle daemons are retained by default so later builds can
+reuse the warmed JVM and configuration state. Set `gradle.stop_after_run = true`
+only when reclaiming memory is more important than subsequent build speed.
 
 Pure JVM Gradle projects default to `build` and `test`. There is no universal JVM
 lint task, so `[tasks].lint` must name the project's real check, such as

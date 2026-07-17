@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,14 +10,21 @@ from devtool.project_runners import (
     DEFAULT_RUNNER_REGISTRY,
     AndroidGradleRunner,
     DotnetRunner,
+    CMakeRunner,
     GenericCommandRunner,
+    GoRunner,
     JvmGradleRunner,
+    MakeRunner,
+    MavenRunner,
+    MesonRunner,
+    NodeRunner,
     PythonRunner,
+    RustRunner,
     RunnerCapabilities,
     RunnerRegistry,
     get_project_runner,
 )
-from devtool.runners import build_specs, build_validation_specs, runner_capabilities
+from devtool.runners import build_specs, build_validation_specs, git_commit, run_specs, runner_capabilities
 
 
 class RunnerRegistryTests(unittest.TestCase):
@@ -25,8 +33,18 @@ class RunnerRegistryTests(unittest.TestCase):
         self.assertIsInstance(get_project_runner("android"), AndroidGradleRunner)
         self.assertIsInstance(get_project_runner("gradle"), JvmGradleRunner)
         self.assertIsInstance(get_project_runner("python"), PythonRunner)
+        self.assertIsInstance(get_project_runner("node"), NodeRunner)
+        self.assertIsInstance(get_project_runner("rust"), RustRunner)
+        self.assertIsInstance(get_project_runner("go"), GoRunner)
+        self.assertIsInstance(get_project_runner("maven"), MavenRunner)
+        self.assertIsInstance(get_project_runner("cmake"), CMakeRunner)
+        self.assertIsInstance(get_project_runner("meson"), MesonRunner)
+        self.assertIsInstance(get_project_runner("make"), MakeRunner)
         self.assertIsInstance(get_project_runner("mixed"), GenericCommandRunner)
-        self.assertEqual(DEFAULT_RUNNER_REGISTRY.registered_kinds(), ("android", "dotnet", "gradle", "python"))
+        self.assertEqual(
+            DEFAULT_RUNNER_REGISTRY.registered_kinds(),
+            ("android", "cmake", "dotnet", "go", "gradle", "make", "maven", "meson", "node", "python", "rust"),
+        )
 
     def test_registry_rejects_duplicate_kinds_without_replace(self) -> None:
         registry = RunnerRegistry([DotnetRunner()])
@@ -130,8 +148,9 @@ class DotnetRunnerCompatibilityTests(unittest.TestCase):
             )
             specs = build_validation_specs(config, skip_build=True)
 
-        self.assertEqual([spec.name for spec in specs], ["restore", "test"])
+        self.assertEqual([spec.name for spec in specs], ["test"])
         self.assertNotIn("--no-build", specs[-1].argv)
+        self.assertTrue(specs[-1].metadata["implicit_restore"])
 
     def test_standalone_test_still_builds_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -190,11 +209,76 @@ class DotnetRunnerCompatibilityTests(unittest.TestCase):
             )
             specs = build_validation_specs(config)
 
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].name, "dotnet-validation")
+        self.assertNotIn("--no-build", specs[0].argv)
+        self.assertIn("Debug", specs[0].argv)
+        self.assertEqual(specs[0].metadata["variant"], "debug")
+        self.assertTrue(specs[0].metadata["coalesced_dotnet_validation"])
+
+
+    def test_default_validation_coalesces_same_target_into_dotnet_test(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="dotnet",
+                restore_target="Demo.sln",
+                build_target="Demo.sln",
+                test_target="Demo.sln",
+            )
+            specs = build_validation_specs(config)
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].name, "dotnet-validation")
+        self.assertEqual(specs[0].argv[:3], ["dotnet", "test", "Demo.sln"])
+        self.assertEqual(specs[0].metadata["validation_components"], ["restore", "build", "test"])
+
+    def test_skip_restore_disables_implicit_restore_in_coalesced_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="dotnet",
+                restore_target="Demo.sln",
+                build_target="Demo.sln",
+                test_target="Demo.sln",
+            )
+            specs = build_validation_specs(config, skip_restore=True)
+
+        self.assertEqual(len(specs), 1)
+        self.assertIn("--no-restore", specs[0].argv)
+        self.assertFalse(specs[0].metadata["implicit_restore"])
+
+    def test_explicit_restore_option_preserves_three_phase_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="dotnet",
+                restore_target="Demo.sln",
+                build_target="Demo.sln",
+                test_target="Demo.sln",
+                runner_options={"dotnet": {"explicit_restore": True}},
+            )
+            specs = build_validation_specs(config)
+
+        self.assertEqual([spec.name for spec in specs], ["restore", "build", "test"])
         self.assertIn("--no-restore", specs[1].argv)
         self.assertIn("--no-build", specs[2].argv)
-        self.assertIn("Debug", specs[1].argv)
-        self.assertIn("Debug", specs[2].argv)
-        self.assertEqual(specs[2].metadata["variant"], "debug")
+
+    def test_different_build_and_test_targets_keep_safe_separate_invocations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="dotnet",
+                restore_target="Desktop.sln",
+                build_target="Desktop.sln",
+                test_target="tests/Desktop.Tests.csproj",
+            )
+            specs = build_validation_specs(config)
+
+        self.assertEqual([spec.name for spec in specs], ["build", "test"])
+        self.assertNotIn("--no-build", specs[1].argv)
+        self.assertTrue(specs[0].metadata["implicit_restore"])
+        self.assertTrue(specs[1].metadata["implicit_restore"])
 
 
 class ExistingRunnerCompatibilityTests(unittest.TestCase):
@@ -230,6 +314,69 @@ class ExistingRunnerCompatibilityTests(unittest.TestCase):
             self.assertFalse(capabilities.restore)
             self.assertEqual(build_specs(config, "build")[0].argv, ["make", "all"])
 
+
+class DotnetBuildServerReuseTests(unittest.TestCase):
+    def test_dotnet_build_server_shutdown_is_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = build_specs(
+                ProjectConfig(repo_root=root, kind="dotnet", build_target="Demo.sln"),
+                "build",
+            )[0]
+            retained, _ = run_specs(
+                ProjectConfig(repo_root=root, kind="dotnet"),
+                [spec],
+                verbose=False,
+                dry_run=True,
+            )
+            stopped, _ = run_specs(
+                ProjectConfig(
+                    repo_root=root,
+                    kind="dotnet",
+                    runner_options={"dotnet": {"stop_after_run": True}},
+                ),
+                [spec],
+                verbose=False,
+                dry_run=True,
+            )
+
+        self.assertNotIn("dotnet-build-server-shutdown", [item.name for item in retained])
+        self.assertIn("dotnet-build-server-shutdown", [item.name for item in stopped])
+
+
+class GradleDaemonReuseTests(unittest.TestCase):
+    def test_gradle_daemon_shutdown_is_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "settings.gradle").write_text("rootProject.name = 'demo'\n", encoding="utf-8")
+            (root / "build.gradle").write_text("plugins { id 'java' }\n", encoding="utf-8")
+            spec = build_specs(
+                ProjectConfig(
+                    repo_root=root,
+                    kind="gradle",
+                    runner_options={"tasks": {"build": ["build"]}},
+                ),
+                "build",
+            )[0]
+            retained, _ = run_specs(
+                ProjectConfig(repo_root=root, kind="gradle"),
+                [spec],
+                verbose=False,
+                dry_run=True,
+            )
+            stopped, _ = run_specs(
+                ProjectConfig(
+                    repo_root=root,
+                    kind="gradle",
+                    runner_options={"gradle": {"stop_after_run": True}},
+                ),
+                [spec],
+                verbose=False,
+                dry_run=True,
+            )
+
+        self.assertNotIn("gradle-daemon-shutdown", [item.name for item in retained])
+        self.assertIn("gradle-daemon-shutdown", [item.name for item in stopped])
 
 if __name__ == "__main__":
     unittest.main()

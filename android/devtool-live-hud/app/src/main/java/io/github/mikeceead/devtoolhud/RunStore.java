@@ -66,6 +66,9 @@ final class RunStore {
         record.target = update.target;
         record.summary = update.summary;
         record.progress = update.displayProgress();
+        record.current = update.current;
+        record.total = update.total;
+        record.unitLabel = update.unitLabel;
         record.warnings = update.warnings;
         record.errors = update.errors;
         record.stepsJson = update.stepsJson;

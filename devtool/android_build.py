@@ -1764,6 +1764,27 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-f", "--force-setup", action="store_true", help="Refresh managed Gradle/AAPT2 downloads")
     parser.add_argument("-m", "--no-daemon", action="store_true", help="Pass --no-daemon to Gradle")
     parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Enable parallel project execution for multi-module builds",
+    )
+    parser.add_argument(
+        "--build-cache",
+        action="store_true",
+        help="Enable the persistent Gradle build cache",
+    )
+    parser.add_argument(
+        "--daemon-idle-timeout-ms",
+        type=int,
+        default=900_000,
+        help="Keep a reusable Gradle daemon alive for this many idle milliseconds",
+    )
+    parser.add_argument(
+        "--stop-gradle",
+        action="store_true",
+        help="Stop this Gradle daemon after the build instead of retaining it for reuse",
+    )
+    parser.add_argument(
         "-S", "--stacktrace",
         dest="stacktrace",
         action="store_true",
@@ -1796,6 +1817,8 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
         args.project = args.project_dir
     if args.max_workers < 1:
         parser.error("--max-workers must be at least 1")
+    if args.daemon_idle_timeout_ms < 0:
+        parser.error("--daemon-idle-timeout-ms cannot be negative")
     args.gradle_args = extra_gradle_args
     return args
 
@@ -2018,6 +2041,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         command.append("--offline")
     if args.no_daemon:
         command.append("--no-daemon")
+    else:
+        command.append(f"-Dorg.gradle.daemon.idletimeout={args.daemon_idle_timeout_ms}")
+    if args.parallel and args.max_workers > 1:
+        command.append("--parallel")
+    if args.build_cache:
+        command.append("--build-cache")
     if aapt2:
         command.append(f"-Pandroid.aapt2FromMavenOverride={aapt2}")
     command.extend(normalize_gradle_arguments(args.gradle_args, plain_console=args.plain_console))
@@ -2049,12 +2078,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 info(str(artifact))
         return 0
     finally:
-        stop_gradle_processes(
-            gradle,
-            project_root,
-            env,
-            dry_run=args.dry_run,
-        )
+        if args.stop_gradle and not args.no_daemon:
+            stop_gradle_processes(
+                gradle,
+                project_root,
+                env,
+                dry_run=args.dry_run,
+            )
 
 
 def standalone_main(argv: Sequence[str] | None = None) -> int:

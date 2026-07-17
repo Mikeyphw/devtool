@@ -30,7 +30,8 @@ static QString baseName(QString name) {
     name = name.toLower().replace('_','-');
     if (name.contains("extract") || name.contains("apply-overlay")) return "extract";
     if (name.contains("restore")) return "restore"; if (name.contains("build")) return "build";
-    if (name.contains("test")) return "test"; if (name.contains("validator") || name.contains("artifact-validation")) return "validate";
+    if (name.contains("test")) return "test";
+    if (name == "validate" || name.endsWith("-validation") || name.contains("validator") || name.contains("artifact-validation")) return "validate";
     if (name.contains("commit")) return "commit"; if (name.contains("rollback")) return "rollback";
     return name;
 }

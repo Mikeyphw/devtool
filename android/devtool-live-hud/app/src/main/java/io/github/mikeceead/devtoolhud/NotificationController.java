@@ -231,7 +231,10 @@ final class NotificationController {
         views.setInt(R.id.notification_workspace_mark, "setBackgroundResource", background);
         views.setTextViewText(R.id.notification_workspace_current, workspace.name);
         views.setTextViewText(R.id.notification_workspace_meta, workspace.meta);
-        views.setTextViewText(R.id.notification_workspace_progress, workspace.progress + "%");
+        String workspaceProgress = update.current >= 0 && update.total > 0
+                ? update.current + "/" + update.total
+                : workspace.progress + "%";
+        views.setTextViewText(R.id.notification_workspace_progress, workspaceProgress);
         String remaining = update.remainingWorkspacesText();
         views.setTextViewText(R.id.notification_workspace_remaining, remaining);
         views.setViewVisibility(R.id.notification_workspace_remaining, remaining.isEmpty() ? View.GONE : View.VISIBLE);

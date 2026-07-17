@@ -708,6 +708,16 @@ public final class MainActivity extends Activity {
             detail.setPadding(0, ui.dp(8), 0, 0);
             card.addView(detail);
         }
+        if (record.current >= 0 && record.total > 0) {
+            String unit = record.unitLabel == null || record.unitLabel.trim().isEmpty() ? "items" : record.unitLabel.trim();
+            TextView taskCount = ui.text(
+                    record.current + "/" + record.total + " " + unit + " · " + record.progress + "%",
+                    UiTypography.Role.LABEL,
+                    ui.palette.cyan);
+            taskCount.setPadding(0, ui.dp(7), 0, 0);
+            taskCount.setContentDescription(record.current + " of " + record.total + " " + unit + " completed");
+            card.addView(taskCount);
+        }
         LinearLayout pipeline = new LinearLayout(this);
         pipeline.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams pipelineParams = new LinearLayout.LayoutParams(
