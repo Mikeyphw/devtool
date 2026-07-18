@@ -14,6 +14,7 @@ import fnmatch
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 from typing import Any, Iterable
 
@@ -54,6 +55,7 @@ class TestSelection:
     methods: list[str] = field(default_factory=list)
     native_filter: str = ""
     task: str = ""
+    tasks: list[str] = field(default_factory=list)
     failed: bool = False
     changed: bool = False
     changed_from: str = "HEAD"
@@ -71,6 +73,7 @@ class TestSelection:
             self.methods,
             self.native_filter,
             self.task,
+            self.tasks,
             self.failed,
             self.changed,
             self.instrumented,
@@ -101,7 +104,8 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
         classes=_list(raw.get("classes") or raw.get("class")),
         methods=_list(raw.get("methods") or raw.get("method")),
         native_filter=str(raw.get("filter") or "").strip(),
-        task=str(raw.get("task") or "").strip(),
+        task="",
+        tasks=_list(raw.get("tasks") or raw.get("task")),
         failed=bool(raw.get("failed", False)),
         changed=bool(raw.get("changed", False)),
         changed_from=str(raw.get("changed_from") or "HEAD").strip() or "HEAD",
@@ -125,7 +129,8 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
         selection.classes = _list(profile.get("classes")) + selection.classes
         selection.methods = _list(profile.get("methods")) + selection.methods
         selection.native_filter = selection.native_filter or str(profile.get("filter") or "").strip()
-        selection.task = selection.task or str(profile.get("task") or "").strip()
+        profile_tasks = _list(profile.get("tasks") or profile.get("task"))
+        selection.tasks = profile_tasks + selection.tasks
         selection.failed = selection.failed or bool(profile.get("failed", False))
         selection.changed = selection.changed or str(profile.get("selection") or "").strip().lower() == "changed"
         selection.changed_from = str(profile.get("base") or selection.changed_from).strip() or "HEAD"
@@ -143,9 +148,10 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
         selection.paths.extend(changed)
 
     # Stable de-duplication keeps generated commands deterministic.
-    for name in ("selectors", "ids", "tags", "exclude_tags", "paths", "classes", "methods"):
+    for name in ("selectors", "ids", "tags", "exclude_tags", "paths", "classes", "methods", "tasks"):
         values = getattr(selection, name)
         setattr(selection, name, list(dict.fromkeys(values)))
+    selection.task = selection.tasks[0] if selection.tasks else ""
     return selection
 
 
@@ -428,6 +434,17 @@ def _append_gradle_arg(argv: list[str], *values: str) -> None:
     argv.extend(values)
 
 
+def _native_test_values(selection: TestSelection) -> list[str]:
+    values: list[str] = []
+    values.extend(selection.ids)
+    values.extend(selection.classes)
+    values.extend(selection.methods)
+    values.extend(selection.selectors)
+    values.extend(selection.paths)
+    values.extend(selection.tags)
+    return list(dict.fromkeys(value for value in values if value))
+
+
 def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpec:
     selection = resolve_test_selection(config)
     contains_tests = bool(spec.metadata.get("contains_tests", False))
@@ -482,20 +499,66 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
         if selection.native_filter:
             _append_gradle_arg(argv, *selection.native_filter.split())
     elif config.kind == "python":
-        # Pytest node IDs and paths can be passed directly.  Keep them before
-        # expression/marker flags so generated commands remain readable.
-        direct = [*selection.ids, *selection.paths]
-        if selected_catalog and not direct and (selection.classes or selection.methods):
-            direct.extend(item.id for item in selected_catalog)
-        argv.extend(dict.fromkeys(direct))
-        expressions = [*selection.selectors, *selection.classes, *selection.methods]
+        framework = str(metadata.get("test_framework") or "pytest").strip().lower()
+        # Selection syntax is framework-specific. Never append pytest's -k/-m
+        # switches to tox, nox, unittest, or an arbitrary custom command.
+        if framework == "pytest":
+            direct = [*selection.ids, *selection.paths]
+            if selected_catalog and not direct and (selection.classes or selection.methods):
+                direct.extend(item.id for item in selected_catalog)
+            argv.extend(dict.fromkeys(direct))
+            expressions = [*selection.selectors, *selection.classes, *selection.methods]
+            if selection.native_filter:
+                expressions.append(selection.native_filter)
+            if expressions:
+                argv.extend(["-k", " and ".join(f"({value})" for value in expressions)])
+            marker_parts = [*selection.tags, *(f"not {value}" for value in selection.exclude_tags)]
+            if marker_parts:
+                argv.extend(["-m", " and ".join(marker_parts)])
+        else:
+            metadata["test_selection_adapter"] = framework
+            metadata["test_selection_native_only"] = True
+    elif config.kind == "node":
+        values = _native_test_values(selection)
+        if values:
+            argv.extend(["--", *values])
+    elif config.kind == "rust":
+        values = _native_test_values(selection)
         if selection.native_filter:
-            expressions.append(selection.native_filter)
-        if expressions:
-            argv.extend(["-k", " and ".join(f"({value})" for value in expressions)])
-        marker_parts = [*selection.tags, *(f"not {value}" for value in selection.exclude_tags)]
-        if marker_parts:
-            argv.extend(["-m", " and ".join(marker_parts)])
+            values = shlex.split(selection.native_filter)
+        if values:
+            try:
+                separator = argv.index("--")
+            except ValueError:
+                separator = len(argv)
+            argv[separator:separator] = values
+    elif config.kind == "go":
+        values = _native_test_values(selection)
+        pattern = selection.native_filter or "|".join(values)
+        if pattern:
+            try:
+                index = argv.index("test")
+            except ValueError:
+                index = 1
+            if "-run" not in argv:
+                argv[index + 1:index + 1] = ["-run", pattern]
+    elif config.kind == "maven":
+        values = _native_test_values(selection)
+        pattern = selection.native_filter or ",".join(values)
+        if pattern:
+            argv.append(f"-Dtest={pattern}")
+    elif config.kind == "cmake":
+        values = _native_test_values(selection)
+        pattern = selection.native_filter or "|".join(values)
+        if pattern:
+            argv.extend(["-R", pattern])
+        if selection.exclude_tags:
+            argv.extend(["-E", "|".join(selection.exclude_tags)])
+    elif config.kind == "meson":
+        values = _native_test_values(selection)
+        if selection.native_filter:
+            values.extend(shlex.split(selection.native_filter))
+        argv.extend(dict.fromkeys(values))
 
     return CommandSpec(
         spec.name,

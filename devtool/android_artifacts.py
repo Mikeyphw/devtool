@@ -117,30 +117,72 @@ def _parse_badging(record: AndroidArtifactRecord, text: str) -> None:
         record.abis = re.findall(r"'([^']+)'", native.group(1))
 
 
-def verify_apk(path: Path, record: AndroidArtifactRecord) -> None:
-    names = _zip_check(record, path, required=("AndroidManifest.xml",))
-    aapt2 = _tool_from_sdk("aapt2") or _tool_from_sdk("aapt")
-    if aapt2:
-        rc, output = _run_tool([aapt2, "dump", "badging", str(path)])
-        if rc == 0:
-            _check(record, "aapt2_badging", "passed")
-            _parse_badging(record, output)
-        else:
-            _check(record, "aapt2_badging", "failed", output.splitlines()[-1] if output else f"exit {rc}")
-    else:
-        _check(record, "aapt2_badging", "skipped", "aapt2/aapt not found")
+def _is_release_artifact(path: Path, record: AndroidArtifactRecord) -> bool:
+    name = path.name.lower()
+    variant = record.variant.lower()
+    return "release" in name or "release" in variant
 
-    apksigner = _tool_from_sdk("apksigner")
-    if apksigner:
-        rc, output = _run_tool([apksigner, "verify", "--verbose", str(path)])
-        record.signed = rc == 0
-        _check(record, "signature", "passed" if rc == 0 else "failed", output.splitlines()[-1] if output else "")
+
+def verify_apk(
+    path: Path,
+    record: AndroidArtifactRecord,
+    *,
+    external_tools: bool = True,
+    external_required: bool = False,
+    external_skip_reason: str = "",
+) -> None:
+    names = _zip_check(record, path, required=("AndroidManifest.xml",))
+    if not external_tools:
+        reason = external_skip_reason or "external Android SDK verification disabled"
+        _check(record, "aapt2_badging", "skipped", reason)
+        _check(record, "signature", "skipped", reason)
     else:
-        record.signed = None
-        # JAR signatures are not authoritative for APK Signature Scheme v2+, so
-        # report only the observable hint and keep the check non-fatal.
-        jar_signed = any(name.upper().startswith("META-INF/") and name.upper().endswith((".RSA", ".DSA", ".EC")) for name in names)
-        _check(record, "signature", "skipped", "apksigner not found" + ("; JAR signature entries present" if jar_signed else ""))
+        aapt2 = _tool_from_sdk("aapt2") or _tool_from_sdk("aapt")
+        if aapt2:
+            rc, output = _run_tool([aapt2, "dump", "badging", str(path)])
+            if rc == 0:
+                _check(record, "aapt2_badging", "passed")
+                _parse_badging(record, output)
+            else:
+                detail = output.splitlines()[-1] if output else f"exit {rc}"
+                # Badging enriches metadata but is not an integrity check. A host
+                # aapt2 can be incompatible with an APK produced inside a chroot,
+                # so only an explicitly strict policy may make this fatal.
+                _check(record, "aapt2_badging", "failed" if external_required else "warning", detail)
+        else:
+            _check(
+                record,
+                "aapt2_badging",
+                "failed" if external_required else "skipped",
+                "aapt2/aapt not found",
+            )
+
+        apksigner = _tool_from_sdk("apksigner")
+        if apksigner:
+            rc, output = _run_tool([apksigner, "verify", "--verbose", str(path)])
+            record.signed = rc == 0
+            if rc == 0:
+                _check(record, "signature", "passed")
+            else:
+                detail = output.splitlines()[-1] if output else f"exit {rc}"
+                strict_signature = external_required or _is_release_artifact(path, record)
+                _check(record, "signature", "failed" if strict_signature else "warning", detail)
+        else:
+            record.signed = None
+            # JAR signatures are not authoritative for APK Signature Scheme v2+, so
+            # report only the observable hint and keep the check non-fatal unless
+            # the target explicitly requires external verification.
+            jar_signed = any(
+                name.upper().startswith("META-INF/")
+                and name.upper().endswith((".RSA", ".DSA", ".EC"))
+                for name in names
+            )
+            _check(
+                record,
+                "signature",
+                "failed" if external_required else "skipped",
+                "apksigner not found" + ("; JAR signature entries present" if jar_signed else ""),
+            )
 
     if "release" in path.name.lower() and "unsigned" in path.name.lower():
         _check(record, "release_signing", "failed", "Release artifact name indicates an unsigned APK")
@@ -158,7 +200,15 @@ def verify_jar(path: Path, record: AndroidArtifactRecord) -> None:
     _zip_check(record, path)
 
 
-def verify_android_artifact(path: Path, *, repo_root: Path, project_root: Path) -> tuple[AndroidArtifactRecord, list[Issue]]:
+def verify_android_artifact(
+    path: Path,
+    *,
+    repo_root: Path,
+    project_root: Path,
+    external_tools: bool = True,
+    external_required: bool = False,
+    external_skip_reason: str = "",
+) -> tuple[AndroidArtifactRecord, list[Issue]]:
     path = path.resolve()
     suffix = path.suffix.lower().lstrip(".") or "file"
     record = AndroidArtifactRecord(
@@ -183,7 +233,13 @@ def verify_android_artifact(path: Path, *, repo_root: Path, project_root: Path) 
         _check(record, "exists", "passed")
         _check(record, "non_empty", "passed")
         if suffix == "apk":
-            verify_apk(path, record)
+            verify_apk(
+                path,
+                record,
+                external_tools=external_tools,
+                external_required=external_required,
+                external_skip_reason=external_skip_reason,
+            )
         elif suffix == "aab":
             verify_aab(path, record)
         elif suffix == "aar":
@@ -195,10 +251,11 @@ def verify_android_artifact(path: Path, *, repo_root: Path, project_root: Path) 
 
     issues: list[Issue] = []
     for check in record.checks:
-        if check["status"] != "failed":
+        status = str(check.get("status") or "")
+        if status not in {"failed", "warning"}:
             continue
         issues.append(Issue(
-            "error",
+            "error" if status == "failed" else "warning",
             "artifact-verify",
             record.path,
             str(check["name"]).upper().replace(":", "_"),
@@ -270,6 +327,42 @@ def _filter_cached_artifacts_for_tasks(paths: Iterable[Path], tasks: Iterable[ob
     return filtered
 
 
+
+def _external_verification_policy(config: ProjectConfig) -> tuple[bool, bool, str, str]:
+    options = config.runner_options.get("artifacts", {})
+    options = dict(options) if isinstance(options, dict) else {}
+    raw_mode = str(options.get("external_verification") or "auto").strip().lower()
+    aliases = {
+        "off": "never",
+        "false": "never",
+        "disabled": "never",
+        "on": "always",
+        "true": "always",
+        "strict": "required",
+    }
+    mode = aliases.get(raw_mode, raw_mode)
+    if mode not in {"auto", "always", "required", "never"}:
+        mode = "auto"
+
+    delegated_chroot = (
+        str(config.execution_environment or "").strip().lower() == "chroot"
+        and os.environ.get("DEVTOOL_INSIDE_TERMUX_CHROOT") != "1"
+    )
+    if mode == "never":
+        return False, False, "disabled by artifact policy", mode
+    if mode == "required":
+        return True, True, "", mode
+    if mode == "always":
+        return True, False, "", mode
+    if delegated_chroot:
+        return (
+            False,
+            False,
+            "artifact was built in a chroot; host-side Android SDK tools are not authoritative",
+            mode,
+        )
+    return True, False, "", mode
+
 def collect_and_verify_android_artifacts(
     config: ProjectConfig,
     *,
@@ -300,6 +393,7 @@ def collect_and_verify_android_artifacts(
         cached = sorted({path.resolve() for path in discover_artifacts(project_root, 0.0) if path.is_file()})
         unique = _filter_cached_artifacts_for_tasks(cached, tasks)
         used_cached_outputs = bool(unique)
+    external_tools, external_required, external_skip_reason, external_mode = _external_verification_policy(config)
     records: list[AndroidArtifactRecord] = []
     issues: list[Issue] = []
     for path in unique:
@@ -307,6 +401,9 @@ def collect_and_verify_android_artifacts(
             path,
             repo_root=config.repo_root,
             project_root=project_root,
+            external_tools=external_tools,
+            external_required=external_required,
+            external_skip_reason=external_skip_reason,
         )
         records.append(record)
         issues.extend(record_issues)
@@ -325,6 +422,12 @@ def collect_and_verify_android_artifacts(
         "invalid": sum(1 for item in records if not item.valid),
         "required": required,
         "used_cached_outputs": used_cached_outputs,
+        "external_verification": {
+            "mode": external_mode,
+            "executed": external_tools,
+            "required": external_required,
+            "skip_reason": external_skip_reason,
+        },
         "items": [item.as_dict() for item in records],
     }
     return metadata, issues

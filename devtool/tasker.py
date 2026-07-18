@@ -368,7 +368,15 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
         except Exception:
             termux_host = False
         if termux_host:
-            _append_hud_log("android bridge mode: starting the native app state forwarder.")
+            from .android_live_hud import AndroidLiveHudBridge
+
+            bridge = AndroidLiveHudBridge()
+            if not bridge.available():
+                detail = bridge.last_error or bridge.install_hint()
+                _append_hud_log(f"android bridge mode unavailable: {detail}")
+                print(f"warning: Android companion HUD unavailable: {detail}", file=sys.stderr)
+                return False
+            _append_hud_log("android bridge mode: companion endpoint resolved; starting the native app state forwarder.")
         else:
             _append_hud_log(
                 "android bridge mode: producer is not the Termux host; state is "

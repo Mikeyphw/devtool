@@ -288,12 +288,11 @@ class ExistingRunnerCompatibilityTests(unittest.TestCase):
             (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
             config = ProjectConfig(repo_root=root, kind="python", python_executable="python3.12")
 
-            build_argv = build_specs(config, "build")[0].argv
+            build_argv = next(spec.argv for spec in build_specs(config, "build") if spec.name == "build")
             test_argv = build_specs(config, "test")[0].argv
-            self.assertTrue(
-                build_argv in (["python3.12", "-m", "build"], ["uv", "run", "python", "-m", "build"])
-                or build_argv[-2:] == ["-m", "build"]
-            )
+            self.assertIn("-m", build_argv)
+            self.assertEqual(build_argv[build_argv.index("-m") + 1], "build")
+            self.assertIn("--outdir", build_argv)
             self.assertTrue("pytest" in test_argv or "unittest" in test_argv)
 
     def test_generic_capabilities_follow_configured_commands(self) -> None:

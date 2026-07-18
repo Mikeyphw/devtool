@@ -229,11 +229,13 @@ def build_parser() -> argparse.ArgumentParser:
                 cmd.add_argument("validate_scope", nargs="?", help="Optional artifact validation scope: overlay or overlays")
                 cmd.add_argument("validate_artifact", nargs="?", help="Artifact archive to validate when scope is overlay/overlays")
                 cmd.add_argument("--fail-on-conflict", action="store_true", help="For overlay bundles, fail if multiple nested overlays write the same file")
+                cmd.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
             cmd.add_argument("--watch", action="store_true", help="Rerun validation when files change")
             cmd.add_argument("--watch-interval", type=float, default=1.5, help="Seconds between watch polls")
             cmd.add_argument("--matrix", default="", help="Comma-separated runtime IDs, target names, or variants to validate")
             cmd.add_argument("--matrix-mode", choices=["rid", "target", "variant"], default="rid")
             cmd.add_argument("--test-profile", default="", help="Saved test profile used by validation")
+            _add_validation_test_selection_flags(cmd)
 
     ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
     ai_prompt.add_argument("--repo-name", required=True, help="Human-friendly repo name for the generated prompt")
@@ -266,11 +268,13 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
         cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested by the artifact manifest")
         cmd.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
+        _add_validation_test_selection_flags(cmd)
         cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
         cmd.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
         cmd.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
         cmd.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
         cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
+        cmd.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
         cmd.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
         cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
         cmd.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
@@ -290,11 +294,14 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument("artifact")
         sub.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
         sub.add_argument("--no-validate", action="store_true", help="Disable validation requested by the artifact manifest")
+        sub.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
+        _add_validation_test_selection_flags(sub)
         sub.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
         sub.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
         sub.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
         sub.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
         sub.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
+        sub.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
         sub.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
         sub.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
         sub.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
@@ -306,9 +313,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate_overlay_cmd = subparsers.add_parser("validate-overlay", aliases=["vo"])
     validate_overlay_cmd.add_argument("artifact")
     validate_overlay_cmd.add_argument("--fail-on-conflict", action="store_true", help="For bundles, fail if multiple nested overlays write the same file")
+    validate_overlay_cmd.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
     validate_overlays_cmd = subparsers.add_parser("validate-overlays", aliases=["vos"])
     validate_overlays_cmd.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to validate as a bundle")
     validate_overlays_cmd.add_argument("--fail-on-conflict", action="store_true", help="Fail if multiple nested overlays write the same file")
+    validate_overlays_cmd.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
 
     inspect_artifact_cmd = subparsers.add_parser("inspect-artifact", aliases=["ia"], help="Print machine-readable artifact, bundle, inventory, validation, and diff metadata")
     inspect_artifact_cmd.add_argument("artifact")
@@ -431,6 +440,22 @@ def _add_validation_skip_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--skip-restore", action="store_true", help="Skip restore during validation")
     cmd.add_argument("--skip-build", action="store_true", help="Skip build during validation")
     cmd.add_argument("--skip-test", action="store_true", help="Skip test during validation")
+
+
+def _add_validation_test_selection_flags(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument("--select", action="append", default=[], help="Select tests by type, suite, tag, class, or name during validation; repeatable")
+    cmd.add_argument("--id", dest="test_ids", action="append", default=[], help="Select an exact framework test ID during validation; repeatable")
+    cmd.add_argument("--tag", action="append", default=[], help="Include tests with this tag/trait/annotation during validation; repeatable")
+    cmd.add_argument("--exclude-tag", action="append", default=[], help="Exclude tests with this tag/trait/annotation during validation; repeatable")
+    cmd.add_argument("--path", dest="test_paths", action="append", default=[], help="Select tests below a source path or package during validation; repeatable")
+    cmd.add_argument("--class", dest="test_classes", action="append", default=[], help="Select a test class during validation; repeatable")
+    cmd.add_argument("--method", dest="test_methods", action="append", default=[], help="Select a test method during validation; repeatable")
+    cmd.add_argument("--filter", dest="test_filter", default="", help="Framework-native test filter used during validation")
+    cmd.add_argument("--task", "--test-task", dest="test_task", action="append", default=[], help="Native test task/script/target override used during validation; repeatable where supported")
+    cmd.add_argument("--failed", action="store_true", help="Rerun tests that failed in the previous structured run during validation")
+    cmd.add_argument("--changed", action="store_true", help="Select tests related to changed files during validation")
+    cmd.add_argument("--changed-from", default="HEAD", help="Git base for --changed during validation")
+    cmd.add_argument("--instrumented", action="store_true", help="Run Android instrumentation tests during validation")
 
 
 
@@ -1353,11 +1378,19 @@ def _apply_artifact_validation_defaults(config: ProjectConfig, args: argparse.Na
     environment = str(policy.get("execution_environment") or "").strip().lower()
     if requested == "auto" and environment:
         args.execution_environment = environment
+    validation_options = config.runner_options.setdefault("validation", {})
     if policy:
-        config.runner_options.setdefault("validation", {}).update({
+        validation_options.update({
             key: value for key, value in policy.items()
             if key in {"test_profile", "execution_environment"} and value
         })
+    declared_paths = sorted(_artifact_declared_paths(manifest))
+    if declared_paths:
+        # Preserve the artifact's exact changed-file inventory for project
+        # runners. Android validation uses it to lint only affected modules,
+        # while root/shared Gradle changes still force a full lint fallback.
+        validation_options["changed_paths"] = declared_paths
+        validation_options["changed_paths_source"] = "artifact-inventory"
 
 
 def _validation_skip_values(args: argparse.Namespace) -> tuple[bool, bool, bool]:
@@ -1366,6 +1399,20 @@ def _validation_skip_values(args: argparse.Namespace) -> tuple[bool, bool, bool]
         bool(getattr(args, "skip_build", False)),
         bool(getattr(args, "skip_test", False)),
     )
+
+
+def _cli_string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, (list, tuple, set)):
+        values: list[str] = []
+        for item in value:
+            values.extend(_cli_string_list(item))
+        return values
+    text = str(value).strip()
+    return [text] if text else []
 
 
 def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -> None:
@@ -1390,15 +1437,16 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
         values = getattr(args, attr, None)
         if values:
             selection[key] = list(values)
-    scalar_mapping = {
-        "filter": "test_filter",
-        "task": "test_task",
-        "changed_from": "changed_from",
-    }
-    for key, attr in scalar_mapping.items():
-        value = str(getattr(args, attr, "") or "").strip()
-        if value and not (key == "changed_from" and value == "HEAD" and not getattr(args, "changed", False)):
-            selection[key] = value
+    filter_value = str(getattr(args, "test_filter", "") or "").strip()
+    if filter_value:
+        selection["filter"] = filter_value
+    task_values = _cli_string_list(getattr(args, "test_task", None))
+    if task_values:
+        selection["tasks"] = task_values
+        selection["task"] = task_values[0]
+    changed_from = str(getattr(args, "changed_from", "") or "").strip()
+    if changed_from and not (changed_from == "HEAD" and not getattr(args, "changed", False)):
+        selection["changed_from"] = changed_from
     for key, attr in (("failed", "failed"), ("changed", "changed"), ("instrumented", "instrumented")):
         if bool(getattr(args, attr, False)):
             selection[key] = True
@@ -2033,7 +2081,12 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         args._devtool_artifact_type = artifact_type
         args._devtool_artifact_path = str(artifact_path)
         args._devtool_artifact_sha = sha256_file(artifact_path) if artifact_path.exists() else ""
-        validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
+        validation = validate_artifact(
+            config.repo_root,
+            artifact_path,
+            artifact_type=artifact_type,
+            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+        )
         args._devtool_artifact_manifest = validation.manifest
         args._devtool_bundle_targets = overlay_bundle_targets(artifact_path) if artifact_type == "overlay_bundle" else []
         args._devtool_workspace_validations = artifact_workspaces(validation.manifest) if artifact_type == "overlay" else []
@@ -2397,6 +2450,7 @@ def _artifact_script_result(
             run_id=str(getattr(args, "_devtool_run_id", "") or ""),
             dry_run=bool(getattr(args, "dry_run", False)),
             log_path=log_path,
+            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
         )
     except Exception as exc:
         result = OperationResult(
@@ -2421,11 +2475,17 @@ def _validation_expectation_result(manifest: dict, results: list[OperationResult
     maximum = expected.get("maximum_warnings")
     if maximum is None:
         return None
+    # ``maximum_warnings`` is a source/validation quality gate. Gradle's own
+    # runtime notices (for example the experimental AAPT2 override required on
+    # Termux) remain visible in diagnostics but must not roll back an otherwise
+    # clean artifact. Compiler, Android Lint and validator warnings still count.
+    ignored_warning_codes = {"GRADLE_INFRA"}
     warning_count = sum(
         1
         for result in results
         for issue in result.issues
         if str(issue.severity).lower() == "warning"
+        and str(issue.code or "").upper() not in ignored_warning_codes
     )
     if warning_count <= int(maximum):
         return None
@@ -2669,6 +2729,9 @@ def _run_sequential_overlays(
                 expectation = _validation_expectation_result(entry_manifest, group_results)
                 if expectation is not None:
                     group_results.append(expectation)
+                    raw_sections.append(
+                        f"=== Validation expectations {label} ===\n{expectation.output}"
+                    )
                 _tag_overlay_results(
                     group_results,
                     index=int(entry["index"]),
@@ -2702,6 +2765,16 @@ def _run_sequential_overlays(
                     )
                     final_args = argparse.Namespace(**vars(args))
                     final_args.command = "apply-overlay"
+                    union_changed_paths = sorted({
+                        changed_path
+                        for paths in declared_paths.values()
+                        for changed_path in paths
+                    })
+                    if union_changed_paths:
+                        final_config.runner_options.setdefault("validation", {}).update({
+                            "changed_paths": union_changed_paths,
+                            "changed_paths_source": "bundle-inventory",
+                        })
                     specs = _validation_specs(final_config, final_args, parser)
                     final_key = (
                         final_config.restore_target,
@@ -2763,6 +2836,9 @@ def _run_sequential_overlays(
                 expectation = _validation_expectation_result(bundle_manifest, all_results)
                 if expectation is not None:
                     all_results.append(expectation)
+                    raw_sections.append(
+                        "=== Bundle validation expectations ===\n" + expectation.output
+                    )
 
         if dotnet_shutdown_config is not None:
             shutdown_result, shutdown_raw = shutdown_dotnet_build_server(
@@ -3190,9 +3266,19 @@ def _run_artifact_validation_command(config: ProjectConfig, args: argparse.Names
             artifact_path = resolve_artifact_path(artifacts[0])
             artifact_type = "overlay_bundle" if explicit_bundle or is_overlay_bundle(artifact_path) else "overlay"
         if artifact_type == "overlay_bundle":
-            validation = validate_overlay_bundle(config.repo_root, artifact_path, fail_on_conflict=bool(getattr(args, "fail_on_conflict", False)))
+            validation = validate_overlay_bundle(
+                config.repo_root,
+                artifact_path,
+                fail_on_conflict=bool(getattr(args, "fail_on_conflict", False)),
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+            )
         else:
-            validation = validate_artifact(config.repo_root, artifact_path, artifact_type=artifact_type)
+            validation = validate_artifact(
+                config.repo_root,
+                artifact_path,
+                artifact_type=artifact_type,
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+            )
         if as_json:
             print(json.dumps({
                 "ok": validation.ok,
@@ -3852,6 +3938,7 @@ def main(argv: list[str] | None = None) -> int:
                 expectation = _validation_expectation_result(read_artifact_manifest(args.artifact), results)
                 if expectation is not None:
                     results.append(expectation)
+                    raw_output += "\n\n=== Validation expectations ===\n" + expectation.output
             validation_policy = artifact_validation_policy(read_artifact_manifest(args.artifact))
             rollback_enabled = bool(validation_policy.get("rollback_on_failure", True))
             if transaction_path and rollback_enabled and _has_failed_after_apply(results):

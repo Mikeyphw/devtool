@@ -160,7 +160,7 @@ _devtool_commands() {
     'hud:run a live HUD renderer'
     'android-hud-bridge:bridge Termux or chroot progress to Android'
     'termux-hud-bridge:alias for android-hud-bridge'
-    'control-center:launch the Qt 5 Control Center'
+    'control-center:launch the Qt 6 Control Center'
     'gui:alias for control-center'
     'ipc-server:run the Control Center IPC broker'
   )
@@ -193,11 +193,25 @@ _devtool_validation_args() {
     '--skip-build[skip project build]' \
     '--skip-test[skip project tests]' \
     '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
+    '*--select[select tests by type, suite, tag, class, or name]:selector:' \
+    '*--id[select an exact framework test ID]:test id:' \
+    '*--tag[include a test tag or trait]:tag:' \
+    '*--exclude-tag[exclude a test tag or trait]:tag:' \
+    '*--path[select tests below a source path or package]:path:_files' \
+    '*--class[select a test class]:class:' \
+    '*--method[select a test method]:method:' \
+    '--filter[framework-native test filter]:filter:' \
+    '(--task --test-task)'{--task,--test-task}'[native test task/script/target override]:task:' \
+    '--failed[rerun tests that failed in the previous structured run]' \
+    '--changed[select tests related to changed files]' \
+    '--changed-from[Git base for changed test selection]:revision:' \
+    '--instrumented[run Android instrumentation tests on a device]' \
     '--watch[rerun validation when files change]' \
     '--watch-interval[seconds between watch polls]:seconds:' \
     '--matrix[comma-separated runtime IDs, target names, or variants]:matrix:' \
     '--matrix-mode[matrix interpretation]:mode:(rid target variant)' \
     '--fail-on-conflict[fail when nested overlays write the same path]' \
+    '--ignore-checksum[skip SHA-256 checks while retaining other manifest checks]' \
     '1:validation scope:(overlay overlays)' \
     '2:artifact:_devtool_artifact_path'
 }
@@ -207,13 +221,28 @@ _devtool_apply_args() {
     '--validate[run validation after applying]' \
     '--no-validate[disable validation requested by the artifact manifest]' \
     '--test-profile[saved test profile for artifact validation]:profile:_devtool_test_profiles' \
+    '*--select[select tests by type, suite, tag, class, or name]:selector:' \
+    '*--id[select an exact framework test ID]:test id:' \
+    '*--tag[include a test tag or trait]:tag:' \
+    '*--exclude-tag[exclude a test tag or trait]:tag:' \
+    '*--path[select tests below a source path or package]:path:_files' \
+    '*--class[select a test class]:class:' \
+    '*--method[select a test method]:method:' \
+    '--filter[framework-native test filter]:filter:' \
+    '(--task --test-task)'{--task,--test-task}'[native test task/script/target override]:task:' \
+    '--failed[rerun tests that failed in the previous structured run]' \
+    '--changed[select tests related to changed files]' \
+    '--changed-from[Git base for changed test selection]:revision:' \
+    '--instrumented[run Android instrumentation tests on a device]' \
     '--validate-only[skip apply and run validation only]' \
     '--preview[preview archive changes without applying]' \
     '--diff[show a repository-relative unified diff]' \
     '--interactive[show preview and ask before applying]' \
     '--no-manifest-check[disable devtool artifact manifest validation]' \
+    '--ignore-checksum[skip SHA-256 checks while retaining other manifest checks]' \
     '--keep-artifact[keep the source artifact after successful apply]' \
     '--delete-artifact-on-failure[delete the source artifact after failed apply]' \
+    '--no-apply-notification[do not show the final apply notification]' \
     '--skip-restore[skip restore during validation]' \
     '--skip-build[skip build during validation]' \
     '--skip-test[skip tests during validation]' \
@@ -309,11 +338,13 @@ _devtool() {
         validate-overlay|vo)
           _arguments \
             '--fail-on-conflict[for bundles, fail when nested overlays write the same path]' \
+            '--ignore-checksum[skip SHA-256 checks while retaining other manifest checks]' \
             '1:artifact:_devtool_artifact_path'
           ;;
         validate-overlays|vos)
           _arguments \
             '--fail-on-conflict[fail when nested overlays write the same path]' \
+            '--ignore-checksum[skip SHA-256 checks while retaining other manifest checks]' \
             '*:artifact:_devtool_artifact_path'
           ;;
         inspect-artifact|ia)

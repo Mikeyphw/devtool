@@ -62,6 +62,9 @@ _CARGO_RUSTC = re.compile(
 )
 _CARGO_FILE = re.compile(r"^\s*-->\s+(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+)$")
 _GENERIC_WARN_ERR = re.compile(r"\b(?P<severity>warning|error)\b[: ]+(?P<message>.+)", re.IGNORECASE)
+_GRADLE_INFRA_WARNING_PREFIXES = (
+    "WARNING: The option setting 'android.aapt2FromMavenOverride=",
+)
 _DOTNET_TEST_RESULT_LINE = re.compile(
     r"\b(?P<status>Passed|Failed)!\s+-\s+Failed:\s*(?P<failed>\d+),\s*Passed:\s*(?P<passed>\d+),\s*Skipped:\s*(?P<skipped>\d+),\s*Total:\s*(?P<total>\d+)",
     re.IGNORECASE,
@@ -357,8 +360,30 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             index += 1
             continue
 
+        if any(stripped.startswith(prefix) for prefix in _GRADLE_INFRA_WARNING_PREFIXES):
+            issues.append(Issue(
+                "warning",
+                command_name,
+                "-",
+                "GRADLE_INFRA",
+                stripped.split(":", 1)[-1].strip(),
+            ))
+            index += 1
+            continue
+
         match = _CARGO_RUSTC.match(stripped)
-        if match:
+        rust_context = bool(
+            match
+            and (
+                "cargo" in command_name.lower()
+                or "rust" in command_name.lower()
+                or any(
+                    _CARGO_FILE.match(lines[lookahead].rstrip())
+                    for lookahead in range(index + 1, min(index + 4, len(lines)))
+                )
+            )
+        )
+        if match and rust_context:
             cargo_pending = Issue(
                 match.group("severity").lower(),
                 command_name,

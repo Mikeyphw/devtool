@@ -307,7 +307,13 @@ use a recursion guard, translate known Termux/chroot paths, and verify the mappe
 before execution.
 .SH TEST SELECTION
 The same selection model is translated to .NET filters, Gradle/JUnit filters, Android
-instrumentation arguments, or Python framework arguments where supported.
+instrumentation arguments, Python framework arguments, and native filters for other
+supported runners where possible. The same selector flags can be used on
+.BR validate
+and on
+.BR apply-overlay --validate
+so artifact validation can run a medium gate without editing
+.BR .devtool.toml .
 .TP
 .B --list-tests " | " --list
 Discover and list tests without executing them.
@@ -340,7 +346,11 @@ Select a test method. Repeatable.
 Pass a framework-native filter.
 .TP
 .BR --task " TASK"
-Override the Gradle test task.
+Override the native test task, script, or target. Repeat for multiple Gradle/Android tasks or Node/Make scripts.
+.TP
+.BR --test-task " TASK"
+Alias for
+.BR --task .
 .TP
 .B --failed
 Rerun tests that failed in the previous structured run.
@@ -435,6 +445,9 @@ Show the preview and request confirmation.
 .B --no-manifest-check
 Disable devtool artifact manifest validation.
 .TP
+.B --ignore-checksum
+Skip SHA-256 presence, format, and mismatch checks while retaining repository identity, path safety, inventory completeness, payload size, conflict, and validation-policy checks.
+.TP
 .B --keep-artifact
 Keep the source artifact and sidecars after a successful apply.
 .TP
@@ -451,8 +464,14 @@ Disable a commit requested by artifact metadata.
 .B --no-artifact-script
 Skip embedded artifact validation scripts while retaining built-in validation.
 .PP
-The validation skip flags and
-.B --test-profile
+The validation skip flags,
+.BR --test-profile ,
+and test selection flags such as
+.BR --task ,
+.BR --class ,
+.BR --filter ,
+and
+.B --tag
 also apply to artifact validation.
 .SH TRANSACTIONAL APPLY AND EVIDENCE
 Before mutation, devtool backs up paths touched by the artifact. If extraction, validation,

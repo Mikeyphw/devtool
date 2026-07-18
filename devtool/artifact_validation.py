@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -53,6 +54,7 @@ def run_artifact_validation_script(
     run_id: str = "",
     dry_run: bool = False,
     log_path: Path | str | None = None,
+    ignore_checksum: bool = False,
 ) -> OperationResult | None:
     """Run an embedded artifact validator from a disposable private directory."""
     artifact_path = resolve_artifact_path(artifact)
@@ -66,7 +68,7 @@ def run_artifact_validation_script(
     if runner not in _ALLOWED_RUNNERS:
         raise RuntimeError(f"Unsupported validation script runner: {runner!r}")
     expected_sha = str(spec.get("sha256") or "").strip().lower()
-    if not expected_sha:
+    if not ignore_checksum and not expected_sha:
         raise RuntimeError("validation.script.sha256 is required")
     timeout_seconds = int(spec.get("timeout_seconds", 900) or 900)
     if timeout_seconds <= 0:
@@ -82,9 +84,10 @@ def run_artifact_validation_script(
     member = next((item for item in members if item.name == script_rel.as_posix() and not item.is_dir), None)
     if member is None or member.data is None:
         raise RuntimeError(f"Validation script is missing from archive: {script_rel.as_posix()}")
-    actual_sha = hashlib.sha256(member.data).hexdigest().lower()
-    if actual_sha != expected_sha:
-        raise RuntimeError("Validation script SHA-256 mismatch")
+    if not ignore_checksum:
+        actual_sha = hashlib.sha256(member.data).hexdigest().lower()
+        if actual_sha != expected_sha:
+            raise RuntimeError("Validation script SHA-256 mismatch")
 
     start = time.perf_counter()
     tmp_parent = _preferred_tmp_parent()
@@ -111,10 +114,49 @@ def run_artifact_validation_script(
             }
         )
         command = [runner, str(script_path)]
+        if runner == "python3":
+            python_spec = spec.get("python") if isinstance(spec.get("python"), dict) else {}
+            python_spec = dict(python_spec) if isinstance(python_spec, dict) else {}
+            project_root = workspace_root if (workspace_root / "pyproject.toml").exists() else repo_root
+            command = [
+                sys.executable,
+                "-m",
+                "devtool.python_support",
+                "run-validator",
+                str(project_root.resolve()),
+                str(script_path.resolve()),
+                "--cwd",
+                str(repo_root.resolve()),
+                "--manager",
+                str(python_spec.get("manager") or "auto"),
+                "--framework",
+                str(python_spec.get("test_framework") or "auto"),
+                "--python",
+                str(python_spec.get("python") or "python3"),
+                "--timeout",
+                str(timeout_seconds),
+            ]
+            environment = str(python_spec.get("environment") or "").strip()
+            if environment:
+                command.extend(["--environment", environment])
+            for group in python_spec.get("groups", []) if isinstance(python_spec.get("groups"), list) else []:
+                command.extend(["--group", str(group)])
+            for extra in python_spec.get("extras", []) if isinstance(python_spec.get("extras"), list) else []:
+                command.extend(["--extra", str(extra)])
+            for dependency in python_spec.get("dependencies", []) if isinstance(python_spec.get("dependencies"), list) else []:
+                command.extend(["--dependency", str(dependency)])
+            if bool(python_spec.get("sync_dependencies", False)):
+                command.append("--sync-dependencies")
+            if python_spec.get("install_project") is False:
+                command.append("--no-install-project")
+            if bool(python_spec.get("unlocked", False)):
+                command.append("--unlocked")
+            if bool(python_spec.get("offline", False)):
+                command.append("--offline")
         try:
             proc = subprocess.run(
                 command,
-                cwd=tmpdir,
+                cwd=repo_root.resolve(),
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -131,6 +173,8 @@ def run_artifact_validation_script(
 
     duration = time.perf_counter() - start
     header = f"$ {runner} {script_rel.as_posix()}"
+    if runner == "python3" and command[:3] == [sys.executable, "-m", "devtool.python_support"]:
+        header += "  # project environment"
     output = header + ("\n" + output.rstrip() if output.strip() else "")
     path = str(write_log(output, log_path, append=log_path is not None))
     issues: list[Issue] = []

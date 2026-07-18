@@ -565,6 +565,86 @@ def normalize_hud_mode_for_termux_host(mode: str | None) -> str:
     return mode
 
 
+_CHROOT_PATH_LIST_ENV_KEYS = {
+    "PATH",
+    "LD_LIBRARY_PATH",
+    "LIBRARY_PATH",
+    "CPATH",
+    "C_INCLUDE_PATH",
+    "CPLUS_INCLUDE_PATH",
+    "PKG_CONFIG_PATH",
+    "PYTHONPATH",
+}
+
+
+def _translate_env_value_for_chroot(
+    key: str,
+    value: str,
+    *,
+    mappings: Iterable[tuple[str, str]],
+    cwd: str | None = None,
+) -> str:
+    """Translate host paths embedded in an environment value for chroot use.
+
+    Build policies are resolved before the execution backend is selected. On a
+    Termux host this means cache variables can initially contain
+    ``/data/data/com.termux/...`` even though the command will run inside the
+    chroot. Command argv paths were already translated; environment paths need
+    the same treatment.
+    """
+
+    text = str(value)
+    if not text:
+        return text
+
+    if key in _CHROOT_PATH_LIST_ENV_KEYS:
+        parts: list[str] = []
+        for part in text.split(os.pathsep):
+            if part.startswith(("/", "~/")):
+                parts.append(_translate_path(part, mappings, cwd=cwd))
+            else:
+                parts.append(part)
+        return os.pathsep.join(parts)
+
+    if text.startswith(("/", "~/")):
+        translated = _translate_path(text, mappings, cwd=cwd)
+        if key == "DEVTOOL_BUILD_CACHE_ROOT":
+            translated = translated.replace(
+                "/devtool/build/native-termux/",
+                "/devtool/build/chroot/",
+            )
+        return translated
+
+    return text
+
+
+def translate_environment_for_chroot(
+    values: Mapping[str, str],
+    *,
+    mappings: Iterable[tuple[str, str]],
+    cwd: str | None = None,
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    """Return chroot-safe environment values and names that changed."""
+
+    translated: dict[str, str] = {}
+    changed: list[str] = []
+    for raw_key, raw_value in values.items():
+        key = str(raw_key)
+        value = str(raw_value)
+        updated = _translate_env_value_for_chroot(
+            key,
+            value,
+            mappings=mappings,
+            cwd=cwd,
+        )
+        if key == "DEVTOOL_BUILD_ENVIRONMENT" and updated == "native-termux":
+            updated = "chroot"
+        translated[key] = updated
+        if updated != value:
+            changed.append(key)
+    return translated, tuple(sorted(changed))
+
+
 def translate_argv_paths_for_chroot(argv: list[str], *, mappings: Iterable[tuple[str, str]], cwd: str | None = None) -> list[str]:
     """Translate absolute host paths inside a command argv to chroot paths."""
     translated: list[str] = []
@@ -621,13 +701,24 @@ def wrap_specs_for_termux_host_chroot(
         host_cwd = str(spec.cwd or host_repo or os.getcwd())
         chroot_cwd = _translate_path(host_cwd, mappings, cwd=os.getcwd())
         argv = translate_argv_paths_for_chroot(list(spec.argv), mappings=mappings, cwd=host_cwd)
-        assignments = " ".join(shlex.quote(item) for item in chroot_environment_assignments(chroot_name))
+        assignment_values = list(chroot_environment_assignments(chroot_name))
+        translated_env, translated_env_keys = translate_environment_for_chroot(
+            spec.env,
+            mappings=mappings,
+            cwd=host_cwd,
+        )
+        for key, value in sorted(translated_env.items()):
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(key)):
+                assignment_values.append(f"{key}={value}")
+        assignments = " ".join(shlex.quote(item) for item in assignment_values)
         command = "cd " + shlex.quote(chroot_cwd or "/") + " && exec env " + assignments + " " + shlex.join(argv)
         metadata = dict(spec.metadata)
         metadata["execution_mode"] = "termux-host-chroot"
         metadata["chroot"] = chroot_name
         metadata["chroot_runner"] = "termux-host-toolchain"
         metadata["chroot_cwd"] = chroot_cwd
+        if translated_env_keys:
+            metadata["chroot_translated_env"] = list(translated_env_keys)
         # Execute the translated command in the chroot, but plan/render dotnet
         # progress from the original host-side command. This lets the parser
         # inspect the real solution/project path and estimate project totals.

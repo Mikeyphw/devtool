@@ -454,6 +454,82 @@ def collect_python_package_output(
         issues.append(Issue("error", command_name, "dist", "PYTHON_PACKAGE_MISSING", str(payload.get("error") or "No package artifacts found")))
     return ReportCollection(dict(payload), issues)
 
+
+def collect_python_audit_output(
+    output: str,
+    *,
+    repo_root: Path,
+    command_name: str,
+) -> ReportCollection:
+    matches = re.findall(r"DEVTOOL_PYTHON_AUDIT_RESULT\s+(\{.*\})", output or "")
+    if not matches:
+        return ReportCollection({}, [])
+    try:
+        payload = json.loads(matches[-1])
+    except json.JSONDecodeError as exc:
+        return ReportCollection({}, [Issue("error", command_name, "-", "PYTHON_AUDIT_JSON", str(exc))])
+    issues = [
+        Issue("error", command_name, str(item.get("path") or "-"), str(item.get("code") or "PYTHON_AUDIT"), str(item.get("message") or "Python source audit issue"))
+        for item in payload.get("issues", []) if isinstance(item, dict)
+    ]
+    return ReportCollection(dict(payload), issues)
+
+
+def collect_python_tool_output(
+    output: str,
+    *,
+    repo_root: Path,
+    command_name: str,
+) -> ReportCollection:
+    matches = re.findall(r"DEVTOOL_PYTHON_TOOL_RESULT\s+(\{.*\})", output or "")
+    if not matches:
+        return ReportCollection({}, [])
+    try:
+        payload = json.loads(matches[-1])
+    except json.JSONDecodeError as exc:
+        return ReportCollection({}, [Issue("error", command_name, "-", "PYTHON_TOOL_JSON", str(exc))])
+    issues: list[Issue] = []
+    for item in payload.get("issues", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        message = str(item.get("message") or "Python tool reported an issue")
+        issues.append(Issue("error", command_name, "-", f"PYTHON_{str(payload.get('tool') or 'TOOL').upper()}", message))
+    if int(payload.get("returncode") or 0) != 0 and not issues:
+        issues.append(Issue("error", command_name, "-", "PYTHON_TOOL", f"{payload.get('tool', 'Python tool')} exited with code {payload.get('returncode')}"))
+    return ReportCollection(dict(payload), issues)
+
+
+def collect_python_coverage_report(
+    project_root: Path,
+    *,
+    repo_root: Path,
+    report_path: str,
+    command_name: str,
+) -> ReportCollection:
+    path = Path(report_path).expanduser() if report_path else project_root / ".devtool" / "reports" / "coverage.xml"
+    if not path.is_absolute():
+        path = project_root / path
+    if not path.is_file():
+        return ReportCollection({}, [])
+    try:
+        root = ET.parse(path).getroot()
+        line_rate = float(root.attrib.get("line-rate", "0") or 0)
+        branch_rate = float(root.attrib.get("branch-rate", "0") or 0)
+        lines_valid = int(float(root.attrib.get("lines-valid", "0") or 0))
+        lines_covered = int(float(root.attrib.get("lines-covered", "0") or 0))
+    except (OSError, ET.ParseError, ValueError) as exc:
+        return ReportCollection({}, [Issue("error", command_name, relativize(repo_root, path), "PYTHON_COVERAGE_XML", str(exc))])
+    payload = {
+        "line_rate": line_rate,
+        "line_percent": round(line_rate * 100.0, 2),
+        "branch_rate": branch_rate,
+        "branch_percent": round(branch_rate * 100.0, 2),
+        "lines_valid": lines_valid,
+        "lines_covered": lines_covered,
+        "report": str(path),
+    }
+    return ReportCollection(payload, [])
+
 def collect_report_metadata(
     project_root: Path,
     *,
@@ -489,4 +565,12 @@ def collect_report_metadata(
         return collect_instrumentation_output(output, repo_root=repo_root or project_root, command_name=command_name)
     if parser == "python-package":
         return collect_python_package_output(output, repo_root=repo_root or project_root, command_name=command_name)
+    if parser == "python-tool":
+        return collect_python_tool_output(output, repo_root=repo_root or project_root, command_name=command_name)
+    if parser == "python-audit":
+        return collect_python_audit_output(output, repo_root=repo_root or project_root, command_name=command_name)
+    if parser == "python-coverage":
+        return collect_python_coverage_report(
+            project_root, repo_root=repo_root or project_root, report_path=report_path, command_name=command_name
+        )
     return ReportCollection({}, [])

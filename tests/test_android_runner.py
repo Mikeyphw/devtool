@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,25 +18,41 @@ from devtool.android_build import (
     find_java_home,
     inspect_project,
     main as android_build_main,
+    run as android_build_run,
     normalize_gradle_arguments,
+    parse_args,
+    gradle_jvmargs,
+    should_cleanup_gradle,
     planned_artifact_names,
     select_revanced_asset,
     maybe_reexec_in_chroot,
     wrapper_distribution_version,
+    _critical_memory_pressure as android_critical_memory_pressure,
+    _memory_guard_limits as android_memory_guard_limits,
+    _try_root_cache_reclaim as android_try_root_cache_reclaim,
 )
 from devtool.android_integration import (
     android_builder_arguments,
+    android_builder_arguments_for_tasks,
     android_doctor_rows,
     android_inspect_rows,
+    android_validation_lint_tasks,
     configured_tasks,
     stage_android_builder,
     stage_gradle_init_script,
     should_prefer_android_chroot,
 )
 from devtool.config import detect_project_kind, discover_gradle_roots, load_project_config
+from devtool.diagnostics import parse_issues
 from devtool.models import ProjectConfig
 from devtool.project_runners import AndroidGradleRunner, get_project_runner
-from devtool.runners import build_specs, build_validation_specs
+from devtool.runners import (
+    build_specs,
+    build_validation_specs,
+    _command_delegates_memory_guard,
+    _critical_memory_pressure as runner_critical_memory_pressure,
+    _memory_guard_limits as runner_memory_guard_limits,
+)
 
 
 def make_android_project(root: Path, *, application: bool = True) -> None:
@@ -217,6 +234,209 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         self.assertIn("GRADLE_BUILD_CHROOT_ACTIVE=1", command[8])
         self.assertIn("/home/termux/Code/demo", command[8])
 
+    def test_gradle_aapt2_notice_is_not_misclassified_as_rust(self) -> None:
+        issues = parse_issues(
+            Path("/tmp/repo"),
+            "lint",
+            "WARNING: The option setting 'android.aapt2FromMavenOverride=/tmp/aapt2' is experimental.",
+        )
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "GRADLE_INFRA")
+
+    def test_android_validation_lints_only_artifact_affected_modules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            root = repo / "app" / "XDM.Android"
+            make_android_project(root)
+            for module in ("browser-integration", "persistence", "protocol-test-lab"):
+                module_root = root / module
+                (module_root / "src" / "main" / "kotlin").mkdir(parents=True)
+                (module_root / "build.gradle.kts").write_text(
+                    'plugins { id("com.android.library") }\n', encoding="utf-8"
+                )
+            core_model = root / "core-model"
+            (core_model / "src" / "main" / "kotlin").mkdir(parents=True)
+            (core_model / "build.gradle.kts").write_text(
+                'plugins { kotlin("jvm") }\n', encoding="utf-8"
+            )
+            config = ProjectConfig(
+                repo_root=repo,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {
+                        "changed_paths": [
+                            "app/XDM.Android/app/src/main/kotlin/Main.kt",
+                            "app/XDM.Android/browser-integration/src/main/kotlin/Parser.kt",
+                            "app/XDM.Android/persistence/src/main/kotlin/Database.kt",
+                            "app/XDM.Android/core-model/src/main/kotlin/Model.kt",
+                            "app/XDM.Android/docs/PHASE.md",
+                        ]
+                    }
+                },
+            )
+
+            tasks, scope, modules = android_validation_lint_tasks(config)
+
+        self.assertEqual(scope, "affected-modules")
+        self.assertEqual(modules, [":app", ":browser-integration", ":persistence"])
+        self.assertEqual(tasks, [
+            ":app:lintDebug",
+            ":browser-integration:lintDebug",
+            ":persistence:lintDebug",
+        ])
+        self.assertNotIn(":protocol-test-lab:lintDebug", tasks)
+        self.assertNotIn(":core-model:lintDebug", tasks)
+
+    def test_android_validation_uses_full_lint_for_shared_gradle_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {"changed_paths": ["gradle/libs.versions.toml"]}
+                },
+            )
+
+            tasks, scope, modules = android_validation_lint_tasks(config)
+
+        self.assertEqual(tasks, ["lintDebug"])
+        self.assertEqual(scope, "full-gradle-wide-change")
+        self.assertEqual(modules, [])
+
+    def test_android_validation_skips_lint_for_docs_only_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {"changed_paths": ["docs/PHASE.md", "README.md"]}
+                },
+            )
+
+            tasks, scope, modules = android_validation_lint_tasks(config)
+
+        self.assertEqual(tasks, [])
+        self.assertEqual(scope, "skipped-non-code-changes")
+        self.assertEqual(modules, [])
+
+    def test_android_lint_validation_gets_larger_bounded_metaspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {
+                        "android_safe": True,
+                        "gradle_heap_mb": 768,
+                        "gradle_metaspace_mb": 384,
+                        "memory_guard_mb": 558,
+                    }
+                },
+            )
+
+            lint_args = android_builder_arguments_for_tasks(
+                config, ["lintDebug"], scan_artifacts=False, validation=True
+            )
+            test_args = android_builder_arguments_for_tasks(
+                config, [":app:testDebugUnitTest"], scan_artifacts=False, validation=True
+            )
+
+        lint_index = lint_args.index("--gradle-metaspace-mb")
+        test_index = test_args.index("--gradle-metaspace-mb")
+        self.assertEqual(lint_args[lint_index + 1], "512")
+        self.assertEqual(test_args[test_index + 1], "384")
+
+    def test_constrained_gradle_options_are_accepted_and_bounded(self) -> None:
+        args = parse_args([
+            "/tmp/demo",
+            "--task",
+            ":app:testDebugUnitTest",
+            "--no-artifact-scan",
+            "--no-daemon",
+            "--constrained",
+            "--gradle-jvm-heap-mb",
+            "799",
+            "--memory-guard-mb",
+            "558",
+            "--cpu-limit",
+            "2",
+        ])
+
+        value = gradle_jvmargs(args)
+
+        self.assertTrue(should_cleanup_gradle(args))
+        self.assertIsNotNone(value)
+        self.assertIn("-Xmx", value or "")
+        self.assertIn("-XX:MaxMetaspaceSize=", value or "")
+        self.assertIn("-XX:ActiveProcessorCount=2", value or "")
+
+    def test_constrained_gradle_command_adds_lock_timeout_and_jvmargs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            java_home = root / "jdk"
+            gradle = root / "gradlew"
+            commands: list[list[str]] = []
+
+            def fake_run(argv, *args, **kwargs):
+                commands.append([str(value) for value in argv])
+                return subprocess.CompletedProcess(commands[-1], 0, "", "")
+
+            project = ProjectInfo(
+                root=root,
+                name="demo",
+                android=False,
+                android_application=False,
+                compile_sdk=None,
+                build_tools=None,
+                agp_major=None,
+                native_build=False,
+                ndk_version=None,
+                cmake_version=None,
+            )
+            with (
+                patch("devtool.android_build.maybe_reexec_in_chroot", return_value=None),
+                patch("devtool.android_build.resolve_project_root", return_value=root),
+                patch("devtool.android_build.inspect_project", return_value=project),
+                patch("devtool.android_build.infer_java_requirement", return_value=JavaRequirement(17)),
+                patch("devtool.android_build.find_java_home", return_value=java_home),
+                patch("devtool.android_build.select_gradle", return_value=gradle),
+                patch("devtool.android_build.run", side_effect=fake_run),
+                patch("devtool.android_build.gradle_process_pids", return_value=[]),
+            ):
+                rc = android_build_main([
+                    str(root),
+                    "--task",
+                    "build",
+                    "--no-artifact-scan",
+                    "--no-daemon",
+                    "--constrained",
+                    "--gradle-jvm-heap-mb",
+                    "799",
+                    "--memory-guard-mb",
+                    "558",
+                    "--cpu-limit",
+                    "2",
+                ])
+
+        self.assertEqual(rc, 0)
+        build_command = next(command for command in commands if "build" in command)
+        self.assertTrue(any(item.startswith("-Dorg.gradle.jvmargs=-Xmx") for item in build_command))
+        self.assertIn("-Dorg.gradle.cache.internal.lockTimeout=600000", build_command)
+        self.assertIn("-Dorg.gradle.vfs.watch=false", build_command)
+        self.assertIn("-Dorg.gradle.parallel=false", build_command)
+        self.assertIn("-Pkotlin.compiler.execution.strategy=in-process", build_command)
+
     def test_gradle_build_continues_across_independent_task_failures_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -373,6 +593,197 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         self.assertIn("--build-cache", combined.argv)
         self.assertIn("--daemon-idle-timeout-ms", combined.argv)
         self.assertTrue(init_script_exists)
+
+    def test_termux_validation_uses_affected_module_lint_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            root = repo / "app" / "XDM.Android"
+            make_android_project(root)
+            for module in ("browser-integration", "persistence", "protocol-test-lab"):
+                module_root = root / module
+                (module_root / "src" / "main" / "kotlin").mkdir(parents=True)
+                (module_root / "build.gradle.kts").write_text(
+                    'plugins { id("com.android.library") }\n', encoding="utf-8"
+                )
+            core_model = root / "core-model"
+            (core_model / "src" / "main" / "kotlin").mkdir(parents=True)
+            (core_model / "build.gradle.kts").write_text(
+                'plugins { kotlin("jvm") }\n', encoding="utf-8"
+            )
+            config = ProjectConfig(
+                repo_root=repo,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "tasks": {
+                        "build": ["assembleDebug"],
+                        "test": [":app:testDebugUnitTest"],
+                        "lint": ["lintDebug"],
+                    },
+                    "validation": {
+                        "changed_paths": [
+                            "app/XDM.Android/app/src/main/kotlin/Main.kt",
+                            "app/XDM.Android/browser-integration/src/main/kotlin/Parser.kt",
+                            "app/XDM.Android/persistence/src/main/kotlin/Database.kt",
+                            "app/XDM.Android/core-model/src/main/kotlin/Model.kt",
+                        ]
+                    },
+                },
+            )
+            with patch.dict(os.environ, {
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+                "DEVTOOL_ANDROID_BUILDER": str(root / "state" / "build-apk"),
+                "DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "state" / "events.gradle"),
+            }, clear=True):
+                validation = build_validation_specs(config)
+
+        lint = next(spec for spec in validation if spec.metadata["validation_components"] == ["lint"])
+        self.assertEqual(lint.metadata["lint_scope"], "affected-modules")
+        self.assertEqual(
+            lint.metadata["gradle_tasks"],
+            [":app:lintDebug", ":browser-integration:lintDebug", ":persistence:lintDebug"],
+        )
+        self.assertNotIn(":protocol-test-lab:lintDebug", lint.argv)
+        self.assertNotIn(":core-model:lintDebug", lint.argv)
+        metaspace_index = lint.argv.index("--gradle-metaspace-mb")
+        self.assertEqual(lint.argv[metaspace_index + 1], "512")
+
+    def test_termux_android_validation_splits_phases_and_caps_load(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "tasks": {
+                        "build": ["assembleDebug"],
+                        "test": ["testDebugUnitTest"],
+                        "lint": ["lintDebug"],
+                    }
+                },
+            )
+            with patch.dict(os.environ, {
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+                "DEVTOOL_ANDROID_BUILDER": str(root / "state" / "build-apk"),
+                "DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "state" / "events.gradle"),
+            }, clear=True):
+                validation = build_validation_specs(config)
+
+        self.assertEqual(
+            [spec.name for spec in validation],
+            ["android-validation-build", "android-validation-test", "android-validation-lint"],
+        )
+        self.assertEqual([spec.metadata["validation_phase_total"] for spec in validation], [3, 3, 3])
+        for spec in validation:
+            worker_index = spec.argv.index("--max-workers")
+            self.assertEqual(spec.argv[worker_index + 1], "1")
+            self.assertIn("--constrained", spec.argv)
+            self.assertIn("--low-priority", spec.argv)
+            cpu_index = spec.argv.index("--cpu-limit")
+            self.assertEqual(spec.argv[cpu_index + 1], "2")
+            self.assertIn("--no-daemon", spec.argv)
+            self.assertNotIn("--parallel", spec.argv)
+            self.assertIn("--memory-guard-mb", spec.argv)
+            self.assertEqual(spec.metadata["validation_resource_profile"], "android-safe")
+            self.assertFalse(spec.metadata["coalesced_gradle_validation"])
+
+    def test_memory_guard_uses_adaptive_thresholds_for_ksp_dips(self) -> None:
+        android_sustained, android_hard = android_memory_guard_limits(558)
+        runner_sustained, runner_hard = runner_memory_guard_limits(558)
+
+        self.assertEqual((android_sustained, android_hard), (runner_sustained, runner_hard))
+        self.assertLess(android_sustained, 450)
+        self.assertLess(android_hard, android_sustained)
+
+    def test_memory_guard_allows_450_mib_when_swap_and_psi_are_healthy(self) -> None:
+        snapshot = (450, 1024, 2048, 0.0, 0.0)
+        history = (470, 466, 462, 458, 454, 452, 451, 450)
+        sustained, _ = android_memory_guard_limits(558)
+
+        android_result = android_critical_memory_pressure(snapshot, history, sustained)
+        runner_result = runner_critical_memory_pressure(snapshot, history, sustained)
+
+        self.assertEqual(android_result, runner_result)
+        self.assertFalse(android_result[0])
+
+    def test_memory_guard_stops_only_with_correlated_pressure_signals(self) -> None:
+        snapshot = (340, 20, 2048, 35.0, 2.0)
+        history = (460, 445, 430, 415, 400, 380, 360, 340)
+        sustained, _ = android_memory_guard_limits(558)
+
+        critical, details = android_critical_memory_pressure(snapshot, history, sustained)
+
+        self.assertTrue(critical)
+        self.assertIn("swap", details)
+        self.assertIn("PSI", details)
+
+    def test_android_builder_owns_explicit_memory_guard_without_outer_duplicate(self) -> None:
+        self.assertTrue(
+            _command_delegates_memory_guard(
+                ["python3", "build-apk", ".", "--memory-guard-mb", "558"]
+            )
+        )
+        self.assertFalse(_command_delegates_memory_guard(["./gradlew", "test"]))
+
+    def test_root_cache_reclaim_uses_termux_su_without_prompting(self) -> None:
+        completed = subprocess.CompletedProcess(["su"], 0)
+        with (
+            patch("devtool.android_build.os.geteuid", return_value=2000),
+            patch(
+                "devtool.android_build.shutil.which",
+                side_effect=lambda name: "/system/xbin/su" if name == "su" else None,
+            ),
+            patch("devtool.android_build.subprocess.run", return_value=completed) as run_mock,
+        ):
+            self.assertTrue(android_try_root_cache_reclaim())
+
+        argv = run_mock.call_args.args[0]
+        self.assertEqual(argv[:2], ["/system/xbin/su", "-c"])
+        self.assertIn("drop_caches", argv[2])
+        self.assertIs(run_mock.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], 5)
+
+    def test_android_builder_memory_guard_aborts_before_system_pressure_escalates(self) -> None:
+        snapshot = (1, 0, 0, 100.0, 100.0)
+        with patch("devtool.android_build._memory_snapshot", return_value=snapshot), patch(
+            "devtool.android_build.time.sleep", return_value=None
+        ):
+            result = android_build_run(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                check=False,
+                quiet=True,
+                memory_guard_mb=512,
+            )
+        self.assertEqual(result.returncode, 75)
+
+    def test_explicit_android_validation_still_receives_safe_resource_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                execution_environment="chroot",
+                build_command="./gradlew assembleDebug",
+                test_command="./gradlew testDebugUnitTest",
+            )
+            validation = build_validation_specs(config)
+
+        self.assertEqual([spec.name for spec in validation], ["restore", "build", "test", "lint"])
+        for spec in validation:
+            self.assertEqual(spec.env["DEVTOOL_MAX_WORKERS"], "1")
+            self.assertEqual(spec.env["DEVTOOL_VALIDATION_CPU_LIMIT"], "2")
+            self.assertIn("-Dorg.gradle.workers.max=1", spec.env["GRADLE_OPTS"])
+            self.assertIn("-XX:ActiveProcessorCount=2", spec.env["JAVA_TOOL_OPTIONS"])
+            self.assertEqual(spec.metadata["validation_resource_profile"], "android-safe")
+            self.assertGreaterEqual(spec.metadata["validation_memory_guard_mb"], 512)
 
     def test_android_builder_and_gradle_init_default_to_xdg_data_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

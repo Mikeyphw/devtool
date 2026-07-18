@@ -20,7 +20,7 @@ import shutil
 import sys
 from typing import Iterable
 
-from .build_optimization import optimized_build_env, resolve_build_policy
+from .build_optimization import optimized_build_env, optimized_validation_env, resolve_android_validation_policy, resolve_build_policy
 from .execution_environments import detect_current_environment
 from .models import CommandSpec, ProjectConfig
 
@@ -729,6 +729,7 @@ class AndroidGradleRunner(ProjectRunner):
         from .android_integration import (
             android_builder_arguments_for_tasks,
             android_project_root,
+            android_validation_lint_tasks,
             configured_tasks,
             plan_android_command,
         )
@@ -742,6 +743,8 @@ class AndroidGradleRunner(ProjectRunner):
             not skip_test and bool(config.test_command),
         ))
         specs: list[CommandSpec] = []
+        resource = resolve_android_validation_policy(config)
+        lint_tasks, lint_scope, lint_modules = android_validation_lint_tasks(config)
         if has_explicit_commands:
             if not skip_restore:
                 specs.extend(self.build_specs(config, "restore"))
@@ -749,33 +752,69 @@ class AndroidGradleRunner(ProjectRunner):
                 specs.extend(self.build_specs(config, "build"))
             if not skip_test:
                 specs.extend(self.build_specs(config, "test"))
-            if configured_tasks(config, "lint"):
-                specs.extend(self.build_specs(config, "lint"))
+            if lint_tasks:
+                lint_plan = plan_android_command(config, "lint")
+                specs.append(CommandSpec(
+                    "lint",
+                    [
+                        *lint_plan.argv_prefix,
+                        *android_builder_arguments_for_tasks(
+                            config, lint_tasks, scan_artifacts=False, validation=True
+                        ),
+                    ],
+                    env=optimized_validation_env(config, self.kind),
+                    cwd=str(lint_plan.project_root),
+                    metadata={
+                        "runner": self.kind,
+                        "project_type": self.kind,
+                        "gradle_tasks": list(lint_tasks),
+                        "android_builder": str(lint_plan.builder),
+                        "project_root": str(lint_plan.project_root),
+                        "progress_parser": "gradle",
+                        "report_parser": "android-lint",
+                        "report_parsers": ["android-lint"],
+                        "validation_components": ["lint"],
+                        "lint_scope": lint_scope,
+                        "lint_modules": list(lint_modules),
+                    },
+                ))
+            if resource.enabled:
+                validation_env = optimized_validation_env(config, self.kind)
+                for spec in specs:
+                    spec.env = dict(validation_env)
+                    spec.metadata.update({
+                        "validation_resource_profile": "android-safe",
+                        "validation_max_workers": resource.max_workers,
+                        "validation_cpu_limit": resource.cpu_limit,
+                        "validation_gradle_heap_mb": resource.gradle_heap_mb,
+                        "validation_memory_guard_mb": resource.memory_guard_mb,
+                        "validation_low_priority": resource.low_priority,
+                    })
         else:
-            tasks: list[str] = []
-            components: list[str] = []
-
+            groups: list[tuple[str, list[str], list[str]]] = []
             if not skip_restore:
                 restore_tasks = configured_tasks(config, "restore")
-                # The default restore task is Gradle `help`, which performs a
-                # full configuration pass but contributes no validation once
-                # real build/test/lint tasks run in the same invocation.
                 if restore_tasks and restore_tasks != ["help"]:
-                    tasks.extend(restore_tasks)
-                    components.append("restore")
+                    groups.append(("restore", restore_tasks, ["restore"]))
             if not skip_build:
-                tasks.extend(configured_tasks(config, "build"))
-                components.append("build")
+                groups.append(("build", configured_tasks(config, "build"), ["build"]))
             if not skip_test:
-                tasks.extend(configured_tasks(config, "test"))
-                components.append("test")
-            lint_tasks = configured_tasks(config, "lint")
+                groups.append(("test", configured_tasks(config, "test"), ["test"]))
             if lint_tasks:
-                tasks.extend(lint_tasks)
-                components.append("lint")
+                groups.append(("lint", lint_tasks, ["lint"]))
 
-            unique_tasks = list(dict.fromkeys(task for task in tasks if task))
-            if unique_tasks:
+            if not resource.split_gradle:
+                tasks: list[str] = []
+                components: list[str] = []
+                for _, group_tasks, group_components in groups:
+                    tasks.extend(group_tasks)
+                    components.extend(group_components)
+                groups = [("validation", tasks, components)]
+
+            for action, tasks, components in groups:
+                unique_tasks = list(dict.fromkeys(task for task in tasks if task))
+                if not unique_tasks:
+                    continue
                 plan_action = "build" if "build" in components else components[0]
                 plan = plan_android_command(config, plan_action)
                 report_parsers: list[str] = []
@@ -796,19 +835,33 @@ class AndroidGradleRunner(ProjectRunner):
                     "report_parsers": report_parsers,
                     "validation_components": components,
                     "contains_tests": "test" in components,
-                    "coalesced_gradle_validation": True,
+                    "coalesced_gradle_validation": not resource.split_gradle,
+                    "validation_resource_profile": "android-safe" if resource.enabled else "standard",
+                    "validation_max_workers": resource.max_workers,
+                    "validation_cpu_limit": resource.cpu_limit,
+                    "validation_gradle_heap_mb": resource.gradle_heap_mb,
+                    "validation_memory_guard_mb": resource.memory_guard_mb,
+                    "validation_low_priority": resource.low_priority,
+                    "lint_scope": lint_scope if "lint" in components else "not-applicable",
+                    "lint_modules": list(lint_modules) if "lint" in components else [],
                 }
+                name = (
+                    ("android-validation" if self.kind == "android" else "gradle-validation")
+                    if action == "validation"
+                    else f"{self.kind}-validation-{action}"
+                )
                 spec = CommandSpec(
-                    "android-validation" if self.kind == "android" else "gradle-validation",
+                    name,
                     [
                         *plan.argv_prefix,
                         *android_builder_arguments_for_tasks(
                             config,
                             unique_tasks,
                             scan_artifacts="build" in components,
+                            validation=True,
                         ),
                     ],
-                    env=_optimized_env(config, self.kind),
+                    env=optimized_validation_env(config, self.kind),
                     cwd=str(plan.project_root),
                     metadata=metadata,
                 )
@@ -850,11 +903,18 @@ class AndroidGradleRunner(ProjectRunner):
         total = len(specs)
         for index, spec in enumerate(specs, start=1):
             metadata = dict(spec.metadata)
+            pipeline_scope = (
+                "android-affected"
+                if lint_scope in {"affected-modules", "skipped-non-code-changes"}
+                else "android-full"
+            )
             metadata.update({
                 "validation_pipeline": True,
                 "validation_phase_index": index,
                 "validation_phase_total": total,
-                "validation_scope": "android-full",
+                "validation_scope": pipeline_scope,
+                "lint_scope": metadata.get("lint_scope", lint_scope),
+                "lint_modules": metadata.get("lint_modules", list(lint_modules)),
             })
             spec.metadata = metadata
         return specs
@@ -913,11 +973,45 @@ class PythonRunner(ProjectRunner):
         value = config.runner_options.get("python", {})
         return dict(value) if isinstance(value, dict) else {}
 
-    def _info(self, config: ProjectConfig):
-        from .python_support import inspect_python_project
-        return inspect_python_project(self._root(config), str(self._options(config).get("manager") or "auto"))
+    def _list_option(self, config: ProjectConfig, name: str) -> list[str]:
+        value = self._options(config).get(name)
+        if isinstance(value, str):
+            return [item.strip() for item in re.split(r"[,\s]+", value) if item.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
 
-    def _venv_python(self, config: ProjectConfig) -> str:
+    def _info(self, config: ProjectConfig):
+        from .python_support import DEPENDENCY_FILES, PythonProjectError, inspect_python_project
+        options = self._options(config)
+        root = self._root(config)
+        signatures: list[tuple[str, int, int]] = []
+        for name in DEPENDENCY_FILES:
+            path = root / name
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            signatures.append((name, stat.st_mtime_ns, stat.st_size))
+        key = (
+            str(root), str(options.get("manager") or "auto"),
+            str(options.get("test_framework") or "auto"), tuple(signatures),
+        )
+        cache = getattr(self, "_python_info_cache", None)
+        if isinstance(cache, dict) and key in cache:
+            return cache[key]
+        try:
+            info = inspect_python_project(root, key[1], key[2])
+        except PythonProjectError as exc:
+            raise SystemExit(str(exc)) from exc
+        if not isinstance(cache, dict):
+            cache = {}
+            setattr(self, "_python_info_cache", cache)
+        cache.clear()
+        cache[key] = info
+        return info
+
+    def _environment_path(self, config: ProjectConfig) -> str:
         options = self._options(config)
         value = str(options.get("environment") or "").strip()
         if not value:
@@ -925,144 +1019,550 @@ class PythonRunner(ProjectRunner):
             value = f".devtool/venvs/{name}"
         path = Path(value).expanduser()
         if not path.is_absolute():
-            path = config.repo_root / path
-        return str(path.resolve() / "bin" / "python")
+            path = self._root(config) / path
+        return str(path.resolve())
 
-    def _run_prefix(self, config: ProjectConfig) -> list[str]:
+    def _plan(self, config: ProjectConfig):
+        from .python_support import resolve_environment
         info = self._info(config)
-        if info.manager == "uv":
-            return ["uv", "run"]
-        if info.manager == "poetry":
-            return ["poetry", "run"]
-        if info.manager == "pdm":
-            return ["pdm", "run"]
-        if info.manager == "pipenv":
-            return ["pipenv", "run"]
-        if info.manager == "hatch":
-            return ["hatch", "run"]
-        return [self._venv_python(config)]
+        environment = self._environment_path(config) if info.manager == "venv" else str(self._options(config).get("environment") or "")
+        key = (
+            str(info.root), info.manager, config.python_executable, environment,
+            tuple(self._list_option(config, "groups")), tuple(self._list_option(config, "extras")),
+            config.execution_environment, info.requires_python, info.dependency_files,
+        )
+        cache = getattr(self, "_python_plan_cache", None)
+        if isinstance(cache, dict) and key in cache:
+            return cache[key]
+        plan = resolve_environment(
+            info,
+            configured_python=config.python_executable,
+            environment=environment,
+            groups=key[4],
+            extras=key[5],
+            execution_environment=config.execution_environment,
+        )
+        if not plan.compatible:
+            raise SystemExit(plan.compatibility_detail)
+        if not isinstance(cache, dict):
+            cache = {}
+            setattr(self, "_python_plan_cache", cache)
+        cache.clear()
+        cache[key] = plan
+        return plan
+
+    def _env(self, config: ProjectConfig, *, isolated: bool = False) -> dict[str, str]:
+        from .python_support import python_cache_env
+        env = _optimized_env(config, self.kind)
+        env.update(python_cache_env(self._root(config), config.execution_environment))
+        options = self._options(config)
+        if isolated or bool(options.get("isolation", False)):
+            home = self._root(config) / ".devtool" / "tmp" / "python-home"
+            tmp = self._root(config) / ".devtool" / "tmp" / "python"
+            home.mkdir(parents=True, exist_ok=True)
+            tmp.mkdir(parents=True, exist_ok=True)
+            for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
+                env.pop(key, None)
+            env.update({
+                "HOME": str(home),
+                "TMPDIR": str(tmp),
+                "TZ": str(options.get("timezone") or "UTC"),
+                "LC_ALL": str(options.get("locale") or "C.UTF-8"),
+                "LANG": str(options.get("locale") or "C.UTF-8"),
+                "PYTHONUTF8": "1",
+                "PYTHONHASHSEED": str(options.get("hash_seed") or "random"),
+                "DEVTOOL_NETWORK_DISABLED": "1" if bool(options.get("disable_network", False)) else "0",
+            })
+        return env
+
+    def _network_wrap(self, config: ProjectConfig, argv: list[str]) -> list[str]:
+        if not bool(self._options(config).get("disable_network", False)):
+            return argv
+        unshare = shutil.which("unshare")
+        if not unshare:
+            raise SystemExit("Python network isolation was requested, but 'unshare' is unavailable.")
+        return [unshare, "--net", "--", *argv]
+
+    def _module(self, config: ProjectConfig, module: str, *args: str) -> list[str]:
+        from .python_support import python_module_argv
+        return python_module_argv(self._plan(config), module, *args)
+
+    def _script(self, config: ProjectConfig, script: str, *args: str) -> list[str]:
+        from .python_support import python_script_argv
+        return python_script_argv(self._plan(config), script, *args)
+
+    def _executable(self, config: ProjectConfig, executable: str, *args: str) -> list[str]:
+        from .python_support import python_executable_argv
+        return python_executable_argv(self._plan(config), executable, *args)
 
     def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
         info = self._info(config)
+        plan = self._plan(config)
         return [
             ("project_root", str(info.root)),
             ("project_type", "Python"),
             ("package", info.package_name),
             ("environment_manager", info.manager),
+            ("environment", plan.environment_root or "manager-owned"),
+            ("environment_fingerprint", plan.fingerprint[:16]),
             ("lock_file", info.lock_file or "none"),
+            ("requires_python", info.requires_python or "unspecified"),
+            ("interpreter", plan.python),
+            ("interpreter_compatible", "yes" if plan.compatible else "no"),
             ("test_framework", info.framework),
             ("build_backend", info.build_backend),
-            ("python", config.python_executable),
+            ("source_roots", ", ".join(info.source_roots) or "."),
+            ("import_packages", ", ".join(info.import_packages) or "none detected"),
+            ("console_scripts", ", ".join(info.console_script_map) or "none"),
+            ("workspace_members", ", ".join(info.workspace_members) or "none"),
+            ("native_backend", info.native_backend or "none"),
+            ("generated_sources", ", ".join(info.generated_tools) or "none detected"),
+            ("service_frameworks", ", ".join(info.service_frameworks) or "none detected"),
+            ("database_tools", ", ".join(info.database_tools) or "none detected"),
+            ("notebooks", str(len(info.notebooks))),
         ]
 
     def doctor_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
         info = self._info(config)
-        tools = [config.python_executable, info.manager if info.manager != "venv" else ""]
+        plan = self._plan(config)
         rows = [("python_project", "READY" if info.root.is_dir() else "MISSING")]
-        for tool in tools:
-            if not tool:
-                continue
-            executable = shutil.which(tool) if not Path(tool).is_absolute() else (tool if Path(tool).exists() else None)
+        tools = [plan.python, info.manager if info.manager != "venv" else ""]
+        native_tools = {
+            "maturin": ["cargo", "rustc"],
+            "setuptools-rust": ["cargo", "rustc"],
+            "scikit-build-core": ["cmake", "ninja"],
+            "meson-python": ["meson", "ninja"],
+            "cython": ["cc"],
+            "pybind11": ["c++"],
+            "cffi": ["cc"],
+        }
+        tools.extend(native_tools.get(info.native_backend, []))
+        for tool in dict.fromkeys(value for value in tools if value):
+            path = Path(tool)
+            executable = str(path) if path.is_absolute() and path.exists() else shutil.which(tool)
             rows.append((tool, f"READY: {executable}" if executable else "MISSING"))
+        rows.append(("requires_python", plan.compatibility_detail))
         return rows
 
-    def _pytest_spec(self, config: ProjectConfig) -> CommandSpec:
+    def _validation_scope(self, config: ProjectConfig):
+        from .python_support import python_validation_scope
+        validation = config.runner_options.get("validation", {})
+        changed = validation.get("changed_paths", []) if isinstance(validation, dict) else []
+        values = [str(item) for item in changed] if isinstance(changed, (list, tuple, set)) else []
+        return python_validation_scope(config.repo_root, values, self._info(config))
+
+    def _pytest_spec(self, config: ProjectConfig, *, targets: Iterable[str] = ()) -> CommandSpec:
         from .test_selection import apply_test_selection
         root = self._root(config)
+        options = self._options(config)
         report = root / ".devtool" / "reports" / "pytest.xml"
-        prefix = self._run_prefix(config)
-        argv = [*prefix, "-m", "pytest", f"--junitxml={report}"] if Path(prefix[0]).name.startswith("python") else [*prefix, "pytest", f"--junitxml={report}"]
+        coverage = options.get("coverage", {})
+        coverage = dict(coverage) if isinstance(coverage, dict) else {}
+        argv = self._module(config, "pytest", f"--junitxml={report}")
+        target_values = list(dict.fromkeys(str(item) for item in targets if str(item)))
+        argv.extend(target_values)
+        if coverage:
+            source = str(coverage.get("source") or ".")
+            argv.extend([f"--cov={source}", "--cov-report=term-missing", f"--cov-report=xml:{root / '.devtool' / 'reports' / 'coverage.xml'}"])
+            minimum = coverage.get("minimum_total")
+            if minimum is not None:
+                argv.append(f"--cov-fail-under={minimum}")
+        retries = int(options.get("flaky_retries") or 0)
+        if retries > 0:
+            argv.extend(["--reruns", str(retries)])
+        argv = self._network_wrap(config, argv)
         spec = CommandSpec(
             "test",
             argv,
-            env=_optimized_env(config, self.kind),
+            env=self._env(config, isolated=True),
             cwd=str(root),
             metadata={
                 "runner": self.kind,
                 "project_type": self.kind,
                 "project_root": str(root),
                 "report_parser": "pytest-junit",
+                "report_parsers": ["pytest-junit", *( ["python-coverage"] if coverage else [])],
                 "test_report": str(report),
+                "coverage_report": str(root / ".devtool" / "reports" / "coverage.xml"),
+                "test_framework": "pytest",
+                "affected_test_targets": target_values,
             },
         )
         return apply_test_selection(config, spec)
 
-    def _lint_specs(self, config: ProjectConfig) -> list[CommandSpec]:
-        options = self._options(config)
-        configured = options.get("lint")
-        if isinstance(configured, str):
-            tools = [item.strip() for item in configured.replace(",", " ").split() if item.strip()]
-        elif isinstance(configured, (list, tuple)):
-            tools = [str(item).strip() for item in configured if str(item).strip()]
+    def _unittest_spec(self, config: ProjectConfig, *, targets: Iterable[str] = ()) -> CommandSpec:
+        values = list(dict.fromkeys(str(item) for item in targets if str(item)))
+        if values:
+            modules = [value[:-3].replace("/", ".") if value.endswith(".py") else value for value in values]
+            argv = self._module(config, "unittest", *modules)
         else:
-            text = (self._root(config) / "pyproject.toml").read_text(encoding="utf-8", errors="replace") if (self._root(config) / "pyproject.toml").is_file() else ""
-            tools = [name for name, marker in (("ruff", "[tool.ruff"), ("mypy", "[tool.mypy"), ("black", "[tool.black"), ("pylint", "[tool.pylint")) if marker in text]
-        prefix = self._run_prefix(config)
+            argv = self._module(config, "unittest", "discover")
+        argv = self._network_wrap(config, argv)
+        return CommandSpec(
+            "test", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)),
+            metadata=_tool_metadata(self.kind, self._root(config), test_framework="unittest"),
+        )
+
+    def _framework_test_specs(self, config: ProjectConfig, *, targets: Iterable[str] = ()) -> list[CommandSpec]:
+        info = self._info(config)
+        if info.framework == "pytest":
+            return [self._pytest_spec(config, targets=targets)]
+        if info.framework == "unittest":
+            return [self._unittest_spec(config, targets=targets)]
+        if info.framework == "tox":
+            selection = config.runner_options.get("test_selection", {})
+            selection = dict(selection) if isinstance(selection, dict) else {}
+            environments = selection.get("tasks") or selection.get("task") or self._list_option(config, "tox_environments")
+            values = [environments] if isinstance(environments, str) else list(environments or [])
+            argv = self._executable(config, "tox")
+            if values:
+                argv.extend(["-e", ",".join(str(item) for item in values)])
+            argv = self._network_wrap(config, argv)
+            return [CommandSpec("test", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), test_framework="tox"))]
+        if info.framework == "nox":
+            selection = config.runner_options.get("test_selection", {})
+            selection = dict(selection) if isinstance(selection, dict) else {}
+            sessions = selection.get("tasks") or selection.get("task") or self._list_option(config, "nox_sessions")
+            values = [sessions] if isinstance(sessions, str) else list(sessions or [])
+            argv = self._executable(config, "nox")
+            if values:
+                argv.extend(["-s", *[str(item) for item in values]])
+            if bool(self._options(config).get("nox_reuse", True)):
+                argv.append("--reuse-existing-virtualenvs")
+            argv = self._network_wrap(config, argv)
+            return [CommandSpec("test", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), test_framework="nox"))]
+        raise SystemExit(f"Unsupported Python test framework: {info.framework}")
+
+    def _lint_tools(self, config: ProjectConfig) -> list[str]:
+        configured = self._options(config).get("lint")
+        if isinstance(configured, str):
+            return [item.strip() for item in configured.replace(",", " ").split() if item.strip()]
+        if isinstance(configured, (list, tuple)):
+            return [str(item).strip() for item in configured if str(item).strip()]
+        try:
+            data = (self._root(config) / "pyproject.toml").read_text(encoding="utf-8")
+        except OSError:
+            data = ""
+        return [
+            name for name, marker in (
+                ("ruff", "[tool.ruff"), ("mypy", "[tool.mypy"),
+                ("black", "[tool.black"), ("isort", "[tool.isort"),
+                ("pylint", "[tool.pylint"), ("pyright", "[tool.pyright"),
+                ("bandit", "[tool.bandit"),
+            ) if marker in data
+        ]
+
+    def _lint_specs(self, config: ProjectConfig, *, targets: Iterable[str] = ()) -> list[CommandSpec]:
+        root = self._root(config)
+        target_values = list(dict.fromkeys(str(item) for item in targets if str(item))) or ["."]
+        plan = self._plan(config)
         specs: list[CommandSpec] = []
-        for tool in tools:
+        for configured_tool in self._lint_tools(config):
+            tool, *configured_args = shlex.split(configured_tool)
             if tool == "ruff":
-                command = ["ruff", "check", "."]
+                tool_args = ["check", *configured_args, *target_values]
             elif tool == "ruff-format":
-                command = ["ruff", "format", "--check", "."]
+                tool, tool_args = "ruff", ["format", "--check", *configured_args, *target_values]
             elif tool == "black":
-                command = ["black", "--check", "."]
+                tool_args = ["--check", *configured_args, *target_values]
             elif tool == "isort":
-                command = ["isort", "--check-only", "."]
-            elif tool in {"mypy", "pyright", "pylint", "bandit"}:
-                command = [tool, "."]
+                tool_args = ["--check-only", *configured_args, *target_values]
+            elif tool == "bandit":
+                tool_args = ["-r", *configured_args, *target_values]
             else:
-                command = shlex.split(tool)
-            argv = [*prefix, *command]
+                tool_args = [*configured_args, *target_values]
+            helper = [
+                sys.executable, "-m", "devtool.python_support", "run-tool",
+                "--manager", self._info(config).manager,
+                "--framework", self._info(config).framework,
+                "--python", config.python_executable,
+                "--environment", plan.environment_root,
+                str(root), tool, *tool_args,
+            ]
             specs.append(CommandSpec(
-                f"lint:{tool}", argv, env=_optimized_env(config, self.kind), cwd=str(self._root(config)),
-                metadata={"runner": self.kind, "project_type": self.kind, "lint_tool": tool},
+                f"lint:{configured_tool}", helper, env=self._env(config), cwd=str(root),
+                metadata=_tool_metadata(
+                    self.kind, root, lint_tool=tool, report_parser="python-tool",
+                    affected_lint_targets=target_values,
+                ),
             ))
         return specs
 
+    def _restore_specs(self, config: ProjectConfig) -> list[CommandSpec]:
+        from .python_support import build_sync_command
+        if config.restore_command:
+            return [CommandSpec("restore", shlex.split(config.restore_command), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), explicit=True))]
+        info = self._info(config)
+        plan = self._plan(config)
+        options = self._options(config)
+        groups = self._list_option(config, "groups")
+        extras = self._list_option(config, "extras")
+        commands = build_sync_command(
+            info, plan,
+            groups=groups,
+            extras=extras,
+            locked=bool(options.get("locked", True)),
+            offline=bool(options.get("offline", False)),
+            install_project=bool(options.get("install_project", True)),
+            constraints=str(options.get("constraints") or ""),
+        )
+        specs: list[CommandSpec] = []
+        for command in commands:
+            name = "venv" if len(command) >= 3 and command[1:3] == ["-m", "venv"] else "restore"
+            specs.append(CommandSpec(
+                name, command, env=self._env(config), cwd=str(self._root(config)),
+                metadata=_tool_metadata(self.kind, self._root(config), manager=info.manager),
+            ))
+        validator_dependencies = self._list_option(config, "validator_dependencies")
+        if validator_dependencies and info.manager == "venv":
+            specs.append(CommandSpec("validator-dependencies", self._module(config, "pip", "install", *validator_dependencies), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config))))
+        snapshot = [
+            sys.executable, "-m", "devtool.python_support", "environment-snapshot",
+            str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
+            "--python", config.python_executable, "--environment", plan.environment_root,
+            "--execution-environment", config.execution_environment,
+        ]
+        for group in groups:
+            snapshot.extend(["--group", group])
+        for extra in extras:
+            snapshot.extend(["--extra", extra])
+        specs.append(CommandSpec("python-environment", snapshot, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), environment_fingerprint=plan.fingerprint)))
+        return specs
+
+    def _support_command_specs(self, config: ProjectConfig, option: str, name: str) -> list[CommandSpec]:
+        value = self._options(config).get(option)
+        commands = [value] if isinstance(value, str) else list(value or []) if isinstance(value, (list, tuple)) else []
+        return [CommandSpec(f"{name}:{index}", shlex.split(str(command)), env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component=name)) for index, command in enumerate(commands, 1) if str(command).strip()]
+
+    def _precommit_spec(self, config: ProjectConfig, targets: Iterable[str]) -> CommandSpec | None:
+        options = self._options(config)
+        enabled = options.get("pre_commit", "auto")
+        if enabled is False or (enabled == "auto" and not (self._root(config) / ".pre-commit-config.yaml").is_file()):
+            return None
+        values = list(dict.fromkeys(str(item) for item in targets if str(item)))
+        argv = self._executable(config, "pre-commit", "run")
+        if values:
+            argv.extend(["--files", *values])
+        else:
+            argv.append("--all-files")
+        return CommandSpec("pre-commit", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="pre-commit"))
+
+    def _import_isolation_specs(self, config: ProjectConfig) -> list[CommandSpec]:
+        if not bool(self._options(config).get("source_import_isolation", False)):
+            return []
+        plan = self._plan(config)
+        specs: list[CommandSpec] = []
+        for module in self._info(config).import_packages:
+            command = [plan.python, "-I", "-c", f"import {module}"] if plan.manager == "venv" else [*plan.run_prefix, "python", "-I", "-c", f"import {module}"]
+            specs.append(CommandSpec(f"import:{module}", command, env=self._env(config, isolated=True), cwd=str(self._root(config).parent), metadata=_tool_metadata(self.kind, self._root(config), validation_component="import-isolation", import_module=module)))
+        return specs
+
+    def _cli_contract_specs(self, config: ProjectConfig) -> list[CommandSpec]:
+        if not bool(self._options(config).get("cli_contract", False)):
+            return []
+        specs: list[CommandSpec] = []
+        for script in self._info(config).console_script_map:
+            for flag in ("--help", "--version"):
+                specs.append(CommandSpec(f"cli:{script}:{flag[2:]}", self._executable(config, script, flag), env=self._env(config, isolated=True), cwd=str(self._root(config).parent), metadata=_tool_metadata(self.kind, self._root(config), validation_component="cli-contract", console_script=script)))
+        return specs
+
+    def _source_audit_spec(self, config: ProjectConfig) -> CommandSpec:
+        info = self._info(config)
+        argv = [
+            sys.executable, "-m", "devtool.python_support", "source-audit",
+            str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
+        ]
+        return CommandSpec(
+            "python-source-audit", argv, env=self._env(config), cwd=str(self._root(config)),
+            metadata=_tool_metadata(self.kind, self._root(config), report_parser="python-audit", validation_component="source-audit"),
+        )
+
+    def _diff_coverage_spec(self, config: ProjectConfig) -> CommandSpec | None:
+        coverage = self._options(config).get("coverage", {})
+        coverage = dict(coverage) if isinstance(coverage, dict) else {}
+        minimum = float(coverage.get("minimum_changed_lines") or 0)
+        if minimum <= 0:
+            return None
+        selection = config.runner_options.get("test_selection", {})
+        selection = dict(selection) if isinstance(selection, dict) else {}
+        base = str(selection.get("changed_from") or "HEAD")
+        report = self._root(config) / ".devtool" / "reports" / "coverage.xml"
+        argv = [
+            sys.executable, "-m", "devtool.python_support", "diff-coverage",
+            str(self._root(config)), str(report), "--base", base, "--minimum", str(minimum),
+        ]
+        return CommandSpec(
+            "python-diff-coverage", argv, env=self._env(config), cwd=str(self._root(config)),
+            metadata=_tool_metadata(self.kind, self._root(config), validation_component="diff-coverage"),
+        )
+
+    def _sbom_spec(self, config: ProjectConfig) -> CommandSpec | None:
+        options = self._options(config)
+        security = options.get("security", {})
+        security = dict(security) if isinstance(security, dict) else {}
+        if not bool(options.get("sbom", False) or security.get("sbom", False)):
+            return None
+        info = self._info(config)
+        plan = self._plan(config)
+        argv = [
+            sys.executable, "-m", "devtool.python_support", "sbom",
+            str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
+            "--python", config.python_executable, "--environment", plan.environment_root,
+        ]
+        return CommandSpec("python-sbom", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="sbom"))
+
+    def _reproducible_spec(self, config: ProjectConfig) -> CommandSpec | None:
+        package = self._options(config).get("package", {})
+        package = dict(package) if isinstance(package, dict) else {}
+        if not bool(package.get("reproducible", False)):
+            return None
+        info = self._info(config)
+        plan = self._plan(config)
+        argv = [
+            sys.executable, "-m", "devtool.python_support", "reproducible-build",
+            str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
+            "--python", config.python_executable, "--environment", plan.environment_root,
+        ]
+        return CommandSpec("python-reproducible-build", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="reproducible-build"))
+
+    def _notebook_spec(self, config: ProjectConfig) -> CommandSpec | None:
+        info = self._info(config)
+        notebook_options = self._options(config).get("notebooks", {})
+        notebook_options = dict(notebook_options) if isinstance(notebook_options, dict) else {}
+        if not info.notebooks or notebook_options.get("validate", False) is False:
+            return None
+        plan = self._plan(config)
+        argv = [
+            sys.executable, "-m", "devtool.python_support", "notebook-check",
+            str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
+            "--python", config.python_executable, "--environment", plan.environment_root,
+        ]
+        for notebook in info.notebooks:
+            argv.extend(["--notebook", notebook])
+        if bool(notebook_options.get("execute", False)):
+            argv.append("--execute")
+        return CommandSpec("python-notebooks", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="notebooks"))
+
+    def _service_lifecycle_spec(self, config: ProjectConfig) -> CommandSpec | None:
+        service = self._options(config).get("service", {})
+        service = dict(service) if isinstance(service, dict) else {}
+        start = str(service.get("start") or "").strip()
+        if not start or service.get("enabled", True) is False:
+            return None
+        argv = [
+            sys.executable, "-m", "devtool.python_support", "service-check",
+            str(self._root(config)), "--start", start,
+            "--timeout", str(int(service.get("timeout") or 60)),
+        ]
+        for key, flag in (("url", "--url"), ("host", "--host"), ("check", "--check")):
+            value = str(service.get(key) or "").strip()
+            if value:
+                argv.extend([flag, value])
+        if int(service.get("port") or 0) > 0:
+            argv.extend(["--port", str(int(service["port"]))])
+        return CommandSpec("python-service-lifecycle", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="service-lifecycle"))
+
+    def _database_specs(self, config: ProjectConfig) -> list[CommandSpec]:
+        database = self._options(config).get("database", {})
+        database = dict(database) if isinstance(database, dict) else {}
+        enabled = database.get("enabled", "auto")
+        if enabled is False:
+            return []
+        commands = database.get("commands")
+        if isinstance(commands, (list, tuple)):
+            return [CommandSpec(f"database:{index}", shlex.split(str(command)), env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="database")) for index, command in enumerate(commands, 1) if str(command).strip()]
+        specs: list[CommandSpec] = []
+        root = self._root(config)
+        if (root / "alembic.ini").is_file():
+            specs.append(CommandSpec("database:alembic-check", self._executable(config, "alembic", "check"), env=self._env(config, isolated=True), cwd=str(root), metadata=_tool_metadata(self.kind, root, validation_component="database")))
+        if (root / "manage.py").is_file():
+            specs.append(CommandSpec("database:django-migrations", self._script(config, str(root / "manage.py"), "makemigrations", "--check", "--dry-run"), env=self._env(config, isolated=True), cwd=str(root), metadata=_tool_metadata(self.kind, root, validation_component="database")))
+        return specs
+
+    def _security_specs(self, config: ProjectConfig) -> list[CommandSpec]:
+        options = self._options(config)
+        security = options.get("security", {})
+        if security is True:
+            tools = ["pip_audit", "bandit"]
+        elif isinstance(security, dict) and bool(security.get("enabled", False)):
+            tools = [str(value) for value in security.get("tools", ["pip_audit", "bandit"])]
+        else:
+            return []
+        specs: list[CommandSpec] = []
+        info = self._info(config)
+        plan = self._plan(config)
+        for tool in tools:
+            args = ["-r", "."] if tool == "bandit" else []
+            argv = [
+                sys.executable, "-m", "devtool.python_support", "run-tool",
+                "--manager", info.manager, "--framework", info.framework,
+                "--python", config.python_executable, "--environment", plan.environment_root,
+                str(self._root(config)), tool, *args,
+            ]
+            specs.append(CommandSpec(f"security:{tool}", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), report_parser="python-tool", validation_component="security")))
+        return specs
+
+    def _matrix_specs(self, config: ProjectConfig) -> list[CommandSpec]:
+        options = self._options(config)
+        raw = options.get("matrix")
+        values = list(raw) if isinstance(raw, (list, tuple)) else []
+        if not values or str(options.get("matrix_mode") or "active").lower() not in {"full", "all"}:
+            return []
+        info = self._info(config)
+        if info.framework in {"tox", "nox"}:
+            return []
+        specs: list[CommandSpec] = []
+        for version in values:
+            version_text = str(version).removeprefix("python")
+            if info.manager == "uv" and shutil.which("uv"):
+                argv = ["uv", "run", "--python", version_text, "python", "-m", "pytest"]
+            else:
+                executable = shutil.which(f"python{version_text}")
+                if not executable:
+                    specs.append(CommandSpec(
+                        f"test:python-{version_text}:skipped",
+                        [sys.executable, "-c", f"print('Python {version_text} is unavailable; matrix entry skipped')"],
+                        env=self._env(config, isolated=True), cwd=str(self._root(config)),
+                        metadata=_tool_metadata(self.kind, self._root(config), validation_component="python-matrix", python_version=version_text, skipped=True),
+                    ))
+                    continue
+                argv = [executable, "-m", info.framework if info.framework in {"pytest", "unittest"} else "pytest"]
+                if info.framework == "unittest":
+                    argv.append("discover")
+            argv = self._network_wrap(config, argv)
+            specs.append(CommandSpec(f"test:python-{version_text}", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="python-matrix", python_version=version_text)))
+        return specs
+
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
-        env = _optimized_env(config, self.kind)
         root = self._root(config)
         info = self._info(config)
-        prefix = self._run_prefix(config)
-
+        options = self._options(config)
         if action == "restore":
-            if config.restore_command:
-                return [CommandSpec("restore", shlex.split(config.restore_command), env=env, cwd=str(root))]
-            if info.manager == "uv":
-                return [CommandSpec("restore", ["uv", "sync", *( ["--frozen"] if info.lock_file else [])], env=env, cwd=str(root))]
-            if info.manager == "poetry":
-                return [CommandSpec("restore", ["poetry", "install"], env=env, cwd=str(root))]
-            if info.manager == "pdm":
-                return [CommandSpec("restore", ["pdm", "sync", *( ["--frozen-lockfile"] if info.lock_file else [])], env=env, cwd=str(root))]
-            if info.manager == "pipenv":
-                return [CommandSpec("restore", ["pipenv", "sync", "--dev"], env=env, cwd=str(root))]
-            if info.manager == "hatch":
-                return [CommandSpec("restore", ["hatch", "env", "create"], env=env, cwd=str(root))]
-            venv_python = self._venv_python(config)
-            venv_root = str(Path(venv_python).parent.parent)
-            specs: list[CommandSpec] = []
-            if not Path(venv_python).is_file():
-                specs.append(CommandSpec("venv", [config.python_executable, "-m", "venv", venv_root], env=env, cwd=str(root)))
-            if (root / "requirements-dev.txt").exists():
-                install = [venv_python, "-m", "pip", "install", "-r", "requirements-dev.txt"]
-            elif (root / "requirements.txt").exists():
-                install = [venv_python, "-m", "pip", "install", "-r", "requirements.txt"]
-            else:
-                install = [venv_python, "-m", "pip", "install", "-e", ".[test]"]
-            specs.append(CommandSpec("restore", install, env=env, cwd=str(root)))
-            return specs
+            return self._restore_specs(config)
         if action == "build":
             if config.build_command:
-                return [CommandSpec("build", shlex.split(config.build_command), env=env, cwd=str(root))]
-            argv = [*prefix, "-m", "build"] if Path(prefix[0]).name.startswith("python") else [*prefix, "python", "-m", "build"]
-            return [CommandSpec("build", argv, env=env, cwd=str(root), metadata={"collect_artifacts": True, "verify_artifacts": True, "project_type": "python"})]
+                return [CommandSpec("build", shlex.split(config.build_command), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+            outdir = root / "dist"
+            specs: list[CommandSpec] = []
+            if bool(options.get("fresh_dist", True)):
+                specs.append(CommandSpec(
+                    "prepare-dist",
+                    [sys.executable, "-m", "devtool.python_support", "prepare-dist", str(root)],
+                    env=self._env(config), cwd=str(root),
+                    metadata=_tool_metadata(self.kind, root, validation_component="package-preparation"),
+                ))
+            argv = self._module(config, "build", "--outdir", str(outdir))
+            specs.append(CommandSpec("build", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, collect_artifacts=True, verify_artifacts=True)))
+            return specs
         if action in {"test", "wine-test"}:
             if config.test_command:
-                from .test_selection import apply_test_selection
-                return [apply_test_selection(config, CommandSpec("test", shlex.split(config.test_command), env=env, cwd=str(root), metadata={"project_type": "python"}))]
-            if info.framework == "pytest":
-                return [self._pytest_spec(config)]
-            return [CommandSpec("test", [*prefix, "-m", "unittest", "discover"] if Path(prefix[0]).name.startswith("python") else [*prefix, "python", "-m", "unittest", "discover"], env=env, cwd=str(root), metadata={"project_type": "python"})]
+                custom_argv = self._network_wrap(config, shlex.split(config.test_command))
+                spec = CommandSpec("test", custom_argv, env=self._env(config, isolated=True), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True, test_framework=str(options.get("test_adapter") or "custom")))
+                if str(options.get("test_adapter") or "").lower() == "pytest":
+                    from .test_selection import apply_test_selection
+                    spec = apply_test_selection(config, spec)
+                return [spec]
+            return self._framework_test_specs(config)
         if action == "lint":
             specs = self._lint_specs(config)
             if not specs:
@@ -1070,22 +1570,44 @@ class PythonRunner(ProjectRunner):
             return specs
         if action == "package-check":
             report = root / ".devtool" / "reports" / "python-packages.json"
+            package = options.get("package", {})
+            package = dict(package) if isinstance(package, dict) else {}
             argv = [sys.executable, "-m", "devtool.python_support", "package-check", str(root), "--report", str(report)]
-            if bool(self._options(config).get("import_smoke", False)):
-                argv.append("--import-smoke")
-            return [CommandSpec("package-check", argv, env=env, cwd=str(root), metadata={"report_parser": "python-package", "package_report": str(report), "project_type": "python"})]
+            flags = {
+                "import_smoke": ("--import-smoke", True),
+                "install_dependencies": ("--install-dependencies", False),
+                "rebuild_sdist": ("--rebuild-sdist", True),
+                "verify_cli": ("--verify-cli", True),
+                "reproducible": ("--reproducible", False),
+                "offline": ("--offline", False),
+            }
+            for key, (flag, default) in flags.items():
+                if bool(package.get(key, options.get(key, default))):
+                    argv.append(flag)
+            if package.get("verify_all_wheels", True) is False:
+                argv.append("--first-wheel-only")
+            for module in package.get("import_modules", []) if isinstance(package.get("import_modules"), list) else []:
+                argv.extend(["--import-module", str(module)])
+            for script in package.get("console_scripts", []) if isinstance(package.get("console_scripts"), list) else []:
+                argv.extend(["--console-script", str(script)])
+            return [CommandSpec("package-check", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, report_parser="python-package", package_report=str(report)))]
         if action == "clean":
-            return [CommandSpec("clean", [sys.executable, "-m", "devtool.python_support", "clean", str(root)], env=env, cwd=str(root))]
+            categories = self._list_option(config, "clean_categories") or ["artifacts", "caches"]
+            argv = [sys.executable, "-m", "devtool.python_support", "clean", str(root)]
+            for category in categories:
+                argv.extend(["--category", category])
+            return [CommandSpec("clean", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root))]
         if action == "run":
             if config.run_command:
-                return [CommandSpec("run", shlex.split(config.run_command), env=env, cwd=str(root))]
+                return [CommandSpec("run", shlex.split(config.run_command), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
             if config.run_module:
-                argv = [*prefix, "-m", config.run_module] if Path(prefix[0]).name.startswith("python") else [*prefix, "python", "-m", config.run_module]
-                return [CommandSpec("run", argv, env=env, cwd=str(root))]
+                return [CommandSpec("run", self._module(config, config.run_module), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root))]
             if config.run_target:
-                return [CommandSpec("run", [*prefix, config.resolve_repo_relative(config.run_target)], env=env, cwd=str(root))]
+                return [CommandSpec("run", self._script(config, config.resolve_repo_relative(config.run_target)), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root))]
             raise SystemExit("No Python run target configured. Set run_command, run_module, or run_target.")
         if action == "package":
+            if config.package_command:
+                return [CommandSpec("package", shlex.split(config.package_command), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
             return self.build_specs(config, "build")
         raise SystemExit(f"Unsupported action for python: {action}")
 
@@ -1098,30 +1620,63 @@ class PythonRunner(ProjectRunner):
         skip_build: bool = False,
         skip_test: bool = False,
     ) -> list[CommandSpec]:
+        scope = self._validation_scope(config)
         specs: list[CommandSpec] = []
+        if scope.scope in {"python-docs-only", "python-unaffected", "python-non-code"}:
+            message = "; ".join(scope.reasons) or scope.scope
+            specs.append(CommandSpec("python-validation-scope", [sys.executable, "-c", f"print({message!r})"], env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="scope")))
+            return _validation_metadata(specs, scope.scope)
+
         if not skip_restore:
-            specs.extend(self.build_specs(config, "restore"))
+            specs.extend(self._restore_specs(config))
+        specs.append(self._source_audit_spec(config))
+        specs.extend(self._support_command_specs(config, "generated_commands", "generated"))
         if not skip_test:
-            specs.extend(self.build_specs(config, "test"))
-        try:
-            specs.extend(self.build_specs(config, "lint"))
-        except SystemExit:
-            pass
-        if not skip_build:
+            test_targets = () if scope.full_tests else scope.test_targets
+            specs.extend(self._framework_test_specs(config, targets=test_targets))
+            diff_coverage = self._diff_coverage_spec(config)
+            if diff_coverage is not None:
+                specs.append(diff_coverage)
+            specs.extend(self._matrix_specs(config))
+        lint_targets = () if scope.full_lint else scope.lint_targets
+        specs.extend(self._lint_specs(config, targets=lint_targets))
+        precommit = self._precommit_spec(config, scope.changed_paths)
+        if precommit is not None:
+            specs.append(precommit)
+        specs.extend(self._database_specs(config))
+        specs.extend(self._support_command_specs(config, "database_commands", "database"))
+        notebook = self._notebook_spec(config)
+        if notebook is not None:
+            specs.append(notebook)
+        specs.extend(self._support_command_specs(config, "notebook_commands", "notebooks"))
+        service = self._service_lifecycle_spec(config)
+        if service is not None:
+            specs.append(service)
+        specs.extend(self._support_command_specs(config, "service_commands", "service"))
+        specs.extend(self._support_command_specs(config, "security_commands", "security"))
+        specs.extend(self._security_specs(config))
+        sbom = self._sbom_spec(config)
+        if sbom is not None:
+            specs.append(sbom)
+        specs.append(CommandSpec("dependency-check", self._module(config, "pip", "check"), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="dependency-integrity")))
+        specs.extend(self._import_isolation_specs(config))
+        specs.extend(self._cli_contract_specs(config))
+        if not skip_build and scope.run_build:
             specs.extend(self.build_specs(config, "build"))
             specs.extend(self.build_specs(config, "package-check"))
+            reproducible = self._reproducible_spec(config)
+            if reproducible is not None:
+                specs.append(reproducible)
         if not specs:
             raise SystemExit("Validation would run no Python commands. Clear a skip flag.")
-        total = len(specs)
-        for index, spec in enumerate(specs, start=1):
+        for spec in specs:
             spec.metadata.update({
-                "validation_pipeline": True,
-                "validation_phase_index": index,
-                "validation_phase_total": total,
-                "validation_scope": "python-full",
+                "python_validation_scope": scope.scope,
+                "python_changed_paths": list(scope.changed_paths),
+                "python_scope_reasons": list(scope.reasons),
+                "environment_fingerprint": self._plan(config).fingerprint,
             })
-        return specs
-
+        return _validation_metadata(specs, scope.scope)
 
 
 class NodeRunner(ProjectRunner):
@@ -1176,6 +1731,7 @@ class NodeRunner(ProjectRunner):
             restore=True,
             build="build" in scripts or bool(config.build_command),
             test="test" in scripts or bool(config.test_command),
+            selective_tests=True,
             validate=bool(scripts) or any((config.restore_command, config.build_command, config.test_command)),
             lint=any(name in scripts for name in ("lint", "check")),
             run=any(name in scripts for name in ("start", "dev")) or bool(config.run_command),
@@ -1211,7 +1767,11 @@ class NodeRunner(ProjectRunner):
             "run": config.run_command, "package": config.package_command,
         }.get(action, "")
         if explicit:
-            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+            spec = CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))
+            if action in {"test", "wine-test"}:
+                from .test_selection import apply_test_selection
+                spec = apply_test_selection(config, spec)
+            return [spec]
         if action == "restore":
             if manager == "npm":
                 clean = bool(options.get("clean_install", False)) and (root / "package-lock.json").exists()
@@ -1235,9 +1795,21 @@ class NodeRunner(ProjectRunner):
         if action == "lint" and "lint" not in scripts and "check" in scripts:
             script = "check"
         if script:
-            if script not in scripts:
-                raise SystemExit(f"package.json has no '{script}' script.")
-            return [CommandSpec(action.replace("wine-", ""), self._script_argv(config, script), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, node_script=script))]
+            selected_scripts = [script]
+            if action in {"test", "wine-test"}:
+                from .test_selection import apply_test_selection, resolve_test_selection
+                selected = resolve_test_selection(config)
+                if selected.tasks:
+                    selected_scripts = selected.tasks
+            specs: list[CommandSpec] = []
+            for selected_script in selected_scripts:
+                if selected_script not in scripts:
+                    raise SystemExit(f"package.json has no '{selected_script}' script.")
+                spec = CommandSpec(action.replace("wine-", ""), self._script_argv(config, selected_script), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, node_script=selected_script))
+                if action in {"test", "wine-test"}:
+                    spec = apply_test_selection(config, spec)
+                specs.append(spec)
+            return specs
         if action == "run":
             script = "start" if "start" in scripts else "dev" if "dev" in scripts else ""
             if not script:
@@ -1266,7 +1838,7 @@ class NodeRunner(ProjectRunner):
 class RustRunner(ProjectRunner):
     kind = "rust"
     display_name = "Rust/Cargo"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -1314,7 +1886,11 @@ class RustRunner(ProjectRunner):
             argv = [*base, "clean"]
         else:
             raise SystemExit(f"Unsupported Rust action: {action}")
-        return [CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))]
+        spec = CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))
+        if action in {"test", "wine-test"}:
+            from .test_selection import apply_test_selection
+            spec = apply_test_selection(config, spec)
+        return [spec]
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
         options = self._options(config)
@@ -1350,7 +1926,7 @@ class RustRunner(ProjectRunner):
 class GoRunner(ProjectRunner):
     kind = "go"
     display_name = "Go"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -1392,7 +1968,11 @@ class GoRunner(ProjectRunner):
             argv = ["go", "clean", "-cache", "-testcache"]
         else:
             raise SystemExit(f"Unsupported Go action: {action}")
-        return [CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))]
+        spec = CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))
+        if action in {"test", "wine-test"}:
+            from .test_selection import apply_test_selection
+            spec = apply_test_selection(config, spec)
+        return [spec]
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
         options = self._options(config)
@@ -1428,7 +2008,7 @@ class GoRunner(ProjectRunner):
 class MavenRunner(ProjectRunner):
     kind = "maven"
     display_name = "Maven"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -1463,7 +2043,11 @@ class MavenRunner(ProjectRunner):
         }.get(action)
         if goals is None:
             raise SystemExit(f"Unsupported Maven action: {action}")
-        return [CommandSpec(action.replace("wine-", ""), [*self._base(config), *goals], env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))]
+        spec = CommandSpec(action.replace("wine-", ""), [*self._base(config), *goals], env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))
+        if action in {"test", "wine-test", "verify"}:
+            from .test_selection import apply_test_selection
+            spec = apply_test_selection(config, spec)
+        return [spec]
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
         options = self._options(config)
@@ -1498,7 +2082,7 @@ class MavenRunner(ProjectRunner):
 class CMakeRunner(ProjectRunner):
     kind = "cmake"
     display_name = "CMake"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -1558,7 +2142,9 @@ class CMakeRunner(ProjectRunner):
             return specs
         if action in {"test", "wine-test"}:
             argv = ["ctest", "--test-dir", str(build_dir), "--parallel", str(workers), "--output-on-failure"]
-            return [CommandSpec("test", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            spec = CommandSpec("test", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))
+            from .test_selection import apply_test_selection
+            return [apply_test_selection(config, spec)]
         if action == "package":
             return [CommandSpec("package", ["cpack", "--config", str(build_dir / "CPackConfig.cmake")], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
         if action == "clean":
@@ -1589,7 +2175,7 @@ class CMakeRunner(ProjectRunner):
 class MesonRunner(ProjectRunner):
     kind = "meson"
     display_name = "Meson"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -1632,7 +2218,9 @@ class MesonRunner(ProjectRunner):
             specs.append(CommandSpec("build", ["meson", "compile", "-C", str(build_dir), "-j", str(workers)], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir))))
             return specs
         if action in {"test", "wine-test"}:
-            return [CommandSpec("test", ["meson", "test", "-C", str(build_dir), "--num-processes", str(workers), "--print-errorlogs"], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            spec = CommandSpec("test", ["meson", "test", "-C", str(build_dir), "--num-processes", str(workers), "--print-errorlogs"], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))
+            from .test_selection import apply_test_selection
+            return [apply_test_selection(config, spec)]
         if action == "package":
             return [CommandSpec("package", ["meson", "dist", "-C", str(build_dir), "--no-tests"], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
         if action == "clean":
@@ -1684,7 +2272,7 @@ class MakeRunner(ProjectRunner):
         targets = self._targets(config)
         return RunnerCapabilities(
             restore=bool(config.restore_command), build=True,
-            test="test" in targets or bool(config.test_command), validate=True,
+            test="test" in targets or bool(config.test_command), selective_tests=True, validate=True,
             lint=any(name in targets for name in ("lint", "check")),
             run=bool(config.run_command), package=any(name in targets for name in ("package", "dist")) or bool(config.package_command),
             clean="clean" in targets, inspect=True, doctor=True,
@@ -1702,7 +2290,16 @@ class MakeRunner(ProjectRunner):
         if action == "build":
             target = str(self._options(config).get("build_target") or "")
         elif action in {"test", "wine-test"}:
-            target = "test"
+            from .test_selection import resolve_test_selection
+            selected = resolve_test_selection(config)
+            requested_targets = selected.tasks or ["test"]
+            specs: list[CommandSpec] = []
+            for requested_target in requested_targets:
+                if requested_target and requested_target not in targets and not config.test_command:
+                    raise SystemExit(f"Makefile has no '{requested_target}' target.")
+                argv = ["make", "-j", str(workers), *( [requested_target] if requested_target else [])]
+                specs.append(CommandSpec("test", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, make_target=requested_target)))
+            return specs
         elif action == "lint":
             target = "lint" if "lint" in targets else "check"
         elif action == "package":

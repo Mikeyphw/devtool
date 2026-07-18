@@ -82,9 +82,13 @@ devtool test --failed
 devtool test --changed --changed-from origin/main
 ```
 
-Python projects now receive manager-aware restore, test, lint, PEP 517 build,
-package verification, clean-install smoke testing, and optional import smoke
-testing. Existing uv, Poetry, PDM, Pipenv, and Hatch metadata is respected.
+Python projects now receive reproducible manager-aware environments, strict
+configuration parsing, affected-file tests and lint, validator dependency
+resolution, coverage and source audits, native-extension diagnostics, verified
+wheel/sdist parity, clean import and CLI checks, optional matrices, notebooks,
+databases, service lifecycle checks, security scanning, SBOMs, and reproducible
+build gates. Existing uv, Poetry, PDM, Pipenv, Hatch, tox, and nox metadata is
+respected.
 
 See [`docs/ANDROID_PROJECTS.md`](docs/ANDROID_PROJECTS.md),
 [`docs/TEST_SELECTION.md`](docs/TEST_SELECTION.md), and
@@ -317,17 +321,28 @@ cd "$HOME/Code/devtool"
 ```
 
 The installer detects desktop Linux versus Android/Termux and offers to build
-and install the matching native app. On desktop it packages and installs the
-Control Center, then removes the temporary `.deb` only after a successful
-installation. On Android it rebuilds the stable tracked APK only when sources
-are newer and installs it with `sudo pm install -r`.
+and install the matching native app. It fingerprints build-relevant source
+inputs rather than trusting timestamps. On desktop it rebuilds only when the
+installed package is missing, its version differs, or relevant sources changed.
+The temporary `.deb` is removed only after a successful installation.
 
-The desktop flow also offers to install the clipboard monitor service or update
-the existing user service. Non-interactive examples:
+On Termux, the Android companion is built through Devtool's repo-owned
+`android_hud` target in the `androidos` chroot. The tracked APK is copied under
+`$TMPDIR` before installation with `su -c pm install -r`. Installation is
+skipped when the installed APK already has the same SHA-256 hash.
+
+The Android flow also asks whether to create and install the optional KernelSU
+root bridge module. Its ZIP is built directly under `$TMPDIR` and installed with
+`su -c ksud install`; an unchanged installed module is skipped. The desktop flow
+offers to install or update the clipboard monitor service.
+
+Non-interactive examples:
 
 ```bash
 ./install.sh --yes --with-app --with-clipboard-service
-./install.sh --app android --with-app
+./install.sh --app android --with-app --with-root-module
+./install.sh --app android --with-app --without-root-module
+./install.sh --app android --force-app-build --force-root-module-build
 ./install.sh --without-app --without-clipboard-service
 ```
 
@@ -445,3 +460,9 @@ History search now keeps a case-folded in-memory index, Android test-catalog
 items cache their search key and avoid one giant concatenated output buffer, and
 the diagnostics parser routes common diagnostic families before the generic
 regular-expression chain. See `docs/UI_REGRESSION.md`.
+
+## Structured logs and retention
+
+Devtool run logs are retained under the XDG state directory and rotated automatically. Defaults keep at most 120 logs for 30 days, cap retained data at 128 MiB, and bound an individual log to 12 MiB while preserving its beginning and newest output. Tune these limits with `DEVTOOL_LOG_MAX_FILES`, `DEVTOOL_LOG_MAX_AGE_DAYS`, `DEVTOOL_LOG_MAX_TOTAL_MB`, and `DEVTOOL_LOG_MAX_FILE_MB`.
+
+The Android companion keeps a separate private structured app log. Its Logs page can browse either stream, search and filter entries, open bounded Devtool log tails through Termux RunCommand, copy/share visible output, rotate retained Devtool logs, or clear each stream independently.

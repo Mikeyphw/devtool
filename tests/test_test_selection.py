@@ -70,3 +70,90 @@ class TestCatalogTests(unittest.TestCase):
         self.assertIn("unit", marker)
         self.assertIn("not slow", marker)
         self.assertTrue(PythonRunner.capabilities.selective_tests)
+
+    def test_python_selection_does_not_inject_pytest_flags_into_tox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            (root / "tox.ini").write_text("[tox]\nenvlist=py\n", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={
+                    "python": {"manager": "uv", "test_framework": "tox"},
+                    "test_selection": {"selectors": ["parser"], "tags": ["fast"]},
+                },
+            )
+            spec = build_specs(config, "test")[0]
+        self.assertIn("tox", spec.argv)
+        self.assertNotIn("-k", spec.argv)
+        self.assertNotIn("parser", spec.argv)
+        self.assertNotIn("fast", spec.argv)
+
+    def test_custom_python_test_command_needs_explicit_pytest_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                test_command="tox -e py312",
+                runner_options={"test_selection": {"selectors": ["parser"]}},
+            )
+            spec = build_specs(config, "test")[0]
+        self.assertEqual(spec.argv, ["tox", "-e", "py312"])
+
+class ValidationTestSelectionCliAndRunnerTests(unittest.TestCase):
+    def test_android_validation_task_selection_accepts_multiple_tasks(self) -> None:
+        from devtool.android_integration import configured_tasks
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="android",
+                runner_options={"test_selection": {"tasks": [":media:test", ":app:testDebugUnitTest"]}},
+            )
+            self.assertEqual(configured_tasks(config, "test"), [":media:test", ":app:testDebugUnitTest"])
+
+    def test_node_validation_task_selection_chooses_named_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text(
+                '{"scripts":{"test":"vitest","test:unit":"vitest run unit"}}',
+                encoding="utf-8",
+            )
+            config = ProjectConfig(
+                repo_root=root,
+                kind="node",
+                runner_options={"test_selection": {"tasks": ["test:unit"]}},
+            )
+            spec = build_specs(config, "test")[0]
+        self.assertEqual(spec.argv[:3], ["npm", "run", "test:unit"])
+        self.assertEqual(spec.metadata.get("node_script"), "test:unit")
+
+    def test_go_validation_selector_translates_to_run_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "go.mod").write_text("module example.com/demo\n", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                kind="go",
+                runner_options={"test_selection": {"methods": ["TestParser"]}},
+            )
+            spec = build_specs(config, "test")[0]
+        self.assertIn("-run", spec.argv)
+        self.assertEqual(spec.argv[spec.argv.index("-run") + 1], "TestParser")
+
+    def test_cmake_validation_selector_translates_to_ctest_regex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="cmake",
+                runner_options={"test_selection": {"selectors": ["parser"]}},
+            )
+            spec = build_specs(config, "test")[0]
+        self.assertIn("-R", spec.argv)
+        self.assertEqual(spec.argv[spec.argv.index("-R") + 1], "parser")

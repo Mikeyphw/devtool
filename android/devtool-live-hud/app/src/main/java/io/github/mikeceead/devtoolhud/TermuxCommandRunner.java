@@ -167,13 +167,18 @@ final class TermuxCommandRunner {
         shell.append("export DEVTOOL_HUD_OVERLAY=").append(overlay ? "1" : "0").append("; ");
         shell.append("export DEVTOOL_ANDROID_HUD_AUTOSTART=1; ");
         String bridgePackage = context.getPackageName();
+        String bridgeComponent = bridgePackage + "/" + BridgeReceiver.class.getName();
         shell.append("export DEVTOOL_ANDROID_HUD_PACKAGE=")
                 .append(shellQuote(bridgePackage)).append("; ");
+        shell.append("export DEVTOOL_ANDROID_HUD_COMPONENT=")
+                .append(shellQuote(bridgeComponent)).append("; ");
+        shell.append("export DEVTOOL_ANDROID_HUD_ACTION_PREFIX=")
+                .append(shellQuote("io.github.mikeceead.devtoolhud")).append("; ");
         // A shell-start acknowledgement distinguishes a command that has not
         // launched from one whose devtool bridge is still warming up.
-        shell.append("/system/bin/am broadcast --user 0 -n ")
-                .append(shellQuote(bridgePackage + "/.BridgeReceiver"))
-                .append(" -a ").append(shellQuote(bridgePackage + ".UPDATE"))
+        shell.append("/system/bin/am broadcast --user 0 -f 0x20 -n ")
+                .append(shellQuote(bridgeComponent))
+                .append(" -a ").append(shellQuote("io.github.mikeceead.devtoolhud.UPDATE"))
                 .append(" --es token ").append(shellQuote(BridgeSecrets.getOrCreateToken(context)))
                 .append(" --es run_id ").append(shellQuote(runId))
                 .append(" --es status waiting --es task ").append(shellQuote("Starting Devtool"))

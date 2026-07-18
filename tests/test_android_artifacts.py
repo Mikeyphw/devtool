@@ -85,6 +85,93 @@ class AndroidArtifactVerificationTests(unittest.TestCase):
         self.assertTrue(metadata["used_cached_outputs"])
         self.assertFalse(issues)
 
+
+    def test_chroot_collection_skips_host_sdk_verifiers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._apk(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                execution_environment="chroot",
+                runner_options={"artifacts": {"required": True}},
+            )
+            with patch("devtool.android_artifacts._tool_from_sdk") as tool_lookup:
+                metadata, issues = collect_and_verify_android_artifacts(
+                    config, project_root=root, started_at=0
+                )
+
+        self.assertEqual(metadata["valid"], 1)
+        self.assertEqual(metadata["invalid"], 0)
+        self.assertFalse(metadata["external_verification"]["executed"])
+        self.assertIn("chroot", metadata["external_verification"]["skip_reason"])
+        tool_lookup.assert_not_called()
+        self.assertFalse(issues)
+
+    def test_debug_badging_failure_is_nonfatal_notice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            apk = self._apk(root)
+
+            def find_tool(name: str):
+                return "/fake/aapt2" if name == "aapt2" else None
+
+            with (
+                patch("devtool.android_artifacts._tool_from_sdk", side_effect=find_tool),
+                patch("devtool.android_artifacts._run_tool", return_value=(1, "badging unavailable")),
+            ):
+                record, issues = verify_android_artifact(
+                    apk, repo_root=root, project_root=root
+                )
+
+        self.assertTrue(record.valid)
+        self.assertEqual([issue.severity for issue in issues], ["warning"])
+        self.assertEqual(issues[0].code, "AAPT2_BADGING")
+
+    def test_release_signature_failure_remains_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            apk = self._apk(root, "app-release.apk")
+
+            def find_tool(name: str):
+                return "/fake/apksigner" if name == "apksigner" else None
+
+            with (
+                patch("devtool.android_artifacts._tool_from_sdk", side_effect=find_tool),
+                patch("devtool.android_artifacts._run_tool", return_value=(1, "DOES NOT VERIFY")),
+            ):
+                record, issues = verify_android_artifact(
+                    apk, repo_root=root, project_root=root
+                )
+
+        self.assertFalse(record.valid)
+        self.assertTrue(any(issue.code == "SIGNATURE" and issue.severity == "error" for issue in issues))
+
+    def test_required_external_verification_fails_when_tools_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._apk(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "artifacts": {
+                        "required": True,
+                        "external_verification": "required",
+                    }
+                },
+            )
+            with patch("devtool.android_artifacts._tool_from_sdk", return_value=None):
+                metadata, issues = collect_and_verify_android_artifacts(
+                    config, project_root=root, started_at=0
+                )
+
+        self.assertEqual(metadata["invalid"], 1)
+        self.assertTrue(any(issue.code == "AAPT2_BADGING" for issue in issues))
+        self.assertTrue(any(issue.code == "SIGNATURE" for issue in issues))
+
     def test_cached_fallback_ignores_unrequested_android_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

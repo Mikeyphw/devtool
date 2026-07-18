@@ -1,4 +1,27 @@
 # Changelog
+- Fixed successful Android validation being rolled back when Gradle infrastructure notices were counted against an artifact's zero-warning policy; expectation failures are now printed explicitly, and lint receives a bounded 512 MiB metaspace cap.
+
+## Unreleased
+
+- Made native-app installation fingerprint-aware: desktop packages rebuild only when relevant sources or the packaged version change, while Android APKs rebuild through the repo-owned `android_hud` chroot target and reinstall only when the installed APK hash differs.
+- Added an optional smart KernelSU root-bridge module flow. The module is built directly under `$TMPDIR`, installed with `su -c ksud install`, and skipped when its source fingerprint and installed version are current. Android APK installation likewise stages under `$TMPDIR` before `su -c pm install -r`.
+- Added a repo-owned `.devtool.toml` with an explicit Android HUD target pinned to the `androidos` chroot and constrained Gradle settings.
+
+- Added bounded Devtool log rotation with age, count, total-size, and per-file retention controls.
+- Added machine-readable `devtool logs list/read/prune/clear` operations for companion and automation clients.
+- Added independent structured JSONL logging for the Android companion app, including crash, bridge, Termux, lifecycle, and launch diagnostics.
+- Added a five-tab Android log viewer with Devtool/App sources, search, level filters, bounded log tails, copy/share actions, and separate retention controls.
+
+- Fixed Android companion HUD discovery for debug and release application IDs. Manual Termux runs now target the installed package with the fully qualified `BridgeReceiver` class, honor explicit component overrides, persist package/component pairing markers, include stopped packages in bridge broadcasts, and report bridge preflight failures instead of silently losing notifications.
+- Rebuilt Python handling around strict project inspection, manager-aware reproducible environments, dependency fingerprints, project-environment artifact validators, framework-safe selection, affected-file validation, structured lint/type/coverage reporting, clean wheel and sdist verification, native/workspace/matrix support, service/database/notebook gates, SBOM and reproducible builds, and target-aware cleanup.
+- Python package verification now validates wheel `RECORD` hashes and sizes, rechecks wheels rebuilt from sdists, clears stale distribution output only when execution begins, and defaults to clean installed-wheel import and console-script smoke tests.
+- Python isolation now sanitizes ambient interpreter variables, can enforce a real Linux network namespace, installs PEP 735/Poetry/PDM validator groups into cached validator environments, executes notebooks from disposable copies, and safely terminates services before collecting output.
+
+- Added artifact-aware Android lint planning: validation now lints only changed Gradle modules, skips lint for documentation-only overlays, falls back to full lint for shared build configuration changes, and enforces a 512 MiB lint metaspace floor even when the general validation cap is lower.
+- Reworked Android validation memory protection to use `MemAvailable`, swap headroom, PSI stalls, and memory trend together; healthy KSP dips around 450 MiB no longer roll back, and duplicate parent/child memory watchdogs no longer reclaim caches twice.
+- Made Android validation memory handling root-aware: hairline `MemAvailable` dips no longer abort builds, sustained and hard-emergency thresholds remain enforced, and Termux root may perform one conservative clean-page-cache reclaim before rollback.
+- Added `--ignore-checksum` for checksum-only artifact recovery without disabling repository, inventory, size, conflict, or validation-policy checks.
+- Added an Android-safe validation profile that splits Gradle validation phases, limits workers, logical CPUs, and heap, disables parallel/daemon-heavy behavior, lowers process priority, and aborts before critically low free memory can destabilize the phone.
 
 ## 1.1.0-rc.6 — 2026-07-16
 

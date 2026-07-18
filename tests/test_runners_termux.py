@@ -9,6 +9,71 @@ from unittest.mock import patch
 from devtool.models import CommandSpec, ProjectConfig
 from devtool.tasker import TaskerProgressSink
 from devtool.runners import run_specs
+from devtool.termux_chroot_runner import wrap_specs_for_termux_host_chroot
+
+
+class TermuxHostChrootEnvironmentTests(unittest.TestCase):
+    def test_resource_environment_is_exported_inside_chroot(self) -> None:
+        spec = CommandSpec(
+            "android-validation-build",
+            ["python3", "/home/mike/.local/share/devtool/build-apk"],
+            cwd="/data/data/com.termux/files/home/Code/demo",
+            env={
+                "DEVTOOL_MAX_WORKERS": "1",
+                "GRADLE_USER_HOME": "/home/mike/.gradle",
+            },
+        )
+        wrapped = wrap_specs_for_termux_host_chroot(
+            [spec],
+            "androidos",
+            repo_root="/data/data/com.termux/files/home/Code/demo",
+            env={
+                "HOME": "/data/data/com.termux/files/home",
+                "DEVTOOL_TERMUX_CHROOT_USER": "mike",
+            },
+        )[0]
+        command = wrapped.argv[-1]
+        self.assertIn("DEVTOOL_MAX_WORKERS=1", command)
+        self.assertIn("GRADLE_USER_HOME=/home/mike/.gradle", command)
+
+    def test_termux_cache_paths_are_translated_for_chroot_execution(self) -> None:
+        termux_home = "/data/data/com.termux/files/home"
+        spec = CommandSpec(
+            "android-validation-build",
+            ["python3", f"{termux_home}/.local/share/devtool/runtime/android/build-apk"],
+            cwd=f"{termux_home}/Code/demo",
+            env={
+                "DEVTOOL_BUILD_ENVIRONMENT": "native-termux",
+                "DEVTOOL_BUILD_CACHE_ROOT": (
+                    f"{termux_home}/.cache/devtool/build/native-termux/android"
+                ),
+                "GRADLE_USER_HOME": f"{termux_home}/.gradle",
+            },
+        )
+
+        wrapped = wrap_specs_for_termux_host_chroot(
+            [spec],
+            "androidos",
+            repo_root=f"{termux_home}/Code/demo",
+            env={"HOME": termux_home},
+        )[0]
+        command = wrapped.argv[-1]
+
+        self.assertIn("DEVTOOL_BUILD_ENVIRONMENT=chroot", command)
+        self.assertIn(
+            "DEVTOOL_BUILD_CACHE_ROOT=/home/termux/.cache/devtool/build/chroot/android",
+            command,
+        )
+        self.assertIn("GRADLE_USER_HOME=/home/termux/.gradle", command)
+        self.assertNotIn(termux_home, command)
+        self.assertEqual(
+            wrapped.metadata["chroot_translated_env"],
+            [
+                "DEVTOOL_BUILD_CACHE_ROOT",
+                "DEVTOOL_BUILD_ENVIRONMENT",
+                "GRADLE_USER_HOME",
+            ],
+        )
 
 
 class RunnersTermuxTests(unittest.TestCase):

@@ -165,6 +165,8 @@ def test_android_frontend_has_visual_run_builder_history_and_shared_run_identity
     assert "RunStore.started" in runner
     assert "DEVTOOL_RUN_ID" in runner
     assert "DEVTOOL_ANDROID_HUD_TOKEN" in runner
+    assert "DEVTOOL_ANDROID_HUD_COMPONENT" in runner
+    assert "BridgeReceiver.class.getName()" in runner
     assert "MAX_RUNS" in store
     assert "Copy output" in main
 
@@ -197,6 +199,9 @@ def test_android_frontend_uses_dynamic_tiles_bottom_navigation_and_one_tap_token
     assert "Install token" in token
     assert "Update token" in token
     assert "DEVTOOL_BRIDGE_TOKEN_OK" in token
+    assert "android-live-hud.package" in token
+    assert "android-live-hud.component" in token
+    assert "BridgeReceiver.class.getName()" in token
     assert "runBridgeOperation" in runner
     assert "BridgeTokenManager.handleResult" in result
     assert "LinearLayout tile(" in ui

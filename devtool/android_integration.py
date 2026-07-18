@@ -12,11 +12,12 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 from typing import Any, Iterable
 
-from .build_optimization import resolve_build_policy
+from .build_optimization import resolve_android_validation_policy, resolve_build_policy
 from . import android_build
 from .execution_environments import CHROOT, NATIVE_TERMUX, detect_current_environment
 from .models import ProjectConfig
@@ -45,10 +46,12 @@ def android_project_root(config: ProjectConfig) -> Path:
 
 
 def _android_runtime_dir() -> Path:
-    """Runtime assets stored in Termux HOME and mapped into the chroot."""
+    """Runtime assets stored in a host path that can be mapped into chroot."""
     explicit = os.environ.get("DEVTOOL_ANDROID_RUNTIME_DIR", "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
+    if os.environ.get("DEVTOOL_XDG_DIR", "").strip():
+        return data_dir().resolve()
     return (
         Path.home()
         / ".local"
@@ -131,11 +134,12 @@ def configured_tasks(config: ProjectConfig, action: str) -> list[str]:
     if action == "test":
         try:
             from .test_selection import resolve_test_selection
-            selected_task = resolve_test_selection(config).task
+            selected = resolve_test_selection(config)
+            selected_tasks = list(selected.tasks)
         except Exception:
-            selected_task = ""
-        if selected_task:
-            return [selected_task]
+            selected_tasks = []
+        if selected_tasks:
+            return selected_tasks
     tasks = _dict_option(config, "tasks")
     aliases = {
         "restore": ("restore", "configure"),
@@ -174,6 +178,176 @@ def configured_tasks(config: ProjectConfig, action: str) -> list[str]:
     return []
 
 
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, (list, tuple, set)):
+        values: list[str] = []
+        for item in value:
+            values.extend(_string_list(item))
+        return values
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _validation_changed_paths(config: ProjectConfig) -> list[str]:
+    validation = _dict_option(config, "validation")
+    return list(dict.fromkeys(
+        item.replace("\\", "/").lstrip("./")
+        for item in _string_list(validation.get("changed_paths"))
+        if item.strip()
+    ))
+
+
+def _is_android_module_build_file(build_file: Path) -> bool:
+    try:
+        text = build_file.read_text(encoding="utf-8", errors="ignore").lower()
+    except OSError:
+        return False
+    markers = (
+        "com.android.application",
+        "com.android.library",
+        "com.android.dynamic-feature",
+        "com.android.test",
+        "plugins.android.application",
+        "plugins.android.library",
+        "androidapplication",
+        "androidlibrary",
+    )
+    return any(marker in text for marker in markers) or bool(
+        re.search(r"(?m)^\s*android\s*\{", text)
+    )
+
+
+def _gradle_module_directories(root: Path) -> dict[Path, str]:
+    modules: dict[Path, str] = {}
+    ignored = {".git", ".gradle", "build", "out", "node_modules"}
+    for name in ("build.gradle.kts", "build.gradle"):
+        for build_file in root.rglob(name):
+            relative = build_file.relative_to(root)
+            if any(part in ignored for part in relative.parts):
+                continue
+            module_dir = build_file.parent.resolve()
+            if module_dir == root.resolve() or not _is_android_module_build_file(build_file):
+                continue
+            module_name = ":" + ":".join(module_dir.relative_to(root).parts)
+            modules[module_dir] = module_name
+    return modules
+
+
+def _is_gradle_wide_change(path: str) -> bool:
+    lowered = path.lower().strip("/")
+    name = lowered.rsplit("/", 1)[-1]
+    parts = set(lowered.split("/"))
+    if name in {
+        "settings.gradle",
+        "settings.gradle.kts",
+        "gradle.properties",
+        "libs.versions.toml",
+        "gradlew",
+        "gradlew.bat",
+        "gradle-wrapper.properties",
+        "gradle-wrapper.jar",
+        ".devtool.toml",
+    }:
+        return True
+    if "/" not in lowered and (name.endswith(".gradle") or name.endswith(".gradle.kts")):
+        return True
+    if lowered.startswith("gradle/wrapper/"):
+        return True
+    return bool(parts & {"buildsrc", "build-logic"})
+
+
+def android_validation_lint_tasks(
+    config: ProjectConfig,
+) -> tuple[list[str], str, list[str]]:
+    """Return lint tasks, scope and affected modules for validation.
+
+    Direct ``devtool lint`` remains a full-project operation.  Artifact-backed
+    validation may safely lint only modules whose files changed, while changes
+    to shared Gradle configuration retain the conservative root lint fallback.
+    """
+
+    default_tasks = configured_tasks(config, "lint")
+    if not default_tasks:
+        return [], "disabled", []
+
+    validation = _dict_option(config, "validation")
+    if validation.get("affected_module_lint") is False:
+        return default_tasks, "full-configured", []
+
+    changed_paths = _validation_changed_paths(config)
+    if not changed_paths:
+        return default_tasks, "full-no-change-data", []
+
+    root = android_project_root(config)
+    repo_root = config.repo_root.expanduser().resolve()
+    try:
+        project_prefix = root.relative_to(repo_root).as_posix().strip("/")
+    except ValueError:
+        project_prefix = ""
+
+    android = _dict_option(config, "android")
+    variant = str(config.variant or android.get("variant", "debug") or "debug").strip()
+    variant_title = variant[:1].upper() + variant[1:]
+    expected_root_task = "lint" + variant_title
+    normalized_defaults = [task.lstrip(":") for task in default_tasks]
+    if normalized_defaults != [expected_root_task]:
+        return default_tasks, "full-custom-task", []
+
+    relative_changes: list[str] = []
+    outside_gradle_change = False
+    for raw in changed_paths:
+        path = raw.strip("/")
+        if not path:
+            continue
+        if project_prefix:
+            if path == project_prefix:
+                relative_changes.append("")
+            elif path.startswith(project_prefix + "/"):
+                relative_changes.append(path[len(project_prefix) + 1:])
+            elif _is_gradle_wide_change(path):
+                outside_gradle_change = True
+        else:
+            relative_changes.append(path)
+
+    if outside_gradle_change or any(_is_gradle_wide_change(path) for path in relative_changes):
+        return default_tasks, "full-gradle-wide-change", []
+
+    modules = _gradle_module_directories(root)
+    affected: set[str] = set()
+    for relative in relative_changes:
+        if not relative:
+            continue
+        absolute = (root / relative).resolve()
+        candidates = [
+            (module_dir, module_name)
+            for module_dir, module_name in modules.items()
+            if absolute == module_dir or module_dir in absolute.parents
+        ]
+        if candidates:
+            _, module_name = max(candidates, key=lambda item: len(item[0].parts))
+            affected.add(module_name)
+            continue
+        # A root Android module can keep sources directly below the build root.
+        if relative.startswith(("src/", "AndroidManifest.xml")):
+            affected.add("")
+
+    if not affected:
+        return [], "skipped-non-code-changes", []
+
+    module_names = sorted(affected)
+    tasks = [
+        f"{module}:lint{variant_title}" if module else expected_root_task
+        for module in module_names
+    ]
+    return tasks, "affected-modules", module_names
+
+
 def _append_option(argv: list[str], flag: str, value: Any) -> None:
     if value is None or value == "":
         return
@@ -185,6 +359,7 @@ def android_builder_arguments_for_tasks(
     tasks: Iterable[str],
     *,
     scan_artifacts: bool,
+    validation: bool = False,
 ) -> list[str]:
     root = android_project_root(config)
     android = _dict_option(config, "android")
@@ -211,9 +386,41 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--cmake-version", android.get("cmake_version", "auto"))
     _append_option(argv, "--gradle-command", gradle.get("command"))
     _append_option(argv, "--gradle-version", gradle.get("version"))
-    _append_option(argv, "--max-workers", gradle.get("max_workers") or android.get("max_workers") or resolve_build_policy(config, config.kind).max_workers)
+    validation_policy = resolve_android_validation_policy(config) if validation else None
+    max_workers = (
+        validation_policy.max_workers
+        if validation_policy is not None
+        else gradle.get("max_workers") or android.get("max_workers") or resolve_build_policy(config, config.kind).max_workers
+    )
+    _append_option(argv, "--max-workers", max_workers)
     _append_option(argv, "--system-deps", android.get("system_deps", "auto"))
     _append_option(argv, "--daemon-idle-timeout-ms", gradle.get("daemon_idle_timeout_ms", 900_000))
+    if validation_policy is not None and validation_policy.enabled:
+        _append_option(argv, "--gradle-jvm-heap-mb", validation_policy.gradle_heap_mb)
+        validation_options = _dict_option(config, "validation")
+        configured_metaspace = (
+            validation_options.get("gradle_metaspace_mb")
+            or gradle.get("validation_metaspace_mb")
+        )
+        lint_workload = any("lint" in task.lower() for task in seen_tasks)
+        # Android Lint loads detector classes and lint models for every selected
+        # module.  A general 384 MiB validation setting must not accidentally
+        # erase lint's safer floor, which caused Gradle to expire its daemon in
+        # the XDM multi-module validation run.
+        if lint_workload:
+            lint_metaspace = (
+                validation_options.get("gradle_lint_metaspace_mb")
+                or gradle.get("validation_lint_metaspace_mb")
+            )
+            metaspace_mb = lint_metaspace or max(int(configured_metaspace or 0), 512)
+        else:
+            metaspace_mb = configured_metaspace or 384
+        _append_option(argv, "--gradle-metaspace-mb", metaspace_mb)
+        _append_option(argv, "--memory-guard-mb", validation_policy.memory_guard_mb)
+        _append_option(argv, "--cpu-limit", validation_policy.cpu_limit)
+        argv.append("--constrained")
+        if validation_policy.low_priority:
+            argv.append("--low-priority")
 
     if bool(android.get("skip_sdk_install", False)):
         argv.append("--skip-sdk-install")
@@ -223,9 +430,15 @@ def android_builder_arguments_for_tasks(
         argv.append("--offline")
     if bool(android.get("force_setup", False)):
         argv.append("--force-setup")
-    if bool(gradle.get("no_daemon", False)):
+    no_daemon = bool(gradle.get("no_daemon", False))
+    parallel = bool(gradle.get("parallel", config.kind == "android"))
+    if validation_policy is not None and validation_policy.enabled:
+        validation_options = _dict_option(config, "validation")
+        no_daemon = validation_policy.no_daemon
+        parallel = bool(validation_options.get("parallel", False))
+    if no_daemon:
         argv.append("--no-daemon")
-    if bool(gradle.get("parallel", config.kind == "android")):
+    if parallel:
         argv.append("--parallel")
     if bool(gradle.get("build_cache", True)):
         argv.append("--build-cache")

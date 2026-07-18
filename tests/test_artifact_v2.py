@@ -18,6 +18,7 @@ from devtool.artifacts import (
     validate_artifact,
     write_archive_entries,
 )
+from devtool.artifact_validation import run_artifact_validation_script
 from devtool.cli import _apply_artifact_manifest_defaults, _normalize_command_aliases, build_parser, main
 from devtool.config import load_project_config
 
@@ -204,7 +205,102 @@ class ArtifactV2Tests(unittest.TestCase):
             self.assertFalse(validation.ok)
             self.assertTrue(any("SHA-256 mismatch" in message for message in validation.messages))
 
-    def test_embedded_validator_runs_from_tmpdir_and_is_never_extracted(self) -> None:
+
+    def test_ignore_checksum_preserves_other_inventory_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "existing.txt").write_bytes(b"unexpected base\n")
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "inventory": {
+                    "format": 1,
+                    "entries": [
+                        {
+                            "path": "existing.txt",
+                            "action": "modify",
+                            "source_sha256": "0" * 64,
+                            "sha256": "1" * 64,
+                            "size": 3,
+                        }
+                    ],
+                },
+            }
+            archive = root / "checksum-mismatch.zip"
+            write_archive_entries(
+                archive,
+                {".devtool-artifact.json": json.dumps(manifest).encode(), "existing.txt": b"new"},
+            )
+
+            strict = validate_artifact(repo, archive)
+            self.assertFalse(strict.ok)
+            ignored = validate_artifact(repo, archive, ignore_checksum=True)
+            self.assertTrue(ignored.ok, ignored.messages)
+            self.assertTrue(any("checksum verification skipped" in message for message in ignored.messages))
+
+            manifest["inventory"]["entries"][0]["size"] = 99
+            write_archive_entries(
+                archive,
+                {".devtool-artifact.json": json.dumps(manifest).encode(), "existing.txt": b"new"},
+            )
+            size_failure = validate_artifact(repo, archive, ignore_checksum=True)
+            self.assertFalse(size_failure.ok)
+            self.assertTrue(any("Payload size mismatch" in message for message in size_failure.messages))
+
+    def test_ignore_checksum_propagates_through_overlay_bundles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            payload = b"bundle payload\n"
+            overlay = root / "nested.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "inventory": {
+                    "format": 1,
+                    "entries": [
+                        {"path": "nested.txt", "action": "add", "sha256": "0" * 64, "size": len(payload)}
+                    ],
+                },
+            }
+            write_archive_entries(
+                overlay,
+                {".devtool-artifact.json": json.dumps(manifest).encode(), "nested.txt": payload},
+            )
+            bundle = create_overlay_bundle(root / "bundle.zip", [overlay])
+
+            self.assertFalse(validate_artifact(repo, bundle).ok)
+            ignored = validate_artifact(repo, bundle, ignore_checksum=True)
+            self.assertTrue(ignored.ok, ignored.messages)
+
+    def test_cli_ignore_checksum_applies_overlay_without_disabling_manifest_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            payload = b"ok\n"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "inventory": {
+                    "format": 1,
+                    "entries": [
+                        {"path": "file.txt", "action": "add", "sha256": "0" * 64, "size": len(payload)}
+                    ],
+                },
+            }
+            archive = root / "bad-checksum.zip"
+            write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), "file.txt": payload})
+
+            rc = main(["-r", str(repo), "--yes", "apply-overlay", str(archive), "--ignore-checksum", "--keep-artifact"])
+            self.assertEqual(rc, 0)
+            self.assertEqual((repo / "file.txt").read_bytes(), payload)
+
+    def test_embedded_validator_runs_from_repo_root_and_is_never_extracted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo = root / "repo"
@@ -214,7 +310,7 @@ class ArtifactV2Tests(unittest.TestCase):
             temp_parent.mkdir()
             script = b"""#!/usr/bin/env bash
 set -euo pipefail
-test "$PWD" = "$DEVTOOL_VALIDATION_TMPDIR"
+test "$PWD" = "$DEVTOOL_REPO_ROOT"
 test "$TMPDIR" = "$DEVTOOL_VALIDATION_TMPDIR"
 test -f "$DEVTOOL_REPO_ROOT/payload.txt"
 test ! -e "$DEVTOOL_REPO_ROOT/.devtool-artifact/validate.sh"
@@ -256,6 +352,36 @@ printf 'ran\\n' > "$DEVTOOL_REPO_ROOT/validator-ran.txt"
             self.assertTrue((repo / "validator-ran.txt").exists())
             self.assertFalse((repo / ".devtool-artifact").exists())
             self.assertEqual(list(temp_parent.iterdir()), [])
+
+
+    def test_ignore_checksum_allows_embedded_validator_checksum_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            script = b"#!/usr/bin/env bash\nset -e\ntest \"$PWD\" = \"$DEVTOOL_REPO_ROOT\"\n"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {
+                    "script": {
+                        "path": ".devtool-artifact/validate.sh",
+                        "runner": "bash",
+                        "sha256": "0" * 64,
+                        "timeout_seconds": 30,
+                    }
+                },
+            }
+            archive = root / "script.zip"
+            write_archive_entries(
+                archive,
+                {".devtool-artifact.json": json.dumps(manifest).encode(), ".devtool-artifact/validate.sh": script},
+            )
+            self.assertFalse(validate_artifact(repo, archive).ok)
+            self.assertTrue(validate_artifact(repo, archive, ignore_checksum=True).ok)
+            result = run_artifact_validation_script(repo, archive, ignore_checksum=True)
+            self.assertIsNotNone(result)
+            self.assertEqual(result.returncode, 0)
 
     def test_bundle_dependencies_are_topologically_sorted_and_cycles_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -2,10 +2,50 @@
 kind = "python"
 run_module = "devtool"
 
+[execution]
+environment = "auto"
+chroot_name = "androidos"
+
+[python]
+manager = "auto"
+test_framework = "pytest"
+environment = ".devtool/venvs/python"
+locked = true
+install_project = true
+isolation = true
+
 [targets.android_hud]
 type = "android"
 root = "android/devtool-live-hud"
+execution_environment = "chroot"
+chroot_name = "androidos"
 
 [targets.android_hud.android]
 variant = "debug"
-prefer_native_termux = true
+aapt2_provider = "auto"
+prefer_native_termux = false
+
+[targets.android_hud.gradle]
+max_workers = 1
+parallel = false
+no_daemon = true
+build_cache = true
+structured_events = true
+
+[targets.android_hud.tasks]
+build = ["assembleDebug"]
+test = ["testDebugUnitTest"]
+lint = ["lintDebug"]
+clean = ["clean"]
+
+[targets.android_hud.artifacts]
+required = true
+external_verification = "auto"
+
+[targets.android_hud.validation]
+android_safe = true
+max_workers = 1
+cpu_limit = 2
+parallel = false
+no_daemon = true
+low_priority = true

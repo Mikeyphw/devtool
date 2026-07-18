@@ -31,6 +31,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -68,6 +69,174 @@ def shell_join(parts: Sequence[str | os.PathLike[str]]) -> str:
     return " ".join(shlex.quote(str(part)) for part in parts)
 
 
+def _memory_snapshot() -> tuple[int | None, int | None, int | None, float | None, float | None]:
+    """Return MemAvailable, SwapFree, SwapTotal and memory PSI avg10 values."""
+
+    values: dict[str, int] = {}
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace").splitlines():
+            key, separator, remainder = line.partition(":")
+            if not separator or key not in {"MemAvailable", "SwapFree", "SwapTotal"}:
+                continue
+            values[key] = max(0, int(remainder.strip().split()[0]) // 1024)
+    except (OSError, ValueError, IndexError):
+        pass
+
+    psi_some: float | None = None
+    psi_full: float | None = None
+    try:
+        for line in Path("/proc/pressure/memory").read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines():
+            kind, _, payload = line.partition(" ")
+            fields = {
+                key: value
+                for token in payload.split()
+                if "=" in token
+                for key, value in [token.split("=", 1)]
+            }
+            if kind == "some" and "avg10" in fields:
+                psi_some = float(fields["avg10"])
+            elif kind == "full" and "avg10" in fields:
+                psi_full = float(fields["avg10"])
+    except (OSError, ValueError):
+        pass
+
+    return (
+        values.get("MemAvailable"),
+        values.get("SwapFree"),
+        values.get("SwapTotal"),
+        psi_some,
+        psi_full,
+    )
+
+
+def _available_memory_mb() -> int | None:
+    return _memory_snapshot()[0]
+
+
+def _memory_guard_limits(memory_guard_mb: int) -> tuple[int, int]:
+    """Return adaptive sustained-pressure and hard-emergency thresholds.
+
+    ``memory_guard_mb`` is an early-warning/reclaim threshold, not an abort
+    threshold. Kotlin/KSP can remain healthy below it while page cache and zram
+    absorb the burst, so sustained aborts require corroborating swap, PSI, or
+    downward-trend evidence.
+    """
+
+    sustained = max(320, min(memory_guard_mb - 96, int(memory_guard_mb * 0.70)))
+    hard = max(192, min(sustained - 96, int(memory_guard_mb * 0.50)))
+    return sustained, hard
+
+
+def _critical_memory_pressure(
+    snapshot: tuple[int | None, int | None, int | None, float | None, float | None],
+    history: Sequence[int],
+    sustained_limit: int,
+) -> tuple[bool, str]:
+    """Require corroborating pressure signals before a sustained abort."""
+
+    available, swap_free, swap_total, psi_some, psi_full = snapshot
+    if available is None or available >= sustained_limit:
+        return False, ""
+
+    swap_exhausted = False
+    if swap_total is not None:
+        swap_reserve = max(64, int(swap_total * 0.05))
+        swap_exhausted = swap_total <= 0 or (swap_free or 0) <= swap_reserve
+
+    worsening = len(history) >= 8 and (history[0] - history[-1]) >= 64
+    psi_stalled = (psi_full is not None and psi_full >= 1.0) or (
+        psi_some is not None and psi_some >= 25.0
+    )
+    telemetry_missing = swap_total is None and psi_some is None and psi_full is None
+    critical = (
+        (swap_exhausted and (psi_stalled or worsening))
+        or (psi_stalled and worsening)
+        or (telemetry_missing and worsening)
+    )
+
+    signals: list[str] = []
+    if swap_total is not None:
+        signals.append(f"swap {swap_free or 0}/{swap_total} MiB free")
+    if psi_some is not None:
+        signals.append(f"PSI some avg10={psi_some:.2f}")
+    if psi_full is not None:
+        signals.append(f"PSI full avg10={psi_full:.2f}")
+    if len(history) >= 2:
+        signals.append(f"trend {history[-1] - history[0]:+d} MiB")
+    return critical, ", ".join(signals)
+
+
+def _try_root_cache_reclaim() -> bool:
+    """Drop clean filesystem caches once when root is available.
+
+    This deliberately uses ``drop_caches=1`` only. It does not kill Android
+    applications, alter swap, or drop inode/dentry caches.
+    """
+
+    if os.name != "posix":
+        return False
+    command = "sync; echo 1 > /proc/sys/vm/drop_caches"
+    try:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            os.sync()
+            Path("/proc/sys/vm/drop_caches").write_text("1\n", encoding="ascii")
+            return True
+    except OSError:
+        pass
+
+    candidates: list[list[str]] = []
+    su = shutil.which("su")
+    if su:
+        candidates.append([su, "-c", command])
+    sudo = shutil.which("sudo")
+    shell = shutil.which("sh") or "/bin/sh"
+    if sudo:
+        candidates.append([sudo, "-n", shell, "-c", command])
+    for candidate in candidates:
+        try:
+            result = subprocess.run(
+                candidate,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return True
+    return False
+
+
+def _limit_cpu_command(command: list[str], cpu_limit: int) -> list[str]:
+    if cpu_limit <= 0:
+        return list(command)
+    taskset = shutil.which("taskset")
+    if not taskset:
+        return list(command)
+    try:
+        available = sorted(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        available = list(range(max(1, os.cpu_count() or 1)))
+    selected = available[: max(1, min(cpu_limit, len(available)))]
+    cpu_list = ",".join(str(cpu) for cpu in selected)
+    return [taskset, "--cpu-list", cpu_list, *command]
+
+
+def _lower_priority_command(command: list[str]) -> list[str]:
+    result = list(command)
+    nice = shutil.which("nice")
+    if nice:
+        result = [nice, "-n", "10", *result]
+    ionice = shutil.which("ionice")
+    if ionice:
+        result = [ionice, "-c", "3", *result]
+    return result
+
+
 def run(
     command: Sequence[str | os.PathLike[str]],
     *,
@@ -78,22 +247,130 @@ def run(
     input_text: str | None = None,
     dry_run: bool = False,
     quiet: bool = False,
+    memory_guard_mb: int = 0,
+    low_priority: bool = False,
+    cpu_limit: int = 0,
 ) -> subprocess.CompletedProcess[str]:
     rendered = [str(part) for part in command]
     if not quiet:
         print("+", shell_join(rendered), flush=True)
     if dry_run:
         return subprocess.CompletedProcess(rendered, 0, "", "")
+    if low_priority:
+        rendered = _lower_priority_command(rendered)
+    if cpu_limit > 0:
+        rendered = _limit_cpu_command(rendered, cpu_limit)
     try:
-        result = subprocess.run(
-            rendered,
-            cwd=str(cwd) if cwd else None,
-            env=dict(env) if env else None,
-            text=True,
-            input=input_text,
-            capture_output=capture,
-            check=False,
-        )
+        if memory_guard_mb > 0 and not capture and input_text is None:
+            proc = subprocess.Popen(
+                rendered,
+                cwd=str(cwd) if cwd else None,
+                env=dict(env) if env else None,
+                text=True,
+                start_new_session=(os.name == "posix"),
+            )
+            sustained_limit, hard_limit = _memory_guard_limits(memory_guard_mb)
+            pressure_samples = 0
+            critical_samples = 0
+            hard_samples = 0
+            reclaim_attempted = False
+            guard_tripped = False
+            memory_history: deque[int] = deque(maxlen=12)
+            pressure_details = ""
+            try:
+                while proc.poll() is None:
+                    snapshot = _memory_snapshot()
+                    available = snapshot[0]
+                    if available is not None:
+                        memory_history.append(available)
+                    pressure_samples = (
+                        pressure_samples + 1
+                        if available is not None and available < memory_guard_mb
+                        else 0
+                    )
+                    critical, pressure_details = _critical_memory_pressure(
+                        snapshot, tuple(memory_history), sustained_limit
+                    )
+                    critical_samples = critical_samples + 1 if critical else 0
+                    hard_samples = (
+                        hard_samples + 1
+                        if available is not None and available < hard_limit
+                        else 0
+                    )
+                    if pressure_samples >= 4 and not reclaim_attempted:
+                        reclaim_attempted = True
+                        before = available
+                        if _try_root_cache_reclaim():
+                            time.sleep(0.25)
+                            snapshot = _memory_snapshot()
+                            available = snapshot[0]
+                            warn(
+                                "Memory pressure triggered one root cache reclaim "
+                                f"({before} MiB before; {available} MiB after)."
+                            )
+                            if available is not None:
+                                memory_history.append(available)
+                            if available is not None and available >= memory_guard_mb:
+                                pressure_samples = 0
+                                critical_samples = 0
+                                hard_samples = 0
+                            elif available is not None and available >= sustained_limit:
+                                critical_samples = 0
+                                hard_samples = 0
+                    if hard_samples >= 3 or critical_samples >= 10:
+                        guard_tripped = True
+                        reason = (
+                            "hard emergency floor"
+                            if hard_samples >= 3
+                            else "corroborated sustained pressure"
+                        )
+                        detail_suffix = f"; {pressure_details}" if pressure_details else ""
+                        warn(
+                            f"Emergency memory guard stopped Gradle after {reason}: "
+                            f"{available} MiB available; configured warning guard {memory_guard_mb} MiB; "
+                            f"adaptive sustained threshold {sustained_limit} MiB; hard floor {hard_limit} MiB"
+                            f"{detail_suffix}."
+                        )
+                        try:
+                            if os.name == "posix":
+                                os.killpg(proc.pid, 15)
+                            else:
+                                proc.terminate()
+                        except (OSError, ProcessLookupError):
+                            pass
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            try:
+                                if os.name == "posix":
+                                    os.killpg(proc.pid, 9)
+                                else:
+                                    proc.kill()
+                            except (OSError, ProcessLookupError):
+                                pass
+                        break
+                    time.sleep(1.0)
+            except KeyboardInterrupt:
+                try:
+                    if os.name == "posix":
+                        os.killpg(proc.pid, 15)
+                    else:
+                        proc.terminate()
+                except (OSError, ProcessLookupError):
+                    pass
+                raise
+            returncode = 75 if guard_tripped else int(proc.wait())
+            result = subprocess.CompletedProcess(rendered, returncode, "", "")
+        else:
+            result = subprocess.run(
+                rendered,
+                cwd=str(cwd) if cwd else None,
+                env=dict(env) if env else None,
+                text=True,
+                input=input_text,
+                capture_output=capture,
+                check=False,
+            )
     except PermissionError as exc:
         fail(
             f"Permission denied while launching {rendered[0]}. The executable may "
@@ -1760,6 +2037,12 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-G", "--gradle-version", help="Managed Gradle version when no wrapper is available")
     parser.add_argument("-k", "--cache-dir", type=Path, default=devtool_cache_dir() / APP_NAME)
     parser.add_argument("-w", "--max-workers", type=int, default=max(1, min(4, os.cpu_count() or 2)))
+    parser.add_argument("--gradle-jvm-heap-mb", type=int, default=0, help="Cap the Gradle JVM heap in MiB")
+    parser.add_argument("--gradle-metaspace-mb", type=int, default=0, help="Cap the Gradle JVM metaspace in MiB")
+    parser.add_argument("--memory-guard-mb", type=int, default=0, help="Stop Gradle before system free memory remains below this threshold")
+    parser.add_argument("--cpu-limit", type=int, default=0, help="Limit validation to this many logical CPUs when taskset is available")
+    parser.add_argument("--low-priority", action="store_true", help="Run Gradle with reduced CPU and I/O scheduler priority")
+    parser.add_argument("--constrained", action="store_true", help="Use memory-saving Gradle and Kotlin settings for Android-hosted validation")
     parser.add_argument("-O", "--offline", action="store_true", help="Disable downloads and Gradle network access")
     parser.add_argument("-f", "--force-setup", action="store_true", help="Refresh managed Gradle/AAPT2 downloads")
     parser.add_argument("-m", "--no-daemon", action="store_true", help="Pass --no-daemon to Gradle")
@@ -1778,6 +2061,17 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=900_000,
         help="Keep a reusable Gradle daemon alive for this many idle milliseconds",
+    )
+    parser.add_argument(
+        "--gradle-lock-timeout-ms",
+        type=int,
+        default=int(os.environ.get("DEVTOOL_GRADLE_LOCK_TIMEOUT_MS", "600000") or "600000"),
+        help="Gradle cache/file-lock timeout in milliseconds",
+    )
+    parser.add_argument(
+        "--pre-stop-gradle",
+        action="store_true",
+        help="Stop stale Gradle daemons before probing or running Gradle",
     )
     parser.add_argument(
         "--stop-gradle",
@@ -1817,8 +2111,18 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
         args.project = args.project_dir
     if args.max_workers < 1:
         parser.error("--max-workers must be at least 1")
+    if args.gradle_jvm_heap_mb < 0:
+        parser.error("--gradle-jvm-heap-mb cannot be negative")
+    if args.gradle_metaspace_mb < 0:
+        parser.error("--gradle-metaspace-mb cannot be negative")
+    if args.memory_guard_mb < 0:
+        parser.error("--memory-guard-mb cannot be negative")
+    if args.cpu_limit < 0:
+        parser.error("--cpu-limit cannot be negative")
     if args.daemon_idle_timeout_ms < 0:
         parser.error("--daemon-idle-timeout-ms cannot be negative")
+    if args.gradle_lock_timeout_ms < 0:
+        parser.error("--gradle-lock-timeout-ms cannot be negative")
     args.gradle_args = extra_gradle_args
     return args
 
@@ -1885,12 +2189,65 @@ def stop_gradle_processes(
     info(f"Stopped {len(set(pids + remaining))} remaining Gradle process(es)")
 
 
+def should_cleanup_gradle(args: argparse.Namespace) -> bool:
+    """Return whether this run should release stale or single-use Gradle processes."""
+
+    return bool(
+        args.stop_gradle
+        or args.pre_stop_gradle
+        or (args.no_daemon and args.constrained)
+        or os.environ.get("DEVTOOL_ANDROID_CLEAN_GRADLE", "").strip().lower() in {"1", "true", "yes", "on"}
+    )
+
+
+def gradle_jvmargs(args: argparse.Namespace) -> str | None:
+    """Build one bounded ``org.gradle.jvmargs`` value for constrained runs."""
+
+    explicit_heap = int(args.gradle_jvm_heap_mb or 0)
+    explicit_metaspace = int(args.gradle_metaspace_mb or 0)
+    explicit_cpu = int(args.cpu_limit or 0)
+    if not args.constrained and explicit_heap <= 0 and explicit_metaspace <= 0 and explicit_cpu <= 0:
+        return None
+
+    heap = explicit_heap or int(os.environ.get("DEVTOOL_GRADLE_JVM_HEAP_MB", "") or "0") or 1024
+    if args.memory_guard_mb and heap > args.memory_guard_mb:
+        # Keep room for metaspace, code cache, Kotlin/KSP, D8/R8 and native allocations.
+        heap = max(512, heap - min(256, max(0, args.memory_guard_mb // 2)))
+    metaspace = (
+        explicit_metaspace
+        or int(os.environ.get("DEVTOOL_GRADLE_METASPACE_MB", "") or "0")
+        or min(640, max(384, heap // 2))
+    )
+    cpu_limit = explicit_cpu or int(os.environ.get("DEVTOOL_VALIDATION_CPU_LIMIT", "") or "0")
+    parts = [
+        f"-Xmx{heap}m",
+        f"-XX:MaxMetaspaceSize={metaspace}m",
+        "-XX:ReservedCodeCacheSize=96m",
+        "-Dfile.encoding=UTF-8",
+    ]
+    if cpu_limit > 0:
+        parts.append(f"-XX:ActiveProcessorCount={cpu_limit}")
+    return " ".join(parts)
+
+
+def apply_low_priority(args: argparse.Namespace) -> None:
+    """Lower the builder process priority while retaining per-command ionice support."""
+
+    if not args.low_priority:
+        return
+    try:
+        os.nice(5)
+    except (AttributeError, OSError):
+        pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
     delegated = maybe_reexec_in_chroot(raw_args)
     if delegated is not None:
         return delegated
     args = parse_args(raw_args)
+    apply_low_priority(args)
     project_root = resolve_project_root(args.project)
     project = inspect_project(project_root)
     cache_root = args.cache_dir.expanduser().resolve()
@@ -2019,6 +2376,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     heading("Gradle")
     info(f"Launcher: {gradle}")
+    if should_cleanup_gradle(args):
+        stop_gradle_processes(gradle, project_root, env, dry_run=args.dry_run)
     run([gradle, "--version"], cwd=project_root, env=env, dry_run=args.dry_run)
 
     tasks = list(args.tasks or default_tasks(project))
@@ -2031,6 +2390,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"-Dorg.gradle.java.installations.paths={java_home}",
         "-Dorg.gradle.java.installations.auto-detect=false",
     ]
+    jvmargs = gradle_jvmargs(args)
+    if jvmargs:
+        command.append(f"-Dorg.gradle.jvmargs={jvmargs}")
+    if args.gradle_lock_timeout_ms:
+        command.append(f"-Dorg.gradle.cache.internal.lockTimeout={args.gradle_lock_timeout_ms}")
+    if args.constrained:
+        command.extend([
+            "-Dorg.gradle.parallel=false",
+            "-Dorg.gradle.vfs.watch=false",
+            "-Pkotlin.compiler.execution.strategy=in-process",
+        ])
     # Diagnostics are enabled by default so independent tasks continue and the
     # resulting output is stable and suitable for error parsers and CI logs.
     if args.continue_on_failure:
@@ -2054,7 +2424,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     heading("Build")
     build_started = time.time()
     try:
-        run(command, cwd=project_root, env=env, dry_run=args.dry_run)
+        run(
+            command,
+            cwd=project_root,
+            env=env,
+            dry_run=args.dry_run,
+            memory_guard_mb=args.memory_guard_mb,
+            low_priority=args.low_priority,
+            cpu_limit=args.cpu_limit,
+        )
 
         if args.no_artifact_scan or args.dry_run:
             return 0
@@ -2078,7 +2456,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 info(str(artifact))
         return 0
     finally:
-        if args.stop_gradle and not args.no_daemon:
+        if should_cleanup_gradle(args):
             stop_gradle_processes(
                 gradle,
                 project_root,

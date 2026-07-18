@@ -17,7 +17,7 @@ from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.apply_notifications import build_apply_notification
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, _validation_specs_for_args, build_parser, main
+from devtool.cli import _apply_artifact_validation_defaults, _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, _validation_expectation_result, _validation_specs_for_args, build_parser, main
 from devtool.config import ProjectConfig, load_project_config
 from devtool.log_commands import choose_active_log, parse_log_filename
 from devtool.logstore import write_log
@@ -46,6 +46,54 @@ def _sample_ai_prompt_options(output_format: str = "markdown") -> AiPromptOption
 
 
 class CliTests(unittest.TestCase):
+
+    def test_artifact_inventory_is_forwarded_to_validation_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(repo_root=root, kind="android", runner_options={})
+            args = SimpleNamespace(test_profile="", execution_environment="auto")
+            manifest = {
+                "inventory": {
+                    "entries": [
+                        {"path": "app/src/main/kotlin/Main.kt", "action": "modify"},
+                        {"path": "docs/PHASE.md", "action": "add"},
+                    ]
+                }
+            }
+
+            _apply_artifact_validation_defaults(config, args, manifest)
+
+        validation = config.runner_options["validation"]
+        self.assertEqual(
+            validation["changed_paths"],
+            ["app/src/main/kotlin/Main.kt", "docs/PHASE.md"],
+        )
+        self.assertEqual(validation["changed_paths_source"], "artifact-inventory")
+
+    def test_artifact_warning_gate_ignores_gradle_infrastructure_notices(self) -> None:
+        manifest = {"validation": {"expected": {"maximum_warnings": 0}}}
+        infra = OperationResult(
+            "lint",
+            ["gradlew", "lintDebug"],
+            0,
+            0.0,
+            "ok",
+            [Issue("warning", "lint", "-", "GRADLE_INFRA", "AAPT2 override is experimental")],
+        )
+        source = OperationResult(
+            "lint",
+            ["gradlew", "lintDebug"],
+            0,
+            0.0,
+            "ok",
+            [Issue("warning", "lint", "app/src/Main.kt", "KOTLIN", "unused value")],
+        )
+
+        self.assertIsNone(_validation_expectation_result(manifest, [infra]))
+        failure = _validation_expectation_result(manifest, [infra, source])
+        self.assertIsNotNone(failure)
+        self.assertEqual(failure.returncode, 1)
+        self.assertIn("1 warning", failure.output)
 
     def test_parser_accepts_shared_execution_environment(self) -> None:
         parser = build_parser()
@@ -1512,3 +1560,48 @@ def test_devtool_no_hud_overrides_all_hud_flags(monkeypatch) -> None:
     assert args.tasker_progress is False
     assert args.hud_overlay is False
     assert args.hud_no_overlay is True
+
+class ApplyOverlayValidationSelectionTests(unittest.TestCase):
+    def test_apply_overlay_validate_accepts_test_selection_flags(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args([
+            "--repo", "/repo",
+            "apply-overlay", "--validate",
+            "--task", ":media:test",
+            "--task", ":app:testDebugUnitTest",
+            "--class", "BrowserHandoffParserTest",
+            "artifact.zip",
+        ])
+        self.assertEqual(args.test_task, [":media:test", ":app:testDebugUnitTest"])
+        self.assertEqual(args.test_classes, ["BrowserHandoffParserTest"])
+
+    def test_apply_overlay_validate_forwards_dotnet_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            artifact = root / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("README.txt", "ok")
+            captured: list[list[str]] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.extend(spec.argv for spec in specs)
+                return ([OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")
+
+            with (
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.apply_overlay", return_value=OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])),
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main([
+                    "--repo", str(root), "--yes", "apply-overlay",
+                    "--validate", "--skip-restore", "--skip-build",
+                    "--class", "ParserTests", str(artifact),
+                ])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(captured), 1)
+            self.assertIn("--filter", captured[0])
+            self.assertIn("FullyQualifiedName~ParserTests", captured[0][captured[0].index("--filter") + 1])

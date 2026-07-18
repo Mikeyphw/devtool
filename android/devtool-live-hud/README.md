@@ -60,6 +60,23 @@ startup acknowledgement immediately. After seven seconds without a real
 producer update, the notification explains that the bridge has not connected
 and directs the user to the execution log or visible Termux session.
 
+## Debug and release bridge discovery
+
+The local installer normally installs the debug application ID
+`io.github.mikeceead.devtoolhud.debug`, while signed releases use
+`io.github.mikeceead.devtoolhud`. Devtool probes both packages and always uses
+the receiver's fully qualified Java class,
+`io.github.mikeceead.devtoolhud.BridgeReceiver`, so desktop HUD flags translated
+to `android-bridge` work from manually entered Termux commands as well as runs
+started inside the app.
+
+Installing or updating the bridge token now writes package and component marker
+files beside `android-live-hud.token`. Advanced overrides are available through
+`DEVTOOL_ANDROID_HUD_PACKAGE`, `DEVTOOL_ANDROID_HUD_COMPONENT`, and
+`DEVTOOL_ANDROID_HUD_ACTION_PREFIX`. Bridge discovery failures are printed to
+the invoking terminal and recorded in
+`~/.local/state/devtool/android-hud-bridge-error.log`.
+
 
 ## Staged Run and History workflow
 

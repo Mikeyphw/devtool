@@ -829,7 +829,13 @@ def overlay_bundle_conflicts(bundle: str | Path) -> dict[str, list[str]]:
     return {path: names for path, names in writers.items() if len(names) > 1}
 
 
-def validate_overlay_bundle(repo_root: Path, bundle: str | Path, *, fail_on_conflict: bool = False) -> ArtifactValidation:
+def validate_overlay_bundle(
+    repo_root: Path,
+    bundle: str | Path,
+    *,
+    fail_on_conflict: bool = False,
+    ignore_checksum: bool = False,
+) -> ArtifactValidation:
     manifest = read_overlay_bundle_manifest(bundle)
     messages: list[str] = []
     ok = True
@@ -872,7 +878,13 @@ def validate_overlay_bundle(repo_root: Path, bundle: str | Path, *, fail_on_conf
         except Exception as exc:
             return ArtifactValidation(False, [str(exc)], manifest)
         for entry in entries:
-            validation = validate_artifact(repo_root, entry.path, artifact_type="overlay", check_source_state=False)
+            validation = validate_artifact(
+                repo_root,
+                entry.path,
+                artifact_type="overlay",
+                check_source_state=False,
+                ignore_checksum=ignore_checksum,
+            )
             label = entry.label or Path(entry.bundle_path).name
             target_note = f" target={entry.target}" if entry.target else ""
             prefix = f"[{entry.index}/{len(entries)}] {label}{target_note}"
@@ -931,15 +943,16 @@ def validate_overlay_bundle(repo_root: Path, bundle: str | Path, *, fail_on_conf
         if member_data is None:
             ok = False
             messages.append(f"Bundle validation script is missing from archive: {script_path}")
-        elif not script_sha:
-            ok = False
-            messages.append("validation.script.sha256 is required.")
-        elif not _is_sha256(script_sha):
-            ok = False
-            messages.append("validation.script.sha256 is not a valid SHA-256.")
-        elif hashlib.sha256(member_data).hexdigest().lower() != script_sha:
-            ok = False
-            messages.append("Bundle validation script SHA-256 mismatch.")
+        elif not ignore_checksum:
+            if not script_sha:
+                ok = False
+                messages.append("validation.script.sha256 is required.")
+            elif not _is_sha256(script_sha):
+                ok = False
+                messages.append("validation.script.sha256 is not a valid SHA-256.")
+            elif hashlib.sha256(member_data).hexdigest().lower() != script_sha:
+                ok = False
+                messages.append("Bundle validation script SHA-256 mismatch.")
         if runner not in {"bash", "sh", "python3"}:
             ok = False
             messages.append(f"Unsupported validation script runner: {runner!r}.")
@@ -947,6 +960,8 @@ def validate_overlay_bundle(repo_root: Path, bundle: str | Path, *, fail_on_conf
         if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
             ok = False
             messages.append("validation.script.timeout_seconds must be a positive integer.")
+    if ignore_checksum:
+        messages.append("Warning: checksum verification skipped by --ignore-checksum.")
     if ok:
         messages.insert(0, f"Overlay bundle validation passed ({len(order)} overlay(s)).")
     return ArtifactValidation(ok, messages, manifest)
@@ -1200,6 +1215,7 @@ def _validate_inventory(
     messages: list[str],
     *,
     check_source_state: bool = True,
+    ignore_checksum: bool = False,
 ) -> bool:
     entries = artifact_inventory_entries(manifest)
     if not entries:
@@ -1250,18 +1266,19 @@ def _validate_inventory(
 
         target = repo_root / rel
         source_sha = str(entry.get("source_sha256") or "").strip().lower()
-        if action in {"modify", "delete"} and not source_sha:
-            ok = False
-            messages.append(f"Inventory {action} entry requires source_sha256: {path}")
-        elif source_sha and not _is_sha256(source_sha):
-            ok = False
-            messages.append(f"Inventory source_sha256 is not a valid SHA-256 for {path}.")
+        if not ignore_checksum:
+            if action in {"modify", "delete"} and not source_sha:
+                ok = False
+                messages.append(f"Inventory {action} entry requires source_sha256: {path}")
+            elif source_sha and not _is_sha256(source_sha):
+                ok = False
+                messages.append(f"Inventory source_sha256 is not a valid SHA-256 for {path}.")
         if check_source_state:
             if action in {"modify", "delete"}:
                 if not target.exists() or not target.is_file():
                     ok = False
                     messages.append(f"Inventory expects existing file for {action}: {path}")
-                elif source_sha and sha256_file(target).lower() != source_sha:
+                elif not ignore_checksum and source_sha and sha256_file(target).lower() != source_sha:
                     ok = False
                     messages.append(f"Source SHA-256 mismatch for {path}.")
             elif action == "add" and target.exists() and conflict_policy == "fail":
@@ -1278,7 +1295,7 @@ def _validate_inventory(
             continue
         expected_size = entry.get("size")
         expected_sha = str(entry.get("sha256") or "").strip().lower()
-        if not expected_sha:
+        if not ignore_checksum and not expected_sha:
             ok = False
             messages.append(f"Inventory {action} entry requires sha256: {path}")
         if expected_size is None:
@@ -1288,16 +1305,16 @@ def _validate_inventory(
             ok = False
             messages.append(f"Inventory size must be a non-negative integer for {path}.")
             expected_size = None
-        if expected_sha and not _is_sha256(expected_sha):
+        if not ignore_checksum and expected_sha and not _is_sha256(expected_sha):
             ok = False
             messages.append(f"Inventory sha256 is not a valid SHA-256 for {path}.")
-        if expected_size is not None or expected_sha:
+        if expected_size is not None or (expected_sha and not ignore_checksum):
             # members passed by validate_artifact include data when inventory is present.
             payload = member.data or b""
             if expected_size is not None and len(payload) != expected_size:
                 ok = False
                 messages.append(f"Payload size mismatch for {path}: expected {expected_size}, found {len(payload)}.")
-            if expected_sha and hashlib.sha256(payload).hexdigest().lower() != expected_sha:
+            if not ignore_checksum and expected_sha and hashlib.sha256(payload).hexdigest().lower() != expected_sha:
                 ok = False
                 messages.append(f"Payload SHA-256 mismatch for {path}.")
 
@@ -1314,9 +1331,10 @@ def validate_artifact(
     *,
     artifact_type: str = "overlay",
     check_source_state: bool = True,
+    ignore_checksum: bool = False,
 ) -> ArtifactValidation:
     if artifact_type in {"overlay", "overlay_bundle"} and is_overlay_bundle(artifact):
-        return validate_overlay_bundle(repo_root, artifact)
+        return validate_overlay_bundle(repo_root, artifact, ignore_checksum=ignore_checksum)
     manifest = read_artifact_manifest(artifact)
     messages: list[str] = []
     ok = True
@@ -1401,7 +1419,14 @@ def validate_artifact(
             ok = False
             messages.append("Artifact requires a clean Git worktree.")
 
-    if not _validate_inventory(repo_root, manifest, members, messages, check_source_state=check_source_state):
+    if not _validate_inventory(
+        repo_root,
+        manifest,
+        members,
+        messages,
+        check_source_state=check_source_state,
+        ignore_checksum=ignore_checksum,
+    ):
         ok = False
 
     script = artifact_validation_script(manifest)
@@ -1424,15 +1449,16 @@ def validate_artifact(
             if script_member is None:
                 ok = False
                 messages.append(f"Validation script is missing from archive: {script_path}")
-            elif not script_sha:
-                ok = False
-                messages.append("validation.script.sha256 is required.")
-            elif not _is_sha256(script_sha):
-                ok = False
-                messages.append("validation.script.sha256 is not a valid SHA-256.")
-            elif hashlib.sha256(script_member.data or b"").hexdigest().lower() != script_sha:
-                ok = False
-                messages.append("Validation script SHA-256 mismatch.")
+            elif not ignore_checksum:
+                if not script_sha:
+                    ok = False
+                    messages.append("validation.script.sha256 is required.")
+                elif not _is_sha256(script_sha):
+                    ok = False
+                    messages.append("validation.script.sha256 is not a valid SHA-256.")
+                elif hashlib.sha256(script_member.data or b"").hexdigest().lower() != script_sha:
+                    ok = False
+                    messages.append("Validation script SHA-256 mismatch.")
         if runner not in {"bash", "sh", "python3"}:
             ok = False
             messages.append(f"Unsupported validation script runner: {runner!r}.")
@@ -1441,6 +1467,8 @@ def validate_artifact(
             ok = False
             messages.append("validation.script.timeout_seconds must be a positive integer.")
 
+    if ignore_checksum:
+        messages.append("Warning: checksum verification skipped by --ignore-checksum.")
     if not messages:
         messages.append("Artifact validation passed.")
     return ArtifactValidation(ok, messages, manifest)

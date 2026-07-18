@@ -122,8 +122,13 @@ def test_android_release_fails_closed_and_has_local_and_device_tests() -> None:
     runner = read(JAVA / "TermuxCommandRunner.java")
     bridge = read(ROOT / "devtool" / "android_live_hud.py")
     assert "context.getPackageName()" in runner
+    assert "BridgeReceiver.class.getName()" in runner
     assert "DEVTOOL_ANDROID_HUD_PACKAGE" in runner
+    assert "DEVTOOL_ANDROID_HUD_COMPONENT" in runner
+    assert "DEVTOOL_ANDROID_HUD_ACTION_PREFIX" in runner
     assert "DEVTOOL_ANDROID_HUD_PACKAGE" in bridge
+    assert "DEVTOOL_ANDROID_HUD_COMPONENT" in bridge
+    assert "io.github.mikeceead.devtoolhud.debug" in bridge
 
 
 def test_android_release_models_compile_and_execute_without_android_framework(tmp_path: Path) -> None:

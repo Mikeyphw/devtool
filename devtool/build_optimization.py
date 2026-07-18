@@ -34,8 +34,21 @@ class BuildResourcePolicy:
     low_memory: bool
 
 
-def available_memory_mb() -> int | None:
-    """Return currently available memory when Linux exposes it."""
+@dataclass(frozen=True, slots=True)
+class AndroidValidationResourcePolicy:
+    enabled: bool
+    environment: str
+    max_workers: int
+    cpu_limit: int
+    gradle_heap_mb: int
+    memory_guard_mb: int
+    split_gradle: bool
+    no_daemon: bool
+    low_priority: bool
+
+
+def memory_info_mb() -> tuple[int | None, int | None]:
+    """Return ``(available, total)`` memory from Linux procfs."""
 
     try:
         values: dict[str, int] = {}
@@ -46,10 +59,19 @@ def available_memory_mb() -> int | None:
             token = raw.strip().split()[0]
             if token.isdigit():
                 values[key] = int(token)
-        kib = values.get("MemAvailable") or values.get("MemFree")
-        return max(1, kib // 1024) if kib else None
+        available_kib = values.get("MemAvailable") or values.get("MemFree")
+        total_kib = values.get("MemTotal")
+        available = max(1, available_kib // 1024) if available_kib else None
+        total = max(1, total_kib // 1024) if total_kib else None
+        return available, total
     except OSError:
-        return None
+        return None, None
+
+
+def available_memory_mb() -> int | None:
+    """Return currently available memory when Linux exposes it."""
+
+    return memory_info_mb()[0]
 
 
 def _option_dict(config: ProjectConfig, name: str) -> dict[str, object]:
@@ -89,6 +111,143 @@ def _effective_environment(config: ProjectConfig) -> str:
         except ValueError:
             pass
     return detect_current_environment()
+
+
+def _bool_option(value: object, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return default
+
+
+def _positive_int(*values: object, allow_zero: bool = False) -> int | None:
+    for value in values:
+        if value in (None, "", "auto"):
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0 or (allow_zero and parsed == 0):
+            return parsed
+    return None
+
+
+def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidationResourcePolicy:
+    """Choose a phone-safe Gradle profile for validation.
+
+    Android-hosted validation favors predictable peak load over shortest wall
+    time. The default splits build/test/lint, uses one worker, disables the
+    persistent daemon, lowers scheduler priority, caps the Gradle heap, and
+    arms an emergency free-memory guard. Desktop validation keeps the normal
+    optimized profile unless explicitly opted in.
+    """
+
+    environment = _effective_environment(config)
+    mobile_host = environment in {CHROOT, NATIVE_TERMUX}
+    validation = _option_dict(config, "validation")
+    gradle = _option_dict(config, "gradle")
+    android = _option_dict(config, "android")
+
+    env_enabled = os.environ.get("DEVTOOL_ANDROID_SAFE_VALIDATION", "").strip()
+    enabled = _bool_option(
+        env_enabled if env_enabled else validation.get("android_safe"),
+        mobile_host,
+    )
+    base = resolve_build_policy(config, config.kind or "android")
+    workers = _positive_int(
+        os.environ.get("DEVTOOL_VALIDATION_MAX_WORKERS", ""),
+        validation.get("max_workers"),
+        gradle.get("validation_max_workers"),
+        android.get("validation_max_workers"),
+    )
+    if workers is None:
+        workers = 1 if enabled and mobile_host else base.max_workers
+    workers = max(1, min(base.cpu_count, workers))
+
+    cpu_limit = _positive_int(
+        os.environ.get("DEVTOOL_VALIDATION_CPU_LIMIT", ""),
+        validation.get("cpu_limit"),
+        android.get("validation_cpu_limit"),
+    )
+    if cpu_limit is None:
+        cpu_limit = min(2, base.cpu_count) if enabled and mobile_host else base.cpu_count
+    cpu_limit = max(1, min(base.cpu_count, cpu_limit))
+
+    available, total = memory_info_mb()
+    heap = _positive_int(
+        os.environ.get("DEVTOOL_GRADLE_VALIDATION_HEAP_MB", ""),
+        validation.get("gradle_heap_mb"),
+        gradle.get("validation_heap_mb"),
+    )
+    if heap is None:
+        basis = available or total or 4096
+        heap = max(768, min(2048, int(basis * 0.35)))
+
+    guard = _positive_int(
+        os.environ.get("DEVTOOL_VALIDATION_MEMORY_GUARD_MB", ""),
+        validation.get("memory_guard_mb"),
+        allow_zero=True,
+    )
+    if guard is None:
+        guard = max(512, min(1024, int((total or 6400) * 0.10)))
+
+    return AndroidValidationResourcePolicy(
+        enabled=enabled,
+        environment=environment,
+        max_workers=workers,
+        cpu_limit=cpu_limit,
+        gradle_heap_mb=heap,
+        memory_guard_mb=guard if enabled else 0,
+        split_gradle=_bool_option(validation.get("split_gradle"), enabled and mobile_host),
+        no_daemon=_bool_option(validation.get("no_daemon"), enabled and mobile_host),
+        low_priority=_bool_option(validation.get("low_priority"), enabled and mobile_host),
+    )
+
+
+def optimized_validation_env(config: ProjectConfig, kind: str) -> dict[str, str]:
+    env = optimized_build_env(config, kind, config.env)
+    if kind in {"android", "gradle"}:
+        policy = resolve_android_validation_policy(config)
+        env["DEVTOOL_MAX_WORKERS"] = str(policy.max_workers)
+        env["DEVTOOL_VALIDATION_CPU_LIMIT"] = str(policy.cpu_limit)
+        env["DEVTOOL_VALIDATION_RESOURCE_PROFILE"] = (
+            "android-safe" if policy.enabled else "standard"
+        )
+        if policy.enabled:
+            safe_gradle_opts = (
+                f"-Dorg.gradle.workers.max={policy.max_workers} "
+                "-Dorg.gradle.parallel=false "
+                "-Dorg.gradle.vfs.watch=false "
+                f"-Dorg.gradle.jvmargs=-Xmx{policy.gradle_heap_mb}m "
+                f"-XX:ActiveProcessorCount={policy.cpu_limit}"
+            )
+            existing = str(env.get("GRADLE_OPTS") or "").strip()
+            env["GRADLE_OPTS"] = f"{existing} {safe_gradle_opts}".strip()
+            java_options = str(env.get("JAVA_TOOL_OPTIONS") or "").strip()
+            processor_cap = f"-XX:ActiveProcessorCount={policy.cpu_limit}"
+            if processor_cap not in java_options:
+                env["JAVA_TOOL_OPTIONS"] = f"{java_options} {processor_cap}".strip()
+            env["CMAKE_BUILD_PARALLEL_LEVEL"] = str(policy.max_workers)
+            env["MAKEFLAGS"] = f"-j{policy.max_workers}"
+    return env
+
+
+def _home_for_environment(environment: str, env: Mapping[str, str] | None = None) -> Path:
+    env = env or os.environ
+    if environment == CHROOT and detect_current_environment(env) != CHROOT:
+        chroot_home = str(env.get("DEVTOOL_TERMUX_CHROOT_HOME") or "").strip()
+        if chroot_home:
+            return Path(chroot_home)
+        user = str(env.get("DEVTOOL_TERMUX_CHROOT_USER") or "mike").strip() or "mike"
+        return Path(f"/home/{user}")
+    return Path(str(env.get("HOME") or "~")).expanduser()
 
 
 def _cache_root(config: ProjectConfig, kind: str, environment: str, env: Mapping[str, str] | None = None) -> Path:
@@ -168,7 +327,7 @@ def optimized_build_env(
         env.setdefault("NUGET_XMLDOC_MODE", "skip")
         env.setdefault("DOTNET_PROCESSOR_COUNT", str(policy.max_workers))
     elif kind in {"android", "gradle"}:
-        env.setdefault("GRADLE_USER_HOME", str(Path.home() / ".gradle"))
+        env.setdefault("GRADLE_USER_HOME", str(_home_for_environment(policy.environment) / ".gradle"))
     elif kind == "python":
         env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
         env.setdefault("PIP_NO_INPUT", "1")

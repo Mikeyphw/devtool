@@ -241,15 +241,13 @@ def detect_project_kind(repo_root: Path) -> str:
     dotnet_candidates = discover_dotnet_candidates(repo_root)
     android_markers = discover_gradle_roots(repo_root, android_only=True)
     gradle_markers = discover_gradle_roots(repo_root, android_only=False)
+    from .python_support import discover_python_roots
+    python_roots = discover_python_roots(repo_root)
     markers = {
         "dotnet": bool(dotnet_candidates),
         "android": bool(android_markers),
         "gradle": bool(gradle_markers and not android_markers),
-        "python": any((repo_root / name).exists() for name in (
-            "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
-            "Pipfile", "uv.lock", "poetry.lock", "pdm.lock", "tox.ini",
-            "noxfile.py", "pytest.ini",
-        )),
+        "python": bool(python_roots),
         "node": (repo_root / "package.json").is_file(),
         "rust": (repo_root / "Cargo.toml").is_file(),
         "go": (repo_root / "go.mod").is_file() or (repo_root / "go.work").is_file(),
@@ -664,16 +662,34 @@ def generate_template(repo_root: Path) -> str:
             target_blocks = "\n" + "".join(named_blocks)
             build_target = ""
     elif kind == "python":
-        if (repo_root / "src").exists():
-            for candidate in sorted((repo_root / "src").glob("*.py")):
+        from .python_support import discover_python_roots, inspect_python_project
+        roots = discover_python_roots(repo_root)
+        if len(roots) > 1 or (roots and roots[0] != repo_root):
+            named_blocks: list[str] = []
+            used_target_names: set[str] = set()
+            for candidate in roots:
+                base_name = _target_name_from_path(repo_root, candidate / "pyproject.toml")
+                target_name = _unique_target_name(used_target_names, base_name, candidate)
+                named_blocks.append(
+                    f"\n[targets.{target_name}]\ntype = \"python\"\nroot = \"{candidate.relative_to(repo_root)}\"\n"
+                )
+            target_blocks = "\n" + "".join(named_blocks)
+            build_target = ""
+        active_root = roots[0] if len(roots) == 1 else repo_root
+        if (active_root / "src").exists():
+            for candidate in sorted((active_root / "src").glob("*.py")):
                 run_target = str(candidate.relative_to(repo_root))
                 break
         if not run_target:
-            for candidate in sorted(repo_root.glob("*.py")):
+            for candidate in sorted(active_root.glob("*.py")):
                 run_target = str(candidate.relative_to(repo_root))
                 break
-        if not run_module and (repo_root / "pyproject.toml").exists():
-            run_module = "your_package"
+        if not run_module and (active_root / "pyproject.toml").exists():
+            try:
+                info = inspect_python_project(active_root)
+                run_module = info.import_packages[0] if info.import_packages else "your_package"
+            except Exception:
+                run_module = "your_package"
 
     return f"""[project]
 kind = "{kind}" # auto | dotnet | android | gradle | python | node | rust | go | maven | cmake | meson | make | command | unknown
@@ -706,9 +722,66 @@ max_workers = 4
 offline = false
 
 [python]
-manager = "auto"
+manager = "auto" # auto | uv | poetry | pdm | pipenv | hatch | venv
+test_framework = "auto" # auto | pytest | unittest | tox | nox
+environment = ".devtool/venvs/python"
+groups = [] # e.g. ["test", "dev"]
+extras = []
+locked = true
+offline = false
+install_project = true
 # lint = ["ruff", "mypy"]
-# test_framework = "auto"
+validator_dependencies = []
+pre_commit = "auto"
+source_import_isolation = false # wheel import isolation is enabled by python.package.import_smoke
+cli_contract = false
+isolation = true
+disable_network = false
+matrix = []
+matrix_mode = "active" # active | full
+fresh_dist = true
+clean_categories = ["artifacts", "caches"]
+# generated_commands = []
+# database_commands = []
+# notebook_commands = []
+# service_commands = []
+# security_commands = []
+
+[python.coverage]
+minimum_total = 0
+minimum_changed_lines = 0
+
+[python.package]
+verify_all_wheels = true
+rebuild_sdist = true
+import_smoke = true
+verify_cli = true
+install_dependencies = false
+reproducible = false
+import_modules = []
+console_scripts = []
+
+[python.notebooks]
+validate = true
+execute = false
+
+[python.database]
+enabled = "auto"
+# commands = ["alembic upgrade head", "alembic downgrade -1", "alembic upgrade head"]
+
+[python.service]
+enabled = false
+start = ""
+url = ""
+host = ""
+port = 0
+check = ""
+timeout = 60
+
+[python.security]
+enabled = false
+tools = ["pip_audit", "bandit"]
+sbom = false
 
 [dotnet]
 # configuration = "Debug"
@@ -752,6 +825,7 @@ build_directory = ".devtool/build/meson"
 [artifacts]
 # output_directory = "artifacts/android"
 # required = true
+# external_verification = "auto" # auto | always | required | never
 
 # [test_profiles.quick]
 # include = ["unit", "smoke"]
@@ -759,6 +833,15 @@ build_directory = ".devtool/build/meson"
 
 [validation]
 # test_profile = "full"
+# Android/Termux safety defaults are automatic:
+# android_safe = true
+# max_workers = 1
+# cpu_limit = 2
+# split_gradle = true
+# no_daemon = true
+# low_priority = true
+# gradle_heap_mb = 1536
+# memory_guard_mb = 640
 
 [env]
 # Arbitrary runtime env vars for commands:

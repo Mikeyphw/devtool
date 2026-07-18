@@ -10,7 +10,7 @@ from unittest.mock import patch
 from rich.console import Console
 
 from devtool.android_integration import android_builder_arguments_for_tasks
-from devtool.build_optimization import optimized_build_env, resolve_build_policy
+from devtool.build_optimization import optimized_build_env, resolve_android_validation_policy, resolve_build_policy
 from devtool.config import detect_project_kind, load_project_config
 from devtool.execution import wrap_specs_for_chroot
 from devtool.generic_progress import GenericProgressTracker
@@ -95,6 +95,40 @@ class ResourcePolicyTests(unittest.TestCase):
         inner = wrapped.argv[-1]
         self.assertIn("CARGO_BUILD_JOBS=2", inner)
         self.assertIn("DEVTOOL_BUILD_CACHE_ROOT=/home/mike/.cache/devtool", inner)
+
+
+    def test_android_validation_defaults_to_phone_safe_profile_in_termux(self) -> None:
+        config = ProjectConfig(repo_root=Path("/repo"), kind="android")
+        with (
+            patch("devtool.build_optimization.os.cpu_count", return_value=8),
+            patch("devtool.build_optimization.memory_info_mb", return_value=(4200, 6144)),
+            patch.dict(os.environ, {
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+            }, clear=True),
+        ):
+            policy = resolve_android_validation_policy(config)
+
+        self.assertTrue(policy.enabled)
+        self.assertEqual(policy.max_workers, 1)
+        self.assertEqual(policy.cpu_limit, 2)
+        self.assertTrue(policy.split_gradle)
+        self.assertTrue(policy.no_daemon)
+        self.assertTrue(policy.low_priority)
+        self.assertGreaterEqual(policy.gradle_heap_mb, 768)
+        self.assertGreaterEqual(policy.memory_guard_mb, 512)
+
+    def test_android_validation_can_disable_only_the_memory_guard(self) -> None:
+        config = ProjectConfig(
+            repo_root=Path("/repo"),
+            kind="android",
+            execution_environment="chroot",
+            runner_options={"validation": {"memory_guard_mb": 0}},
+        )
+        policy = resolve_android_validation_policy(config)
+        self.assertTrue(policy.enabled)
+        self.assertEqual(policy.memory_guard_mb, 0)
 
 
 class FirstClassRunnerPlanningTests(unittest.TestCase):
@@ -199,8 +233,10 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
             python.write_text("", encoding="utf-8")
             config = ProjectConfig(repo_root=root, project_root=str(root), kind="python", runner_options={"python": {"manager": "venv"}})
             specs = build_specs(config, "restore")
-        self.assertEqual([spec.name for spec in specs], ["restore"])
+        self.assertEqual([spec.name for spec in specs], ["restore", "python-environment"])
         self.assertNotEqual(specs[0].argv[2:4], ["venv", str(python.parent.parent)])
+        self.assertEqual(specs[0].metadata["manager"], "venv")
+        self.assertIn("environment_fingerprint", specs[1].metadata)
 
     def test_android_gradle_receives_environment_aware_worker_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"HOME": tmp, "DEVTOOL_MAX_WORKERS": "2"}, clear=False):

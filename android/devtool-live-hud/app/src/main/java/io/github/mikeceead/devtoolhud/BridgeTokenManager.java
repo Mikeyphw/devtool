@@ -68,11 +68,19 @@ final class BridgeTokenManager {
         String token = BridgeSecrets.getOrCreateToken(context);
         String expectedHash = hash(token);
         String quoted = shellQuote(token);
+        String packageName = shellQuote(context.getPackageName());
+        String componentName = shellQuote(context.getPackageName() + "/" + BridgeReceiver.class.getName());
         String command = "set -eu; "
                 + "dir=\"$HOME/.config/devtool\"; file=\"$dir/android-live-hud.token\"; "
+                + "package_file=\"$dir/android-live-hud.package\"; component_file=\"$dir/android-live-hud.component\"; "
                 + "mkdir -p \"$dir\"; umask 077; tmp=\"$file.tmp.$$\"; "
                 + "printf '%s\\n' " + quoted + " > \"$tmp\"; chmod 600 \"$tmp\"; mv -f \"$tmp\" \"$file\"; "
-                + "test \"$(cat \"$file\")\" = " + quoted + "; printf 'DEVTOOL_BRIDGE_TOKEN_OK\\n'";
+                + "printf '%s\\n' " + packageName + " > \"$package_file.tmp.$$\"; chmod 600 \"$package_file.tmp.$$\"; mv -f \"$package_file.tmp.$$\" \"$package_file\"; "
+                + "printf '%s\\n' " + componentName + " > \"$component_file.tmp.$$\"; chmod 600 \"$component_file.tmp.$$\"; mv -f \"$component_file.tmp.$$\" \"$component_file\"; "
+                + "test \"$(cat \"$file\")\" = " + quoted + "; "
+                + "test \"$(cat \"$package_file\")\" = " + packageName + "; "
+                + "test \"$(cat \"$component_file\")\" = " + componentName + "; "
+                + "printf 'DEVTOOL_BRIDGE_TOKEN_OK\\n'";
         return launch(context, OP_INSTALL, expectedHash, command);
     }
 
@@ -80,8 +88,13 @@ final class BridgeTokenManager {
         String token = BridgeSecrets.getOrCreateToken(context);
         String expectedHash = hash(token);
         String quoted = shellQuote(token);
-        String command = "set -eu; file=\"$HOME/.config/devtool/android-live-hud.token\"; "
+        String packageName = shellQuote(context.getPackageName());
+        String componentName = shellQuote(context.getPackageName() + "/" + BridgeReceiver.class.getName());
+        String command = "set -eu; dir=\"$HOME/.config/devtool\"; file=\"$dir/android-live-hud.token\"; "
+                + "package_file=\"$dir/android-live-hud.package\"; component_file=\"$dir/android-live-hud.component\"; "
                 + "test -f \"$file\"; test \"$(cat \"$file\")\" = " + quoted
+                + "; test \"$(cat \"$package_file\")\" = " + packageName
+                + "; test \"$(cat \"$component_file\")\" = " + componentName
                 + "; test \"$(stat -c '%a' \"$file\" 2>/dev/null || stat -f '%Lp' \"$file\")\" = 600; "
                 + "printf 'DEVTOOL_BRIDGE_TOKEN_OK\\n'";
         return launch(context, OP_VERIFY, expectedHash, command);

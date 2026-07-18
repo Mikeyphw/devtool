@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 import json
 import os
 import re
@@ -58,6 +58,140 @@ from .project_runners import (
 from .tasker import TaskerProgressSink
 
 console = create_console()
+
+
+def _memory_snapshot() -> tuple[int | None, int | None, int | None, float | None, float | None]:
+    """Return MemAvailable, SwapFree, SwapTotal and memory PSI avg10 values."""
+
+    values: dict[str, int] = {}
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace").splitlines():
+            key, separator, remainder = line.partition(":")
+            if not separator or key not in {"MemAvailable", "SwapFree", "SwapTotal"}:
+                continue
+            values[key] = max(0, int(remainder.strip().split()[0]) // 1024)
+    except (OSError, ValueError, IndexError):
+        pass
+
+    psi_some: float | None = None
+    psi_full: float | None = None
+    try:
+        for line in Path("/proc/pressure/memory").read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines():
+            kind, _, payload = line.partition(" ")
+            fields = {
+                key: value
+                for token in payload.split()
+                if "=" in token
+                for key, value in [token.split("=", 1)]
+            }
+            if kind == "some" and "avg10" in fields:
+                psi_some = float(fields["avg10"])
+            elif kind == "full" and "avg10" in fields:
+                psi_full = float(fields["avg10"])
+    except (OSError, ValueError):
+        pass
+
+    return (
+        values.get("MemAvailable"),
+        values.get("SwapFree"),
+        values.get("SwapTotal"),
+        psi_some,
+        psi_full,
+    )
+
+
+def _memory_guard_limits(memory_guard_mb: int) -> tuple[int, int]:
+    """Return adaptive sustained-pressure and hard-emergency thresholds."""
+
+    sustained = max(320, min(memory_guard_mb - 96, int(memory_guard_mb * 0.70)))
+    hard = max(192, min(sustained - 96, int(memory_guard_mb * 0.50)))
+    return sustained, hard
+
+
+def _critical_memory_pressure(
+    snapshot: tuple[int | None, int | None, int | None, float | None, float | None],
+    history: Sequence[int],
+    sustained_limit: int,
+) -> tuple[bool, str]:
+    available, swap_free, swap_total, psi_some, psi_full = snapshot
+    if available is None or available >= sustained_limit:
+        return False, ""
+
+    swap_exhausted = False
+    if swap_total is not None:
+        swap_reserve = max(64, int(swap_total * 0.05))
+        swap_exhausted = swap_total <= 0 or (swap_free or 0) <= swap_reserve
+    worsening = len(history) >= 8 and (history[0] - history[-1]) >= 64
+    psi_stalled = (psi_full is not None and psi_full >= 1.0) or (
+        psi_some is not None and psi_some >= 25.0
+    )
+    telemetry_missing = swap_total is None and psi_some is None and psi_full is None
+    critical = (
+        (swap_exhausted and (psi_stalled or worsening))
+        or (psi_stalled and worsening)
+        or (telemetry_missing and worsening)
+    )
+
+    signals: list[str] = []
+    if swap_total is not None:
+        signals.append(f"swap {swap_free or 0}/{swap_total} MiB free")
+    if psi_some is not None:
+        signals.append(f"PSI some avg10={psi_some:.2f}")
+    if psi_full is not None:
+        signals.append(f"PSI full avg10={psi_full:.2f}")
+    if len(history) >= 2:
+        signals.append(f"trend {history[-1] - history[0]:+d} MiB")
+    return critical, ", ".join(signals)
+
+
+def _command_delegates_memory_guard(argv: Sequence[str]) -> bool:
+    """Avoid two watchdogs monitoring the same Android builder process."""
+
+    return any(
+        value == "--memory-guard-mb" or value.startswith("--memory-guard-mb=")
+        for value in argv
+    )
+
+
+def _try_root_cache_reclaim() -> bool:
+    """Drop clean page cache once when direct root, su, or passwordless sudo works."""
+
+    if os.name != "posix":
+        return False
+    command = "sync; echo 1 > /proc/sys/vm/drop_caches"
+    try:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            os.sync()
+            Path("/proc/sys/vm/drop_caches").write_text("1\n", encoding="ascii")
+            return True
+    except OSError:
+        pass
+
+    candidates: list[list[str]] = []
+    su = shutil.which("su")
+    if su:
+        candidates.append([su, "-c", command])
+    sudo = shutil.which("sudo")
+    shell = shutil.which("sh") or "/bin/sh"
+    if sudo:
+        candidates.append([sudo, "-n", shell, "-c", command])
+    for candidate in candidates:
+        try:
+            result = subprocess.run(
+                candidate,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return True
+    return False
 
 
 _TERMUX_DOTNET_ENV = "DEVTOOL_TERMUX_DOTNET"
@@ -309,6 +443,7 @@ def _iter_process_output_lines(
     idle_timeout: float | None = None,
     completion_idle_grace: float | None = None,
     completion_status_detector: Callable[[str], int | None] | None = None,
+    memory_guard_mb: int = 0,
 ):
     """Yield child output without waiting forever for pipe EOF.
 
@@ -342,6 +477,14 @@ def _iter_process_output_lines(
     last_output_at = time.monotonic()
     completion_seen_at: float | None = None
     completion_assumed_returncode: int | None = None
+    memory_guard_pressure_samples = 0
+    memory_guard_critical_samples = 0
+    memory_guard_hard_samples = 0
+    memory_guard_reclaim_attempted = False
+    memory_guard_checked_at = 0.0
+    memory_guard_history: deque[int] = deque(maxlen=12)
+    memory_guard_details = ""
+    memory_guard_sustained_limit, memory_guard_hard_limit = _memory_guard_limits(memory_guard_mb)
 
     def emit_text(text: str):
         nonlocal pending
@@ -416,6 +559,85 @@ def _iter_process_output_lines(
                     for line in emit_and_track(decoder.decode(chunk)):
                         yield line
                 break
+
+            if memory_guard_mb > 0 and (time.monotonic() - memory_guard_checked_at) >= 1.0:
+                memory_guard_checked_at = time.monotonic()
+                snapshot = _memory_snapshot()
+                available = snapshot[0]
+                if available is not None:
+                    memory_guard_history.append(available)
+                memory_guard_pressure_samples = (
+                    memory_guard_pressure_samples + 1
+                    if available is not None and available < memory_guard_mb
+                    else 0
+                )
+                critical, memory_guard_details = _critical_memory_pressure(
+                    snapshot, tuple(memory_guard_history), memory_guard_sustained_limit
+                )
+                memory_guard_critical_samples = (
+                    memory_guard_critical_samples + 1 if critical else 0
+                )
+                memory_guard_hard_samples = (
+                    memory_guard_hard_samples + 1
+                    if available is not None and available < memory_guard_hard_limit
+                    else 0
+                )
+                if memory_guard_pressure_samples >= 4 and not memory_guard_reclaim_attempted:
+                    memory_guard_reclaim_attempted = True
+                    before = available
+                    if _try_root_cache_reclaim():
+                        time.sleep(0.25)
+                        snapshot = _memory_snapshot()
+                        available = snapshot[0]
+                        message = (
+                            "\nDevtool used root once to reclaim clean filesystem cache under "
+                            f"memory pressure ({before} MiB before; {available} MiB after).\n"
+                        )
+                        for line in emit_and_track(message):
+                            yield line
+                        if available is not None:
+                            memory_guard_history.append(available)
+                        if available is not None and available >= memory_guard_mb:
+                            memory_guard_pressure_samples = 0
+                            memory_guard_critical_samples = 0
+                            memory_guard_hard_samples = 0
+                        elif available is not None and available >= memory_guard_sustained_limit:
+                            memory_guard_critical_samples = 0
+                            memory_guard_hard_samples = 0
+                if memory_guard_hard_samples >= 3 or memory_guard_critical_samples >= 10:
+                    setattr(proc, "_devtool_assumed_returncode", 75)
+                    reason = (
+                        "hard emergency floor"
+                        if memory_guard_hard_samples >= 3
+                        else "corroborated sustained memory pressure"
+                    )
+                    detail_suffix = f"; {memory_guard_details}" if memory_guard_details else ""
+                    message = (
+                        f"\nDevtool stopped validation after {reason}: {available} MiB available; "
+                        f"configured warning guard {memory_guard_mb} MiB; adaptive sustained threshold "
+                        f"{memory_guard_sustained_limit} MiB; hard floor "
+                        f"{memory_guard_hard_limit} MiB{detail_suffix}.\n"
+                    )
+                    for line in emit_and_track(message):
+                        yield line
+                    try:
+                        os.killpg(proc.pid, 15)
+                    except Exception:
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                    try:
+                        proc.wait(timeout=3.0)
+                    except Exception:
+                        try:
+                            os.killpg(proc.pid, 9)
+                        except Exception:
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                    break
 
             if (
                 completion_idle_grace is not None
@@ -540,6 +762,7 @@ def _run_process_live(
     progress_parser: str = "",
     live_log_path: Path | str | None = None,
     live_log_header: str = "",
+    memory_guard_mb: int = 0,
 ) -> tuple[int, str]:
     live_log_handle = None
     if live_log_path is not None:
@@ -722,7 +945,13 @@ def _run_process_live(
         completion_idle_grace = _test_completion_grace_for(parser_argv, command_name)
         completion_detector = _dotnet_test_completion_status if completion_idle_grace is not None else None
         if tracker is None:
-            for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout, completion_idle_grace=completion_idle_grace, completion_status_detector=completion_detector):
+            for line in _iter_process_output_lines(
+                proc,
+                idle_timeout=idle_timeout,
+                completion_idle_grace=completion_idle_grace,
+                completion_status_detector=completion_detector,
+                memory_guard_mb=memory_guard_mb,
+            ):
                 output_parts.append(line)
                 _append_live_log(line)
                 print(line, end="", flush=True)
@@ -732,7 +961,13 @@ def _run_process_live(
             return code, "".join(output_parts)
 
         with tracker:
-            for line in _iter_process_output_lines(proc, idle_timeout=idle_timeout, completion_idle_grace=completion_idle_grace, completion_status_detector=completion_detector):
+            for line in _iter_process_output_lines(
+                proc,
+                idle_timeout=idle_timeout,
+                completion_idle_grace=completion_idle_grace,
+                completion_status_detector=completion_detector,
+                memory_guard_mb=memory_guard_mb,
+            ):
                 output_parts.append(line)
                 _append_live_log(line)
                 # Non-verbose mode intentionally keeps command stdout/stderr captured only.
@@ -1005,6 +1240,16 @@ def run_specs(
             progress_argv = list(spec.metadata.get("progress_argv") or effective_argv)
             progress_cwd = str(spec.metadata.get("progress_cwd") or cwd)
             progress_parser = str(spec.metadata.get("progress_parser") or "")
+            memory_guard_mb = int(
+                spec.metadata.get("validation_memory_guard_mb")
+                or spec.metadata.get("memory_guard_mb")
+                or 0
+            )
+            if memory_guard_mb > 0 and _command_delegates_memory_guard(effective_argv):
+                # The Android builder monitors the actual Gradle child itself.
+                # A second outer watchdog would sample the same kernel state,
+                # reclaim caches twice, and race the inner adaptive policy.
+                memory_guard_mb = 0
             if verbose:
                 console.print(f"[cyan]$ {' '.join(shlex.quote(a) for a in effective_argv)}[/cyan]")
                 returncode, output = _run_process_live(
@@ -1024,6 +1269,7 @@ def run_specs(
                     progress_parser=progress_parser,
                     live_log_path=log_path,
                     live_log_header=command_line + "\n" if log_path is not None else "",
+                    memory_guard_mb=memory_guard_mb,
                 )
             else:
                 if progress_parser == "gradle" or dotnet_progress_plan(progress_argv, progress_cwd):
@@ -1044,6 +1290,7 @@ def run_specs(
                         progress_parser=progress_parser,
                         live_log_path=log_path,
                         live_log_header=command_line + "\n" if log_path is not None else "",
+                        memory_guard_mb=memory_guard_mb,
                     )
                 else:
                     with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
@@ -1061,6 +1308,7 @@ def run_specs(
                             progress_parser=progress_parser,
                             live_log_path=log_path,
                             live_log_header=command_line + "\n" if log_path is not None else "",
+                            memory_guard_mb=memory_guard_mb,
                         )
         finally:
             if cleanup_dir:
@@ -1088,7 +1336,11 @@ def run_specs(
                     started_at=started_wall,
                     command_name=spec.name,
                     output=output,
-                    report_path=str(result_metadata.get("test_report") or result_metadata.get("package_report") or ""),
+                    report_path=str(
+                        result_metadata.get("coverage_report")
+                        if report_parser == "python-coverage"
+                        else result_metadata.get("test_report") or result_metadata.get("package_report") or ""
+                    ),
                 )
                 if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation"}:
                     tests = dict(collection.metadata)
@@ -1130,6 +1382,26 @@ def run_specs(
                         f"{collection.metadata.get('valid', 0)} valid, "
                         f"{collection.metadata.get('invalid', 0)} invalid.\n"
                     )
+                elif report_parser == "python-tool":
+                    result_metadata.setdefault("python_tools", []).append(collection.metadata)
+                    if collection.metadata:
+                        output = (output.rstrip() + "\n" if output else "") + (
+                            f"Devtool Python {collection.metadata.get('tool', 'tool')}: "
+                            f"{collection.metadata.get('errors', 0)} errors, "
+                            f"{collection.metadata.get('warnings', 0)} warnings.\n"
+                        )
+                elif report_parser == "python-audit":
+                    result_metadata["python_audit"] = collection.metadata
+                    if collection.metadata:
+                        output = (output.rstrip() + "\n" if output else "") + (
+                            f"Devtool Python source audit: {collection.metadata.get('errors', 0)} issue(s).\n"
+                        )
+                elif report_parser == "python-coverage":
+                    result_metadata["coverage"] = collection.metadata
+                    if collection.metadata:
+                        output = (output.rstrip() + "\n" if output else "") + (
+                            f"Devtool Python coverage: {collection.metadata.get('line_percent', 0):.2f}%.\n"
+                        )
                 issues.extend(collection.issues)
 
 
@@ -1150,6 +1422,21 @@ def run_specs(
                 f"{artifact_metadata.get('invalid', 0)} invalid, "
                 f"{artifact_metadata.get('count', 0)} total.\n"
             )
+            if artifact_issues:
+                failures = [issue for issue in artifact_issues if issue.severity == "error"]
+                warnings = [issue for issue in artifact_issues if issue.severity == "warning"]
+                if failures:
+                    output += "Devtool artifact verification failures:\n"
+                    for issue in failures[:8]:
+                        output += f"- {issue.file} [{issue.code}]: {issue.message}\n"
+                    if len(failures) > 8:
+                        output += f"- ... and {len(failures) - 8} more failure(s).\n"
+                if warnings:
+                    output += "Devtool artifact verification notices:\n"
+                    for issue in warnings[:8]:
+                        output += f"- {issue.file} [{issue.code}]: {issue.message}\n"
+                    if len(warnings) > 8:
+                        output += f"- ... and {len(warnings) - 8} more notice(s).\n"
         nonfatal_issue_ids = {id(issue) for issue in nonfatal_report_issues}
         has_fatal_error_diagnostics = any(
             issue.severity == "error" and id(issue) not in nonfatal_issue_ids

@@ -85,6 +85,10 @@ All payload and inventory paths are repository-relative. Artifact metadata under
 
 `source_sha256` protects `modify` and `delete` actions from applying to an unexpected base file. `sha256` and `size` verify the archive payload. If an inventory is present, every payload file must be declared.
 
+Use `--ignore-checksum` only for deliberate recovery or locally modified artifacts. It skips SHA-256 presence, format, and mismatch checks for payloads, source files, and embedded validation scripts, while retaining repository identity, path safety, inventory completeness, payload size, conflict, and validation-policy checks. Unlike `--no-manifest-check`, it does not disable the rest of artifact validation. Devtool prints a warning whenever the option is active.
+
+Embedded validator scripts are extracted to a private temporary directory but execute with the repository root as their working directory. The temporary path remains available through `DEVTOOL_VALIDATION_TMPDIR`.
+
 The legacy `files`, `.devtool-delete`, `repo_name`, and `validate_target` fields remain accepted.
 
 ## Monorepos
@@ -162,6 +166,8 @@ DEVTOOL_VALIDATION_TMPDIR
 DEVTOOL_RUN_ID
 TMPDIR
 ```
+
+For `python3` validators, Devtool resolves the project interpreter and dependency manager, runs from the repository root, adds declared source roots to `PYTHONPATH`, and can use the optional `validation.script.python` table for groups, extras, validator-only dependencies, synchronization, offline mode, and editable project installation. Missing imports are reported as environment failures rather than opaque tracebacks.
 
 Exit code `0` passes. Any other exit code or timeout fails validation and triggers transaction rollback when `rollback_on_failure` is enabled.
 

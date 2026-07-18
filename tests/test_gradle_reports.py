@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from devtool.gradle_reports import (
     collect_android_lint_reports,
@@ -12,7 +13,7 @@ from devtool.gradle_reports import (
     parse_android_lint_xml,
     parse_junit_reports,
 )
-from devtool.models import CommandSpec, ProjectConfig
+from devtool.models import CommandSpec, Issue, ProjectConfig
 from devtool.runners import run_specs
 
 
@@ -146,6 +147,82 @@ class GradleReportTests(unittest.TestCase):
         self.assertEqual({issue.code for issue in results[0].issues}, {"NewApi", "ManifestTypo"})
         self.assertIn("Devtool Android Lint: 1 errors, 1 warnings.", results[0].output)
         self.assertNotIn("detected error diagnostics", raw)
+
+    def test_chroot_built_apk_does_not_fail_on_host_verifier_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            apk = root / "app/build/outputs/apk/debug/app-debug.apk"
+            apk.parent.mkdir(parents=True)
+            import zipfile
+            with zipfile.ZipFile(apk, "w") as archive:
+                archive.writestr("AndroidManifest.xml", b"manifest")
+                archive.writestr("classes.dex", b"dex")
+            script = root / "success.py"
+            script.write_text("print('BUILD SUCCESSFUL')\n", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                execution_environment="chroot",
+            )
+            spec = CommandSpec(
+                "build",
+                ["python3", str(script)],
+                cwd=str(root),
+                metadata={
+                    "project_root": str(root),
+                    "gradle_tasks": ["assembleDebug"],
+                    "collect_artifacts": True,
+                    "verify_artifacts": True,
+                },
+            )
+            with patch("devtool.android_artifacts._tool_from_sdk") as tool_lookup:
+                results, raw = run_specs(
+                    config, [spec], verbose=False, shutdown_dotnet=False
+                )
+
+        self.assertEqual(results[0].returncode, 0)
+        self.assertIn("Devtool artifacts: 1 valid, 0 invalid, 1 total.", raw)
+        self.assertNotIn("detected error diagnostics", raw)
+        tool_lookup.assert_not_called()
+
+    def test_run_specs_prints_android_artifact_failure_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "success.py"
+            script.write_text("print('BUILD SUCCESSFUL')\n", encoding="utf-8")
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+            spec = CommandSpec(
+                "build",
+                ["python3", str(script)],
+                cwd=str(root),
+                metadata={
+                    "project_root": str(root),
+                    "gradle_tasks": ["assembleDebug"],
+                    "collect_artifacts": True,
+                    "verify_artifacts": True,
+                },
+            )
+            metadata = {"valid": 0, "invalid": 1, "count": 1, "items": []}
+            artifact_issue = Issue(
+                "error",
+                "artifact-verify",
+                "app/build/outputs/apk/debug/app-debug.apk",
+                "SIGNATURE",
+                "verification tool failed",
+            )
+            with patch(
+                "devtool.android_artifacts.collect_and_verify_android_artifacts",
+                return_value=(metadata, [artifact_issue]),
+            ):
+                results, raw = run_specs(
+                    config, [spec], verbose=False, shutdown_dotnet=False
+                )
+
+        self.assertEqual(results[0].returncode, 1)
+        self.assertIn("Devtool artifact verification failures:", results[0].output)
+        self.assertIn("[SIGNATURE]: verification tool failed", results[0].output)
+        self.assertIn("detected error diagnostics", raw)
 
 
 if __name__ == "__main__":
