@@ -1,8 +1,35 @@
+## Android 1.14.0
+
+- Added redacted Android support bundles for Logs, Repositories, root bridge, retention and Git-operation diagnostics.
+- Added Settings controls to copy or share a support bundle.
+- Added an opt-in switch for including redacted recent commands; commands remain disabled by default.
+- Added reusable redaction for bridge tokens, HTTPS credentials, Authorization headers, common secret assignments and private-key blocks.
+
 # Changelog
 - Fixed successful Android validation being rolled back when Gradle infrastructure notices were counted against an artifact's zero-warning policy; expectation failures are now printed explicitly, and lint receives a bounded 512 MiB metaspace cap.
 
 ## Unreleased
 
+- Added Android repository Phase 6 mobile hardening: adaptive navigation rails and split panes for tablets/foldables, large-text-safe vertical actions, live Git queue timing and reordering, pinned-run retention, configurable indexed-data cleanup, and optional SQLite compaction.
+- Added passive credential-remediation guidance with copyable commands, explicit host-fingerprint warnings, and no automatic remote probes or secret display.
+- Added Phase 6 accessibility instrumentation for responsive profiles, labeled controls, and 48 dp touch targets; upgraded the Android indexed database to schema 6.
+- Bumped Devtool Live HUD to 1.13.0 (`versionCode 26`).
+
+- Added Android repository Phase 5 cross-feature integration: durable per-repository Git operation queues, cancellation, root-process markers, orphan detection/termination, synthetic structured Git runs, completion notifications, and repository-filtered saved Logs views.
+- Added passive SSH/credential diagnostics and local incoming/outgoing commit previews without contacting remotes or exposing secrets.
+- Linked Git operations bidirectionally across Repos, Logs, runs, commits, and artifacts, including exact operation metadata in run details and recovery of interrupted operations after Android process death.
+- Bumped Devtool Live HUD to 1.12.0 (`versionCode 25`).
+
+- Added Android repository Phase 4 full Git parity: staged commit creation, local and remote branch checkout, branch creation, fetch with prune/tags, fast-forward-only pull, non-force push with automatic first-upstream setup, stash/pop including untracked files, and strongly confirmed tracked-only hard reset.
+- Added local/remote branch and stash views backed by NUL-safe Git records, per-repository operation serialization, owner-aware Termux/chroot execution, bounded network operations with interactive prompts disabled, credential redaction, and structured repository activity events.
+- Bumped Devtool Live HUD to 1.11.0 (`versionCode 24`).
+
+- Added the Android repository working-tree and commit-history phase: NUL-safe porcelain-v2 parsing, grouped staged/modified/untracked/deleted/renamed/conflicted files, working and staged diffs, file and bulk stage/unstage, guarded tracked-file discard, commit details, remote links, and Devtool run/artifact correlation.
+- Added owner-aware Git mutation serialization and repository activity records for the Phase 3 path-scoped operations.
+- Bumped Devtool Live HUD to 1.10.0 (`versionCode 23`).
+
+- Added the Android Repositories destination as a root-aware read-only port of the desktop Repo page, including explicit and discovered repositories, temporary live entries, environment-aware identity, status/branch/remote inspection, active run and artifact correlation, rooted browsing, repository-owner shell launch, and Overview/Activity/Runs/Metadata detail views.
+- Replaced Android SharedPreferences run history with a SQLite-backed runs, structured logs, repositories, activity, source, and cursor model; added legacy migration and exact-run Timeline/Problems/Raw/Metadata viewing.
 - Added durable resumable Android/Gradle validation sessions with preflight, dependency, compile, resource, unit-test, package, artifact verification, lint, instrumentation, and finalization checkpoints. Sessions survive process death, preserve pending apply transactions, support phase/range/runtime/power controls, cache failures, invalidate only affected downstream phases, and report overall phase progress to terminal, machine output, desktop HUD, and Android HUD.
 - Added changed-file phase planning, per-phase Android resource profiles, optional Gradle daemon shutdown after each phase, explicit retry/finalize/abort/status commands, and paused-apply notifications that no longer claim an incomplete overlay was fully applied.
 

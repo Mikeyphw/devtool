@@ -111,8 +111,8 @@ def test_android_run_and_history_workflows_cover_slice_two() -> None:
     assert "Search and filters" in activity
     assert "populateHistoryList" in activity
     assert "Run again" in activity
-    assert "Delete this run?" in activity
-    assert "Clear all run history?" in activity
+    assert "Delete this indexed run?" in activity
+    assert "Clear all indexed runs?" in activity
     assert "requestRunBuiltCommand" in activity
     assert "dangerousOperation" in activity
     assert "static synchronized boolean remove" in store

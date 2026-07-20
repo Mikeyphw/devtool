@@ -21,8 +21,8 @@ android {
         applicationId 'io.github.mikeceead.devtoolhud'
         minSdk 26
         targetSdk 36
-        versionCode 20
-        versionName '1.7.2'
+        versionCode 27
+        versionName '1.14.0'
 
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
         testInstrumentationRunnerArguments clearPackageData: 'true'

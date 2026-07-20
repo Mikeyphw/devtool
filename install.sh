@@ -49,7 +49,7 @@ Desktop app installation rebuilds only when its source fingerprint changes or
 its binary is missing. Android app installation builds through Devtool's
 android_hud chroot target, stages the APK below $TMPDIR, and installs it with
 su -c 'pm install -r <apk>'. The optional KernelSU module is staged below
-$TMPDIR and installed with su -c 'ksud module install <zip>'.
+$TMPDIR and installed with su -c 'ksud install <zip>'.
 USAGE
 }
 
@@ -583,7 +583,7 @@ install_root_module() {
     }
     run chmod 0644 "$module_zip"
     printf 'Installing staged KernelSU module from %s\n' "$module_zip"
-    run_as_root ksud module install "$module_zip"
+    run_as_root ksud install "$module_zip"
     write_stamp "$root_module_stamp" "$fingerprint"
     printf 'KernelSU module installed/updated. A reboot may be required.\n'
   else

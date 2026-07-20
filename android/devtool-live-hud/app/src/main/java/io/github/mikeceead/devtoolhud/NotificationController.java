@@ -351,17 +351,17 @@ final class NotificationController {
     }
 
     private PendingIntent openRunIntent(String runId) {
-        Intent intent = new Intent(context, MainActivity.class)
-                .putExtra("run_id", runId)
+        Intent intent = new Intent(context, LogViewerActivity.class)
+                .putExtra(LogViewerActivity.EXTRA_RUN_ID, runId)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         return PendingIntent.getActivity(context, runId.hashCode() ^ 0x0c41, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     private PendingIntent openLogIntent(String runId) {
-        Intent intent = new Intent(context, MainActivity.class)
-                .putExtra("run_id", runId)
-                .putExtra("open_log", true)
+        Intent intent = new Intent(context, LogViewerActivity.class)
+                .putExtra(LogViewerActivity.EXTRA_RUN_ID, runId)
+                .setData(android.net.Uri.parse("devtool://logs/run/" + android.net.Uri.encode(runId)))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         return PendingIntent.getActivity(context, runId.hashCode() ^ 0x1f31, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);

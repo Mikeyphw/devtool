@@ -32,6 +32,38 @@
         </activity>
 
         <activity
+            android:name=".LogViewerActivity"
+            android:exported="true"
+            android:label="Devtool Log">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="devtool" android:host="logs" android:pathPrefix="/run/" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".RepositoryDetailActivity"
+            android:exported="false"
+            android:label="Repository" />
+
+        <activity
+            android:name=".RepositoryPickerActivity"
+            android:exported="false"
+            android:label="Choose Repository" />
+
+        <activity
+            android:name=".GitDiffActivity"
+            android:exported="false"
+            android:label="Git Diff" />
+
+        <activity
+            android:name=".GitCommitActivity"
+            android:exported="false"
+            android:label="Commit Details" />
+
+        <activity
             android:name=".TaskerPluginActivity"
             android:exported="true"
             android:label="@string/tasker_action_name"

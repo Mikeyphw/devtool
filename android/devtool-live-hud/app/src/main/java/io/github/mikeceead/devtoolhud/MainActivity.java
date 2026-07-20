@@ -48,7 +48,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATIONS = 41;
     private static final int REQUEST_TERMUX = 42;
     private static final int REQUEST_ROOT_MODULE_EXPORT = 43;
-    private static final String[] PAGES = {"Overview", "Run", "History", "Settings"};
+    private static final String[] PAGES = {"Overview", "Run", "Logs", "Repos", "Settings"};
 
     private UiKit ui;
     private int currentPage;
@@ -108,10 +108,24 @@ public final class MainActivity extends Activity {
     private final Set<String> selectedTestIds = new LinkedHashSet<>();
     private String historyQuery = "";
     private String historyStatus = "all";
+    private String historyProject = "all";
+    private String historySeverity = "all";
+    private String historyRepositoryId = "";
+    private String repositoryQuery = "";
+    private String repositoryFilter = "all";
+    private String repositoryError = "";
+    private String logIndexError = "";
 
     private final BroadcastReceiver runUpdates = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            if (RepositoryStore.ACTION_UPDATED.equals(intent.getAction())) {
+                String error = intent.getStringExtra(RepositoryStore.EXTRA_ERROR);
+                if (error != null) repositoryError = error;
+            } else if (RootLogIndexer.ACTION_UPDATED.equals(intent.getAction())) {
+                String error = intent.getStringExtra(RootLogIndexer.EXTRA_ERROR);
+                if (error != null) logIndexError = error;
+            }
             if (currentPage != 1) rebuildUi();
         }
     };
@@ -120,18 +134,30 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         new NotificationController(this);
-        currentPage = getIntent().hasExtra("run_id") ? 2 : AppSettings.page(this);
+        RepositoryWorkspaceStore.initialize(this);
+        RunStore.all(this); // Complete the one-time history migration before retention evaluates rows.
+        RetentionManager.maybeRun(this);
+        historyQuery = AppSettings.logQuery(this);
+        historyStatus = AppSettings.logStatus(this);
+        historyProject = AppSettings.logProject(this);
+        historySeverity = AppSettings.logSeverity(this);
+        historyRepositoryId = AppSettings.logRepository(this);
+        applyLogRepositoryIntent(getIntent());
+        currentPage = resolveRequestedPage(getIntent());
         rebuildUi();
+        maybeOpenRequestedRun(getIntent());
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (intent != null && intent.hasExtra("run_id")) {
-            currentPage = 2;
+        if (intent != null) {
+            applyLogRepositoryIntent(intent);
+            currentPage = resolveRequestedPage(intent);
             AppSettings.setPage(this, currentPage);
             rebuildUi();
+            maybeOpenRequestedRun(intent);
         }
     }
 
@@ -142,6 +168,8 @@ public final class MainActivity extends Activity {
             IntentFilter filter = new IntentFilter(RunStore.ACTION_UPDATED);
             filter.addAction(BridgeTokenManager.ACTION_UPDATED);
             filter.addAction(RootBridgeManager.ACTION_UPDATED);
+            filter.addAction(RepositoryStore.ACTION_UPDATED);
+            filter.addAction(RootLogIndexer.ACTION_UPDATED);
             if (Build.VERSION.SDK_INT >= 33) registerReceiver(runUpdates, filter, Context.RECEIVER_NOT_EXPORTED);
             else registerReceiver(runUpdates, filter);
             receiverRegistered = true;
@@ -161,7 +189,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (ui != null && (currentPage == 0 || currentPage == 3)) rebuildUi();
+        if (ui != null && (currentPage == 0 || currentPage == 3 || currentPage == 4)) rebuildUi();
         else if (statusView != null) refreshStatus();
     }
 
@@ -175,28 +203,61 @@ public final class MainActivity extends Activity {
 
     private View buildRoot() {
         LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        root.setOrientation(ui.wideLayout() ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         root.setBackgroundColor(ui.palette.background);
         root.setFocusableInTouchMode(true);
         root.setContentDescription(PAGES[currentPage] + ". " + pageSubtitle());
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             int top;
             int bottom;
+            int left = 0;
+            int right = 0;
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
                 top = bars.top;
                 bottom = bars.bottom;
+                left = bars.left;
+                right = bars.right;
             } else {
                 top = insets.getSystemWindowInsetTop();
                 bottom = insets.getSystemWindowInsetBottom();
             }
-            view.setPadding(0, top, 0, bottom);
+            view.setPadding(left, top, right, bottom);
             return insets;
         });
 
+        LinearLayout pageColumn = new LinearLayout(this);
+        pageColumn.setOrientation(LinearLayout.VERTICAL);
+        pageColumn.setBackgroundColor(ui.palette.background);
+        pageColumn.addView(buildPageHeader());
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(ui.palette.background);
+        scroll.addView(buildPage());
+        pageColumn.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        if (currentPage == 1) pageColumn.addView(buildRunActionBar());
+
+        if (ui.wideLayout()) {
+            root.addView(buildNavigationRail(), new LinearLayout.LayoutParams(
+                    ui.dp(AdaptiveLayout.navigationRailWidthDp(this)),
+                    LinearLayout.LayoutParams.MATCH_PARENT));
+            root.addView(pageColumn, new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+        } else {
+            root.addView(pageColumn, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+            root.addView(buildBottomNavigation());
+        }
+        return root;
+    }
+
+    private View buildPageHeader() {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
-        header.setPadding(ui.dp(20), ui.dp(18), ui.dp(20), ui.dp(14));
+        header.setPadding(ui.contentHorizontalPadding(), ui.dp(18),
+                ui.contentHorizontalPadding(), ui.dp(14));
         header.addView(ui.text("DEVTOOL", UiTypography.Role.LABEL, ui.palette.cyan));
         TextView title = ui.text(PAGES[currentPage], UiTypography.Role.PAGE_TITLE, ui.palette.text);
         title.setPadding(0, ui.dp(2), 0, ui.dp(2));
@@ -204,17 +265,36 @@ public final class MainActivity extends Activity {
         title.setContentDescription(PAGES[currentPage] + " page");
         header.addView(title);
         header.addView(ui.text(pageSubtitle(), UiTypography.Role.BODY, ui.palette.muted));
-        root.addView(header);
+        return header;
+    }
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(ui.palette.background);
-        scroll.addView(buildPage());
-        root.addView(scroll, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
-        if (currentPage == 1) root.addView(buildRunActionBar());
-        root.addView(buildBottomNavigation());
-        return root;
+    private View buildNavigationRail() {
+        LinearLayout rail = new LinearLayout(this);
+        rail.setOrientation(LinearLayout.VERTICAL);
+        rail.setPadding(ui.dp(10), ui.dp(14), ui.dp(10), ui.dp(14));
+        rail.setBackgroundColor(ui.palette.surface);
+        TextView brand = ui.text("DEVTOOL", UiTypography.Role.LABEL, ui.palette.cyan);
+        brand.setPadding(ui.dp(10), ui.dp(4), ui.dp(10), ui.dp(14));
+        rail.addView(brand);
+        int[] symbols = {R.drawable.ic_nav_overview, R.drawable.ic_nav_run,
+                R.drawable.ic_nav_history, R.drawable.ic_repository, R.drawable.ic_nav_settings};
+        for (int index = 0; index < PAGES.length; index++) {
+            final int page = index;
+            Button button = ui.navButton(symbols[index], PAGES[index], index == currentPage, v -> {
+                currentPage = page;
+                AppSettings.setPage(this, page);
+                rebuildUi();
+            });
+            button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            button.setCompoundDrawablesWithIntrinsicBounds(symbols[index], 0, 0, 0);
+            button.setCompoundDrawablePadding(ui.dp(12));
+            button.setPadding(ui.dp(12), ui.dp(10), ui.dp(10), ui.dp(10));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            params.setMargins(0, ui.dp(3), 0, ui.dp(3));
+            rail.addView(button, params);
+        }
+        return rail;
     }
 
     private View buildBottomNavigation() {
@@ -222,7 +302,7 @@ public final class MainActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setPadding(ui.dp(10), ui.dp(7), ui.dp(10), ui.dp(7));
         row.setBackgroundColor(ui.palette.surface);
-        int[] symbols = {R.drawable.ic_nav_overview, R.drawable.ic_nav_run, R.drawable.ic_nav_history, R.drawable.ic_nav_settings};
+        int[] symbols = {R.drawable.ic_nav_overview, R.drawable.ic_nav_run, R.drawable.ic_nav_history, R.drawable.ic_repository, R.drawable.ic_nav_settings};
         for (int index = 0; index < PAGES.length; index++) {
             final int page = index;
             Button button = ui.navButton(symbols[index], PAGES[index], index == currentPage, v -> {
@@ -241,18 +321,21 @@ public final class MainActivity extends Activity {
 
     private String pageSubtitle() {
         if (currentPage == 1) return "Build and run a devtool workflow without writing shell commands.";
-        if (currentPage == 2) return "Review recent runs, results and captured output.";
-        if (currentPage == 3) return "Manage appearance, permissions, pairing and advanced execution.";
+        if (currentPage == 2) return "Search structured run output, problems and metadata.";
+        if (currentPage == 3) return "Inspect saved, discovered and live repositories across Termux and chroots.";
+        if (currentPage == 4) return "Manage appearance, permissions, pairing and advanced execution.";
         return "See readiness, current work and the next useful action at a glance.";
     }
 
     private View buildPage() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(ui.dp(16), ui.dp(2), ui.dp(16), ui.dp(28));
+        content.setPadding(ui.contentHorizontalPadding(), ui.dp(2),
+                ui.contentHorizontalPadding(), ui.dp(28));
         if (currentPage == 1) buildRunPage(content);
         else if (currentPage == 2) buildHistoryPage(content);
-        else if (currentPage == 3) buildSettingsPage(content);
+        else if (currentPage == 3) buildRepositoriesPage(content);
+        else if (currentPage == 4) buildSettingsPage(content);
         else buildOverviewPage(content);
         return content;
     }
@@ -288,7 +371,8 @@ public final class MainActivity extends Activity {
         content.addView(ui.quickTile(R.drawable.ic_repository, "Repository status", "Inspect the configured repository", ui.palette.green, v -> runQuick("status")));
         content.addView(ui.quickTile(R.drawable.ic_validate, "Validate target", "Restore, build and test efficiently", ui.palette.cyan, v -> runQuick("validate")));
         content.addView(ui.quickTile(R.drawable.ic_workflow, "Build a workflow", "Apply overlays, test or commit", ui.palette.yellow, v -> switchPage(1)));
-        content.addView(ui.quickTile(R.drawable.ic_nav_history, "Run history", "Review output and rerun commands", ui.palette.muted, v -> switchPage(2)));
+        content.addView(ui.quickTile(R.drawable.ic_nav_history, "Structured logs", "Review output, problems and metadata", ui.palette.muted, v -> switchPage(2)));
+        content.addView(ui.quickTile(R.drawable.ic_repository, "Repositories", "Inspect Termux and chroot repositories", ui.palette.cyan, v -> switchPage(3)));
 
         List<RunRecord> records = RunStore.all(this);
         if (records.size() > 1) {
@@ -380,14 +464,245 @@ public final class MainActivity extends Activity {
     }
 
     private void buildHistoryPage(LinearLayout content) {
+        RootLogIndexer.refreshIfStale(this, 60_000L);
+        content.addView(ui.sectionTitle("Log sources"));
+        LinearLayout sourceControls = ui.surface();
+        sourceControls.addView(ui.text("Root indexing reads authoritative Devtool logs from Termux, chroots, HUD bridges and the phone mirror. Files are tailed incrementally; source logs are never modified.",
+                UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        if (!logIndexError.isEmpty()) sourceControls.addView(ui.text(logIndexError, UiTypography.Role.LABEL, ui.palette.red));
+        sourceControls.addView(ui.button(RootLogIndexer.busy() ? "Indexing…" : "Refresh root logs", ui.palette.cyan, v -> {
+            logIndexError = "";
+            RootLogIndexer.refreshAsync(this);
+            rebuildUi();
+        }));
+        content.addView(sourceControls);
         content.addView(ui.sectionTitle("Search and filters"));
-        LinearLayout filters=ui.surface(); EditText search=ui.input(historyQuery,"Search command, repository, target or output",false);search.setContentDescription("Search run history by command, repository, target, or output"); filters.addView(search);
-        Spinner status=spinner(new String[]{"all","ok","failed","cancelled","interrupted","skipped"},historyStatus,"History status filter"); filters.addView(label("Status"));filters.addView(status);content.addView(filters);
-        content.addView(ui.sectionTitle("Runs")); LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);content.addView(list);
-        Runnable refresh=()->populateHistoryList(list,RunStore.all(this),search.getText().toString(),String.valueOf(status.getSelectedItem()));
-        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){historyQuery=s.toString();refresh.run();}public void afterTextChanged(Editable s){}});
-        status.setOnItemSelectedListener(new SimpleItemSelectedListener(()->{historyStatus=String.valueOf(status.getSelectedItem());refresh.run();})); refresh.run();
-        LinearLayout actions=ui.surface();actions.addView(ui.secondaryButton("Clear run history",v->new AlertDialog.Builder(this).setTitle("Clear all run history?").setMessage("This removes saved run metadata. Repositories, artifacts and external logs are not deleted.").setNegativeButton("Cancel",null).setPositiveButton("Clear",(d,w)->{RunStore.clear(this);rebuildUi();}).show()));content.addView(actions);
+        LinearLayout filters = ui.surface();
+        EditText search = ui.input(historyQuery, "Search command, repository, target, problem or output", false);
+        search.setContentDescription("Search command, repository, target, output or structured log entries");
+        filters.addView(search);
+        Spinner status = spinner(new String[]{"all", "ok", "failed", "cancelled", "interrupted", "skipped", "waiting"},
+                historyStatus, "Log status filter");
+        filters.addView(label("Status"));
+        filters.addView(status);
+        Spinner project = spinner(new String[]{"all", "git", "android", "gradle", "dotnet", "python", "rust", "node", "cmake", "auto"},
+                historyProject, "Project type filter");
+        filters.addView(label("Project type"));
+        filters.addView(project);
+        Spinner severity = spinner(new String[]{"all", "error", "warning", "success", "info"},
+                historySeverity, "Severity filter");
+        filters.addView(label("Severity"));
+        filters.addView(severity);
+
+        List<RepositoryRecord> logRepositories = RepositoryStore.all(this);
+        List<String> repositoryLabels = new ArrayList<>();
+        List<String> repositoryIds = new ArrayList<>();
+        repositoryLabels.add("all repositories");
+        repositoryIds.add("");
+        int repositorySelection = 0;
+        for (RepositoryRecord repository : logRepositories) {
+            repositoryLabels.add(repository.name() + " · " + repository.location().displayEnvironment());
+            repositoryIds.add(repository.repositoryId);
+            if (repository.repositoryId.equals(historyRepositoryId)) repositorySelection = repositoryIds.size() - 1;
+        }
+        Spinner repository = new Spinner(this);
+        ArrayAdapter<String> repositoryAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, repositoryLabels);
+        repositoryAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        repository.setAdapter(repositoryAdapter);
+        repository.setSelection(repositorySelection);
+        repository.setContentDescription("Repository log filter");
+        filters.addView(label("Repository"));
+        filters.addView(repository);
+        filters.addView(ui.text("This view is saved automatically and restored when Logs opens again.",
+                UiTypography.Role.CAPTION, ui.palette.muted));
+        filters.addView(ui.secondaryButton("Reset saved view", v -> {
+            AppSettings.resetLogView(this);
+            historyQuery = "";
+            historyStatus = "all";
+            historyProject = "all";
+            historySeverity = "all";
+            historyRepositoryId = "";
+            rebuildUi();
+        }));
+        content.addView(filters);
+
+        content.addView(ui.sectionTitle("Runs"));
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        content.addView(list);
+        Runnable refresh = () -> populateHistoryList(list, RunStore.all(this), search.getText().toString(),
+                String.valueOf(status.getSelectedItem()), String.valueOf(project.getSelectedItem()),
+                String.valueOf(severity.getSelectedItem()), historyRepositoryId);
+        search.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+            public void onTextChanged(CharSequence value, int start, int before, int count) {
+                historyQuery = value.toString();
+                saveLogView();
+                refresh.run();
+            }
+            public void afterTextChanged(Editable value) {}
+        });
+        status.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> {
+            historyStatus = String.valueOf(status.getSelectedItem()); saveLogView(); refresh.run();
+        }));
+        project.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> {
+            historyProject = String.valueOf(project.getSelectedItem()); saveLogView(); refresh.run();
+        }));
+        severity.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> {
+            historySeverity = String.valueOf(severity.getSelectedItem()); saveLogView(); refresh.run();
+        }));
+        repository.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> {
+            int selected = repository.getSelectedItemPosition();
+            historyRepositoryId = selected >= 0 && selected < repositoryIds.size() ? repositoryIds.get(selected) : "";
+            saveLogView();
+            refresh.run();
+        }));
+        refresh.run();
+
+        LinearLayout actions = ui.surface();
+        actions.addView(ui.secondaryButton("Clear indexed run history", v -> new AlertDialog.Builder(this)
+                .setTitle("Clear all indexed runs?")
+                .setMessage("This removes Android run and structured-entry records. Repository files, Git history, artifacts and external Devtool logs are not deleted.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Clear", (dialog, which) -> { RunStore.clear(this); rebuildUi(); })
+                .show()));
+        content.addView(actions);
+    }
+
+    private void buildRepositoriesPage(LinearLayout content) {
+        content.addView(ui.sectionTitle("Repository sources"));
+        LinearLayout controls = ui.surface();
+        controls.addView(ui.text("Repositories are opt-in. Active Devtool runs appear temporarily as LIVE · NOT SAVED until you save them.",
+                UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        if (!repositoryError.isEmpty()) controls.addView(ui.text(repositoryError, UiTypography.Role.BODY_SMALL, ui.palette.red));
+        controls.addView(ui.button(RepositoryStore.busy() ? "Refreshing…" : "Refresh saved and live",
+                ui.palette.cyan, v -> RepositoryStore.refreshAsync(this, false)));
+        controls.addView(ui.secondaryButton("Discover Termux and chroot repositories",
+                v -> RepositoryStore.refreshAsync(this, true)));
+        controls.addView(ui.secondaryButton("Add repository…", v -> openRepositoryPicker()));
+        content.addView(controls);
+
+        content.addView(ui.sectionTitle("Search and filters"));
+        LinearLayout filters = ui.surface();
+        EditText search = ui.input(repositoryQuery, "Search name, path, branch, remote or environment", false);
+        Spinner filter = spinner(new String[]{"all", "saved", "modified", "clean", "live", "missing", "termux", "chroot"},
+                repositoryFilter, "Repository filter");
+        filters.addView(search);
+        filters.addView(label("Filter"));
+        filters.addView(filter);
+        content.addView(filters);
+
+        content.addView(ui.sectionTitle("Repositories"));
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        content.addView(list);
+        Runnable refresh = () -> populateRepositoryList(list,
+                RepositoryStore.filter(RepositoryStore.all(this), search.getText().toString(),
+                        String.valueOf(filter.getSelectedItem())));
+        search.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+            public void onTextChanged(CharSequence value, int start, int before, int count) {
+                repositoryQuery = value.toString(); refresh.run();
+            }
+            public void afterTextChanged(Editable value) {}
+        });
+        filter.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> {
+            repositoryFilter = String.valueOf(filter.getSelectedItem()); refresh.run();
+        }));
+        refresh.run();
+    }
+
+    private void populateRepositoryList(LinearLayout list, List<RepositoryRecord> repositories) {
+        list.removeAllViews();
+        if (repositories.isEmpty()) {
+            LinearLayout empty = ui.surface();
+            empty.addView(ui.text("No repositories match", UiTypography.Role.CARD_TITLE, ui.palette.text));
+            empty.addView(ui.text("Add a path explicitly, discover repositories with root, or start a Devtool run to create a live entry.",
+                    UiTypography.Role.BODY_SMALL, ui.palette.muted));
+            empty.addView(ui.button("Add repository", ui.palette.cyan, v -> openRepositoryPicker()));
+            list.addView(empty);
+            return;
+        }
+        for (RepositoryRecord repository : repositories) list.addView(repositoryCard(repository));
+    }
+
+    private View repositoryCard(RepositoryRecord repository) {
+        LinearLayout card = ui.surface();
+        card.setContentDescription(repository.name() + ", " + repository.status + ", "
+                + repository.location().displayEnvironment() + ", " + repository.canonicalPath);
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.addView(ui.text(repository.name(), UiTypography.Role.CARD_TITLE, ui.palette.text),
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        heading.addView(ui.text(repository.status.toUpperCase(Locale.ROOT), UiTypography.Role.CAPTION,
+                repositoryStatusColor(repository.status)));
+        card.addView(heading);
+        TextView path = ui.text(repository.canonicalPath, UiTypography.Role.BODY_SMALL, ui.palette.muted);
+        path.setTypeface(Typeface.MONOSPACE);
+        path.setMaxLines(2);
+        card.addView(path);
+        long activeGitOperations = RepositoryWorkspaceStore.operations(this, repository.repositoryId).stream()
+                .filter(RepositoryOperationRecord::active).count();
+        card.addView(ui.text(join(" · ", repository.branch.isEmpty() ? "No branch" : repository.branch,
+                        repository.location().displayEnvironment(), repository.linuxUser,
+                        repository.projectType, repository.saved ? "SAVED" : "LIVE · NOT SAVED",
+                        repository.activeRunCount > 0 ? repository.activeRunCount + " live" : "",
+                        activeGitOperations > 0 ? activeGitOperations + " Git op" + (activeGitOperations == 1 ? "" : "s") : ""),
+                UiTypography.Role.CAPTION, activeGitOperations > 0 ? ui.palette.cyan
+                        : repository.saved ? ui.palette.muted : ui.palette.yellow));
+        if (repository.aheadCount > 0 || repository.behindCount > 0) {
+            card.addView(ui.text(repository.aheadCount + " ahead · " + repository.behindCount + " behind",
+                    UiTypography.Role.CAPTION, ui.palette.cyan));
+        }
+        if (!repository.lastError.isEmpty()) card.addView(ui.text(repository.lastError,
+                UiTypography.Role.BODY_SMALL, ui.palette.red));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(ui.verticalActions() ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        Button open = ui.button("Open", ui.palette.cyan, v -> openRepository(repository.repositoryId));
+        Button use = ui.secondaryButton("Use in Run", v -> useRepositoryInRun(repository));
+        Button save = ui.secondaryButton(repository.saved ? "Remove" : "Save", v -> {
+            if (repository.saved) RepositoryStore.remove(this, repository.repositoryId);
+            else RepositoryStore.setSaved(this, repository.repositoryId, true);
+        });
+        if (ui.verticalActions()) { actions.addView(open); actions.addView(use); actions.addView(save); }
+        else {
+            actions.addView(open, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(use, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(save, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        card.addView(actions);
+        return card;
+    }
+
+    private void openRepository(String repositoryId) {
+        boolean hasOperation = RepositoryWorkspaceStore.operations(this, repositoryId).stream()
+                .anyMatch(RepositoryOperationRecord::active);
+        startActivity(new Intent(this, RepositoryDetailActivity.class)
+                .putExtra(RepositoryDetailActivity.EXTRA_REPOSITORY_ID, repositoryId)
+                .putExtra(RepositoryDetailActivity.EXTRA_TAB, hasOperation ? 4 : 0));
+    }
+
+    private void openRepositoryPicker() {
+        startActivity(new Intent(this, RepositoryPickerActivity.class)
+                .putExtra(RepositoryPickerActivity.EXTRA_MODE, RepositoryPickerActivity.MODE_ADD));
+    }
+
+    private void useRepositoryInRun(RepositoryRecord repository) {
+        DevtoolRunConfig config = AppSettings.runConfig(this);
+        config.repo = repository.canonicalPath;
+        config.workdir = repository.environment.equals("chroot") || repository.environment.equals("root") ? "~/"
+                : (repository.hostPath.isEmpty() ? repository.canonicalPath : repository.hostPath);
+        config.projectType = repository.projectType.isEmpty() ? "auto" : repository.projectType;
+        config.executionEnvironment = repository.environment.equals("chroot") ? "chroot"
+                : repository.environment.equals("root") ? "android-device" : "native-termux";
+        config.useChroot = repository.environment.equals("chroot");
+        config.useRootBridge = repository.environment.equals("root") || config.useRootBridge;
+        config.chrootName = repository.chrootName.isEmpty() ? "androidos" : repository.chrootName;
+        AppSettings.setRunConfig(this, config);
+        AppSettings.setRunDraft(this, config);
+        RepositoryStore.touch(this, repository.repositoryId);
+        switchPage(1);
     }
 
     private void buildSettingsPage(LinearLayout content) {
@@ -402,6 +717,8 @@ public final class MainActivity extends Activity {
         appearance.addView(ui.text("Off uses the shared Devtool desktop palette. On follows wallpaper colors on Android 12+.", UiTypography.Role.BODY_SMALL, ui.palette.muted));
         content.addView(appearance);
 
+        buildRetentionSettings(content);
+
         content.addView(ui.sectionTitle("Permissions and integrations"));
         addCoreTiles(content, true);
         content.addView(ui.sectionTitle("Optional root bridge"));
@@ -414,6 +731,7 @@ public final class MainActivity extends Activity {
         content.addView(ui.quickTile(R.drawable.ic_hud, "Test floating HUD", "Show a sample overlay card", ui.palette.cyan, v -> testOverlay()));
         content.addView(ui.quickTile(R.drawable.ic_terminal, "Open Termux", "Bring the current Termux session to the foreground", ui.palette.cyan,
                 v -> { if (!TermuxCommandRunner.openTermux(this)) Toast.makeText(this, "Termux could not be opened", Toast.LENGTH_LONG).show(); }));
+        buildSupportBundleSettings(content);
 
         content.addView(ui.sectionTitle("Command runner"));
         content.addView(ui.text("Advanced raw commands always use the rootless Termux backend. The optional root bridge accepts only visual-builder devtool workflows.", UiTypography.Role.BODY_SMALL, ui.palette.muted));
@@ -449,6 +767,104 @@ public final class MainActivity extends Activity {
         content.addView(bridge);
     }
 
+    private void buildSupportBundleSettings(LinearLayout content) {
+        LinearLayout bundle = ui.surface();
+        bundle.addView(ui.text("Support bundle", UiTypography.Role.CARD_TITLE, ui.palette.text));
+        bundle.addView(ui.text("Copies a redacted JSON snapshot of app state, database counts, root bridge status, recent runs, repositories and queued Git operations. Raw logs are not included.",
+                UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        Switch includeCommands = ui.toggle("Include redacted recent commands", AppSettings.includeSupportCommands(this));
+        includeCommands.setContentDescription("Include redacted recent command strings in support bundles");
+        includeCommands.setOnCheckedChangeListener((button, checked) -> AppSettings.setIncludeSupportCommands(this, checked));
+        bundle.addView(includeCommands);
+        bundle.addView(ui.text("Leave this off when sharing publicly. When enabled, command text is still redacted for bridge tokens, HTTPS credentials, authorization headers and common secret assignments.",
+                UiTypography.Role.LABEL, ui.palette.muted));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(ui.verticalActions() ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        Button copy = ui.button("Copy support bundle", ui.palette.green,
+                v -> copyText("Devtool support bundle", SupportBundle.build(this)));
+        Button share = ui.secondaryButton("Share support bundle", v -> shareSupportBundle());
+        if (ui.verticalActions()) {
+            actions.addView(copy, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            actions.addView(share, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        } else {
+            actions.addView(copy, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(share, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        bundle.addView(actions);
+        content.addView(bundle);
+    }
+
+    private void buildRetentionSettings(LinearLayout content) {
+        content.addView(ui.sectionTitle("Indexed data retention"));
+        DevtoolDatabase.DatabaseStats stats = DevtoolDatabase.get(this).databaseStats();
+        LinearLayout retention = ui.surface();
+        retention.addView(ui.text(stats.runs + " runs · " + stats.pinnedRuns + " pinned · "
+                        + stats.logEntries + " structured entries",
+                UiTypography.Role.CARD_TITLE, ui.palette.text));
+        retention.addView(ui.text(stats.repositories + " repositories · " + stats.operations
+                        + " Git operations · " + formatBytes(stats.databaseBytes),
+                UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        retention.addView(ui.text("Cleanup affects only Android-indexed metadata. Authoritative Devtool logs, repositories, artifacts, Git history, and untracked files are never deleted.",
+                UiTypography.Role.BODY_SMALL, ui.palette.muted));
+
+        String[] runDaysValues = {"7", "14", "30", "60", "90", "365"};
+        String[] maxRunValues = {"100", "250", "500", "1000", "2000"};
+        String[] operationDaysValues = {"7", "30", "90", "365"};
+        String[] eventDaysValues = {"30", "90", "180", "365"};
+        Spinner runDays = spinner(runDaysValues, String.valueOf(AppSettings.completedRunRetentionDays(this)),
+                "Completed run retention days");
+        Spinner maxRuns = spinner(maxRunValues, String.valueOf(AppSettings.maximumCompletedRuns(this)),
+                "Maximum completed runs");
+        Spinner operationDays = spinner(operationDaysValues,
+                String.valueOf(AppSettings.repositoryOperationRetentionDays(this)),
+                "Git operation retention days");
+        Spinner eventDays = spinner(eventDaysValues,
+                String.valueOf(AppSettings.repositoryEventRetentionDays(this)),
+                "Repository activity retention days");
+        retention.addView(label("Completed runs: days"));
+        retention.addView(runDays);
+        retention.addView(label("Maximum completed runs"));
+        retention.addView(maxRuns);
+        retention.addView(label("Completed Git operations: days"));
+        retention.addView(operationDays);
+        retention.addView(label("Repository activity: days"));
+        retention.addView(eventDays);
+        retention.addView(ui.button("Save retention policy", ui.palette.green, v -> {
+            AppSettings.setRetentionPolicy(this,
+                    Integer.parseInt(String.valueOf(runDays.getSelectedItem())),
+                    Integer.parseInt(String.valueOf(maxRuns.getSelectedItem())),
+                    Integer.parseInt(String.valueOf(operationDays.getSelectedItem())),
+                    Integer.parseInt(String.valueOf(eventDays.getSelectedItem())));
+            Toast.makeText(this, "Retention policy saved", Toast.LENGTH_SHORT).show();
+        }));
+        retention.addView(ui.secondaryButton("Clean indexed data now", v -> runRetention(false)));
+        retention.addView(ui.secondaryButton("Clean and compact database…", v -> new AlertDialog.Builder(this)
+                .setTitle("Clean and compact indexed data?")
+                .setMessage("The cleanup policy will run, then SQLite will reclaim unused database space. Active and pinned runs are preserved.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Clean and compact", (dialog, which) -> runRetention(true))
+                .show()));
+        content.addView(retention);
+    }
+
+    private void runRetention(boolean compactDatabase) {
+        Toast.makeText(this, compactDatabase ? "Cleaning and compacting…" : "Cleaning indexed data…",
+                Toast.LENGTH_SHORT).show();
+        RetentionManager.runNow(this, compactDatabase, report -> runOnUiThread(() -> {
+            Toast.makeText(this, report.summary(), Toast.LENGTH_LONG).show();
+            rebuildUi();
+        }));
+    }
+
+    private static String formatBytes(long value) {
+        if (value < 1024L) return value + " B";
+        double kib = value / 1024.0;
+        if (kib < 1024.0) return String.format(Locale.ROOT, "%.1f KiB", kib);
+        double mib = kib / 1024.0;
+        if (mib < 1024.0) return String.format(Locale.ROOT, "%.1f MiB", mib);
+        return String.format(Locale.ROOT, "%.2f GiB", mib / 1024.0);
+    }
+
     private Spinner spinner(String[] values, String selected, String accessibilityLabel) {
         Spinner spinner = new Spinner(this);
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, values);
@@ -461,11 +877,11 @@ public final class MainActivity extends Activity {
     }
 
     private View buildRunActionBar() {
-        LinearLayout bar=new LinearLayout(this);bar.setOrientation(ui.largeText()?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(ui.dp(12),ui.dp(8),ui.dp(12),ui.dp(8));bar.setBackgroundColor(ui.palette.surface);
+        LinearLayout bar=new LinearLayout(this);bar.setOrientation(ui.verticalActions()?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(ui.dp(12),ui.dp(8),ui.dp(12),ui.dp(8));bar.setBackgroundColor(ui.palette.surface);
         runBackButton=ui.secondaryButton("Back",v->showRunStage(runStage-1));runStageLabel=ui.text("", UiTypography.Role.LABEL, ui.palette.muted);runStageLabel.setGravity(Gravity.CENTER);
         runNextButton=ui.secondaryButton("Next",v->showRunStage(runStage+1));runExecuteButton=ui.button("Run devtool",ui.palette.green,v->requestRunBuiltCommand());
         runBackButton.setContentDescription("Previous workflow step"); runNextButton.setContentDescription("Next workflow step"); runExecuteButton.setContentDescription("Run reviewed devtool workflow");
-        if(ui.largeText()){
+        if(ui.verticalActions()){
             bar.addView(runStageLabel,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
             bar.addView(runBackButton,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
             bar.addView(runNextButton,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -497,17 +913,113 @@ public final class MainActivity extends Activity {
         try{DevtoolRunConfig config=readRunConfig().copy();config.operation="test";config.listTests=true;config.testSelectors="";config.testTags="";config.testExcludeTags="";config.testPath="";config.testClass="";config.testMethod="";String command=DevtoolCommandBuilder.build(config);runRaw(command,resolvedWorkdir(config),config.overlay,config.useRootBridge);Toast.makeText(this,"Test discovery started. Return to Tests after it finishes.",Toast.LENGTH_LONG).show();}catch(RuntimeException error){Toast.makeText(this,"Could not start discovery: "+error.getMessage(),Toast.LENGTH_LONG).show();}
     }
 
-    private void populateHistoryList(LinearLayout parent,List<RunRecord> records,String query,String status){parent.removeAllViews();String needle=query==null?"":query.trim().toLowerCase(Locale.ROOT);String wanted=status==null?"all":status.trim().toLowerCase(Locale.ROOT);int shown=0;for(RunRecord record:records){if(!wanted.equals("all")&&!record.status.equalsIgnoreCase(wanted))continue;String hay=join("\n",record.title,record.repo,record.target,record.command,record.summary,record.detail,record.error,record.stderr,record.stdout).toLowerCase(Locale.ROOT);if(!needle.isEmpty()&&!hay.contains(needle))continue;parent.addView(compactHistoryCard(record));shown++;}if(shown==0){LinearLayout empty=ui.surface();empty.addView(ui.text(records.isEmpty()?"No history yet":"No runs match the current search and filter.", UiTypography.Role.CARD_TITLE, ui.palette.text));if(records.isEmpty())empty.addView(ui.button("Create a run",ui.palette.cyan,v->switchPage(1)));parent.addView(empty);}}
+    private void populateHistoryList(LinearLayout parent, List<RunRecord> records, String query,
+                                     String status, String project, String severity,
+                                     String repositoryId) {
+        parent.removeAllViews();
+        String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        String wantedStatus = status == null ? "all" : status.trim().toLowerCase(Locale.ROOT);
+        String wantedProject = project == null ? "all" : project.trim().toLowerCase(Locale.ROOT);
+        String wantedSeverity = severity == null ? "all" : severity.trim().toLowerCase(Locale.ROOT);
+        String wantedRepository = repositoryId == null ? "" : repositoryId.trim();
+        Set<String> structuredMatches = needle.isEmpty()
+                ? java.util.Collections.emptySet() : DevtoolDatabase.get(this).matchingRunIds(needle);
+        Set<String> severityMatches = wantedSeverity.equals("all")
+                ? java.util.Collections.emptySet() : DevtoolDatabase.get(this).runIdsWithSeverity(wantedSeverity);
+        int shown = 0;
+        for (RunRecord record : records) {
+            if (!wantedRepository.isEmpty() && !wantedRepository.equals(record.repositoryId)) continue;
+            if (!wantedStatus.equals("all") && !record.status.equalsIgnoreCase(wantedStatus)) continue;
+            if (!wantedProject.equals("all") && !record.projectType.equalsIgnoreCase(wantedProject)) continue;
+            if (!matchesSeverity(record, wantedSeverity) && !severityMatches.contains(record.runId)) continue;
+            String hay = join("\n", record.title, record.repo, record.target, record.command,
+                    record.summary, record.detail, record.error, record.stderr, record.stdout,
+                    record.artifact, record.commitHash, record.phase).toLowerCase(Locale.ROOT);
+            if (!needle.isEmpty() && !hay.contains(needle) && !structuredMatches.contains(record.runId)) continue;
+            parent.addView(compactHistoryCard(record));
+            shown++;
+        }
+        if (shown == 0) {
+            LinearLayout empty = ui.surface();
+            empty.addView(ui.text(records.isEmpty() ? "No logs yet" : "No runs match the current search and filters.",
+                    UiTypography.Role.CARD_TITLE, ui.palette.text));
+            if (records.isEmpty()) empty.addView(ui.button("Create a run", ui.palette.cyan, v -> switchPage(1)));
+            parent.addView(empty);
+        }
+    }
 
-    private View compactHistoryCard(RunRecord record){LinearLayout card=ui.surface();card.setContentDescription(record.title+". Status "+record.status+". "+(record.summary.isEmpty()?record.detail:record.summary));LinearLayout heading=new LinearLayout(this);heading.setOrientation(LinearLayout.HORIZONTAL);TextView title=ui.text(record.title, UiTypography.Role.CARD_TITLE, ui.palette.text);title.setMaxLines(ui.largeText()?2:1);heading.addView(title,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));heading.addView(ui.text(record.status.toUpperCase(Locale.ROOT), UiTypography.Role.CAPTION, statusColor(record.status)));card.addView(heading);card.addView(ui.text(join(" · ",record.repo,record.target,humanProjectType(record.projectType),DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT).format(new Date(record.updatedAtMs))), UiTypography.Role.LABEL, ui.palette.muted));card.addView(ui.text(record.summary.isEmpty()?record.detail:record.summary, UiTypography.Role.BODY_SMALL, ui.palette.text));LinearLayout actions=new LinearLayout(this);actions.setOrientation(ui.largeText()?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);Button details=ui.secondaryButton("Details",v->showRunDetails(record));details.setContentDescription("Show details for "+record.title);Button rerun=ui.secondaryButton("Run again",v->runRaw(record.command,record.workdir,AppSettings.overlayByDefault(this),AppSettings.runConfig(this).useRootBridge));rerun.setContentDescription("Run "+record.title+" again");rerun.setEnabled(!record.command.isEmpty());Button delete=ui.secondaryButton("Delete",v->new AlertDialog.Builder(this).setTitle("Delete this run?").setMessage("This removes saved run metadata. It does not delete repository files.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->{RunStore.remove(this,record.runId);rebuildUi();}).show());delete.setContentDescription("Delete history record for "+record.title);if(ui.largeText()){actions.addView(details);actions.addView(rerun);actions.addView(delete);}else{actions.addView(details,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));actions.addView(rerun,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));actions.addView(delete,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));}card.addView(actions);return card;}
+    private boolean matchesSeverity(RunRecord record, String severity) {
+        if (severity.equals("all")) return true;
+        if (severity.equals("error")) return record.errors > 0 || record.status.equals("failed") || !record.error.isEmpty();
+        if (severity.equals("warning")) return record.warnings > 0 || !record.stderr.isEmpty();
+        if (severity.equals("success")) return record.status.equals("ok");
+        return !record.status.equals("failed") && record.errors == 0 && record.warnings == 0;
+    }
 
-    private void showRunDetails(RunRecord record){String output=join("\n\n",record.summary,record.detail,record.error,record.stderr,record.stdout,record.launchLog);new AlertDialog.Builder(this).setTitle(record.title+" · "+record.status.toUpperCase(Locale.ROOT)).setMessage(join("\n",record.command,"",output)).setNegativeButton("Close",null).setNeutralButton("Copy command",(d,w)->copyText("Devtool command",record.command)).setPositiveButton("Run again",(d,w)->runRaw(record.command,record.workdir,AppSettings.overlayByDefault(this),AppSettings.runConfig(this).useRootBridge)).show();}
+    private View compactHistoryCard(RunRecord record) {
+        LinearLayout card = ui.surface();
+        card.setContentDescription(record.title + ". Status " + record.status + ". "
+                + (record.summary.isEmpty() ? record.detail : record.summary));
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        TextView title = ui.text(record.title, UiTypography.Role.CARD_TITLE, ui.palette.text);
+        title.setMaxLines(ui.largeText() ? 2 : 1);
+        heading.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        heading.addView(ui.text((record.pinned ? "PINNED · " : "")
+                        + record.status.toUpperCase(Locale.ROOT), UiTypography.Role.CAPTION,
+                record.pinned ? ui.palette.yellow : statusColor(record.status)));
+        card.addView(heading);
+        card.addView(ui.text(join(" · ", record.repo, record.target, humanProjectType(record.projectType),
+                        humanExecutionEnvironment(record.executionEnvironment),
+                        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(new Date(record.updatedAtMs))),
+                UiTypography.Role.LABEL, ui.palette.muted));
+        card.addView(ui.text(record.summary.isEmpty() ? record.detail : record.summary,
+                UiTypography.Role.BODY_SMALL, ui.palette.text));
+        card.addView(ui.text(record.errors + " errors · " + record.warnings + " warnings · "
+                        + formatDuration(record.durationMs), UiTypography.Role.CAPTION, ui.palette.muted));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(ui.verticalActions() ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        Button details = ui.button("Open log", ui.palette.cyan, v -> openLog(record.runId));
+        Button rerun = ui.secondaryButton("Run again", v -> runRaw(record.command, record.workdir,
+                AppSettings.overlayByDefault(this), AppSettings.runConfig(this).useRootBridge));
+        rerun.setEnabled(!record.command.isEmpty());
+        Button repository = ui.secondaryButton("Repository", v -> startActivity(
+                new Intent(this, RepositoryDetailActivity.class)
+                        .putExtra(RepositoryDetailActivity.EXTRA_REPOSITORY_ID, record.repositoryId)));
+        repository.setEnabled(!record.repositoryId.isEmpty());
+        Button pin = ui.secondaryButton(record.pinned ? "Unpin" : "Pin", v -> {
+            RunStore.setPinned(this, record.runId, !record.pinned);
+            rebuildUi();
+        });
+        Button delete = ui.secondaryButton("Delete", v -> new AlertDialog.Builder(this)
+                .setTitle("Delete this indexed run?")
+                .setMessage((record.pinned ? "This run is pinned. " : "")
+                        + "This removes Android metadata and structured entries. It does not delete repository files or authoritative external logs.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (dialog, which) -> { RunStore.remove(this, record.runId); rebuildUi(); })
+                .show());
+        if (ui.verticalActions()) {
+            actions.addView(details); actions.addView(rerun); actions.addView(repository); actions.addView(pin); actions.addView(delete);
+        } else {
+            actions.addView(details, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(rerun, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(repository, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(pin, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(delete, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        card.addView(actions);
+        return card;
+    }
+
+    private void openLog(String runId) {
+        startActivity(new Intent(this, LogViewerActivity.class).putExtra(LogViewerActivity.EXTRA_RUN_ID, runId));
+    }
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         boolean ctrl = event.isCtrlPressed();
         boolean alt = event.isAltPressed();
-        if (ctrl && keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_4) {
+        if (ctrl && keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_5) {
             switchPage(keyCode - KeyEvent.KEYCODE_1);
             return true;
         }
@@ -1093,6 +1605,50 @@ public final class MainActivity extends Activity {
         return ui.palette.cyan;
     }
 
+    private int repositoryStatusColor(String status) {
+        if (status.equals("clean")) return ui.palette.green;
+        if (status.equals("modified")) return ui.palette.yellow;
+        if (status.equals("checking")) return ui.palette.cyan;
+        return ui.palette.red;
+    }
+
+    private static String formatDuration(long durationMs) {
+        long seconds = Math.max(0L, durationMs / 1000L);
+        if (seconds < 60L) return seconds + "s";
+        return seconds / 60L + "m " + seconds % 60L + "s";
+    }
+
+    private void applyLogRepositoryIntent(Intent intent) {
+        if (intent == null || !intent.hasExtra("logs_repository_id")) return;
+        historyRepositoryId = intent.getStringExtra("logs_repository_id");
+        if (historyRepositoryId == null) historyRepositoryId = "";
+        intent.removeExtra("logs_repository_id");
+        saveLogView();
+    }
+
+    private void saveLogView() {
+        AppSettings.setLogView(this, historyQuery, historyStatus, historyProject,
+                historySeverity, historyRepositoryId);
+    }
+
+    private int resolveRequestedPage(Intent intent) {
+        if (intent != null && intent.hasExtra("open_page")) {
+            return Math.max(0, Math.min(PAGES.length - 1, intent.getIntExtra("open_page", 0)));
+        }
+        if (intent != null && (intent.hasExtra("run_id") || intent.getBooleanExtra("open_history", false))) return 2;
+        int saved = AppSettings.page(this);
+        return Math.max(0, Math.min(PAGES.length - 1, saved));
+    }
+
+    private void maybeOpenRequestedRun(Intent intent) {
+        if (intent == null) return;
+        String runId = intent.getStringExtra("run_id");
+        if (runId == null || runId.trim().isEmpty()) return;
+        intent.removeExtra("run_id");
+        startActivity(new Intent(this, LogViewerActivity.class)
+                .putExtra(LogViewerActivity.EXTRA_RUN_ID, runId.trim()));
+    }
+
     private void switchPage(int page) {
         captureRunDraft();
         currentPage = page;
@@ -1207,6 +1763,18 @@ public final class MainActivity extends Activity {
     private void openOwnAppDetails() {
         startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.parse("package:" + getPackageName())));
+    }
+
+    private void shareSupportBundle() {
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_SUBJECT, "Devtool Android support bundle");
+        intent.putExtra(Intent.EXTRA_TEXT, SupportBundle.build(this));
+        try {
+            startActivity(Intent.createChooser(intent, "Share support bundle"));
+        } catch (RuntimeException error) {
+            copyText("Devtool support bundle", SupportBundle.build(this));
+        }
     }
 
     private void copyToken() {

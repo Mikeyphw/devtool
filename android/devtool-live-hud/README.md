@@ -7,8 +7,10 @@ A portrait-first GUI frontend and live HUD for devtool.
 - Concurrent runs keep independent notification IDs and floating-HUD cards.
 - Two or more active runs receive a grouped summary notification.
 - Cancelling or dismissing one run does not remove the others.
-- Completed runs remain in History.
-- Abandoned nonterminal history records expire after 12 hours.
+- Completed runs remain in the structured Logs database.
+- Authoritative Termux, chroot, bridge, and mirror logs are indexed incrementally through root.
+- Saved and temporary live repositories are available from the Repos destination.
+- Abandoned nonterminal run records expire after 12 hours.
 
 ## Integrations
 
@@ -78,7 +80,13 @@ the invoking terminal and recorded in
 `~/.local/state/devtool/android-hud-bridge-error.log`.
 
 
-## Staged Run and History workflow
+## Structured Logs and Repositories
+
+Logs uses SQLite/FTS search and a root-backed incremental file indexer. The app reads Devtool XDG logs, Tasker/HUD JSONL, supported chroots, bridge logs, and the phone mirror without modifying source files. Each run opens in Timeline, Problems, Raw, and Metadata views.
+
+Repos ports the desktop repository registry and Git surface with environment-aware Termux/chroot/root identities, working-tree and commit views, branches, guarded mutations, durable operation queues, and cross-linked structured Logs. Phase 6 adds tablet/foldable split panes, queue reordering, retention controls, and passive credential-remediation guidance. See `../../docs/ANDROID_LOGS_REPOSITORIES.md`.
+
+## Staged Run and Logs workflow
 
 Run is organized into Project, Operation, Tests, and Review stages with a fixed
 bottom action bar. The visual builder includes all common lifecycle operations,
@@ -89,9 +97,9 @@ The Tests stage can launch a `--list-tests` discovery run. Completed discovery
 output is parsed into a searchable checklist while profiles, selectors, tags,
 paths, classes, methods, and instrumentation remain available for manual use.
 
-History supports text and status filtering, compact run cards, details, command
-copy/rerun, per-run deletion, and guarded clear-all. Deleting history never
-deletes repository files.
+Logs supports full-text structured search plus status, project, and severity filters, compact run cards, exact-run details, command rerun, per-run deletion, and guarded clear-all. Deleting indexed records never deletes repository files or authoritative external logs.
+
+Repositories now includes a mobile working-tree, commit-history, branch, stash, and remote synchronization surface. It parses porcelain v2 with NUL delimiters, preserves spaces and rename source paths, groups conflicts and file states, provides working/staged diffs, stages and unstages individual files or all changes, and only discards tracked working-tree changes after confirmation. Commit cards link indexed Devtool runs and artifacts. Phase 4 adds staged commits, validated branch creation and checkout, remote tracking checkout, fetch/prune/tags, fast-forward-only pull, non-force push with first-upstream setup, stash/pop including untracked files, and typed-confirmation tracked-only hard reset.
 
 ## TalkBack, touch targets, and large text
 
@@ -112,7 +120,15 @@ constructing a single oversized buffer. Completed rollbacks are announced as
 **Changes rolled back**. See `../../docs/UI_REGRESSION.md`.
 
 
-## 1.7.2 release qualification
+## 1.13.0 release qualification
+
+
+Phase 6 adds adaptive navigation rails and split repository/log panes on wide screens,
+large-text-safe action stacking, live queue timing and reordering, pinned-run retention,
+configurable indexed-data cleanup, optional SQLite compaction, and reviewable credential
+setup guidance. Remote checks remain passive, Git operations remain owner-aware, and
+network commands remain non-interactive, bounded, fast-forward-only for pull, and
+non-force for push.
 
 Debug builds use the `.debug` application ID suffix and can coexist with a
 release installation. Local JVM tests cover command generation/import, Termux

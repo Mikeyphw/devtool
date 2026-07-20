@@ -11,6 +11,7 @@ final class AppSettings {
     private static final String KEY_BACKGROUND = "background";
     private static final String KEY_OVERLAY = "overlay_default";
     private static final String KEY_PAGE = "page";
+    private static final String KEY_NAV_VERSION = "navigation_version";
     private static final String KEY_OPERATION = "operation";
     private static final String KEY_PROJECT_TYPE = "project_type";
     private static final String KEY_EXECUTION_ENVIRONMENT = "execution_environment";
@@ -42,6 +43,17 @@ final class AppSettings {
     private static final String KEY_LIST_TESTS = "list_tests";
     private static final String KEY_INSTRUMENTED = "instrumented";
     private static final String KEY_RUN_DRAFT = "run_draft_json";
+    private static final String KEY_LOG_QUERY = "log_view_query";
+    private static final String KEY_LOG_STATUS = "log_view_status";
+    private static final String KEY_LOG_PROJECT = "log_view_project";
+    private static final String KEY_LOG_SEVERITY = "log_view_severity";
+    private static final String KEY_LOG_REPOSITORY = "log_view_repository";
+    private static final String KEY_RETENTION_RUN_DAYS = "retention_run_days";
+    private static final String KEY_RETENTION_MAX_RUNS = "retention_max_runs";
+    private static final String KEY_RETENTION_OPERATION_DAYS = "retention_operation_days";
+    private static final String KEY_RETENTION_EVENT_DAYS = "retention_event_days";
+    private static final String KEY_LAST_RETENTION_AT = "last_retention_at";
+    private static final String KEY_SUPPORT_INCLUDE_COMMANDS = "support_include_commands";
 
     private AppSettings() {}
 
@@ -70,8 +82,84 @@ final class AppSettings {
     static boolean overlayByDefault(Context context) { return prefs(context).getBoolean(KEY_OVERLAY, true); }
     static void setOverlayByDefault(Context context, boolean value) { prefs(context).edit().putBoolean(KEY_OVERLAY, value).apply(); }
 
-    static int page(Context context) { return prefs(context).getInt(KEY_PAGE, 0); }
-    static void setPage(Context context, int value) { prefs(context).edit().putInt(KEY_PAGE, value).apply(); }
+    static int page(Context context) {
+        SharedPreferences preferences = prefs(context);
+        int value = preferences.getInt(KEY_PAGE, 0);
+        int version = preferences.getInt(KEY_NAV_VERSION, 1);
+        if (version < 2) {
+            if (value == 3) value = 4; // Settings moved after the new Repos destination.
+            preferences.edit().putInt(KEY_PAGE, value).putInt(KEY_NAV_VERSION, 2).apply();
+        }
+        return value;
+    }
+    static void setPage(Context context, int value) {
+        prefs(context).edit().putInt(KEY_PAGE, value).putInt(KEY_NAV_VERSION, 2).apply();
+    }
+
+    static String logQuery(Context context) { return prefs(context).getString(KEY_LOG_QUERY, ""); }
+    static String logStatus(Context context) { return prefs(context).getString(KEY_LOG_STATUS, "all"); }
+    static String logProject(Context context) { return prefs(context).getString(KEY_LOG_PROJECT, "all"); }
+    static String logSeverity(Context context) { return prefs(context).getString(KEY_LOG_SEVERITY, "all"); }
+    static String logRepository(Context context) { return prefs(context).getString(KEY_LOG_REPOSITORY, ""); }
+
+    static void setLogView(Context context, String query, String status, String project,
+                           String severity, String repositoryId) {
+        prefs(context).edit()
+                .putString(KEY_LOG_QUERY, clean(query))
+                .putString(KEY_LOG_STATUS, clean(status).isEmpty() ? "all" : clean(status))
+                .putString(KEY_LOG_PROJECT, clean(project).isEmpty() ? "all" : clean(project))
+                .putString(KEY_LOG_SEVERITY, clean(severity).isEmpty() ? "all" : clean(severity))
+                .putString(KEY_LOG_REPOSITORY, clean(repositoryId))
+                .apply();
+    }
+
+    static void resetLogView(Context context) {
+        prefs(context).edit()
+                .remove(KEY_LOG_QUERY).remove(KEY_LOG_STATUS).remove(KEY_LOG_PROJECT)
+                .remove(KEY_LOG_SEVERITY).remove(KEY_LOG_REPOSITORY).apply();
+    }
+
+    static int completedRunRetentionDays(Context context) {
+        return prefs(context).getInt(KEY_RETENTION_RUN_DAYS, 30);
+    }
+
+    static int maximumCompletedRuns(Context context) {
+        return prefs(context).getInt(KEY_RETENTION_MAX_RUNS, 500);
+    }
+
+    static int repositoryOperationRetentionDays(Context context) {
+        return prefs(context).getInt(KEY_RETENTION_OPERATION_DAYS, 30);
+    }
+
+    static int repositoryEventRetentionDays(Context context) {
+        return prefs(context).getInt(KEY_RETENTION_EVENT_DAYS, 90);
+    }
+
+    static void setRetentionPolicy(Context context, int runDays, int maximumRuns,
+                                   int operationDays, int eventDays) {
+        prefs(context).edit()
+                .putInt(KEY_RETENTION_RUN_DAYS, runDays)
+                .putInt(KEY_RETENTION_MAX_RUNS, maximumRuns)
+                .putInt(KEY_RETENTION_OPERATION_DAYS, operationDays)
+                .putInt(KEY_RETENTION_EVENT_DAYS, eventDays)
+                .apply();
+    }
+
+    static boolean includeSupportCommands(Context context) {
+        return prefs(context).getBoolean(KEY_SUPPORT_INCLUDE_COMMANDS, false);
+    }
+
+    static void setIncludeSupportCommands(Context context, boolean value) {
+        prefs(context).edit().putBoolean(KEY_SUPPORT_INCLUDE_COMMANDS, value).apply();
+    }
+
+    static long lastRetentionAt(Context context) {
+        return prefs(context).getLong(KEY_LAST_RETENTION_AT, 0L);
+    }
+
+    static void setLastRetentionAt(Context context, long value) {
+        prefs(context).edit().putLong(KEY_LAST_RETENTION_AT, value).apply();
+    }
 
     static DevtoolRunConfig runConfig(Context context) {
         SharedPreferences p = prefs(context);

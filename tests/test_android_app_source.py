@@ -319,10 +319,10 @@ def test_android_clipboard_paste_is_guarded_against_first_access_crashes() -> No
     assert "coerceToText(this)" not in tasker
 
 
-def test_android_app_version_bumped_for_notification_bridge_update() -> None:
+def test_android_app_version_bumped_for_logs_and_repositories() -> None:
     build = (APP / "app" / "build.gradle").read_text(encoding="utf-8")
-    assert "versionCode 20" in build
-    assert "versionName '1.7.2'" in build
+    assert "versionCode 27" in build
+    assert "versionName '1.14.0'" in build
 
 
 

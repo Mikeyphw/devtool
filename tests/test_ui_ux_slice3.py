@@ -97,7 +97,10 @@ def test_compact_hud_uses_screen_bounds_safer_opacity_and_keyboard_actions() -> 
 
 def test_android_ui_kit_enforces_touch_targets_labels_and_large_text_mode() -> None:
     source = read(ANDROID / "UiKit.java")
-    assert "fontScale >= 1.3f" in source
+    adaptive = read(ANDROID / "AdaptiveLayout.java")
+    assert "fontScale(context) >= 1.30f" in adaptive
+    assert "fontScale(context) >= 1.60f" in adaptive
+    assert "AdaptiveLayout.largeText(context)" in source
     assert "setMinimumHeight(dp(48))" in source
     assert "setMinHeight(dp(56))" in source
     assert "View.generateViewId()" in source
@@ -109,12 +112,12 @@ def test_android_ui_kit_enforces_touch_targets_labels_and_large_text_mode() -> N
 def test_android_run_history_and_talkback_behaviors_are_present() -> None:
     source = read(ANDROID / "MainActivity.java")
     assert "announceForAccessibility" in source
-    assert "ui.largeText()?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL" in source
+    assert "ui.verticalActions()?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL" in source
     assert "check.setMinimumHeight(ui.dp(48))" in source
     assert "public boolean onKeyUp(int keyCode, KeyEvent event)" in source
     assert "event.isCtrlPressed()" in source
     assert "event.isAltPressed()" in source
-    assert 'setContentDescription("Search run history by command, repository, target, or output")' in source
+    assert 'setContentDescription("Search command, repository, target, output or structured log entries")' in source
     assert 'setContentDescription("Generated devtool command preview")' in source
 
 

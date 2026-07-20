@@ -21,6 +21,13 @@ final class RunRecord {
     String error = "";
     String launchLog = "";
     String launchMode = "";
+    String repositoryId = "";
+    String artifact = "";
+    String commitHash = "";
+    String transactionBackup = "";
+    String logPath = "";
+    String logSourceId = "";
+    int exitCode = -1;
     long lastProgressAtMs = 0L;
     int progress = 0;
     int current = -1;
@@ -30,6 +37,7 @@ final class RunRecord {
     int errors = 0;
     String stepsJson = "";
     boolean indeterminate = true;
+    boolean pinned;
     long startedAtMs = System.currentTimeMillis();
     long updatedAtMs = System.currentTimeMillis();
     long durationMs = 0L;
@@ -58,6 +66,13 @@ final class RunRecord {
         value.put("error", error);
         value.put("launch_log", launchLog);
         value.put("launch_mode", launchMode);
+        value.put("repository_id", repositoryId);
+        value.put("artifact", artifact);
+        value.put("commit_hash", commitHash);
+        value.put("transaction_backup", transactionBackup);
+        value.put("log_path", logPath);
+        value.put("log_source_id", logSourceId);
+        value.put("exit_code", exitCode);
         value.put("last_progress_at_ms", lastProgressAtMs);
         value.put("progress", progress);
         value.put("current", current);
@@ -67,6 +82,7 @@ final class RunRecord {
         value.put("errors", errors);
         value.put("steps_json", stepsJson);
         value.put("indeterminate", indeterminate);
+        value.put("pinned", pinned);
         value.put("started_at_ms", startedAtMs);
         value.put("updated_at_ms", updatedAtMs);
         value.put("duration_ms", durationMs);
@@ -92,6 +108,13 @@ final class RunRecord {
         record.error = HudUpdate.plainText(value.optString("error", ""));
         record.launchLog = value.optString("launch_log", "");
         record.launchMode = value.optString("launch_mode", "");
+        record.repositoryId = value.optString("repository_id", "");
+        record.artifact = value.optString("artifact", "");
+        record.commitHash = value.optString("commit_hash", "");
+        record.transactionBackup = value.optString("transaction_backup", "");
+        record.logPath = value.optString("log_path", "");
+        record.logSourceId = value.optString("log_source_id", "");
+        record.exitCode = value.optInt("exit_code", -1);
         record.lastProgressAtMs = value.optLong("last_progress_at_ms", 0L);
         record.progress = value.optInt("progress", 0);
         record.current = value.optInt("current", -1);
@@ -101,6 +124,7 @@ final class RunRecord {
         record.errors = value.optInt("errors", 0);
         record.stepsJson = value.optString("steps_json", "");
         record.indeterminate = value.optBoolean("indeterminate", true);
+        record.pinned = value.optBoolean("pinned", false);
         record.startedAtMs = value.optLong("started_at_ms", System.currentTimeMillis());
         record.updatedAtMs = value.optLong("updated_at_ms", record.startedAtMs);
         record.durationMs = value.optLong("duration_ms", 0L);

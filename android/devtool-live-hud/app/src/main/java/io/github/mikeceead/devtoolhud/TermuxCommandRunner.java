@@ -67,6 +67,12 @@ final class TermuxCommandRunner {
                 true, false, null, operation, expectedHash);
     }
 
+    static LaunchResult runUtilityCommand(Context context, String command, String workdir,
+                                          boolean background, String operation) {
+        return runInternal(context, command, workdir, background, false, null,
+                operation == null ? "repository-utility" : operation, "");
+    }
+
     private static LaunchResult runInternal(Context context, String command, String workdir,
                                             boolean background, boolean overlay, Intent taskerFireIntent,
                                             String bridgeOperation, String bridgeExpectedHash) {
@@ -109,7 +115,8 @@ final class TermuxCommandRunner {
             context.startService(request);
             Log.i(TAG, "RunCommand accepted run=" + runId + " mode=" + (background ? "background" : "foreground")
                     + " shell=" + resolveShell() + " workdir=" + TermuxPaths.normalizeWorkdir(workdir));
-            if (!background && (bridgeOperation == null || bridgeOperation.isEmpty())) {
+            if (!background && (bridgeOperation == null || bridgeOperation.isEmpty()
+                    || bridgeOperation.equals("repository-shell"))) {
                 new Handler(Looper.getMainLooper()).postDelayed(() -> openTermux(context), 250L);
             }
             if (bridgeOperation == null || bridgeOperation.isEmpty()) {

@@ -26,9 +26,17 @@ final class UiKit {
         return Math.round(value * context.getResources().getDisplayMetrics().density);
     }
 
-    boolean largeText() {
-        return context.getResources().getConfiguration().fontScale >= 1.3f;
-    }
+    boolean largeText() { return AdaptiveLayout.largeText(context); }
+
+    boolean extraLargeText() { return AdaptiveLayout.extraLargeText(context); }
+
+    boolean wideLayout() { return AdaptiveLayout.wide(context); }
+
+    boolean twoPaneLayout() { return AdaptiveLayout.twoPane(context); }
+
+    boolean verticalActions() { return AdaptiveLayout.verticalActions(context); }
+
+    int contentHorizontalPadding() { return dp(AdaptiveLayout.contentHorizontalPaddingDp(context)); }
 
     TextView text(String value, UiTypography.Role role, int color) {
         TextView view = new TextView(context);
@@ -72,11 +80,14 @@ final class UiKit {
         tile.setPadding(dp(16), dp(16), dp(16), dp(14));
 
         LinearLayout top = new LinearLayout(context);
-        top.setOrientation(LinearLayout.HORIZONTAL);
-        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setOrientation(verticalActions() ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        top.setGravity(verticalActions() ? Gravity.START : Gravity.CENTER_VERTICAL);
 
+        LinearLayout identity = new LinearLayout(context);
+        identity.setOrientation(LinearLayout.HORIZONTAL);
+        identity.setGravity(Gravity.CENTER_VERTICAL);
         ImageView icon = icon(iconRes, accent, 42);
-        top.addView(icon, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        identity.addView(icon, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         LinearLayout copy = new LinearLayout(context);
         copy.setOrientation(LinearLayout.VERTICAL);
@@ -85,13 +96,18 @@ final class UiKit {
         TextView detailView = text(detail, UiTypography.Role.BODY_SMALL, palette.muted);
         detailView.setPadding(0, dp(3), 0, 0);
         copy.addView(detailView);
-        top.addView(copy, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        identity.addView(copy, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        top.addView(identity, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         TextView badge = text(state.toUpperCase(java.util.Locale.ROOT), UiTypography.Role.CAPTION, accent);
         badge.setLetterSpacing(0.04f);
         badge.setPadding(dp(8), dp(5), dp(8), dp(5));
         badge.setBackground(flat(withAlpha(accent, 28), 999));
-        top.addView(badge);
+        LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        if (verticalActions()) badgeParams.setMargins(dp(54), dp(8), 0, 0);
+        top.addView(badge, badgeParams);
         tile.addView(top);
 
         tile.setContentDescription(title + ". " + detail + ". Status: " + state + ".");
@@ -119,6 +135,7 @@ final class UiKit {
         button.setCompoundDrawablesWithIntrinsicBounds(0, iconRes, 0, 0);
         button.setCompoundDrawableTintList(ColorStateList.valueOf(selected ? palette.green : palette.muted));
         button.setCompoundDrawablePadding(dp(4));
+        button.setMaxLines(extraLargeText() ? 2 : 1);
         button.setContentDescription(label + (selected ? ", current page" : ", navigation tab"));
         button.setOnClickListener(listener);
         return button;

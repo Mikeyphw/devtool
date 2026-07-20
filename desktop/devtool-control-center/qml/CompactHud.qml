@@ -6,6 +6,8 @@ import Devtool.ControlCenter.Components 1.0
 
 Window {
     id: root
+    readonly property int screenWidthMargin: Screen.availableWidth - 32
+    readonly property int screenHeightMargin: Screen.availableHeight - 32
     function hudAvailableWidth() {
         return Screen.availableWidth > 0 ? Screen.availableWidth : 1920
     }
@@ -16,12 +18,12 @@ Window {
     // text: "Details"
     // text: copiedFeedback ? "Copied" : "Copy"
     // Previous translucent baseline: theme.dark ? 0.14 : 0.18
-    width: Math.min(720, Math.max(minimumWidth, hudAvailableWidth() - 32))
+    width: Math.min(720, Math.max(minimumWidth, root.screenWidthMargin > 0 ? root.screenWidthMargin : hudAvailableWidth() - 32))
     height: Math.min(maximumHeight, Math.max(minimumHeight, contentLayout.implicitHeight + 32))
     minimumWidth: Math.min(520, Math.max(320, hudAvailableWidth() - 24))
     minimumHeight: 224
     maximumWidth: Math.max(minimumWidth, hudAvailableWidth() - 16)
-    maximumHeight: Math.max(260, Screen.availableHeight - 32)
+    maximumHeight: Math.max(260, root.screenHeightMargin > 0 ? root.screenHeightMargin : Screen.availableHeight - 32)
     visible: true
     color: "transparent"
     flags: Qt.Window | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint

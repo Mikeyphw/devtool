@@ -31,6 +31,11 @@ public final class TermuxResultService extends IntentService {
         if (result == null) {
             String error = "Termux returned no result bundle";
             boolean overlay = intent.getBooleanExtra(EXTRA_OVERLAY, false);
+            if (bridgeOperation != null && bridgeOperation.startsWith("repository-")) {
+                sendBroadcast(new Intent(RepositoryStore.ACTION_UPDATED).setPackage(getPackageName())
+                        .putExtra(RepositoryStore.EXTRA_ERROR, error));
+                return;
+            }
             if (bridgeOperation != null && !bridgeOperation.isEmpty()) {
                 BridgeTokenManager.handleResult(this, bridgeOperation, bridgeExpectedHash,
                         -1, "", "", error);
@@ -54,6 +59,13 @@ public final class TermuxResultService extends IntentService {
                 (errorMessage == null || errorMessage.trim().isEmpty()
                         ? "Termux internal error " + internalError : errorMessage);
         boolean overlay = intent.getBooleanExtra(EXTRA_OVERLAY, false);
+        if (bridgeOperation != null && bridgeOperation.startsWith("repository-")) {
+            String utilityError = exitCode == 0 && error.isEmpty() ? ""
+                    : (error.isEmpty() ? (stderr.isEmpty() ? stdout : stderr) : error);
+            sendBroadcast(new Intent(RepositoryStore.ACTION_UPDATED).setPackage(getPackageName())
+                    .putExtra(RepositoryStore.EXTRA_ERROR, utilityError));
+            return;
+        }
         if (bridgeOperation != null && !bridgeOperation.isEmpty()) {
             BridgeTokenManager.handleResult(this, bridgeOperation, bridgeExpectedHash,
                     exitCode, stdout, stderr, error);

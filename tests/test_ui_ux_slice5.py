@@ -36,8 +36,8 @@ def test_slice5_versions_are_canonical_and_consistent() -> None:
         "devtool": "1.1.0",
         "desktop": "0.4.0",
         "android": {
-            "version_name": "1.7.2",
-            "version_code": 20,
+            "version_name": "1.13.0",
+            "version_code": 26,
             "application_id": "io.github.mikeceead.devtoolhud",
         },
             "minimums": {

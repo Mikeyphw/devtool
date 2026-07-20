@@ -5,20 +5,19 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 final class RunStore {
     static final String ACTION_UPDATED = "io.github.mikeceead.devtoolhud.RUN_STORE_UPDATED";
     private static final String PREFS = "run_store";
     private static final String KEY_RUNS = "runs";
-    private static final int MAX_RUNS = 40;
-    private static final int MAX_OUTPUT = 16_000;
-    private static final int MAX_LAUNCH_LOG = 12_000;
+    private static final String KEY_MIGRATED = "sqlite_migrated_v1";
+    private static final int MAX_RUNS = 500;
+    private static final int MAX_OUTPUT = 512_000;
+    private static final int MAX_LAUNCH_LOG = 96_000;
     private static final long ACTIVE_STALE_MS = 12L * 60L * 60L * 1000L;
 
     private RunStore() {}
@@ -27,7 +26,9 @@ final class RunStore {
         started(context, runId, command, workdir, true, "root bridge");
     }
 
-    static synchronized void started(Context context, String runId, String command, String workdir, boolean background, String shell) {
+    static synchronized void started(Context context, String runId, String command, String workdir,
+                                     boolean background, String shell) {
+        migrateLegacy(context);
         RunRecord record = find(context, runId);
         if (record == null) record = new RunRecord();
         record.runId = runId;
@@ -44,17 +45,22 @@ final class RunStore {
         record.lastProgressAtMs = 0L;
         record.launchMode = background ? "background" : "foreground";
         record.launchLog = "";
+        linkRepository(context, record, true);
         appendLine(record, "RunCommand request created");
         appendLine(record, "mode=" + record.launchMode + " shell=" + shell + " workdir=" + workdir);
         appendLine(record, "run_id=" + runId + " waiting for authenticated HUD bridge updates");
         upsert(context, record);
+        addEntry(context, record, "info", "execution", "android_app", "event",
+                "Run requested", record.launchLog);
     }
 
     static synchronized void update(Context context, HudUpdate update) {
+        migrateLegacy(context);
         RunRecord record = find(context, update.runId);
         if (record == null) record = new RunRecord();
         String previousPhase = record.phase;
         int previousProgress = record.progress;
+        String previousStatus = record.status;
         record.runId = update.runId;
         record.title = update.title();
         record.status = update.status;
@@ -65,6 +71,8 @@ final class RunStore {
         record.executionEnvironment = update.executionEnvironment;
         record.target = update.target;
         record.summary = update.summary;
+        record.artifact = update.artifact;
+        record.commitHash = update.commit;
         record.progress = update.displayProgress();
         record.current = update.current;
         record.total = update.total;
@@ -79,12 +87,18 @@ final class RunStore {
         if (update.sequence > 0L || !update.status.equals("waiting") || !update.phase.equals("Termux")) {
             record.lastProgressAtMs = update.updatedAtMs;
         }
-        boolean meaningfulLog = !previousPhase.equals(update.phase)
-                || previousProgress / 10 != update.displayProgress() / 10
-                || update.isTerminal();
+        boolean repositoryEvent = !previousPhase.equals(update.phase)
+                || !previousStatus.equals(update.status)
+                || (update.isTerminal() && !terminalStatus(previousStatus));
+        linkRepository(context, record, repositoryEvent);
+        boolean meaningfulLog = repositoryEvent
+                || previousProgress / 10 != update.displayProgress() / 10;
         if (meaningfulLog) {
-            appendLine(record, "bridge seq=" + update.sequence + " phase=" + update.phase
-                    + " overall=" + update.displayProgress() + "% local=" + update.current + "/" + update.total);
+            String message = "bridge seq=" + update.sequence + " phase=" + update.phase
+                    + " overall=" + update.displayProgress() + "% local=" + update.current + "/" + update.total;
+            appendLine(record, message);
+            addEntry(context, record, severityFor(record), "execution", "devtool", "event",
+                    update.detail.isEmpty() ? message : update.detail, message);
         }
         upsert(context, record);
     }
@@ -99,6 +113,9 @@ final class RunStore {
         record.updatedAtMs = System.currentTimeMillis();
         record.durationMs = Math.max(0L, record.updatedAtMs - record.startedAtMs);
         appendLine(record, "Run cancellation received");
+        addEntry(context, record, "warning", "execution", "android_app", "event",
+                "Run cancelled", "Run cancellation received");
+        linkRepository(context, record, true);
         upsert(context, record);
     }
 
@@ -107,6 +124,8 @@ final class RunStore {
         if (record == null) return;
         appendLine(record, message);
         record.updatedAtMs = System.currentTimeMillis();
+        String severity = classifySeverity(message);
+        addEntry(context, record, severity, "diagnostic", "android_app", "event", message, message);
         upsert(context, record);
     }
 
@@ -133,20 +152,30 @@ final class RunStore {
             record.progress = 100;
             record.indeterminate = false;
         }
+        record.exitCode = exitCode;
         record.stdout = limit(HudUpdate.plainText(stdout));
         record.stderr = limit(HudUpdate.plainText(stderr));
         record.error = limit(HudUpdate.plainText(error));
         record.updatedAtMs = System.currentTimeMillis();
         record.durationMs = Math.max(0L, record.updatedAtMs - record.startedAtMs);
-        appendLine(record, "Termux result received: exit=" + exitCode + (clean(error).isEmpty() ? "" : " error=" + clean(error)));
+        String result = "Termux result received: exit=" + exitCode
+                + (clean(error).isEmpty() ? "" : " error=" + clean(error));
+        appendLine(record, result);
+        if (!record.stdout.isEmpty()) addEntry(context, record, "info", "output", "termux", "stdout",
+                firstUseful(record.stdout), record.stdout);
+        if (!record.stderr.isEmpty()) addEntry(context, record, ok ? "warning" : "error", "output", "termux", "stderr",
+                firstUseful(record.stderr), record.stderr);
+        if (!record.error.isEmpty()) addEntry(context, record, "error", "diagnostic", "android_app", "event",
+                firstUseful(record.error), record.error);
+        addEntry(context, record, ok ? "success" : "error", "execution", "termux", "event", result, result);
+        linkRepository(context, record, !hadRichCompletion);
         upsert(context, record);
         return hadRichCompletion;
     }
 
     static synchronized List<RunRecord> all(Context context) {
-        List<RunRecord> result = read(context);
-        result.sort(Comparator.comparingLong((RunRecord value) -> value.updatedAtMs).reversed());
-        return result;
+        migrateLegacy(context);
+        return DevtoolDatabase.get(context).allRuns();
     }
 
     static synchronized RunRecord latest(Context context) {
@@ -173,60 +202,111 @@ final class RunStore {
 
     static synchronized RunRecord find(Context context, String runId) {
         if (runId == null || runId.trim().isEmpty()) return null;
-        for (RunRecord record : read(context)) {
-            if (record.runId.equals(runId)) return record;
-        }
-        return null;
+        migrateLegacy(context);
+        return DevtoolDatabase.get(context).findRun(runId);
+    }
+
+    static synchronized List<RunRecord> forRepository(Context context, RepositoryRecord repository) {
+        migrateLegacy(context);
+        return DevtoolDatabase.get(context).runsForRepository(repository);
+    }
+
+    static synchronized void setPinned(Context context, String runId, boolean pinned) {
+        if (runId == null || runId.trim().isEmpty()) return;
+        DevtoolDatabase.get(context).setRunPinned(runId, pinned);
+        notifyChanged(context, runId);
     }
 
     static synchronized boolean remove(Context context, String runId) {
         if (runId == null || runId.trim().isEmpty()) return false;
-        List<RunRecord> records = read(context);
-        boolean removed = records.removeIf(record -> record.runId.equals(runId));
-        if (!removed) return false;
-        write(context, records);
-        notifyChanged(context, runId);
-        return true;
+        boolean removed = DevtoolDatabase.get(context).deleteRun(runId);
+        if (removed) notifyChanged(context, runId);
+        return removed;
     }
 
     static synchronized void clear(Context context) {
-        prefs(context).edit().remove(KEY_RUNS).apply();
+        DevtoolDatabase.get(context).clearRuns();
         notifyChanged(context, "");
     }
 
     private static void upsert(Context context, RunRecord value) {
-        List<RunRecord> records = read(context);
-        records.removeIf(item -> item.runId.equals(value.runId));
-        records.add(value);
-        records.sort(Comparator.comparingLong((RunRecord item) -> item.updatedAtMs).reversed());
-        if (records.size() > MAX_RUNS) records = new ArrayList<>(records.subList(0, MAX_RUNS));
-        write(context, records);
+        DevtoolDatabase.get(context).upsertRun(value);
         notifyChanged(context, value.runId);
     }
 
-    private static List<RunRecord> read(Context context) {
-        List<RunRecord> result = new ArrayList<>();
-        String raw = prefs(context).getString(KEY_RUNS, "[]");
+    private static void addEntry(Context context, RunRecord record, String severity,
+                                 String category, String source, String stream,
+                                 String message, String raw) {
+        DevtoolDatabase.get(context).addLogEntry(record.runId, System.currentTimeMillis(), severity,
+                category, source, record.phase, stream, HudUpdate.plainText(message), HudUpdate.plainText(raw));
+    }
+
+    private static void linkRepository(Context context, RunRecord record, boolean recordEvent) {
+        if (clean(record.repo).isEmpty() && clean(record.workdir).isEmpty()) return;
+        RepositoryLocation location = RepositoryLocation.fromRun(record);
+        record.repositoryId = location.id();
+        RepositoryRecord existing = DevtoolDatabase.get(context).repository(record.repositoryId);
+        RepositoryRecord repository = existing == null ? new RepositoryRecord() : existing;
+        repository.repositoryId = location.id();
+        repository.environment = location.environment;
+        repository.chrootName = location.chrootName;
+        repository.linuxUser = location.linuxUser;
+        repository.configuredPath = location.path;
+        repository.canonicalPath = location.path;
+        repository.hostPath = location.hostPath;
+        repository.projectType = record.projectType;
+        repository.lastUsedAt = Math.max(repository.lastUsedAt, record.updatedAtMs);
+        if (!record.terminal()) repository.activeRunCount = Math.max(1, repository.activeRunCount);
+        if (repository.displayName.isEmpty()) {
+            String path = location.path;
+            int slash = path.lastIndexOf('/');
+            repository.displayName = slash >= 0 ? path.substring(slash + 1) : path;
+        }
+        DevtoolDatabase.get(context).upsertRepository(repository);
+        if (recordEvent) {
+            DevtoolDatabase.get(context).addRepositoryEvent(repository.repositoryId, record.runId,
+                    eventType(record), firstUseful(record.summary, record.detail, record.title), record.updatedAtMs);
+        }
+    }
+
+    private static boolean terminalStatus(String status) {
+        String clean = clean(status).toLowerCase(java.util.Locale.ROOT);
+        return clean.equals("ok") || clean.equals("failed") || clean.equals("cancelled")
+                || clean.equals("interrupted") || clean.equals("skipped");
+    }
+
+    private static String eventType(RunRecord record) {
+        if (!record.terminal()) return "RUN_ACTIVE";
+        if (record.status.equals("ok")) return "RUN_SUCCEEDED";
+        if (record.status.equals("cancelled")) return "RUN_CANCELLED";
+        return "RUN_FAILED";
+    }
+
+    private static void migrateLegacy(Context context) {
+        SharedPreferences preferences = prefs(context);
+        if (preferences.getBoolean(KEY_MIGRATED, false)) return;
+        String raw = preferences.getString(KEY_RUNS, "[]");
         try {
             JSONArray values = new JSONArray(raw == null ? "[]" : raw);
             for (int i = 0; i < values.length(); i++) {
                 JSONObject item = values.optJSONObject(i);
-                if (item != null) result.add(RunRecord.fromJson(item));
+                if (item == null) continue;
+                RunRecord record = RunRecord.fromJson(item);
+                if (record.runId.isEmpty()) continue;
+                linkRepository(context, record, true);
+                DevtoolDatabase.get(context).upsertRun(record);
+                if (!record.launchLog.isEmpty()) addEntry(context, record, "info", "migration",
+                        "android_app", "event", "Imported legacy launch diagnostics", record.launchLog);
+                if (!record.stdout.isEmpty()) addEntry(context, record, "info", "migration",
+                        "termux", "stdout", firstUseful(record.stdout), record.stdout);
+                if (!record.stderr.isEmpty()) addEntry(context, record, "warning", "migration",
+                        "termux", "stderr", firstUseful(record.stderr), record.stderr);
+                if (!record.error.isEmpty()) addEntry(context, record, "error", "migration",
+                        "android_app", "event", firstUseful(record.error), record.error);
             }
-        } catch (JSONException ignored) {
+        } catch (Exception ignored) {
         }
-        return result;
-    }
-
-    private static void write(Context context, List<RunRecord> records) {
-        JSONArray values = new JSONArray();
-        for (RunRecord record : records) {
-            try {
-                values.put(record.toJson());
-            } catch (JSONException ignored) {
-            }
-        }
-        prefs(context).edit().putString(KEY_RUNS, values.toString()).apply();
+        preferences.edit().putBoolean(KEY_MIGRATED, true).apply();
     }
 
     private static SharedPreferences prefs(Context context) {
@@ -250,10 +330,30 @@ final class RunStore {
     private static void appendLine(RunRecord record, String message) {
         String clean = HudUpdate.plainText(message);
         if (clean.isEmpty()) return;
-        String stamp = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.ROOT).format(new java.util.Date());
-        String combined = record.launchLog.isEmpty() ? stamp + "  " + clean : record.launchLog + "\n" + stamp + "  " + clean;
-        if (combined.length() > MAX_LAUNCH_LOG) combined = combined.substring(combined.length() - MAX_LAUNCH_LOG);
+        String stamp = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.ROOT)
+                .format(new java.util.Date());
+        String combined = record.launchLog.isEmpty() ? stamp + "  " + clean
+                : record.launchLog + "\n" + stamp + "  " + clean;
+        if (combined.length() > MAX_LAUNCH_LOG) {
+            combined = combined.substring(combined.length() - MAX_LAUNCH_LOG);
+        }
         record.launchLog = combined;
+    }
+
+    private static String severityFor(RunRecord record) {
+        if (record.status.equals("failed")) return "error";
+        if (record.status.equals("ok")) return "success";
+        if (record.warnings > 0) return "warning";
+        return "info";
+    }
+
+    private static String classifySeverity(String message) {
+        String lower = clean(message).toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("fatal") || lower.contains("exception") || lower.contains("error")
+                || lower.contains("failed")) return "error";
+        if (lower.contains("warn")) return "warning";
+        if (lower.contains("success") || lower.contains("passed")) return "success";
+        return "info";
     }
 
     private static String limit(String value) {
@@ -262,7 +362,5 @@ final class RunStore {
         return clean.substring(clean.length() - MAX_OUTPUT);
     }
 
-    private static String clean(String value) {
-        return value == null ? "" : value.trim();
-    }
+    private static String clean(String value) { return value == null ? "" : value.trim(); }
 }
