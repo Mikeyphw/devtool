@@ -1,5 +1,6 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -41,7 +42,7 @@ public final class LogViewerActivity extends Activity {
         rebuild();
     }
 
-    @Override protected void onStart() {
+    @Override @SuppressLint("UnspecifiedRegisterReceiverFlag") protected void onStart() {
         super.onStart();
         if (!registered) {
             IntentFilter filter = new IntentFilter(RunStore.ACTION_UPDATED);

@@ -4,14 +4,26 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
-import android.test.InstrumentationTestCase;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 
-public final class Phase6AdaptiveAccessibilityTest extends InstrumentationTestCase {
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
+@RunWith(AndroidJUnit4.class)
+public final class Phase6AdaptiveAccessibilityTest {
+    @Test
     public void testAdaptivePolicyHandlesPhoneTabletFoldableAndLargeText() {
-        Context target = getInstrumentation().getTargetContext();
+        Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Configuration phoneConfig = new Configuration(target.getResources().getConfiguration());
         phoneConfig.screenWidthDp = 360;
         phoneConfig.fontScale = 1.0f;
@@ -35,15 +47,16 @@ public final class Phase6AdaptiveAccessibilityTest extends InstrumentationTestCa
         assertTrue(AdaptiveLayout.verticalActions(enlarged));
     }
 
+    @Test
     public void testMainActivityButtonsHaveLabelsAndTouchTargets() {
-        Context context = getInstrumentation().getTargetContext();
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Intent intent = new Intent(Intent.ACTION_MAIN)
                 .setClass(context, MainActivity.class)
                 .addCategory(Intent.CATEGORY_LAUNCHER)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        Activity activity = getInstrumentation().startActivitySync(intent);
+        Activity activity = InstrumentationRegistry.getInstrumentation().startActivitySync(intent);
         assertNotNull(activity);
-        getInstrumentation().waitForIdleSync();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         int[] counts = inspect(activity.getWindow().getDecorView(), context);
         assertTrue("Expected interactive buttons", counts[0] >= 5);
         assertEquals("Every button must have a content description", counts[0], counts[1]);

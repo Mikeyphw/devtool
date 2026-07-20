@@ -1,5 +1,6 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
@@ -76,7 +77,7 @@ public final class RepositoryDetailActivity extends Activity {
         refreshWorkspace(false);
     }
 
-    @Override protected void onStart() {
+    @Override @SuppressLint("UnspecifiedRegisterReceiverFlag") protected void onStart() {
         super.onStart();
         if (!registered) {
             IntentFilter filter = new IntentFilter(RepositoryStore.ACTION_UPDATED);

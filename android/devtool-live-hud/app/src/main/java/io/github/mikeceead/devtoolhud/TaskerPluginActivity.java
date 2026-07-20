@@ -1,8 +1,11 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
+import android.window.OnBackInvokedDispatcher;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -31,13 +34,19 @@ public final class TaskerPluginActivity extends Activity {
         ui = new UiKit(this);
         getWindow().setStatusBarColor(ui.palette.background);
         getWindow().setNavigationBarColor(ui.palette.background);
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::saveAndFinish);
+        }
         setContentView(buildUi());
         loadConfig();
     }
 
     @Override
+    @SuppressLint("GestureBackNavigation")
     public void onBackPressed() {
-        saveAndFinish();
+        if (Build.VERSION.SDK_INT < 33) saveAndFinish();
+        else super.onBackPressed();
     }
 
     private View buildUi() {

@@ -24,7 +24,7 @@ android {
         versionCode 27
         versionName '1.14.0'
 
-        testInstrumentationRunner 'android.test.InstrumentationTestRunner'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         testInstrumentationRunnerArguments clearPackageData: 'true'
     }
 
@@ -126,4 +126,6 @@ tasks.register('verifyReleaseApk') {
 
 dependencies {
     testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
