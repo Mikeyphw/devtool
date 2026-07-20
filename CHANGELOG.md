@@ -3,6 +3,9 @@
 
 ## Unreleased
 
+- Added durable resumable Android/Gradle validation sessions with preflight, dependency, compile, resource, unit-test, package, artifact verification, lint, instrumentation, and finalization checkpoints. Sessions survive process death, preserve pending apply transactions, support phase/range/runtime/power controls, cache failures, invalidate only affected downstream phases, and report overall phase progress to terminal, machine output, desktop HUD, and Android HUD.
+- Added changed-file phase planning, per-phase Android resource profiles, optional Gradle daemon shutdown after each phase, explicit retry/finalize/abort/status commands, and paused-apply notifications that no longer claim an incomplete overlay was fully applied.
+
 - Made native-app installation fingerprint-aware: desktop packages rebuild only when relevant sources or the packaged version change, while Android APKs rebuild through the repo-owned `android_hud` chroot target and reinstall only when the installed APK hash differs.
 - Added an optional smart KernelSU root-bridge module flow. The module is built directly under `$TMPDIR`, installed with `su -c ksud install`, and skipped when its source fingerprint and installed version are current. Android APK installation likewise stages under `$TMPDIR` before `su -c pm install -r`.
 - Added a repo-owned `.devtool.toml` with an explicit Android HUD target pinned to the `androidos` chroot and constrained Gradle settings.

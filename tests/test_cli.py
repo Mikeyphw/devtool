@@ -399,6 +399,140 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(selected, log_path)
 
+    def test_active_log_selection_follows_android_bridge_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "DEVTOOL_XDG_DIR": str(Path(tmp) / "state"),
+                "DEVTOOL_HUD_BRIDGE_DIR": str(Path(tmp) / "bridge"),
+                "XDG_RUNTIME_DIR": "",
+            },
+            clear=False,
+        ):
+            bridge = Path(tmp) / "bridge"
+            runs = bridge / "runs"
+            logs = bridge / "logs"
+            runs.mkdir(parents=True)
+            logs.mkdir(parents=True)
+            log_path = logs / "20260716-162523-546390.log"
+            log_path.write_text("bridge-live", encoding="utf-8")
+            (runs / "bridge-run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "bridge-run",
+                        "pid": os.getpid(),
+                        "command": "build",
+                        "status": "running",
+                        "updated_at": "2026-07-16T16:25:23Z",
+                        "log_path": str(log_path),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            selected = choose_active_log(use_fzf=False)
+
+        self.assertEqual(selected, log_path)
+
+    def test_active_log_selection_treats_permission_denied_pid_as_alive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {"DEVTOOL_XDG_DIR": str(Path(tmp) / "state"), "XDG_RUNTIME_DIR": ""},
+            clear=False,
+        ):
+            state = Path(tmp) / "state"
+            runs = state / "runs"
+            logs = state / "logs"
+            runs.mkdir(parents=True)
+            logs.mkdir(parents=True)
+            log_path = logs / "20260716-172523-546390.log"
+            log_path.write_text("cross-user-live", encoding="utf-8")
+            (runs / "cross-user.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "cross-user",
+                        "pid": 424242,
+                        "command": "build",
+                        "status": "running",
+                        "log_path": str(log_path),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("devtool.log_commands.os.kill", side_effect=PermissionError):
+                selected = choose_active_log(use_fzf=False)
+
+        self.assertEqual(selected, log_path)
+
+    def test_active_log_selection_uses_authoritative_run_lock_without_hud(self) -> None:
+        from devtool.single_run import SingleRunLock
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "DEVTOOL_XDG_DIR": str(Path(tmp) / "state"),
+                "XDG_RUNTIME_DIR": str(Path(tmp) / "runtime"),
+                "DEVTOOL_NO_HUD": "1",
+            },
+            clear=False,
+        ):
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            log_path = Path(tmp) / "state" / "logs" / "20260716-182523-546390.log"
+            log_path.parent.mkdir(parents=True)
+            log_path.write_text("lock-live", encoding="utf-8")
+            lock = SingleRunLock(repo, command="build", run_id="lock-run", log_path=str(log_path)).acquire()
+            try:
+                selected = choose_active_log(use_fzf=False)
+            finally:
+                lock.release()
+
+        self.assertEqual(selected, log_path)
+
+    def test_active_log_selection_defaults_to_newest_run_without_tty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {"DEVTOOL_XDG_DIR": str(Path(tmp) / "state"), "XDG_RUNTIME_DIR": ""},
+            clear=False,
+        ):
+            state = Path(tmp) / "state"
+            runs = state / "runs"
+            logs = state / "logs"
+            runs.mkdir(parents=True)
+            logs.mkdir(parents=True)
+            older = logs / "20260716-182523-546390.log"
+            newer = logs / "20260716-192523-546390.log"
+            older.write_text("older", encoding="utf-8")
+            newer.write_text("newer", encoding="utf-8")
+            (runs / "older.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "older",
+                        "pid": os.getpid(),
+                        "status": "running",
+                        "updated_at": "2026-07-16T18:25:23Z",
+                        "log_path": str(older),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (runs / "newer.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "newer",
+                        "pid": os.getpid(),
+                        "status": "running",
+                        "updated_at": "2026-07-16T19:25:23Z",
+                        "log_path": str(newer),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("devtool.log_commands.sys.stdin.isatty", return_value=False):
+                selected = choose_active_log(use_fzf=False)
+
+        self.assertEqual(selected, newer)
+
     def test_batch_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

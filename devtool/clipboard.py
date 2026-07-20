@@ -11,6 +11,7 @@ from pathlib import Path
 from .console_utils import is_termux_environment
 
 CLIPBOARD_STARTUP_GRACE_SECONDS = 0.15
+TERMUX_CLIPBOARD_TIMEOUT_SECONDS = 8.0
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,48 @@ def _can_use_x11() -> bool:
     return bool(os.environ.get("DISPLAY"))
 
 
+def _run_termux_clipboard_command(command: list[str], text: str, backend: str) -> ClipboardResult:
+    """Run Termux:API clipboard writes synchronously.
+
+    Fast Devtool failures can exit before the asynchronous Android binder call
+    finishes.  The old 150 ms grace period therefore reported success for a
+    process that was merely still running.  Desktop clipboard owners remain
+    asynchronous because xclip/wl-copy may intentionally stay alive.
+    """
+
+    try:
+        completed = subprocess.run(
+            command,
+            input=text,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=TERMUX_CLIPBOARD_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return ClipboardResult(
+            False,
+            backend=backend,
+            reason=f"{backend} did not finish within {TERMUX_CLIPBOARD_TIMEOUT_SECONDS:g} seconds",
+        )
+    except OSError as exc:
+        return ClipboardResult(False, backend=backend, reason=str(exc))
+
+    if completed.returncode == 0:
+        return ClipboardResult(True, backend=backend)
+
+    error = str(completed.stderr or "").strip()
+    reason = f"{backend} exited with status {completed.returncode}"
+    if error:
+        reason = f"{reason}: {error}"
+    return ClipboardResult(False, backend=backend, reason=reason)
+
+
 def _run_clipboard_command(command: list[str], text: str, backend: str) -> ClipboardResult:
+    if backend == "termux-clipboard-set":
+        return _run_termux_clipboard_command(command, text, backend)
+
     try:
         process = subprocess.Popen(
             command,

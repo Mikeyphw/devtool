@@ -72,6 +72,21 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(issues[0].code, "ANDROID")
         self.assertEqual(issues[0].line, 7)
 
+    def test_parse_gradle_metaspace_and_failed_task_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = (
+                "The Daemon will expire after the build after running out of JVM Metaspace.\n"
+                "> Task :platform:compileDebugKotlin FAILED\n"
+            )
+            issues = parse_issues(root, "build", output)
+
+        by_code = {issue.code: issue for issue in issues}
+        self.assertEqual(by_code["GRADLE_METASPACE"].severity, "warning")
+        self.assertIn("metaspace", by_code["GRADLE_METASPACE"].message.lower())
+        self.assertEqual(by_code["GRADLE_TASK"].severity, "error")
+        self.assertIn(":platform:compileDebugKotlin", by_code["GRADLE_TASK"].message)
+
     def test_parse_gradle_toolchain_and_aar_metadata_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

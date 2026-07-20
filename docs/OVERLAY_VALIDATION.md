@@ -39,8 +39,28 @@ A validating apply follows this sequence:
 8. roll back repository files when a required check fails.
 
 Generated caches and build outputs are not used as rollback source material.
-Runner cleanup happens on success, failure, and interruption: .NET build servers
-are shut down and Gradle daemons are stopped.
+Runner cleanup happens on success, failure, and interruption according to the
+selected runner policy.
+
+## Paused Android validation transactions
+
+An Android/Gradle apply may opt into the same durable phase engine:
+
+```bash
+devtool -r "$HOME/Code/app" apply-overlay patch.zip --validate --sequential --through compile
+devtool -r "$HOME/Code/app" validate resume --through package
+devtool -r "$HOME/Code/app" validate resume --complete
+```
+
+While paused, the repository transaction remains in
+`applied-pending-validation` or `partially-validated` state. The backup and
+artifact are retained, no Git commit is created, and notifications say
+"validation paused" rather than "applied". An unrelated devtool command refuses
+to consume or roll back that intentional checkpoint. `validate abort` restores
+the transaction by default; `validate abort --keep-changes` abandons the session
+without restoring files. Finalization runs artifact validators and expectations,
+creates the requested commit, marks the transaction complete, records history,
+and only then performs artifact cleanup.
 
 ## Failure evidence
 

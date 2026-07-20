@@ -7,7 +7,7 @@ where oversubscribing CPU usually causes memory pressure and makes builds
 slower. Explicit project configuration and DEVTOOL_MAX_WORKERS always win.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import shutil
@@ -210,6 +210,60 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
         low_priority=_bool_option(validation.get("low_priority"), enabled and mobile_host),
     )
 
+
+
+def resolve_android_validation_phase_policy(
+    config: ProjectConfig,
+    phase: str,
+) -> AndroidValidationResourcePolicy:
+    """Return a phase-specific Android validation resource profile.
+
+    The base mobile-safe policy remains authoritative.  Phase profiles only
+    narrow concurrency or raise bounded heap floors for workloads that need it.
+    Projects can override any built-in value under
+    ``[validation.phase_profiles.<phase>]``.
+    """
+
+    base = resolve_android_validation_policy(config)
+    normalized = str(phase or "").strip().lower().replace("_", "-")
+    builtins: dict[str, dict[str, object]] = {
+        "preflight": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
+        "dependencies": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
+        "compile": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit)},
+        "resources": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1024, base.gradle_heap_mb)},
+        "unit-test": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit)},
+        "package": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1280, base.gradle_heap_mb)},
+        "artifact-check": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
+        "lint": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1536, base.gradle_heap_mb)},
+        "instrumentation": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": max(768, base.gradle_heap_mb)},
+        "finalize": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
+    }
+    values = dict(builtins.get(normalized, {}))
+    validation = _option_dict(config, "validation")
+    profiles = validation.get("phase_profiles")
+    if isinstance(profiles, dict):
+        configured = profiles.get(normalized) or profiles.get(normalized.replace("-", "_"))
+        if isinstance(configured, dict):
+            values.update(configured)
+
+    max_workers = _positive_int(values.get("max_workers")) or base.max_workers
+    cpu_limit = _positive_int(values.get("cpu_limit")) or base.cpu_limit
+    heap = _positive_int(values.get("gradle_heap_mb")) or base.gradle_heap_mb
+    guard = _positive_int(values.get("memory_guard_mb"), allow_zero=True)
+    no_daemon = _bool_option(values.get("no_daemon"), base.no_daemon)
+    low_priority = _bool_option(values.get("low_priority"), base.low_priority)
+    split_gradle = _bool_option(values.get("split_gradle"), base.split_gradle)
+
+    return replace(
+        base,
+        max_workers=max(1, max_workers),
+        cpu_limit=max(1, cpu_limit),
+        gradle_heap_mb=max(256, heap),
+        memory_guard_mb=base.memory_guard_mb if guard is None else max(0, guard),
+        no_daemon=no_daemon,
+        low_priority=low_priority,
+        split_gradle=split_gradle,
+    )
 
 def optimized_validation_env(config: ProjectConfig, kind: str) -> dict[str, str]:
     env = optimized_build_env(config, kind, config.env)

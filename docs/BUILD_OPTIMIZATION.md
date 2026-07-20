@@ -91,7 +91,8 @@ no_daemon = true
 low_priority = true
 gradle_heap_mb = 1536
 gradle_metaspace_mb = 384
-gradle_lint_metaspace_mb = 512
+gradle_packaging_metaspace_mb = 768
+gradle_lint_metaspace_mb = 640
 memory_guard_mb = 640
 parallel = false
 affected_module_lint = true
@@ -107,9 +108,9 @@ modules. Documentation-only overlays skip Android lint. Changes to
 `devtool lint` remains a full-project check. Set `affected_module_lint = false`
 to retain full-project lint during artifact validation.
 
-Lint always receives at least 512 MiB of bounded metaspace unless a larger
-`gradle_lint_metaspace_mb` value is configured. This floor is separate from the
-general validation metaspace cap because Android lint loads substantially more
+Android packaging receives at least 768 MiB of bounded metaspace, and lint receives at least 640 MiB, unless a larger
+`gradle_packaging_metaspace_mb` or `gradle_lint_metaspace_mb` value is configured. These floors are separate from the
+general validation metaspace cap because Kotlin/KSP packaging and Android lint load substantially more
 detector and model classes than compile or unit-test phases.
 
 The configured guard is an early-warning and cache-reclaim threshold, not an
@@ -175,3 +176,24 @@ output now recognizes common `completed/total` forms such as Ninja's
 `[37/124]` and Maven reactor `2/7` lines. Those values use the same shared HUD
 payload consumed by the terminal, Android notification/app/history, compact
 desktop HUD, and desktop pipeline view.
+
+### Android packaging heap
+
+Phone-safe validation keeps one Gradle worker and the adaptive system-memory
+watchdog, but APK/AAB packaging receives a 1024 MiB JVM heap floor for D8/R8.
+The system-memory guard is an early-warning threshold and never rewrites an
+explicit JVM heap request. Override the packaging floor with either:
+
+```toml
+[validation]
+gradle_packaging_heap_mb = 1280
+```
+
+or `DEVTOOL_GRADLE_PACKAGING_HEAP_MB`. Tests and ordinary compilation retain
+the lower general validation heap.
+
+
+Constrained Android validation is fail-fast by default. This prevents a failed
+Kotlin/KSP task from being hidden by a later task that Gradle starts only to
+collect additional diagnostics. Set `[validation].fail_fast = false` only when
+the complete multi-failure report is more important than a quick, precise stop.

@@ -11,6 +11,7 @@ import sys
 from typing import Any, Iterable
 
 from .logstore import latest_log, logs_dir, state_dir
+from .single_run import active_run_lock_records
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,9 +47,68 @@ def parse_log_filename(path: Path) -> tuple[str, str]:
     return parsed.strftime("%Y-%m-%d"), parsed.strftime("%H:%M:%S")
 
 
+def _candidate_state_roots() -> list[Path]:
+    """Return every state root that can own the active producer record.
+
+    The active run lock lives in the normal XDG runtime/state tree, while HUD
+    producers may publish their richer run state to a Tasker or Android bridge
+    directory. ``logs tail`` must consult both rather than assuming the HUD
+    always writes to ``state_dir()``.
+    """
+    roots: list[Path] = []
+
+    def add(value: str | Path | None) -> None:
+        if value is None:
+            return
+        text = str(value).strip()
+        if not text:
+            return
+        path = Path(text).expanduser()
+        if path not in roots:
+            roots.append(path)
+
+    add(state_dir())
+    add(os.environ.get("DEVTOOL_TASKER_DIR"))
+    add(os.environ.get("DEVTOOL_HUD_BRIDGE_DIR"))
+    add(os.environ.get("DEVTOOL_ANDROID_HUD_STATE_DIR"))
+
+    try:
+        from .tasker import default_tasker_dir, read_active_hud_directory
+
+        add(default_tasker_dir())
+        add(read_active_hud_directory(default=None))
+    except Exception:
+        pass
+    return roots
+
+
+def _all_log_paths() -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for root in _candidate_state_roots():
+        try:
+            candidates = sorted((root / "logs").glob("*.log"))
+        except OSError:
+            continue
+        for path in candidates:
+            if path not in seen:
+                seen.add(path)
+                paths.append(path)
+    phone_mirror = Path(os.environ.get("DEVTOOL_PHONE_LOG_MIRROR_DIR", "/sdcard/.logs/devtool")).expanduser()
+    try:
+        mirror_candidates = sorted(phone_mirror.glob("*.log"))
+    except OSError:
+        mirror_candidates = []
+    for path in mirror_candidates:
+        if path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return sorted(paths, key=lambda item: _safe_mtime(item))
+
+
 def list_log_entries() -> list[LogEntry]:
     entries: list[LogEntry] = []
-    for path in sorted(logs_dir().glob("*.log")):
+    for path in _all_log_paths():
         date, time = parse_log_filename(path)
         try:
             size = path.stat().st_size
@@ -56,10 +116,6 @@ def list_log_entries() -> list[LogEntry]:
             size = 0
         entries.append(LogEntry(path=path, date=date, time=time, size=size))
     return entries
-
-
-def _runs_dir() -> Path:
-    return state_dir() / "runs"
 
 
 def _phase_name(value: Any) -> str:
@@ -82,37 +138,110 @@ def _log_path_from_state(state: dict[str, Any]) -> Path | None:
     return None
 
 
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Cross-user Termux/chroot readers cannot signal the producer, but the
+        # permission failure proves that the PID exists.
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _state_timestamp(state: dict[str, Any], path: Path | None = None) -> str:
+    value = str(
+        state.get("updated_at")
+        or state.get("heartbeat_at")
+        or state.get("started_at")
+        or ""
+    ).strip()
+    if value:
+        return value
+    if path is not None:
+        timestamp = _safe_mtime(path)
+        if timestamp:
+            return datetime.fromtimestamp(timestamp).isoformat()
+    return ""
+
+
+def _active_run_from_payload(state: dict[str, Any], *, fallback_id: str, source_path: Path | None = None) -> ActiveRun | None:
+    run_id = str(state.get("run_id") or fallback_id).strip()
+    if not run_id:
+        return None
+    pid = int(state.get("pid") or 0)
+    if pid and not _pid_is_alive(pid):
+        return None
+    return ActiveRun(
+        run_id=run_id,
+        pid=pid,
+        command=str(state.get("command") or "").strip(),
+        repo=str(state.get("repo_root") or state.get("repo_name") or "").strip(),
+        status=str(state.get("status") or "running").strip(),
+        phase=_phase_name(state.get("phase")),
+        updated_at=_state_timestamp(state, source_path),
+        log_path=_log_path_from_state(state),
+    )
+
+
+def _merge_active_runs(authoritative: ActiveRun, richer: ActiveRun) -> ActiveRun:
+    """Merge HUD detail into an authoritative lock-backed run record."""
+    return ActiveRun(
+        run_id=authoritative.run_id,
+        pid=authoritative.pid or richer.pid,
+        command=richer.command or authoritative.command,
+        repo=richer.repo or authoritative.repo,
+        status=richer.status or authoritative.status,
+        phase=richer.phase or authoritative.phase,
+        updated_at=richer.updated_at or authoritative.updated_at,
+        log_path=richer.log_path or authoritative.log_path,
+    )
+
+
 def list_active_runs() -> list[ActiveRun]:
-    runs: list[ActiveRun] = []
-    for path in sorted(_runs_dir().glob("*.json")):
+    by_id: dict[str, ActiveRun] = {}
+
+    # Repository locks are the authority for whether a devtool operation is
+    # active. They exist even when HUD publication is disabled or redirected.
+    for state in active_run_lock_records(_candidate_state_roots()):
+        run = _active_run_from_payload(state, fallback_id="")
+        if run is not None:
+            by_id[run.run_id] = run
+
+    # HUD state contributes phase/progress/log detail and supports older
+    # producers that predate log paths in the single-run lock.
+    for root in _candidate_state_roots():
+        runs_dir = root / "runs"
         try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            paths = sorted(runs_dir.glob("*.json"))
+        except OSError:
             continue
-        if not isinstance(state, dict):
-            continue
-        run_id = str(state.get("run_id") or path.stem).strip()
-        if not run_id:
-            continue
-        pid = int(state.get("pid") or 0)
-        if pid:
+        for path in paths:
             try:
-                os.kill(pid, 0)
-            except OSError:
+                state = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
                 continue
-        runs.append(
-            ActiveRun(
-                run_id=run_id,
-                pid=pid,
-                command=str(state.get("command") or "").strip(),
-                repo=str(state.get("repo_root") or state.get("repo_name") or "").strip(),
-                status=str(state.get("status") or "").strip(),
-                phase=_phase_name(state.get("phase")),
-                updated_at=str(state.get("updated_at") or state.get("heartbeat_at") or "").strip(),
-                log_path=_log_path_from_state(state),
-            )
-        )
-    return runs
+            if not isinstance(state, dict):
+                continue
+            run = _active_run_from_payload(state, fallback_id=path.stem, source_path=path)
+            if run is None:
+                continue
+            existing = by_id.get(run.run_id)
+            by_id[run.run_id] = _merge_active_runs(existing, run) if existing else run
+
+    return sorted(by_id.values(), key=lambda run: run.updated_at or "", reverse=True)
 
 
 def _format_entry(entry: LogEntry, index: int) -> str:
@@ -168,7 +297,8 @@ def resolve_log_path(selector: str = "", *, use_fzf: bool = True) -> Path | None
         path = Path(selector).expanduser()
         return path if path.exists() else None
     if selector == "latest":
-        return latest_log()
+        entries = list_log_entries()
+        return entries[-1].path if entries else latest_log()
     entries = list_log_entries()
     lines = [_format_entry(entry, index) for index, entry in enumerate(entries, start=1)]
     selected = choose_index(lines, use_fzf=use_fzf)
@@ -200,21 +330,44 @@ def newest_logs(limit: int = 10) -> list[Path]:
     return [entry.path for entry in list_log_entries()[-max(1, int(limit)):]]
 
 
+def _accessible_log_path(path: Path | None, fallbacks: Iterable[Path]) -> Path | None:
+    if path is not None and path.exists():
+        return path
+    if path is not None:
+        basename = path.name
+        for candidate in fallbacks:
+            if candidate.name == basename and candidate.exists():
+                return candidate
+        for root in _candidate_state_roots():
+            candidate = root / "logs" / basename
+            if candidate.exists():
+                return candidate
+        mirror = Path(os.environ.get("DEVTOOL_PHONE_LOG_MIRROR_DIR", "/sdcard/.logs/devtool")).expanduser() / basename
+        if mirror.exists():
+            return mirror
+    return None
+
+
 def choose_active_log(*, use_fzf: bool = True) -> Path | None:
     runs = list_active_runs()
     recent_logs = newest_logs(max(1, len(runs)))
     if not runs:
         return None
-    lines = []
-    fallback_by_index: dict[int, Path | None] = {}
+    lines: list[str] = []
+    log_by_index: dict[int, Path | None] = {}
     for index, run in enumerate(runs, start=1):
-        fallback = recent_logs[index - 1] if index - 1 < len(recent_logs) else (recent_logs[-1] if recent_logs else None)
-        fallback_by_index[index] = fallback
-        lines.append(_format_run(run, index, fallback))
+        fallback = recent_logs[-index] if index <= len(recent_logs) else (recent_logs[-1] if recent_logs else None)
+        resolved = _accessible_log_path(run.log_path, recent_logs) or fallback
+        log_by_index[index] = resolved
+        lines.append(_format_run(run, index, resolved))
     selected = choose_index(lines, use_fzf=use_fzf)
+    if selected is None and not sys.stdin.isatty():
+        # Termux RunCommand and app integrations are non-interactive. Select
+        # the newest active run rather than falsely reporting that none exists.
+        selected = 1
     if selected is None or selected < 1 or selected > len(runs):
         return None
-    return runs[selected - 1].log_path or fallback_by_index.get(selected)
+    return log_by_index.get(selected)
 
 
 def format_log_entries(entries: Iterable[LogEntry]) -> list[str]:

@@ -201,6 +201,22 @@ devtool \
 
 CLI options still override artifact values. Use `--no-validate`, `--no-commit`, or `--no-artifact-script` for explicit opt-outs. See [`docs/ARTIFACTS.md`](docs/ARTIFACTS.md) for the complete overlay and bundle formats.
 
+## Resumable Android validation
+
+Long Gradle validation can be checkpointed instead of keeping one Termux/chroot
+process alive for the whole pipeline:
+
+```bash
+devtool -r "$HOME/Code/app" validate start --next
+devtool -r "$HOME/Code/app" validate resume --through package
+devtool -r "$HOME/Code/app" validate resume --complete
+```
+
+The same controls work after `apply-overlay --validate --sequential`; the apply
+transaction and rollback backup stay pending until validation is finalized. See
+[`docs/ANDROID_PROJECTS.md`](docs/ANDROID_PROJECTS.md) for phase controls, power
+guards, changed-file planning, and per-phase resource profiles.
+
 ## Typical Android command
 
 After pairing the secure bridge in the app, commands launched directly from Termux use:

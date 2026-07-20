@@ -87,9 +87,16 @@ def build_apply_notification(
     failed = int(totals.get("failed", 0) or 0)
     warnings = int(totals.get("warnings", 0) or 0)
     rolled_back = any(result.name == "apply-rollback" and result.returncode == 0 for result in results)
+    paused_result = next((
+        result for result in reversed(results)
+        if result.name == "validation-paused" or result.metadata.get("validation_complete") is False
+    ), None)
     if rolled_back:
         title = f"Devtool {label} rolled back"
         status = "Rolled back"
+    elif paused_result is not None:
+        title = f"Devtool {label} validation paused"
+        status = "Validation paused"
     elif failed:
         title = f"Devtool {label} failed"
         status = "Failed"
@@ -107,7 +114,16 @@ def build_apply_notification(
     commit = _commit_hash(results)
     if commit:
         bits.append(f"commit {commit}")
-    if failed and not rolled_back:
+    if paused_result is not None and not rolled_back:
+        metadata = paused_result.metadata or {}
+        completed = int(metadata.get("completed_phases", 0) or 0)
+        total = int(metadata.get("phase_total", 0) or 0)
+        next_phase = str(metadata.get("next_phase") or "").strip()
+        if total:
+            bits.append(f"phase {completed}/{total}")
+        if next_phase:
+            bits.append(f"next {next_phase}")
+    elif failed and not rolled_back:
         bits.append(f"{failed} failed step{'s' if failed != 1 else ''}")
     elif warnings:
         bits.append(f"{warnings} warning{'s' if warnings != 1 else ''}")

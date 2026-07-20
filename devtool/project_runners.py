@@ -20,7 +20,7 @@ import shutil
 import sys
 from typing import Iterable
 
-from .build_optimization import optimized_build_env, optimized_validation_env, resolve_android_validation_policy, resolve_build_policy
+from .build_optimization import optimized_build_env, optimized_validation_env, resolve_android_validation_phase_policy, resolve_android_validation_policy, resolve_build_policy
 from .execution_environments import detect_current_environment
 from .models import CommandSpec, ProjectConfig
 
@@ -717,6 +717,214 @@ class AndroidGradleRunner(ProjectRunner):
             specs = [apply_test_selection(config, spec) for spec in specs]
         return specs
 
+    def _build_resumable_validation_specs(
+        self,
+        config: ProjectConfig,
+        *,
+        skip_restore: bool,
+        skip_build: bool,
+        skip_test: bool,
+    ) -> list[CommandSpec]:
+        from .android_integration import (
+            android_builder_arguments_for_tasks,
+            android_project_root,
+            android_validation_change_scope,
+            android_validation_lint_tasks,
+            configured_tasks,
+            inspect_android_project,
+            plan_android_command,
+        )
+        from .test_selection import apply_test_selection
+
+        validation = config.runner_options.get("validation", {})
+        validation = dict(validation) if isinstance(validation, dict) else {}
+        phase_config = validation.get("phases", {})
+        phase_config = dict(phase_config) if isinstance(phase_config, dict) else {}
+        android_options = config.runner_options.get("android", {})
+        android_options = dict(android_options) if isinstance(android_options, dict) else {}
+        variant = str(config.variant or android_options.get("variant") or "debug").strip()
+        variant_title = variant[:1].upper() + variant[1:]
+        project = inspect_android_project(config)
+        project_root = android_project_root(config)
+        lint_tasks, lint_scope, lint_modules = android_validation_lint_tasks(config)
+        change_scope = android_validation_change_scope(config)
+        allowed_by_scope = {
+            "full": {"preflight", "dependencies", "compile", "resources", "unit-test", "package", "artifact-check", "lint", "instrumentation", "finalize"},
+            "source": {"compile", "unit-test", "package", "artifact-check", "lint", "instrumentation", "finalize"},
+            "resources": {"resources", "package", "artifact-check", "lint", "finalize"},
+            "tests": {"unit-test", "lint", "instrumentation", "finalize"},
+            "docs": {"finalize"},
+        }
+        allowed_phases = allowed_by_scope.get(change_scope, allowed_by_scope["full"])
+
+        def phase_enabled(name: str) -> bool:
+            return name in allowed_phases
+
+        def task_values(value: object) -> list[str]:
+            if isinstance(value, str):
+                return [item.strip() for item in value.replace(",", " ").split() if item.strip()]
+            if isinstance(value, (list, tuple)):
+                return [str(item).strip() for item in value if str(item).strip()]
+            return []
+
+        def phase_tasks(name: str, defaults: list[str]) -> list[str]:
+            configured = task_values(phase_config.get(name) or phase_config.get(name.replace("-", "_")))
+            return configured if configured else defaults
+
+        def gradle_phase(
+            phase: str,
+            tasks: list[str],
+            *,
+            report_parsers: list[str] | None = None,
+            scan_artifacts: bool = False,
+            collect_artifacts: bool = False,
+            verify_artifacts: bool = False,
+        ) -> CommandSpec:
+            unique_tasks = list(dict.fromkeys(item for item in tasks if item))
+            plan_action = "build" if phase in {"compile", "resources", "package"} else "test" if phase == "unit-test" else "lint" if phase == "lint" else "restore"
+            plan = plan_android_command(config, plan_action)
+            policy = resolve_android_validation_phase_policy(config, phase)
+            parsers = list(report_parsers or [])
+            metadata = {
+                "runner": self.kind,
+                "project_type": self.kind,
+                "gradle_tasks": unique_tasks,
+                "android_builder": str(plan.builder),
+                "project_root": str(project_root),
+                "collect_artifacts": collect_artifacts,
+                "verify_artifacts": verify_artifacts,
+                "progress_parser": "gradle",
+                "report_parser": parsers[0] if parsers else "",
+                "report_parsers": parsers,
+                "validation_components": [phase],
+                "validation_phase_name": phase,
+                "validation_resumable": True,
+                "validation_resource_profile": f"android-{phase}",
+                "validation_max_workers": policy.max_workers,
+                "validation_cpu_limit": policy.cpu_limit,
+                "validation_gradle_heap_mb": policy.gradle_heap_mb,
+                "validation_memory_guard_mb": policy.memory_guard_mb,
+                "validation_low_priority": policy.low_priority,
+                "lint_scope": lint_scope if phase == "lint" else "not-applicable",
+                "lint_modules": list(lint_modules) if phase == "lint" else [],
+                "validation_change_scope": change_scope,
+            }
+            spec = CommandSpec(
+                f"{self.kind}-validation-{phase}",
+                [
+                    *plan.argv_prefix,
+                    *android_builder_arguments_for_tasks(
+                        config,
+                        unique_tasks,
+                        scan_artifacts=scan_artifacts,
+                        validation=True,
+                        validation_phase=phase,
+                    ),
+                ],
+                env=optimized_validation_env(config, self.kind),
+                cwd=str(plan.project_root),
+                metadata=metadata,
+            )
+            if phase == "unit-test":
+                spec = apply_test_selection(config, spec)
+            return spec
+
+        def internal_phase(phase: str, message: str, *, artifact_check: bool = False) -> CommandSpec:
+            policy = resolve_android_validation_phase_policy(config, phase)
+            return CommandSpec(
+                f"{self.kind}-validation-{phase}",
+                [sys.executable, "-c", f"print({message!r})"],
+                env=optimized_validation_env(config, self.kind),
+                cwd=str(project_root),
+                metadata={
+                    "runner": self.kind,
+                    "project_type": self.kind,
+                    "project_root": str(project_root),
+                    "gradle_tasks": configured_tasks(config, "build") if artifact_check else [],
+                    "collect_artifacts": artifact_check,
+                    "verify_artifacts": artifact_check,
+                    "progress_parser": "generic",
+                    "validation_components": [phase],
+                    "validation_phase_name": phase,
+                    "validation_resumable": True,
+                    "validation_resource_profile": f"android-{phase}",
+                    "validation_max_workers": policy.max_workers,
+                    "validation_cpu_limit": policy.cpu_limit,
+                    "validation_gradle_heap_mb": policy.gradle_heap_mb,
+                    "validation_memory_guard_mb": policy.memory_guard_mb,
+                    "validation_low_priority": policy.low_priority,
+                    "validation_change_scope": change_scope,
+                },
+            )
+
+        specs: list[CommandSpec] = []
+        if not skip_restore and phase_enabled("preflight"):
+            specs.append(gradle_phase("preflight", phase_tasks("preflight", ["help"])))
+        if not skip_restore and phase_enabled("dependencies"):
+            specs.append(gradle_phase("dependencies", phase_tasks("dependencies", ["dependencies"])))
+        if not skip_build and phase_enabled("compile"):
+            compile_defaults = [f"compile{variant_title}Sources"] if project.android else ["classes"]
+            specs.append(gradle_phase("compile", phase_tasks("compile", compile_defaults)))
+        if not skip_build and project.android and phase_enabled("resources"):
+            specs.append(gradle_phase("resources", phase_tasks("resources", [f"process{variant_title}Resources"])))
+        if not skip_test and phase_enabled("unit-test"):
+            specs.append(gradle_phase("unit-test", phase_tasks("unit-test", configured_tasks(config, "test")), report_parsers=["gradle-junit"]))
+        if not skip_build and phase_enabled("package"):
+            package_tasks = phase_tasks("package", configured_tasks(config, "build"))
+            specs.append(gradle_phase("package", package_tasks, scan_artifacts=True))
+        if not skip_build and phase_enabled("artifact-check"):
+            specs.append(internal_phase("artifact-check", "Verifying produced Android/Gradle artifacts", artifact_check=True))
+        if lint_tasks and phase_enabled("lint"):
+            specs.append(gradle_phase("lint", phase_tasks("lint", lint_tasks), report_parsers=["android-lint"]))
+
+        instrumentation_policy = str(android_options.get("instrumentation") or "never").strip().lower()
+        run_instrumentation = not skip_test and (
+            instrumentation_policy in {"required", "always"}
+            or (instrumentation_policy == "when-device-present" and (shutil.which("pm") or shutil.which("adb")))
+        )
+        if run_instrumentation and phase_enabled("instrumentation"):
+            selection_options = dict(config.runner_options.get("test_selection", {}) or {})
+            selection_options["instrumented"] = True
+            original = config.runner_options.get("test_selection")
+            config.runner_options["test_selection"] = selection_options
+            try:
+                instrumentation_specs = self.build_specs(config, "instrumentation")
+            finally:
+                if original is None:
+                    config.runner_options.pop("test_selection", None)
+                else:
+                    config.runner_options["test_selection"] = original
+            for spec in instrumentation_specs:
+                policy = resolve_android_validation_phase_policy(config, "instrumentation")
+                spec.name = f"{self.kind}-validation-instrumentation"
+                spec.metadata.update({
+                    "validation_components": ["instrumentation"],
+                    "validation_phase_name": "instrumentation",
+                    "validation_resumable": True,
+                    "validation_resource_profile": "android-instrumentation",
+                    "validation_max_workers": policy.max_workers,
+                    "validation_cpu_limit": policy.cpu_limit,
+                    "validation_gradle_heap_mb": policy.gradle_heap_mb,
+                    "validation_memory_guard_mb": policy.memory_guard_mb,
+                    "validation_change_scope": change_scope,
+                })
+                specs.append(spec)
+
+        if phase_enabled("finalize"):
+            specs.append(internal_phase("finalize", "Finalizing validation evidence and session state"))
+        if not specs:
+            raise SystemExit("Validation would run no Android/Gradle commands. Clear a skip flag.")
+        total = len(specs)
+        for index, spec in enumerate(specs, start=1):
+            spec.metadata.update({
+                "validation_pipeline": True,
+                "validation_phase_index": index,
+                "validation_phase_total": total,
+                "validation_scope": "android-resumable",
+                "validation_change_scope": change_scope,
+            })
+        return specs
+
     def build_validation_specs(
         self,
         config: ProjectConfig,
@@ -734,6 +942,16 @@ class AndroidGradleRunner(ProjectRunner):
             plan_android_command,
         )
         from .test_selection import apply_test_selection
+
+        validation_options = config.runner_options.get("validation", {})
+        validation_options = dict(validation_options) if isinstance(validation_options, dict) else {}
+        if bool(validation_options.get("resumable", False)):
+            return self._build_resumable_validation_specs(
+                config,
+                skip_restore=skip_restore,
+                skip_build=skip_build,
+                skip_test=skip_test,
+            )
 
         # Explicit shell commands may carry action-specific setup or side
         # effects, so preserve the legacy multi-command pipeline for them.

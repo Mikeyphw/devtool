@@ -981,9 +981,13 @@ def _post_chroot_apply_notification(argv: list[str], rc: int, plain: str, env: M
     artifact_name = Path(artifact).name if artifact else label
     lower = plain.lower()
     rolled_back = "rolled back" in lower or "rollback" in lower and rc != 0
+    validation_paused = "validation paused" in lower or "validation session paused" in lower
     if rolled_back:
         title = f"Devtool {label} rolled back"
         status = "Rolled back"
+    elif validation_paused:
+        title = f"Devtool {label} validation paused"
+        status = "Validation paused"
     elif rc == 0:
         title = f"Devtool {label} applied"
         status = "Applied"

@@ -71,6 +71,7 @@ class GradleProgressTracker:
     tests_total: int = field(init=False, default=0)
     current_task: str = field(init=False, default="")
     current_test: str = field(init=False, default="")
+    failed_task: str = field(init=False, default="")
     returncode: int | None = field(init=False, default=None)
     last_sequence: int = field(init=False, default=0)
     expected_run_id: str = field(init=False, default="")
@@ -173,7 +174,13 @@ class GradleProgressTracker:
             self.current_task = str(event.get("task") or "")
             self.completed = int(event.get("completed") or 0)
             self.total = int(event.get("total") or 0) or self.total
-            self.detail = f"Running {self.current_task or 'Gradle task'}"
+            if self.failed_task:
+                self.detail = (
+                    f"Failed {self.failed_task}; collecting diagnostics in "
+                    f"{self.current_task or 'Gradle task'}"
+                )
+            else:
+                self.detail = f"Running {self.current_task or 'Gradle task'}"
         elif kind == "task-finish":
             self.current_task = str(event.get("task") or self.current_task)
             self.completed = int(event.get("completed") or self.completed or 0)
@@ -182,6 +189,8 @@ class GradleProgressTracker:
             self.detail = f"{self.current_task or 'Gradle task'}: {outcome}"
             if outcome == "failed":
                 self.errors += 1
+                if not self.failed_task:
+                    self.failed_task = self.current_task
         elif kind == "test-start":
             self.current_test = str(event.get("test") or "")
             self.detail = f"Testing {self.current_test or 'test'}"
@@ -225,6 +234,10 @@ class GradleProgressTracker:
                 detail += f": {outcome}"
                 if outcome == "failed":
                     self.errors += 1
+                    if not self.failed_task:
+                        self.failed_task = task
+            if self.failed_task and task != self.failed_task and outcome != "failed":
+                detail = f"Failed {self.failed_task}; collecting diagnostics in {task}"
             self.detail = detail
             self.fallback_lines += 1
             self._publish()
@@ -255,7 +268,12 @@ class GradleProgressTracker:
         self.returncode = returncode
         if returncode == 0 and self.total is not None:
             self.completed = self.total
-        status = "Gradle completed" if returncode == 0 else f"Gradle failed rc={returncode}"
+        if returncode == 0:
+            status = "Gradle completed"
+        elif self.failed_task:
+            status = f"Gradle failed at {self.failed_task} rc={returncode}"
+        else:
+            status = f"Gradle failed rc={returncode}"
         if self.tests_total:
             status += (
                 f" • tests: {self.tests_passed} passed, {self.tests_failed} failed, "
@@ -280,6 +298,7 @@ class GradleProgressTracker:
             "unit_label": "tasks",
             "current_task": self.current_task,
             "current_test": self.current_test,
+            "failed_task": self.failed_task,
             "tests_passed": self.tests_passed,
             "tests_failed": self.tests_failed,
             "tests_skipped": self.tests_skipped,

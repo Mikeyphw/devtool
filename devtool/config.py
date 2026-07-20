@@ -833,7 +833,8 @@ build_directory = ".devtool/build/meson"
 
 [validation]
 # test_profile = "full"
-# Android/Termux safety defaults are automatic:
+# Android/Termux safety defaults are automatic. Resumable mode is selected by
+# `validate start`, `validate --sequential`, or an apply validation flag.
 # android_safe = true
 # max_workers = 1
 # cpu_limit = 2
@@ -842,6 +843,24 @@ build_directory = ".devtool/build/meson"
 # low_priority = true
 # gradle_heap_mb = 1536
 # memory_guard_mb = 640
+# stop_daemon_after_phase = false
+# affected_module_lint = true
+#
+# [validation.phases]
+# preflight = ["help"]
+# dependencies = ["dependencies"]
+# compile = [":app:compileDebugSources"]
+# resources = [":app:processDebugResources"]
+# unit-test = [":app:testDebugUnitTest"]
+# package = [":app:assembleDebug"]
+# lint = [":app:lintDebug"]
+#
+# [validation.phase_profiles.compile]
+# max_workers = 1
+# cpu_limit = 2
+# gradle_heap_mb = 1536
+# memory_guard_mb = 640
+# low_priority = true
 
 [env]
 # Arbitrary runtime env vars for commands:

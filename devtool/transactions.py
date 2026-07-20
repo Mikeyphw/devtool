@@ -458,3 +458,101 @@ def rollback_transaction(transaction_path: str | Path, *, reason: str = "rollbac
     except BaseException as exc:
         output = f"Rollback failed.\ntransaction: {path}\nreason: {reason}\nerror_type: {type(exc).__name__}\nerror: {exc}"
         return OperationResult("apply-rollback", argv, 1, time.perf_counter() - start, output, [], failure_kind="rollback_failure")
+
+
+def read_transaction(transaction_path: str | Path) -> dict[str, Any]:
+    """Read a transaction JSON path or active marker."""
+    path = Path(transaction_path)
+    if path.name == "active.json" or path.parent.name == "active":
+        active = _read_json(path)
+        path = Path(str(active.get("path") or ""))
+    return _read_json(path)
+
+
+def transaction_pending_validation(transaction_path: str | Path | None) -> bool:
+    if not transaction_path:
+        return False
+    try:
+        return str(read_transaction(transaction_path).get("status") or "") in {
+            "applied-pending-validation",
+            "validation-running",
+            "partially-validated",
+        }
+    except Exception:
+        return False
+
+
+def _write_transaction_active_marker(path: Path, tx: dict[str, Any]) -> None:
+    repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
+    transaction_id = str(tx.get("transaction_id") or "")
+    marker_payload = {
+        "transaction_id": transaction_id,
+        "path": str(path),
+        "status": str(tx.get("status") or ""),
+        "updated_at": str(tx.get("updated_at") or _utc_now()),
+        "pid": int(tx.get("pid", 0) or 0),
+        "process_start": str(tx.get("process_start") or ""),
+        "run_id": str(tx.get("run_id") or ""),
+        "validation_session_id": str(tx.get("validation_session_id") or ""),
+        "next_validation_phase": str(tx.get("next_validation_phase") or ""),
+    }
+    _atomic_write_json(_active_file(repo_root, transaction_id), marker_payload)
+
+
+def mark_transaction_validation_running(
+    transaction_path: str | Path | None,
+    *,
+    session_id: str,
+    phase: str,
+) -> None:
+    if not transaction_path:
+        return
+    path = Path(transaction_path)
+    if not path.exists():
+        return
+    tx = _read_json(path)
+    tx.update({
+        "status": "validation-running",
+        "validation_session_id": session_id,
+        "current_validation_phase": phase,
+        "next_validation_phase": phase,
+        "pid": os.getpid(),
+        "process_start": _process_start_token(os.getpid()),
+        "run_id": os.environ.get("DEVTOOL_RUN_ID", ""),
+        "updated_at": _utc_now(),
+    })
+    _atomic_write_json(path, tx)
+    _write_transaction_active_marker(path, tx)
+
+
+def mark_transaction_pending_validation(
+    transaction_path: str | Path | None,
+    *,
+    session_id: str,
+    next_phase: str = "",
+    completed_phases: int = 0,
+    phase_total: int = 0,
+) -> None:
+    """Persist a transaction across devtool processes while validation is paused."""
+    if not transaction_path:
+        return
+    path = Path(transaction_path)
+    if not path.exists():
+        return
+    tx = _read_json(path)
+    tx.update({
+        "status": "partially-validated" if completed_phases else "applied-pending-validation",
+        "validation_session_id": session_id,
+        "current_validation_phase": "",
+        "next_validation_phase": next_phase,
+        "validation_completed_phases": int(completed_phases),
+        "validation_phase_total": int(phase_total),
+        # A paused transaction deliberately has no live owner.  The session
+        # marker distinguishes it from an abandoned legacy apply.
+        "pid": 0,
+        "process_start": "",
+        "run_id": "",
+        "updated_at": _utc_now(),
+    })
+    _atomic_write_json(path, tx)
+    _write_transaction_active_marker(path, tx)

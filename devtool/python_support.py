@@ -537,6 +537,57 @@ def resolve_python_executable(root: Path, configured: str, environment: str = ""
     return configured or "python3"
 
 
+def _is_termux_host_python(value: str) -> bool:
+    """Return whether *value* is a Termux-host Python path.
+
+    These paths are valid on the Android/Termux host but are not visible inside
+    Ubuntu chroots. Planning chroot validation commands with such absolute paths
+    makes the host-side planner leak into the guest namespace.
+    """
+
+    normalized = str(value or "").strip()
+    if not normalized:
+        return False
+    try:
+        path = Path(normalized).expanduser()
+    except (OSError, RuntimeError):
+        return False
+    parts = path.parts
+    return (
+        path.is_absolute()
+        and len(parts) >= 7
+        and parts[:6] == ("/", "data", "data", "com.termux", "files", "usr")
+        and parts[6] == "bin"
+        and path.name.startswith("python")
+    )
+
+
+def _is_chroot_execution_environment(value: str) -> bool:
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    return normalized == "chroot"
+
+
+def resolve_bootstrap_python(
+    root: Path,
+    configured: str,
+    environment: str = "",
+    *,
+    execution_environment: str = "",
+) -> str:
+    """Resolve the interpreter used to bootstrap project environments.
+
+    Chroot validation must not embed a Termux host Python path such as
+    /data/data/com.termux/files/usr/bin/python3.13 inside the Ubuntu guest.
+    """
+
+    if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(configured):
+        return "python3"
+    resolved = resolve_python_executable(root, configured, environment)
+    if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(resolved):
+        return "python3"
+    return resolved
+
+
 @lru_cache(maxsize=32)
 def _manager_version(manager: str) -> str:
     executable = manager if manager != "venv" else ""
@@ -595,7 +646,12 @@ def resolve_environment(
     extras: Sequence[str] = (),
     execution_environment: str = "",
 ) -> PythonEnvironmentPlan:
-    bootstrap_python = resolve_python_executable(info.root, configured_python, "")
+    bootstrap_python = resolve_bootstrap_python(
+        info.root,
+        configured_python,
+        "",
+        execution_environment=execution_environment,
+    )
     requested_environment = ""
     if environment:
         env_path = Path(environment).expanduser()
@@ -678,7 +734,7 @@ def python_cache_env(root: Path, execution_environment: str = "host") -> dict[st
     if workers == "auto":
         workers = str(max(1, min(4, os.cpu_count() or 1)))
     abi = f"py{sys.version_info.major}{sys.version_info.minor}-{platform.machine()}"
-    return {
+    env = {
         "PIP_CACHE_DIR": str(cache / "pip"),
         "UV_CACHE_DIR": str(cache / "uv"),
         "MYPY_CACHE_DIR": str(cache / "mypy"),
@@ -694,6 +750,11 @@ def python_cache_env(root: Path, execution_environment: str = "host") -> dict[st
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    if "chroot" in safe or "termux" in safe:
+        env.setdefault("LANG", "C.UTF-8")
+        env.setdefault("LC_ALL", "C.UTF-8")
+        env.setdefault("PYTHONUTF8", "1")
+    return env
 
 
 def write_environment_state(info: PythonProjectInfo, plan: PythonEnvironmentPlan, *, groups: Sequence[str] = (), extras: Sequence[str] = ()) -> Path:

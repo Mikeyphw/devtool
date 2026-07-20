@@ -49,6 +49,29 @@ class GradleProgressTests(unittest.TestCase):
         self.assertEqual(tracker.last_sequence, 0)
         self.assertTrue(snapshots)
 
+    def test_plain_gradle_progress_keeps_first_failed_task_visible(self) -> None:
+        tracker = self.make_tracker()
+        tracker.update_from_line("> Task :platform:compileDebugKotlin FAILED")
+        tracker.update_from_line("> Task :app:checkOfficialDebugDuplicateClasses")
+
+        current = tracker.snapshot()
+        self.assertEqual(current["failed_task"], ":platform:compileDebugKotlin")
+        self.assertIn("Failed :platform:compileDebugKotlin", current["detail"])
+        self.assertIn(":app:checkOfficialDebugDuplicateClasses", current["detail"])
+        tracker.finish(1)
+        self.assertIn(":platform:compileDebugKotlin", tracker.detail)
+
+    def test_structured_gradle_progress_keeps_first_failed_task_visible(self) -> None:
+        tracker = self.make_tracker()
+        tracker.update_from_line(self.event(1, "task-graph", total=3))
+        tracker.update_from_line(self.event(2, "task-finish", task=":ui:compileDebugKotlin", completed=1, total=3, outcome="failed"))
+        tracker.update_from_line(self.event(3, "task-start", task=":app:checkDebugDuplicateClasses", completed=1, total=3))
+
+        current = tracker.snapshot()
+        self.assertEqual(current["failed_task"], ":ui:compileDebugKotlin")
+        self.assertIn("Failed :ui:compileDebugKotlin", current["detail"])
+        self.assertIn(":app:checkDebugDuplicateClasses", current["detail"])
+
     def test_structured_events_take_precedence_over_plain_gradle_output(self) -> None:
         tracker = self.make_tracker()
         snapshots: list[dict] = []

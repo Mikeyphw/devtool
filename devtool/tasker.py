@@ -1079,22 +1079,28 @@ class TaskerProgressSink:
 
     def phase_started(self, name: str, *, index: int, total: int, argv: list[str] | None = None, metadata: dict[str, Any] | None = None) -> None:
         metadata = dict(metadata or {})
+        index = int(metadata.get("validation_phase_index") or index)
+        total = int(metadata.get("validation_phase_total") or total)
+        display_name = str(metadata.get("validation_phase_name") or name).strip() or name
         target = str(metadata.get("bundle_target") or metadata.get("target") or metadata.get("matrix") or "").strip()
         workspace = str(metadata.get("workspace") or "").strip()
         if target:
             self.set_targets(self.targets + [target])
         self.current_phase = {
-            "name": name,
+            "name": display_name,
+            "command_name": name,
             "index": index,
             "total": total,
             "argv": argv or [],
             "target": target,
             "workspace": workspace,
             "workspace_root": str(metadata.get("workspace_root") or "").strip(),
+            "validation_session_id": str(metadata.get("validation_session_id") or "").strip(),
+            "validation_phase_key": str(metadata.get("validation_phase_key") or "").strip(),
             "started_at": utc_now_iso(),
         }
         self._record_phase_progress(phase=self.current_phase, status="running", completed=0)
-        self.emit("phase_started", status="running", phase=self.current_phase, progress={"percent": None, "current": 0, "completed": 0, "total": None, "target": target}, message=_human_event_message("phase_started", phase_name=name, metadata=metadata), force=True, notify=True)
+        self.emit("phase_started", status="running", phase=self.current_phase, progress={"percent": None, "current": 0, "completed": 0, "total": None, "target": target}, message=_human_event_message("phase_started", phase_name=display_name, metadata=metadata), force=True, notify=True)
 
     def progress(
         self,

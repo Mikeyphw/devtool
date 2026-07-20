@@ -54,32 +54,92 @@ devtool -r "$HOME/Code/project" --target mobile validate
 
 ## Validation pipeline
 
-Android validation plans build, local JVM/unit-test, and Android Lint tasks, then runs them in one Gradle invocation whenever the target uses normal Gradle tasks. This avoids repeating Java, SDK, wrapper, dependency, and project configuration work for each phase. Explicit shell commands remain separate because they may have action-specific side effects.
+Normal Android validation still uses the fastest safe coalesced Gradle plan. On
+memory-constrained Android and Termux hosts, persistent sequential validation
+splits that plan into durable checkpoints:
 
 ```text
-single Gradle invocation: build/package + local JVM/unit tests + Android Lint
-optional second invocation: connected instrumentation tests
+preflight -> dependencies -> compile -> resources -> unit-test -> package
+          -> artifact-check -> lint -> instrumentation -> finalize
 ```
 
-The inferred `help` restore task is omitted from combined validation because the real tasks already configure the project. A non-default explicit restore task is retained.
+Each invocation may stop at a phase boundary and continue later. State is stored
+under `.devtool/state/android-validation/<session-id>/state.json`; the active
+session marker is `.devtool/state/android-validation/active.json`. Gradle's
+project cache, `GRADLE_USER_HOME`, dependency cache, and build outputs are kept.
+Devtool never inserts `clean` between phases.
 
-For a `debug` Android target, inferred defaults are:
+Common forms:
 
-```text
-help
-assembleDebug
-testDebugUnitTest
-lintDebug
+```bash
+devtool -r "$HOME/Code/app" validate start --next
+devtool -r "$HOME/Code/app" validate next
+devtool -r "$HOME/Code/app" validate resume --through package
+devtool -r "$HOME/Code/app" validate resume --complete
+devtool -r "$HOME/Code/app" validate status
+devtool -r "$HOME/Code/app" validate abort
 ```
 
-The selected variant controls the inferred task names. Explicit `[tasks]`
-entries always win. Gradle daemons are retained by default so later builds can
-reuse the warmed JVM and configuration state. Set `gradle.stop_after_run = true`
-only when reclaiming memory is more important than subsequent build speed.
+The equivalent top-level commands are `start-validation`, `resume-validation`,
+`validation-status`, `validation-finalize`, and `validation-abort`. A failed
+phase is cached and is not repeated while its inputs are unchanged. Use
+`--retry-failed` to retry it explicitly.
 
-Pure JVM Gradle projects default to `build` and `test`. There is no universal JVM
-lint task, so `[tasks].lint` must name the project's real check, such as
-`checkstyleMain`, `detekt`, or `ktlintCheck`.
+Useful boundaries and guards:
+
+```bash
+--phase compile
+--from-phase resources --through package
+--max-phases 2
+--max-runtime 15m
+--pause-after lint
+--stop-below-battery 30
+--require-charging
+--stop-above-temperature 44
+--require-complete
+```
+
+Runtime budgets are checked only between phases. Devtool lets the active Gradle
+phase finish, checkpoints it, then pauses. `--stop-gradle-after-phase` reclaims
+daemon memory after every invocation; `--keep-gradle-daemon` keeps the warm JVM.
+The target may set `validation.stop_daemon_after_phase = true` as its default.
+
+Changed-file planning keeps the smallest conservative pipeline:
+
+- shared Gradle, wrapper, version-catalog, buildSrc, or build-logic changes run all phases;
+- source changes start at compile;
+- manifest, resource, and asset changes start at resource processing;
+- test-only changes start at unit tests;
+- documentation-only changes skip Gradle and run finalization only.
+
+Explicit phase tasks may be configured under `[validation.phases]`, for example:
+
+```toml
+[validation.phases]
+preflight = ["help"]
+dependencies = ["dependencies"]
+compile = [":app:compileDebugSources"]
+resources = [":app:processDebugResources"]
+unit-test = [":app:testDebugUnitTest"]
+package = [":app:assembleDebug"]
+lint = [":app:lintDebug"]
+```
+
+Per-phase resource profiles may override the Android-safe defaults:
+
+```toml
+[validation.phase_profiles.compile]
+max_workers = 1
+cpu_limit = 2
+gradle_heap_mb = 1536
+memory_guard_mb = 640
+low_priority = true
+```
+
+The HUD, Android notification, terminal summary, and machine JSON expose the
+overall phase index independently from Gradle task progress, such as `phase 3/9`
+and `28/117 Gradle tasks`. Pure JVM Gradle projects use the same session engine,
+but omit Android-only resource and instrumentation phases where unavailable.
 
 ## Shared `build-apk` backend
 

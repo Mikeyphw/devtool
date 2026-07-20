@@ -69,6 +69,52 @@ class ClipboardTests(unittest.TestCase):
         self.assertEqual(result.backend, "xsel")
         self.assertEqual(result.reason, "xsel failed")
 
+    def test_termux_clipboard_waits_for_real_success(self) -> None:
+        completed = __import__("subprocess").CompletedProcess(
+            ["termux-clipboard-set"], 0, "", ""
+        )
+        with patch("devtool.clipboard.subprocess.run", return_value=completed) as run:
+            from devtool.clipboard import _run_clipboard_command
+
+            result = _run_clipboard_command(
+                ["termux-clipboard-set"], "failure summary", "termux-clipboard-set"
+            )
+
+        self.assertTrue(result.success)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["input"], "failure summary")
+
+    def test_termux_clipboard_reports_late_failure(self) -> None:
+        completed = __import__("subprocess").CompletedProcess(
+            ["termux-clipboard-set"], 1, "", "API service unavailable"
+        )
+        with patch("devtool.clipboard.subprocess.run", return_value=completed):
+            from devtool.clipboard import _run_clipboard_command
+
+            result = _run_clipboard_command(
+                ["termux-clipboard-set"], "failure summary", "termux-clipboard-set"
+            )
+
+        self.assertFalse(result.success)
+        self.assertIn("status 1", result.reason or "")
+        self.assertIn("API service unavailable", result.reason or "")
+
+    def test_termux_clipboard_timeout_is_not_success(self) -> None:
+        import subprocess
+
+        with patch(
+            "devtool.clipboard.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(["termux-clipboard-set"], 8),
+        ):
+            from devtool.clipboard import _run_clipboard_command
+
+            result = _run_clipboard_command(
+                ["termux-clipboard-set"], "failure summary", "termux-clipboard-set"
+            )
+
+        self.assertFalse(result.success)
+        self.assertIn("did not finish", result.reason or "")
+
     def test_run_clipboard_command_accepts_long_lived_process(self) -> None:
         events: list[str] = []
 

@@ -354,8 +354,75 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         lint_index = lint_args.index("--gradle-metaspace-mb")
         test_index = test_args.index("--gradle-metaspace-mb")
-        self.assertEqual(lint_args[lint_index + 1], "512")
+        self.assertEqual(lint_args[lint_index + 1], "640")
         self.assertEqual(test_args[test_index + 1], "384")
+
+    def test_android_packaging_validation_gets_ksp_safe_metaspace_and_fail_fast(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {
+                        "android_safe": True,
+                        "gradle_metaspace_mb": 384,
+                    }
+                },
+            )
+
+            args = android_builder_arguments_for_tasks(
+                config, [":app:assembleOfficialDebug"], scan_artifacts=True, validation=True
+            )
+
+        metaspace_index = args.index("--gradle-metaspace-mb")
+        self.assertEqual(args[metaspace_index + 1], "768")
+        self.assertIn("--fail-fast", args)
+
+    def test_combined_android_validation_uses_higher_metaspace_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={"validation": {"android_safe": True}},
+            )
+
+            args = android_builder_arguments_for_tasks(
+                config,
+                [":app:assembleOfficialDebug", ":app:testOfficialDebugUnitTest", ":app:lintOfficialDebug"],
+                scan_artifacts=True,
+                validation=True,
+            )
+
+        metaspace_index = args.index("--gradle-metaspace-mb")
+        self.assertEqual(args[metaspace_index + 1], "896")
+
+    def test_android_validation_can_explicitly_collect_all_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {
+                        "android_safe": True,
+                        "fail_fast": False,
+                    }
+                },
+            )
+
+            args = android_builder_arguments_for_tasks(
+                config, ["assembleDebug"], scan_artifacts=True, validation=True
+            )
+
+        self.assertNotIn("--fail-fast", args)
 
     def test_constrained_gradle_options_are_accepted_and_bounded(self) -> None:
         args = parse_args([
@@ -377,9 +444,84 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         self.assertTrue(should_cleanup_gradle(args))
         self.assertIsNotNone(value)
-        self.assertIn("-Xmx", value or "")
-        self.assertIn("-XX:MaxMetaspaceSize=", value or "")
+        self.assertIn("-Xmx799m", value or "")
+        self.assertIn("-XX:MaxMetaspaceSize=599m", value or "")
+        self.assertIn("-XX:ReservedCodeCacheSize=128m", value or "")
         self.assertIn("-XX:ActiveProcessorCount=2", value or "")
+
+    def test_memory_guard_does_not_shrink_explicit_gradle_heap(self) -> None:
+        args = parse_args([
+            "/tmp/demo",
+            "--task",
+            "assembleDebug",
+            "--constrained",
+            "--gradle-jvm-heap-mb",
+            "768",
+            "--memory-guard-mb",
+            "558",
+        ])
+
+        self.assertIn("-Xmx768m", gradle_jvmargs(args) or "")
+
+    def test_android_packaging_validation_uses_d8_heap_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {
+                        "android_safe": True,
+                        "gradle_heap_mb": 768,
+                        "memory_guard_mb": 558,
+                    }
+                },
+            )
+            with patch.dict(os.environ, {
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+            }, clear=True):
+                packaging = android_builder_arguments_for_tasks(
+                    config, ["assembleDebug"], scan_artifacts=False, validation=True
+                )
+                tests = android_builder_arguments_for_tasks(
+                    config, [":app:testDebugUnitTest"], scan_artifacts=False, validation=True
+                )
+
+        packaging_heap = packaging[packaging.index("--gradle-jvm-heap-mb") + 1]
+        test_heap = tests[tests.index("--gradle-jvm-heap-mb") + 1]
+        self.assertEqual(packaging_heap, "1024")
+        self.assertEqual(test_heap, "768")
+
+    def test_android_packaging_heap_floor_is_configurable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {
+                        "android_safe": True,
+                        "gradle_heap_mb": 768,
+                        "gradle_packaging_heap_mb": 1280,
+                    }
+                },
+            )
+            with patch.dict(os.environ, {
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+            }, clear=True):
+                argv = android_builder_arguments_for_tasks(
+                    config, ["assembleDebug"], scan_artifacts=False, validation=True
+                )
+
+        self.assertEqual(argv[argv.index("--gradle-jvm-heap-mb") + 1], "1280")
 
     def test_constrained_gradle_command_adds_lock_timeout_and_jvmargs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -648,7 +790,7 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         self.assertNotIn(":protocol-test-lab:lintDebug", lint.argv)
         self.assertNotIn(":core-model:lintDebug", lint.argv)
         metaspace_index = lint.argv.index("--gradle-metaspace-mb")
-        self.assertEqual(lint.argv[metaspace_index + 1], "512")
+        self.assertEqual(lint.argv[metaspace_index + 1], "640")
 
     def test_termux_android_validation_splits_phases_and_caps_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

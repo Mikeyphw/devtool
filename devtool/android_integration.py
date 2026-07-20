@@ -17,7 +17,7 @@ import shutil
 import sys
 from typing import Any, Iterable
 
-from .build_optimization import resolve_android_validation_policy, resolve_build_policy
+from .build_optimization import resolve_android_validation_phase_policy, resolve_android_validation_policy, resolve_build_policy
 from . import android_build
 from .execution_environments import CHROOT, NATIVE_TERMUX, detect_current_environment
 from .models import ProjectConfig
@@ -203,6 +203,49 @@ def _validation_changed_paths(config: ProjectConfig) -> list[str]:
     ))
 
 
+_DOC_SUFFIXES = {".md", ".rst", ".adoc", ".txt", ".html", ".css", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+_SOURCE_SUFFIXES = {".java", ".kt", ".kts", ".groovy", ".scala", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".rs"}
+
+
+def android_validation_change_scope(config: ProjectConfig) -> str:
+    """Classify artifact changes for the resumable validation phase plan.
+
+    The result is conservative. Unknown files force ``full`` validation, while
+    documentation-only inventories avoid starting Gradle at all.
+    """
+
+    changed_paths = _validation_changed_paths(config)
+    if not changed_paths:
+        return "full"
+    categories: set[str] = set()
+    for raw in changed_paths:
+        path = raw.replace("\\", "/").strip("/")
+        lowered = path.lower()
+        name = lowered.rsplit("/", 1)[-1]
+        suffix = Path(name).suffix.lower()
+        if _is_gradle_wide_change(path):
+            return "full"
+        if "/src/androidtest/" in f"/{lowered}/" or "/src/test/" in f"/{lowered}/" or any(part in {"test", "tests"} for part in lowered.split("/")):
+            categories.add("tests")
+        elif name == "androidmanifest.xml" or "/res/" in f"/{lowered}/" or "/assets/" in f"/{lowered}/":
+            categories.add("resources")
+        elif suffix in _SOURCE_SUFFIXES:
+            categories.add("source")
+        elif suffix in _DOC_SUFFIXES or lowered.startswith(("docs/", ".github/")) or name in {"license", "notice", "readme", "changelog"}:
+            categories.add("docs")
+        else:
+            categories.add("unknown")
+    if "unknown" in categories:
+        return "full"
+    if "source" in categories:
+        return "source"
+    if "resources" in categories:
+        return "resources"
+    if "tests" in categories:
+        return "tests"
+    return "docs"
+
+
 def _is_android_module_build_file(build_file: Path) -> bool:
     try:
         text = build_file.read_text(encoding="utf-8", errors="ignore").lower()
@@ -288,6 +331,8 @@ def android_validation_lint_tasks(
     repo_root = config.repo_root.expanduser().resolve()
     try:
         project_prefix = root.relative_to(repo_root).as_posix().strip("/")
+        if project_prefix == ".":
+            project_prefix = ""
     except ValueError:
         project_prefix = ""
 
@@ -354,12 +399,54 @@ def _append_option(argv: list[str], flag: str, value: Any) -> None:
     argv.extend([flag, str(value)])
 
 
+def _positive_integer(value: Any) -> int | None:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _bool_setting(value: Any, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _is_android_packaging_workload(tasks: Iterable[str]) -> bool:
+    """Return whether tasks can invoke D8/R8 or final APK/AAB packaging."""
+
+    packaging_markers = (
+        "assemble",
+        "bundle",
+        "package",
+        "minify",
+        "shrink",
+        "dex",
+        "apk",
+        "aab",
+        "install",
+    )
+    return any(
+        any(marker in str(task).rsplit(":", 1)[-1].lower() for marker in packaging_markers)
+        for task in tasks
+    )
+
+
 def android_builder_arguments_for_tasks(
     config: ProjectConfig,
     tasks: Iterable[str],
     *,
     scan_artifacts: bool,
     validation: bool = False,
+    validation_phase: str = "",
 ) -> list[str]:
     root = android_project_root(config)
     android = _dict_option(config, "android")
@@ -386,7 +473,13 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--cmake-version", android.get("cmake_version", "auto"))
     _append_option(argv, "--gradle-command", gradle.get("command"))
     _append_option(argv, "--gradle-version", gradle.get("version"))
-    validation_policy = resolve_android_validation_policy(config) if validation else None
+    validation_policy = (
+        resolve_android_validation_phase_policy(config, validation_phase)
+        if validation and validation_phase
+        else resolve_android_validation_policy(config)
+        if validation
+        else None
+    )
     max_workers = (
         validation_policy.max_workers
         if validation_policy is not None
@@ -396,25 +489,56 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--system-deps", android.get("system_deps", "auto"))
     _append_option(argv, "--daemon-idle-timeout-ms", gradle.get("daemon_idle_timeout_ms", 900_000))
     if validation_policy is not None and validation_policy.enabled:
-        _append_option(argv, "--gradle-jvm-heap-mb", validation_policy.gradle_heap_mb)
         validation_options = _dict_option(config, "validation")
-        configured_metaspace = (
-            validation_options.get("gradle_metaspace_mb")
+        packaging_workload = _is_android_packaging_workload(seen_tasks)
+        heap_mb = validation_policy.gradle_heap_mb
+        if packaging_workload:
+            configured_packaging_heap = _positive_integer(
+                os.environ.get("DEVTOOL_GRADLE_PACKAGING_HEAP_MB")
+                or validation_options.get("gradle_packaging_heap_mb")
+                or gradle.get("validation_packaging_heap_mb")
+            )
+            # D8/R8 transforms, especially Compose's extended material-icons
+            # artifact, routinely exceed a 512-768 MiB heap even with one
+            # Gradle worker.  Keep a bounded packaging floor while the adaptive
+            # system-memory watchdog remains authoritative for device safety.
+            heap_mb = configured_packaging_heap or max(int(heap_mb), 1024)
+        _append_option(argv, "--gradle-jvm-heap-mb", heap_mb)
+        configured_metaspace = _positive_integer(
+            os.environ.get("DEVTOOL_GRADLE_VALIDATION_METASPACE_MB")
+            or validation_options.get("gradle_metaspace_mb")
             or gradle.get("validation_metaspace_mb")
         )
         lint_workload = any("lint" in task.lower() for task in seen_tasks)
-        # Android Lint loads detector classes and lint models for every selected
-        # module.  A general 384 MiB validation setting must not accidentally
-        # erase lint's safer floor, which caused Gradle to expire its daemon in
-        # the XDM multi-module validation run.
+        test_workload = any("test" in task.lower() for task in seen_tasks)
+        # Kotlin/KSP, AGP transforms and Android packaging retain substantially
+        # more class metadata than a small JVM-only Gradle task. A 384 MiB cap
+        # made MMRL's assembleOfficialDebug daemon exhaust metaspace, after
+        # which --continue left checkDuplicateClasses looking like the hang.
+        metaspace_floor = 384
+        if packaging_workload:
+            metaspace_floor = max(metaspace_floor, 768)
         if lint_workload:
-            lint_metaspace = (
-                validation_options.get("gradle_lint_metaspace_mb")
+            metaspace_floor = max(metaspace_floor, 640)
+        if sum((packaging_workload, lint_workload, test_workload)) >= 2:
+            metaspace_floor = max(metaspace_floor, 896)
+
+        workload_metaspace: int | None = None
+        if packaging_workload:
+            workload_metaspace = _positive_integer(
+                os.environ.get("DEVTOOL_GRADLE_PACKAGING_METASPACE_MB")
+                or validation_options.get("gradle_packaging_metaspace_mb")
+                or gradle.get("validation_packaging_metaspace_mb")
+            )
+        if lint_workload:
+            lint_metaspace = _positive_integer(
+                os.environ.get("DEVTOOL_GRADLE_LINT_METASPACE_MB")
+                or validation_options.get("gradle_lint_metaspace_mb")
                 or gradle.get("validation_lint_metaspace_mb")
             )
-            metaspace_mb = lint_metaspace or max(int(configured_metaspace or 0), 512)
-        else:
-            metaspace_mb = configured_metaspace or 384
+            workload_metaspace = max(workload_metaspace or 0, lint_metaspace or 0) or workload_metaspace
+
+        metaspace_mb = max(configured_metaspace or 0, workload_metaspace or 0, metaspace_floor)
         _append_option(argv, "--gradle-metaspace-mb", metaspace_mb)
         _append_option(argv, "--memory-guard-mb", validation_policy.memory_guard_mb)
         _append_option(argv, "--cpu-limit", validation_policy.cpu_limit)
@@ -442,7 +566,19 @@ def android_builder_arguments_for_tasks(
         argv.append("--parallel")
     if bool(gradle.get("build_cache", True)):
         argv.append("--build-cache")
-    if bool(gradle.get("fail_fast", False)):
+    fail_fast_default = bool(validation_policy is not None and validation_policy.enabled)
+    fail_fast_value: Any = None
+    env_fail_fast = os.environ.get("DEVTOOL_GRADLE_FAIL_FAST", "").strip()
+    if env_fail_fast:
+        fail_fast_value = env_fail_fast
+    elif validation:
+        validation_options = _dict_option(config, "validation")
+        if "fail_fast" in validation_options:
+            fail_fast_value = validation_options.get("fail_fast")
+    if fail_fast_value is None and "fail_fast" in gradle:
+        fail_fast_value = gradle.get("fail_fast")
+    fail_fast = _bool_setting(fail_fast_value, fail_fast_default)
+    if fail_fast:
         argv.append("--fail-fast")
 
     if not scan_artifacts:

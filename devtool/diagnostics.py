@@ -28,6 +28,14 @@ _GRADLE_JAVA_TOOLCHAIN = re.compile(
     r"Cannot find a Java installation on your machine .* matching: \{languageVersion=(?P<version>\d+),.*\}\.",
     re.IGNORECASE,
 )
+_GRADLE_METASPACE_EXHAUSTED = re.compile(
+    r"running out of JVM Metaspace",
+    re.IGNORECASE,
+)
+_GRADLE_FAILED_TASK = re.compile(
+    r"^>\s*Task\s+(?P<task>\S+)\s+FAILED$",
+    re.IGNORECASE,
+)
 _ANDROIDX_AAR_METADATA = re.compile(
     r"Dependency '(?P<dependency>[^']+)' requires libraries and applications that depend on it to compile against version (?P<version>\d+) or later of the Android APIs\.",
     re.IGNORECASE,
@@ -144,6 +152,29 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 ))
                 index += 1
                 continue
+
+        if _GRADLE_METASPACE_EXHAUSTED.search(stripped):
+            issues.append(Issue(
+                "warning",
+                command_name,
+                "-",
+                "GRADLE_METASPACE",
+                "Gradle exhausted its configured JVM metaspace; increase the Android validation metaspace cap.",
+            ))
+            index += 1
+            continue
+
+        match = _GRADLE_FAILED_TASK.match(stripped)
+        if match:
+            issues.append(Issue(
+                "error",
+                command_name,
+                "-",
+                "GRADLE_TASK",
+                f"Gradle task failed: {match.group('task')}",
+            ))
+            index += 1
+            continue
 
         match = _GRADLE_JAVA_TOOLCHAIN.search(stripped)
         if match:

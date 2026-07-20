@@ -2210,19 +2210,21 @@ def gradle_jvmargs(args: argparse.Namespace) -> str | None:
         return None
 
     heap = explicit_heap or int(os.environ.get("DEVTOOL_GRADLE_JVM_HEAP_MB", "") or "0") or 1024
-    if args.memory_guard_mb and heap > args.memory_guard_mb:
-        # Keep room for metaspace, code cache, Kotlin/KSP, D8/R8 and native allocations.
-        heap = max(512, heap - min(256, max(0, args.memory_guard_mb // 2)))
+    # ``memory_guard_mb`` is a system-pressure warning threshold, not a JVM
+    # heap budget.  Comparing the two silently changed an explicitly requested
+    # 768 MiB heap into 512 MiB and caused D8/R8 to fail while plenty of system
+    # memory and swap remained available.  Resource safety is enforced by the
+    # adaptive watchdog, worker cap, CPU cap and low-priority scheduling.
     metaspace = (
         explicit_metaspace
         or int(os.environ.get("DEVTOOL_GRADLE_METASPACE_MB", "") or "0")
-        or min(640, max(384, heap // 2))
+        or min(1024, max(512 if args.constrained else 384, int(heap * 0.75)))
     )
     cpu_limit = explicit_cpu or int(os.environ.get("DEVTOOL_VALIDATION_CPU_LIMIT", "") or "0")
     parts = [
         f"-Xmx{heap}m",
         f"-XX:MaxMetaspaceSize={metaspace}m",
-        "-XX:ReservedCodeCacheSize=96m",
+        "-XX:ReservedCodeCacheSize=128m",
         "-Dfile.encoding=UTF-8",
     ]
     if cpu_limit > 0:
@@ -2422,6 +2424,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     command.extend(normalize_gradle_arguments(args.gradle_args, plain_console=args.plain_console))
 
     heading("Build")
+    if jvmargs:
+        failure_mode = "continue" if args.continue_on_failure else "fail-fast"
+        info(
+            f"Resource profile: workers={args.max_workers}, {jvmargs}, "
+            f"failure-mode={failure_mode}"
+        )
     build_started = time.time()
     try:
         run(

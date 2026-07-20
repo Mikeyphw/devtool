@@ -112,6 +112,16 @@ _devtool_commands() {
     'lint:run configured lint and static-analysis tools'
     'validate:run runner-specific validation'
     'v:alias for validate'
+    'start-validation:start a persistent sequential validation session'
+    'sv:alias for start-validation'
+    'resume-validation:resume a persistent sequential validation session'
+    'rv:alias for resume-validation'
+    'validation-status:show the active validation session'
+    'vs:alias for validation-status'
+    'validation-finalize:finalize a completed validation session'
+    'vf:alias for validation-finalize'
+    'validation-abort:abort and optionally roll back a validation session'
+    'va:alias for validation-abort'
     'wine-validate:run validation with Wine environment settings'
     'wv:alias for wine-validate'
     'run:run the selected project'
@@ -212,7 +222,27 @@ _devtool_validation_args() {
     '--matrix-mode[matrix interpretation]:mode:(rid target variant)' \
     '--fail-on-conflict[fail when nested overlays write the same path]' \
     '--ignore-checksum[skip SHA-256 checks while retaining other manifest checks]' \
-    '1:validation scope:(overlay overlays)' \
+    '--sequential[use a persistent Android/Gradle validation session]' \
+    '--resume[resume the active validation session]' \
+    '--restart-session[replace an existing non-transactional session]' \
+    '--retry-failed[retry the cached failed phase and dependents]' \
+    '--next[run only the next pending phase]' \
+    '--phase[run a named pending phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--through[run pending phases through this phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--complete[run all remaining phases]' \
+    '--from-phase[start this invocation at a named phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--pause-after[pause after a named phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--max-phases[maximum phases for this invocation]:count:' \
+    '--max-runtime[pause at a phase boundary after this duration]:duration:' \
+    '--require-complete[return failure when the invocation pauses incomplete]' \
+    '--stop-below-battery[pause below this battery percentage]:percent:' \
+    '--require-charging[pause unless the Android device is charging]' \
+    '--stop-above-temperature[pause above this device temperature]:celsius:' \
+    '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
+    '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phase invocations]' \
+    '--session[specific validation session ID]:session:' \
+    '--keep-changes[keep repository changes when aborting]' \
+    '1:validation action or artifact scope:(start next resume status finalize abort overlay overlays)' \
     '2:artifact:_devtool_artifact_path'
 }
 
@@ -246,6 +276,23 @@ _devtool_apply_args() {
     '--skip-restore[skip restore during validation]' \
     '--skip-build[skip build during validation]' \
     '--skip-test[skip tests during validation]' \
+    '--sequential[keep apply validation as a durable session]' \
+    '--resume[resume the active validation session]' \
+    '--retry-failed[retry the cached failed validation phase]' \
+    '--next[run only the next validation phase]' \
+    '--phase[run a named validation phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--through[run validation through this phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--complete[run all remaining validation phases]' \
+    '--pause-after[pause after a named validation phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--max-phases[maximum phases for this invocation]:count:' \
+    '--max-runtime[pause at a phase boundary after this duration]:duration:' \
+    '--require-complete[fail when validation pauses incomplete]' \
+    '--stop-below-battery[pause below this battery percentage]:percent:' \
+    '--require-charging[pause unless charging]' \
+    '--stop-above-temperature[pause above this temperature]:celsius:' \
+    '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
+    '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phases]' \
+    '--session[specific validation session ID]:session:' \
     '--commit[commit after successful apply and validation]:message:' \
     '--no-commit[disable a commit requested by the artifact manifest]' \
     '--no-artifact-script[skip embedded artifact validation scripts]' \
@@ -305,8 +352,14 @@ _devtool() {
         test|t)
           _devtool_test_args
           ;;
-        validate|v)
+        validate|v|start-validation|sv|resume-validation|rv)
           _devtool_validation_args
+          ;;
+        validation-status|vs|validation-finalize|vf)
+          _arguments '--session[specific validation session ID]:session:'
+          ;;
+        validation-abort|va)
+          _arguments '--session[specific validation session ID]:session:' '--keep-changes[keep repository changes instead of rolling back]'
           ;;
         wine-validate|wv)
           _arguments \

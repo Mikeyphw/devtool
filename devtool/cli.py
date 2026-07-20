@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 import resource
 import tempfile
 import zipfile
@@ -74,8 +75,34 @@ from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
-from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, rollback_transaction, transaction_root
+from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, mark_transaction_pending_validation, mark_transaction_validation_running, read_transaction, rollback_transaction, transaction_pending_validation, transaction_root
 from .validation_evidence import preserve_validation_evidence
+from .validation_sessions import (
+    ValidationSession,
+    ValidationSessionError,
+    annotate_specs as annotate_validation_specs,
+    clear_active_session,
+    completion_result as validation_completion_result,
+    create_session as create_validation_session,
+    guard_reason as validation_guard_reason,
+    load_active_session,
+    load_session as load_validation_session,
+    mark_aborted as mark_validation_aborted,
+    mark_completed as mark_validation_completed,
+    mark_paused as mark_validation_paused,
+    mark_phase_running,
+    parse_duration_seconds,
+    pause_result as validation_pause_result,
+    reconcile_inputs as reconcile_validation_inputs,
+    record_phase_result,
+    retry_failed as retry_failed_validation,
+    select_phase_keys,
+    session_operation_results,
+    spec_map as validation_spec_map,
+    status_payload as validation_status_payload,
+    status_text as validation_status_text,
+    sync_plan as sync_validation_plan,
+)
 from .single_run import SingleRunLock
 
 console = create_console()
@@ -96,7 +123,9 @@ INTERACTIVE_COPY_COMMANDS = {
 
 PROGRESS_CAPABLE_COMMANDS = {
     "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v",
-    "wine-validate", "wv", "run", "rn", "package", "pkg", "clean", "cl",
+    "wine-validate", "wv", "start-validation", "sv", "resume-validation", "rv",
+    "validation-finalize", "vf", "validation-abort", "va",
+    "run", "rn", "package", "pkg", "clean", "cl",
     "apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as", "batch", "commit", "ci", "tag",
 }
 
@@ -236,6 +265,21 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--matrix-mode", choices=["rid", "target", "variant"], default="rid")
             cmd.add_argument("--test-profile", default="", help="Saved test profile used by validation")
             _add_validation_test_selection_flags(cmd)
+            if name == "validate":
+                _add_resumable_validation_flags(cmd)
+
+    for name, aliases, mode in [
+        ("start-validation", ["sv"], "start"),
+        ("resume-validation", ["rv"], "resume"),
+    ]:
+        cmd = subparsers.add_parser(name, aliases=aliases, help=f"{mode.title()} a persistent sequential validation session")
+        cmd.set_defaults(_devtool_validation_mode=mode)
+        _add_validation_skip_flags(cmd)
+        _add_validation_test_selection_flags(cmd)
+        cmd.add_argument("--test-profile", default="", help="Saved test profile used by validation")
+        cmd.add_argument("--matrix", default="", help="Comma-separated runtime IDs, targets, or variants")
+        cmd.add_argument("--matrix-mode", choices=["rid", "target", "variant"], default="rid")
+        _add_resumable_validation_flags(cmd)
 
     ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
     ai_prompt.add_argument("--repo-name", required=True, help="Human-friendly repo name for the generated prompt")
@@ -279,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
         cmd.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
         _add_validation_skip_flags(cmd)
+        _add_resumable_validation_flags(cmd)
         cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
         cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
         cmd.add_argument("--no-artifact-script", action="store_true", help="Skip embedded artifact validation scripts while keeping built-in validation")
@@ -306,6 +351,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
         sub.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
         _add_validation_skip_flags(sub)
+        _add_resumable_validation_flags(sub)
         sub.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
         sub.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
         sub.add_argument("--no-artifact-script", action="store_true", help="Skip embedded artifact validation scripts while keeping built-in validation")
@@ -423,6 +469,16 @@ def build_parser() -> argparse.ArgumentParser:
     rollback_cmd.add_argument("commit", nargs="?", default="")
     rollback_cmd.add_argument("--last", action="store_true")
 
+    validation_status = subparsers.add_parser("validation-status", aliases=["vs"], help="Show the active resumable validation session")
+    validation_status.add_argument("--session", default="", help="Specific validation session ID")
+
+    validation_abort = subparsers.add_parser("validation-abort", aliases=["va"], help="Abort a resumable validation session")
+    validation_abort.add_argument("--session", default="", help="Specific validation session ID")
+    validation_abort.add_argument("--keep-changes", action="store_true", help="Do not roll back a pending artifact transaction")
+
+    validation_finalize = subparsers.add_parser("validation-finalize", aliases=["vf"], help="Finalize a completed resumable validation session")
+    validation_finalize.add_argument("--session", default="", help="Specific validation session ID")
+
     subparsers.add_parser("targets", aliases=["tg"])
 
     control_center = subparsers.add_parser("control-center", aliases=["gui"], help="Launch the Qt 5 Devtool Control Center")
@@ -440,6 +496,31 @@ def _add_validation_skip_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--skip-restore", action="store_true", help="Skip restore during validation")
     cmd.add_argument("--skip-build", action="store_true", help="Skip build during validation")
     cmd.add_argument("--skip-test", action="store_true", help="Skip test during validation")
+
+
+def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument("--sequential", action="store_true", help="Use a persistent Android/Gradle validation session")
+    cmd.add_argument("--resume", action="store_true", help="Resume the active validation session")
+    cmd.add_argument("--restart-session", action="store_true", help="Replace an existing non-transactional validation session")
+    cmd.add_argument("--retry-failed", action="store_true", help="Retry the cached failed phase and every dependent phase")
+    selection = cmd.add_mutually_exclusive_group()
+    selection.add_argument("--next", dest="validation_next", action="store_true", help="Run only the next pending phase")
+    selection.add_argument("--phase", default="", help="Run a named pending phase")
+    selection.add_argument("--through", default="", help="Run pending phases through this phase")
+    selection.add_argument("--complete", dest="validation_complete", action="store_true", help="Run every remaining phase")
+    cmd.add_argument("--from-phase", default="", help="Start this invocation at a named phase")
+    cmd.add_argument("--pause-after", default="", help="Pause after this phase (alias for --through)")
+    cmd.add_argument("--max-phases", type=int, default=0, help="Maximum phase boundaries to cross in this invocation")
+    cmd.add_argument("--max-runtime", default="", help="Stop before the next phase after this runtime budget, such as 15m or 1h")
+    cmd.add_argument("--require-complete", action="store_true", help="Return a failure code when validation pauses incomplete")
+    cmd.add_argument("--stop-below-battery", type=int, default=0, metavar="PERCENT", help="Pause before a phase when battery is below this percentage")
+    cmd.add_argument("--require-charging", action="store_true", help="Pause before a phase unless the Android device is charging")
+    cmd.add_argument("--stop-above-temperature", type=float, default=0.0, metavar="CELSIUS", help="Pause before a phase when device temperature exceeds this value")
+    daemon = cmd.add_mutually_exclusive_group()
+    daemon.add_argument("--stop-gradle-after-phase", action="store_true", help="Stop Gradle daemons after each completed phase")
+    daemon.add_argument("--keep-gradle-daemon", action="store_true", help="Keep Gradle daemons available between phase invocations")
+    cmd.add_argument("--keep-changes", action="store_true", help="When aborting through `validate abort`, keep the applied repository changes")
+    cmd.add_argument("--session", default="", help="Specific validation session ID")
 
 
 def _add_validation_test_selection_flags(cmd: argparse.ArgumentParser) -> None:
@@ -1320,6 +1401,39 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
 def _normalize_command_aliases(args: argparse.Namespace) -> None:
     if getattr(args, "command", "") == "apply":
         args.command = str(getattr(args, "normalized_command", "") or "apply-overlay")
+    command = str(getattr(args, "command", "") or "")
+    if command in {"validate", "v"}:
+        action = str(getattr(args, "validate_scope", "") or "").strip().lower()
+        if action in {"start", "next", "resume", "status", "finalize", "abort"}:
+            args.validate_scope = ""
+            if action == "start":
+                args._devtool_validation_mode = "start"
+                args.sequential = True
+                args.restart_session = True
+            elif action == "next":
+                args.sequential = True
+                args.validation_next = True
+            elif action == "resume":
+                args._devtool_validation_mode = "resume"
+                args.sequential = True
+                args.resume = True
+            elif action == "status":
+                args.command = "validation-status"
+            elif action == "finalize":
+                args.command = "validation-finalize"
+            elif action == "abort":
+                args.command = "validation-abort"
+            command = str(args.command)
+    if command in {"start-validation", "sv"}:
+        args._devtool_validation_mode = "start"
+        args.sequential = True
+        args.restart_session = True
+        args.command = "validate"
+    elif command in {"resume-validation", "rv"}:
+        args._devtool_validation_mode = "resume"
+        args.sequential = True
+        args.resume = True
+        args.command = "validate"
 
 
 def _is_artifact_validation_args(args: argparse.Namespace) -> bool:
@@ -1347,6 +1461,8 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
             parser.error(f"validate {scope} requires an artifact archive")
     if args.command not in APPLY_COMMANDS:
         return
+    if _resumable_validation_requested(args) and not (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
+        parser.error("Sequential/resumable validation flags on apply require --validate or --validate-only.")
     if getattr(args, "no_validate", False) and (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
         parser.error("--no-validate cannot be combined with --validate or --validate-only.")
     if getattr(args, "no_commit", False) and str(getattr(args, "commit", "") or "").strip():
@@ -1385,12 +1501,21 @@ def _apply_artifact_validation_defaults(config: ProjectConfig, args: argparse.Na
             if key in {"test_profile", "execution_environment"} and value
         })
     declared_paths = sorted(_artifact_declared_paths(manifest))
+    changed_paths_source = "artifact-inventory"
+    if not declared_paths:
+        preview = dict(getattr(args, "_devtool_artifact_preview", {}) or {})
+        declared_paths = sorted({
+            str(item.get("path") or "").replace("\\", "/").strip("/")
+            for item in preview.get("changes", [])
+            if isinstance(item, dict) and str(item.get("path") or "").strip()
+        })
+        changed_paths_source = "apply-preview"
     if declared_paths:
-        # Preserve the artifact's exact changed-file inventory for project
-        # runners. Android validation uses it to lint only affected modules,
-        # while root/shared Gradle changes still force a full lint fallback.
+        # Preserve the exact changed-file inventory for project runners.
+        # Android validation uses it for phase selection and affected-module
+        # linting, while root/shared Gradle changes retain the full fallback.
         validation_options["changed_paths"] = declared_paths
-        validation_options["changed_paths_source"] = "artifact-inventory"
+        validation_options["changed_paths_source"] = changed_paths_source
 
 
 def _validation_skip_values(args: argparse.Namespace) -> tuple[bool, bool, bool]:
@@ -1711,6 +1836,467 @@ def _run_specs_for_args(
     )
 
 
+
+def _resumable_validation_requested(args: argparse.Namespace) -> bool:
+    return bool(
+        getattr(args, "sequential", False)
+        or getattr(args, "resume", False)
+        or getattr(args, "restart_session", False)
+        or getattr(args, "retry_failed", False)
+        or getattr(args, "validation_next", False)
+        or str(getattr(args, "phase", "") or "").strip()
+        or str(getattr(args, "through", "") or "").strip()
+        or str(getattr(args, "from_phase", "") or "").strip()
+        or str(getattr(args, "pause_after", "") or "").strip()
+        or bool(getattr(args, "validation_complete", False))
+        or int(getattr(args, "max_phases", 0) or 0) > 0
+        or str(getattr(args, "max_runtime", "") or "").strip()
+        or int(getattr(args, "stop_below_battery", 0) or 0) > 0
+        or bool(getattr(args, "require_charging", False))
+        or float(getattr(args, "stop_above_temperature", 0.0) or 0.0) > 0
+        or str(getattr(args, "_devtool_validation_mode", "") or "") in {"start", "resume"}
+    )
+
+
+def _enable_resumable_validation(config: ProjectConfig, args: argparse.Namespace) -> None:
+    if config.kind not in {"android", "gradle"}:
+        raise ValidationSessionError(
+            "Persistent sequential validation is currently supported for Android/Gradle targets."
+        )
+    validation = config.runner_options.setdefault("validation", {})
+    if not isinstance(validation, dict):
+        validation = {}
+        config.runner_options["validation"] = validation
+    validation["resumable"] = True
+    # Each phase is deliberately its own Gradle process boundary.  Gradle's
+    # project and user-home caches remain intact, while no automatic clean is
+    # introduced between invocations.
+    validation["split_gradle"] = True
+    configured_stop = bool(validation.get("stop_daemon_after_phase", False))
+    stop_after_phase = bool(getattr(args, "stop_gradle_after_phase", False)) or configured_stop
+    if bool(getattr(args, "keep_gradle_daemon", False)):
+        stop_after_phase = False
+    gradle = config.runner_options.setdefault("gradle", {})
+    if not isinstance(gradle, dict):
+        gradle = {}
+        config.runner_options["gradle"] = gradle
+    gradle["stop_after_run"] = stop_after_phase
+
+
+def _validation_session_options(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "skip_restore": bool(getattr(args, "skip_restore", False)),
+        "skip_build": bool(getattr(args, "skip_build", False)),
+        "skip_test": bool(getattr(args, "skip_test", False)),
+        "max_runtime": str(getattr(args, "max_runtime", "") or ""),
+        "stop_below_battery": int(getattr(args, "stop_below_battery", 0) or 0),
+        "require_charging": bool(getattr(args, "require_charging", False)),
+        "stop_above_temperature": float(getattr(args, "stop_above_temperature", 0.0) or 0.0),
+        "require_complete": bool(getattr(args, "require_complete", False)),
+        "stop_gradle_after_phase": bool(getattr(args, "stop_gradle_after_phase", False)),
+        "keep_gradle_daemon": bool(getattr(args, "keep_gradle_daemon", False)),
+    }
+
+
+def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str, manifest: dict) -> dict[str, object]:
+    artifact_values = _artifact_arg_list(getattr(args, "artifact", ""))
+    return {
+        "command": str(getattr(args, "command", "") or "apply-overlay"),
+        "artifacts": artifact_values,
+        "artifact": artifact_values[0] if len(artifact_values) == 1 else artifact_values,
+        "artifact_type": str(getattr(args, "_devtool_artifact_type", "") or ""),
+        "artifact_sha": str(getattr(args, "_devtool_artifact_sha", "") or ""),
+        "manifest": manifest,
+        "preview": dict(getattr(args, "_devtool_artifact_preview", {}) or {}),
+        "commit": str(getattr(args, "commit", "") or ""),
+        "keep_artifact": bool(getattr(args, "keep_artifact", False)),
+        "delete_artifact_on_failure": bool(getattr(args, "delete_artifact_on_failure", False)),
+        "no_artifact_script": bool(getattr(args, "no_artifact_script", False)),
+        "no_manifest_check": bool(getattr(args, "no_manifest_check", False)),
+        "ignore_checksum": bool(getattr(args, "ignore_checksum", False)),
+        "validate_only": bool(getattr(args, "validate_only", False)),
+        "rollback_on_failure": bool(artifact_validation_policy(manifest).get("rollback_on_failure", True)),
+        "target": str(getattr(args, "target", "") or artifact_target(manifest)),
+        "solution": str(getattr(args, "solution", "") or artifact_solution(manifest)),
+        "transaction_path": transaction_path,
+    }
+
+
+def _load_or_create_validation_session(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    transaction_path: str = "",
+    apply_context: dict[str, object] | None = None,
+) -> tuple[ValidationSession, list[CommandSpec]]:
+    requested_session = str(getattr(args, "session", "") or "").strip()
+    active = load_validation_session(config.repo_root, requested_session) if requested_session else load_active_session(config.repo_root)
+    mode = str(getattr(args, "_devtool_validation_mode", "") or "").strip()
+    explicitly_resuming = mode == "resume" or bool(getattr(args, "resume", False)) or bool(requested_session)
+    if explicitly_resuming and active is None:
+        raise ValidationSessionError("No matching active validation session exists to resume.")
+
+    start_new = mode == "start" or bool(getattr(args, "restart_session", False)) or active is None
+    if not start_new and active is not None:
+        # A resumed plan must retain its original skip/daemon choices. Runtime,
+        # battery, temperature and phase selection are intentionally per-run.
+        for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon"):
+            if name in active.options:
+                setattr(args, name, active.options[name])
+
+    _enable_resumable_validation(config, args)
+    specs = _validation_specs_for_args(config, args, parser)
+    if start_new:
+        if active is not None and active.transaction_path:
+            raise ValidationSessionError(
+                "The active validation session owns a pending apply transaction. Resume or abort it instead of replacing it."
+            )
+        session = create_validation_session(
+            config,
+            specs,
+            transaction_path=transaction_path,
+            apply_context=dict(apply_context or {}),
+            options=_validation_session_options(args),
+            replace_active=bool(active is not None),
+        )
+        specs = annotate_validation_specs(specs, session_id=session.session_id)
+    else:
+        session = active
+        if session is None:
+            raise ValidationSessionError("No active validation session exists.")
+        if transaction_path and session.transaction_path and transaction_path != session.transaction_path:
+            raise ValidationSessionError("The active validation session belongs to a different apply transaction.")
+        specs = sync_validation_plan(session, specs)
+        reconcile_validation_inputs(session, config)
+        if session.failed:
+            if bool(getattr(args, "retry_failed", False)):
+                retry_failed_validation(session)
+            else:
+                failed = next((item.name for item in session.phases if item.status == "failed"), "unknown")
+                raise ValidationSessionError(
+                    f"Validation phase {failed!r} already failed with unchanged inputs. "
+                    "Change its inputs or use --retry-failed to run it again."
+                )
+    return session, specs
+
+
+def _session_pause_metadata(session: ValidationSession) -> tuple[int, int, str]:
+    completed = sum(item.status in {"succeeded", "skipped"} for item in session.phases)
+    next_phase = session.next_pending()
+    return completed, len(session.phases), next_phase.name if next_phase else ""
+
+
+def _mark_session_transaction_pending(session: ValidationSession) -> None:
+    if not session.transaction_path:
+        return
+    completed, total, next_phase = _session_pause_metadata(session)
+    mark_transaction_pending_validation(
+        session.transaction_path,
+        session_id=session.session_id,
+        next_phase=next_phase,
+        completed_phases=completed,
+        phase_total=total,
+    )
+
+
+def _finalize_validation_session(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    session: ValidationSession,
+    results: list[OperationResult],
+    raw_output: str,
+    *,
+    log_path: Path | str | None,
+    tasker_progress: TaskerProgressSink | None,
+) -> tuple[list[OperationResult], str]:
+    if not session.complete:
+        paused = validation_pause_result(session, "not all validation phases are complete", require_complete=True)
+        return [*results, paused], raw_output + ("\n\n" if raw_output else "") + paused.output
+
+    context = dict(session.apply_context or {})
+    if not context:
+        mark_validation_completed(session)
+        completed = validation_completion_result(session)
+        return [*results, completed], raw_output + ("\n\n" if raw_output else "") + completed.output
+
+    final_args = argparse.Namespace(**vars(args))
+    final_args.command = str(context.get("command") or "apply-overlay")
+    final_args.artifact = context.get("artifact") or context.get("artifacts") or ""
+    final_args.commit = str(context.get("commit") or "")
+    final_args.keep_artifact = bool(context.get("keep_artifact", False))
+    final_args.delete_artifact_on_failure = bool(context.get("delete_artifact_on_failure", False))
+    final_args.no_artifact_script = bool(context.get("no_artifact_script", False))
+    final_args.no_manifest_check = bool(context.get("no_manifest_check", False))
+    final_args.ignore_checksum = bool(context.get("ignore_checksum", False))
+    final_args.validate_only = bool(context.get("validate_only", False))
+    final_args._devtool_artifact_type = str(context.get("artifact_type") or "")
+    final_args._devtool_artifact_sha = str(context.get("artifact_sha") or "")
+    final_args._devtool_artifact_preview = dict(context.get("preview") or {})
+    final_args._devtool_artifact_manifest = dict(context.get("manifest") or {})
+
+    historical_results = session_operation_results(session)
+    manifest = dict(context.get("manifest") or {})
+    artifact_values = [str(item) for item in context.get("artifacts") or [] if str(item)]
+    artifact_path: Path | None = None
+    if len(artifact_values) == 1:
+        try:
+            artifact_path = resolve_artifact_path(artifact_values[0])
+        except Exception:
+            artifact_path = None
+    if artifact_path is not None and not any(result.returncode != 0 for result in results):
+        script_result, script_raw = _artifact_script_result(
+            config,
+            final_args,
+            artifact_path,
+            manifest,
+            target=str(context.get("target") or artifact_target(manifest)),
+            solution=str(context.get("solution") or artifact_solution(manifest)),
+            log_path=log_path,
+            tasker_progress=tasker_progress,
+        )
+        if script_result is not None:
+            results.append(script_result)
+            raw_output += ("\n\n" if raw_output else "") + script_raw
+
+    expectation = _validation_expectation_result(manifest, [*historical_results, *results])
+    if expectation is not None:
+        results.append(expectation)
+        raw_output += ("\n\n" if raw_output else "") + "=== Validation expectations ===\n" + expectation.output
+
+    rollback_enabled = bool(context.get("rollback_on_failure", True))
+    if session.transaction_path and rollback_enabled and any(result.returncode != 0 for result in results):
+        evidence = preserve_validation_evidence(
+            config.repo_root,
+            [*historical_results, *results],
+            run_id=str(getattr(args, "_devtool_run_id", "") or ""),
+        )
+        if evidence:
+            raw_output += f"\n\nValidation evidence preserved: {evidence}"
+        rollback_result, rollback_raw = _run_transaction_rollback(
+            session.transaction_path,
+            reason="resumable validation finalization failed",
+            tasker_progress=tasker_progress,
+            log_path=log_path,
+        )
+        results.append(rollback_result)
+        raw_output += "\n\n" + rollback_raw
+        session.status = "failed"
+        session.last_error = "resumable validation finalization failed"
+        clear_active_session(session)
+        return results, raw_output
+
+    results, raw_output = _maybe_commit_after_apply(config, final_args, results, raw_output, log_path=log_path)
+    if session.transaction_path:
+        if any(result.returncode != 0 for result in results):
+            if rollback_enabled:
+                rollback_result, rollback_raw = _run_transaction_rollback(
+                    session.transaction_path,
+                    reason="resumable validation commit failed",
+                    tasker_progress=tasker_progress,
+                    log_path=log_path,
+                )
+                results.append(rollback_result)
+                raw_output += "\n\n" + rollback_raw
+            session.status = "failed"
+            session.last_error = "post-validation commit failed"
+            clear_active_session(session)
+            return results, raw_output
+        mark_transaction_completed(session.transaction_path)
+
+    if not bool(getattr(final_args, "dry_run", False)) and not final_args.keep_artifact:
+        cleanup = _delete_original_artifact_after_apply(
+            results,
+            artifact=final_args.artifact,
+            delete_on_failure=final_args.delete_artifact_on_failure,
+        )
+        if cleanup is not None:
+            results.append(cleanup)
+            raw_output += ("\n\n" if raw_output else "") + "$ " + " ".join(cleanup.argv) + "\n" + cleanup.output
+
+    if not getattr(final_args, "_devtool_history_recorded", False):
+        _record_apply_history(config, final_args, [*historical_results, *results])
+        final_args._devtool_history_recorded = True
+    mark_validation_completed(session)
+    completed = validation_completion_result(session)
+    results.append(completed)
+    raw_output += ("\n\n" if raw_output else "") + completed.output
+    return results, raw_output
+
+
+def _run_validation_session(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    log_path: Path | str | None,
+    tasker_progress: TaskerProgressSink | None,
+    continue_on_error: bool,
+    transaction_path: str = "",
+    apply_context: dict[str, object] | None = None,
+) -> tuple[list[OperationResult], str, ValidationSession]:
+    session, specs = _load_or_create_validation_session(
+        config,
+        args,
+        parser,
+        transaction_path=transaction_path,
+        apply_context=apply_context,
+    )
+    mapping = validation_spec_map(specs)
+    through = str(getattr(args, "through", "") or "").strip()
+    pause_after = str(getattr(args, "pause_after", "") or "").strip()
+    if through and pause_after and through != pause_after:
+        raise ValidationSessionError("--through and --pause-after must name the same phase when combined.")
+    through = through or pause_after
+    keys = select_phase_keys(
+        session,
+        phase=str(getattr(args, "phase", "") or "").strip(),
+        through=through,
+        from_phase=str(getattr(args, "from_phase", "") or "").strip(),
+        next_only=bool(getattr(args, "validation_next", False)),
+        complete=bool(getattr(args, "validation_complete", False)),
+        max_phases=max(0, int(getattr(args, "max_phases", 0) or 0)),
+    )
+    results: list[OperationResult] = []
+    raw_sections: list[str] = []
+    started = time.monotonic()
+    runtime_budget = parse_duration_seconds(getattr(args, "max_runtime", ""))
+    pause_reason = ""
+
+    for key in keys:
+        if runtime_budget > 0 and results and time.monotonic() - started >= runtime_budget:
+            pause_reason = f"runtime budget of {runtime_budget:g}s reached at a phase boundary"
+            break
+        guard = validation_guard_reason(
+            stop_below_battery=int(getattr(args, "stop_below_battery", 0) or 0),
+            require_charging=bool(getattr(args, "require_charging", False)),
+            stop_above_temperature=float(getattr(args, "stop_above_temperature", 0.0) or 0.0),
+        )
+        if guard:
+            pause_reason = guard
+            break
+        spec = mapping.get(key)
+        if spec is None:
+            raise ValidationSessionError(f"Validation plan no longer contains phase key: {key}")
+        phase = mark_phase_running(session, key)
+        if session.transaction_path:
+            mark_transaction_validation_running(
+                session.transaction_path,
+                session_id=session.session_id,
+                phase=phase.name,
+            )
+        phase_results, phase_raw = _run_specs_for_args(
+            config,
+            [spec],
+            args,
+            continue_on_error=False,
+            log_path=log_path,
+            tasker_progress=tasker_progress,
+            shutdown_dotnet=False,
+        )
+        result = phase_results[-1]
+        record_phase_result(session, key, result)
+        results.extend(phase_results)
+        if phase_raw:
+            raw_sections.append(phase_raw)
+        if result.returncode != 0:
+            break
+        if not session.complete:
+            _mark_session_transaction_pending(session)
+
+    raw_output = "\n\n".join(raw_sections)
+    if session.failed:
+        context = dict(session.apply_context or {})
+        rollback_enabled = bool(context.get("rollback_on_failure", True))
+        if session.transaction_path and rollback_enabled:
+            evidence = preserve_validation_evidence(
+                config.repo_root,
+                [*session_operation_results(session), *results],
+                run_id=str(getattr(args, "_devtool_run_id", "") or ""),
+            )
+            if evidence:
+                raw_output += ("\n\n" if raw_output else "") + f"Validation evidence preserved: {evidence}"
+            rollback_result, rollback_raw = _run_transaction_rollback(
+                session.transaction_path,
+                reason="resumable validation phase failed",
+                tasker_progress=tasker_progress,
+                log_path=log_path,
+            )
+            results.append(rollback_result)
+            raw_output += ("\n\n" if raw_output else "") + rollback_raw
+            clear_active_session(session)
+        return results, raw_output, session
+
+    if session.complete:
+        results, raw_output = _finalize_validation_session(
+            config,
+            args,
+            session,
+            results,
+            raw_output,
+            log_path=log_path,
+            tasker_progress=tasker_progress,
+        )
+        return results, raw_output, session
+
+    pause_reason = pause_reason or "requested phase boundary reached"
+    mark_validation_paused(session, pause_reason)
+    _mark_session_transaction_pending(session)
+    paused = validation_pause_result(
+        session,
+        pause_reason,
+        require_complete=bool(getattr(args, "require_complete", False)),
+    )
+    results.append(paused)
+    raw_output += ("\n\n" if raw_output else "") + paused.output
+    return results, raw_output, session
+
+
+def _validation_management_session(config: ProjectConfig, args: argparse.Namespace) -> ValidationSession:
+    requested = str(getattr(args, "session", "") or "").strip()
+    return load_validation_session(config.repo_root, requested) if requested else load_active_session(config.repo_root, required=True)
+
+
+def _handle_validation_status(config: ProjectConfig, args: argparse.Namespace, *, machine: bool) -> int:
+    session = _validation_management_session(config, args)
+    if machine:
+        print(json.dumps(validation_status_payload(session), ensure_ascii=False, indent=None if args.machine == "compact" else 2))
+    else:
+        print(validation_status_text(session))
+    return 0
+
+
+def _handle_validation_abort(config: ProjectConfig, args: argparse.Namespace) -> int:
+    session = _validation_management_session(config, args)
+    if session.transaction_path and not bool(getattr(args, "keep_changes", False)):
+        result = rollback_transaction(session.transaction_path, reason="validation session aborted by user")
+        if result.returncode != 0:
+            console.print(f"[red]{result.output}[/red]")
+            return 1
+    mark_validation_aborted(session, "aborted by user")
+    console.print(f"[yellow]Aborted validation session {session.session_id}.[/yellow]")
+    return 0
+
+
+def _handle_validation_finalize(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    *,
+    log_path: Path | str | None,
+    tasker_progress: TaskerProgressSink | None,
+) -> tuple[list[OperationResult], str]:
+    session = _validation_management_session(config, args)
+    return _finalize_validation_session(
+        config,
+        args,
+        session,
+        [],
+        "",
+        log_path=log_path,
+        tasker_progress=tasker_progress,
+    )
+
+
 def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, results: list[OperationResult]) -> None:
     if args.command not in APPLY_COMMANDS or getattr(args, "validate_only", False) or getattr(args, "preview", False):
         return
@@ -1938,11 +2524,17 @@ def _ensure_run_id(args: argparse.Namespace) -> str:
     return run_id
 
 
-def _acquire_repo_single_run_lock(repo_root: Path, args: argparse.Namespace) -> SingleRunLock:
+def _acquire_repo_single_run_lock(
+    repo_root: Path,
+    args: argparse.Namespace,
+    *,
+    log_path: Path | str | None = None,
+) -> SingleRunLock:
     lock = SingleRunLock(
         repo_root,
         command=str(getattr(args, "command", "devtool") or "devtool"),
         run_id=_ensure_run_id(args),
+        log_path=str(log_path or ""),
     )
     try:
         lock.acquire()
@@ -1952,8 +2544,13 @@ def _acquire_repo_single_run_lock(repo_root: Path, args: argparse.Namespace) -> 
     return lock
 
 
-def _acquire_single_run_lock(config: ProjectConfig, args: argparse.Namespace) -> SingleRunLock:
-    return _acquire_repo_single_run_lock(config.repo_root, args)
+def _acquire_single_run_lock(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    *,
+    log_path: Path | str | None = None,
+) -> SingleRunLock:
+    return _acquire_repo_single_run_lock(config.repo_root, args, log_path=log_path)
 
 
 @contextmanager
@@ -2225,6 +2822,61 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     text = "$ " + " ".join(result.argv) + "\n" + result.output + manifest_note
     result.output = result.output + manifest_note
     return _return_apply(result, text)
+
+
+
+def _run_resumable_apply(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    log_path: Path | str | None,
+    tasker_progress: TaskerProgressSink | None,
+    continue_on_error: bool,
+) -> tuple[list[OperationResult], str]:
+    apply_results, apply_raw = _run_apply(
+        config,
+        args,
+        args.command,
+        getattr(args, "artifact", ""),
+        log_path=log_path,
+        tasker_progress=tasker_progress,
+    )
+    if not apply_results or any(result.returncode != 0 for result in apply_results):
+        return apply_results, apply_raw
+
+    manifest = dict(getattr(args, "_devtool_artifact_manifest", {}) or {})
+    if not getattr(args, "validate_only", False):
+        config = _reload_config_after_artifact_apply(args, config, manifest)
+    _apply_artifact_validation_defaults(config, args, manifest)
+    transaction_path = _apply_transaction_path(apply_results)
+    context = _validation_apply_context(args, transaction_path=transaction_path, manifest=manifest)
+    session_results, session_raw, session = _run_validation_session(
+        config,
+        args,
+        parser,
+        log_path=log_path,
+        tasker_progress=tasker_progress,
+        continue_on_error=continue_on_error,
+        transaction_path=transaction_path,
+        apply_context=context,
+    )
+    results = [*apply_results, *session_results]
+    raw_output = apply_raw + (("\n\n" + session_raw) if session_raw else "")
+    for result in results:
+        result.metadata.setdefault("validation_session_id", session.session_id)
+    if args.command in {"apply-overlay", "ao"}:
+        artifact_values = _artifact_arg_list(getattr(args, "artifact", ""))
+        label = Path(artifact_values[0]).name if artifact_values else "Overlay"
+        _tag_overlay_results(
+            results,
+            index=1,
+            total=1,
+            label=label,
+            target=config.selected_target or "",
+            artifact=artifact_values[0] if artifact_values else "",
+        )
+    return results, raw_output
 
 
 def _repair_result_name() -> str:
@@ -3737,6 +4389,17 @@ def main(argv: list[str] | None = None) -> int:
         with _single_run_guard(config.repo_root, args):
             return _rollback(config, args)
 
+    if args.command in {"validation-status", "vs", "validation-abort", "va"}:
+        config = _load_command_config(args)
+        try:
+            if args.command in {"validation-status", "vs"}:
+                return _handle_validation_status(config, args, machine=effective_payload == "json")
+            with _single_run_guard(config.repo_root, args):
+                return _handle_validation_abort(config, args)
+        except ValidationSessionError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return 2
+
     if args.command in {"doctor", "dr", "status", "st", "inspect", "info", "release-notes", "tag"} or args.command in {"commit", "ci"}:
         repo = Path(args.repo or Path.cwd()).resolve()
         if args.command in {"commit", "ci"}:
@@ -3805,8 +4468,9 @@ def main(argv: list[str] | None = None) -> int:
         return _print_test_catalog(config, args, as_json=effective_payload == "json")
     continue_on_error = args.continue_on_error and not args.fail_fast
     log_path = new_log_path()
+    log_path.touch(exist_ok=True)
     _ensure_run_id(args)
-    _single_run_lock = _acquire_single_run_lock(config, args)
+    _single_run_lock = _acquire_single_run_lock(config, args, log_path=log_path)
     tasker_progress = _live_progress_for_args(args, config)
     if tasker_progress is not None:
         tasker_progress.log_path = str(log_path)
@@ -3820,6 +4484,47 @@ def main(argv: list[str] | None = None) -> int:
         cache_cleanup_result = _build_cache_cleanup_result(dry_run=bool(getattr(args, "dry_run", False)))
 
     stale_transaction = find_active_transaction(config.repo_root)
+    if stale_transaction is not None and transaction_pending_validation(stale_transaction):
+        active_validation = load_active_session(config.repo_root)
+        transaction_data = read_transaction(stale_transaction)
+        transaction_session = str(transaction_data.get("validation_session_id") or "")
+        session_matches = bool(
+            active_validation is not None
+            and active_validation.session_id == transaction_session
+            and active_validation.transaction_path == str(stale_transaction)
+        )
+        validation_commands = {"validate", "v", "validation-finalize", "vf"}
+        if session_matches and args.command in validation_commands:
+            stale_transaction = None
+        else:
+            pending_result = OperationResult(
+                "validation-pending",
+                ["devtool", "resume-validation"],
+                1,
+                0.0,
+                (
+                    "An applied artifact is waiting for resumable validation.\n"
+                    f"transaction: {stale_transaction}\n"
+                    f"session: {transaction_session or '-'}\n"
+                    "Resume it with 'devtool resume-validation' or abort it with 'devtool validation-abort'. "
+                    "The pending changes were not rolled back automatically."
+                ),
+                [],
+                failure_kind="validation_pending",
+                metadata={"validation_session_id": transaction_session, "transaction_path": str(stale_transaction)},
+            )
+            finished_at = datetime.now(timezone.utc)
+            totals, summary_text, json_text, machine_text = _emit_summary(
+                [pending_result], config, as_json=effective_payload == "json", payload_mode=effective_payload,
+                raw_output=pending_result.output, command=args.command, started_at=started_at,
+                finished_at=finished_at, machine_format=args.machine or "pretty",
+            )
+            _write_json_payload(args.save_json_payload or args.machine_file, machine_text)
+            _maybe_copy(pending_result.output, summary_text, json_text, args)
+            _finish_live_progress(tasker_progress, totals=totals, results=[pending_result])
+            _release_single_run_lock(args)
+            return 1
+
     if stale_transaction is not None and args.command not in {"history", "clean", "cl"}:
         results = []
         raw_output = ""
@@ -3864,142 +4569,170 @@ def main(argv: list[str] | None = None) -> int:
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
 
     if args.command in APPLY_COMMANDS:
-        implicit_or_explicit_bundle = False
-        if args.command in {"apply-overlay", "ao"}:
+        if _resumable_validation_requested(args):
             try:
-                implicit_or_explicit_bundle = is_overlay_bundle(resolve_artifact_path(args.artifact))
-            except Exception:
-                implicit_or_explicit_bundle = False
-        if args.command in {"apply-overlays", "aos"} or implicit_or_explicit_bundle:
-            results, raw_output = _run_sequential_overlays(
-                config,
-                args,
-                parser,
-                log_path=log_path,
-                tasker_progress=tasker_progress,
-                continue_on_error=continue_on_error,
-            )
-        else:
-            results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
-            transaction_path = _apply_transaction_path(results)
-            applied_manifest = read_artifact_manifest(args.artifact)
-            if results and results[-1].returncode == 0 and not getattr(args, "validate_only", False):
-                config = _reload_config_after_artifact_apply(args, config, applied_manifest)
-            _apply_artifact_validation_defaults(config, args, applied_manifest)
-            should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
-            if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
-                skip_restore, skip_build, skip_test = _validation_skip_values(args)
-                validation_results: list[OperationResult] = []
-                if not (skip_restore and skip_build and skip_test):
-                    more_results, more_raw = _run_specs_for_args(
-                        config,
-                        _validation_specs_for_args(config, args, parser),
-                        args,
-                        continue_on_error=continue_on_error,
-                        log_path=log_path,
-                        tasker_progress=tasker_progress,
-                    )
-                    validation_results.extend(more_results)
-                    validation_raw = more_raw
-                else:
-                    validation_raw = ""
-                if any(result.returncode != 0 for result in validation_results):
-                    validation_results, repair_raw, _repair_result = _attempt_auto_repair(
-                        config,
-                        args,
-                        validation_results=validation_results,
-                        validation_specs=_validation_specs_for_args(config, args, parser),
-                        continue_on_error=continue_on_error,
-                        log_path=log_path,
-                        tasker_progress=tasker_progress,
-                        parser=parser,
-                    )
-                    if repair_raw:
-                        validation_raw = repair_raw
-                results.extend(validation_results)
-                if validation_raw:
-                    raw_output += "\n\n" + validation_raw
-                if not any(result.returncode != 0 for result in results):
-                    artifact_path = resolve_artifact_path(args.artifact)
-                    manifest = read_artifact_manifest(artifact_path)
-                    script_result, script_raw = _artifact_script_result(
-                        config,
-                        args,
-                        artifact_path,
-                        manifest,
-                        target=str(getattr(args, "target", "") or artifact_target(manifest)),
-                        solution=str(getattr(args, "solution", "") or artifact_solution(manifest)),
-                        log_path=log_path,
-                        tasker_progress=tasker_progress,
-                    )
-                    if script_result is not None:
-                        results.append(script_result)
-                        raw_output += "\n\n" + script_raw
-                expectation = _validation_expectation_result(read_artifact_manifest(args.artifact), results)
-                if expectation is not None:
-                    results.append(expectation)
-                    raw_output += "\n\n=== Validation expectations ===\n" + expectation.output
-            validation_policy = artifact_validation_policy(read_artifact_manifest(args.artifact))
-            rollback_enabled = bool(validation_policy.get("rollback_on_failure", True))
-            if transaction_path and rollback_enabled and _has_failed_after_apply(results):
-                evidence_path = preserve_validation_evidence(
-                    config.repo_root, results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
-                )
-                if evidence_path:
-                    raw_output += f"\n\nValidation evidence preserved: {evidence_path}"
-                rollback_result, rollback_raw = _run_transaction_rollback(
-                    transaction_path,
-                    reason="validation or artifact validation script failed after artifact apply",
-                    tasker_progress=tasker_progress,
+                results, raw_output = _run_resumable_apply(
+                    config,
+                    args,
+                    parser,
                     log_path=log_path,
+                    tasker_progress=tasker_progress,
+                    continue_on_error=continue_on_error,
                 )
-                results.append(rollback_result)
-                raw_output += "\n\n" + rollback_raw
-            results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
-            if transaction_path:
-                if any(result.returncode != 0 for result in results):
-                    if rollback_enabled and not any(result.name == "apply-rollback" for result in results):
-                        evidence_path = preserve_validation_evidence(
-                            config.repo_root, results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
-                        )
-                        if evidence_path:
-                            raw_output += f"\n\nValidation evidence preserved: {evidence_path}"
-                        rollback_result, rollback_raw = _run_transaction_rollback(
-                            transaction_path,
-                            reason="post-apply command failed",
-                            tasker_progress=tasker_progress,
-                            log_path=log_path,
-                        )
-                        results.append(rollback_result)
-                        raw_output += "\n\n" + rollback_raw
-                else:
-                    mark_transaction_completed(transaction_path)
-            if not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
-                cleanup_result = _delete_original_artifact_after_apply(
-                    results,
-                    artifact=getattr(args, "artifact", ""),
-                    delete_on_failure=bool(getattr(args, "delete_artifact_on_failure", False)),
-                )
-                if cleanup_result is not None:
-                    results.append(cleanup_result)
-                    raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
+            except ValidationSessionError as exc:
+                results = [OperationResult(
+                    "validation-session", ["devtool", "resume-validation"], 2, 0.0, str(exc), [],
+                    failure_kind="validation_session_error",
+                )]
+                raw_output = str(exc)
+        else:
+            implicit_or_explicit_bundle = False
             if args.command in {"apply-overlay", "ao"}:
-                artifact_text = str(getattr(args, "artifact", "") or "")
                 try:
-                    overlay_label = resolve_artifact_path(artifact_text).name
+                    implicit_or_explicit_bundle = is_overlay_bundle(resolve_artifact_path(args.artifact))
                 except Exception:
-                    overlay_label = Path(artifact_text).name or "Overlay"
-                _tag_overlay_results(
-                    results,
-                    index=1,
-                    total=1,
-                    label=overlay_label,
-                    target=config.selected_target or "",
-                    artifact=artifact_text,
+                    implicit_or_explicit_bundle = False
+            if args.command in {"apply-overlays", "aos"} or implicit_or_explicit_bundle:
+                results, raw_output = _run_sequential_overlays(
+                    config,
+                    args,
+                    parser,
+                    log_path=log_path,
+                    tasker_progress=tasker_progress,
+                    continue_on_error=continue_on_error,
                 )
-            if not getattr(args, "_devtool_history_recorded", False):
-                _record_apply_history(config, args, results)
-                args._devtool_history_recorded = True
+            else:
+                results, raw_output = _run_apply(config, args, args.command, args.artifact, log_path=log_path, tasker_progress=tasker_progress)
+                transaction_path = _apply_transaction_path(results)
+                applied_manifest = read_artifact_manifest(args.artifact)
+                if results and results[-1].returncode == 0 and not getattr(args, "validate_only", False):
+                    config = _reload_config_after_artifact_apply(args, config, applied_manifest)
+                _apply_artifact_validation_defaults(config, args, applied_manifest)
+                should_validate = getattr(args, "validate", False) or getattr(args, "validate_only", False)
+                if should_validate and (getattr(args, "validate_only", False) or results[-1].returncode == 0):
+                    skip_restore, skip_build, skip_test = _validation_skip_values(args)
+                    validation_results: list[OperationResult] = []
+                    if not (skip_restore and skip_build and skip_test):
+                        more_results, more_raw = _run_specs_for_args(
+                            config,
+                            _validation_specs_for_args(config, args, parser),
+                            args,
+                            continue_on_error=continue_on_error,
+                            log_path=log_path,
+                            tasker_progress=tasker_progress,
+                        )
+                        validation_results.extend(more_results)
+                        validation_raw = more_raw
+                    else:
+                        validation_raw = ""
+                    if any(result.returncode != 0 for result in validation_results):
+                        validation_results, repair_raw, _repair_result = _attempt_auto_repair(
+                            config,
+                            args,
+                            validation_results=validation_results,
+                            validation_specs=_validation_specs_for_args(config, args, parser),
+                            continue_on_error=continue_on_error,
+                            log_path=log_path,
+                            tasker_progress=tasker_progress,
+                            parser=parser,
+                        )
+                        if repair_raw:
+                            validation_raw = repair_raw
+                    results.extend(validation_results)
+                    if validation_raw:
+                        raw_output += "\n\n" + validation_raw
+                    if not any(result.returncode != 0 for result in results):
+                        artifact_path = resolve_artifact_path(args.artifact)
+                        manifest = read_artifact_manifest(artifact_path)
+                        script_result, script_raw = _artifact_script_result(
+                            config,
+                            args,
+                            artifact_path,
+                            manifest,
+                            target=str(getattr(args, "target", "") or artifact_target(manifest)),
+                            solution=str(getattr(args, "solution", "") or artifact_solution(manifest)),
+                            log_path=log_path,
+                            tasker_progress=tasker_progress,
+                        )
+                        if script_result is not None:
+                            results.append(script_result)
+                            raw_output += "\n\n" + script_raw
+                    expectation = _validation_expectation_result(read_artifact_manifest(args.artifact), results)
+                    if expectation is not None:
+                        results.append(expectation)
+                        raw_output += "\n\n=== Validation expectations ===\n" + expectation.output
+                validation_policy = artifact_validation_policy(read_artifact_manifest(args.artifact))
+                rollback_enabled = bool(validation_policy.get("rollback_on_failure", True))
+                if transaction_path and rollback_enabled and _has_failed_after_apply(results):
+                    evidence_path = preserve_validation_evidence(
+                        config.repo_root, results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
+                    )
+                    if evidence_path:
+                        raw_output += f"\n\nValidation evidence preserved: {evidence_path}"
+                    rollback_result, rollback_raw = _run_transaction_rollback(
+                        transaction_path,
+                        reason="validation or artifact validation script failed after artifact apply",
+                        tasker_progress=tasker_progress,
+                        log_path=log_path,
+                    )
+                    results.append(rollback_result)
+                    raw_output += "\n\n" + rollback_raw
+                results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
+                if transaction_path:
+                    if any(result.returncode != 0 for result in results):
+                        if rollback_enabled and not any(result.name == "apply-rollback" for result in results):
+                            evidence_path = preserve_validation_evidence(
+                                config.repo_root, results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
+                            )
+                            if evidence_path:
+                                raw_output += f"\n\nValidation evidence preserved: {evidence_path}"
+                            rollback_result, rollback_raw = _run_transaction_rollback(
+                                transaction_path,
+                                reason="post-apply command failed",
+                                tasker_progress=tasker_progress,
+                                log_path=log_path,
+                            )
+                            results.append(rollback_result)
+                            raw_output += "\n\n" + rollback_raw
+                    else:
+                        mark_transaction_completed(transaction_path)
+                if not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
+                    cleanup_result = _delete_original_artifact_after_apply(
+                        results,
+                        artifact=getattr(args, "artifact", ""),
+                        delete_on_failure=bool(getattr(args, "delete_artifact_on_failure", False)),
+                    )
+                    if cleanup_result is not None:
+                        results.append(cleanup_result)
+                        raw_output += "\n\n$ " + " ".join(cleanup_result.argv) + "\n" + cleanup_result.output
+                if args.command in {"apply-overlay", "ao"}:
+                    artifact_text = str(getattr(args, "artifact", "") or "")
+                    try:
+                        overlay_label = resolve_artifact_path(artifact_text).name
+                    except Exception:
+                        overlay_label = Path(artifact_text).name or "Overlay"
+                    _tag_overlay_results(
+                        results,
+                        index=1,
+                        total=1,
+                        label=overlay_label,
+                        target=config.selected_target or "",
+                        artifact=artifact_text,
+                    )
+                if not getattr(args, "_devtool_history_recorded", False):
+                    _record_apply_history(config, args, results)
+                    args._devtool_history_recorded = True
+    elif args.command in {"validation-finalize", "vf"}:
+        try:
+            results, raw_output = _handle_validation_finalize(
+                config, args, log_path=log_path, tasker_progress=tasker_progress
+            )
+        except ValidationSessionError as exc:
+            results = [OperationResult(
+                "validation-finalize", ["devtool", "validation-finalize"], 2, 0.0, str(exc), [],
+                failure_kind="validation_session_error",
+            )]
+            raw_output = str(exc)
     elif args.command in {"clean", "cl"}:
         specs = build_specs(config, args.command)
         results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
@@ -4032,8 +4765,27 @@ def main(argv: list[str] | None = None) -> int:
                 return watch_loop(config.repo_root, _run_once, interval=args.watch_interval)
             finally:
                 _release_single_run_lock(args)
-        specs = _validation_specs_for_args(config, args, parser)
-        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
+        if _resumable_validation_requested(args):
+            if getattr(args, "watch", False):
+                parser.error("--watch cannot be combined with resumable sequential validation.")
+            try:
+                results, raw_output, _session = _run_validation_session(
+                    config,
+                    args,
+                    parser,
+                    log_path=log_path,
+                    tasker_progress=tasker_progress,
+                    continue_on_error=continue_on_error,
+                )
+            except ValidationSessionError as exc:
+                results = [OperationResult(
+                    "validation-session", ["devtool", "resume-validation"], 2, 0.0, str(exc), [],
+                    failure_kind="validation_session_error",
+                )]
+                raw_output = str(exc)
+        else:
+            specs = _validation_specs_for_args(config, args, parser)
+            results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
     elif args.command == "batch":
         results, raw_output = _handle_batch(config, args, log_path=log_path, tasker_progress=tasker_progress)
     else:
