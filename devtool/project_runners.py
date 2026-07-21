@@ -972,12 +972,17 @@ class AndroidGradleRunner(ProjectRunner):
                 specs.extend(self.build_specs(config, "test"))
             if lint_tasks:
                 lint_plan = plan_android_command(config, "lint")
+                lint_policy = resolve_android_validation_phase_policy(config, "lint")
                 specs.append(CommandSpec(
                     "lint",
                     [
                         *lint_plan.argv_prefix,
                         *android_builder_arguments_for_tasks(
-                            config, lint_tasks, scan_artifacts=False, validation=True
+                            config,
+                            lint_tasks,
+                            scan_artifacts=False,
+                            validation=True,
+                            validation_phase="lint",
                         ),
                     ],
                     env=optimized_validation_env(config, self.kind),
@@ -992,54 +997,94 @@ class AndroidGradleRunner(ProjectRunner):
                         "report_parser": "android-lint",
                         "report_parsers": ["android-lint"],
                         "validation_components": ["lint"],
+                        "validation_phase_name": "lint",
                         "lint_scope": lint_scope,
                         "lint_modules": list(lint_modules),
+                        "validation_resource_profile": "android-lint",
+                        "validation_max_workers": lint_policy.max_workers,
+                        "validation_cpu_limit": lint_policy.cpu_limit,
+                        "validation_gradle_heap_mb": lint_policy.gradle_heap_mb,
+                        "validation_memory_guard_mb": lint_policy.memory_guard_mb,
+                        "validation_low_priority": lint_policy.low_priority,
                     },
                 ))
             if resource.enabled:
                 validation_env = optimized_validation_env(config, self.kind)
                 for spec in specs:
                     spec.env = dict(validation_env)
+                    phase_name = str(spec.metadata.get("validation_phase_name") or "").strip()
+                    phase_policy = (
+                        resolve_android_validation_phase_policy(config, phase_name)
+                        if phase_name
+                        else resource
+                    )
                     spec.metadata.update({
-                        "validation_resource_profile": "android-safe",
-                        "validation_max_workers": resource.max_workers,
-                        "validation_cpu_limit": resource.cpu_limit,
-                        "validation_gradle_heap_mb": resource.gradle_heap_mb,
-                        "validation_memory_guard_mb": resource.memory_guard_mb,
-                        "validation_low_priority": resource.low_priority,
+                        "validation_resource_profile": f"android-{phase_name}" if phase_name else "android-safe",
+                        "validation_max_workers": phase_policy.max_workers,
+                        "validation_cpu_limit": phase_policy.cpu_limit,
+                        "validation_gradle_heap_mb": phase_policy.gradle_heap_mb,
+                        "validation_memory_guard_mb": phase_policy.memory_guard_mb,
+                        "validation_low_priority": phase_policy.low_priority,
                     })
         else:
-            groups: list[tuple[str, list[str], list[str]]] = []
+            groups: list[tuple[str, list[str], list[str], str]] = []
             if not skip_restore:
                 restore_tasks = configured_tasks(config, "restore")
                 if restore_tasks and restore_tasks != ["help"]:
-                    groups.append(("restore", restore_tasks, ["restore"]))
+                    groups.append(("restore", restore_tasks, ["restore"], "dependencies"))
             if not skip_build:
-                groups.append(("build", configured_tasks(config, "build"), ["build"]))
+                groups.append(("build", configured_tasks(config, "build"), ["build"], "package"))
             if not skip_test:
-                groups.append(("test", configured_tasks(config, "test"), ["test"]))
+                groups.append(("test", configured_tasks(config, "test"), ["test"], "unit-test"))
             if lint_tasks:
-                groups.append(("lint", lint_tasks, ["lint"]))
+                groups.append(("lint", lint_tasks, ["lint"], "lint"))
 
-            if not resource.split_gradle:
+            if resource.split_gradle:
+                seen_task_ids: set[str] = set()
+                filtered_reversed: list[tuple[str, list[str], list[str], str]] = []
+                for action, group_tasks, group_components, validation_phase in reversed(groups):
+                    kept_reversed: list[str] = []
+                    for task in reversed(group_tasks):
+                        task_id = task.lstrip(":")
+                        if task_id in seen_task_ids:
+                            continue
+                        seen_task_ids.add(task_id)
+                        kept_reversed.append(task)
+                    kept = list(reversed(kept_reversed))
+                    if kept:
+                        filtered_reversed.append((action, kept, group_components, validation_phase))
+                groups = list(reversed(filtered_reversed))
+            else:
                 tasks: list[str] = []
                 components: list[str] = []
-                for _, group_tasks, group_components in groups:
+                for _, group_tasks, group_components, _ in groups:
                     tasks.extend(group_tasks)
                     components.extend(group_components)
-                groups = [("validation", tasks, components)]
+                groups = [("validation", tasks, components, "")]
 
-            for action, tasks, components in groups:
+            for action, tasks, components, validation_phase in groups:
                 unique_tasks = list(dict.fromkeys(task for task in tasks if task))
                 if not unique_tasks:
                     continue
                 plan_action = "build" if "build" in components else components[0]
                 plan = plan_android_command(config, plan_action)
+                phase_policy = (
+                    resolve_android_validation_phase_policy(config, validation_phase)
+                    if validation_phase
+                    else resource
+                )
                 report_parsers: list[str] = []
                 if "test" in components:
                     report_parsers.append("gradle-junit")
                 if "lint" in components:
                     report_parsers.append("android-lint")
+                validation_components = list(components)
+                if validation_phase:
+                    validation_components = (
+                        ["package", "artifact-check"]
+                        if validation_phase == "package" and "build" in components
+                        else [validation_phase]
+                    )
                 metadata = {
                     "runner": self.kind,
                     "project_type": self.kind,
@@ -1051,15 +1096,20 @@ class AndroidGradleRunner(ProjectRunner):
                     "progress_parser": "gradle",
                     "report_parser": report_parsers[0] if report_parsers else "",
                     "report_parsers": report_parsers,
-                    "validation_components": components,
+                    "validation_components": validation_components,
+                    "validation_phase_name": validation_phase or "validation",
                     "contains_tests": "test" in components,
                     "coalesced_gradle_validation": not resource.split_gradle,
-                    "validation_resource_profile": "android-safe" if resource.enabled else "standard",
-                    "validation_max_workers": resource.max_workers,
-                    "validation_cpu_limit": resource.cpu_limit,
-                    "validation_gradle_heap_mb": resource.gradle_heap_mb,
-                    "validation_memory_guard_mb": resource.memory_guard_mb,
-                    "validation_low_priority": resource.low_priority,
+                    "validation_resource_profile": (
+                        f"android-{validation_phase}"
+                        if validation_phase and phase_policy.enabled
+                        else "android-safe" if phase_policy.enabled else "standard"
+                    ),
+                    "validation_max_workers": phase_policy.max_workers,
+                    "validation_cpu_limit": phase_policy.cpu_limit,
+                    "validation_gradle_heap_mb": phase_policy.gradle_heap_mb,
+                    "validation_memory_guard_mb": phase_policy.memory_guard_mb,
+                    "validation_low_priority": phase_policy.low_priority,
                     "lint_scope": lint_scope if "lint" in components else "not-applicable",
                     "lint_modules": list(lint_modules) if "lint" in components else [],
                 }
@@ -1077,6 +1127,7 @@ class AndroidGradleRunner(ProjectRunner):
                             unique_tasks,
                             scan_artifacts="build" in components,
                             validation=True,
+                            validation_phase=validation_phase,
                         ),
                     ],
                     env=optimized_validation_env(config, self.kind),

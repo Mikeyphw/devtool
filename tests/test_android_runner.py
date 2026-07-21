@@ -882,6 +882,18 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             ["android-validation-build", "android-validation-test", "android-validation-lint"],
         )
         self.assertEqual([spec.metadata["validation_phase_total"] for spec in validation], [3, 3, 3])
+        self.assertEqual(
+            [spec.metadata["validation_phase_name"] for spec in validation],
+            ["package", "unit-test", "lint"],
+        )
+        self.assertEqual(
+            [spec.metadata["validation_components"] for spec in validation],
+            [["package", "artifact-check"], ["unit-test"], ["lint"]],
+        )
+        self.assertEqual(
+            [spec.metadata["validation_resource_profile"] for spec in validation],
+            ["android-package", "android-unit-test", "android-lint"],
+        )
         for spec in validation:
             worker_index = spec.argv.index("--max-workers")
             self.assertEqual(spec.argv[worker_index + 1], "1")
@@ -892,8 +904,42 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             self.assertIn("--no-daemon", spec.argv)
             self.assertNotIn("--parallel", spec.argv)
             self.assertIn("--memory-guard-mb", spec.argv)
-            self.assertEqual(spec.metadata["validation_resource_profile"], "android-safe")
             self.assertFalse(spec.metadata["coalesced_gradle_validation"])
+
+    def test_split_android_validation_removes_cross_phase_duplicate_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {"split_gradle": True},
+                    "tasks": {
+                        "build": ["assembleDebug", "testDebugUnitTest", "lintDebug"],
+                        "test": ["testDebugUnitTest"],
+                        "lint": [":lintDebug"],
+                    },
+                },
+            )
+            with patch.dict(os.environ, {
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+                "DEVTOOL_ANDROID_BUILDER": str(root / "state" / "build-apk"),
+                "DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "state" / "events.gradle"),
+            }, clear=True):
+                validation = build_validation_specs(config)
+
+        self.assertEqual(
+            [(spec.name, spec.metadata["gradle_tasks"]) for spec in validation],
+            [
+                ("android-validation-build", ["assembleDebug"]),
+                ("android-validation-test", ["testDebugUnitTest"]),
+                ("android-validation-lint", [":lintDebug"]),
+            ],
+        )
 
     def test_memory_guard_uses_adaptive_thresholds_for_ksp_dips(self) -> None:
         android_sustained, android_hard = android_memory_guard_limits(558)
@@ -979,12 +1025,15 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             validation = build_validation_specs(config)
 
         self.assertEqual([spec.name for spec in validation], ["restore", "build", "test", "lint"])
+        self.assertEqual(
+            [spec.metadata["validation_resource_profile"] for spec in validation],
+            ["android-safe", "android-safe", "android-safe", "android-lint"],
+        )
         for spec in validation:
             self.assertEqual(spec.env["DEVTOOL_MAX_WORKERS"], "1")
             self.assertEqual(spec.env["DEVTOOL_VALIDATION_CPU_LIMIT"], "2")
             self.assertIn("-Dorg.gradle.workers.max=1", spec.env["GRADLE_OPTS"])
             self.assertIn("-XX:ActiveProcessorCount=2", spec.env["JAVA_TOOL_OPTIONS"])
-            self.assertEqual(spec.metadata["validation_resource_profile"], "android-safe")
             self.assertGreaterEqual(spec.metadata["validation_memory_guard_mb"], 512)
 
     def test_android_builder_and_gradle_init_default_to_xdg_data_dir(self) -> None:
