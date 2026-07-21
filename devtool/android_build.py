@@ -1225,6 +1225,47 @@ def _sdk_root_from_local_properties(project_root: Path | None) -> Path | None:
     return None
 
 
+def sdk_host_compatible(sdk_root: Path) -> bool:
+    machine = normalized_machine()
+    if machine not in {"arm64", "armv7", "x86_64", "x86"}:
+        return True
+
+    build_tools = installed_build_tools_versions(sdk_root)
+    if not build_tools:
+        return True
+
+    probe_names = ("aapt2", "zipalign")
+    for version in build_tools[:2]:
+        directory = sdk_root / "build-tools" / version
+        for name in probe_names:
+            candidate = directory / name
+            if not candidate.is_file():
+                continue
+            try:
+                header = candidate.read_bytes()[:4096]
+            except OSError:
+                continue
+            if not header.startswith(b"\x7fELF"):
+                continue
+            detected = _elf_machine(header)
+            if detected is not None and detected != machine:
+                return False
+    return True
+
+
+def _elf_machine(header: bytes) -> str | None:
+    if len(header) < 20 or not header.startswith(b"\x7fELF"):
+        return None
+    endian = "little" if header[5] == 1 else "big" if header[5] == 2 else "little"
+    machine = int.from_bytes(header[18:20], endian, signed=False)
+    return {
+        3: "x86",
+        40: "armv7",
+        62: "x86_64",
+        183: "arm64",
+    }.get(machine)
+
+
 def discover_sdk_root(explicit: Path | None, project_root: Path | None = None) -> Path | None:
     sdk_root, _source = discover_sdk_root_with_source(explicit, project_root)
     return sdk_root
@@ -1237,42 +1278,39 @@ def discover_sdk_root_with_source(
     include_managed_cache: bool = False,
     cache_root: Path | None = None,
 ) -> tuple[Path | None, str | None]:
-    candidates: list[Path] = []
+    candidates: list[tuple[Path, str, bool]] = []
     if explicit:
-        candidates.append(explicit.expanduser())
+        candidates.append((explicit.expanduser(), "explicit --sdk-root", True))
     local_properties = _sdk_root_from_local_properties(project_root)
     if local_properties is not None:
-        candidates.append(local_properties)
+        candidates.append((local_properties, "local.properties sdk.dir", False))
     for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
         if os.environ.get(variable):
-            candidates.append(Path(os.environ[variable]).expanduser())
+            candidates.append((Path(os.environ[variable]).expanduser(), variable, False))
     if include_managed_cache and cache_root is not None:
-        candidates.append((cache_root / "android-sdk").expanduser())
+        candidates.append(((cache_root / "android-sdk").expanduser(), "managed cache", False))
     candidates.extend(
         [
-            Path.home() / "Android" / "Sdk",
-            Path.home() / "android-sdk",
-            Path.home() / ".android" / "sdk",
-            Path("/opt/android-sdk"),
-            Path("/usr/lib/android-sdk"),
+            (Path.home() / "Android" / "Sdk", "system install", False),
+            (Path.home() / "android-sdk", "system install", False),
+            (Path.home() / ".android" / "sdk", "system install", False),
+            (Path("/opt/android-sdk"), "system install", False),
+            (Path("/usr/lib/android-sdk"), "system install", False),
         ]
     )
-    for candidate in candidates:
+    skipped_incompatible: set[Path] = set()
+    for candidate, source, explicit_candidate in candidates:
+        resolved = candidate.expanduser().resolve() if candidate.exists() else candidate.expanduser().resolve(strict=False)
+        if resolved in skipped_incompatible:
+            continue
         if candidate.is_dir():
-            resolved = candidate.resolve()
-            if explicit and candidate == explicit.expanduser():
-                return resolved, "explicit --sdk-root"
-            if local_properties is not None and candidate == local_properties:
-                return resolved, "local.properties sdk.dir"
-            env_home = os.environ.get("ANDROID_HOME")
-            if env_home and candidate == Path(env_home).expanduser():
-                return resolved, "ANDROID_HOME"
-            env_root = os.environ.get("ANDROID_SDK_ROOT")
-            if env_root and candidate == Path(env_root).expanduser():
-                return resolved, "ANDROID_SDK_ROOT"
-            if include_managed_cache and cache_root is not None and candidate == (cache_root / "android-sdk").expanduser():
-                return resolved, "managed cache"
-            return resolved, "system install"
+            if not sdk_host_compatible(resolved):
+                if explicit_candidate:
+                    return resolved, source
+                skipped_incompatible.add(resolved)
+                warn(f"Skipping Android SDK with incompatible host build tools: {resolved} ({source})")
+                continue
+            return resolved, source
     if explicit:
         return explicit.expanduser().resolve(), "explicit --sdk-root"
     if include_managed_cache and cache_root is not None:
@@ -1971,13 +2009,23 @@ def normalize_gradle_arguments(arguments: Sequence[str], *, plain_console: bool 
     return normalized
 
 
-def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
-    raw = list(sys.argv[1:] if raw_args is None else raw_args)
+def split_gradle_passthrough_args(raw_args: Sequence[str]) -> tuple[list[str], list[str]]:
+    raw: list[str] = []
     extra_gradle_args: list[str] = []
-    if "--" in raw:
-        separator = raw.index("--")
-        extra_gradle_args = raw[separator + 1 :]
-        raw = raw[:separator]
+    iterator = iter(raw_args)
+    for value in iterator:
+        if value == "--":
+            extra_gradle_args.extend(iterator)
+            break
+        if value.startswith("-P") and value != "-P":
+            extra_gradle_args.append(value)
+            continue
+        raw.append(value)
+    return raw, extra_gradle_args
+
+
+def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
+    raw, extra_gradle_args = split_gradle_passthrough_args(sys.argv[1:] if raw_args is None else raw_args)
 
     parser = argparse.ArgumentParser(
         description="Smart generic Gradle builder for JVM and Android projects.",

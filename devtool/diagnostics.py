@@ -32,6 +32,10 @@ _GRADLE_METASPACE_EXHAUSTED = re.compile(
     r"running out of JVM Metaspace",
     re.IGNORECASE,
 )
+_GRADLE_MEMORY_GUARD = re.compile(
+    r"Emergency memory guard stopped Gradle after (?P<reason>[^:]+):\s*(?P<detail>.+)$",
+    re.IGNORECASE,
+)
 _GRADLE_FAILED_TASK = re.compile(
     r"^>\s*Task\s+(?P<task>\S+)\s+FAILED$",
     re.IGNORECASE,
@@ -160,6 +164,21 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 "-",
                 "GRADLE_METASPACE",
                 "Gradle exhausted its configured JVM metaspace; increase the Android validation metaspace cap.",
+            ))
+            index += 1
+            continue
+
+        match = _GRADLE_MEMORY_GUARD.search(stripped)
+        if match:
+            issues.append(Issue(
+                "error",
+                command_name,
+                "-",
+                "GRADLE_MEMORY_GUARD",
+                (
+                    "Gradle was stopped by devtool memory guard after "
+                    f"{match.group('reason').strip()}: {match.group('detail').strip()}"
+                ),
             ))
             index += 1
             continue

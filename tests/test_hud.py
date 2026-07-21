@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from devtool.hud import AndroidAppHud, HudState, choose_hud_mode, desktop_hud_starts_expanded, events_for_state, last_phase_highlights, latest_log_path, live_issue_counts, operation_steps, parse_hud_state, render_ascii_bar, state_from_directory
+from devtool.hud import AndroidAppHud, HudState, choose_hud_mode, completion_copy_text, desktop_hud_starts_expanded, events_for_state, last_phase_highlights, latest_log_path, live_issue_counts, operation_steps, parse_hud_state, render_ascii_bar, state_from_directory
 from devtool.cli import build_parser
 
 
@@ -280,6 +280,30 @@ class HudTests(unittest.TestCase):
             {"event_type": "progress", "phase": {"name": "build"}, "message": "2 Warning(s) 1 Error(s)"},
         ]
         self.assertEqual(live_issue_counts(events, state), (1, 2))
+
+    def test_completion_copy_text_includes_warning_and_error_details(self) -> None:
+        state = HudState(
+            status="failed",
+            raw={
+                "completion": {
+                    "headline": "Completed with errors",
+                    "detail": "12 warnings • 2 errors",
+                    "warning_details": [f"warning {index}" for index in range(1, 13)],
+                    "diagnostics": [
+                        {"severity": "warning", "detail": "warning 1"},
+                        {"severity": "error", "detail": "src/App.kt:7: error LintError: Failure 1"},
+                        {"severity": "error", "detail": "src/App.kt:8: error LintError: Failure 2"},
+                    ],
+                },
+            },
+        )
+
+        text = completion_copy_text(state)
+
+        self.assertIn("Warnings:", text)
+        self.assertIn("- warning 12", text)
+        self.assertIn("Errors:", text)
+        self.assertIn("- src/App.kt:8: error LintError: Failure 2", text)
 
     def test_render_ascii_bar_clamps_progress(self) -> None:
         self.assertEqual(render_ascii_bar(5, 10, width=10), "█████░░░░░")

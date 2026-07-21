@@ -17,7 +17,7 @@ from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.apply_notifications import build_apply_notification
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _apply_artifact_validation_defaults, _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, _validation_expectation_result, _validation_specs_for_args, build_parser, main
+from devtool.cli import _apply_artifact_validation_defaults, _apply_runner_cli_options, _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, _validation_expectation_result, _validation_specs_for_args, build_parser, main, split_runner_passthrough_args
 from devtool.config import ProjectConfig, load_project_config
 from devtool.log_commands import choose_active_log, parse_log_filename
 from devtool.logstore import write_log
@@ -137,6 +137,15 @@ class CliTests(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["v"])
         self.assertEqual(args.command, "v")
+
+    def test_build_parser_accepts_artifact_output_override(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["build", "-o", "dist/apks", "-n", "demo-debug.apk"])
+        config = ProjectConfig(repo_root=Path("/tmp/demo"), kind="android")
+        _apply_runner_cli_options(config, args)
+
+        self.assertEqual(config.runner_options["artifacts"]["output_directory"], "dist/apks")
+        self.assertEqual(config.runner_options["artifacts"]["output_name"], "demo-debug.apk")
 
     def test_parser_accepts_apply_flags(self) -> None:
         parser = build_parser()
@@ -680,6 +689,75 @@ artifact-cleanup: ok exit=0 time=0.10s
         self.assertIn("Repair summary", copied[0])
         self.assertIn("Auto-fix candidates", copied[0])
         self.assertIn("System.IO.Path.GetFullPath", copied[0])
+
+    def test_success_copy_includes_structured_warning_details(self) -> None:
+        raw_output = (
+            "$ ./gradlew lintDebug\n"
+            "Devtool Android Lint: 0 errors, 12 warnings.\n"
+        )
+        issues = [
+            {
+                "severity": "warning",
+                "command": "lint",
+                "file": "app/src/main/AndroidManifest.xml",
+                "line": 12,
+                "code": "ExportedReceiver",
+                "message": "Receiver should explicitly set exported.",
+            },
+            {
+                "severity": "warning",
+                "command": "lint",
+                "file": "app/src/main/kotlin/MainActivity.kt",
+                "line": 44,
+                "code": "NewApi",
+                "message": "Call requires API level 33.",
+            },
+        ]
+        issues.extend(
+            {
+                "severity": "warning",
+                "command": "lint",
+                "file": f"app/src/main/kotlin/Generated{index}.kt",
+                "line": index,
+                "code": "GeneratedWarning",
+                "message": f"Generated warning {index}.",
+            }
+            for index in range(3, 13)
+        )
+        summary_text = "build: ok exit=0 time=3.00s\ngit-commit: ok exit=0 time=0.20s\n"
+        json_text = json.dumps(
+            {
+                "warnings": 12,
+                "errors": 0,
+                "failed": 0,
+                "skipped": 0,
+                "results": [
+                    {
+                        "name": "build",
+                        "issues": issues,
+                    }
+                ],
+            }
+        )
+        args = SimpleNamespace(
+            no_clipboard=False,
+            copy=True,
+            copy_summary=False,
+            copy_json=False,
+            copy_via="auto",
+        )
+        copied: list[str] = []
+        result = SimpleNamespace(success=True, backend="test", reason="")
+        with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
+            _maybe_copy(raw_output, summary_text, json_text, args)
+
+        self.assertEqual(len(copied), 1)
+        self.assertIn("Warnings:", copied[0])
+        self.assertIn("app/src/main/AndroidManifest.xml:12: ExportedReceiver: Receiver should explicitly set exported.", copied[0])
+        self.assertIn("app/src/main/kotlin/MainActivity.kt:44: NewApi: Call requires API level 33.", copied[0])
+        self.assertIn("app/src/main/kotlin/Generated12.kt:12: GeneratedWarning: Generated warning 12.", copied[0])
+        self.assertNotIn("more unique warning", copied[0])
+        self.assertNotIn("individual warning text was not available", copied[0])
 
     def test_auto_repair_rewrites_and_revalidates_when_it_reduces_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1639,6 +1717,7 @@ def test_hud_overlay_can_be_requested_by_environment(monkeypatch, tmp_path) -> N
     import argparse
 
     monkeypatch.setenv("DEVTOOL_HUD_OVERLAY", "1")
+    monkeypatch.delenv("DEVTOOL_NO_HUD", raising=False)
     args = argparse.Namespace(command="validate", auto_hud=False, hud_overlay=False, hud_no_overlay=False)
     _normalize_live_progress_args(args)
     assert args.hud_overlay is True
@@ -1694,6 +1773,36 @@ def test_devtool_no_hud_overrides_all_hud_flags(monkeypatch) -> None:
     assert args.tasker_progress is False
     assert args.hud_overlay is False
     assert args.hud_no_overlay is True
+
+def test_runner_passthrough_args_are_split_after_build_command() -> None:
+    parse_argv, passthrough = split_runner_passthrough_args([
+        "--repo",
+        "/repo",
+        "--target",
+        "xdm_android",
+        "build",
+        "--",
+        "-Pxdm.requireAria2Runtime=true",
+    ])
+
+    assert parse_argv == ["--repo", "/repo", "--target", "xdm_android", "build"]
+    assert passthrough == ["-Pxdm.requireAria2Runtime=true"]
+
+
+def test_runner_passthrough_split_ignores_option_values_named_like_commands() -> None:
+    parse_argv, passthrough = split_runner_passthrough_args([
+        "--repo",
+        "/repo",
+        "--target",
+        "build",
+        "apply-overlay",
+        "--",
+        "artifact.zip",
+    ])
+
+    assert parse_argv == ["--repo", "/repo", "--target", "build", "apply-overlay", "--", "artifact.zip"]
+    assert passthrough == []
+
 
 class ApplyOverlayValidationSelectionTests(unittest.TestCase):
     def test_apply_overlay_validate_accepts_test_selection_flags(self) -> None:

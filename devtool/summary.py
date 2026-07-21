@@ -72,6 +72,25 @@ def _shorten_output(text: str, *, max_lines: int = 12, max_chars: int = 3000) ->
     return stripped
 
 
+def _root_cause_issue(result: OperationResult) -> Issue | None:
+    errors = [issue for issue in result.issues if issue.severity == "error"]
+    if not errors:
+        return None
+    primary = [
+        issue for issue in errors
+        if str(issue.code or "").upper() not in {"ARTIFACT_MISSING"}
+        and str(issue.command or "") != "artifact-verify"
+    ]
+    return primary[0] if primary else errors[0]
+
+
+def _issue_summary(issue: Issue) -> str:
+    location = _format_issue_location(issue)
+    prefix = f"{issue.code}: " if issue.code else ""
+    suffix = f" ({location})" if location != "-" else ""
+    return f"{prefix}{issue.message}{suffix}"
+
+
 def _render_failed_output_details(results: list[OperationResult], target_console: Console) -> None:
     failed = [result for result in results if result.returncode != 0 and (result.output or "").strip()]
     if not failed:
@@ -89,6 +108,8 @@ def _render_failed_output_details(results: list[OperationResult], target_console
         table.add_row("exit", str(result.returncode))
         if result.log_path:
             table.add_row("log", result.log_path)
+        if issue := _root_cause_issue(result):
+            table.add_row("root cause", Text(_issue_summary(issue), overflow="fold", style="bold red"))
         table.add_row("details", Text(_shorten_output(result.output), overflow="fold"))
         renderables.append(table)
     target_console.print(Panel(Group(*renderables), title="Failure details", expand=not is_narrow_console(target_console)))
@@ -906,6 +927,8 @@ def _artifact_headline_panel(manifest: dict, target_console: Console) -> Panel:
     if validation:
         required = bool(validation.get("required", False))
         details.add_row("Validation", Text("Required" if required else "Configured", style="bold green" if required else "yellow"))
+        if required:
+            details.add_row("Validation reason", Text("auto-enabled by artifact manifest", style="dim"))
     apply = manifest.get("apply") if isinstance(manifest.get("apply"), dict) else {}
     commit = apply.get("commit") if isinstance(apply.get("commit"), dict) else {}
     if commit:
@@ -1023,6 +1046,8 @@ def _policy_rows(section: str, value: dict) -> list[tuple[str, str, Text]]:
     if not isinstance(cleaned, dict) or not cleaned:
         return []
     rows: list[tuple[str, str, Text]] = []
+    if section == "Validation policy" and bool(cleaned.get("required", False)):
+        rows.append((section, "Activation", Text("auto-enabled unless --no-validate is used", style="green")))
     for key, item in cleaned.items():
         if isinstance(item, list):
             rendered = ", ".join(str(part) for part in item) if item else "—"

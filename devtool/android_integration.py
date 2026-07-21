@@ -37,6 +37,16 @@ def _dict_option(config: ProjectConfig, name: str) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _list_option(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item for item in value.split() if item]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item)]
+    return [str(value)] if str(value) else []
+
+
 def android_project_root(config: ProjectConfig) -> Path:
     raw = config.project_root or config.build_target or str(config.repo_root)
     path = Path(raw).expanduser()
@@ -585,6 +595,8 @@ def android_builder_arguments_for_tasks(
         argv.append("--no-artifact-scan")
     else:
         output_dir = artifacts.get("output_directory") or artifacts.get("output_dir")
+        if not output_dir and not validation:
+            output_dir = ".devtool/build-artifacts"
         output_name = artifacts.get("output_name")
         _append_option(argv, "--output-dir", output_dir)
         _append_option(argv, "--output-name", output_name)
@@ -594,13 +606,17 @@ def android_builder_arguments_for_tasks(
     # The builder treats arguments after ``--`` as direct Gradle arguments.
     # The staged init script emits the exact task/test lifecycle consumed by
     # terminal and native HUD progress, avoiding percentage guesses.
+    gradle_args: list[str] = []
     if bool(gradle.get("structured_events", True)):
-        argv.extend([
-            "--",
+        gradle_args.extend([
             "--init-script",
             str(stage_gradle_init_script()),
             "--no-configuration-cache",
         ])
+    gradle_args.extend(_list_option(gradle.get("args")))
+    if gradle_args:
+        argv.append("--")
+        argv.extend(gradle_args)
     return argv
 
 

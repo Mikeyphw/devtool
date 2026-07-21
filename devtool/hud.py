@@ -818,6 +818,15 @@ def completion_copy_text(state: HudState) -> str:
     if warning_details:
         lines.extend(("", "Warnings:"))
         lines.extend(f"- {item}" for item in warning_details if item)
+    diagnostics = completion.get("diagnostics") if isinstance(completion.get("diagnostics"), list) else []
+    error_details = [
+        str(item.get("detail") or item.get("message") or "").strip()
+        for item in diagnostics
+        if isinstance(item, dict) and str(item.get("severity") or "").lower() == "error"
+    ]
+    if error_details:
+        lines.extend(("", "Errors:"))
+        lines.extend(f"- {item}" for item in error_details if item)
     commit_hash = str(completion.get("commit_hash") or "").strip()
     if commit_hash:
         lines.extend(("", f"Git commit: {commit_hash}"))

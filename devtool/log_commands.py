@@ -76,7 +76,8 @@ def _candidate_state_roots() -> list[Path]:
         from .tasker import default_tasker_dir, read_active_hud_directory
 
         add(default_tasker_dir())
-        add(read_active_hud_directory(default=None))
+        if os.environ.get("DEVTOOL_NO_HUD", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            add(read_active_hud_directory(default=None))
     except Exception:
         pass
     return roots

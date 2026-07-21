@@ -15,6 +15,8 @@ from .xdg import state_dir
 
 
 def _state_home() -> Path:
+    if os.environ.get("DEVTOOL_XDG_DIR", "").strip():
+        return state_dir()
     runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     if runtime:
         return Path(runtime).expanduser() / "devtool"
@@ -158,11 +160,12 @@ def _candidate_lock_state_roots(extra_roots: Iterable[Path] = ()) -> list[Path]:
 
     add(_state_home())
     add(state_dir())
-    runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
-    if runtime:
-        add(Path(runtime) / "devtool")
-    with contextlib.suppress(OSError):
-        add(Path("/run/user") / str(os.getuid()) / "devtool")
+    if not os.environ.get("DEVTOOL_XDG_DIR", "").strip():
+        runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+        if runtime:
+            add(Path(runtime) / "devtool")
+        with contextlib.suppress(OSError):
+            add(Path("/run/user") / str(os.getuid()) / "devtool")
     for root in extra_roots:
         add(root)
     return roots

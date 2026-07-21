@@ -21,6 +21,7 @@ from devtool.android_build import (
     run as android_build_run,
     normalize_gradle_arguments,
     parse_args,
+    split_gradle_passthrough_args,
     gradle_jvmargs,
     should_cleanup_gradle,
     planned_artifact_names,
@@ -115,6 +116,28 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         self.assertEqual(names, ["demo-app-debug.apk"])
         self.assertEqual(artifact_variant(source), "debug")
+
+    def test_incompatible_local_properties_sdk_is_skipped_for_host(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bad_sdk = root / "bad-sdk"
+            good_sdk = root / "good-sdk"
+            bad_tool = bad_sdk / "build-tools" / "36.0.0" / "aapt2"
+            good_tool = good_sdk / "build-tools" / "36.0.0" / "aapt2"
+            bad_tool.parent.mkdir(parents=True)
+            good_tool.parent.mkdir(parents=True)
+            # ELF64 x86_64 e_machine = 62.
+            bad_tool.write_bytes(b"\x7fELF" + bytes([2, 1, 1]) + bytes(11) + (62).to_bytes(2, "little") + bytes(64))
+            # ELF64 AArch64 e_machine = 183.
+            good_tool.write_bytes(b"\x7fELF" + bytes([2, 1, 1]) + bytes(11) + (183).to_bytes(2, "little") + bytes(64))
+            (root / "local.properties").write_text(f"sdk.dir={bad_sdk}\n", encoding="utf-8")
+
+            with patch("devtool.android_build.normalized_machine", return_value="arm64"), patch.dict(
+                os.environ, {"ANDROID_HOME": str(good_sdk)}, clear=False
+            ):
+                discovered = discover_sdk_root_with_source(None, root)
+
+        self.assertEqual(discovered, (good_sdk.resolve(), "ANDROID_HOME"))
 
     def test_local_properties_sdk_root_is_preferred_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -402,6 +425,30 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         metaspace_index = args.index("--gradle-metaspace-mb")
         self.assertEqual(args[metaspace_index + 1], "896")
 
+    def test_android_builder_appends_configured_gradle_passthrough_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "gradle": {
+                        "structured_events": False,
+                        "args": ["-Pxdm.requireAria2Runtime=true"],
+                    }
+                },
+            )
+
+            args = android_builder_arguments_for_tasks(
+                config, [":transfer-aria2:verifyAria2Runtime", "assembleDebug"], scan_artifacts=True
+            )
+
+        self.assertIn("--", args)
+        separator = args.index("--")
+        self.assertEqual(args[separator + 1 :], ["-Pxdm.requireAria2Runtime=true"])
+
     def test_android_validation_can_explicitly_collect_all_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -483,6 +530,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
                 "HOME": "/data/data/com.termux/files/home",
                 "PREFIX": "/data/data/com.termux/files/usr",
                 "TERMUX_VERSION": "0.119",
+                "DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "state" / "events.gradle"),
             }, clear=True):
                 packaging = android_builder_arguments_for_tasks(
                     config, ["assembleDebug"], scan_artifacts=False, validation=True
@@ -516,6 +564,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
                 "HOME": "/data/data/com.termux/files/home",
                 "PREFIX": "/data/data/com.termux/files/usr",
                 "TERMUX_VERSION": "0.119",
+                "DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "state" / "events.gradle"),
             }, clear=True):
                 argv = android_builder_arguments_for_tasks(
                     config, ["assembleDebug"], scan_artifacts=False, validation=True
@@ -735,6 +784,17 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         self.assertIn("--build-cache", combined.argv)
         self.assertIn("--daemon-idle-timeout-ms", combined.argv)
         self.assertTrue(init_script_exists)
+
+    def test_android_build_defaults_to_devtool_artifact_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+            with patch.dict(os.environ, {"DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "init.gradle")}, clear=False):
+                args = android_builder_arguments(config, "build")
+
+        output_index = args.index("--output-dir")
+        self.assertEqual(args[output_index + 1], ".devtool/build-artifacts")
 
     def test_termux_validation_uses_affected_module_lint_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1067,6 +1127,34 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         self.assertEqual(args.count("--no-configuration-cache"), 1)
         self.assertNotIn("--configuration-cache", args)
         self.assertEqual([value for value in args if str(value).startswith("--console")], [])
+
+    def test_attached_gradle_project_properties_are_passed_through(self) -> None:
+        raw, gradle_args = split_gradle_passthrough_args([
+            "demo",
+            "-Pxdm.requireAria2Runtime=true",
+            "--task",
+            "assembleDebug",
+            "-P",
+            "36",
+            "--",
+            "--info",
+        ])
+
+        self.assertEqual(raw, ["demo", "--task", "assembleDebug", "-P", "36"])
+        self.assertEqual(gradle_args, ["-Pxdm.requireAria2Runtime=true", "--info"])
+
+        args = parse_args([
+            "demo",
+            "-Pxdm.requireAria2Runtime=true",
+            "--task",
+            "assembleDebug",
+            "-P",
+            "36",
+            "--",
+            "--info",
+        ])
+        self.assertEqual(args.android_platform, "36")
+        self.assertEqual(args.gradle_args, ["-Pxdm.requireAria2Runtime=true", "--info"])
 
     def test_gradle_console_arguments_are_normalized_with_last_explicit_value_winning(self) -> None:
         self.assertEqual(

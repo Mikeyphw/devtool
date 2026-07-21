@@ -87,6 +87,20 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(by_code["GRADLE_TASK"].severity, "error")
         self.assertIn(":platform:compileDebugKotlin", by_code["GRADLE_TASK"].message)
 
+    def test_parse_gradle_memory_guard_as_fatal_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = (
+                "warning: Emergency memory guard stopped Gradle after hard emergency floor: "
+                "165 MiB available; configured warning guard 512 MiB.\n"
+            )
+            issues = parse_issues(root, "build", output)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].severity, "error")
+        self.assertEqual(issues[0].code, "GRADLE_MEMORY_GUARD")
+        self.assertIn("165 MiB available", issues[0].message)
+
     def test_parse_gradle_toolchain_and_aar_metadata_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

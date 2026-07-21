@@ -66,7 +66,11 @@ class SummaryRenderingTests(unittest.TestCase):
                         {"path": "b.cs", "action": "modify", "source_sha256": "b" * 64},
                     ]
                 },
-                "validation": {"dotnet_available_in_authoring_environment": False, "recommended_commands": ["dotnet test App.sln --no-build"]},
+                "validation": {
+                    "required": True,
+                    "dotnet_available_in_authoring_environment": False,
+                    "recommended_commands": ["dotnet test App.sln --no-build"],
+                },
             },
             console_obj=console,
         )
@@ -76,6 +80,11 @@ class SummaryRenderingTests(unittest.TestCase):
         self.assertIn("Change", output)
         self.assertIn("Repository path", output)
         self.assertIn("Execution contract", output)
+        self.assertIn("Validation reason", output)
+        self.assertIn("auto-enabled by artifact manifest", output)
+        self.assertIn("Activation", output)
+        self.assertIn("auto-enabled unless", output)
+        self.assertIn("--no-validate is", output)
         self.assertIn("a.cs", output)
         self.assertIn("b.cs", output)
         self.assertIn("Recommended Commands", output)
@@ -275,6 +284,45 @@ class FailureDetailRenderingTests(unittest.TestCase):
         self.assertIn("Failure details", output)
         self.assertIn("RuntimeError", output)
         self.assertIn("boom", output)
+
+    def test_render_summary_shows_primary_root_cause_before_artifact_missing(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=100)
+        result = OperationResult(
+            name="build",
+            argv=["gradlew", "assembleDebug"],
+            returncode=75,
+            duration_seconds=0.0,
+            output=(
+                "warning: Emergency memory guard stopped Gradle after hard emergency floor: "
+                "165 MiB available.\n"
+                "Devtool artifact verification failures:\n"
+                "- android [ARTIFACT_MISSING]: Build completed without producing a new standard Android/Gradle artifact.\n"
+            ),
+            issues=[
+                Issue(
+                    severity="error",
+                    command="build",
+                    file="-",
+                    code="GRADLE_MEMORY_GUARD",
+                    message="Gradle was stopped by devtool memory guard after hard emergency floor: 165 MiB available.",
+                ),
+                Issue(
+                    severity="error",
+                    command="artifact-verify",
+                    file="android",
+                    code="ARTIFACT_MISSING",
+                    message="Build completed without producing a new standard Android/Gradle artifact.",
+                ),
+            ],
+            failure_kind="compile_failure",
+        )
+        render_summary([result], console_obj=console)
+        output = stream.getvalue()
+
+        self.assertIn("root cause", output)
+        self.assertIn("GRADLE_MEMORY_GUARD", output)
+        self.assertIn("165 MiB available", output)
 
     def test_build_json_summary_includes_output(self) -> None:
         result = OperationResult(

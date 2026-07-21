@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from devtool.models import OperationResult
+from devtool.models import Issue, OperationResult
 from devtool.tasker import ANDROID_TASKER_DIR, DEFAULT_EVENT_HTTP_URL, TaskerProgressSink, default_tasker_dir, send_local_http_event, start_auto_hud
 
 
@@ -49,6 +49,39 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertIn("text", notification)
             self.assertGreaterEqual(len(jsonl_lines), 4)
 
+    def test_finished_completion_includes_all_warning_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = TaskerProgressSink(
+                directory=Path(tmp),
+                command="validate",
+                repo_root="/repo/demo",
+                repo_name="demo",
+                enabled=True,
+            )
+            issues = [
+                Issue(
+                    "warning",
+                    "lint",
+                    f"src/File{index}.kt",
+                    "LintWarning",
+                    f"Warning {index}",
+                    line=index,
+                )
+                for index in range(1, 13)
+            ]
+
+            sink.started()
+            sink.finished(
+                ok=True,
+                totals={"warnings": 12, "errors": 0, "failed": 0, "skipped": 0},
+                results=[OperationResult("lint", ["gradle", "lint"], 0, 1.0, "", issues)],
+            )
+
+            state = json.loads((Path(tmp) / "state.json").read_text(encoding="utf-8"))
+            completion = state["completion"]
+            self.assertEqual(len(completion["warning_details"]), 12)
+            self.assertIn("src/File12.kt:12: warning LintWarning: Warning 12", completion["warning_details"])
+            self.assertEqual(len(completion["diagnostics"]), 12)
 
     def test_sink_uses_shared_run_id_from_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"DEVTOOL_RUN_ID": "shared-run"}, clear=False):

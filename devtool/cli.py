@@ -129,6 +129,61 @@ PROGRESS_CAPABLE_COMMANDS = {
     "apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as", "batch", "commit", "ci", "tag",
 }
 
+RUNNER_PASSTHROUGH_COMMANDS = {
+    "restore", "rs", "build", "b", "test", "t", "lint", "clean", "cl",
+}
+
+GLOBAL_OPTIONS_WITH_VALUE = {
+    "-r",
+    "--repo",
+    "-c",
+    "--config",
+    "--target",
+    "--variant",
+    "--solution",
+    "--project",
+    "--project-type",
+    "--performance-file",
+    "--machine",
+    "--machine-file",
+    "--copy-via",
+    "--theme",
+    "--stdout-payload",
+    "--save-json-payload",
+    "--json-output",
+    "--hud-mode",
+    "--chroot",
+    "--execution-environment",
+}
+
+
+def _runner_passthrough_command(raw_args: list[str], separator: int) -> str:
+    index = 0
+    while index < separator:
+        token = raw_args[index]
+        if token in RUNNER_PASSTHROUGH_COMMANDS:
+            return token
+        if token in GLOBAL_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        if any(token.startswith(option + "=") for option in GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return token
+    return ""
+
+
+def split_runner_passthrough_args(raw_args: list[str]) -> tuple[list[str], list[str]]:
+    if "--" not in raw_args:
+        return list(raw_args), []
+    separator = raw_args.index("--")
+    command = _runner_passthrough_command(raw_args, separator)
+    if command not in RUNNER_PASSTHROUGH_COMMANDS:
+        return list(raw_args), []
+    return list(raw_args[:separator]), list(raw_args[separator + 1 :])
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -231,6 +286,23 @@ def build_parser() -> argparse.ArgumentParser:
         ("doctor", ["dr"]),
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
+        if name == "build":
+            cmd.add_argument(
+                "-o",
+                "--artifact-output-dir",
+                "--output-dir",
+                dest="artifact_output_dir",
+                default="",
+                help="Copy produced Android/Gradle artifacts here (default: .devtool/build-artifacts)",
+            )
+            cmd.add_argument(
+                "-n",
+                "--artifact-output-name",
+                "--output-name",
+                dest="artifact_output_name",
+                default="",
+                help="Base filename for copied Android/Gradle artifacts",
+            )
         if name == "doctor":
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
         if name == "clean":
@@ -309,8 +381,8 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to bundle/apply transactionally")
         else:
             cmd.add_argument("artifact")
-        cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
-        cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested by the artifact manifest")
+        cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact; required artifact validation is enabled automatically")
+        cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested or required by the artifact manifest")
         cmd.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
         _add_validation_test_selection_flags(cmd)
         cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
@@ -337,8 +409,8 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to bundle/apply transactionally")
         else:
             sub.add_argument("artifact")
-        sub.add_argument("--validate", action="store_true", help="Run validation after applying the artifact")
-        sub.add_argument("--no-validate", action="store_true", help="Disable validation requested by the artifact manifest")
+        sub.add_argument("--validate", action="store_true", help="Run validation after applying the artifact; required artifact validation is enabled automatically")
+        sub.add_argument("--no-validate", action="store_true", help="Disable validation requested or required by the artifact manifest")
         sub.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
         _add_validation_test_selection_flags(sub)
         sub.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
@@ -657,11 +729,52 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
         return None
 
-    def _warning_details(limit: int = 10) -> tuple[list[str], int]:
-        """Extract useful, deduplicated warnings from captured output."""
+    def _warning_details() -> tuple[list[str], int]:
+        """Extract useful, deduplicated warnings from structured issues or output."""
 
         warning_lines: list[str] = []
         seen: set[str] = set()
+
+        def _add_warning(text: str) -> None:
+            cleaned = _re.sub(r"\s+", " ", str(text or "")).strip()
+            if not cleaned:
+                return
+            key = cleaned.casefold()
+            if key in seen:
+                return
+            seen.add(key)
+            warning_lines.append(cleaned)
+
+        def _format_issue_warning(issue: dict) -> str:
+            code = str(issue.get("code") or "").strip()
+            message = str(issue.get("message") or "").strip()
+            file_text = str(issue.get("file") or "").strip()
+            line = issue.get("line")
+            location = ""
+            if file_text and file_text != "-":
+                location = file_text
+                if line not in {None, ""}:
+                    location += f":{line}"
+            prefix = f"{location}: " if location else ""
+            code_text = f"{code}: " if code else ""
+            return f"{prefix}{code_text}{message or 'Warning'}"
+
+        for result in payload.get("results", []) if isinstance(payload.get("results"), list) else []:
+            if not isinstance(result, dict):
+                continue
+            issues = result.get("issues")
+            if not isinstance(issues, list):
+                continue
+            for issue in issues:
+                if not isinstance(issue, dict):
+                    continue
+                if str(issue.get("severity") or "").lower() != "warning":
+                    continue
+                _add_warning(_format_issue_warning(issue))
+
+        if warning_lines:
+            total_unique = len(warning_lines)
+            return warning_lines, total_unique
 
         warning_patterns = (
             # MSBuild/compiler warnings:
@@ -702,15 +815,10 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 flags=_re.IGNORECASE,
             )
 
-            key = cleaned.casefold()
-            if key in seen:
-                continue
-
-            seen.add(key)
-            warning_lines.append(cleaned)
+            _add_warning(cleaned)
 
         total_unique = len(warning_lines)
-        return warning_lines[:limit], total_unique
+        return warning_lines, total_unique
 
     def _commit_hash() -> str:
         patterns = (
@@ -848,13 +956,6 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
         if warning_details:
             success_lines.extend(f"- {warning}" for warning in warning_details)
-
-            hidden_warning_count = max(0, unique_warning_count - len(warning_details))
-            if hidden_warning_count:
-                success_lines.append(
-                    f"- …and {hidden_warning_count} more unique warning"
-                    f"{'s' if hidden_warning_count != 1 else ''}; see the full log."
-                )
         else:
             success_lines.append(
                 f"- {warnings} warning{'s' if warnings != 1 else ''} reported; "
@@ -1541,6 +1642,31 @@ def _cli_string_list(value: object) -> list[str]:
 
 
 def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -> None:
+    if args.command in {"build", "b"} and config.kind in {"android", "gradle"}:
+        artifacts = config.runner_options.setdefault("artifacts", {})
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+            config.runner_options["artifacts"] = artifacts
+        output_dir = str(getattr(args, "artifact_output_dir", "") or "").strip()
+        output_name = str(getattr(args, "artifact_output_name", "") or "").strip()
+        if output_dir:
+            artifacts["output_directory"] = output_dir
+        elif not (artifacts.get("output_directory") or artifacts.get("output_dir")):
+            artifacts["output_directory"] = ".devtool/build-artifacts"
+        if output_name:
+            artifacts["output_name"] = output_name
+
+    passthrough = [str(value) for value in getattr(args, "_devtool_passthrough_args", []) if str(value)]
+    if passthrough and config.kind in {"android", "gradle"}:
+        gradle = config.runner_options.setdefault("gradle", {})
+        if not isinstance(gradle, dict):
+            gradle = {}
+            config.runner_options["gradle"] = gradle
+        existing = gradle.get("args", [])
+        values = _cli_string_list(existing)
+        values.extend(passthrough)
+        gradle["args"] = values
+
     selection = dict(config.runner_options.get("test_selection", {}) or {})
     profile = str(getattr(args, "profile", "") or getattr(args, "test_profile", "") or "").strip()
     if not profile:
@@ -4184,8 +4310,10 @@ def _write_performance_report(
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    parse_argv, passthrough_args = split_runner_passthrough_args(raw_argv)
     parser = build_parser()
-    args = parser.parse_args(raw_argv)
+    args = parser.parse_args(parse_argv)
+    args._devtool_passthrough_args = passthrough_args
     _normalize_command_aliases(args)
     _normalize_live_progress_args(args)
     args._devtool_cli_target_explicit = bool(str(getattr(args, "target", "") or "").strip())

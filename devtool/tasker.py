@@ -603,12 +603,8 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
                 "phase": result.name,
                 "detail": detail,
             })
-            if issue.severity == "warning" and len(warning_details) < 5:
+            if issue.severity == "warning":
                 warning_details.append(detail)
-            if len(diagnostics) >= 200:
-                break
-        if len(diagnostics) >= 200:
-            break
 
     rollback_results = [result for result in results if result.name == "apply-rollback"]
     rollback_succeeded = any(
