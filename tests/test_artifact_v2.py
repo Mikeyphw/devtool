@@ -205,6 +205,30 @@ class ArtifactV2Tests(unittest.TestCase):
             self.assertFalse(validation.ok)
             self.assertTrue(any("SHA-256 mismatch" in message for message in validation.messages))
 
+    def test_validation_expected_accepts_common_outcome_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {
+                    "expected": {
+                        "restore": "skipped",
+                        "build": "success",
+                        "tests": "failed",
+                        "maximum_warnings": 0,
+                    }
+                },
+            }
+            archive = root / "overlay.zip"
+            write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode()})
+
+            validation = validate_artifact(repo, archive)
+
+        self.assertTrue(validation.ok, validation.messages)
+
 
     def test_ignore_checksum_preserves_other_inventory_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

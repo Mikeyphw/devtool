@@ -4,10 +4,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from devtool.diagnostics import parse_issues
+from devtool.diagnostics import classify_failure, parse_issues
 
 
 class DiagnosticTests(unittest.TestCase):
+
+    def test_classify_android_sdk_package_install_failure(self) -> None:
+        output = (
+            "Warning: Failed to find package 'platforms;android-37'\n"
+            "error: Android SDK package installation failed again after clearing partial downloads: platforms;android-37\n"
+        )
+
+        self.assertEqual(classify_failure("build", output, 2), "missing_sdk")
+
     def test_parse_dotnet_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

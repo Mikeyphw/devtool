@@ -104,6 +104,19 @@ For .NET, built-in `debug` and `release` variants map to `-c Debug` and
 variants feed existing Gradle task inference, such as `assembleRelease`,
 `testReleaseUnitTest`, and `lintRelease`.
 
+Command targets can provide their own explicit lifecycle commands. This is
+useful for mixed repositories where the default project has a first-class
+runner, but individual packages use ad hoc packaging scripts:
+
+```toml
+[targets.browser_extension]
+type = "command"
+root = "extensions/browser-extension"
+build_command = "python3 build.py"
+test_command = "python3 -m pytest"
+package_command = "python3 build.py --package"
+```
+
 ## Adding a runner
 
 1. Subclass `ProjectRunner`.

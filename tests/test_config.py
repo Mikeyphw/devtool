@@ -196,6 +196,33 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.runner_options["gradle"]["max_workers"], 2)
         self.assertEqual(config.env["DEV_FLAVOR"], "release")
 
+    def test_named_command_target_overrides_project_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text('{"scripts":{"build":"node root.js"}}\n', encoding="utf-8")
+            (root / "extensions" / "demo").mkdir(parents=True)
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='node'\nbuild_command='node root-build.js'\n"
+                "\n[targets.demo_extension]\n"
+                "type='command'\n"
+                "root='extensions/demo'\n"
+                "build_command='python3 build.py'\n"
+                "test_command='python3 -m pytest'\n",
+                encoding="utf-8",
+            )
+
+            base = load_project_config(str(root), None)
+            selected = load_project_config(str(root), None, target_name="demo_extension")
+            data = resolve_config_dict(selected)
+
+        self.assertEqual(base.kind, "node")
+        self.assertEqual(base.build_command, "node root-build.js")
+        self.assertEqual(selected.kind, "command")
+        self.assertEqual(selected.project_root, str((root / "extensions" / "demo").resolve()))
+        self.assertEqual(selected.build_command, "python3 build.py")
+        self.assertEqual(selected.test_command, "python3 -m pytest")
+        self.assertEqual(data["targets"]["demo_extension"]["build_command"], "python3 build.py")
+
     def test_generated_template_documents_execution_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

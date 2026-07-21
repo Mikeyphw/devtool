@@ -62,14 +62,69 @@ def _try_parse_json_text(text: str) -> object | None:
     return None
 
 
-def _shorten_output(text: str, *, max_lines: int = 12, max_chars: int = 3000) -> str:
+_FAILURE_MARKER_RE = re.compile(
+    r"("
+    r"\berror\b|\bfatal\b|build failed|task .* failed|execution failed|"
+    r"lint found \d+ errors?|failed to find package|failed .* package|"
+    r"traceback \(most recent call last\)|unhandled exception|exception:|"
+    r"payload sha-256 mismatch|sdk package installation failed"
+    r")",
+    re.IGNORECASE,
+)
+
+_HEADER_LINE_RE = re.compile(r"^(?:\$ |==> |\s*(?:Project|Project name|Type|compileSdk|JAVA_HOME|Platform|Build Tools):)")
+
+
+def summarize_failure_output(text: str, *, max_lines: int = 18, max_chars: int = 4000) -> str:
     stripped = _strip_command_echo(text)
-    if len(stripped) > max_chars:
-        stripped = stripped[:max_chars].rstrip() + "\n… output truncated …"
+    if not stripped:
+        return ""
+
     lines = stripped.splitlines()
-    if len(lines) > max_lines:
-        return "\n".join(lines[:max_lines] + [f"… {len(lines) - max_lines} more line(s) …"])
-    return stripped
+    if len(lines) <= max_lines and len(stripped) <= max_chars:
+        return stripped
+
+    marker_indexes = [index for index, line in enumerate(lines) if _FAILURE_MARKER_RE.search(line)]
+    if not marker_indexes:
+        tail = lines[-max_lines:]
+        omitted = max(0, len(lines) - len(tail))
+        prefix = [f"… {omitted} earlier line(s) omitted …"] if omitted else []
+        return "\n".join(prefix + tail)[:max_chars].rstrip()
+
+    context: list[str] = []
+    for line in lines[:8]:
+        if _HEADER_LINE_RE.search(line):
+            context.append(line.rstrip())
+
+    selected: list[str] = []
+    selected_indexes: set[int] = set()
+    for marker_index in marker_indexes[:6]:
+        start = max(0, marker_index - 1)
+        end = min(len(lines), marker_index + 4)
+        for index in range(start, end):
+            if index in selected_indexes:
+                continue
+            selected_indexes.add(index)
+            selected.append(lines[index].rstrip())
+
+    compact: list[str] = []
+    seen: set[str] = set()
+    for line in [*context, *(["… failure excerpt …"] if context and selected else []), *selected]:
+        key = re.sub(r"\s+", " ", line.strip()).casefold()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        compact.append(line)
+
+    summary = "\n".join(compact).strip()
+    if len(summary) > max_chars:
+        summary = summary[:max_chars].rstrip() + "\n… output truncated …"
+    return summary
+
+
+def _shorten_output(text: str, *, max_lines: int = 12, max_chars: int = 3000) -> str:
+    return summarize_failure_output(text, max_lines=max_lines, max_chars=max_chars)
 
 
 def _root_cause_issue(result: OperationResult) -> Issue | None:

@@ -42,6 +42,21 @@ BUNDLE_MANIFEST_NAMES = {"devtool-bundle.json", ".devtool-bundle.json"}
 BUNDLE_KINDS = {"devtool.overlay_bundle", "overlay_bundle", "overlay-bundle"}
 _SUFFIX_VARIANT_RE = re.compile(r"^(?P<root>.+?)(?:\((?P<paren>\d+)\)|[_-](?P<sep>\d+)|(?P<bare>\d+))$")
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+_VALIDATION_EXPECTED_OUTCOMES = {
+    "pass",
+    "passed",
+    "success",
+    "succeeded",
+    "skip",
+    "skipped",
+    "warn",
+    "warning",
+    "warnings",
+    "fail",
+    "failed",
+    "error",
+    "errors",
+}
 
 _HASH_CACHE_LIMIT = 2048
 _HASH_CACHE: "OrderedDict[tuple[str, int, int, int], str]" = OrderedDict()
@@ -416,9 +431,12 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
             ok = False
             messages.append("validation.expected.maximum_warnings must be a non-negative integer.")
         for key in ("restore", "build", "tests"):
-            if key in expected and str(expected[key]).strip().lower() != "pass":
+            if key in expected and str(expected[key]).strip().lower() not in _VALIDATION_EXPECTED_OUTCOMES:
                 ok = False
-                messages.append(f"validation.expected.{key} currently supports only 'pass'.")
+                messages.append(
+                    f"validation.expected.{key} must be one of: "
+                    f"{', '.join(sorted(_VALIDATION_EXPECTED_OUTCOMES))}."
+                )
     if "rollback_on_failure" in raw and not isinstance(raw.get("rollback_on_failure"), bool):
         ok = False
         messages.append("validation.rollback_on_failure must be a boolean.")

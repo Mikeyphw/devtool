@@ -561,7 +561,13 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return ""
     text = output.lower()
     name = command_name.lower()
-    if "sdk" in text and ("not found" in text or "not installed" in text or "could not execute" in text):
+    if "sdk" in text and (
+        "not found" in text
+        or "not installed" in text
+        or "could not execute" in text
+        or "failed to find package" in text
+        or "package installation failed" in text
+    ):
         return "missing_sdk"
     if "nuget" in text or "unable to load the service index" in text or "failed to restore" in text:
         return "nuget_failure"

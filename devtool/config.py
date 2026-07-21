@@ -218,11 +218,31 @@ def load_project_config(
         test_target=resolved["test_target"],
         python_executable=str(project_section.get("python", sys.executable)).strip() or sys.executable,
         run_module=str(project_section.get("run_module", "")).strip(),
-        restore_command=str(project_section.get("restore_command", "")).strip(),
-        build_command=str(project_section.get("build_command", "")).strip(),
-        test_command=str(project_section.get("test_command", "")).strip(),
-        package_command=str(project_section.get("package_command", "")).strip(),
-        run_command=str(project_section.get("run_command", "")).strip(),
+        restore_command=(
+            selected_target.restore_command
+            if selected_target and selected_target.restore_command
+            else str(project_section.get("restore_command", "")).strip()
+        ),
+        build_command=(
+            selected_target.build_command
+            if selected_target and selected_target.build_command
+            else str(project_section.get("build_command", "")).strip()
+        ),
+        test_command=(
+            selected_target.test_command
+            if selected_target and selected_target.test_command
+            else str(project_section.get("test_command", "")).strip()
+        ),
+        package_command=(
+            selected_target.package_command
+            if selected_target and selected_target.package_command
+            else str(project_section.get("package_command", "")).strip()
+        ),
+        run_command=(
+            selected_target.run_command
+            if selected_target and selected_target.run_command
+            else str(project_section.get("run_command", "")).strip()
+        ),
         env=effective_env,
         config_path=config_path,
         selected_target=resolved["selected_target"],
@@ -449,6 +469,11 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
         run_project = _resolve_optional_path(repo_root, raw_value.get("run_project", ""))
         cwd = _resolve_optional_path(repo_root, raw_value.get("cwd", ""))
         target_root = _resolve_optional_path(repo_root, raw_value.get("root", ""))
+        restore_command = str(raw_value.get("restore_command", "")).strip()
+        build_command = str(raw_value.get("build_command", "")).strip()
+        test_command = str(raw_value.get("test_command", "")).strip()
+        package_command = str(raw_value.get("package_command", "")).strip()
+        run_command = str(raw_value.get("run_command", "")).strip()
         target_env = dict(base_env)
         for key, value in raw_value.get("env", {}).items() if isinstance(raw_value.get("env", {}), dict) else []:
             target_env[str(key)] = str(value)
@@ -468,6 +493,11 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             test_target=test_target,
             run_project=run_project,
             cwd=cwd,
+            restore_command=restore_command,
+            build_command=build_command,
+            test_command=test_command,
+            package_command=package_command,
+            run_command=run_command,
             env=target_env,
             execution_environment=str(raw_value.get("execution_environment", raw_value.get("environment", ""))).strip().lower(),
             chroot_name=str(raw_value.get("chroot_name", "")).strip(),
@@ -1121,6 +1151,11 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
                 "test_target": target.test_target,
                 "run_project": target.run_project,
                 "cwd": target.cwd,
+                "restore_command": target.restore_command,
+                "build_command": target.build_command,
+                "test_command": target.test_command,
+                "run_command": target.run_command,
+                "package_command": target.package_command,
                 "env": dict(sorted(target.env.items())),
                 "execution_environment": target.execution_environment,
                 "chroot_name": target.chroot_name,

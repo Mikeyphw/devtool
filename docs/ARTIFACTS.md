@@ -85,6 +85,11 @@ All payload and inventory paths are repository-relative. Artifact metadata under
 
 `source_sha256` protects `modify` and `delete` actions from applying to an unexpected base file. `sha256` and `size` verify the archive payload. If an inventory is present, every payload file must be declared.
 
+`validation.expected.restore`, `validation.expected.build`, and
+`validation.expected.tests` accept common outcome names: `pass`, `passed`,
+`success`, `succeeded`, `skip`, `skipped`, `warn`, `warning`, `warnings`,
+`fail`, `failed`, `error`, and `errors`.
+
 Use `--ignore-checksum` only for deliberate recovery or locally modified artifacts. It skips SHA-256 presence, format, and mismatch checks for payloads, source files, and embedded validation scripts, while retaining repository identity, path safety, inventory completeness, payload size, conflict, and validation-policy checks. Unlike `--no-manifest-check`, it does not disable the rest of artifact validation. Devtool prints a warning whenever the option is active.
 
 Embedded validator scripts are extracted to a private temporary directory but execute with the repository root as their working directory. The temporary path remains available through `DEVTOOL_VALIDATION_TMPDIR`.

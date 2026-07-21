@@ -53,6 +53,11 @@ class DotnetTarget:
     test_target: str = ""
     run_project: str = ""
     cwd: str = ""
+    restore_command: str = ""
+    build_command: str = ""
+    test_command: str = ""
+    package_command: str = ""
+    run_command: str = ""
     env: dict[str, str] = field(default_factory=dict)
     execution_environment: str = "auto"
     chroot_name: str = ""

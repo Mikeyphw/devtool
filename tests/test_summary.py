@@ -4,7 +4,7 @@ import unittest
 from io import StringIO
 
 from devtool.models import Issue, OperationResult
-from devtool.summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
+from devtool.summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from rich.console import Console
 
 
@@ -323,6 +323,60 @@ class FailureDetailRenderingTests(unittest.TestCase):
         self.assertIn("root cause", output)
         self.assertIn("GRADLE_MEMORY_GUARD", output)
         self.assertIn("165 MiB available", output)
+
+
+    def test_failure_output_summary_prefers_explicit_tail_error(self) -> None:
+        output = "\n".join(
+            [
+                "$ python3 build-apk android --task assembleDebug",
+                "==> Project inspection",
+                "    Project: /repo/android",
+                "    compileSdk: 37",
+                "==> Java",
+                "    JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64",
+                *[f"Loading repository line {index}" for index in range(30)],
+                "Warning: Failed to find package 'platforms;android-37'",
+                "error: Android SDK package installation failed again after clearing partial downloads: platforms;android-37",
+            ]
+        )
+
+        summary = summarize_failure_output(output, max_lines=12)
+
+        self.assertIn("compileSdk: 37", summary)
+        self.assertIn("Failed to find package 'platforms;android-37'", summary)
+        self.assertIn("Android SDK package installation failed again", summary)
+        self.assertNotIn("Loading repository line 0", summary)
+
+    def test_render_summary_failure_details_show_tail_error(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=100)
+        result = OperationResult(
+            name="build",
+            argv=["gradlew", "assembleDebug"],
+            returncode=2,
+            duration_seconds=0.0,
+            output="\n".join(
+                [
+                    "$ python3 build-apk android --task assembleDebug",
+                    "==> Project inspection",
+                    "    Project: /repo/android",
+                    "    compileSdk: 37",
+                    *[f"sdkmanager progress {index}" for index in range(30)],
+                    "Warning: Failed to find package 'platforms;android-37'",
+                    "error: Android SDK package installation failed again after clearing partial downloads: platforms;android-37",
+                ]
+            ),
+            issues=[],
+            failure_kind="missing_sdk",
+        )
+
+        render_summary([result], console_obj=console)
+        output = stream.getvalue()
+
+        self.assertIn("Failure details", output)
+        self.assertIn("missing_sdk", output)
+        self.assertIn("platforms;android-37", output)
+        self.assertNotIn("sdkmanager progress 0", output)
 
     def test_build_json_summary_includes_output(self) -> None:
         result = OperationResult(

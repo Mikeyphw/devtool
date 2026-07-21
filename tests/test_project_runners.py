@@ -313,6 +313,25 @@ class ExistingRunnerCompatibilityTests(unittest.TestCase):
             self.assertFalse(capabilities.restore)
             self.assertEqual(build_specs(config, "build")[0].argv, ["make", "all"])
 
+    def test_generic_runner_uses_selected_target_command_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            extension_root = root / "extensions" / "demo"
+            extension_root.mkdir(parents=True)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="command",
+                project_root=str(extension_root),
+                selected_target="demo",
+                build_command="python3 build.py",
+            )
+
+            spec = build_specs(config, "build")[0]
+
+        self.assertEqual(spec.argv, ["python3", "build.py"])
+        self.assertEqual(spec.cwd, str(extension_root))
+        self.assertEqual(spec.metadata["runner"], "command")
+
 
 class DotnetBuildServerReuseTests(unittest.TestCase):
     def test_dotnet_build_server_shutdown_is_opt_in(self) -> None:

@@ -32,3 +32,9 @@ dist/
 # Root bridge source is tracked even though generated build directories are ignored.
 !root-module/devtool-bridge/bin/
 !root-module/devtool-bridge/bin/devtool-root-bridge
+
+# Devtool runtime state
+.devtool/cache/
+.devtool/reports/
+.devtool/test-history.json
+.devtool/tmp/

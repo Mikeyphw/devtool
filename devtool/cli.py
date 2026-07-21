@@ -72,7 +72,7 @@ from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
-from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary
+from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
 from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, mark_transaction_pending_validation, mark_transaction_validation_running, read_transaction, rollback_transaction, transaction_pending_validation, transaction_root
@@ -1042,46 +1042,9 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 break
 
         if failed_block:
-            lines = failed_block.splitlines()
-            command_line = lines[0].rstrip()
-            body = lines[1:]
-            marker_re = _re.compile(
-                r"(?:\berror\b|build failed|test run failed|failed!|error message:|stack trace:|traceback \(most recent call last\)|unhandled exception|fatal:)",
-                _re.IGNORECASE,
-            )
-            marker_index = next((index for index, line in enumerate(body) if marker_re.search(line)), None)
-            if marker_index is None:
-                diagnostic_lines = body[-80:]
-            else:
-                diagnostic_lines = body[marker_index:]
-
-            compact_lines: list[str] = []
-            seen_lines: set[str] = set()
-            routine_success = _re.compile(r"^\s*[^:]+\s+->\s+.+\.(?:dll|exe)\s*$", _re.IGNORECASE)
-            routine_noise = _re.compile(
-                r"^\s*(?:Determining projects to restore|All projects are up-to-date for restore\.|Restore completed|Skipping project).*",
-                _re.IGNORECASE,
-            )
-            for line in diagnostic_lines:
-                if routine_success.match(line) or routine_noise.match(line):
-                    continue
-                cleaned = line.rstrip()
-                key = _re.sub(r"\s+", " ", cleaned.strip()).casefold()
-                if key and key in seen_lines and ("error" in key or "failed" in key):
-                    continue
-                if key:
-                    seen_lines.add(key)
-                compact_lines.append(cleaned)
-
-            while compact_lines and not compact_lines[0].strip():
-                compact_lines.pop(0)
-            while compact_lines and not compact_lines[-1].strip():
-                compact_lines.pop()
-            if len(compact_lines) > 120:
-                compact_lines = compact_lines[:100] + ["… output trimmed; see the devtool log for the complete failure."] + compact_lines[-19:]
-            failure_details = "\n".join([command_line, *compact_lines]).strip()
+            failure_details = summarize_failure_output(failed_block, max_lines=80, max_chars=12000)
         else:
-            failure_details = raw_output.strip() or summary_text.strip() or json_text.strip()
+            failure_details = summarize_failure_output(raw_output, max_lines=80, max_chars=12000) or summary_text.strip() or json_text.strip()
 
         lines = ["Devtool failed."]
         if successful_steps:
