@@ -690,6 +690,91 @@ artifact-cleanup: ok exit=0 time=0.10s
         self.assertIn("Auto-fix candidates", copied[0])
         self.assertIn("System.IO.Path.GetFullPath", copied[0])
 
+    def test_failed_overlay_copy_keeps_artifact_context(self) -> None:
+        raw_output = (
+            "$ python3 /home/mike/.local/share/devtool/runtime/android/build-apk /repo/app/XDM.Android --task assembleDebug\n"
+            "e: file:///repo/app/XDM.Android/app/src/main/kotlin/Screens.kt:2367:1 Modifier 'private' is not applicable to 'local function'.\n"
+            "e: file:///repo/app/XDM.Android/app/src/main/kotlin/Screens.kt:2377:12 Syntax error: Expecting '}'.\n"
+            "\n> Task :app:compileDebugKotlin FAILED\n"
+            "\n$ devtool rollback\n"
+            "Rolled back changes.\n"
+        )
+        summary_text = (
+            "apply-overlay: ok exit=0 time=0.05s\n"
+            "android-validation-build: failed exit=2 time=60.50s\n"
+            "apply-rollback: ok exit=0 time=0.07s\n"
+        )
+        json_text = json.dumps(
+            {
+                "warnings": 0,
+                "errors": 2,
+                "failed": 1,
+                "skipped": 0,
+                "results": [
+                    {
+                        "name": "android-validation-build",
+                        "issues": [
+                            {
+                                "severity": "error",
+                                "command": "android-validation-build",
+                                "file": "-",
+                                "line": None,
+                                "code": "GRADLE_TASK",
+                                "message": "Gradle task failed: :app:testDebugUnitTest",
+                            },
+                            {
+                                "severity": "error",
+                                "command": "android-validation-build",
+                                "file": "app/build/test-results/testDebugUnitTest/TEST-com.mikeyphw.xdm.android.ArchitectureContractTest.xml",
+                                "line": None,
+                                "code": "GRADLE_TEST",
+                                "message": (
+                                    "com.mikeyphw.xdm.android.ArchitectureContractTest.browserAndShareHandoffsOpenDownloadWorkflows: "
+                                    "java.lang.AssertionError: ShareSheet intake must inspect shared text and clip data"
+                                ),
+                            },
+                        ],
+                    }
+                ],
+                "overlays": [
+                    {
+                        "index": 1,
+                        "total": 1,
+                        "label": "xdm_android_handoff_screenshot_audit_overlay.zip",
+                        "target": "xdm_android",
+                        "artifact": "/home/mike/Downloads/xdm_android_handoff_screenshot_audit_overlay.zip",
+                        "warnings": 0,
+                        "errors": 2,
+                        "failed": 1,
+                        "skipped": 0,
+                        "duration_seconds": 60.62,
+                    }
+                ],
+            }
+        )
+        args = SimpleNamespace(
+            no_clipboard=False,
+            copy=True,
+            copy_summary=False,
+            copy_json=False,
+            copy_via="auto",
+        )
+        copied: list[str] = []
+        result = SimpleNamespace(success=True, backend="test", reason="")
+        with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
+            _maybe_copy(raw_output, summary_text, json_text, args)
+
+        self.assertEqual(len(copied), 1)
+        text = copied[0]
+        self.assertIn("Overlay: xdm_android_handoff_screenshot_audit_overlay.zip [xdm_android]", text)
+        self.assertIn("- Artifact: /home/mike/Downloads/xdm_android_handoff_screenshot_audit_overlay.zip", text)
+        self.assertIn("- Diagnostics: 0 warnings, 2 errors", text)
+        self.assertIn("- Gradle task failed: :app:testDebugUnitTest", text)
+        self.assertIn("- com.mikeyphw.xdm.android.ArchitectureContractTest.browserAndShareHandoffsOpenDownloadWorkflows: java.lang.AssertionError: ShareSheet intake must inspect shared text and clip data", text)
+        self.assertIn("Failed: android validation build", text)
+        self.assertIn("Recovery: rollback succeeded", text)
+        self.assertIn("compileDebugKotlin FAILED", text)
+
     def test_success_copy_includes_structured_warning_details(self) -> None:
         raw_output = (
             "$ ./gradlew lintDebug\n"

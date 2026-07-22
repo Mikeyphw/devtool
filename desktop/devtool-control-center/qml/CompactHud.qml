@@ -18,8 +18,8 @@ Window {
     // text: "Details"
     // text: copiedFeedback ? "Copied" : "Copy"
     // Previous translucent baseline: theme.dark ? 0.14 : 0.18
-    width: Math.min(720, Math.max(minimumWidth, root.screenWidthMargin > 0 ? root.screenWidthMargin : hudAvailableWidth() - 32))
-    height: Math.min(maximumHeight, Math.max(minimumHeight, contentLayout.implicitHeight + 32))
+    readonly property int initialHudWidth: Math.min(720, Math.max(minimumWidth, root.screenWidthMargin > 0 ? root.screenWidthMargin : hudAvailableWidth() - 32))
+    readonly property int initialHudHeight: Math.min(maximumHeight, Math.max(minimumHeight, contentLayout.implicitHeight + 32))
     minimumWidth: Math.min(520, Math.max(320, hudAvailableWidth() - 24))
     minimumHeight: 224
     maximumWidth: Math.max(minimumWidth, hudAvailableWidth() - 16)
@@ -41,6 +41,11 @@ Window {
     Timer { interval: 1000; running: true; repeat: true; onTriggered: root.nowMs = Date.now() }
     Timer { id: copiedTimer; interval: 1300; onTriggered: root.copiedFeedback = false }
     Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+    Component.onCompleted: {
+        root.width = root.initialHudWidth
+        root.height = root.initialHudHeight
+    }
 
     function steps() { return run.steps || [] }
     function humanCommand(command) {
@@ -657,273 +662,288 @@ Window {
             }
 
             ScrollView {
-                id: workspaceScroll
+                id: bodyScroll
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(342, workspaceColumn.implicitHeight)
-                visible: scopedLanes().length > 0
+                Layout.fillHeight: true
+                Layout.minimumHeight: 96
                 clip: true
                 background: Rectangle { color: "transparent" }
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                ScrollBar.vertical.policy: workspaceColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                ScrollBar.vertical.policy: lowerContent.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
 
-                Column {
-                    id: workspaceColumn
-                    width: workspaceScroll.availableWidth
-                    spacing: 8
+                ColumnLayout {
+                    id: lowerContent
+                    width: bodyScroll.availableWidth
+                    spacing: 10
 
-                    Repeater {
-                        model: scopedLanes()
-                        delegate: Rectangle {
-                            id: workspaceCard
-                            required property var modelData
-                            required property int index
-                            width: workspaceColumn.width
-                            implicitHeight: cardColumn.implicitHeight + 18
-                            radius: 12
-                            color: theme.alpha(laneStatus(modelData) === "failed" ? theme.errorSurface : theme.surface, root.panelOpacity)
-                            border.width: workspaceCard.activeFocus ? 2 : 1
-                            border.color: workspaceCard.activeFocus ? theme.accent : laneStatus(modelData) === "failed" ? theme.alpha(theme.error, 0.40)
-                                        : laneStatus(modelData) === "running" ? theme.alpha(theme.info, 0.34)
-                                        : theme.alpha(theme.windowText, 0.08)
-                            property bool active: laneStatus(modelData) === "running"
-                            property bool expanded: active || root.expandedLaneKey === modelData.key || (scopedLanes().length === 1 && root.expandedLaneKey === "")
-                            property var metrics: laneMetrics(modelData)
-                            activeFocusOnTab: !active
-                            Accessible.role: Accessible.Button
-                            Accessible.name: laneTitle(modelData) + ", " + laneStatusLabel(modelData) + ", " + laneProgressLabel(modelData)
-                            Accessible.description: active ? "Active workspace details remain expanded" : "Press Space or Enter to toggle workspace details"
-                            Keys.onSpacePressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
-                            Keys.onReturnPressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
-                            Keys.onEnterPressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
+                    ScrollView {
+                        id: workspaceScroll
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(342, workspaceColumn.implicitHeight)
+                        visible: scopedLanes().length > 0
+                        clip: true
+                        background: Rectangle { color: "transparent" }
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        ScrollBar.vertical.policy: workspaceColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
 
-                            ColumnLayout {
-                                id: cardColumn
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                anchors.margins: 9
-                                spacing: 7
+                        Column {
+                            id: workspaceColumn
+                            width: workspaceScroll.availableWidth
+                            spacing: 8
 
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 9
-
-                                    Rectangle {
-                                        Layout.preferredWidth: 28
-                                        Layout.preferredHeight: 28
-                                        radius: 7
-                                        color: theme.alpha(laneColor(modelData), theme.dark ? 0.10 : 0.07)
-                                        border.color: theme.alpha(laneColor(modelData), 0.34)
-                                        Label {
-                                            anchors.centerIn: parent
-                                            text: String(index + 1)
-                                            color: laneColor(modelData)
-                                            font.pointSize: theme.captionPointSize
-                                            font.weight: Font.Bold
-                                        }
-                                    }
+                            Repeater {
+                                model: scopedLanes()
+                                delegate: Rectangle {
+                                    id: workspaceCard
+                                    required property var modelData
+                                    required property int index
+                                    width: workspaceColumn.width
+                                    implicitHeight: cardColumn.implicitHeight + 18
+                                    radius: 12
+                                    color: theme.alpha(laneStatus(modelData) === "failed" ? theme.errorSurface : theme.surface, root.panelOpacity)
+                                    border.width: workspaceCard.activeFocus ? 2 : 1
+                                    border.color: workspaceCard.activeFocus ? theme.accent : laneStatus(modelData) === "failed" ? theme.alpha(theme.error, 0.40)
+                                                : laneStatus(modelData) === "running" ? theme.alpha(theme.info, 0.34)
+                                                : theme.alpha(theme.windowText, 0.08)
+                                    property bool active: laneStatus(modelData) === "running"
+                                    property bool expanded: active || root.expandedLaneKey === modelData.key || (scopedLanes().length === 1 && root.expandedLaneKey === "")
+                                    property var metrics: laneMetrics(modelData)
+                                    activeFocusOnTab: !active
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: laneTitle(modelData) + ", " + laneStatusLabel(modelData) + ", " + laneProgressLabel(modelData)
+                                    Accessible.description: active ? "Active workspace details remain expanded" : "Press Space or Enter to toggle workspace details"
+                                    Keys.onSpacePressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
+                                    Keys.onReturnPressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
+                                    Keys.onEnterPressed: if (!active) root.expandedLaneKey = expanded ? "" : modelData.key
 
                                     ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 1
-                                        Label {
+                                        id: cardColumn
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.margins: 9
+                                        spacing: 7
+
+                                        RowLayout {
                                             Layout.fillWidth: true
-                                            text: laneTitle(modelData)
-                                            color: theme.windowText
-                                            font.pointSize: theme.smallPointSize
-                                            font.weight: Font.DemiBold
-                                            elide: Text.ElideMiddle
-                                            font.letterSpacing: 0
-                                        }
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: laneSubtitle(modelData)
-                                            color: theme.subtleText
-                                            font.pointSize: theme.captionPointSize
-                                            elide: Text.ElideMiddle
-                                            font.letterSpacing: 0
-                                        }
-                                    }
+                                            spacing: 9
 
-                                    Label {
-                                        text: laneStatusLabel(modelData)
-                                        color: laneColor(modelData)
-                                        font.pointSize: theme.captionPointSize
-                                        font.weight: Font.Bold
-                                        font.letterSpacing: 0
-                                    }
-                                    Image {
-                                        source: workspaceCard.expanded ? "qrc:/qt/qml/Devtool/ControlCenter/icons/chevron-up.svg" : "qrc:/qt/qml/Devtool/ControlCenter/icons/chevron-down.svg"
-                                        sourceSize.width: 16
-                                        sourceSize.height: 16
-                                        width: 16
-                                        height: 16
-                                        Accessible.ignored: true
-                                    }
-                                }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 8
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 5
-                                        radius: 3
-                                        color: theme.alpha(theme.recessedSurface, root.recessedOpacity)
-                                        border.color: theme.alpha(theme.windowText, 0.05)
-                                        border.width: 1
-                                        Rectangle {
-                                            height: parent.height
-                                            radius: 3
-                                            width: parent.width * laneProgress(modelData) / 100
-                                            color: laneColor(modelData)
-                                            Behavior on width { NumberAnimation { duration: 100; easing.type: Easing.OutCubic } }
-                                        }
-                                    }
-                                    Label {
-                                        text: laneProgressLabel(modelData)
-                                        color: laneColor(modelData)
-                                        font.pointSize: theme.captionPointSize
-                                        font.weight: Font.Bold
-                                        font.letterSpacing: 0
-                                    }
-                                }
-
-                                ColumnLayout {
-                                    visible: workspaceCard.expanded
-                                    Layout.fillWidth: true
-                                    spacing: 7
-
-                                    Flow {
-                                        Layout.fillWidth: true
-                                        spacing: 5
-                                        Repeater {
-                                            model: workspaceCard.modelData.steps
-                                            delegate: Rectangle {
-                                                required property var modelData
-                                                implicitWidth: phaseText.implicitWidth + (modelData.validator ? 46 : 16)
-                                                implicitHeight: 24
+                                            Rectangle {
+                                                Layout.preferredWidth: 28
+                                                Layout.preferredHeight: 28
                                                 radius: 7
-                                                color: modelData.status === "ok" ? theme.successSurface
-                                                     : modelData.status === "failed" ? theme.errorSurface
-                                                     : modelData.status === "running" ? theme.selectedSurface
-                                                     : theme.elevatedSurface
-                                                border.color: modelData.status === "failed" ? theme.alpha(theme.error, 0.34)
-                                                            : modelData.status === "running" ? theme.alpha(theme.info, 0.30)
-                                                            : "transparent"
-                                                Row {
+                                                color: theme.alpha(laneColor(modelData), theme.dark ? 0.10 : 0.07)
+                                                border.color: theme.alpha(laneColor(modelData), 0.34)
+                                                Label {
                                                     anchors.centerIn: parent
-                                                    spacing: 5
-                                                    StatusMark {
-                                                        kind: modelData.status
-                                                        markColor: modelData.status === "ok" ? theme.success
-                                                                 : modelData.status === "failed" ? theme.error
-                                                                 : modelData.status === "running" ? theme.info
-                                                                 : theme.subtleText
-                                                        markSize: 12
-                                                    }
-                                                    Label {
-                                                        id: phaseText
-                                                        text: modelData.phaseLabel || modelData.label
-                                                        color: modelData.status === "running" ? theme.windowText : theme.subtleText
-                                                        font.pointSize: theme.captionPointSize
-                                                        font.weight: Font.DemiBold
-                                                    }
-                                                    Rectangle {
-                                                        visible: !!modelData.validator
-                                                        implicitWidth: scriptLabel.implicitWidth + 8
-                                                        implicitHeight: 16
-                                                        radius: 8
-                                                        color: theme.alpha(theme.elevatedSurface, root.panelOpacity)
-                                                        Label {
-                                                            id: scriptLabel
+                                                    text: String(index + 1)
+                                                    color: laneColor(modelData)
+                                                    font.pointSize: theme.captionPointSize
+                                                    font.weight: Font.Bold
+                                                }
+                                            }
+
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 1
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    text: laneTitle(modelData)
+                                                    color: theme.windowText
+                                                    font.pointSize: theme.smallPointSize
+                                                    font.weight: Font.DemiBold
+                                                    elide: Text.ElideMiddle
+                                                    font.letterSpacing: 0
+                                                }
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    text: laneSubtitle(modelData)
+                                                    color: theme.subtleText
+                                                    font.pointSize: theme.captionPointSize
+                                                    elide: Text.ElideMiddle
+                                                    font.letterSpacing: 0
+                                                }
+                                            }
+
+                                            Label {
+                                                text: laneStatusLabel(modelData)
+                                                color: laneColor(modelData)
+                                                font.pointSize: theme.captionPointSize
+                                                font.weight: Font.Bold
+                                                font.letterSpacing: 0
+                                            }
+                                            Image {
+                                                source: workspaceCard.expanded ? "qrc:/qt/qml/Devtool/ControlCenter/icons/chevron-up.svg" : "qrc:/qt/qml/Devtool/ControlCenter/icons/chevron-down.svg"
+                                                sourceSize.width: 16
+                                                sourceSize.height: 16
+                                                width: 16
+                                                height: 16
+                                                Accessible.ignored: true
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 5
+                                                radius: 3
+                                                color: theme.alpha(theme.recessedSurface, root.recessedOpacity)
+                                                border.color: theme.alpha(theme.windowText, 0.05)
+                                                border.width: 1
+                                                Rectangle {
+                                                    height: parent.height
+                                                    radius: 3
+                                                    width: parent.width * laneProgress(modelData) / 100
+                                                    color: laneColor(modelData)
+                                                    Behavior on width { NumberAnimation { duration: 100; easing.type: Easing.OutCubic } }
+                                                }
+                                            }
+                                            Label {
+                                                text: laneProgressLabel(modelData)
+                                                color: laneColor(modelData)
+                                                font.pointSize: theme.captionPointSize
+                                                font.weight: Font.Bold
+                                                font.letterSpacing: 0
+                                            }
+                                        }
+
+                                        ColumnLayout {
+                                            visible: workspaceCard.expanded
+                                            Layout.fillWidth: true
+                                            spacing: 7
+
+                                            Flow {
+                                                Layout.fillWidth: true
+                                                spacing: 5
+                                                Repeater {
+                                                    model: workspaceCard.modelData.steps
+                                                    delegate: Rectangle {
+                                                        required property var modelData
+                                                        implicitWidth: phaseText.implicitWidth + (modelData.validator ? 46 : 16)
+                                                        implicitHeight: 24
+                                                        radius: 7
+                                                        color: modelData.status === "ok" ? theme.successSurface
+                                                             : modelData.status === "failed" ? theme.errorSurface
+                                                             : modelData.status === "running" ? theme.selectedSurface
+                                                             : theme.elevatedSurface
+                                                        border.color: modelData.status === "failed" ? theme.alpha(theme.error, 0.34)
+                                                                    : modelData.status === "running" ? theme.alpha(theme.info, 0.30)
+                                                                    : "transparent"
+                                                        Row {
                                                             anchors.centerIn: parent
-                                                            text: "script"
-                                                            color: theme.subtleText
-                                                            font.pointSize: theme.captionPointSize
+                                                            spacing: 5
+                                                            StatusMark {
+                                                                kind: modelData.status
+                                                                markColor: modelData.status === "ok" ? theme.success
+                                                                         : modelData.status === "failed" ? theme.error
+                                                                         : modelData.status === "running" ? theme.info
+                                                                         : theme.subtleText
+                                                                markSize: 12
+                                                            }
+                                                            Label {
+                                                                id: phaseText
+                                                                text: modelData.phaseLabel || modelData.label
+                                                                color: modelData.status === "running" ? theme.windowText : theme.subtleText
+                                                                font.pointSize: theme.captionPointSize
+                                                                font.weight: Font.DemiBold
+                                                            }
+                                                            Rectangle {
+                                                                visible: !!modelData.validator
+                                                                implicitWidth: scriptLabel.implicitWidth + 8
+                                                                implicitHeight: 16
+                                                                radius: 8
+                                                                color: theme.alpha(theme.elevatedSurface, root.panelOpacity)
+                                                                Label {
+                                                                    id: scriptLabel
+                                                                    anchors.centerIn: parent
+                                                                    text: "script"
+                                                                    color: theme.subtleText
+                                                                    font.pointSize: theme.captionPointSize
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
                                             }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                visible: !!workspaceCard.metrics.lastDetail
+                                                text: workspaceCard.metrics.lastDetail
+                                                color: theme.subtleText
+                                                font.pointSize: theme.captionPointSize
+                                                elide: Text.ElideMiddle
+                                            }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 12
+                                                Label {
+                                                    text: projectUnitLabel() + "  " + workspaceCard.metrics.projects
+                                                    color: theme.subtleText
+                                                    font.pointSize: theme.captionPointSize
+                                                }
+                                                Label {
+                                                    text: testContainerLabel() + "  " + workspaceCard.metrics.assemblies
+                                                    color: theme.subtleText
+                                                    font.pointSize: theme.captionPointSize
+                                                }
+                                                Label {
+                                                    text: workspaceCard.metrics.passed + " passed"
+                                                    color: workspaceCard.metrics.failed > 0 ? theme.subtleText : theme.success
+                                                    font.pointSize: theme.captionPointSize
+                                                }
+                                                Label {
+                                                    text: workspaceCard.metrics.failed + " failed"
+                                                    color: workspaceCard.metrics.failed > 0 ? theme.error : theme.subtleText
+                                                    font.pointSize: theme.captionPointSize
+                                                }
+                                                Label {
+                                                    text: "Validator  " + workspaceCard.metrics.validator
+                                                    color: workspaceCard.metrics.validator === "failed" ? theme.error
+                                                         : workspaceCard.metrics.validator === "passed" ? theme.success
+                                                         : theme.subtleText
+                                                    font.pointSize: theme.captionPointSize
+                                                }
+                                                Item { Layout.fillWidth: true }
+                                            }
                                         }
                                     }
 
-                                    Label {
-                                        Layout.fillWidth: true
-                                        visible: !!workspaceCard.metrics.lastDetail
-                                        text: workspaceCard.metrics.lastDetail
-                                        color: theme.subtleText
-                                        font.pointSize: theme.captionPointSize
-                                        elide: Text.ElideMiddle
+                                    MouseArea {
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        height: 52
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (workspaceCard.active) return
+                                            root.expandedLaneKey = root.expandedLaneKey === workspaceCard.modelData.key ? "" : workspaceCard.modelData.key
+                                        }
                                     }
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 12
-                                        Label {
-                                            text: projectUnitLabel() + "  " + workspaceCard.metrics.projects
-                                            color: theme.subtleText
-                                            font.pointSize: theme.captionPointSize
-                                        }
-                                        Label {
-                                            text: testContainerLabel() + "  " + workspaceCard.metrics.assemblies
-                                            color: theme.subtleText
-                                            font.pointSize: theme.captionPointSize
-                                        }
-                                        Label {
-                                            text: workspaceCard.metrics.passed + " passed"
-                                            color: workspaceCard.metrics.failed > 0 ? theme.subtleText : theme.success
-                                            font.pointSize: theme.captionPointSize
-                                        }
-                                        Label {
-                                            text: workspaceCard.metrics.failed + " failed"
-                                            color: workspaceCard.metrics.failed > 0 ? theme.error : theme.subtleText
-                                            font.pointSize: theme.captionPointSize
-                                        }
-                                        Label {
-                                            text: "Validator  " + workspaceCard.metrics.validator
-                                            color: workspaceCard.metrics.validator === "failed" ? theme.error
-                                                 : workspaceCard.metrics.validator === "passed" ? theme.success
-                                                 : theme.subtleText
-                                            font.pointSize: theme.captionPointSize
-                                        }
-                                        Item { Layout.fillWidth: true }
-                                    }
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                height: 52
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (workspaceCard.active) return
-                                    root.expandedLaneKey = root.expandedLaneKey === workspaceCard.modelData.key ? "" : workspaceCard.modelData.key
                                 }
                             }
                         }
                     }
-                }
-            }
 
-            Rectangle {
-                id: parserPanel
-                visible: parserExpanded
-                Layout.fillWidth: true
-                Layout.preferredHeight: visible ? parserContent.implicitHeight + 20 : 0
-                radius: 12
-                color: theme.alpha(theme.recessedSurface, root.recessedOpacity)
-                border.color: theme.alpha(theme.info, 0.28)
-                border.width: 1
+                    Rectangle {
+                        id: parserPanel
+                        visible: parserExpanded
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: visible ? parserContent.implicitHeight + 20 : 0
+                        radius: 12
+                        color: theme.alpha(theme.recessedSurface, root.recessedOpacity)
+                        border.color: theme.alpha(theme.info, 0.28)
+                        border.width: 1
 
-                ColumnLayout {
-                    id: parserContent
-                    anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 7
-                    property var metrics: aggregateParserMetrics()
+                        ColumnLayout {
+                            id: parserContent
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 7
+                            property var metrics: aggregateParserMetrics()
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -997,6 +1017,8 @@ Window {
                     }
                 }
             }
+            }
+        }
         }
 
         Shortcut {
