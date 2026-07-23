@@ -156,6 +156,7 @@ _devtool_commands() {
     'tag:create a Git tag'
     'release-notes:generate release notes between Git refs'
     'init-config:create .devtool.toml'
+    'init:alias for init-config'
     'config:inspect resolved configuration'
     'detect:detect project type and targets'
     'targets:list named targets'
@@ -272,6 +273,7 @@ _devtool_apply_args() {
     '--ignore-checksum[skip SHA-256 checks while retaining other manifest checks]' \
     '--keep-artifact[keep the source artifact after successful apply]' \
     '--delete-artifact-on-failure[delete the source artifact after failed apply]' \
+    '--no-rollback-on-failure[disable rollback when apply or validation fails]' \
     '--no-apply-notification[do not show the final apply notification]' \
     '--skip-restore[skip restore during validation]' \
     '--skip-build[skip build during validation]' \
@@ -346,6 +348,12 @@ _devtool() {
       case $line[1] in
         test|t)
           _devtool_test_args
+          ;;
+        build|b)
+          _arguments \
+            '(-o --artifact-output-dir --output-dir)'{-o,--artifact-output-dir,--output-dir}'[copy produced Android/Gradle artifacts here]:directory:_files -/' \
+            '(-n --artifact-output-name --output-name)'{-n,--artifact-output-name,--output-name}'[base filename for copied Android/Gradle artifacts]:name:' \
+            '*:runner args:'
           ;;
         validate|v|start-validation|sv|resume-validation|rv)
           _devtool_validation_args
@@ -445,7 +453,7 @@ _devtool() {
         commit|ci)
           _arguments '1:commit message:'
           ;;
-        init-config)
+        init-config|init)
           _arguments '--force[overwrite an existing configuration]' '1:repository:_devtool_repo_path'
           ;;
         logs)

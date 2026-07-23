@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -231,12 +232,53 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
             python = root / ".devtool" / "venvs" / "python" / "bin" / "python"
             python.parent.mkdir(parents=True)
             python.write_text("", encoding="utf-8")
-            config = ProjectConfig(repo_root=root, project_root=str(root), kind="python", runner_options={"python": {"manager": "venv"}})
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "venv", "environment": ".devtool/venvs/python"}},
+            )
             specs = build_specs(config, "restore")
         self.assertEqual([spec.name for spec in specs], ["restore", "python-environment"])
         self.assertNotEqual(specs[0].argv[2:4], ["venv", str(python.parent.parent)])
         self.assertEqual(specs[0].metadata["manager"], "venv")
         self.assertIn("environment_fingerprint", specs[1].metadata)
+
+    def test_python_implicit_environment_is_outside_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(repo_root=root, project_root=str(root), kind="python", runner_options={"python": {"manager": "venv"}})
+                specs = build_specs(config, "restore")
+        self.assertIn(str(Path(xdg) / "python" / "venvs"), " ".join(specs[0].argv))
+        self.assertNotIn(str(root / ".devtool" / "venvs"), " ".join(specs[0].argv))
+
+    def test_python_venv_restore_installs_pytest_when_not_declared(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_demo.py").write_text("def test_demo(): pass\n", encoding="utf-8")
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(repo_root=root, project_root=str(root), kind="python", runner_options={"python": {"manager": "venv"}})
+                specs = build_specs(config, "restore")
+        self.assertTrue(any(spec.argv[-1] == "pytest" and spec.argv[-4:-1] == ["-m", "pip", "install"] for spec in specs))
+
+    def test_python_hatch_restore_ignores_stale_venv_environment_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[tool.hatch]\n", encoding="utf-8")
+            stale = root / ".devtool" / "venvs" / "python"
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "hatch", "environment": ".devtool/venvs/python"}},
+            )
+            specs = build_specs(config, "restore")
+        self.assertEqual(specs[0].argv[:3], [sys.executable, "-m", "devtool.python_support"])
+        self.assertNotIn(str(stale), " ".join(specs[-1].argv))
 
     def test_android_gradle_receives_environment_aware_worker_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"HOME": tmp, "DEVTOOL_MAX_WORKERS": "2"}, clear=False):

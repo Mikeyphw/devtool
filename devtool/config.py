@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 import tomllib
 from pathlib import Path
@@ -645,6 +646,26 @@ def _apply_runtime_env_overrides(section: dict[str, str]) -> dict[str, str]:
     return section
 
 
+def _detect_node_manager(repo_root: Path) -> str:
+    try:
+        data = json.loads((repo_root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    package_manager = str(data.get("packageManager") or "").split("@", 1)[0].strip().lower()
+    if package_manager in {"npm", "pnpm", "yarn", "bun"}:
+        return package_manager
+    for filename, manager in (
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("bun.lockb", "bun"),
+        ("bun.lock", "bun"),
+        ("package-lock.json", "npm"),
+    ):
+        if (repo_root / filename).exists():
+            return manager
+    return "auto"
+
+
 def generate_template(repo_root: Path) -> str:
     repo_root = repo_root.resolve()
     kind = detect_project_kind(repo_root)
@@ -652,6 +673,9 @@ def generate_template(repo_root: Path) -> str:
     run_target = ""
     run_module = ""
     target_blocks = ""
+    python_manager = "auto"
+    python_test_framework = "auto"
+    node_manager = "auto"
 
     if kind == "dotnet":
         candidates = discover_dotnet_candidates(repo_root)
@@ -717,9 +741,13 @@ def generate_template(repo_root: Path) -> str:
         if not run_module and (active_root / "pyproject.toml").exists():
             try:
                 info = inspect_python_project(active_root)
+                python_manager = info.manager
+                python_test_framework = info.framework
                 run_module = info.import_packages[0] if info.import_packages else "your_package"
             except Exception:
                 run_module = "your_package"
+    elif kind == "node":
+        node_manager = _detect_node_manager(repo_root)
 
     return f"""[project]
 kind = "{kind}" # auto | dotnet | android | gradle | python | node | rust | go | maven | cmake | meson | make | command | unknown
@@ -752,9 +780,9 @@ max_workers = 4
 offline = false
 
 [python]
-manager = "auto" # auto | uv | poetry | pdm | pipenv | hatch | venv
-test_framework = "auto" # auto | pytest | unittest | tox | nox
-environment = ".devtool/venvs/python"
+manager = "{python_manager}" # auto | uv | poetry | pdm | pipenv | hatch | venv
+test_framework = "{python_test_framework}" # auto | pytest | unittest | tox | nox
+environment = "" # blank uses devtool-managed XDG storage
 groups = [] # e.g. ["test", "dev"]
 extras = []
 locked = true
@@ -826,7 +854,7 @@ stop_after_run = false
 max_workers = "auto" # CPU/memory-aware; DEVTOOL_MAX_WORKERS overrides
 
 [node]
-manager = "auto" # auto | npm | pnpm | yarn | bun
+manager = "{node_manager}" # auto | npm | pnpm | yarn | bun
 coalesce_validation = true
 
 [rust]

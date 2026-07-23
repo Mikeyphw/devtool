@@ -437,7 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch = subparsers.add_parser("batch")
     batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
 
-    init_cfg = subparsers.add_parser("init-config")
+    init_cfg = subparsers.add_parser("init-config", aliases=["init"])
     init_cfg.add_argument("repo_root", nargs="?", default=".")
     init_cfg.add_argument("--force", action="store_true")
 
@@ -601,19 +601,21 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
     import re as _re
 
+    try:
+        payload = json.loads(json_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+    payload_ok = bool(payload.get("ok") or payload.get("completion", {}).get("ok"))
+
     suppression_patterns = (
         (r"Artifact (?:not found|check failed before apply)|No matching artifact|Could not resolve artifact|FileNotFoundError|No such file or directory.*(?:\.zip|\.tar)", "artifact is missing"),
         (r"Requested command was not executed.*re-run|previous devtool apply appears to have been interrupted|Cleared stale devtool apply transaction|Interrupted by user|Interrupted during (?:artifact|overlay)|Child process was terminated", "run was interrupted or guarded by recovery"),
     )
     for pattern, reason in suppression_patterns:
-        if _re.search(pattern, raw_output, _re.IGNORECASE | _re.DOTALL):
+        if not payload_ok and _re.search(pattern, raw_output, _re.IGNORECASE | _re.DOTALL):
             console.print(f"[yellow]Clipboard copy skipped because the {reason}.[/yellow]")
             return
 
-    try:
-        payload = json.loads(json_text)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        payload = {}
     repair_lines = repair_summary_lines_from_payload(payload)
 
     warnings = int(payload.get("warnings", 0) or 0)
@@ -2455,9 +2457,20 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
     artifact = getattr(args, "artifact", "")
     if not artifact:
         return
-    apply_result = results[0] if results else None
+    apply_result = next(
+        (
+            result for result in results
+            if not (result.name == "apply-rollback" and result.failure_kind == "stale_apply_rolled_back")
+        ),
+        None,
+    )
     status = "ok" if apply_result and apply_result.returncode == 0 else "failed"
-    if any(r.name == "apply-rollback" and r.returncode == 0 for r in results):
+    if any(
+        r.name == "apply-rollback"
+        and r.returncode == 0
+        and r.failure_kind != "stale_apply_rolled_back"
+        for r in results
+    ):
         status = "rolled-back"
     validation_results = [r for r in results[1:] if r.name not in {"git-add", "git-commit", "apply-rollback"}]
     if not (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
@@ -3766,7 +3779,8 @@ def _delete_original_artifact_after_apply(
     """Delete the source artifact after success, or after failure when requested."""
     failed = any(result.returncode != 0 for result in results)
     rolled_back = any(
-        result.name == "apply-rollback" or result.metadata.get("rolled_back_during_apply")
+        result.failure_kind != "stale_apply_rolled_back"
+        and (result.name == "apply-rollback" or result.metadata.get("rolled_back_during_apply"))
         for result in results
         if getattr(result, "metadata", None) is not None
     )
@@ -3831,10 +3845,13 @@ def _run_transaction_rollback(
     reason: str,
     tasker_progress: TaskerProgressSink | None = None,
     log_path: Path | str | None = None,
+    failure_kind: str | None = None,
 ) -> tuple[OperationResult, str]:
     if tasker_progress is not None:
         tasker_progress.phase_started("apply-rollback", index=1, total=1, argv=["rsync", "rollback", str(transaction_path)])
     result = rollback_transaction(transaction_path, reason=reason)
+    if failure_kind is not None:
+        result.failure_kind = failure_kind
     if log_path is not None:
         try:
             from .logstore import write_log
@@ -4430,7 +4447,7 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[red]Unknown logs command: {logs_command}[/red]")
         return 2
 
-    if args.command == "init-config":
+    if args.command in {"init-config", "init"}:
         target = write_template_config(Path(args.repo_root), force=args.force)
         console.print(f"[green]Wrote[/green] {target}")
         return 0
@@ -4685,6 +4702,7 @@ def main(argv: list[str] | None = None) -> int:
             reason="previous devtool apply appears to have been interrupted or killed",
             tasker_progress=tasker_progress,
             log_path=log_path,
+            failure_kind="stale_apply_rolled_back",
         )
         if rollback_result.returncode != 0:
             results = [rollback_result]

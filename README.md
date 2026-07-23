@@ -87,7 +87,9 @@ configuration parsing, affected-file tests and lint, validator dependency
 resolution, coverage and source audits, native-extension diagnostics, verified
 wheel/sdist parity, clean import and CLI checks, optional matrices, notebooks,
 databases, service lifecycle checks, security scanning, SBOMs, and reproducible
-build gates. Existing uv, Poetry, PDM, Pipenv, Hatch, tox, and nox metadata is
+build gates. Devtool-owned Python venvs, caches, and environment snapshots live
+under devtool XDG storage by default; explicit `[python].environment` paths are
+still honored. Existing uv, Poetry, PDM, Pipenv, Hatch, tox, and nox metadata is
 respected.
 
 See [`docs/ANDROID_PROJECTS.md`](docs/ANDROID_PROJECTS.md),

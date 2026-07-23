@@ -17,7 +17,7 @@ from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.apply_notifications import build_apply_notification
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _apply_artifact_validation_defaults, _apply_runner_cli_options, _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _run_sequential_overlays, _validation_expectation_result, _validation_specs_for_args, build_parser, main, split_runner_passthrough_args
+from devtool.cli import _apply_artifact_validation_defaults, _apply_runner_cli_options, _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _record_apply_history, _run_sequential_overlays, _validation_expectation_result, _validation_specs_for_args, build_parser, main, split_runner_passthrough_args
 from devtool.config import ProjectConfig, load_project_config
 from devtool.log_commands import choose_active_log, parse_log_filename
 from devtool.logstore import write_log
@@ -581,6 +581,15 @@ class CliTests(unittest.TestCase):
             self.assertIn("[project]", output)
             self.assertIn("restore_command", output)
 
+    def test_init_alias_writes_detected_devtool_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.toml").write_text("[package]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+            rc = main(["init", str(root)])
+            text = (root / ".devtool.toml").read_text(encoding="utf-8")
+        self.assertEqual(rc, 0)
+        self.assertIn('kind = "rust"', text)
+
     def test_version_matches_project_metadata(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         metadata = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
@@ -1091,6 +1100,26 @@ artifact-cleanup: ok exit=0 time=0.10s
             rendered = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
             self.assertIn("nope", rendered)
 
+    def test_copy_allows_success_after_stale_recovery_cleanup(self) -> None:
+        args = SimpleNamespace(
+            no_clipboard=False,
+            copy=True,
+            copy_via="auto",
+            command="apply-overlay",
+        )
+        raw_output = "previous devtool apply appears to have been interrupted\nCompleted successfully"
+        json_text = json.dumps({"ok": True, "warnings": 0, "errors": 0, "failed": 0, "skipped": 0})
+
+        with (
+            patch("devtool.cli.copy_text", return_value=__import__("devtool.clipboard").clipboard.ClipboardResult(True, backend="xclip")),
+            patch("devtool.cli.console.print") as mock_print,
+        ):
+            _maybe_copy(raw_output, "summary", json_text, args)
+
+        rendered = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+        self.assertIn("Successful run summary copied to clipboard", rendered)
+        self.assertNotIn("Clipboard copy skipped", rendered)
+
     def test_commit_does_not_prompt_for_interactive_copy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1324,7 +1353,24 @@ artifact-cleanup: ok exit=0 time=0.10s
             artifact = root / "artifact.zip"
             config = ProjectConfig(repo_root=root, kind="android", runner_options={})
             calls: list[str] = []
+            rollback_kwargs: list[dict[str, object]] = []
             summary_calls: list[list[str]] = []
+
+            def fake_stale_rollback(*args, **kwargs):
+                calls.append("rollback")
+                rollback_kwargs.append(kwargs)
+                return (
+                    OperationResult(
+                        "apply-rollback",
+                        ["rsync", "rollback"],
+                        0,
+                        0.1,
+                        "rolled back",
+                        [],
+                        failure_kind=str(kwargs.get("failure_kind") or ""),
+                    ),
+                    "$ rsync rollback\nrolled back",
+                )
 
             def fake_emit_summary(results, config, **kwargs):
                 summary_calls.append([result.name for result in results])
@@ -1345,7 +1391,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.find_active_transaction", return_value=str(root / "stale.tx")), \
                 patch("devtool.cli.transaction_pending_validation", return_value=False), \
                 patch("devtool.cli.read_artifact_manifest", return_value={"validation": {"rollback_on_failure": True}}), \
-                patch("devtool.cli._run_transaction_rollback", side_effect=lambda *args, **kwargs: (calls.append("rollback") or OperationResult("apply-rollback", ["rsync", "rollback"], 0, 0.1, "rolled back", [], metadata={"rolled_back_during_apply": True}), "$ rsync rollback\nrolled back")), \
+                patch("devtool.cli._run_transaction_rollback", side_effect=fake_stale_rollback), \
                 patch("devtool.cli._run_apply", side_effect=lambda *args, **kwargs: (calls.append("apply") or [OperationResult("apply-overlay", ["apply-overlay", str(artifact)], 0, 0.2, "applied", [], metadata={"transaction_path": str(root / "tx")})], "apply raw")), \
                 patch("devtool.cli._reload_config_after_artifact_apply", return_value=config), \
                 patch("devtool.cli._maybe_commit_after_apply", side_effect=lambda config, args, results, raw_output, log_path=None: (results, raw_output)), \
@@ -1359,7 +1405,44 @@ artifact-cleanup: ok exit=0 time=0.10s
 
             self.assertEqual(rc, 0)
             self.assertEqual(calls, ["rollback", "apply"])
+            self.assertEqual(rollback_kwargs[-1]["failure_kind"], "stale_apply_rolled_back")
             self.assertEqual(summary_calls[-1], ["apply-rollback", "apply-overlay"])
+
+    def test_apply_history_uses_actual_apply_result_after_stale_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            config = ProjectConfig(repo_root=root, kind="android", runner_options={})
+            args = SimpleNamespace(
+                command="apply-overlay",
+                artifact=str(root / "artifact.zip"),
+                validate=False,
+                validate_only=False,
+                preview=False,
+                commit="",
+                _devtool_artifact_type="overlay",
+                _devtool_artifact_preview=None,
+                _devtool_artifact_manifest=None,
+                _devtool_artifact_sha="",
+            )
+            captured: list[dict[str, object]] = []
+
+            def fake_make_history_entry(*args, **kwargs):
+                captured.append(kwargs)
+                return {"status": kwargs["status"]}
+
+            results = [
+                OperationResult("apply-rollback", ["rsync", "rollback"], 0, 0.1, "stale", [], failure_kind="stale_apply_rolled_back"),
+                OperationResult("apply-overlay", ["devtool", "apply-overlay"], 1, 0.2, "failed", []),
+            ]
+
+            with (
+                patch("devtool.cli.make_history_entry", side_effect=fake_make_history_entry),
+                patch("devtool.cli.append_history", return_value=root / ".devtool" / "entry.json"),
+            ):
+                _record_apply_history(config, args, results)
+
+            self.assertEqual(captured[-1]["status"], "failed")
 
     def test_apply_overlay_no_rollback_on_failure_skips_validation_rollback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

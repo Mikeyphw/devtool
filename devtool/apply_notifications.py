@@ -86,7 +86,12 @@ def build_apply_notification(
     label = _command_label(command)
     failed = int(totals.get("failed", 0) or 0)
     warnings = int(totals.get("warnings", 0) or 0)
-    rolled_back = any(result.name == "apply-rollback" and result.returncode == 0 for result in results)
+    rolled_back = any(
+        result.name == "apply-rollback"
+        and result.returncode == 0
+        and result.failure_kind != "stale_apply_rolled_back"
+        for result in results
+    )
     paused_result = next((
         result for result in reversed(results)
         if result.name == "validation-paused" or result.metadata.get("validation_complete") is False
@@ -196,13 +201,21 @@ def _post_desktop(notification: ApplyNotification) -> None:
 
 
 def _post_android(notification: ApplyNotification) -> None:
-    posted = _post_termux_notification(notification)
-    if not posted:
-        _post_root_notification(notification)
+    if not _android_app_run_notification_active():
+        posted = _post_termux_notification(notification)
+        if not posted:
+            _post_root_notification(notification)
 
     toasted = _post_termux_toast(notification.toast)
     if not toasted:
         _post_android_bridge_toast(notification)
+
+
+def _android_app_run_notification_active() -> bool:
+    return bool(
+        os.environ.get("DEVTOOL_HUD_BRIDGE_DIR", "").strip()
+        and os.environ.get("DEVTOOL_RUN_ID", "").strip()
+    )
 
 
 def _post_termux_notification(notification: ApplyNotification) -> bool:

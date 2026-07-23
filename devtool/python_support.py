@@ -40,6 +40,8 @@ import urllib.request
 import venv
 import zipfile
 
+from .xdg import cache_dir, data_dir, state_dir
+
 
 SUPPORTED_MANAGERS = {"auto", "uv", "poetry", "pdm", "pipenv", "hatch", "venv"}
 SUPPORTED_TEST_FRAMEWORKS = {"auto", "pytest", "unittest", "tox", "nox"}
@@ -75,6 +77,28 @@ DOC_SUFFIXES = {".md", ".rst", ".txt", ".adoc", ".png", ".jpg", ".jpeg", ".svg",
 
 class PythonProjectError(RuntimeError):
     """A Python project declaration is invalid or internally inconsistent."""
+
+
+def python_repo_key(root: Path) -> str:
+    resolved = str(root.expanduser().resolve())
+    slug = root.expanduser().resolve().name or "repo"
+    safe_slug = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in slug).strip(".-") or "repo"
+    digest = hashlib.sha256(resolved.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    return f"{safe_slug}-{digest}"
+
+
+def default_python_environment_root(root: Path, name: str = "python") -> Path:
+    safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", name or "python").strip(".-") or "python"
+    return data_dir() / "python" / "venvs" / python_repo_key(root) / safe_name
+
+
+def default_python_cache_root(root: Path, execution_environment: str = "host") -> Path:
+    safe_env = re.sub(r"[^a-zA-Z0-9_.-]+", "-", execution_environment or "host").strip(".-") or "host"
+    return cache_dir() / "python" / python_repo_key(root) / safe_env
+
+
+def default_python_state_root(root: Path) -> Path:
+    return state_dir() / "python" / "environments" / python_repo_key(root)
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +254,11 @@ def _project_dependencies(data: Mapping[str, Any]) -> list[str]:
             if isinstance(group, dict) and isinstance(group.get("dependencies"), dict):
                 values.extend(str(key) for key in group["dependencies"])
     return values
+
+
+def _build_system_requires(data: Mapping[str, Any]) -> list[str]:
+    build_system = data.get("build-system") if isinstance(data.get("build-system"), dict) else {}
+    return _list(build_system.get("requires")) if isinstance(build_system, dict) else []
 
 
 def _detect_manager(root: Path, data: Mapping[str, Any], configured: str) -> tuple[str, str]:
@@ -665,7 +694,7 @@ def resolve_environment(
         elif _venv_python(existing_dotvenv).is_file():
             environment_root = str(existing_dotvenv.resolve())
         elif info.dependency_files:
-            environment_root = str((info.root / ".devtool" / "venvs" / "python").resolve())
+            environment_root = str(default_python_environment_root(info.root).resolve())
         else:
             environment_root = ""
         if environment_root:
@@ -679,7 +708,7 @@ def resolve_environment(
             version_probe = python
     else:
         python = bootstrap_python
-        environment_root = requested_environment
+        environment_root = ""
         if info.manager == "uv":
             prefix = ("uv", "run")
         elif info.manager == "poetry":
@@ -729,7 +758,7 @@ def python_executable_argv(plan: PythonEnvironmentPlan, executable: str, *args: 
 
 def python_cache_env(root: Path, execution_environment: str = "host") -> dict[str, str]:
     safe = re.sub(r"[^a-zA-Z0-9_.-]+", "-", execution_environment or "host")
-    cache = root / ".devtool" / "cache" / "python" / safe
+    cache = default_python_cache_root(root, safe)
     workers = os.environ.get("DEVTOOL_MAX_WORKERS", "1" if "termux" in safe or "chroot" in safe else "auto")
     if workers == "auto":
         workers = str(max(1, min(4, os.cpu_count() or 1)))
@@ -758,7 +787,7 @@ def python_cache_env(root: Path, execution_environment: str = "host") -> dict[st
 
 
 def write_environment_state(info: PythonProjectInfo, plan: PythonEnvironmentPlan, *, groups: Sequence[str] = (), extras: Sequence[str] = ()) -> Path:
-    path = info.root / ".devtool" / "state" / "python" / "environment.json"
+    path = default_python_state_root(info.root) / "environment.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": 1,
@@ -834,9 +863,12 @@ def build_sync_command(
             command.append("--pypi-mirror=none")
         return [command]
     if info.manager == "hatch":
-        return [["hatch", "env", "create"]]
+        command = [sys.executable, "-m", "devtool.python_support", "ensure-hatch-env", str(info.root), "--framework", info.framework]
+        for extra in extras:
+            command.extend(["--extra", extra])
+        return [command]
 
-    venv_root = Path(plan.environment_root) if plan.environment_root else info.root / ".devtool" / "venvs" / "python"
+    venv_root = Path(plan.environment_root) if plan.environment_root else default_python_environment_root(info.root)
     venv_python = venv_root / "bin" / "python"
     if not venv_python.is_file():
         commands.append([plan.bootstrap_python or plan.python, "-m", "venv", str(venv_root)])
@@ -852,12 +884,115 @@ def build_sync_command(
         requirements.append("requirements.txt")
     for requirement in requirements:
         commands.append([*pip_base, "-r", requirement])
+    if info.framework == "pytest" and not _declares_requirement(info.root, "pytest"):
+        commands.append([*pip_base, "pytest"])
     if install_project and (info.root / "pyproject.toml").is_file():
         extra_text = f"[{','.join(extras)}]" if extras else ""
         commands.append([*pip_base, "-e", f".{extra_text}"])
     elif not requirements and (info.root / "setup.py").is_file():
         commands.append([*pip_base, "-e", "."])
     return commands
+
+
+def _hatch_environment_python(root: Path) -> Path | None:
+    hatch = shutil.which("hatch")
+    command = [hatch or sys.executable, "env", "find"] if hatch else [sys.executable, "-m", "hatch", "env", "find"]
+    proc = subprocess.run(
+        command,
+        cwd=root.resolve(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    if proc.returncode:
+        return None
+    env_root = Path((proc.stdout or "").strip())
+    python = env_root / "bin" / "python"
+    return python if python.is_file() else None
+
+
+def ensure_hatch_environment(root: Path, *, framework: str = "auto", extras: Sequence[str] = ()) -> int:
+    hatch = shutil.which("hatch")
+    command = [hatch or sys.executable, "env", "create"] if hatch else [sys.executable, "-m", "hatch", "env", "create"]
+    if not hatch:
+        install = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "hatch"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        install_output = install.stdout or ""
+        if install_output:
+            print(install_output, end="" if install_output.endswith("\n") else "\n")
+        if install.returncode:
+            return install.returncode
+    proc = subprocess.run(
+        command,
+        cwd=root.resolve(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    output = proc.stdout or ""
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n")
+    if proc.returncode == 0:
+        pass
+    elif "already exists" not in output.lower():
+        return proc.returncode
+
+    python = _hatch_environment_python(root)
+    if python is None:
+        return 0
+    try:
+        data = load_pyproject(root)
+    except PythonProjectError as exc:
+        print(str(exc), file=sys.stderr)
+        return 86
+    requirements = list(dict.fromkeys([
+        *_build_system_requires(data),
+        *(["pytest"] if (framework == "pytest" and not _declares_requirement(root, "pytest")) else []),
+    ]))
+    if any(str(item).split(";", 1)[0].strip().lower().startswith("hatchling") for item in requirements):
+        requirements.append("editables")
+        requirements = list(dict.fromkeys(requirements))
+    if requirements:
+        bootstrap = subprocess.run(
+            [str(python), "-m", "pip", "install", "--disable-pip-version-check", *requirements],
+            cwd=root.resolve(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        bootstrap_output = bootstrap.stdout or ""
+        if bootstrap_output:
+            print(bootstrap_output, end="" if bootstrap_output.endswith("\n") else "\n")
+        if bootstrap.returncode:
+            return bootstrap.returncode
+    install_target = "."
+    selected_extras = list(dict.fromkeys(str(extra).strip() for extra in extras if str(extra).strip()))
+    if not selected_extras and framework == "pytest":
+        optional = data.get("project", {}).get("optional-dependencies", {}) if isinstance(data.get("project"), dict) else {}
+        if isinstance(optional, dict) and "dev" in optional:
+            selected_extras = ["dev"]
+    if selected_extras:
+        install_target = f".[{','.join(selected_extras)}]"
+    project = subprocess.run(
+        [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--no-build-isolation", "-e", install_target],
+        cwd=root.resolve(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    project_output = project.stdout or ""
+    if project_output:
+        print(project_output, end="" if project_output.endswith("\n") else "\n")
+    return project.returncode
 
 
 def python_validation_scope(root: Path, changed: Sequence[str], info: PythonProjectInfo) -> PythonValidationScope:
@@ -1264,7 +1399,13 @@ def dependency_snapshot(plan: PythonEnvironmentPlan, root: Path) -> dict[str, An
         "print(json.dumps({'python':sys.executable,'version':sys.version.split()[0],"
         "'packages':sorted([{'name':d.metadata.get('Name',''),'version':d.version} for d in m.distributions()],key=lambda x:x['name'].lower())}))"
     )
-    command = [plan.python, "-c", script] if plan.manager == "venv" else [*plan.run_prefix, "python", "-c", script]
+    hatch_python = _hatch_environment_python(root) if plan.manager == "hatch" else None
+    if plan.manager == "venv":
+        command = [plan.python, "-c", script]
+    elif hatch_python is not None:
+        command = [str(hatch_python), "-c", script]
+    else:
+        command = [*plan.run_prefix, "python", "-c", script]
     proc = _run_capture(command, cwd=root)
     if proc.returncode:
         return {"returncode": proc.returncode, "error": proc.stdout.strip(), "packages": []}
@@ -1387,6 +1528,23 @@ def declared_group_dependencies(root: Path, groups: Sequence[str]) -> list[str]:
         if isinstance(values, list):
             result.extend(str(item) for item in values if isinstance(item, str))
     return list(dict.fromkeys(item for item in result if item.strip()))
+
+
+def _declares_requirement(root: Path, name: str) -> bool:
+    pattern = re.compile(rf"(^|[^a-z0-9_.-]){re.escape(name.lower())}($|[^a-z0-9_.-])")
+    try:
+        data = load_pyproject(root)
+    except PythonProjectError:
+        data = {}
+    candidates: list[str] = _project_dependencies(data)
+    candidates.extend(declared_group_dependencies(root, ["dev", "test", "tests"]))
+    for filename in ("requirements.txt", "requirements-dev.txt"):
+        path = root / filename
+        try:
+            candidates.extend(path.read_text(encoding="utf-8", errors="replace").splitlines())
+        except OSError:
+            pass
+    return any(pattern.search(item.lower()) for item in candidates)
 
 
 def _prepare_declared_validator_dependencies(root: Path, info: PythonProjectInfo, plan: PythonEnvironmentPlan, args: argparse.Namespace) -> PythonEnvironmentPlan:
@@ -1957,6 +2115,11 @@ def main(raw_args: Sequence[str] | None = None) -> int:
     snapshot.add_argument("--extra", action="append", default=[])
     snapshot.add_argument("--execution-environment", default="host")
 
+    hatch = sub.add_parser("ensure-hatch-env")
+    hatch.add_argument("root", type=Path)
+    hatch.add_argument("--framework", default="auto")
+    hatch.add_argument("--extra", action="append", default=[])
+
     validator = sub.add_parser("run-validator")
     validator.add_argument("root", type=Path)
     validator.add_argument("script", type=Path)
@@ -2043,6 +2206,8 @@ def main(raw_args: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "environment-snapshot":
             return _write_snapshot(args)
+        if args.command == "ensure-hatch-env":
+            return ensure_hatch_environment(args.root, framework=args.framework, extras=args.extra)
         if args.command == "run-validator":
             return run_validator(args)
         if args.command == "run-tool":

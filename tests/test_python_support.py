@@ -16,12 +16,17 @@ from devtool.python_support import (
     check_service_lifecycle,
     clean_python,
     declared_group_dependencies,
+    default_python_cache_root,
+    default_python_environment_root,
     discover_python_roots,
+    ensure_hatch_environment,
     inspect_python_project,
+    python_cache_env,
     python_validation_scope,
     prepare_dist,
     resolve_environment,
     verify_packages,
+    write_environment_state,
 )
 from devtool.runners import build_specs, build_validation_specs, run_specs
 from devtool.tasker import TaskerProgressSink
@@ -237,6 +242,105 @@ class PythonSupportTests(unittest.TestCase):
             plan = resolve_environment(info, configured_python=sys.executable, environment=str(root / ".venv"))
         self.assertFalse(plan.compatible)
 
+    def test_implicit_venv_environment_uses_xdg_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp) / "demo"
+            root.mkdir()
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            with mock.patch.dict("os.environ", {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                info = inspect_python_project(root, "venv")
+                plan = resolve_environment(info, configured_python=sys.executable)
+                expected = default_python_environment_root(root)
+        self.assertEqual(Path(plan.environment_root), expected)
+        self.assertTrue(str(plan.environment_root).startswith(str(Path(xdg) / "python" / "venvs")))
+        self.assertFalse(str(plan.environment_root).startswith(str(root)))
+
+    def test_explicit_relative_venv_environment_stays_repo_relative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            with mock.patch.dict("os.environ", {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                info = inspect_python_project(root, "venv")
+                plan = resolve_environment(info, configured_python=sys.executable, environment=".venv")
+        self.assertEqual(Path(plan.environment_root), (root / ".venv").resolve())
+
+    def test_python_cache_and_state_use_xdg_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp) / "demo"
+            root.mkdir()
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            with mock.patch.dict("os.environ", {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                info = inspect_python_project(root, "venv")
+                plan = resolve_environment(info, configured_python=sys.executable)
+                env = python_cache_env(root, "chroot")
+                state = write_environment_state(info, plan)
+                expected_cache = default_python_cache_root(root, "chroot")
+        self.assertEqual(Path(env["PIP_CACHE_DIR"]).parent, expected_cache)
+        self.assertTrue(str(state).startswith(str(Path(xdg) / "python" / "environments")))
+        self.assertFalse(str(state).startswith(str(root)))
+
+    def test_hatch_environment_create_is_idempotent_when_default_exists(self) -> None:
+        completed = mock.Mock(returncode=1, stdout="Environment `default` already exists\n")
+        find = mock.Mock(returncode=1, stdout="")
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch("devtool.python_support.shutil.which", return_value="/usr/bin/hatch"),
+            mock.patch("devtool.python_support.subprocess.run", side_effect=[completed, find]),
+        ):
+            rc = ensure_hatch_environment(Path(tmp))
+        self.assertEqual(rc, 0)
+
+    def test_hatch_environment_installs_hatch_when_command_is_missing(self) -> None:
+        install = mock.Mock(returncode=0, stdout="installed hatch\n")
+        create = mock.Mock(returncode=0, stdout="created\n")
+        find = mock.Mock(returncode=1, stdout="")
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch("devtool.python_support.shutil.which", return_value=None),
+            mock.patch("devtool.python_support.subprocess.run", side_effect=[install, create, find]) as run,
+        ):
+            rc = ensure_hatch_environment(Path(tmp))
+        self.assertEqual(rc, 0)
+        self.assertEqual(run.call_args_list[0].args[0], [sys.executable, "-m", "pip", "install", "hatch"])
+        self.assertEqual(run.call_args_list[1].args[0], [sys.executable, "-m", "hatch", "env", "create"])
+
+    def test_hatch_environment_bootstraps_build_backend_and_dev_extra(self) -> None:
+        create = mock.Mock(returncode=1, stdout="Environment `default` already exists\n")
+        find = mock.Mock(returncode=0, stdout="/tmp/hatch-env\n")
+        install_backend = mock.Mock(returncode=0, stdout="installed hatchling\n")
+        install_project = mock.Mock(returncode=0, stdout="installed project\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[build-system]\nrequires=['hatchling>=1.27']\n"
+                "[project]\nname='demo'\nversion='1'\n"
+                "[project.optional-dependencies]\ndev=['pytest>=8']\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch("devtool.python_support.shutil.which", return_value="/usr/bin/hatch"),
+                mock.patch("devtool.python_support.Path.is_file", return_value=True),
+                mock.patch("devtool.python_support.subprocess.run", side_effect=[create, find, install_backend, install_project]) as run,
+            ):
+                rc = ensure_hatch_environment(root, framework="pytest")
+        self.assertEqual(rc, 0)
+        self.assertEqual(run.call_args_list[2].args[0][-2:], ["hatchling>=1.27", "editables"])
+        self.assertEqual(run.call_args_list[3].args[0][-1], ".[dev]")
+
+    def test_hatch_ignores_stale_repo_local_environment_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[tool.hatch]\n", encoding="utf-8")
+            info = inspect_python_project(root, "hatch")
+            plan = resolve_environment(
+                info,
+                configured_python=sys.executable,
+                environment=str(root / ".devtool" / "venvs" / "python"),
+            )
+        self.assertEqual(plan.manager, "hatch")
+        self.assertEqual(plan.environment_root, "")
+        self.assertEqual(plan.run_prefix, ("hatch", "run"))
+
     def test_wheel_record_digest_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -325,4 +429,3 @@ class PythonSupportTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(payload["ready"])
         self.assertIn("service-ready", payload["output"])
-

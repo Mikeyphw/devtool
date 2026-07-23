@@ -64,6 +64,20 @@ class CompletionStateTests(unittest.TestCase):
         rollback = next(item for item in payload["actions"] if item["name"] == "apply-rollback")
         self.assertEqual(rollback["status"], "ok")
 
+    def test_success_after_stale_cleanup_is_not_reported_as_rolled_back(self) -> None:
+        results = [
+            OperationResult("apply-rollback", ["rsync", "rollback"], 0, 0.2, "Stale cleanup", [], failure_kind="stale_apply_rolled_back"),
+            OperationResult("apply-overlay", ["devtool", "apply-overlay"], 0, 0.1, "Applied", []),
+        ]
+        payload = _completion_payload(
+            ok=True,
+            totals={"warnings": 0, "errors": 0, "failed": 0, "skipped": 0},
+            results=results,
+        )
+        self.assertEqual(payload["headline"], "Completed successfully")
+        self.assertFalse(payload["rolled_back"])
+        self.assertFalse(payload["rollback_failed"])
+
     def test_finished_state_keeps_original_failure_phase_after_rollback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             sink = TaskerProgressSink(directory=Path(tmp), command="apply-overlay", repo_root="/repo", repo_name="repo")

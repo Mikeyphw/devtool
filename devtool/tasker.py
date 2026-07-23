@@ -607,8 +607,9 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
                 warning_details.append(detail)
 
     rollback_results = [result for result in results if result.name == "apply-rollback"]
+    stale_recovery = any(result.failure_kind == "stale_apply_rolled_back" for result in rollback_results)
     rollback_succeeded = any(
-        result.returncode == 0 or result.failure_kind == "stale_apply_rolled_back"
+        result.returncode == 0 and result.failure_kind != "stale_apply_rolled_back"
         for result in rollback_results
     )
     rollback_failed = any(
@@ -619,7 +620,6 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
         (result for result in results if result.returncode != 0 and result.name != "apply-rollback"),
         None,
     )
-    stale_recovery = any(result.failure_kind == "stale_apply_rolled_back" for result in rollback_results)
 
     actions: list[dict[str, Any]] = []
     for result in results:

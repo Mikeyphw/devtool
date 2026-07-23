@@ -1281,11 +1281,12 @@ class PythonRunner(ProjectRunner):
         return info
 
     def _environment_path(self, config: ProjectConfig) -> str:
+        from .python_support import default_python_environment_root
         options = self._options(config)
         value = str(options.get("environment") or "").strip()
         if not value:
             name = config.selected_target or "python"
-            value = f".devtool/venvs/{name}"
+            return str(default_python_environment_root(self._root(config), name).resolve())
         path = Path(value).expanduser()
         if not path.is_absolute():
             path = self._root(config) / path

@@ -143,7 +143,7 @@ Generate notes between
 and
 .BR --to-ref .
 .TP
-.B init-config
+.B init-config " | " init
 Create a starter
 .I .devtool.toml.
 .TP
@@ -407,7 +407,9 @@ device instrumentation according to target policy.
 .PP
 Python validation respects the existing environment manager and lock file, then performs
 the configured dependency synchronization, tests, lint/type checks, PEP 517 build, package
-verification, and optional clean-environment import/install checks.
+verification, and optional clean-environment import/install checks. Devtool-owned Python
+venvs, caches, and environment snapshots are stored under devtool XDG directories unless
+an explicit Python environment path is configured.
 .SH APPLY OPTIONS
 .TP
 .B --validate

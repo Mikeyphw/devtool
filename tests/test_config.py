@@ -76,6 +76,30 @@ class ConfigTests(unittest.TestCase):
             text = generate_template(root)
             self.assertIn('restore_command = ""', text)
             self.assertIn('build_command = ""', text)
+            self.assertRegex(text, r'manager = "(uv|venv)" # auto \| uv \| poetry \| pdm \| pipenv \| hatch \| venv')
+
+    def test_generate_template_detects_python_hatch_and_pytest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[build-system]\nrequires=['hatchling']\nbuild-backend='hatchling.build'\n"
+                "[project]\nname='x'\nversion='0.1.0'\n"
+                "[project.optional-dependencies]\ndev=['pytest>=8']\n",
+                encoding="utf-8",
+            )
+            (root / "tests").mkdir()
+            (root / "tests" / "test_demo.py").write_text("def test_demo(): pass\n", encoding="utf-8")
+            text = generate_template(root)
+        self.assertIn('manager = "hatch" # auto | uv | poetry | pdm | pipenv | hatch | venv', text)
+        self.assertIn('test_framework = "pytest" # auto | pytest | unittest | tox | nox', text)
+
+    def test_generate_template_detects_node_manager(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text('{"packageManager":"pnpm@10.0.0"}\n', encoding="utf-8")
+            text = generate_template(root)
+        self.assertIn('kind = "node"', text)
+        self.assertIn('manager = "pnpm" # auto | npm | pnpm | yarn | bun', text)
 
     def test_project_values_can_be_overridden_by_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
