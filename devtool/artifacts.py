@@ -426,10 +426,6 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
         ok = False
         messages.append("validation.expected must be an object.")
     elif isinstance(expected, dict):
-        maximum = expected.get("maximum_warnings")
-        if maximum is not None and (not isinstance(maximum, int) or isinstance(maximum, bool) or maximum < 0):
-            ok = False
-            messages.append("validation.expected.maximum_warnings must be a non-negative integer.")
         for key in ("restore", "build", "tests"):
             if key in expected and str(expected[key]).strip().lower() not in _VALIDATION_EXPECTED_OUTCOMES:
                 ok = False

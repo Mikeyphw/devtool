@@ -9,7 +9,6 @@ chroot_name = "androidos"
 [python]
 manager = "auto"
 test_framework = "pytest"
-environment = ".devtool/venvs/python"
 locked = true
 install_project = true
 isolation = true

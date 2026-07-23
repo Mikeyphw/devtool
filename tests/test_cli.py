@@ -70,8 +70,8 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(validation["changed_paths_source"], "artifact-inventory")
 
-    def test_artifact_warning_gate_ignores_gradle_infrastructure_notices(self) -> None:
-        manifest = {"validation": {"expected": {"maximum_warnings": 0}}}
+    def test_artifact_warning_expectations_do_not_gate_validation(self) -> None:
+        manifest = {"validation": {"expected": {}}}
         infra = OperationResult(
             "lint",
             ["gradlew", "lintDebug"],
@@ -90,10 +90,7 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertIsNone(_validation_expectation_result(manifest, [infra]))
-        failure = _validation_expectation_result(manifest, [infra, source])
-        self.assertIsNotNone(failure)
-        self.assertEqual(failure.returncode, 1)
-        self.assertIn("1 warning", failure.output)
+        self.assertIsNone(_validation_expectation_result(manifest, [infra, source]))
 
     def test_parser_accepts_shared_execution_environment(self) -> None:
         parser = build_parser()

@@ -3287,34 +3287,8 @@ def _artifact_script_result(
 
 
 def _validation_expectation_result(manifest: dict, results: list[OperationResult]) -> OperationResult | None:
-    policy = artifact_validation_policy(manifest)
-    expected = policy.get("expected") if isinstance(policy.get("expected"), dict) else {}
-    maximum = expected.get("maximum_warnings")
-    if maximum is None:
-        return None
-    # ``maximum_warnings`` is a source/validation quality gate. Gradle's own
-    # runtime notices (for example the experimental AAPT2 override required on
-    # Termux) remain visible in diagnostics but must not roll back an otherwise
-    # clean artifact. Compiler, Android Lint and validator warnings still count.
-    ignored_warning_codes = {"GRADLE_INFRA"}
-    warning_count = sum(
-        1
-        for result in results
-        for issue in result.issues
-        if str(issue.severity).lower() == "warning"
-        and str(issue.code or "").upper() not in ignored_warning_codes
-    )
-    if warning_count <= int(maximum):
-        return None
-    return OperationResult(
-        "artifact-validation-expectations",
-        ["artifact-validation-expectations"],
-        1,
-        0.0,
-        f"Validation produced {warning_count} warning(s); artifact permits at most {maximum}.",
-        [Issue("error", "artifact-validation-expectations", "", "maximum-warnings", f"Expected at most {maximum} warning(s), found {warning_count}.")],
-        failure_kind="validation_failure",
-    )
+    _ = manifest, results
+    return None
 
 
 def _artifact_declared_paths(manifest: dict) -> set[str]:

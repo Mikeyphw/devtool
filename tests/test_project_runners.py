@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import subprocess
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,7 +24,7 @@ from devtool.project_runners import (
     RunnerRegistry,
     get_project_runner,
 )
-from devtool.runners import build_specs, build_validation_specs, git_commit, run_specs, runner_capabilities
+from devtool.runners import build_specs, build_validation_specs, run_specs, runner_capabilities
 
 
 class RunnerRegistryTests(unittest.TestCase):
@@ -294,6 +294,20 @@ class ExistingRunnerCompatibilityTests(unittest.TestCase):
             self.assertEqual(build_argv[build_argv.index("-m") + 1], "build")
             self.assertIn("--outdir", build_argv)
             self.assertTrue("pytest" in test_argv or "unittest" in test_argv)
+
+    def test_python_runner_exports_uv_project_environment_for_uv_projects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            with unittest.mock.patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(repo_root=root, kind="python", runner_options={"python": {"manager": "auto"}})
+                runner = PythonRunner()
+                env = runner._env(config)
+
+        self.assertIn("UV_PROJECT_ENVIRONMENT", env)
+        self.assertTrue(env["UV_PROJECT_ENVIRONMENT"].startswith(str(Path(xdg) / "python" / "venvs")))
+        self.assertFalse(env["UV_PROJECT_ENVIRONMENT"].startswith(str(root)))
 
     def test_generic_capabilities_follow_configured_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

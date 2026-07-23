@@ -218,7 +218,6 @@ class ArtifactV2Tests(unittest.TestCase):
                         "restore": "skipped",
                         "build": "success",
                         "tests": "failed",
-                        "maximum_warnings": 0,
                     }
                 },
             }

@@ -73,6 +73,7 @@ IGNORED_DIRECTORIES = {
     "vendor", "target", "artifacts", ".idea", ".vscode",
 }
 DOC_SUFFIXES = {".md", ".rst", ".txt", ".adoc", ".png", ".jpg", ".jpeg", ".svg", ".gif"}
+_RUFF_SUMMARY = re.compile(r"Found (?P<errors>\d+) errors?(?: and (?P<warnings>\d+) warnings?)?\.")
 
 
 class PythonProjectError(RuntimeError):
@@ -708,18 +709,23 @@ def resolve_environment(
             version_probe = python
     else:
         python = bootstrap_python
-        environment_root = ""
         if info.manager == "uv":
+            environment_root = str(default_python_environment_root(info.root).resolve())
             prefix = ("uv", "run")
         elif info.manager == "poetry":
+            environment_root = ""
             prefix = ("poetry", "run")
         elif info.manager == "pdm":
+            environment_root = ""
             prefix = ("pdm", "run")
         elif info.manager == "pipenv":
+            environment_root = ""
             prefix = ("pipenv", "run")
         elif info.manager == "hatch":
+            environment_root = ""
             prefix = ("hatch", "run")
         else:
+            environment_root = ""
             prefix = (python,)
         version_probe = python
     fingerprint, inputs = environment_fingerprint(
@@ -1673,14 +1679,22 @@ def run_tool(args: argparse.Namespace) -> int:
     output = proc.stdout
     if output:
         print(output, end="" if output.endswith("\n") else "\n")
+    warnings = 0
+    returncode = proc.returncode
+    if args.tool == "ruff":
+        summary = _RUFF_SUMMARY.search(output)
+        if summary:
+            warnings = int(summary.group("errors") or 0) + int(summary.group("warnings") or 0)
+            if returncode == 1 and warnings > 0:
+                returncode = 0
     issues: list[dict[str, str]] = []
     for line in output.splitlines():
         if re.search(r"(^|:)\s*(error|warning)(\[|:|\s)", line, re.I) or re.match(r".+:\d+:\d+:\s+[A-Z]\d+", line):
             issues.append({"message": line[:2000]})
-    errors = len(issues) if proc.returncode else 0
-    payload = {"tool": args.tool, "returncode": proc.returncode, "errors": errors, "warnings": 0, "issues": issues[:200]}
+    errors = len(issues) if returncode else 0
+    payload = {"tool": args.tool, "returncode": returncode, "errors": errors, "warnings": warnings, "issues": issues[:200]}
     print("DEVTOOL_PYTHON_TOOL_RESULT " + json.dumps(payload, ensure_ascii=False))
-    return proc.returncode
+    return returncode
 
 
 def _write_snapshot(args: argparse.Namespace) -> int:

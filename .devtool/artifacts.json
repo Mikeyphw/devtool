@@ -151,6 +151,966 @@
         ]
       },
       "history_id": "4c615dcb2e734392b136208fc8b0f5ad"
+    },
+    {
+      "applied_at": "2026-07-23T18:15:21.344150Z",
+      "artifact": "/home/mike/Downloads/devtool_hud_notification_parity_autosize_overlay.zip",
+      "artifact_name": "devtool_hud_notification_parity_autosize_overlay.zip",
+      "type": "overlay",
+      "sha256": "ce000c29fdc4e547ee6755d7962cc9aac471d764200f8c804f38ed427aca83b0",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 12,
+      "change_counts": {
+        "add": 2,
+        "modify": 10
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_hud_notification_parity_autosize_overlay",
+        "description": "Fix Android notification status-line parity, desktop HUD content-aware auto-sizing, and the stale changelog project-version heading while preserving detailed HUD content.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 14,
+        "features": [
+          "Android notification status lead/detail parity below progress bars",
+          "compact expanded and large-text notification layouts include status lines",
+          "notification RemoteViews bind status lead/detail and export extras for diagnostics",
+          "desktop HUD content-aware auto-size with debounce and screen-bound clamping",
+          "manual desktop HUD resizing preserved with double-click return to auto-size",
+          "changelog latest release heading aligned with project version 1.1.0",
+          "regression tests prove notification parity and detailed HUD content preservation"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+              "action": "modify",
+              "sha256": "d4e8a0f4ef08fab43cd3797abe42c3260e48c9388c9e93608f1a94362eb6a622",
+              "size": 33418,
+              "source_sha256": "4bdfe7b47c6996d6a01bb47d3f089aa43b32473aa7e72ce5326af5c9d4caf70e"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+              "action": "modify",
+              "sha256": "5d23b3fd5f86c90d899a456fa0ae812c3ab3b5ab163b9c900eb82f04a81e727f",
+              "size": 26086,
+              "source_sha256": "c2756e51dbbcb94b1df889b1e642270047b55441185abf6c4fbabefd1fd40b0a"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+              "action": "modify",
+              "sha256": "124eab0913d87468015da69080c85f6dc8d3a041f84e04a16d3ebb3f0654f42a",
+              "size": 4361,
+              "source_sha256": "10125ac2af1869ba926dff0e49269904697b3f905ef9811e474cabc462599ac4"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+              "action": "modify",
+              "sha256": "1af3c371334549c3d5a00ce0e2379771e1941291bc17441209f01ee77aaa961e",
+              "size": 15910,
+              "source_sha256": "9b6d5a7c84e875cd14cfe8b4cdf13ca99c88cf57946194a613424b6d50fb660c"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+              "action": "modify",
+              "sha256": "396543c7945003737527a23460d60940f1fce46cea73acefa9d3b0e69ca23065",
+              "size": 13401,
+              "source_sha256": "9521eb022b00448bb16f82017f4af0b9cf838988135ba5259e9ea0c36c346542"
+            },
+            {
+              "path": "android/devtool-live-hud/docs/notification-ui-contract.json",
+              "action": "modify",
+              "sha256": "6b66ad668895c947c1b25eae8590c2711d1a963fece943810a8658f4d44f6fc8",
+              "size": 1337,
+              "source_sha256": "c83a7556116c9dd012c2950b0bfb11b01a2180801ca51fdfd798447dab5749b4"
+            },
+            {
+              "path": "desktop/devtool-control-center/qml/CompactHud.qml",
+              "action": "modify",
+              "sha256": "e0785a1f129ff34e639408f315f2540be8a7cea5446f1a1d019307833979be00",
+              "size": 60499,
+              "source_sha256": "21dacc7c28c89248443bd093cf7b4cea00a070fa11bf38f54d5d76aa642d42d6"
+            },
+            {
+              "path": "desktop/devtool-control-center/src/HudMain.cpp",
+              "action": "modify",
+              "sha256": "e4fdba590b2900754b27332ad0e12afbd9e269f1b797e92281074d5321b7a137",
+              "size": 11743,
+              "source_sha256": "6076766bef8ddf8b72e2c07e8acba72d826fc2710a458f976743f166fc49ceef"
+            },
+            {
+              "path": "tests/test_android_notification_mock.py",
+              "action": "modify",
+              "sha256": "18a98023f4af0f814b77a534982edd0ebf0a7bc5cee70d7b430d0b83d8ca3d6a",
+              "size": 6935,
+              "source_sha256": "c52490fb6e4fa215893bc11d72071698ffca59a0193f2449732446074ce397a7"
+            },
+            {
+              "path": "tests/test_desktop_hud_autosize.py",
+              "action": "add",
+              "sha256": "fb4f0299b70626536b8e2e7111784cbbbc15cf52971f824d069c9223facf0527",
+              "size": 1612
+            },
+            {
+              "path": "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+              "action": "add",
+              "sha256": "5dd4f25a4d1c6d666af49ea8d226543376defcec5131fd2b5efffe93203fd159",
+              "size": 1664
+            },
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "c1da280e3afffbe6d7f8040019558a3760efcd1545e0a5ea9f8add9785b36076",
+              "size": 12358,
+              "source_sha256": "7cc5095a24491a8bfdda923e78d168b837e124fd3250262d32347c270424ec88"
+            }
+          ]
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": true,
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "passed"
+          },
+          "focused_tests": 33,
+          "notes": "Focused Python UI/HUD regression tests passed locally. Source audit reports 0 errors after the changelog version fix. The uploaded base archive has unrelated baseline failures outside this overlay slice, so a full-suite pass is not claimed."
+        },
+        "key_files": [
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+          "android/devtool-live-hud/docs/notification-ui-contract.json",
+          "desktop/devtool-control-center/qml/CompactHud.qml",
+          "desktop/devtool-control-center/src/HudMain.cpp",
+          "tests/test_android_notification_mock.py",
+          "tests/test_desktop_hud_autosize.py",
+          "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+          "CHANGELOG.md"
+        ]
+      },
+      "history_id": "89bb5883b36e4f0e8d2a697651734d46"
+    },
+    {
+      "applied_at": "2026-07-23T18:16:02.731622Z",
+      "artifact": "/home/mike/Downloads/devtool_hud_notification_parity_autosize_overlay.zip",
+      "artifact_name": "devtool_hud_notification_parity_autosize_overlay.zip",
+      "type": "overlay",
+      "sha256": "ce000c29fdc4e547ee6755d7962cc9aac471d764200f8c804f38ed427aca83b0",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 12,
+      "change_counts": {
+        "add": 2,
+        "modify": 10
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_hud_notification_parity_autosize_overlay",
+        "description": "Fix Android notification status-line parity, desktop HUD content-aware auto-sizing, and the stale changelog project-version heading while preserving detailed HUD content.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 14,
+        "features": [
+          "Android notification status lead/detail parity below progress bars",
+          "compact expanded and large-text notification layouts include status lines",
+          "notification RemoteViews bind status lead/detail and export extras for diagnostics",
+          "desktop HUD content-aware auto-size with debounce and screen-bound clamping",
+          "manual desktop HUD resizing preserved with double-click return to auto-size",
+          "changelog latest release heading aligned with project version 1.1.0",
+          "regression tests prove notification parity and detailed HUD content preservation"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+              "action": "modify",
+              "sha256": "d4e8a0f4ef08fab43cd3797abe42c3260e48c9388c9e93608f1a94362eb6a622",
+              "size": 33418,
+              "source_sha256": "4bdfe7b47c6996d6a01bb47d3f089aa43b32473aa7e72ce5326af5c9d4caf70e"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+              "action": "modify",
+              "sha256": "5d23b3fd5f86c90d899a456fa0ae812c3ab3b5ab163b9c900eb82f04a81e727f",
+              "size": 26086,
+              "source_sha256": "c2756e51dbbcb94b1df889b1e642270047b55441185abf6c4fbabefd1fd40b0a"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+              "action": "modify",
+              "sha256": "124eab0913d87468015da69080c85f6dc8d3a041f84e04a16d3ebb3f0654f42a",
+              "size": 4361,
+              "source_sha256": "10125ac2af1869ba926dff0e49269904697b3f905ef9811e474cabc462599ac4"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+              "action": "modify",
+              "sha256": "1af3c371334549c3d5a00ce0e2379771e1941291bc17441209f01ee77aaa961e",
+              "size": 15910,
+              "source_sha256": "9b6d5a7c84e875cd14cfe8b4cdf13ca99c88cf57946194a613424b6d50fb660c"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+              "action": "modify",
+              "sha256": "396543c7945003737527a23460d60940f1fce46cea73acefa9d3b0e69ca23065",
+              "size": 13401,
+              "source_sha256": "9521eb022b00448bb16f82017f4af0b9cf838988135ba5259e9ea0c36c346542"
+            },
+            {
+              "path": "android/devtool-live-hud/docs/notification-ui-contract.json",
+              "action": "modify",
+              "sha256": "6b66ad668895c947c1b25eae8590c2711d1a963fece943810a8658f4d44f6fc8",
+              "size": 1337,
+              "source_sha256": "c83a7556116c9dd012c2950b0bfb11b01a2180801ca51fdfd798447dab5749b4"
+            },
+            {
+              "path": "desktop/devtool-control-center/qml/CompactHud.qml",
+              "action": "modify",
+              "sha256": "e0785a1f129ff34e639408f315f2540be8a7cea5446f1a1d019307833979be00",
+              "size": 60499,
+              "source_sha256": "21dacc7c28c89248443bd093cf7b4cea00a070fa11bf38f54d5d76aa642d42d6"
+            },
+            {
+              "path": "desktop/devtool-control-center/src/HudMain.cpp",
+              "action": "modify",
+              "sha256": "e4fdba590b2900754b27332ad0e12afbd9e269f1b797e92281074d5321b7a137",
+              "size": 11743,
+              "source_sha256": "6076766bef8ddf8b72e2c07e8acba72d826fc2710a458f976743f166fc49ceef"
+            },
+            {
+              "path": "tests/test_android_notification_mock.py",
+              "action": "modify",
+              "sha256": "18a98023f4af0f814b77a534982edd0ebf0a7bc5cee70d7b430d0b83d8ca3d6a",
+              "size": 6935,
+              "source_sha256": "c52490fb6e4fa215893bc11d72071698ffca59a0193f2449732446074ce397a7"
+            },
+            {
+              "path": "tests/test_desktop_hud_autosize.py",
+              "action": "add",
+              "sha256": "fb4f0299b70626536b8e2e7111784cbbbc15cf52971f824d069c9223facf0527",
+              "size": 1612
+            },
+            {
+              "path": "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+              "action": "add",
+              "sha256": "5dd4f25a4d1c6d666af49ea8d226543376defcec5131fd2b5efffe93203fd159",
+              "size": 1664
+            },
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "c1da280e3afffbe6d7f8040019558a3760efcd1545e0a5ea9f8add9785b36076",
+              "size": 12358,
+              "source_sha256": "7cc5095a24491a8bfdda923e78d168b837e124fd3250262d32347c270424ec88"
+            }
+          ]
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": true,
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "passed"
+          },
+          "focused_tests": 33,
+          "notes": "Focused Python UI/HUD regression tests passed locally. Source audit reports 0 errors after the changelog version fix. The uploaded base archive has unrelated baseline failures outside this overlay slice, so a full-suite pass is not claimed."
+        },
+        "key_files": [
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+          "android/devtool-live-hud/docs/notification-ui-contract.json",
+          "desktop/devtool-control-center/qml/CompactHud.qml",
+          "desktop/devtool-control-center/src/HudMain.cpp",
+          "tests/test_android_notification_mock.py",
+          "tests/test_desktop_hud_autosize.py",
+          "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+          "CHANGELOG.md"
+        ]
+      },
+      "history_id": "dcec9c59bed84e45a76a7144aa378f1b"
+    },
+    {
+      "applied_at": "2026-07-23T18:18:00.875519Z",
+      "artifact": "/home/mike/Downloads/devtool_hud_notification_parity_autosize_overlay.zip",
+      "artifact_name": "devtool_hud_notification_parity_autosize_overlay.zip",
+      "type": "overlay",
+      "sha256": "ce000c29fdc4e547ee6755d7962cc9aac471d764200f8c804f38ed427aca83b0",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 12,
+      "change_counts": {
+        "add": 2,
+        "modify": 10
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_hud_notification_parity_autosize_overlay",
+        "description": "Fix Android notification status-line parity, desktop HUD content-aware auto-sizing, and the stale changelog project-version heading while preserving detailed HUD content.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 14,
+        "features": [
+          "Android notification status lead/detail parity below progress bars",
+          "compact expanded and large-text notification layouts include status lines",
+          "notification RemoteViews bind status lead/detail and export extras for diagnostics",
+          "desktop HUD content-aware auto-size with debounce and screen-bound clamping",
+          "manual desktop HUD resizing preserved with double-click return to auto-size",
+          "changelog latest release heading aligned with project version 1.1.0",
+          "regression tests prove notification parity and detailed HUD content preservation"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+              "action": "modify",
+              "sha256": "d4e8a0f4ef08fab43cd3797abe42c3260e48c9388c9e93608f1a94362eb6a622",
+              "size": 33418,
+              "source_sha256": "4bdfe7b47c6996d6a01bb47d3f089aa43b32473aa7e72ce5326af5c9d4caf70e"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+              "action": "modify",
+              "sha256": "5d23b3fd5f86c90d899a456fa0ae812c3ab3b5ab163b9c900eb82f04a81e727f",
+              "size": 26086,
+              "source_sha256": "c2756e51dbbcb94b1df889b1e642270047b55441185abf6c4fbabefd1fd40b0a"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+              "action": "modify",
+              "sha256": "124eab0913d87468015da69080c85f6dc8d3a041f84e04a16d3ebb3f0654f42a",
+              "size": 4361,
+              "source_sha256": "10125ac2af1869ba926dff0e49269904697b3f905ef9811e474cabc462599ac4"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+              "action": "modify",
+              "sha256": "1af3c371334549c3d5a00ce0e2379771e1941291bc17441209f01ee77aaa961e",
+              "size": 15910,
+              "source_sha256": "9b6d5a7c84e875cd14cfe8b4cdf13ca99c88cf57946194a613424b6d50fb660c"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+              "action": "modify",
+              "sha256": "396543c7945003737527a23460d60940f1fce46cea73acefa9d3b0e69ca23065",
+              "size": 13401,
+              "source_sha256": "9521eb022b00448bb16f82017f4af0b9cf838988135ba5259e9ea0c36c346542"
+            },
+            {
+              "path": "android/devtool-live-hud/docs/notification-ui-contract.json",
+              "action": "modify",
+              "sha256": "6b66ad668895c947c1b25eae8590c2711d1a963fece943810a8658f4d44f6fc8",
+              "size": 1337,
+              "source_sha256": "c83a7556116c9dd012c2950b0bfb11b01a2180801ca51fdfd798447dab5749b4"
+            },
+            {
+              "path": "desktop/devtool-control-center/qml/CompactHud.qml",
+              "action": "modify",
+              "sha256": "e0785a1f129ff34e639408f315f2540be8a7cea5446f1a1d019307833979be00",
+              "size": 60499,
+              "source_sha256": "21dacc7c28c89248443bd093cf7b4cea00a070fa11bf38f54d5d76aa642d42d6"
+            },
+            {
+              "path": "desktop/devtool-control-center/src/HudMain.cpp",
+              "action": "modify",
+              "sha256": "e4fdba590b2900754b27332ad0e12afbd9e269f1b797e92281074d5321b7a137",
+              "size": 11743,
+              "source_sha256": "6076766bef8ddf8b72e2c07e8acba72d826fc2710a458f976743f166fc49ceef"
+            },
+            {
+              "path": "tests/test_android_notification_mock.py",
+              "action": "modify",
+              "sha256": "18a98023f4af0f814b77a534982edd0ebf0a7bc5cee70d7b430d0b83d8ca3d6a",
+              "size": 6935,
+              "source_sha256": "c52490fb6e4fa215893bc11d72071698ffca59a0193f2449732446074ce397a7"
+            },
+            {
+              "path": "tests/test_desktop_hud_autosize.py",
+              "action": "add",
+              "sha256": "fb4f0299b70626536b8e2e7111784cbbbc15cf52971f824d069c9223facf0527",
+              "size": 1612
+            },
+            {
+              "path": "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+              "action": "add",
+              "sha256": "5dd4f25a4d1c6d666af49ea8d226543376defcec5131fd2b5efffe93203fd159",
+              "size": 1664
+            },
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "c1da280e3afffbe6d7f8040019558a3760efcd1545e0a5ea9f8add9785b36076",
+              "size": 12358,
+              "source_sha256": "7cc5095a24491a8bfdda923e78d168b837e124fd3250262d32347c270424ec88"
+            }
+          ]
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": true,
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "passed"
+          },
+          "focused_tests": 33,
+          "notes": "Focused Python UI/HUD regression tests passed locally. Source audit reports 0 errors after the changelog version fix. The uploaded base archive has unrelated baseline failures outside this overlay slice, so a full-suite pass is not claimed."
+        },
+        "key_files": [
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+          "android/devtool-live-hud/docs/notification-ui-contract.json",
+          "desktop/devtool-control-center/qml/CompactHud.qml",
+          "desktop/devtool-control-center/src/HudMain.cpp",
+          "tests/test_android_notification_mock.py",
+          "tests/test_desktop_hud_autosize.py",
+          "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+          "CHANGELOG.md"
+        ]
+      },
+      "history_id": "9ce2bb1e41f94ba5b4862efe0cf27421"
+    },
+    {
+      "applied_at": "2026-07-23T18:21:46.975955Z",
+      "artifact": "/home/mike/Downloads/devtool_hud_notification_parity_autosize_overlay.zip",
+      "artifact_name": "devtool_hud_notification_parity_autosize_overlay.zip",
+      "type": "overlay",
+      "sha256": "ce000c29fdc4e547ee6755d7962cc9aac471d764200f8c804f38ed427aca83b0",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 12,
+      "change_counts": {
+        "add": 2,
+        "modify": 10
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_hud_notification_parity_autosize_overlay",
+        "description": "Fix Android notification status-line parity, desktop HUD content-aware auto-sizing, and the stale changelog project-version heading while preserving detailed HUD content.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 14,
+        "features": [
+          "Android notification status lead/detail parity below progress bars",
+          "compact expanded and large-text notification layouts include status lines",
+          "notification RemoteViews bind status lead/detail and export extras for diagnostics",
+          "desktop HUD content-aware auto-size with debounce and screen-bound clamping",
+          "manual desktop HUD resizing preserved with double-click return to auto-size",
+          "changelog latest release heading aligned with project version 1.1.0",
+          "regression tests prove notification parity and detailed HUD content preservation"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+              "action": "modify",
+              "sha256": "d4e8a0f4ef08fab43cd3797abe42c3260e48c9388c9e93608f1a94362eb6a622",
+              "size": 33418,
+              "source_sha256": "4bdfe7b47c6996d6a01bb47d3f089aa43b32473aa7e72ce5326af5c9d4caf70e"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+              "action": "modify",
+              "sha256": "5d23b3fd5f86c90d899a456fa0ae812c3ab3b5ab163b9c900eb82f04a81e727f",
+              "size": 26086,
+              "source_sha256": "c2756e51dbbcb94b1df889b1e642270047b55441185abf6c4fbabefd1fd40b0a"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+              "action": "modify",
+              "sha256": "124eab0913d87468015da69080c85f6dc8d3a041f84e04a16d3ebb3f0654f42a",
+              "size": 4361,
+              "source_sha256": "10125ac2af1869ba926dff0e49269904697b3f905ef9811e474cabc462599ac4"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+              "action": "modify",
+              "sha256": "1af3c371334549c3d5a00ce0e2379771e1941291bc17441209f01ee77aaa961e",
+              "size": 15910,
+              "source_sha256": "9b6d5a7c84e875cd14cfe8b4cdf13ca99c88cf57946194a613424b6d50fb660c"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+              "action": "modify",
+              "sha256": "396543c7945003737527a23460d60940f1fce46cea73acefa9d3b0e69ca23065",
+              "size": 13401,
+              "source_sha256": "9521eb022b00448bb16f82017f4af0b9cf838988135ba5259e9ea0c36c346542"
+            },
+            {
+              "path": "android/devtool-live-hud/docs/notification-ui-contract.json",
+              "action": "modify",
+              "sha256": "6b66ad668895c947c1b25eae8590c2711d1a963fece943810a8658f4d44f6fc8",
+              "size": 1337,
+              "source_sha256": "c83a7556116c9dd012c2950b0bfb11b01a2180801ca51fdfd798447dab5749b4"
+            },
+            {
+              "path": "desktop/devtool-control-center/qml/CompactHud.qml",
+              "action": "modify",
+              "sha256": "e0785a1f129ff34e639408f315f2540be8a7cea5446f1a1d019307833979be00",
+              "size": 60499,
+              "source_sha256": "21dacc7c28c89248443bd093cf7b4cea00a070fa11bf38f54d5d76aa642d42d6"
+            },
+            {
+              "path": "desktop/devtool-control-center/src/HudMain.cpp",
+              "action": "modify",
+              "sha256": "e4fdba590b2900754b27332ad0e12afbd9e269f1b797e92281074d5321b7a137",
+              "size": 11743,
+              "source_sha256": "6076766bef8ddf8b72e2c07e8acba72d826fc2710a458f976743f166fc49ceef"
+            },
+            {
+              "path": "tests/test_android_notification_mock.py",
+              "action": "modify",
+              "sha256": "18a98023f4af0f814b77a534982edd0ebf0a7bc5cee70d7b430d0b83d8ca3d6a",
+              "size": 6935,
+              "source_sha256": "c52490fb6e4fa215893bc11d72071698ffca59a0193f2449732446074ce397a7"
+            },
+            {
+              "path": "tests/test_desktop_hud_autosize.py",
+              "action": "add",
+              "sha256": "fb4f0299b70626536b8e2e7111784cbbbc15cf52971f824d069c9223facf0527",
+              "size": 1612
+            },
+            {
+              "path": "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+              "action": "add",
+              "sha256": "5dd4f25a4d1c6d666af49ea8d226543376defcec5131fd2b5efffe93203fd159",
+              "size": 1664
+            },
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "c1da280e3afffbe6d7f8040019558a3760efcd1545e0a5ea9f8add9785b36076",
+              "size": 12358,
+              "source_sha256": "7cc5095a24491a8bfdda923e78d168b837e124fd3250262d32347c270424ec88"
+            }
+          ]
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": true,
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "passed"
+          },
+          "focused_tests": 33,
+          "notes": "Focused Python UI/HUD regression tests passed locally. Source audit reports 0 errors after the changelog version fix. The uploaded base archive has unrelated baseline failures outside this overlay slice, so a full-suite pass is not claimed."
+        },
+        "key_files": [
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+          "android/devtool-live-hud/docs/notification-ui-contract.json",
+          "desktop/devtool-control-center/qml/CompactHud.qml",
+          "desktop/devtool-control-center/src/HudMain.cpp",
+          "tests/test_android_notification_mock.py",
+          "tests/test_desktop_hud_autosize.py",
+          "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+          "CHANGELOG.md"
+        ]
+      },
+      "history_id": "aa0eab5d6e7e49ff949c89b2bcb36f07"
+    },
+    {
+      "applied_at": "2026-07-23T18:22:35.061090Z",
+      "artifact": "/home/mike/Downloads/devtool_hud_notification_parity_autosize_overlay.zip",
+      "artifact_name": "devtool_hud_notification_parity_autosize_overlay.zip",
+      "type": "overlay",
+      "sha256": "ce000c29fdc4e547ee6755d7962cc9aac471d764200f8c804f38ed427aca83b0",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 12,
+      "change_counts": {
+        "add": 2,
+        "modify": 10
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_hud_notification_parity_autosize_overlay",
+        "description": "Fix Android notification status-line parity, desktop HUD content-aware auto-sizing, and the stale changelog project-version heading while preserving detailed HUD content.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 14,
+        "features": [
+          "Android notification status lead/detail parity below progress bars",
+          "compact expanded and large-text notification layouts include status lines",
+          "notification RemoteViews bind status lead/detail and export extras for diagnostics",
+          "desktop HUD content-aware auto-size with debounce and screen-bound clamping",
+          "manual desktop HUD resizing preserved with double-click return to auto-size",
+          "changelog latest release heading aligned with project version 1.1.0",
+          "regression tests prove notification parity and detailed HUD content preservation"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+              "action": "modify",
+              "sha256": "d4e8a0f4ef08fab43cd3797abe42c3260e48c9388c9e93608f1a94362eb6a622",
+              "size": 33418,
+              "source_sha256": "4bdfe7b47c6996d6a01bb47d3f089aa43b32473aa7e72ce5326af5c9d4caf70e"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+              "action": "modify",
+              "sha256": "5d23b3fd5f86c90d899a456fa0ae812c3ab3b5ab163b9c900eb82f04a81e727f",
+              "size": 26086,
+              "source_sha256": "c2756e51dbbcb94b1df889b1e642270047b55441185abf6c4fbabefd1fd40b0a"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+              "action": "modify",
+              "sha256": "124eab0913d87468015da69080c85f6dc8d3a041f84e04a16d3ebb3f0654f42a",
+              "size": 4361,
+              "source_sha256": "10125ac2af1869ba926dff0e49269904697b3f905ef9811e474cabc462599ac4"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+              "action": "modify",
+              "sha256": "1af3c371334549c3d5a00ce0e2379771e1941291bc17441209f01ee77aaa961e",
+              "size": 15910,
+              "source_sha256": "9b6d5a7c84e875cd14cfe8b4cdf13ca99c88cf57946194a613424b6d50fb660c"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+              "action": "modify",
+              "sha256": "396543c7945003737527a23460d60940f1fce46cea73acefa9d3b0e69ca23065",
+              "size": 13401,
+              "source_sha256": "9521eb022b00448bb16f82017f4af0b9cf838988135ba5259e9ea0c36c346542"
+            },
+            {
+              "path": "android/devtool-live-hud/docs/notification-ui-contract.json",
+              "action": "modify",
+              "sha256": "6b66ad668895c947c1b25eae8590c2711d1a963fece943810a8658f4d44f6fc8",
+              "size": 1337,
+              "source_sha256": "c83a7556116c9dd012c2950b0bfb11b01a2180801ca51fdfd798447dab5749b4"
+            },
+            {
+              "path": "desktop/devtool-control-center/qml/CompactHud.qml",
+              "action": "modify",
+              "sha256": "e0785a1f129ff34e639408f315f2540be8a7cea5446f1a1d019307833979be00",
+              "size": 60499,
+              "source_sha256": "21dacc7c28c89248443bd093cf7b4cea00a070fa11bf38f54d5d76aa642d42d6"
+            },
+            {
+              "path": "desktop/devtool-control-center/src/HudMain.cpp",
+              "action": "modify",
+              "sha256": "e4fdba590b2900754b27332ad0e12afbd9e269f1b797e92281074d5321b7a137",
+              "size": 11743,
+              "source_sha256": "6076766bef8ddf8b72e2c07e8acba72d826fc2710a458f976743f166fc49ceef"
+            },
+            {
+              "path": "tests/test_android_notification_mock.py",
+              "action": "modify",
+              "sha256": "18a98023f4af0f814b77a534982edd0ebf0a7bc5cee70d7b430d0b83d8ca3d6a",
+              "size": 6935,
+              "source_sha256": "c52490fb6e4fa215893bc11d72071698ffca59a0193f2449732446074ce397a7"
+            },
+            {
+              "path": "tests/test_desktop_hud_autosize.py",
+              "action": "add",
+              "sha256": "fb4f0299b70626536b8e2e7111784cbbbc15cf52971f824d069c9223facf0527",
+              "size": 1612
+            },
+            {
+              "path": "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+              "action": "add",
+              "sha256": "5dd4f25a4d1c6d666af49ea8d226543376defcec5131fd2b5efffe93203fd159",
+              "size": 1664
+            },
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "c1da280e3afffbe6d7f8040019558a3760efcd1545e0a5ea9f8add9785b36076",
+              "size": 12358,
+              "source_sha256": "7cc5095a24491a8bfdda923e78d168b837e124fd3250262d32347c270424ec88"
+            }
+          ]
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": true,
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "passed"
+          },
+          "focused_tests": 33,
+          "notes": "Focused Python UI/HUD regression tests passed locally. Source audit reports 0 errors after the changelog version fix. The uploaded base archive has unrelated baseline failures outside this overlay slice, so a full-suite pass is not claimed."
+        },
+        "key_files": [
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+          "android/devtool-live-hud/docs/notification-ui-contract.json",
+          "desktop/devtool-control-center/qml/CompactHud.qml",
+          "desktop/devtool-control-center/src/HudMain.cpp",
+          "tests/test_android_notification_mock.py",
+          "tests/test_desktop_hud_autosize.py",
+          "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+          "CHANGELOG.md"
+        ]
+      },
+      "history_id": "ef3d227927f1495b8bf94e5b95ae8312"
+    },
+    {
+      "applied_at": "2026-07-23T18:31:21.058900Z",
+      "artifact": "/home/mike/Downloads/devtool_hud_notification_parity_autosize_overlay.zip",
+      "artifact_name": "devtool_hud_notification_parity_autosize_overlay.zip",
+      "type": "overlay",
+      "sha256": "ce000c29fdc4e547ee6755d7962cc9aac471d764200f8c804f38ed427aca83b0",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 12,
+      "change_counts": {
+        "add": 2,
+        "modify": 10
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_hud_notification_parity_autosize_overlay",
+        "description": "Fix Android notification status-line parity, desktop HUD content-aware auto-sizing, and the stale changelog project-version heading while preserving detailed HUD content.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 14,
+        "features": [
+          "Android notification status lead/detail parity below progress bars",
+          "compact expanded and large-text notification layouts include status lines",
+          "notification RemoteViews bind status lead/detail and export extras for diagnostics",
+          "desktop HUD content-aware auto-size with debounce and screen-bound clamping",
+          "manual desktop HUD resizing preserved with double-click return to auto-size",
+          "changelog latest release heading aligned with project version 1.1.0",
+          "regression tests prove notification parity and detailed HUD content preservation"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+              "action": "modify",
+              "sha256": "d4e8a0f4ef08fab43cd3797abe42c3260e48c9388c9e93608f1a94362eb6a622",
+              "size": 33418,
+              "source_sha256": "4bdfe7b47c6996d6a01bb47d3f089aa43b32473aa7e72ce5326af5c9d4caf70e"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+              "action": "modify",
+              "sha256": "5d23b3fd5f86c90d899a456fa0ae812c3ab3b5ab163b9c900eb82f04a81e727f",
+              "size": 26086,
+              "source_sha256": "c2756e51dbbcb94b1df889b1e642270047b55441185abf6c4fbabefd1fd40b0a"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+              "action": "modify",
+              "sha256": "124eab0913d87468015da69080c85f6dc8d3a041f84e04a16d3ebb3f0654f42a",
+              "size": 4361,
+              "source_sha256": "10125ac2af1869ba926dff0e49269904697b3f905ef9811e474cabc462599ac4"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+              "action": "modify",
+              "sha256": "1af3c371334549c3d5a00ce0e2379771e1941291bc17441209f01ee77aaa961e",
+              "size": 15910,
+              "source_sha256": "9b6d5a7c84e875cd14cfe8b4cdf13ca99c88cf57946194a613424b6d50fb660c"
+            },
+            {
+              "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+              "action": "modify",
+              "sha256": "396543c7945003737527a23460d60940f1fce46cea73acefa9d3b0e69ca23065",
+              "size": 13401,
+              "source_sha256": "9521eb022b00448bb16f82017f4af0b9cf838988135ba5259e9ea0c36c346542"
+            },
+            {
+              "path": "android/devtool-live-hud/docs/notification-ui-contract.json",
+              "action": "modify",
+              "sha256": "6b66ad668895c947c1b25eae8590c2711d1a963fece943810a8658f4d44f6fc8",
+              "size": 1337,
+              "source_sha256": "c83a7556116c9dd012c2950b0bfb11b01a2180801ca51fdfd798447dab5749b4"
+            },
+            {
+              "path": "desktop/devtool-control-center/qml/CompactHud.qml",
+              "action": "modify",
+              "sha256": "e0785a1f129ff34e639408f315f2540be8a7cea5446f1a1d019307833979be00",
+              "size": 60499,
+              "source_sha256": "21dacc7c28c89248443bd093cf7b4cea00a070fa11bf38f54d5d76aa642d42d6"
+            },
+            {
+              "path": "desktop/devtool-control-center/src/HudMain.cpp",
+              "action": "modify",
+              "sha256": "e4fdba590b2900754b27332ad0e12afbd9e269f1b797e92281074d5321b7a137",
+              "size": 11743,
+              "source_sha256": "6076766bef8ddf8b72e2c07e8acba72d826fc2710a458f976743f166fc49ceef"
+            },
+            {
+              "path": "tests/test_android_notification_mock.py",
+              "action": "modify",
+              "sha256": "18a98023f4af0f814b77a534982edd0ebf0a7bc5cee70d7b430d0b83d8ca3d6a",
+              "size": 6935,
+              "source_sha256": "c52490fb6e4fa215893bc11d72071698ffca59a0193f2449732446074ce397a7"
+            },
+            {
+              "path": "tests/test_desktop_hud_autosize.py",
+              "action": "add",
+              "sha256": "fb4f0299b70626536b8e2e7111784cbbbc15cf52971f824d069c9223facf0527",
+              "size": 1612
+            },
+            {
+              "path": "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+              "action": "add",
+              "sha256": "5dd4f25a4d1c6d666af49ea8d226543376defcec5131fd2b5efffe93203fd159",
+              "size": 1664
+            },
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "c1da280e3afffbe6d7f8040019558a3760efcd1545e0a5ea9f8add9785b36076",
+              "size": 12358,
+              "source_sha256": "7cc5095a24491a8bfdda923e78d168b837e124fd3250262d32347c270424ec88"
+            }
+          ]
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": true,
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "passed"
+          },
+          "focused_tests": 33,
+          "notes": "Focused Python UI/HUD regression tests passed locally. Source audit reports 0 errors after the changelog version fix. The uploaded base archive has unrelated baseline failures outside this overlay slice, so a full-suite pass is not claimed."
+        },
+        "key_files": [
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/HudUpdate.java",
+          "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+          "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+          "android/devtool-live-hud/docs/notification-ui-contract.json",
+          "desktop/devtool-control-center/qml/CompactHud.qml",
+          "desktop/devtool-control-center/src/HudMain.cpp",
+          "tests/test_android_notification_mock.py",
+          "tests/test_desktop_hud_autosize.py",
+          "PHASE_8_HUD_NOTIFICATION_PARITY_AUTOSIZE.md",
+          "CHANGELOG.md"
+        ]
+      },
+      "history_id": "e684691dd62447739ca617b0c70f683f"
     }
   ]
 }

@@ -63,6 +63,10 @@ _PY_STYLE = re.compile(
     r"^(?P<file>[^:]+):(?P<line>\d+):(?:(?P<col>\d+):)?\s+"
     r"(?P<code>[A-Z]+\d+)?\s*(?P<message>.+)$"
 )
+_RUFF_FINDING = re.compile(
+    r"^(?P<code>[A-Z]{1,5}\d{0,4})(?:\s+\[[^\]]+\])?\s+(?P<message>.+)$"
+)
+_RUFF_LOCATION = re.compile(r"^-->\s+(?P<file>.+?):(?P<line>\d+):(?P<col>\d+)$")
 _MYPY = re.compile(
     r"^(?P<file>[^:]+):(?P<line>\d+):(?:(?P<col>\d+):)?\s+"
     r"(?P<severity>error|note|warning):\s+(?P<message>.+?)(?:\s+\[(?P<code>[^\]]+)\])?$",
@@ -141,6 +145,21 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                     line=int(match.group("line")),
                 ))
                 index += 1
+                continue
+
+        match = _RUFF_FINDING.match(stripped)
+        if match and index + 1 < len(lines):
+            location = _RUFF_LOCATION.match(lines[index + 1].strip())
+            if location:
+                issues.append(Issue(
+                    "warning",
+                    command_name,
+                    relativize(repo_root, location.group("file")),
+                    match.group("code").upper(),
+                    match.group("message").strip(),
+                    line=int(location.group("line")),
+                ))
+                index += 2
                 continue
 
         if stripped.startswith("/") and "): " in stripped:

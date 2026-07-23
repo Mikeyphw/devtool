@@ -4,6 +4,7 @@ import json
 import tempfile
 import sys
 import unittest
+from io import StringIO
 from unittest import mock
 from pathlib import Path
 import zipfile
@@ -22,6 +23,7 @@ from devtool.python_support import (
     ensure_hatch_environment,
     inspect_python_project,
     python_cache_env,
+    run_tool,
     python_validation_scope,
     prepare_dist,
     resolve_environment,
@@ -165,6 +167,40 @@ class PythonSupportTests(unittest.TestCase):
         self.assertEqual(argv[-2:], ["check", "."])
         self.assertNotIn("python ruff", " ".join(argv))
 
+    def test_ruff_findings_are_reported_as_warnings_without_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            (root / "src").mkdir()
+            (root / "src" / "demo.py").write_text("import importlib\n", encoding="utf-8")
+            proc = mock.Mock(
+                returncode=1,
+                stdout=(
+                    "F401 [*] `importlib` imported but unused\n"
+                    " --> src/demo.py:1:1\n"
+                    "help: Remove unused import: `importlib`\n"
+                    "Found 1 error.\n"
+                ),
+            )
+            args = mock.Mock(
+                root=root,
+                manager="auto",
+                framework="auto",
+                python="python3",
+                environment="",
+                timeout=30,
+                tool="ruff",
+                tool_args=("check", "."),
+            )
+            with mock.patch.dict("os.environ", {"DEVTOOL_XDG_DIR": xdg}, clear=False), \
+                mock.patch("devtool.python_support._run_capture", return_value=proc), \
+                mock.patch("sys.stdout", new=StringIO()) as stdout:
+                rc = run_tool(args)
+
+        self.assertEqual(rc, 0)
+        self.assertIn('"warnings": 1', stdout.getvalue())
+
     def test_package_command_is_honored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -251,6 +287,21 @@ class PythonSupportTests(unittest.TestCase):
                 info = inspect_python_project(root, "venv")
                 plan = resolve_environment(info, configured_python=sys.executable)
                 expected = default_python_environment_root(root)
+        self.assertEqual(Path(plan.environment_root), expected)
+        self.assertTrue(str(plan.environment_root).startswith(str(Path(xdg) / "python" / "venvs")))
+        self.assertFalse(str(plan.environment_root).startswith(str(root)))
+
+    def test_implicit_uv_environment_uses_xdg_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp) / "demo"
+            root.mkdir()
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            with mock.patch.dict("os.environ", {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                info = inspect_python_project(root, "auto")
+                plan = resolve_environment(info, configured_python=sys.executable)
+                expected = default_python_environment_root(root)
+        self.assertEqual(info.manager, "uv")
         self.assertEqual(Path(plan.environment_root), expected)
         self.assertTrue(str(plan.environment_root).startswith(str(Path(xdg) / "python" / "venvs")))
         self.assertFalse(str(plan.environment_root).startswith(str(root)))

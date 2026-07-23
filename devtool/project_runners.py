@@ -1325,6 +1325,11 @@ class PythonRunner(ProjectRunner):
         from .python_support import python_cache_env
         env = _optimized_env(config, self.kind)
         env.update(python_cache_env(self._root(config), config.execution_environment))
+        info = self._info(config)
+        if info.manager == "uv":
+            plan = self._plan(config)
+            if plan.environment_root:
+                env.setdefault("UV_PROJECT_ENVIRONMENT", plan.environment_root)
         options = self._options(config)
         if isolated or bool(options.get("isolation", False)):
             home = self._root(config) / ".devtool" / "tmp" / "python-home"
@@ -1815,7 +1820,6 @@ class PythonRunner(ProjectRunner):
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
         root = self._root(config)
-        info = self._info(config)
         options = self._options(config)
         if action == "restore":
             return self._restore_specs(config)
