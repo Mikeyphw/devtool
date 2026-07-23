@@ -1414,6 +1414,13 @@ class PythonRunner(ProjectRunner):
         rows.append(("requires_python", plan.compatibility_detail))
         return rows
 
+    def _needs_python_environment_bootstrap(self, config: ProjectConfig) -> bool:
+        info = self._info(config)
+        if info.manager != "venv":
+            return False
+        plan = self._plan(config)
+        return bool(plan.environment_root and not Path(plan.python).is_file())
+
     def _validation_scope(self, config: ProjectConfig):
         from .python_support import python_validation_scope
         validation = config.runner_options.get("validation", {})
@@ -1899,6 +1906,12 @@ class PythonRunner(ProjectRunner):
 
         if not skip_restore:
             specs.extend(self._restore_specs(config))
+        elif self._needs_python_environment_bootstrap(config):
+            bootstrap_specs = self._restore_specs(config)
+            for spec in bootstrap_specs:
+                spec.metadata["implicit_environment_bootstrap"] = True
+                spec.metadata["restore_skipped_but_environment_missing"] = True
+            specs.extend(bootstrap_specs)
         specs.append(self._source_audit_spec(config))
         specs.extend(self._support_command_specs(config, "generated_commands", "generated"))
         if not skip_test:

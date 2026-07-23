@@ -280,6 +280,26 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
         self.assertEqual(specs[0].argv[:3], [sys.executable, "-m", "devtool.python_support"])
         self.assertNotIn(str(stale), " ".join(specs[-1].argv))
 
+    def test_python_skip_restore_bootstraps_missing_venv_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_demo.py").write_text("def test_demo(): pass\n", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "venv", "environment": ".devtool/venvs/python"}},
+            )
+            specs = build_validation_specs(config, skip_restore=True)
+        names = [spec.name for spec in specs]
+        self.assertIn("venv", names)
+        self.assertIn("python-environment", names)
+        self.assertLess(names.index("python-environment"), names.index("test"))
+        bootstrap = next(spec for spec in specs if spec.name == "venv")
+        self.assertTrue(bootstrap.metadata["implicit_environment_bootstrap"])
+
     def test_android_gradle_receives_environment_aware_worker_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"HOME": tmp, "DEVTOOL_MAX_WORKERS": "2"}, clear=False):
             root = Path(tmp)
