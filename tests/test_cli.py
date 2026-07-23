@@ -627,8 +627,6 @@ artifact-cleanup: ok exit=0 time=0.10s
         args = SimpleNamespace(
             no_clipboard=False,
             copy=True,
-            copy_summary=False,
-            copy_json=False,
             copy_via="auto",
         )
         copied: list[str] = []
@@ -676,8 +674,6 @@ artifact-cleanup: ok exit=0 time=0.10s
         args = SimpleNamespace(
             no_clipboard=False,
             copy=True,
-            copy_summary=False,
-            copy_json=False,
             copy_via="auto",
         )
         copied: list[str] = []
@@ -755,8 +751,6 @@ artifact-cleanup: ok exit=0 time=0.10s
         args = SimpleNamespace(
             no_clipboard=False,
             copy=True,
-            copy_summary=False,
-            copy_json=False,
             copy_via="auto",
         )
         copied: list[str] = []
@@ -827,8 +821,6 @@ artifact-cleanup: ok exit=0 time=0.10s
         args = SimpleNamespace(
             no_clipboard=False,
             copy=True,
-            copy_summary=False,
-            copy_json=False,
             copy_via="auto",
         )
         copied: list[str] = []
@@ -1066,26 +1058,22 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertTrue(any(result.name == "validation-reused" for result in results))
             self.assertIn("same workspace is restored, built, and tested only once", raw)
 
-    def test_copy_json_uses_json_summary_even_without_json_stdout(self) -> None:
+    def test_machine_file_writes_machine_envelope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
             (root / "App.sln").write_text("", encoding="utf-8")
-            copied: list[str] = []
+            machine_file = root / "machine.json"
 
-            with (
-                patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or __import__("devtool.clipboard").clipboard.ClipboardResult(True, backend="xclip")),
-                patch("devtool.cli.console.print"),
-            ):
-                rc = main(["--repo", str(root), "--copy-json", "--dry-run", "validate"])
+            with patch("devtool.cli.console.print"):
+                rc = main(["--repo", str(root), "--machine-file", str(machine_file), "--dry-run", "validate"])
 
             self.assertEqual(rc, 0)
-            self.assertEqual(len(copied), 1)
-            copied_json = copied[0]
-            self.assertIn('"warnings"', copied_json)
-            self.assertIn('"errors"', copied_json)
-            self.assertIn('"failed"', copied_json)
-            self.assertNotIn('"failures"', copied_json)
+            self.assertTrue(machine_file.is_file())
+            payload = json.loads(machine_file.read_text(encoding="utf-8"))
+            self.assertEqual(payload["schema_version"], 1)
+            self.assertIn("clipboard", payload)
+            self.assertIn("notification", payload)
 
     def test_copy_uses_result_success_not_truthiness(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1117,45 +1105,46 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertEqual(rc, 0)
             mock_confirm.assert_not_called()
 
-    def test_parser_accepts_stdout_payload_json(self) -> None:
+    def test_parser_accepts_stdout_payload_summary(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["--stdout-payload", "json", "validate"])
-        self.assertEqual(args.stdout_payload, "json")
+        args = parser.parse_args(["--stdout-payload", "summary", "validate"])
+        self.assertEqual(args.stdout_payload, "summary")
 
     def test_parser_rejects_removed_stdout_payload_aliases(self) -> None:
         parser = build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--stdout-payload", "json", "validate"])
         with self.assertRaises(SystemExit):
             parser.parse_args(["--stdout-payload", "machine-json", "validate"])
         with self.assertRaises(SystemExit):
             parser.parse_args(["--stdout-payload", "runner-json", "validate"])
 
-    def test_json_cannot_be_combined_with_stdout_payload(self) -> None:
+    def test_removed_json_flag_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "App.sln").write_text("", encoding="utf-8")
             with self.assertRaises(SystemExit):
-                main(["--repo", str(root), "--json", "--stdout-payload", "raw", "validate"])
+                main(["--repo", str(root), "--json", "validate"])
 
     def test_copy_flags_must_not_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "App.sln").write_text("", encoding="utf-8")
             with self.assertRaises(SystemExit):
-                main(["--repo", str(root), "--copy", "--copy-json", "validate"])
+                main(["--repo", str(root), "--copy", "--no-clipboard", "validate"])
 
-    def test_stdout_payload_json_prints_envelope(self) -> None:
+    def test_stdout_payload_summary_prints_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
             (root / "App.sln").write_text("", encoding="utf-8")
             stream = io.StringIO()
             with redirect_stdout(stream):
-                rc = main(["--repo", str(root), "--stdout-payload", "json", "--dry-run", "validate"])
+                rc = main(["--repo", str(root), "--stdout-payload", "summary", "--dry-run", "validate"])
             self.assertEqual(rc, 0)
-            payload = json.loads(stream.getvalue())
-            self.assertEqual(payload["schema_version"], 1)
-            self.assertIn("clipboard", payload)
-            self.assertIn("notification", payload)
+            output = stream.getvalue()
+            self.assertTrue(output.strip())
+            self.assertIn("skipped", output)
 
     def test_json_summary_uses_failed_not_failures(self) -> None:
         payload = build_json_summary([], repo_root="/tmp/repo")
@@ -1327,6 +1316,99 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertTrue(sidecar.exists())
             self.assertEqual((root / "existing.txt").read_text(encoding="utf-8"), "before")
             self.assertFalse((root / "new.txt").exists())
+
+    def test_apply_overlay_continues_after_successful_stale_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            artifact = root / "artifact.zip"
+            config = ProjectConfig(repo_root=root, kind="android", runner_options={})
+            calls: list[str] = []
+            summary_calls: list[list[str]] = []
+
+            def fake_emit_summary(results, config, **kwargs):
+                summary_calls.append([result.name for result in results])
+                summary_text = "\n".join(
+                    f"{result.name}: ok exit={result.returncode} time={result.duration_seconds:.2f}s"
+                    for result in results
+                )
+                return (
+                    {"warnings": 0, "errors": 0, "failed": 0, "skipped": 0},
+                    summary_text,
+                    json.dumps({"warnings": 0, "errors": 0, "failed": 0, "skipped": 0}),
+                    json.dumps({"results": [result.name for result in results]}),
+                )
+
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False), \
+                patch("devtool.cli._load_command_config", return_value=config), \
+                patch("devtool.cli._apply_artifact_manifest_defaults"), \
+                patch("devtool.cli.find_active_transaction", return_value=str(root / "stale.tx")), \
+                patch("devtool.cli.transaction_pending_validation", return_value=False), \
+                patch("devtool.cli.read_artifact_manifest", return_value={"validation": {"rollback_on_failure": True}}), \
+                patch("devtool.cli._run_transaction_rollback", side_effect=lambda *args, **kwargs: (calls.append("rollback") or OperationResult("apply-rollback", ["rsync", "rollback"], 0, 0.1, "rolled back", [], metadata={"rolled_back_during_apply": True}), "$ rsync rollback\nrolled back")), \
+                patch("devtool.cli._run_apply", side_effect=lambda *args, **kwargs: (calls.append("apply") or [OperationResult("apply-overlay", ["apply-overlay", str(artifact)], 0, 0.2, "applied", [], metadata={"transaction_path": str(root / "tx")})], "apply raw")), \
+                patch("devtool.cli._reload_config_after_artifact_apply", return_value=config), \
+                patch("devtool.cli._maybe_commit_after_apply", side_effect=lambda config, args, results, raw_output, log_path=None: (results, raw_output)), \
+                patch("devtool.cli._record_apply_history"), \
+                patch("devtool.cli._delete_original_artifact_after_apply", return_value=None), \
+                patch("devtool.cli._finish_live_progress"), \
+                patch("devtool.cli.notify_apply_finished"), \
+                patch("devtool.cli._emit_summary", side_effect=fake_emit_summary), \
+                patch("devtool.cli.render_summary"):
+                rc = main(["--repo", str(root), "--no-clipboard", "apply-overlay", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(calls, ["rollback", "apply"])
+            self.assertEqual(summary_calls[-1], ["apply-rollback", "apply-overlay"])
+
+    def test_apply_overlay_no_rollback_on_failure_skips_validation_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            artifact = root / "artifact.zip"
+            config = ProjectConfig(repo_root=root, kind="android", runner_options={})
+            validation_failure = OperationResult("build", ["./gradlew", "build"], 1, 0.3, "boom", [])
+
+            def fake_emit_summary(results, config, **kwargs):
+                summary_text = "\n".join(
+                    f"{result.name}: {'ok' if result.returncode == 0 else 'failed'} exit={result.returncode} time={result.duration_seconds:.2f}s"
+                    for result in results
+                )
+                return (
+                    {"warnings": 0, "errors": 1, "failed": 1, "skipped": 0},
+                    summary_text,
+                    json.dumps({"warnings": 0, "errors": 1, "failed": 1, "skipped": 0}),
+                    json.dumps({"results": [result.name for result in results]}),
+                )
+
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False), \
+                patch("devtool.cli._load_command_config", return_value=config), \
+                patch("devtool.cli._apply_artifact_manifest_defaults"), \
+                patch("devtool.cli.find_active_transaction", return_value=None), \
+                patch("devtool.cli.read_artifact_manifest", return_value={"validation": {"rollback_on_failure": True}}), \
+                patch("devtool.cli._run_apply", return_value=([OperationResult("apply-overlay", ["apply-overlay", str(artifact)], 0, 0.2, "applied", [], metadata={"transaction_path": str(root / "tx")})], "apply raw")), \
+                patch("devtool.cli._reload_config_after_artifact_apply", return_value=config), \
+                patch("devtool.cli._validation_specs_for_args", return_value=[CommandSpec("build", ["./gradlew", "build"])]), \
+                patch("devtool.cli._run_specs_for_args", return_value=([validation_failure], "validation raw")), \
+                patch("devtool.cli._attempt_auto_repair", return_value=([validation_failure], "", None)), \
+                patch("devtool.cli._maybe_commit_after_apply", side_effect=lambda config, args, results, raw_output, log_path=None: (results, raw_output)), \
+                patch("devtool.cli._record_apply_history"), \
+                patch("devtool.cli._delete_original_artifact_after_apply", return_value=None), \
+                patch("devtool.cli._finish_live_progress"), \
+                patch("devtool.cli.notify_apply_finished"), \
+                patch("devtool.cli._emit_summary", side_effect=fake_emit_summary), \
+                patch("devtool.cli._run_transaction_rollback", side_effect=AssertionError("rollback should not run when disabled")), \
+                patch("devtool.cli.render_summary"):
+                rc = main([
+                    "--repo", str(root),
+                    "--no-clipboard",
+                    "apply-overlay",
+                    "--validate",
+                    "--no-rollback-on-failure",
+                    str(artifact),
+                ])
+
+            self.assertEqual(rc, 1)
 
     def test_apply_snapshot_skips_metadata_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1809,7 +1891,7 @@ def test_hud_overlay_can_be_requested_by_environment(monkeypatch, tmp_path) -> N
 
 
 class OverlayClipboardSummaryTests(unittest.TestCase):
-    def test_single_overlay_copy_summary_names_applied_artifact(self) -> None:
+    def test_single_overlay_copy_names_applied_artifact(self) -> None:
         from types import SimpleNamespace
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1829,7 +1911,7 @@ class OverlayClipboardSummaryTests(unittest.TestCase):
                 patch("devtool.cli.copy_text", side_effect=capture),
             ):
                 rc = main([
-                    "--repo", str(root), "--yes", "--copy-summary",
+                    "--repo", str(root), "--yes", "--copy",
                     "apply-overlay", "--keep-artifact", str(artifact),
                 ])
 

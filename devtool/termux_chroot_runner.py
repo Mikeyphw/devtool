@@ -39,12 +39,12 @@ from .xdg import cache_dir, state_dir
 
 _PATH_VALUE_FLAGS = {
     "-r", "--repo", "-c", "--config", "--solution", "--project",
-    "--machine-file", "--save-json-payload", "--json-output",
+    "--machine-file",
     "-o", "--output",
 }
 
 _FLAGS_WITH_VALUES = _PATH_VALUE_FLAGS | {
-    "--target", "--machine", "--hud-mode",
+    "--target", "--hud-mode",
     "--theme", "--stdout-payload", "--copy-via", "--commit", "--watch-interval",
     "--matrix", "--matrix-mode", "--format", "--repo-name", "--project-type",
     "--build-target", "--run-target", "--target-name", "--solution-target",
@@ -150,20 +150,11 @@ def _find_flag_value(argv: list[str], flags: set[str]) -> str:
 
 
 def _copy_label(copy_mode: str) -> str:
-    if copy_mode == "summary":
-        return "Summary"
-    if copy_mode == "json":
-        return "JSON summary"
     return "Raw command output"
 
 
 def _clipboard_text_from_machine_payload(payload: dict, copy_mode: str) -> str:
     clipboard = payload.get("clipboard", {}) if isinstance(payload, dict) else {}
-    if copy_mode == "summary":
-        return str(clipboard.get("summary", "") or "")
-    if copy_mode == "json":
-        value = clipboard.get("json", {})
-        return json.dumps(value, ensure_ascii=False, indent=2)
     return str(clipboard.get("raw", "") or "")
 
 
@@ -196,7 +187,6 @@ def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerC
         path_map=default_path_map(env),
     )
     forwarded: list[str] = []
-    copy_flags_seen: list[str] = []
     index = 0
     while index < len(argv):
         token = argv[index]
@@ -229,13 +219,6 @@ def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerC
             config.chroot_name = _take_value(config.chroot_name).strip() or config.chroot_name
         elif token in {"-p", "--copy"}:
             config.copy_mode = "raw"
-            copy_flags_seen.append(token)
-        elif token == "--copy-summary":
-            config.copy_mode = "summary"
-            copy_flags_seen.append(token)
-        elif token == "--copy-json":
-            config.copy_mode = "json"
-            copy_flags_seen.append(token)
         elif token == "--copy-via" or token.startswith("--copy-via="):
             value = _take_value(config.copy_via).strip() or config.copy_via
             config.copy_via = value
@@ -248,10 +231,8 @@ def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerC
         else:
             forwarded.append(token)
         index += 1
-    if len(copy_flags_seen) > 1:
-        raise ValueError("Choose only one of --copy, --copy-summary, or --copy-json.")
     if config.no_clipboard and config.copy_mode:
-        raise ValueError("--no-clipboard cannot be combined with --copy, --copy-summary, or --copy-json.")
+        raise ValueError("--no-clipboard cannot be combined with --copy.")
     if config.copy_mode:
         forwarded, _ = _strip_flag_value(forwarded, "--copy-via")
     return config, forwarded
@@ -1200,7 +1181,7 @@ def prepare_host_clipboard_run(config: RunnerConfig, forwarded: list[str]) -> tu
     if not config.copy_mode:
         return forwarded, None, False
 
-    machine_path = _find_flag_value(forwarded, {"--machine-file", "--save-json-payload", "--json-output"})
+    machine_path = _find_flag_value(forwarded, {"--machine-file"})
     cleanup = False
     host_machine_path: Path | None = None
     chroot_machine_path = ""

@@ -144,13 +144,10 @@ GLOBAL_OPTIONS_WITH_VALUE = {
     "--project",
     "--project-type",
     "--performance-file",
-    "--machine",
     "--machine-file",
     "--copy-via",
     "--theme",
     "--stdout-payload",
-    "--save-json-payload",
-    "--json-output",
     "--hud-mode",
     "--chroot",
     "--execution-environment",
@@ -184,6 +181,40 @@ def split_runner_passthrough_args(raw_args: list[str]) -> tuple[list[str], list[
     if command not in RUNNER_PASSTHROUGH_COMMANDS:
         return list(raw_args), []
     return list(raw_args[:separator]), list(raw_args[separator + 1 :])
+
+
+def _add_apply_validation_flags(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact; required artifact validation is enabled automatically")
+    cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested or required by the artifact manifest")
+    cmd.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
+    _add_validation_test_selection_flags(cmd)
+    cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
+    _add_validation_skip_flags(cmd)
+    _add_resumable_validation_flags(cmd)
+
+
+def _add_apply_policy_flags(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
+    cmd.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
+    cmd.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
+    cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
+    cmd.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
+    cmd.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
+    cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
+    cmd.add_argument("--no-rollback-on-failure", action="store_true", help="Disable rollback when an apply or its validation fails")
+    cmd.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
+    cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
+    cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
+    cmd.add_argument("--no-artifact-script", action="store_true", help="Skip embedded artifact validation scripts while keeping built-in validation")
+
+
+def _add_apply_command_flags(cmd: argparse.ArgumentParser, *, name: str) -> None:
+    if name == "apply-overlays":
+        cmd.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to bundle/apply transactionally")
+    else:
+        cmd.add_argument("artifact")
+    _add_apply_validation_flags(cmd)
+    _add_apply_policy_flags(cmd)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -226,28 +257,12 @@ def build_parser() -> argparse.ArgumentParser:
     execution.add_argument("--performance-file", default="", help="Performance report path (default: devtool state directory)")
 
     output = parser.add_argument_group("Output and clipboard")
-    output.add_argument("-j", "--json", action="store_true", help="Shortcut for the machine envelope stdout payload")
-    output.add_argument("--machine", nargs="?", const="compact", choices=["compact", "pretty"], default="", help="Emit the clean machine envelope on stdout")
+    output.add_argument("--stdout-payload", choices=["auto", "summary", "raw"], default="auto", help="Select stdout content: normal UI, concise summary, or raw command output")
     output.add_argument("--machine-file", default="", help="Write the machine envelope to this file")
-    output.add_argument("-p", "--copy", action="store_true", help="Copy a concise summary on success, or verbose output on failure")
-    output.add_argument("--copy-summary", action="store_true", help="Copy the concise summary without prompting")
-    output.add_argument("--copy-json", action="store_true", help="Copy JSON summary without prompting")
+    output.add_argument("-p", "--copy", action="store_true", help="Copy the selected run summary or prompt output to the clipboard")
     output.add_argument("--no-clipboard", action="store_true", help="Disable clipboard prompts and copy behavior")
     output.add_argument("--copy-via", choices=["auto", "socket", "fifo", "termux", "x11", "wayland"], default="auto", help="Prefer a clipboard backend family")
     output.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
-    output.add_argument(
-        "--stdout-payload",
-        choices=["auto", "summary", "json", "raw"],
-        default="auto",
-        help="Select stdout content: normal UI, concise summary, machine JSON, or raw command output",
-    )
-    output.add_argument(
-        "--save-json-payload",
-        "--json-output",
-        dest="save_json_payload",
-        default="",
-        help="Write the machine JSON payload to this file",
-    )
 
     hud = parser.add_argument_group("HUD and app bridge")
     hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the selected HUD while progress is emitted (default)")
@@ -377,56 +392,14 @@ def build_parser() -> argparse.ArgumentParser:
         ("apply-snapshot", ["as"]),
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
-        if name == "apply-overlays":
-            cmd.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to bundle/apply transactionally")
-        else:
-            cmd.add_argument("artifact")
-        cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact; required artifact validation is enabled automatically")
-        cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested or required by the artifact manifest")
-        cmd.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
-        _add_validation_test_selection_flags(cmd)
-        cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
-        cmd.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
-        cmd.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
-        cmd.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
-        cmd.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
-        cmd.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
-        cmd.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
-        cmd.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
-        cmd.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
-        _add_validation_skip_flags(cmd)
-        _add_resumable_validation_flags(cmd)
-        cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
-        cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
-        cmd.add_argument("--no-artifact-script", action="store_true", help="Skip embedded artifact validation scripts while keeping built-in validation")
+        _add_apply_command_flags(cmd, name=name)
 
     apply_cmd = subparsers.add_parser("apply", help="Apply an overlay, overlay bundle, or snapshot")
     apply_sub = apply_cmd.add_subparsers(dest="apply_command", required=True)
     for sub_name, command_name in [("overlay", "apply-overlay"), ("overlays", "apply-overlays"), ("snapshot", "apply-snapshot")]:
         sub = apply_sub.add_parser(sub_name)
         sub.set_defaults(normalized_command=command_name)
-        if command_name == "apply-overlays":
-            sub.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to bundle/apply transactionally")
-        else:
-            sub.add_argument("artifact")
-        sub.add_argument("--validate", action="store_true", help="Run validation after applying the artifact; required artifact validation is enabled automatically")
-        sub.add_argument("--no-validate", action="store_true", help="Disable validation requested or required by the artifact manifest")
-        sub.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
-        _add_validation_test_selection_flags(sub)
-        sub.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
-        sub.add_argument("--preview", action="store_true", help="Preview archive changes without applying")
-        sub.add_argument("--diff", action="store_true", help="Show a repo-relative unified diff of artifact changes")
-        sub.add_argument("--interactive", action="store_true", help="Show preview and ask before applying")
-        sub.add_argument("--no-manifest-check", action="store_true", help="Disable devtool artifact manifest validation")
-        sub.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
-        sub.add_argument("--keep-artifact", action="store_true", help="Keep the source artifact and sidecars after a successful apply (failures are always preserved by default)")
-        sub.add_argument("--delete-artifact-on-failure", action="store_true", help="Explicitly delete the source artifact after a failed apply (default: preserve it for retry and diagnosis)")
-        sub.add_argument("--no-apply-notification", action="store_true", help="Do not show the final apply notification/toast")
-        _add_validation_skip_flags(sub)
-        _add_resumable_validation_flags(sub)
-        sub.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
-        sub.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
-        sub.add_argument("--no-artifact-script", action="store_true", help="Skip embedded artifact validation scripts while keeping built-in validation")
+        _add_apply_command_flags(sub, name=command_name)
 
     validate_overlay_cmd = subparsers.add_parser("validate-overlay", aliases=["vo"])
     validate_overlay_cmd.add_argument("artifact")
@@ -1175,14 +1148,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         label = "Failure summary"
 
     # Explicit clipboard modes retain their override behavior.
-    if args.copy_json:
-        to_copy = json_text
-        label = "JSON summary"
-    elif args.copy_summary:
-        to_copy = success_summary if succeeded else failure_summary
-        label = "Summary"
-
-    if args.copy or args.copy_summary or args.copy_json:
+    if args.copy:
         result = (
             copy_text(to_copy)
             if args.copy_via == "auto"
@@ -1225,22 +1191,10 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
 def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[str, str]:
     explicit_stdout = args.stdout_payload
-    if args.json and explicit_stdout != "auto":
-        parser.error("--json cannot be combined with --stdout-payload; use --stdout-payload json instead.")
-    if args.machine and explicit_stdout != "auto":
-        parser.error("--machine cannot be combined with --stdout-payload; use --machine-file for sidecar JSON.")
-    if args.json and args.machine:
-        parser.error("Use either --json/-j or --machine, not both.")
-    if (args.json or args.machine) and explicit_stdout == "auto":
-        explicit_stdout = "json"
+    if args.no_clipboard and args.copy:
+        parser.error("--no-clipboard cannot be combined with --copy.")
 
-    copy_flags = [name for name, enabled in (("raw", args.copy), ("summary", args.copy_summary), ("json", args.copy_json)) if enabled]
-    if len(copy_flags) > 1:
-        parser.error("Choose only one of --copy, --copy-summary, or --copy-json.")
-    if args.no_clipboard and copy_flags:
-        parser.error("--no-clipboard cannot be combined with --copy, --copy-summary, or --copy-json.")
-
-    copy_mode = copy_flags[0] if copy_flags else "auto"
+    copy_mode = "raw" if args.copy else "auto"
     return explicit_stdout, copy_mode
 
 
@@ -1369,8 +1323,6 @@ def _select_stdout_payload(
 ) -> str:
     if payload == "summary":
         return summary_text
-    if payload == "json":
-        return machine_json_text
     if payload == "raw":
         return raw_output
     raise ValueError(f"Unsupported stdout payload: {payload}")
@@ -1563,6 +1515,14 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
         and not str(getattr(args, "commit", "") or "").strip()
     ):
         args.commit = message
+
+
+def _rollback_on_failure_enabled(args: argparse.Namespace, policy: dict[str, object] | None = None) -> bool:
+    if getattr(args, "no_rollback_on_failure", False):
+        return False
+    if policy is None:
+        return True
+    return bool(policy.get("rollback_on_failure", True))
 
 
 def _normalize_command_aliases(args: argparse.Namespace) -> None:
@@ -2107,7 +2067,7 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "no_manifest_check": bool(getattr(args, "no_manifest_check", False)),
         "ignore_checksum": bool(getattr(args, "ignore_checksum", False)),
         "validate_only": bool(getattr(args, "validate_only", False)),
-        "rollback_on_failure": bool(artifact_validation_policy(manifest).get("rollback_on_failure", True)),
+        "rollback_on_failure": _rollback_on_failure_enabled(args, artifact_validation_policy(manifest)),
         "target": str(getattr(args, "target", "") or artifact_target(manifest)),
         "solution": str(getattr(args, "solution", "") or artifact_solution(manifest)),
         "transaction_path": transaction_path,
@@ -2256,7 +2216,7 @@ def _finalize_validation_session(
         results.append(expectation)
         raw_output += ("\n\n" if raw_output else "") + "=== Validation expectations ===\n" + expectation.output
 
-    rollback_enabled = bool(context.get("rollback_on_failure", True))
+    rollback_enabled = _rollback_on_failure_enabled(args, context)
     if session.transaction_path and rollback_enabled and any(result.returncode != 0 for result in results):
         evidence = preserve_validation_evidence(
             config.repo_root,
@@ -2399,7 +2359,7 @@ def _run_validation_session(
     raw_output = "\n\n".join(raw_sections)
     if session.failed:
         context = dict(session.apply_context or {})
-        rollback_enabled = bool(context.get("rollback_on_failure", True))
+        rollback_enabled = _rollback_on_failure_enabled(args, context)
         if session.transaction_path and rollback_enabled:
             evidence = preserve_validation_evidence(
                 config.repo_root,
@@ -2452,7 +2412,7 @@ def _validation_management_session(config: ProjectConfig, args: argparse.Namespa
 def _handle_validation_status(config: ProjectConfig, args: argparse.Namespace, *, machine: bool) -> int:
     session = _validation_management_session(config, args)
     if machine:
-        print(json.dumps(validation_status_payload(session), ensure_ascii=False, indent=None if args.machine == "compact" else 2))
+        print(json.dumps(validation_status_payload(session), ensure_ascii=False, indent=2))
     else:
         print(validation_status_text(session))
     return 0
@@ -2559,7 +2519,7 @@ def _rollback(config: ProjectConfig, args: argparse.Namespace) -> int:
     specs = [CommandSpec("rollback", ["git", "revert", "--no-edit", commit], destructive=True)]
     results, raw = _run_specs_for_args(config, specs, args, log_path=new_log_path())
     totals, _, _, machine = _emit_summary(results, config, as_json=False, raw_output=raw, command="rollback")
-    _write_json_payload(args.save_json_payload or args.machine_file, machine)
+    _write_json_payload(args.machine_file, machine)
     return 0 if totals["failed"] == 0 else 1
 
 
@@ -3693,7 +3653,7 @@ def _run_sequential_overlays(
             all_results.append(shutdown_result)
             raw_sections.append(shutdown_raw)
 
-        rollback_enabled = bool(bundle_policy.get("rollback_on_failure", True))
+        rollback_enabled = _rollback_on_failure_enabled(args, bundle_policy)
         if transaction_path and rollback_enabled and _has_failed_after_apply(all_results):
             evidence_path = preserve_validation_evidence(
                 config.repo_root, all_results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
@@ -4386,15 +4346,13 @@ def main(argv: list[str] | None = None) -> int:
     args._devtool_cli_solution_explicit = bool(str(getattr(args, "solution", "") or "").strip())
     _apply_artifact_manifest_defaults(args)
     _validate_apply_args(args, parser)
-    effective_payload, copy_mode = _validate_output_flags(args, parser)
+    effective_payload, _copy_mode = _validate_output_flags(args, parser)
     auto_chroot_rc = _maybe_prepare_termux_auto_chroot(raw_argv, args)
     if auto_chroot_rc is not None:
         return auto_chroot_rc
     _print_chroot_indicator_once(args)
 
     if args.command in {"ai-prompt", "ap"}:
-        if copy_mode in {"summary", "json"}:
-            parser.error("ai-prompt only supports raw clipboard copy; use --copy or omit clipboard flags.")
         config = _load_command_config(args)
         options = resolve_ai_prompt_options(
             config,
@@ -4425,7 +4383,7 @@ def main(argv: list[str] | None = None) -> int:
             console.print(f"[green]Wrote[/green] {output_path}")
         else:
             print(prompt_text, end="" if prompt_text.endswith("\n") else "\n")
-        if copy_mode == "raw":
+        if args.copy:
             result = copy_text(prompt_text)
             if result.success:
                 console.print(f"[green]AI prompt copied to clipboard via {result.backend}.[/green]")
@@ -4493,12 +4451,12 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
             return 2
-        print(json.dumps(payload, indent=None if args.machine == "compact" else 2, ensure_ascii=False))
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0 if bool(payload.get("validation", {}).get("ok", False)) else 1
 
     if _is_artifact_validation_args(args):
         config = _load_command_config(args)
-        return _run_artifact_validation_command(config, args, as_json=effective_payload == "json")
+        return _run_artifact_validation_command(config, args, as_json=False)
 
     if args.command == "config":
         return _config_command(args)
@@ -4511,8 +4469,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "detect":
         repo = Path(args.repo or Path.cwd()).resolve()
         info = detect_repo(repo)
-        if args.format == "json" or effective_payload == "json":
-            print(json.dumps(info, indent=(2 if args.machine != "compact" else None), separators=(None if args.machine != "compact" else (",", ":"))))
+        if args.format == "json":
+            print(json.dumps(info, indent=2, ensure_ascii=False))
         else:
             print(render_detect_text(info))
         return 0
@@ -4572,8 +4530,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "history":
         config = _load_command_config(args)
-        if effective_payload == "json":
-            print(json.dumps(load_history(config.repo_root)[-max(1, args.limit):], indent=(2 if args.machine != "compact" else None), separators=(None if args.machine != "compact" else (",", ":"))))
+        if args.format == "json":
+            print(json.dumps(load_history(config.repo_root)[-max(1, args.limit):], indent=2, ensure_ascii=False))
         else:
             _print_history(config, limit=args.limit)
         return 0
@@ -4587,7 +4545,7 @@ def main(argv: list[str] | None = None) -> int:
         config = _load_command_config(args)
         try:
             if args.command in {"validation-status", "vs"}:
-                return _handle_validation_status(config, args, machine=effective_payload == "json")
+                return _handle_validation_status(config, args, machine=False)
             with _single_run_guard(config.repo_root, args):
                 return _handle_validation_abort(config, args)
         except ValidationSessionError as exc:
@@ -4606,16 +4564,16 @@ def main(argv: list[str] | None = None) -> int:
                 totals, summary_text, json_text, _machine_json_text = _emit_summary(
                     results,
                     None,
-                    as_json=effective_payload == "json",
+                    as_json=False,
                     payload_mode=effective_payload,
                     raw_output=raw_output,
                     command=args.command,
                     started_at=started_at,
                     finished_at=finished_at,
-                    machine_format=args.machine or "pretty",
+                    machine_format="pretty",
                 )
                 failed = totals["failed"]
-                _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
+                _write_json_payload(args.machine_file, _machine_json_text)
                 _maybe_copy(raw_output, summary_text, json_text, args)
                 return 0 if failed == 0 else 1
         config = load_project_config(
@@ -4644,22 +4602,22 @@ def main(argv: list[str] | None = None) -> int:
                 totals, summary_text, json_text, _machine_json_text = _emit_summary(
                     results,
                     config,
-                    as_json=effective_payload == "json",
+                    as_json=False,
                     payload_mode=effective_payload,
                     raw_output=raw_output,
                     command=args.command,
                     started_at=started_at,
                     finished_at=finished_at,
-                    machine_format=args.machine or "pretty",
+                    machine_format="pretty",
                 )
-                _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
+                _write_json_payload(args.machine_file, _machine_json_text)
                 _maybe_copy(raw_output, summary_text, json_text, args)
                 return 0 if totals["failed"] == 0 else 1
 
     config = _load_command_config(args)
     _apply_runner_cli_options(config, args)
     if args.command in {"test", "t"} and bool(getattr(args, "list_tests", False)):
-        return _print_test_catalog(config, args, as_json=effective_payload == "json")
+        return _print_test_catalog(config, args, as_json=False)
     continue_on_error = args.continue_on_error and not args.fail_fast
     log_path = new_log_path()
     log_path.touch(exist_ok=True)
@@ -4678,6 +4636,8 @@ def main(argv: list[str] | None = None) -> int:
         cache_cleanup_result = _build_cache_cleanup_result(dry_run=bool(getattr(args, "dry_run", False)))
 
     stale_transaction = find_active_transaction(config.repo_root)
+    stale_recovery_results: list[OperationResult] = []
+    stale_recovery_raw = ""
     if stale_transaction is not None and transaction_pending_validation(stale_transaction):
         active_validation = load_active_session(config.repo_root)
         transaction_data = read_transaction(stale_transaction)
@@ -4709,53 +4669,49 @@ def main(argv: list[str] | None = None) -> int:
             )
             finished_at = datetime.now(timezone.utc)
             totals, summary_text, json_text, machine_text = _emit_summary(
-                [pending_result], config, as_json=effective_payload == "json", payload_mode=effective_payload,
+                [pending_result], config, as_json=False, payload_mode=effective_payload,
                 raw_output=pending_result.output, command=args.command, started_at=started_at,
-                finished_at=finished_at, machine_format=args.machine or "pretty",
+                finished_at=finished_at, machine_format="pretty",
             )
-            _write_json_payload(args.save_json_payload or args.machine_file, machine_text)
+            _write_json_payload(args.machine_file, machine_text)
             _maybe_copy(pending_result.output, summary_text, json_text, args)
             _finish_live_progress(tasker_progress, totals=totals, results=[pending_result])
             _release_single_run_lock(args)
             return 1
 
     if stale_transaction is not None and args.command not in {"history", "clean", "cl"}:
-        results = []
-        raw_output = ""
         rollback_result, rollback_raw = _run_transaction_rollback(
             stale_transaction,
             reason="previous devtool apply appears to have been interrupted or killed",
             tasker_progress=tasker_progress,
             log_path=log_path,
         )
-        # Force a failed command result even when rollback succeeds so callers know
-        # their requested command was not executed and must be rerun.
-        if rollback_result.returncode == 0:
-            rollback_result.returncode = 1
-            rollback_result.failure_kind = "stale_apply_rolled_back"
-            rollback_result.output += "\nRequested command was not executed. Re-run it after reviewing the rollback."
-        results.append(rollback_result)
-        raw_output = rollback_raw
-        finished_at = datetime.now(timezone.utc)
-        totals, summary_text, json_text, _machine_json_text = _emit_summary(
-            results,
-            config,
-            as_json=effective_payload == "json",
-            payload_mode=effective_payload,
-            raw_output=raw_output,
-            command=args.command,
-            started_at=started_at,
-            finished_at=finished_at,
-            machine_format=args.machine or "pretty",
-        )
-        duration_seconds = sum(r.duration_seconds for r in results)
-        _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
-        _maybe_copy(raw_output, summary_text, json_text, args)
-        _finish_live_progress(tasker_progress, totals=totals, results=results)
-        if args.command in APPLY_COMMANDS:
-            notify_apply_finished(args, config, results, totals)
-        _release_single_run_lock(args)
-        return 1
+        if rollback_result.returncode != 0:
+            results = [rollback_result]
+            raw_output = rollback_raw
+            finished_at = datetime.now(timezone.utc)
+            totals, summary_text, json_text, _machine_json_text = _emit_summary(
+                results,
+                config,
+                as_json=False,
+                payload_mode=effective_payload,
+                raw_output=raw_output,
+                command=args.command,
+                started_at=started_at,
+                finished_at=finished_at,
+                machine_format="pretty",
+            )
+            duration_seconds = sum(r.duration_seconds for r in results)
+            _write_json_payload(args.machine_file, _machine_json_text)
+            _maybe_copy(raw_output, summary_text, json_text, args)
+            _finish_live_progress(tasker_progress, totals=totals, results=results)
+            if args.command in APPLY_COMMANDS:
+                notify_apply_finished(args, config, results, totals)
+            _release_single_run_lock(args)
+            return 1
+
+        stale_recovery_results = [rollback_result]
+        stale_recovery_raw = rollback_raw
 
     if args.command == "batch":
         destructive_batch = any(step.split("=", 1)[0] in {"apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as", "commit", "ci", "tag"} for step in args.steps)
@@ -4856,7 +4812,7 @@ def main(argv: list[str] | None = None) -> int:
                         results.append(expectation)
                         raw_output += "\n\n=== Validation expectations ===\n" + expectation.output
                 validation_policy = artifact_validation_policy(read_artifact_manifest(args.artifact))
-                rollback_enabled = bool(validation_policy.get("rollback_on_failure", True))
+                rollback_enabled = _rollback_on_failure_enabled(args, validation_policy)
                 if transaction_path and rollback_enabled and _has_failed_after_apply(results):
                     evidence_path = preserve_validation_evidence(
                         config.repo_root, results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
@@ -4944,15 +4900,15 @@ def main(argv: list[str] | None = None) -> int:
                 run_totals, run_summary, run_json, run_machine = _emit_summary(
                     run_results,
                     config,
-                    as_json=effective_payload == "json",
+                    as_json=False,
                     payload_mode=effective_payload,
                     raw_output=run_raw,
                     command=args.command,
                     started_at=run_started,
                     finished_at=run_finished,
-                    machine_format=args.machine or "pretty",
+                    machine_format="pretty",
                 )
-                _write_json_payload(args.save_json_payload or args.machine_file, run_machine)
+                _write_json_payload(args.machine_file, run_machine)
                 _maybe_copy(run_raw, run_summary, run_json, args)
                 return 0 if run_totals["failed"] == 0 else 1
             try:
@@ -4987,20 +4943,24 @@ def main(argv: list[str] | None = None) -> int:
         specs = _maybe_apply_test_no_build_flag(specs, args, parser)
         results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
 
+    if stale_recovery_results:
+        results = [*stale_recovery_results, *results]
+        raw_output = stale_recovery_raw + ("\n\n" + raw_output if raw_output else "")
+
     finished_at = datetime.now(timezone.utc)
     totals, summary_text, json_text, _machine_json_text = _emit_summary(
         results,
         config,
-        as_json=effective_payload == "json",
+        as_json=False,
         payload_mode=effective_payload,
         raw_output=raw_output,
         command=args.command,
         started_at=started_at,
         finished_at=finished_at,
-        machine_format=args.machine or "pretty",
+        machine_format="pretty",
     )
     duration_seconds = sum(r.duration_seconds for r in results)
-    _write_json_payload(args.save_json_payload or args.machine_file, _machine_json_text)
+    _write_json_payload(args.machine_file, _machine_json_text)
     _maybe_copy(raw_output, summary_text, json_text, args)
     _finish_live_progress(tasker_progress, totals=totals, results=results)
     if args.command in APPLY_COMMANDS:

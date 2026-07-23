@@ -320,17 +320,12 @@ _devtool() {
     '--fail-fast[stop the batch at the first failed step]' \
     '--performance[write a JSON performance report]' \
     '--performance-file[performance report path]:file:_files' \
-    '(-j --json)'{-j,--json}'[emit the compact machine envelope]' \
-    '--machine[emit the machine envelope]:format:(compact pretty)' \
     '--machine-file[write the machine envelope]:file:_files' \
     '(-p --copy)'{-p,--copy}'[copy summary on success or verbose output on failure]' \
-    '--copy-summary[copy the concise summary without prompting]' \
-    '--copy-json[copy the JSON summary without prompting]' \
     '--no-clipboard[disable clipboard prompts and copy behavior]' \
     '--copy-via[preferred clipboard backend]:backend:(auto socket fifo termux x11 wayland)' \
     '--theme[summary theme]:theme:(auto plain)' \
-    '--stdout-payload[select stdout content]:payload:(auto summary json raw)' \
-    '(--save-json-payload --json-output)'{--save-json-payload,--json-output}'[write machine JSON payload]:file:_files' \
+    '--stdout-payload[select stdout content]:payload:(auto summary raw)' \
     '(--auto-hud --hud-auto --no-hud)'{--auto-hud,--hud-auto}'[auto-start or reuse the selected HUD]' \
     '(--auto-hud --hud-auto --no-hud)--no-hud[do not publish live HUD progress]' \
     '--hud-mode[HUD backend]:mode:(desktop android-bridge desktop-window gtk-window web studio terminal)' \

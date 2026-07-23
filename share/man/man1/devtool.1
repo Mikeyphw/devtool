@@ -242,20 +242,11 @@ Write a JSON performance report.
 Select the performance report path.
 .SH OUTPUT AND CLIPBOARD
 .TP
-.BR -j , " --json"
-Emit the compact machine envelope.
-.TP
-.BR --machine "[=compact|pretty]"
-Emit the clean machine envelope on standard output.
-.TP
 .BR --machine-file " FILE"
 Save the machine envelope.
 .TP
 .BR -p , " --copy"
 Copy a concise success summary or verbose failure output.
-.TP
-.BR --copy-summary , " --copy-json"
-Copy the selected structured summary without prompting.
 .TP
 .B --no-clipboard
 Disable clipboard prompts and copy behavior.
@@ -273,13 +264,8 @@ or
 .BR --theme " auto|plain"
 Select the summary theme.
 .TP
-.BR --stdout-payload " auto|summary|json|raw"
+.BR --stdout-payload " auto|summary|raw"
 Select standard-output content.
-.TP
-.BR --save-json-payload " FILE"
-Write the machine payload. The alias
-.B --json-output
-is also accepted.
 .SH EXECUTION ENVIRONMENTS
 .TP
 .B --host
@@ -454,6 +440,9 @@ Keep the source artifact and sidecars after a successful apply.
 .B --delete-artifact-on-failure
 Explicitly delete a failed source artifact. By default failed artifacts are preserved for
 retry and diagnosis.
+.TP
+.B --no-rollback-on-failure
+Disable rollback when an apply or its validation fails.
 .TP
 .BR --commit " MESSAGE"
 Commit after successful apply and optional validation.
