@@ -157,7 +157,7 @@ _devtool_commands() {
     'release-notes:generate release notes between Git refs'
     'init-config:create .devtool.toml'
     'init:alias for init-config'
-    'config:inspect resolved configuration'
+    'config:inspect, initialize, edit, or diagnose configuration'
     'detect:detect project type and targets'
     'targets:list named targets'
     'tg:alias for targets'
@@ -478,7 +478,23 @@ _devtool() {
           _values 'shell' zsh
           ;;
         config)
-          _values 'config action' show defaults resolve doctor
+          if (( ${#line} < 2 )); then
+            _values 'config action' path show defaults init edit resolve doctor
+          else
+            case $line[2] in
+              path|show|defaults|doctor)
+                _arguments '--global[use the user global config]' '--minimal[prefer sparse minimal defaults]'
+                ;;
+              init)
+                _arguments '--global[create the user global config]' '--minimal[write sparse global preferences]' '--force[overwrite existing config]'
+                ;;
+              edit)
+                _arguments '--global[edit the user global config]' '--editor[editor command, defaulting to micro]:editor:'
+                ;;
+              *)
+                ;;
+            esac
+          fi
           ;;
         detect)
           _arguments '--format[output format]:format:(text json)'

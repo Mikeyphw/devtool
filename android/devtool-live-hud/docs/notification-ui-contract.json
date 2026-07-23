@@ -2,8 +2,42 @@
   "schema_version": 1,
   "layout": "mock-v1",
   "surfaces": {
-    "collapsed": ["brand", "state", "task", "workspace", "progress"],
-    "expanded": ["artifact", "workspace_position", "phases", "workspace_stack", "metrics", "actions"]
+    "collapsed": [
+      "brand",
+      "state",
+      "task",
+      "workspace",
+      "progress",
+      "status_lead",
+      "status_detail"
+    ],
+    "expanded": [
+      "artifact",
+      "workspace_position",
+      "progress",
+      "status_lead",
+      "status_detail",
+      "phases",
+      "workspace_stack",
+      "metrics",
+      "actions"
+    ],
+    "expanded_large_text": [
+      "artifact",
+      "workspace_position",
+      "progress",
+      "status_lead",
+      "status_detail",
+      "phases",
+      "workspace_stack",
+      "metrics_summary",
+      "actions"
+    ]
+  },
+  "parity": {
+    "status_lines_below_progress": true,
+    "status_lead_source": "HudUpdate.notificationStatusLead mirrors desktop HUD statusLead semantics",
+    "status_detail_source": "HudUpdate.notificationStatusDetail mirrors desktop HUD statusDetail semantics"
   },
   "states": {
     "running": "LIVE",
@@ -15,11 +49,56 @@
     "rollback_failed": "CRITICAL"
   },
   "actions": {
-    "running": ["Open log", "Copy summary", "Cancel"],
-    "success": ["Open app", "Copy summary", "Dismiss"],
-    "failed": ["Open log", "Copy error", "Retry"],
-    "rollback": ["Open log", "Copy status", "Keep visible"],
-    "recovered": ["Open log", "Copy summary", "Dismiss"],
-    "rollback_failed": ["Open log", "Copy recovery", "Keep visible"]
+    "running": [
+      "Open log",
+      "Copy summary",
+      "Cancel"
+    ],
+    "success": [
+      "Open app",
+      "Copy summary",
+      "Dismiss"
+    ],
+    "failed": [
+      "Open log",
+      "Copy error",
+      "Retry"
+    ],
+    "rollback": [
+      "Open log",
+      "Copy status",
+      "Keep visible"
+    ],
+    "recovered": [
+      "Open log",
+      "Copy summary",
+      "Dismiss"
+    ],
+    "rollback_failed": [
+      "Open log",
+      "Copy recovery",
+      "Keep visible"
+    ]
+  },
+  "visual_prominence": {
+    "progress_height_dp": 7,
+    "dominant_state_label": true,
+    "state_label_min_height_dp": 24,
+    "state_label_uses_chip_background": true
+  },
+  "accessibility": {
+    "root_summary_includes": [
+      "state",
+      "task",
+      "progress",
+      "status"
+    ],
+    "progress_content_description": true,
+    "state_label_content_description": true,
+    "status_line_content_descriptions": true,
+    "phase_row_content_descriptions": true,
+    "workspace_card_content_description": true,
+    "action_min_height_dp": 48,
+    "action_content_descriptions": true
   }
 }

@@ -65,7 +65,16 @@ from .watch import watch_loop
 from .clipboard import copy_text
 from .console_utils import create_console, resolve_cli_path
 from .completion import ZSH_COMPLETION
-from .config import detect_project_kind, discover_dotnet_candidates, load_project_config, resolve_config_dict
+from .config import (
+    detect_project_kind,
+    discover_dotnet_candidates,
+    global_config_doctor_entries,
+    global_config_path,
+    load_global_config,
+    load_project_config,
+    minimal_global_config_template,
+    resolve_config_dict,
+)
 from .log_commands import choose_active_log, format_log_entries, list_log_entries, open_log, resolve_log_path, tail_log
 from .logstore import latest_log, new_log_path
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
@@ -472,10 +481,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
-    cfg_sub.add_parser("show")
-    cfg_sub.add_parser("defaults")
+    cfg_path = cfg_sub.add_parser("path", help="Print the repo or global config path")
+    cfg_path.add_argument("--global", dest="global_config", action="store_true", help="Use the user global config path")
+    cfg_show = cfg_sub.add_parser("show", help="Print repo or global config")
+    cfg_show.add_argument("--global", dest="global_config", action="store_true", help="Show ~/.config/devtool/config.toml")
+    cfg_defaults = cfg_sub.add_parser("defaults", help="Print a config template")
+    cfg_defaults.add_argument("--global", dest="global_config", action="store_true", help="Print the sparse global config template")
+    cfg_defaults.add_argument("--minimal", action="store_true", help="Prefer the minimal sparse template")
+    cfg_init = cfg_sub.add_parser("init", help="Create a config file")
+    cfg_init.add_argument("--global", dest="global_config", action="store_true", help="Create ~/.config/devtool/config.toml")
+    cfg_init.add_argument("--minimal", action="store_true", help="Write the sparse global preference template")
+    cfg_init.add_argument("--force", action="store_true", help="Overwrite an existing config")
+    cfg_edit = cfg_sub.add_parser("edit", help="Open config in an editor")
+    cfg_edit.add_argument("--global", dest="global_config", action="store_true", help="Edit ~/.config/devtool/config.toml")
+    cfg_edit.add_argument("--editor", default="", help="Editor command; defaults to DEVTOOL_EDITOR, VISUAL, EDITOR, then micro")
     cfg_sub.add_parser("resolve")
-    cfg_sub.add_parser("doctor")
+    cfg_doctor = cfg_sub.add_parser("doctor")
+    cfg_doctor.add_argument("--global", dest="global_config", action="store_true", help="Diagnose the user global config")
 
     detect_cmd = subparsers.add_parser("detect")
     detect_cmd.add_argument("--format", choices=["text", "json"], default="text")
@@ -1786,7 +1808,7 @@ def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
     elif str(getattr(args, "chroot", "") or "").strip():
         requested = EXECUTION_CHROOT
     elif requested == EXECUTION_AUTO and str(config.execution_environment or EXECUTION_AUTO) == EXECUTION_AUTO:
-        if detect_current_environment() == "native-termux" and config.kind in {"android", "gradle"}:
+        if detect_current_environment() == "native-termux":
             from .android_integration import should_prefer_android_chroot
             if should_prefer_android_chroot(config):
                 requested = EXECUTION_CHROOT
@@ -4119,7 +4141,155 @@ def _run_bundle_command(args: argparse.Namespace) -> int:
     return 0
 
 
+
+
+def _devtool_global_cli_config() -> dict:
+    data, _path = load_global_config()
+    cli = data.get("cli", {}) if isinstance(data.get("cli", {}), dict) else {}
+    return cli if isinstance(cli, dict) else {}
+
+
+def _raw_flag_present(raw_argv: list[str], *flags: str) -> bool:
+    for token in raw_argv:
+        for flag in flags:
+            if token == flag or (flag.startswith("--") and token.startswith(flag + "=")):
+                return True
+    return False
+
+
+def _apply_global_cli_defaults(args: argparse.Namespace, raw_argv: list[str]) -> None:
+    cli = _devtool_global_cli_config()
+    if not cli:
+        return
+    output = cli.get("output", {}) if isinstance(cli.get("output", {}), dict) else {}
+    if "stdout_payload" in output and not _raw_flag_present(raw_argv, "--stdout-payload"):
+        value = str(output.get("stdout_payload") or "auto")
+        if value in {"auto", "summary", "raw"}:
+            args.stdout_payload = value
+    if "machine_file" in output and not _raw_flag_present(raw_argv, "--machine-file"):
+        value = str(output.get("machine_file") or "").strip()
+        if value:
+            args.machine_file = value
+    if bool(output.get("copy", False)) and not _raw_flag_present(raw_argv, "-p", "--copy", "--no-clipboard"):
+        args.copy = True
+    if bool(output.get("no_clipboard", False)) and not _raw_flag_present(raw_argv, "--no-clipboard", "-p", "--copy"):
+        args.no_clipboard = True
+    if "copy_via" in output and not _raw_flag_present(raw_argv, "--copy-via"):
+        value = str(output.get("copy_via") or "auto")
+        if value in {"auto", "socket", "fifo", "termux", "x11", "wayland"}:
+            args.copy_via = value
+    if "theme" in output and not _raw_flag_present(raw_argv, "--theme"):
+        value = str(output.get("theme") or "auto")
+        if value in {"auto", "plain"}:
+            args.theme = value
+
+    hud = cli.get("hud", {}) if isinstance(cli.get("hud", {}), dict) else {}
+    if "auto_hud" in hud and not _raw_flag_present(raw_argv, "--auto-hud", "--hud-auto", "--no-hud"):
+        value = hud.get("auto_hud")
+        if isinstance(value, bool):
+            args.auto_hud = value
+        elif str(value).strip().lower() in {"true", "yes", "on", "1"}:
+            args.auto_hud = True
+        elif str(value).strip().lower() in {"false", "no", "off", "0"}:
+            args.auto_hud = False
+    if "mode" in hud and not _raw_flag_present(raw_argv, "--hud-mode"):
+        value = str(hud.get("mode") or "").strip()
+        if value:
+            args.hud_mode = value
+    overlay_value = str(hud.get("overlay", "auto") or "auto").strip().lower()
+    if overlay_value in {"true", "yes", "on", "1"} and not _raw_flag_present(raw_argv, "--hud-overlay", "--hud-no-overlay"):
+        args.hud_overlay = True
+    elif overlay_value in {"false", "no", "off", "0"} and not _raw_flag_present(raw_argv, "--hud-overlay", "--hud-no-overlay"):
+        args.hud_no_overlay = True
+
+    env = cli.get("environment", {}) if isinstance(cli.get("environment", {}), dict) else {}
+    if "execution_environment" in env and not _raw_flag_present(raw_argv, "--execution-environment", "--host", "--chroot"):
+        value = str(env.get("execution_environment") or EXECUTION_AUTO).strip()
+        if value in EXECUTION_ENVIRONMENTS:
+            args.execution_environment = value
+    if bool(env.get("no_auto_chroot", False)) and not _raw_flag_present(raw_argv, "--no-auto-chroot", "--chroot"):
+        args.no_auto_chroot = True
+
+    apply = cli.get("apply", {}) if isinstance(cli.get("apply", {}), dict) else {}
+    if str(getattr(args, "command", "") or "") in LEGACY_APPLY_VALIDATE_COMMANDS:
+        if bool(apply.get("validate", False)) and not _raw_flag_present(raw_argv, "--validate", "--no-validate"):
+            args.validate = True
+        if bool(apply.get("manifest_check", True)) is False and not _raw_flag_present(raw_argv, "--no-manifest-check"):
+            args.no_manifest_check = True
+        if bool(apply.get("ignore_checksum", False)) and not _raw_flag_present(raw_argv, "--ignore-checksum"):
+            args.ignore_checksum = True
+        if bool(apply.get("keep_artifact", False)) and not _raw_flag_present(raw_argv, "--keep-artifact"):
+            args.keep_artifact = True
+        if bool(apply.get("delete_artifact_on_failure", False)) and not _raw_flag_present(raw_argv, "--delete-artifact-on-failure"):
+            args.delete_artifact_on_failure = True
+        if bool(apply.get("rollback_on_failure", True)) is False and not _raw_flag_present(raw_argv, "--no-rollback-on-failure"):
+            args.no_rollback_on_failure = True
+        if bool(apply.get("apply_notification", True)) is False and not _raw_flag_present(raw_argv, "--no-apply-notification"):
+            args.no_apply_notification = True
+        if bool(apply.get("artifact_script", True)) is False and not _raw_flag_present(raw_argv, "--no-artifact-script"):
+            args.no_artifact_script = True
+
+
+def _resolve_config_editor(requested: str = "") -> list[str]:
+    candidates = [
+        requested,
+        os.environ.get("DEVTOOL_EDITOR", ""),
+        os.environ.get("VISUAL", ""),
+        os.environ.get("EDITOR", ""),
+        "micro",
+        "nano",
+        "vim",
+        "vi",
+    ]
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text:
+            continue
+        argv = shlex.split(text)
+        if not argv:
+            continue
+        if shutil.which(argv[0]) or os.path.isabs(argv[0]) or "/" in argv[0]:
+            return argv
+    raise SystemExit("No editor found. Install micro or set DEVTOOL_EDITOR, VISUAL, or EDITOR.")
+
 def _config_command(args: argparse.Namespace) -> int:
+    if args.config_command == "path":
+        if getattr(args, "global_config", False):
+            print(global_config_path())
+            return 0
+        config = _load_command_config(args)
+        print(config.config_path or "")
+        return 0
+
+    if getattr(args, "global_config", False):
+        data, path = load_global_config()
+        if args.config_command == "show":
+            print(path.read_text(encoding="utf-8") if path.exists() else "")
+            return 0
+        if args.config_command == "defaults":
+            print(minimal_global_config_template(), end="")
+            return 0
+        if args.config_command == "init":
+            if path.exists() and not getattr(args, "force", False):
+                raise SystemExit(f"Global config already exists: {path}. Use --force to overwrite.")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(minimal_global_config_template(), encoding="utf-8")
+            console.print(f"[green]Wrote[/green] {path}")
+            return 0
+        if args.config_command == "edit":
+            if not path.exists():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(minimal_global_config_template(), encoding="utf-8")
+            editor = _resolve_config_editor(str(getattr(args, "editor", "") or ""))
+            return subprocess.run([*editor, str(path)], check=False).returncode
+        if args.config_command == "doctor":
+            rows = [("global_config_path", str(path)), ("exists", "yes" if path.exists() else "no")]
+            rows.extend(global_config_doctor_entries(data))
+            if len(rows) == 2:
+                rows.append(("status", "ok"))
+            render_status_table(rows)
+            return 0
+
     config = _load_command_config(args)
     if args.config_command == "show":
         print(config.config_path.read_text(encoding="utf-8") if config.config_path else "")
@@ -4127,14 +4297,29 @@ def _config_command(args: argparse.Namespace) -> int:
     if args.config_command == "defaults":
         from .config import generate_template
 
-        print(generate_template(config.repo_root))
+        if getattr(args, "minimal", False):
+            print(generate_template(config.repo_root))
+        else:
+            print(generate_template(config.repo_root))
         return 0
+    if args.config_command == "init":
+        target = write_template_config(config.repo_root, force=getattr(args, "force", False))
+        console.print(f"[green]Wrote[/green] {target}")
+        return 0
+    if args.config_command == "edit":
+        path = config.config_path or (config.repo_root / ".devtool.toml")
+        if not path.exists():
+            target = write_template_config(config.repo_root, force=False)
+            path = target
+        editor = _resolve_config_editor(str(getattr(args, "editor", "") or ""))
+        return subprocess.run([*editor, str(path)], check=False).returncode
     if args.config_command == "resolve":
         print(json.dumps(resolve_config_dict(config), indent=2))
         return 0
     if args.config_command == "doctor":
         rows = [
             ("config_path", str(config.config_path) if config.config_path else "-"),
+            ("global_config_path", str(config.global_config_path) if config.global_config_path else "-"),
             ("repo_root", str(config.repo_root)),
             ("kind", config.kind),
             ("build_target", config.build_target or "-"),
@@ -4143,7 +4328,6 @@ def _config_command(args: argparse.Namespace) -> int:
         render_status_table(rows)
         return 0
     return 1
-
 
 def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namespace) -> int | None:
     """Enable Android chroot execution from Termux.
@@ -4174,6 +4358,12 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
                     args.chroot = configured.chroot_name or "androidos"
             elif configured_environment != EXECUTION_AUTO:
                 return None
+            else:
+                from .android_integration import should_prefer_android_chroot
+                if detect_current_environment() == "native-termux" and not should_prefer_android_chroot(configured):
+                    return None
+                if not str(getattr(args, "chroot", "") or "").strip():
+                    args.chroot = configured.chroot_name or "androidos"
         except (OSError, SystemExit, ValueError):
             # Apply-time artifacts may introduce or repair configuration. The
             # normal loader will produce the actionable error after apply.
@@ -4332,6 +4522,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(parse_argv)
     args._devtool_passthrough_args = passthrough_args
     _normalize_command_aliases(args)
+    _apply_global_cli_defaults(args, parse_argv)
     _normalize_live_progress_args(args)
     args._devtool_cli_target_explicit = bool(str(getattr(args, "target", "") or "").strip())
     args._devtool_cli_solution_explicit = bool(str(getattr(args, "solution", "") or "").strip())

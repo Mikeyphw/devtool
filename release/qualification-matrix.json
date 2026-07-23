@@ -1,17 +1,83 @@
 {
   "schema_version": 1,
   "gates": [
-    {"id": "versions", "group": "core", "required": true, "description": "All package and frontend versions match release/versions.json"},
-    {"id": "python-compile", "group": "core", "required": true, "description": "Python sources compile"},
-    {"id": "python-tests", "group": "core", "required": true, "description": "Complete Python/source-contract test suite passes"},
-    {"id": "shell-syntax", "group": "core", "required": true, "description": "All shipped shell entry points pass bash syntax validation"},
-    {"id": "qt-configure", "group": "qt", "required": false, "description": "Qt 5 project configures with CMake"},
-    {"id": "qt-build", "group": "qt", "required": false, "description": "Both native Qt executables compile and link"},
-    {"id": "qt-smoke", "group": "qt", "required": false, "description": "CTest launches both QML applications offscreen"},
-    {"id": "android-lint", "group": "android", "required": false, "description": "Android release lint passes"},
-    {"id": "android-unit", "group": "android", "required": false, "description": "Android local JVM tests pass"},
-    {"id": "android-release", "group": "android", "required": false, "description": "A signed release APK is assembled and verified"},
-    {"id": "android-instrumentation", "group": "device", "required": false, "description": "Connected device/emulator instrumentation smoke tests pass"},
-    {"id": "source-archive", "group": "package", "required": true, "description": "Deterministic release source archive and checksums are generated"}
+    {
+      "id": "versions",
+      "group": "core",
+      "required": true,
+      "description": "All package and frontend versions match release/versions.json"
+    },
+    {
+      "id": "python-compile",
+      "group": "core",
+      "required": true,
+      "description": "Python sources compile"
+    },
+    {
+      "id": "python-tests",
+      "group": "core",
+      "required": true,
+      "description": "Complete Python/source-contract test suite passes"
+    },
+    {
+      "id": "shell-syntax",
+      "group": "core",
+      "required": true,
+      "description": "All shipped shell entry points pass bash syntax validation"
+    },
+    {
+      "id": "ui-ux-contract",
+      "group": "ui",
+      "required": true,
+      "description": "Final UI/UX source contract protects HUD detail, notification parity/accessibility, navigation copy, and responsive Run/Overview polish"
+    },
+    {
+      "id": "qt-configure",
+      "group": "qt",
+      "required": false,
+      "description": "Qt 5 project configures with CMake"
+    },
+    {
+      "id": "qt-build",
+      "group": "qt",
+      "required": false,
+      "description": "Both native Qt executables compile and link"
+    },
+    {
+      "id": "qt-smoke",
+      "group": "qt",
+      "required": false,
+      "description": "CTest launches both QML applications offscreen"
+    },
+    {
+      "id": "android-lint",
+      "group": "android",
+      "required": false,
+      "description": "Android release lint passes"
+    },
+    {
+      "id": "android-unit",
+      "group": "android",
+      "required": false,
+      "description": "Android local JVM tests pass"
+    },
+    {
+      "id": "android-release",
+      "group": "android",
+      "required": false,
+      "description": "A signed release APK is assembled and verified"
+    },
+    {
+      "id": "android-instrumentation",
+      "group": "device",
+      "required": false,
+      "description": "Connected device/emulator instrumentation smoke tests pass"
+    },
+    {
+      "id": "source-archive",
+      "group": "package",
+      "required": true,
+      "description": "Deterministic release source archive and checksums are generated"
+    }
   ]
 }

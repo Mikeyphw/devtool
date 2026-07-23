@@ -6,7 +6,7 @@ import android.widget.TextView;
 /** Semantic Android typography shared by the app, overlay HUD, and generated controls. */
 final class UiTypography {
     enum Role {
-        PAGE_TITLE(28f, "sans-serif-medium", 1.22f),
+        PAGE_TITLE(24f, "sans-serif-medium", 1.20f),
         LARGE_VALUE(20f, "sans-serif-medium", 1.18f),
         CARD_TITLE(16f, "sans-serif-medium", 1.25f),
         BODY(14f, "sans-serif", 1.40f),
@@ -38,7 +38,7 @@ final class UiTypography {
     }
 
     static Role fromLegacySize(int sp, boolean emphasized) {
-        if (sp >= 25) return Role.PAGE_TITLE;
+        if (sp >= 24) return Role.PAGE_TITLE;
         if (sp >= 19) return Role.LARGE_VALUE;
         if (sp >= 15) return Role.CARD_TITLE;
         if (sp >= 14) return emphasized ? Role.BUTTON : Role.BODY;

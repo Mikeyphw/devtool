@@ -23,6 +23,7 @@ Button {
     implicitHeight: Math.max(48, theme.controlHeight + 10)
     leftPadding: compact ? 8 : 12
     rightPadding: compact ? 8 : 12
+    readonly property int selectedRailWidth: 3
     Accessible.role: Accessible.Button
     Accessible.name: text + (selected ? ", current page" : "")
     Accessible.description: accessibleDescription
@@ -33,7 +34,7 @@ Button {
         spacing: root.compact ? 0 : 12
         Image {
             source: root.resolvedIconSource()
-            width: root.compact ? root.availableWidth : theme.navigationIconSize
+            width: theme.navigationIconSize
             height: parent.height
             sourceSize.width: theme.navigationIconSize
             sourceSize.height: theme.navigationIconSize
@@ -57,5 +58,18 @@ Button {
         color: root.selected ? theme.selectedSurface : root.hovered ? theme.hoverSurface : "transparent"
         border.width: root.activeFocus ? 2 : 0
         border.color: theme.accent
+        Rectangle {
+            id: selectedRail
+            visible: root.selected
+            width: root.selectedRailWidth
+            radius: width
+            color: theme.accent
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.topMargin: 7
+            anchors.bottomMargin: 7
+            Accessible.ignored: true
+        }
     }
 }

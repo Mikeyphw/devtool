@@ -16,15 +16,21 @@ Item {
     property bool importedHudExplicit: false
     property int currentStage: 0
     readonly property bool narrowMode: width < 760
+    property bool projectAdvancedOpen: false
+    property bool operationAdvancedOpen: false
+    property bool reviewAdvancedOpen: false
+    property bool commandPreviewOpen: false
     property var testCatalog: []
     property var selectedTests: ({})
     property string catalogMessage: ""
-    readonly property var stages: ["Project", "Operation", "Tests", "Review"]
+    readonly property var allStages: ["Project", "Operation", "Tests", "Review"]
+    readonly property var compactStages: ["Project", "Operation", "Review"]
+    readonly property var stages: root.needsTests() ? root.allStages : root.compactStages
     readonly property var operations: ["Apply overlay", "Apply bundle", "Validate", "Restore", "Build", "Test", "Lint", "Run project", "Package", "Clean", "Inspect", "Commit", "Status", "Doctor"]
     Theme { id: theme }
     Accessible.role: Accessible.Pane
-    Accessible.name: "Run workflow, " + stages[currentStage] + " step"
-    Accessible.description: "Four step workflow builder. Use Alt+Left and Alt+Right to move between steps, and Control+Enter to run from Review."
+    Accessible.name: "Run workflow, " + stageName(currentStage) + " step"
+    Accessible.description: "Workflow builder with progressive disclosure. Use Alt+Left and Alt+Right to move between steps, and Control+Enter to run from Review."
 
     function copyModeIndex(value) { const v=String(value||"summary").toLowerCase(); return v==="json"?1:v==="none"?2:0 }
     function selectedCopyMode() { return copyMode.currentIndex===1?"json":copyMode.currentIndex===2?"none":"summary" }
@@ -32,6 +38,10 @@ Item {
     function operationIndex(label) { const i=root.operations.indexOf(label); return i<0?0:i }
     function isApplyOperation() { return operation==="Apply overlay" || operation==="Apply bundle" }
     function needsTests() { return operation==="Test" || operation==="Validate" || isApplyOperation() }
+    function stageName(stage) { return stage===0 ? "Project" : stage===1 ? "Operation" : stage===2 ? "Tests" : "Review" }
+    function stageForVisibleIndex(index) { return !needsTests() && index===2 ? 3 : index }
+    function visibleIndexForStage(stage) { return needsTests() ? stage : (stage < 2 ? stage : 2) }
+    function visibleStepCount() { return needsTests() ? 4 : 3 }
     function isDangerousOperation() { return isApplyOperation() || operation==="Restore" || operation==="Clean" || operation==="Commit" }
     function dangerExplanation() {
         if (isApplyOperation()) return "This writes artifact files into the selected repository and may create a commit."
@@ -217,15 +227,17 @@ AppButton {
                     delegate: Rectangle {
                         required property string modelData
                         required property int index
+                        readonly property int actualStage: root.stageForVisibleIndex(index)
+                        readonly property bool current: actualStage === root.currentStage
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         implicitHeight: Math.max(42, stageLabel.implicitHeight + 16)
                         radius: theme.controlRadius
-                        color: index === root.currentStage ? theme.selectedSurface : theme.recessedSurface
-                        border.color: index === root.currentStage ? theme.accent : theme.border
+                        color: current ? theme.selectedSurface : theme.recessedSurface
+                        border.color: current ? theme.accent : theme.border
                         border.width: 1
                         Accessible.role: Accessible.StaticText
-                        Accessible.name: "Step " + (index + 1) + " of 4, " + modelData + (index === root.currentStage ? ", current" : "")
+                        Accessible.name: "Step " + (index + 1) + " of " + root.visibleStepCount() + ", " + modelData + (current ? ", current" : "")
                         Label {
                             id: stageLabel
                             anchors.centerIn: parent
@@ -233,44 +245,59 @@ AppButton {
                             horizontalAlignment: Text.AlignHCenter
                             elide: Text.ElideRight
                             text: (index + 1) + " · " + modelData
-                            color: index === root.currentStage ? theme.windowText : theme.mutedText
-                            font.weight: index === root.currentStage ? Font.DemiBold : Font.Normal
+                            color: current ? theme.windowText : theme.mutedText
+                            font.weight: current ? Font.DemiBold : Font.Normal
                         }
                     }
                 }
             }
 
-            SurfaceCard { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===0;implicitHeight:projectForm.implicitHeight+32
-                GridLayout{id:projectForm;anchors.fill:parent;anchors.margins:16;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
-                    Label{text:"Repository";color:theme.mutedText}
+            SurfaceCard { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===0;implicitHeight:projectColumn.implicitHeight+32
+                ColumnLayout{id:projectColumn;anchors.fill:parent;anchors.margins:16;spacing:12
+                    Label{text:"Basic";color:theme.windowText;font.pointSize:theme.cardTitlePointSize;font.weight:Font.DemiBold}
+                    GridLayout{Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
+                        Label{text:"Repository";color:theme.mutedText}
 AppTextField{accessibleName:"Repository root";accessibleDescription:"Repository where devtool will run";Layout.fillWidth:true;text:appController.repository;onTextEdited:appController.repository=text;placeholderText:"Repository root"}
 AppButton{text:"Browse…";onClicked:repoDialog.open()}
-                    Label{text:"Project type";color:theme.mutedText}
+                    }
+                    AppButton{text:root.projectAdvancedOpen?"Hide project options":"Show project options";variant:"ghost";onClicked:root.projectAdvancedOpen=!root.projectAdvancedOpen}
+                    GridLayout{visible:root.projectAdvancedOpen;Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
+                        Label{text:"Project type";color:theme.mutedText}
 AppComboBox{id:projectType;accessibleName:"Project type";accessibleDescription:"Select the project runner";Layout.fillWidth:true;model:["auto","dotnet","android","gradle","python","command"]}
-Item{}
-                    Label{text:"Execution";color:theme.mutedText}
-AppComboBox{id:executionEnvironment;accessibleName:"Execution environment";accessibleDescription:"Select where devtool should execute";Layout.fillWidth:true;model:["auto","native-termux","chroot","desktop-linux","android-device","external-device"]}
-Item{}
+Label{text:"Auto is recommended unless a repo needs a forced runner.";color:theme.subtleText;wrapMode:Text.Wrap}
+                    }
                 }
             }
-            SurfaceCard { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===1;implicitHeight:operationForm.implicitHeight+32
-                GridLayout{id:operationForm;anchors.fill:parent;anchors.margins:16;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
-                    Label{text:"Operation";color:theme.mutedText}
+            SurfaceCard { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===1;implicitHeight:operationColumn.implicitHeight+32
+                ColumnLayout{id:operationColumn;anchors.fill:parent;anchors.margins:16;spacing:12
+                    Label{text:"Basic";color:theme.windowText;font.pointSize:theme.cardTitlePointSize;font.weight:Font.DemiBold}
+                    GridLayout{Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
+                        Label{text:"Operation";color:theme.mutedText}
 AppComboBox{id:operationCombo;accessibleName:"Operation";accessibleDescription:"Select the devtool operation";Layout.fillWidth:true;model:root.operations;onCurrentTextChanged:root.operation=currentText}
-Label{text:"Complete desktop operation coverage";color:theme.subtleText}
-                    Label{text:"Artifact";color:theme.mutedText;visible:root.isApplyOperation()}
+Label{text:root.needsTests()?"This workflow includes validation/test selection.":"This workflow skips the Tests step.";color:theme.subtleText;wrapMode:Text.Wrap}
+                        Label{text:"Artifact";color:theme.mutedText;visible:root.isApplyOperation()}
 AppTextField{accessibleName:"Overlay or bundle archive";Layout.fillWidth:true;visible:root.isApplyOperation();text:appController.artifact;onTextEdited:{
     appController.artifact = text
     artifactVerification.restart()
 }
 placeholderText:"Overlay or bundle archive"}
 AppButton{text:"Browse…";visible:root.isApplyOperation();onClicked:artifactDialog.open()}
-                    Label{text:"Target";color:theme.mutedText}
+                        Label{text:"Target";color:theme.mutedText}
 AppTextField{id:target;accessibleName:"Target or profile";Layout.fillWidth:true;placeholderText:"Optional target/profile"}
 Item{}
-                    Label{text:"Commit message";color:theme.mutedText;visible:root.isApplyOperation()||root.operation==="Commit"}
+                        Label{text:"Commit message";color:theme.mutedText;visible:root.isApplyOperation()||root.operation==="Commit"}
 AppTextField{id:message;accessibleName:"Commit message";Layout.fillWidth:true;visible:root.isApplyOperation()||root.operation==="Commit";placeholderText:"Artifact manifest may provide this"}
 Item{}
+                    }
+                    AppButton{text:root.operationAdvancedOpen?"Hide advanced execution":"Show advanced execution";variant:"ghost";onClicked:root.operationAdvancedOpen=!root.operationAdvancedOpen}
+                    GridLayout{visible:root.operationAdvancedOpen;Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
+                        Label{text:"Execution";color:theme.mutedText}
+AppComboBox{id:executionEnvironment;accessibleName:"Execution environment";accessibleDescription:"Select where devtool should execute";Layout.fillWidth:true;model:["auto","native-termux","chroot","desktop-linux","android-device","external-device"]}
+Label{text:"Leave on auto for normal local runs.";color:theme.subtleText;wrapMode:Text.Wrap}
+                        Label{text:"Custom arguments";color:theme.mutedText}
+AppTextField{id:customArgs;accessibleName:"Custom operation arguments";Layout.fillWidth:true;placeholderText:"Used only with custom or manual operations"}
+Item{}
+                    }
                 }
             }
             RowLayout { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===1&&root.isApplyOperation()&&appController.artifact!=="";spacing:8
@@ -325,21 +352,41 @@ Item{}
             SurfaceCard { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===3;implicitHeight:reviewColumn.implicitHeight+32
                 ColumnLayout{id:reviewColumn;anchors.fill:parent;anchors.margins:16;spacing:12
                     Label{text:"Review and run";color:theme.windowText;font.pointSize:theme.cardTitlePointSize;font.weight:Font.DemiBold}
-                    Label{text:"External terminal execution";color:theme.mutedText}
-                    GridLayout{Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:10;rowSpacing:10
+                    Label{Layout.fillWidth:true;text:"Confirm the workflow shape first. Output routing, environment flags, and exact command details are still available below.";color:theme.mutedText;wrapMode:Text.Wrap}
+                    RowLayout{visible:root.isApplyOperation();AppCheckBox{id:validate;text:"Validate";checked:true}
+AppCheckBox{id:commit;text:"Commit";checked:true}
+AppCheckBox{id:keep;text:"Keep artifact"}
+Item{Layout.fillWidth:true}}
+                    RowLayout {
+                        Layout.fillWidth: true
+                        AppButton{text:root.commandPreviewOpen?"Hide exact command":"Show exact command";variant:"ghost";onClicked:root.commandPreviewOpen=!root.commandPreviewOpen}
+                        AppButton{text:root.reviewAdvancedOpen?"Hide advanced output":"Show advanced output";variant:"ghost";onClicked:root.reviewAdvancedOpen=!root.reviewAdvancedOpen}
+                        Item { Layout.fillWidth: true }
+                    }
+                    GridLayout{visible:root.reviewAdvancedOpen;Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:10;rowSpacing:10
                         Label{text:"Clipboard";color:theme.mutedText}
 AppComboBox{id:copyMode;accessibleName:"Clipboard result mode";Layout.fillWidth:true;model:["Copy summary","Copy JSON","Do not copy"]}
 Item{}
                         Label{text:"HUD mode";color:theme.mutedText}
 AppComboBox{id:hudMode;accessibleName:"HUD mode";Layout.fillWidth:true;model:["control-center","desktop-window","android-bridge","none"];enabled:autoHud.checked}
 AppCheckBox{id:autoHud;text:"Auto HUD";checked:true}
+                        Label{text:"Environment";color:theme.mutedText}
+AppTextField{id:environmentAssignments;accessibleName:"Environment assignments";Layout.fillWidth:true;placeholderText:"NAME=value"}
+Item{}
+                        Label{text:"Extra global args";color:theme.mutedText}
+AppTextField{id:extraGlobalArguments;accessibleName:"Additional global arguments";Layout.fillWidth:true;placeholderText:"Flags before the subcommand"}
+Item{}
+                        Label{text:"Extra operation args";color:theme.mutedText}
+AppTextField{id:extraOperationArguments;accessibleName:"Additional operation arguments";Layout.fillWidth:true;placeholderText:"Arguments after the subcommand"}
+Item{}
                     }
-                    RowLayout{visible:root.isApplyOperation();AppCheckBox{id:validate;text:"Validate";checked:true}
-AppCheckBox{id:commit;text:"Commit";checked:true}
-AppCheckBox{id:keep;text:"Keep artifact"}
-Item{Layout.fillWidth:true}}
-                    Label{text:"Command preview";color:theme.windowText;font.weight:Font.DemiBold}
-                    Rectangle{Layout.fillWidth:true;implicitHeight:120;color:theme.recessedSurface;radius:theme.controlRadius;Label{anchors.fill:parent;anchors.margins:12;text:root.commandText();color:theme.mutedText;font.family:theme.monospaceFamily;wrapMode:Text.WrapAnywhere}}
+                    GridLayout{Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:10;rowSpacing:10
+                        Label{text:"Danger zone";color:root.isDangerousOperation()?theme.warning:theme.mutedText}
+AppCheckBox{id:yes;text:"Non-interactive --yes";checked:false}
+Label{text:root.isDangerousOperation()?root.dangerExplanation():"This operation is not expected to modify repository state.";color:root.isDangerousOperation()?theme.warning:theme.subtleText;wrapMode:Text.Wrap}
+                    }
+                    Label{visible:root.commandPreviewOpen;text:"Exact command";color:theme.windowText;font.weight:Font.DemiBold}
+                    Rectangle{visible:root.commandPreviewOpen;Layout.fillWidth:true;implicitHeight:120;color:theme.recessedSurface;radius:theme.controlRadius;Label{anchors.fill:parent;anchors.margins:12;text:root.commandText();color:theme.mutedText;font.family:theme.monospaceFamily;wrapMode:Text.WrapAnywhere}}
                     RowLayout {
                         AppButton{text:"Copy command";onClicked:appController.copyText(root.commandText())}
                         AppButton {
@@ -359,7 +406,7 @@ Item{Layout.fillWidth:true}}
         id:stickyBar;anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom;height:root.narrowMode?88:72;color:theme.elevatedSurface;border.color:theme.border;border.width:1
         RowLayout{anchors.fill:parent;anchors.leftMargin:theme.pageMargin;anchors.rightMargin:theme.pageMargin;spacing:10
             AppButton{text:"Back";accessibleDescription:"Go to the previous workflow step. Keyboard shortcut Alt+Left.";variant:"ghost";enabled:root.currentStage>0;onClicked:root.currentStage=Math.max(0,root.currentStage-1)}
-            Label{text:"Step "+(root.currentStage+1)+" of 4 · "+root.stages[root.currentStage];color:theme.mutedText}
+            Label{text:"Step "+(root.visibleIndexForStage(root.currentStage)+1)+" of "+root.visibleStepCount()+" · "+root.stageName(root.currentStage);color:theme.mutedText}
             Item{Layout.fillWidth:true}
             AppButton{visible:root.currentStage<3;text:root.currentStage===1&&!root.needsTests()?"Skip tests":"Next";accessibleDescription:"Go to the next workflow step. Keyboard shortcut Alt+Right.";variant:"primary";onClicked:root.currentStage=Math.min(3,root.currentStage+(root.currentStage===1&&!root.needsTests()?2:1))}
             AppButton{visible:root.currentStage===3;text:root.narrowMode?"Run":"Open in "+(appController.preferredTerminal?appController.preferredTerminal.split("/").pop():"terminal");accessibleName:"Run devtool workflow";accessibleDescription:"Run the reviewed workflow. Keyboard shortcut Control+Enter.";variant:"primary";enabled:root.canRun();onClicked:root.requestRun()}

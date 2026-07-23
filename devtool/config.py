@@ -11,6 +11,152 @@ from .models import DotnetTarget, ProjectConfig
 from .toolchains import normalize_toolchain_manager
 
 CONFIG_NAME = ".devtool.toml"
+
+GLOBAL_CONFIG_NAME = "config.toml"
+GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
+    "cli", "environment", "termux_chroot", "android", "dotnet", "terminal",
+}
+GLOBAL_REPO_SCOPED_SECTIONS = {
+    "project", "targets", "tasks", "artifacts", "python", "node", "rust",
+    "go", "maven", "cmake", "meson", "make", "test_profiles", "variants",
+}
+GLOBAL_COMMAND_SCOPED_CLI_KEYS = {
+    ("validation", "skip_restore"), ("validation", "skip_build"), ("validation", "skip_test"),
+    ("validation", "watch"), ("validation", "matrix"), ("validation", "test_profile"),
+    ("validation", "select"), ("validation", "id"), ("validation", "tag"),
+    ("validation", "exclude_tag"), ("validation", "path"), ("validation", "class"),
+    ("validation", "method"), ("validation", "filter"), ("validation", "task"),
+    ("validation", "failed"), ("validation", "changed"),
+}
+
+
+def global_config_path() -> Path:
+    raw = os.environ.get("DEVTOOL_GLOBAL_CONFIG", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    root = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    return root / "devtool" / GLOBAL_CONFIG_NAME
+
+
+def load_global_config(path: str | Path | None = None) -> tuple[dict[str, Any], Path]:
+    config_path = Path(path).expanduser() if path is not None else global_config_path()
+    if not config_path.exists():
+        return {}, config_path
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise SystemExit(f"Invalid TOML in global config {config_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        return {}, config_path
+    return data, config_path
+
+
+def _deep_merge_defaults(defaults: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(defaults)
+    for key, value in values.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_defaults(dict(merged[key]), value)
+        elif value not in (None, "", [], {}):
+            merged[key] = value
+        elif key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _global_project_defaults(global_config: dict[str, Any]) -> dict[str, Any]:
+    defaults: dict[str, Any] = {}
+    environment = global_config.get("environment", {})
+    if isinstance(environment, dict):
+        default_chroot = str(environment.get("default_chroot", "") or "").strip()
+        if default_chroot:
+            defaults.setdefault("execution", {})["chroot_name"] = default_chroot
+    for section in ("android", "dotnet"):
+        value = global_config.get(section, {})
+        if isinstance(value, dict) and value:
+            defaults[section] = dict(value)
+    termux = global_config.get("termux_chroot", {})
+    if isinstance(termux, dict) and termux:
+        filtered = {str(k): v for k, v in termux.items() if k in {"project_kinds", "default_chroot", "mode"}}
+        if filtered:
+            defaults["termux_chroot"] = filtered
+            default_chroot = str(filtered.get("default_chroot", "") or "").strip()
+            if default_chroot:
+                defaults.setdefault("execution", {})["chroot_name"] = default_chroot
+    return defaults
+
+
+def minimal_global_config_template() -> str:
+    lines = [
+        "# ~/.config/devtool/config.toml",
+        "# Sparse user preferences only. Omitted keys use built-in defaults.",
+        "",
+        "[cli.output]",
+        "copy = false",
+        "copy_via = \"auto\"",
+        "theme = \"auto\"",
+        "stdout_payload = \"auto\"",
+        "",
+        "[cli.hud]",
+        "auto_hud = \"auto\"",
+        "mode = \"desktop\"",
+        "",
+        "[cli.apply]",
+        "validate = true",
+        "manifest_check = true",
+        "rollback_on_failure = true",
+        "apply_notification = true",
+        "artifact_script = true",
+        "keep_artifact = false",
+        "delete_artifact_on_failure = false",
+        "ignore_checksum = false",
+        "",
+        "[cli.environment]",
+        "execution_environment = \"auto\"",
+        "no_auto_chroot = false",
+        "",
+        "[environment]",
+        "default_chroot = \"androidos\"",
+        "",
+        "[termux_chroot]",
+        "# Project kinds that auto mode may route through chroot when running on native Termux.",
+        "# Repo and CLI settings still win, and --host / --execution-environment native-termux opt out.",
+        "project_kinds = [\"android\", \"gradle\"]",
+        "default_chroot = \"androidos\"",
+        "",
+        "[terminal]",
+        "preferred = \"micro\"",
+        "",
+        "[dotnet]",
+        "stop_after_run = true",
+        "",
+        "[android]",
+        "aapt2_provider = \"auto\"",
+        "aapt2_fallback_path = \"/sdcard/Download/aapt2-arm64-v8a.bin\"",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def global_config_doctor_entries(config: dict[str, Any]) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for section in sorted(config):
+        if section in GLOBAL_REPO_SCOPED_SECTIONS:
+            entries.append((f"{section}", "repo-scoped; keep this in .devtool.toml"))
+        elif section not in GLOBAL_SAFE_TOP_LEVEL_SECTIONS:
+            entries.append((f"{section}", "unknown global section"))
+    cli = config.get("cli", {}) if isinstance(config.get("cli", {}), dict) else {}
+    validation = cli.get("validation", {}) if isinstance(cli.get("validation", {}), dict) else {}
+    for key in sorted(validation):
+        if ("validation", str(key)) in GLOBAL_COMMAND_SCOPED_CLI_KEYS:
+            entries.append((f"cli.validation.{key}", "command-specific; prefer a CLI flag or repo profile"))
+    session = validation.get("session", {}) if isinstance(validation.get("session", {}), dict) else {}
+    for key in sorted(session):
+        entries.append((f"cli.validation.session.{key}", "runtime session state; do not store globally"))
+    env = cli.get("environment", {}) if isinstance(cli.get("environment", {}), dict) else {}
+    if str(env.get("chroot", "") or "").strip():
+        entries.append(("cli.environment.chroot", "forces every command into one chroot; prefer environment.default_chroot"))
+    return entries
 SUPPORTED_PROJECT_KINDS = {
     "auto", "dotnet", "android", "gradle", "python", "node", "rust",
     "go", "maven", "cmake", "meson", "make", "command", "unknown",
@@ -18,7 +164,7 @@ SUPPORTED_PROJECT_KINDS = {
 RUNNER_OPTION_SECTIONS = (
     "android", "gradle", "python", "dotnet", "node", "rust", "go",
     "maven", "cmake", "meson", "make", "build", "tasks", "artifacts",
-    "test_profiles", "validation",
+    "test_profiles", "validation", "termux_chroot",
 )
 PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
 RUNTIME_ENV_PREFIX = "DEVTOOL_ENV_"
@@ -79,6 +225,11 @@ def load_project_config(
             loaded = tomllib.loads(config_path.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError as exc:
             raise SystemExit(f"Invalid TOML in {config_path}: {exc}") from exc
+
+    global_loaded, global_path = load_global_config()
+    global_defaults = _global_project_defaults(global_loaded)
+    if global_defaults:
+        loaded = _deep_merge_defaults(global_defaults, loaded)
 
     project_section = _apply_project_env_overrides(dict(loaded.get("project", {})))
     env_section = _apply_runtime_env_overrides({str(k): str(v) for k, v in loaded.get("env", {}).items()})
@@ -149,10 +300,12 @@ def load_project_config(
         or project_section.get("execution_environment", "")
         or "auto"
     ).strip().lower()
+    termux_chroot_section = loaded.get("termux_chroot", {}) if isinstance(loaded.get("termux_chroot", {}), dict) else {}
     chroot_name = str(
         (selected_target.chroot_name if selected_target and selected_target.chroot_name else "")
         or execution_section.get("chroot_name", "")
         or project_section.get("chroot_name", "")
+        or termux_chroot_section.get("default_chroot", "")
         or os.environ.get("DEVTOOL_TERMUX_CHROOT", "androidos")
         or "androidos"
     ).strip()
@@ -255,6 +408,7 @@ def load_project_config(
         project_root=project_root,
         toolchain_manager=toolchain_manager,
         runner_options=runner_options,
+        global_config_path=global_path if global_loaded else None,
     )
 
 
@@ -1148,6 +1302,7 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
     return {
         "repo_root": str(config.repo_root),
         "config_path": str(config.config_path) if config.config_path else "",
+        "global_config_path": str(config.global_config_path) if config.global_config_path else "",
         "project": {
             "kind": config.kind,
             "project_root": config.project_root,

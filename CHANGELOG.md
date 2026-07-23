@@ -1,5 +1,11 @@
 ## Android 1.14.0
 
+- Added sparse user global configuration with `devtool config path/show/defaults/init/edit/doctor --global`, editor launch that prefers micro, CLI preference defaults, and Android/Termux chroot project-kind policy.
+- Finalized the UI/UX contract after the HUD, notification, typography, navigation, Overview, and Run-flow polish stack, including documentation and focused regression gates for all accepted surfaces.
+- Polished Android notification accessibility: 7dp progress rails, dominant chip-style state labels, content descriptions for progress/status/phase/workspace/action surfaces, and contract tests for 48dp action targets.
+- Polished detailed desktop and Android HUD layouts without reducing information density: clearer current-run/status/workspace/diagnostics regions, Android floating HUD position persistence, drag/display clamping, and rotation/font-scale bounds handling.
+- Polished Overview and Run workflow topography: action-first Overview pages, wrapping desktop quick actions, dynamic no-test steppers, and progressive Run advanced/danger sections on desktop and Android.
+- Polished Devtool Control Center and Android companion typography/navigation: compact headers, stronger selected navigation, sentence-case metrics, Logs copy, and human readiness labels.
 - Added redacted Android support bundles for Logs, Repositories, root bridge, retention and Git-operation diagnostics.
 - Added Settings controls to copy or share a support bundle.
 - Added an opt-in switch for including redacted recent commands; commands remain disabled by default.
@@ -53,7 +59,7 @@
 - Added `--ignore-checksum` for checksum-only artifact recovery without disabling repository, inventory, size, conflict, or validation-policy checks.
 - Added an Android-safe validation profile that splits Gradle validation phases, limits workers, logical CPUs, and heap, disables parallel/daemon-heavy behavior, lowers process priority, and aborts before critically low free memory can destabilize the phone.
 
-## 1.1.0-rc.6 — 2026-07-16
+## 1.1.0 — 2026-07-16
 
 - Added optimized first-class runners for Node.js, Rust/Cargo, Go, Maven, CMake, Meson, and Make.
 - Added one shared CPU/memory-aware worker policy for desktop Linux, native Termux, and Android-hosted chroots.

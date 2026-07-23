@@ -70,7 +70,7 @@ def test_notification_contrast_and_large_text_layout_are_enforced() -> None:
 def test_android_typography_is_semantic_and_role_specific() -> None:
     typography = read(ANDROID / "java/io/github/mikeceead/devtoolhud/UiTypography.java")
     for role, size in {
-        "PAGE_TITLE": 28,
+        "PAGE_TITLE": 24,
         "LARGE_VALUE": 20,
         "CARD_TITLE": 16,
         "BODY": 14,
@@ -96,7 +96,7 @@ def test_android_typography_is_semantic_and_role_specific() -> None:
 
     ui_kit = read(java_root / "UiKit.java")
     assert "UiTypography.Role" in ui_kit
-    assert "setLetterSpacing(0.02f)" in ui_kit
+    assert "setLetterSpacing(0.01f)" in ui_kit
     assert "setAllCaps(true)" not in ui_kit
 
 
@@ -105,9 +105,11 @@ def test_desktop_scale_follows_system_font_and_has_user_presets() -> None:
     assert "Qt.application.font.pointSize" in theme
     assert "platformBodyPointSize" in theme
     assert "typeScale" in theme
-    assert "captionPointSize: 9.5 * typeScale" in theme
+    assert "pageTitlePointSize: 24.0 * typeScale" in theme
+    assert "sectionTitlePointSize: 15.0 * typeScale" in theme
+    assert "captionPointSize: 9.0 * typeScale" in theme
     assert "bodyLineHeight: 1.42" in theme
-    assert "titleLineHeight: 1.24" in theme
+    assert "titleLineHeight: 1.20" in theme
     assert "monospaceFamily" in theme and "uiMonospaceFont" in theme
     assert "JetBrainsMono Nerd Font" not in theme
 

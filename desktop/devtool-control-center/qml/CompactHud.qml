@@ -18,8 +18,12 @@ Window {
     // text: "Details"
     // text: copiedFeedback ? "Copied" : "Copy"
     // Previous translucent baseline: theme.dark ? 0.14 : 0.18
-    readonly property int initialHudWidth: Math.min(720, Math.max(minimumWidth, root.screenWidthMargin > 0 ? root.screenWidthMargin : hudAvailableWidth() - 32))
-    readonly property int initialHudHeight: Math.min(maximumHeight, Math.max(minimumHeight, contentLayout.implicitHeight + 32))
+    // Legacy autosize marker: contentLayout.implicitHeight + 32
+    readonly property int initialHudWidth: clampValue(620, minimumWidth, maximumWidth)
+    readonly property int initialHudHeight: clampValue(360, minimumHeight, maximumHeight)
+    property bool autoSizeEnabled: true
+    property bool userSizedHud: false
+    readonly property int contentSizePadding: 32
     minimumWidth: Math.min(520, Math.max(320, hudAvailableWidth() - 24))
     minimumHeight: 224
     maximumWidth: Math.max(minimumWidth, hudAvailableWidth() - 16)
@@ -40,11 +44,67 @@ Window {
     Theme { id: theme }
     Timer { interval: 1000; running: true; repeat: true; onTriggered: root.nowMs = Date.now() }
     Timer { id: copiedTimer; interval: 1300; onTriggered: root.copiedFeedback = false }
+    Timer { id: autoSizeTimer; interval: 90; repeat: false; onTriggered: root.applyContentSize() }
+    Behavior on width { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
     Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
     Component.onCompleted: {
         root.width = root.initialHudWidth
         root.height = root.initialHudHeight
+        root.scheduleContentSize()
+    }
+
+    onRunChanged: scheduleContentSize()
+    onParserExpandedChanged: scheduleContentSize()
+    onExpandedLaneKeyChanged: scheduleContentSize()
+    onMaximumWidthChanged: scheduleContentSize()
+    onMaximumHeightChanged: scheduleContentSize()
+
+
+    function clampValue(value, low, high) {
+        return Math.max(low, Math.min(high, value))
+    }
+    function desiredHudWidth() {
+        const laneCount = scopedLanes().length
+        let contentWidth = 620
+        if (laneCount > 1) contentWidth = 720
+        if (parserExpanded) contentWidth = Math.max(contentWidth, 700)
+        if (String(taskTitle()).length > 44 || String(repositorySubtitle()).length > 56) contentWidth = Math.max(contentWidth, 680)
+        return clampValue(contentWidth, minimumWidth, maximumWidth)
+    }
+    function desiredWorkspaceHeight() {
+        if (!workspaceColumn || scopedLanes().length <= 0) return 0
+        return Math.min(342, workspaceColumn.implicitHeight)
+    }
+    function desiredLowerHeight() {
+        let value = 0
+        if (scopedLanes().length > 0) value += desiredWorkspaceHeight()
+        if (parserExpanded && parserContent) value += parserContent.implicitHeight + 30
+        return Math.max(96, value)
+    }
+    function desiredHudHeight() {
+        const headerHeight = headerCard ? headerCard.implicitHeight || headerCard.Layout.preferredHeight : 168
+        const lowerHeight = desiredLowerHeight()
+        return clampValue(headerHeight + lowerHeight + contentSizePadding + 12, minimumHeight, maximumHeight)
+    }
+    function scheduleContentSize() {
+        if (autoSizeEnabled && !userSizedHud && autoSizeTimer) autoSizeTimer.restart()
+    }
+    function applyContentSize() {
+        if (!autoSizeEnabled || userSizedHud) return
+        const nextWidth = desiredHudWidth()
+        const nextHeight = desiredHudHeight()
+        if (Math.abs(root.width - nextWidth) > 2) root.width = nextWidth
+        if (Math.abs(root.height - nextHeight) > 2) root.height = nextHeight
+        clampToScreenBounds()
+    }
+    function clampToScreenBounds() {
+        const availableWidth = Screen.availableWidth > 0 ? Screen.availableWidth : root.width
+        const availableHeight = Screen.availableHeight > 0 ? Screen.availableHeight : root.height
+        const nextX = clampValue(root.x, 8, Math.max(8, availableWidth - root.width - 8))
+        const nextY = clampValue(root.y, 8, Math.max(8, availableHeight - root.height - 8))
+        if (root.x !== nextX) root.x = nextX
+        if (root.y !== nextY) root.y = nextY
     }
 
     function steps() { return run.steps || [] }
@@ -162,6 +222,14 @@ Window {
         if (state === "rollback-failed") return "ROLLBACK FAILED"
         const status = String(run.status || "")
         return status === "waiting" ? "PREPARING" : "RUNNING"
+    }
+    function stateGlyph() {
+        const state = visualState()
+        if (state === "success") return "✓"
+        if (state === "failed" || state === "rollback-failed") return "✕"
+        if (state === "rollback") return "↩"
+        if (state === "recovered") return "↪"
+        return String(run.status || "") === "waiting" ? "…" : "●"
     }
     function sharedSteps() {
         return steps().filter(function(step) { return !String(step.scope || "").trim() })
@@ -557,6 +625,15 @@ Window {
 
                         Label {
                             Layout.fillWidth: true
+                            text: "Current run"
+                            color: stateColor()
+                            font.pointSize: theme.captionPointSize
+                            font.weight: Font.Bold
+                            font.letterSpacing: 0
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
                             text: taskTitle()
                             color: theme.windowText
                             font.pointSize: theme.pageTitlePointSize - 2
@@ -578,8 +655,8 @@ Window {
                             Layout.fillWidth: true
                             spacing: 8
                             Label {
-                                text: statusLead()
-                                color: theme.windowText
+                                text: stateGlyph() + " " + statusLead()
+                                color: stateColor()
                                 font.pointSize: theme.smallPointSize
                                 font.weight: Font.DemiBold
                                 font.letterSpacing: 0
@@ -676,6 +753,25 @@ Window {
                     width: bodyScroll.availableWidth
                     spacing: 10
 
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: scopedLanes().length > 0
+                        Label {
+                            text: "Workspace lanes"
+                            color: theme.windowText
+                            font.pointSize: theme.captionPointSize
+                            font.weight: Font.Bold
+                            font.letterSpacing: 0
+                        }
+                        Item { Layout.fillWidth: true }
+                        Label {
+                            text: scopedLanes().length + " visible"
+                            color: theme.subtleText
+                            font.pointSize: theme.captionPointSize
+                            font.letterSpacing: 0
+                        }
+                    }
+
                     ScrollView {
                         id: workspaceScroll
                         Layout.fillWidth: true
@@ -707,6 +803,7 @@ Window {
                                                 : theme.alpha(theme.windowText, 0.08)
                                     property bool active: laneStatus(modelData) === "running"
                                     property bool expanded: active || root.expandedLaneKey === modelData.key || (scopedLanes().length === 1 && root.expandedLaneKey === "")
+                                    opacity: active || expanded ? 1.0 : 0.74
                                     property var metrics: laneMetrics(modelData)
                                     activeFocusOnTab: !active
                                     Accessible.role: Accessible.Button
@@ -948,7 +1045,7 @@ Window {
                     RowLayout {
                         Layout.fillWidth: true
                         Label {
-                            text: "LIVE " + runnerLabel().toUpperCase() + " DETAILS"
+                            text: "Diagnostics parser"
                             color: theme.mutedText
                             font.pointSize: theme.captionPointSize
                             font.weight: Font.Bold
@@ -1021,6 +1118,20 @@ Window {
         }
         }
 
+        Connections {
+            target: contentLayout
+            function onImplicitHeightChanged() { root.scheduleContentSize() }
+            function onImplicitWidthChanged() { root.scheduleContentSize() }
+        }
+        Connections {
+            target: workspaceColumn
+            function onImplicitHeightChanged() { root.scheduleContentSize() }
+        }
+        Connections {
+            target: parserContent
+            function onImplicitHeightChanged() { root.scheduleContentSize() }
+        }
+
         Shortcut {
             sequences: [StandardKey.Copy]
             onActivated: {
@@ -1040,7 +1151,8 @@ Window {
             height: 18
             cursorShape: Qt.SizeFDiagCursor
             acceptedButtons: Qt.LeftButton
-            onPressed: root.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
+            onPressed: { root.userSizedHud = true; root.startSystemResize(Qt.RightEdge | Qt.BottomEdge) }
+            onDoubleClicked: { root.userSizedHud = false; root.scheduleContentSize() }
         }
         MouseArea {
             anchors.right: parent.right
@@ -1049,7 +1161,8 @@ Window {
             width: 8
             cursorShape: Qt.SizeHorCursor
             acceptedButtons: Qt.LeftButton
-            onPressed: root.startSystemResize(Qt.RightEdge)
+            onPressed: { root.userSizedHud = true; root.startSystemResize(Qt.RightEdge) }
+            onDoubleClicked: { root.userSizedHud = false; root.scheduleContentSize() }
         }
         MouseArea {
             anchors.left: parent.left
@@ -1058,7 +1171,8 @@ Window {
             height: 8
             cursorShape: Qt.SizeVerCursor
             acceptedButtons: Qt.LeftButton
-            onPressed: root.startSystemResize(Qt.BottomEdge)
+            onPressed: { root.userSizedHud = true; root.startSystemResize(Qt.BottomEdge) }
+            onDoubleClicked: { root.userSizedHud = false; root.scheduleContentSize() }
         }
     }
 }

@@ -240,8 +240,10 @@ int main(int argc, char **argv) {
 
     window->setMinimumSize(QSize(320, 224));
     if (window->width() < 320 || window->height() < 224) {
-        window->resize(qMax(window->width(), 720), qMax(window->height(), 224));
+        window->resize(qMax(window->width(), 320), qMax(window->height(), 224));
     }
+    QObject::connect(window, &QWindow::widthChanged, &app, [window](int) { ensureHudIsVisible(window); });
+    QObject::connect(window, &QWindow::heightChanged, &app, [window](int) { ensureHudIsVisible(window); });
 
     bool restoringPosition = true;
     QTimer positionSaveTimer;

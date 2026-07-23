@@ -147,8 +147,19 @@ and
 Create a starter
 .I .devtool.toml.
 .TP
-.B config show|defaults|resolve|doctor
-Inspect configuration and resolution behavior.
+.B config path|show|defaults|init|edit|resolve|doctor
+Inspect, create, edit, resolve, and diagnose repository or global configuration. Use
+.B --global
+with
+.BR path ,
+.BR show ,
+.BR defaults ,
+.BR init ,
+.BR edit ,
+and
+.B doctor
+for the sparse user config at
+.IR ~/.config/devtool/config.toml .
 .TP
 .B detect
 Detect project type; use
@@ -266,6 +277,50 @@ Select the summary theme.
 .TP
 .BR --stdout-payload " auto|summary|raw"
 Select standard-output content.
+
+.SH GLOBAL CONFIGURATION
+Devtool supports a sparse user preference file at
+.IR ~/.config/devtool/config.toml .
+It is merged as defaults only: built-in defaults, then global user preferences, then the repository
+.I .devtool.toml,
+then explicit CLI flags. The global file is intentionally not a shadow repository config. Keep
+project kind, targets, tasks, test profiles, artifact paths, and validation filters in
+.IR .devtool.toml .
+.PP
+Useful global sections are
+.BR [cli.output] ,
+.BR [cli.hud] ,
+.BR [cli.apply] ,
+.BR [cli.environment] ,
+.BR [environment] ,
+.BR [termux_chroot] ,
+.BR [android] ,
+and
+.BR [dotnet] .
+Run
+.B devtool config init --global --minimal
+to create a starter file,
+.B devtool config edit --global
+to open it in an editor, and
+.B devtool config doctor --global
+to warn about repo-scoped or command-scoped keys placed globally. Editor selection prefers
+.B DEVTOOL_EDITOR,
+then
+.BR VISUAL ,
+.BR EDITOR ,
+then
+.BR micro .
+.PP
+On Android/Termux,
+.B [termux_chroot] project_kinds
+controls which project types auto mode may route through the configured chroot. The default remains
+.BR ["android","gradle"] ,
+but users may add values such as
+.B python
+or use
+.B all
+when the chroot should own every supported project kind.
+
 .SH EXECUTION ENVIRONMENTS
 .TP
 .B --host
@@ -571,6 +626,9 @@ values. Unsigned release APKs are rejected and verified with apksigner.
 Per-repository target, runner, task, artifact, test-profile, validation, environment, and
 execution configuration.
 .TP
+.I ~/.config/devtool/config.toml
+Sparse user preferences for output, HUD, apply policy, default chroot, and Android/Termux chroot project-kind policy.
+.TP
 .I ~/.local/state/devtool/logs
 Saved human-readable command logs.
 .TP
@@ -583,6 +641,14 @@ Staged Android build backend and related shared resources.
 .I ~/.local/state/devtool-android-hud
 Default shared Android bridge state on Termux.
 .SH ENVIRONMENT
+.TP
+.B DEVTOOL_GLOBAL_CONFIG
+Override the user global config path.
+.TP
+.B DEVTOOL_EDITOR
+Preferred editor for
+.B devtool config edit
+commands.
 .TP
 .B DEVTOOL_XDG_DIR
 Override devtool runtime state storage.

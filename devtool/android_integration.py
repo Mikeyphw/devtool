@@ -745,18 +745,32 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     ]
 
 
-def should_prefer_android_chroot(config: ProjectConfig) -> bool:
-    """Return whether Android auto mode should use the configured chroot.
+def _termux_chroot_project_kinds(config: ProjectConfig) -> set[str]:
+    options = _dict_option(config, "termux_chroot")
+    raw = options.get("project_kinds", ["android", "gradle"])
+    if isinstance(raw, str):
+        values = [item.strip().lower() for item in raw.split(",")]
+    elif isinstance(raw, (list, tuple, set)):
+        values = [str(item).strip().lower() for item in raw]
+    else:
+        values = []
+    return {value for value in values if value}
 
-    Native Termux remains available explicitly. Auto mode is conservative when
-    a chroot backend exists because Android SDK host tools are commonly glibc or
-    architecture specific. Projects can opt into native-first behavior with
-    ``[android] prefer_native_termux = true``.
+
+def should_prefer_android_chroot(config: ProjectConfig) -> bool:
+    """Return whether Termux auto mode should use the configured chroot.
+
+    The historical name is kept for API compatibility. The policy now supports
+    non-Android project kinds through ``[termux_chroot] project_kinds`` in the
+    repo or sparse global config. Native Termux remains available explicitly via
+    ``--host``, ``--execution-environment native-termux``, or Android
+    ``prefer_native_termux = true``.
     """
 
-    if config.kind not in {"android", "gradle"}:
+    allowed = _termux_chroot_project_kinds(config)
+    if "all" not in allowed and config.kind not in allowed:
         return False
     android = _dict_option(config, "android")
-    if bool(android.get("prefer_native_termux", False)):
+    if config.kind in {"android", "gradle"} and bool(android.get("prefer_native_termux", False)):
         return False
     return bool(shutil.which(os.environ.get("DEVTOOL_CHROOTCTL", "chrootctl")))

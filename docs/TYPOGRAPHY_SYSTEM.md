@@ -7,7 +7,7 @@ roles are shared conceptually across Android, the Qt Control Center, and the HUD
 
 | Role | Size | Line-height multiplier | Typical use |
 | --- | ---: | ---: | --- |
-| Page title | 28sp | 1.22 | Screen heading |
+| Page title | 24sp | 1.20 | Compact phone and app screen heading |
 | Large value | 20sp | 1.18 | Primary metric |
 | Card title | 16sp | 1.25 | Card and dialog heading |
 | Body | 14sp | 1.40 | Descriptions and multiline content |
@@ -18,7 +18,7 @@ roles are shared conceptually across Android, the Qt Control Center, and the HUD
 | Code | 13sp | 1.36 | Commands, paths, and logs |
 
 The notification uses 14sp titles, 12sp workspace labels and actions, 11sp
-details, and 10sp badges. At `fontScale >= 1.3`, it switches to a simplified
+details, and 11sp dominant state badges. At `fontScale >= 1.3`, it switches to a simplified
 expanded layout that reduces phase density and combines metrics into one line.
 Text rows use `wrap_content` and minimum heights instead of fixed heights.
 
@@ -38,3 +38,14 @@ semantics do not depend on Nerd Font glyphs.
   badges and compact metric labels.
 - Use vector drawables or `StatusMark` for icons and state marks.
 - Verify layouts at font scales 1.0, 1.3, 1.5, and 2.0 before release.
+
+
+## UI/UX roadmap finalization
+
+The final polish stack standardizes these additional rules:
+
+- Desktop metric and section labels use sentence case unless the text is a compact state badge.
+- Android page headers stay compact on phones; large overline branding is reserved for wider layouts.
+- The Logs label is the user-facing destination name even when source files keep Diagnostics implementation names.
+- Notification state labels are allowed uppercase because they are compact state badges.
+- HUDs may contain dense operational detail, but headings and grouping labels must create a clear scan path.

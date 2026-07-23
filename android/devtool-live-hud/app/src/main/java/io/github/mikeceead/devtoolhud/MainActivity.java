@@ -18,6 +18,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.Editable;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -99,6 +100,14 @@ public final class MainActivity extends Activity {
     private LinearLayout runOperationSection;
     private LinearLayout runTestsSection;
     private LinearLayout runReviewSection;
+    private LinearLayout runProjectAdvancedSection;
+    private LinearLayout runOperationAdvancedSection;
+    private LinearLayout runReviewAdvancedSection;
+    private LinearLayout runDangerZoneSection;
+    private boolean runProjectAdvancedOpen;
+    private boolean runOperationAdvancedOpen;
+    private boolean runReviewAdvancedOpen;
+    private boolean runDangerZoneOpen;
     private Button runBackButton;
     private Button runNextButton;
     private Button runExecuteButton;
@@ -258,15 +267,20 @@ public final class MainActivity extends Activity {
     private View buildPageHeader() {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
-        header.setPadding(ui.contentHorizontalPadding(), ui.dp(18),
-                ui.contentHorizontalPadding(), ui.dp(14));
-        header.addView(ui.text("DEVTOOL", UiTypography.Role.LABEL, ui.palette.cyan));
+        header.setPadding(ui.contentHorizontalPadding(), ui.dp(ui.wideLayout() ? 18 : 12),
+                ui.contentHorizontalPadding(), ui.dp(ui.wideLayout() ? 14 : 9));
+        if (ui.wideLayout()) {
+            header.addView(ui.text("DEVTOOL", UiTypography.Role.LABEL, ui.palette.cyan));
+        }
         TextView title = ui.text(PAGES[currentPage], UiTypography.Role.PAGE_TITLE, ui.palette.text);
-        title.setPadding(0, ui.dp(2), 0, ui.dp(2));
+        title.setPadding(0, ui.dp(ui.wideLayout() ? 2 : 0), 0, ui.dp(ui.wideLayout() ? 2 : 1));
         if (Build.VERSION.SDK_INT >= 28) title.setAccessibilityHeading(true);
         title.setContentDescription(PAGES[currentPage] + " page");
         header.addView(title);
-        header.addView(ui.text(pageSubtitle(), UiTypography.Role.BODY, ui.palette.muted));
+        TextView subtitle = ui.text(pageSubtitle(), ui.wideLayout() ? UiTypography.Role.BODY : UiTypography.Role.BODY_SMALL, ui.palette.muted);
+        subtitle.setMaxLines(ui.extraLargeText() ? 2 : 1);
+        subtitle.setEllipsize(TextUtils.TruncateAt.END);
+        header.addView(subtitle);
         return header;
     }
 
@@ -323,7 +337,7 @@ public final class MainActivity extends Activity {
 
     private String pageSubtitle() {
         if (currentPage == 1) return "Build and run a devtool workflow without writing shell commands.";
-        if (currentPage == 2) return "Search structured run output, problems and metadata.";
+        if (currentPage == 2) return "Search run output, problems and metadata.";
         if (currentPage == 3) return "Inspect saved, discovered and live repositories across Termux and chroots.";
         if (currentPage == 4) return "Manage appearance, permissions, pairing and advanced execution.";
         return "See readiness, current work and the next useful action at a glance.";
@@ -343,38 +357,53 @@ public final class MainActivity extends Activity {
     }
 
     private void buildOverviewPage(LinearLayout content) {
-        content.addView(ui.sectionTitle("Readiness"));
-        LinearLayout readiness = ui.surface();
-        int ready = readinessCount();
-        readiness.addView(ui.text(ready + " of 4 core services ready", UiTypography.Role.LARGE_VALUE, ready == 4 ? ui.palette.green : ui.palette.text));
-        TextView readinessDetail = ui.text(ready == 4 ? "Android, Termux and the secure HUD bridge are connected."
-                        : "Complete the highlighted tiles below before relying on live background progress.", UiTypography.Role.BODY_SMALL, ui.palette.muted);
-        readinessDetail.setPadding(0, ui.dp(5), 0, 0);
-        readiness.addView(readinessDetail);
-        content.addView(readiness);
-
-        addCoreTiles(content, false);
-        content.addView(ui.sectionTitle("Optional root access"));
-        content.addView(rootBridgeTile());
+        LinearLayout primary = ui.surface();
+        primary.addView(ui.sectionTitle("Next action"));
+        int running = 0;
+        for (RunRecord record : RunStore.all(this)) if ("running".equals(record.status)) running++;
+        final boolean hasRunning = running > 0;
+        String primaryTitle = hasRunning ? "Open live work" : "Run Devtool";
+        primary.addView(ui.text(primaryTitle, UiTypography.Role.LARGE_VALUE, ui.palette.text));
+        primary.addView(ui.text(hasRunning
+                ? running + " active run" + (running == 1 ? " is" : "s are") + " publishing progress."
+                : "Build a workflow, validate the current repo, or apply an overlay without writing shell commands.",
+                UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        primary.addView(ui.button(hasRunning ? "Open HUD" : "Create a run", ui.palette.cyan,
+                v -> { if (hasRunning) OverlayHudService.setEnabled(this, true); else switchPage(1); }));
+        if (readinessCount() == 4) primary.addView(ui.secondaryButton("Validate current repo", v -> runQuick("validate")));
+        content.addView(primary);
 
         content.addView(ui.sectionTitle("Latest run"));
         RunRecord latest = RunStore.latest(this);
         if (latest == null) {
             LinearLayout empty = ui.surface();
             empty.addView(ui.text("No devtool runs yet", UiTypography.Role.LARGE_VALUE, ui.palette.text));
-            empty.addView(ui.text("Open Run to build a command visually or use the advanced raw-command launcher.", UiTypography.Role.BODY, ui.palette.muted));
+            empty.addView(ui.text("Create a workflow first; logs and artifacts will appear here after the first run.", UiTypography.Role.BODY, ui.palette.muted));
             empty.addView(ui.button("Create a run", ui.palette.cyan, v -> switchPage(1)));
             content.addView(empty);
         } else {
             content.addView(runCard(latest, true));
         }
 
+        content.addView(ui.sectionTitle("Readiness"));
+        LinearLayout readiness = ui.surface();
+        int ready = readinessCount();
+        readiness.addView(ui.text(ready == 4 ? "Ready to run" : ready + " of 4 services ready", UiTypography.Role.LARGE_VALUE, ready == 4 ? ui.palette.green : ui.palette.text));
+        TextView readinessDetail = ui.text(ready == 4 ? "Android, Termux and the secure HUD bridge are connected."
+                        : "Complete the highlighted tiles below before relying on live background progress.", UiTypography.Role.BODY_SMALL, ui.palette.muted);
+        readinessDetail.setPadding(0, ui.dp(5), 0, 0);
+        readiness.addView(readinessDetail);
+        content.addView(readiness);
+
         content.addView(ui.sectionTitle("Quick actions"));
-        content.addView(ui.quickTile(R.drawable.ic_repository, "Repository status", "Inspect the configured repository", ui.palette.green, v -> runQuick("status")));
         content.addView(ui.quickTile(R.drawable.ic_validate, "Validate target", "Restore, build and test efficiently", ui.palette.cyan, v -> runQuick("validate")));
-        content.addView(ui.quickTile(R.drawable.ic_workflow, "Build a workflow", "Apply overlays, test or commit", ui.palette.yellow, v -> switchPage(1)));
-        content.addView(ui.quickTile(R.drawable.ic_nav_history, "Structured logs", "Review output, problems and metadata", ui.palette.muted, v -> switchPage(2)));
-        content.addView(ui.quickTile(R.drawable.ic_repository, "Repositories", "Inspect Termux and chroot repositories", ui.palette.cyan, v -> switchPage(3)));
+        content.addView(ui.quickTile(R.drawable.ic_workflow, "Build workflow", "Apply overlays, test, package or commit", ui.palette.yellow, v -> switchPage(1)));
+        content.addView(ui.quickTile(R.drawable.ic_nav_history, "Logs", "Review output, problems and metadata", ui.palette.muted, v -> switchPage(2)));
+        content.addView(ui.quickTile(R.drawable.ic_repository, "Repos", "Inspect Termux and chroot repositories", ui.palette.green, v -> switchPage(3)));
+
+        addCoreTiles(content, false);
+        content.addView(ui.sectionTitle("Advanced setup"));
+        content.addView(rootBridgeTile());
 
         List<RunRecord> records = RunStore.all(this);
         if (records.size() > 1) {
@@ -394,32 +423,42 @@ public final class MainActivity extends Activity {
         runProjectSection = ui.surface();
         runProjectSection.addView(ui.sectionTitle("1 · Project"));
         runProjectSection.addView(ui.button("Paste and import command", ui.palette.cyan, v -> importBuilderCommandFromClipboard()));
-        projectTypeInput = spinner(DevtoolCommandBuilder.PROJECT_TYPES, saved.projectType, "Project type");
-        runProjectSection.addView(label("Project type")); runProjectSection.addView(projectTypeInput);
+        runProjectSection.addView(ui.text("Basic", UiTypography.Role.LABEL, ui.palette.muted));
         repoInput = field(runProjectSection, "Repository", saved.repo, "Termux or chroot repository path", false);
         targetInput = field(runProjectSection, "Target", saved.target, "Configured devtool target", false);
+        projectTypeInput = spinner(DevtoolCommandBuilder.PROJECT_TYPES, saved.projectType, "Project type");
+        runProjectAdvancedSection = progressiveSection(runProjectSection, "Project options", "Show project options", "Hide project options", () -> runProjectAdvancedOpen = !runProjectAdvancedOpen, runProjectAdvancedOpen);
+        runProjectAdvancedSection.addView(label("Project type")); runProjectAdvancedSection.addView(projectTypeInput);
+        runProjectAdvancedSection.addView(ui.text("Auto is recommended unless a repository needs a forced runner.", UiTypography.Role.BODY_SMALL, ui.palette.muted));
         content.addView(runProjectSection);
 
         runOperationSection = ui.surface();
         runOperationSection.addView(ui.sectionTitle("2 · Operation"));
+        runOperationSection.addView(ui.text("Basic", UiTypography.Role.LABEL, ui.palette.muted));
         operationInput = spinner(DevtoolCommandBuilder.OPERATIONS, saved.operation, "Operation");
         runOperationSection.addView(label("Operation")); runOperationSection.addView(operationInput);
         artifactInput = field(runOperationSection, "Overlay / bundle", saved.artifact, "$HOME/Downloads/example_overlay.zip", false);
-        commitInput = field(runOperationSection, "Commit message", saved.commitMessage, "Required for explicit commit", false);
-        customInput = field(runOperationSection, "Custom subcommand and arguments", saved.customArguments, "Used only when operation is custom", true);
-        executionModeInput = spinner(DevtoolCommandBuilder.EXECUTION_ENVIRONMENTS, saved.executionEnvironment, "Execution environment");
-        runOperationSection.addView(label("Execution environment")); runOperationSection.addView(executionModeInput);
-        rootBridgeToggle = toggle(runOperationSection, "Use optional root bridge", saved.useRootBridge);
-        rootBridgeToggle.setEnabled(RootBridgeManager.isReady(this)); if (!RootBridgeManager.isReady(this)) rootBridgeToggle.setChecked(false);
-        chrootToggle = toggle(runOperationSection, "Run through androidos chroot", saved.useChroot);
-        chrootInput = field(runOperationSection, "Chroot name", saved.chrootName, "androidos", false);
-        runWorkdirInput = field(runOperationSection, "Termux working directory", saved.workdir, "Auto: repository, or ~/ for chroot", false);
         validateToggle = toggle(runOperationSection, "Validate after apply", saved.validate);
         commitToggle = toggle(runOperationSection, "Commit after apply", saved.commit);
+        commitInput = field(runOperationSection, "Commit message", saved.commitMessage, "Required for explicit commit", false);
+        executionModeInput = spinner(DevtoolCommandBuilder.EXECUTION_ENVIRONMENTS, saved.executionEnvironment, "Execution environment");
+        rootBridgeToggle = ui.toggle("Use optional root bridge", saved.useRootBridge);
+        rootBridgeToggle.setEnabled(RootBridgeManager.isReady(this)); if (!RootBridgeManager.isReady(this)) rootBridgeToggle.setChecked(false);
+        chrootToggle = ui.toggle("Run through androidos chroot", saved.useChroot);
+        chrootInput = ui.input(saved.chrootName, "androidos", false);
+        runWorkdirInput = ui.input(saved.workdir, "Auto: repository, or ~/ for chroot", false);
+        customInput = ui.input(saved.customArguments, "Used only when operation is custom", true);
+        runOperationAdvancedSection = progressiveSection(runOperationSection, "Advanced execution", "Show advanced execution", "Hide advanced execution", () -> runOperationAdvancedOpen = !runOperationAdvancedOpen, runOperationAdvancedOpen);
+        runOperationAdvancedSection.addView(label("Execution environment")); runOperationAdvancedSection.addView(executionModeInput);
+        runOperationAdvancedSection.addView(rootBridgeToggle);
+        runOperationAdvancedSection.addView(chrootToggle);
+        TextView chrootLabel = label("Chroot name"); ui.labelInput(chrootLabel, chrootInput, "Chroot name", "androidos"); runOperationAdvancedSection.addView(chrootLabel); runOperationAdvancedSection.addView(chrootInput);
+        TextView workdirLabel = label("Termux working directory"); ui.labelInput(workdirLabel, runWorkdirInput, "Termux working directory", "Auto: repository, or ~/ for chroot"); runOperationAdvancedSection.addView(workdirLabel); runOperationAdvancedSection.addView(runWorkdirInput);
+        TextView customLabel = label("Custom subcommand and arguments"); ui.labelInput(customLabel, customInput, "Custom subcommand and arguments", "Used only when operation is custom"); runOperationAdvancedSection.addView(customLabel); runOperationAdvancedSection.addView(customInput);
         content.addView(runOperationSection);
 
         runTestsSection = ui.surface();
-        runTestsSection.addView(ui.sectionTitle("Test selection"));
+        runTestsSection.addView(ui.sectionTitle("3 · Tests"));
         runTestsSection.addView(ui.text("Discover the real devtool test catalog, search it, and select tests without typing framework IDs.", UiTypography.Role.BODY_SMALL, ui.palette.muted));
         testProfileInput = field(runTestsSection, "Saved profile", saved.testProfile, "quick, full, parser…", false);
         runTestsSection.addView(ui.button("Discover tests", ui.palette.cyan, v -> discoverTestsOnAndroid()));
@@ -437,17 +476,33 @@ public final class MainActivity extends Activity {
 
         runReviewSection = ui.surface();
         runReviewSection.addView(ui.sectionTitle("4 · Review"));
-        copyToggle = toggle(runReviewSection, "Copy result", saved.copy);
-        copyViaTermuxToggle = toggle(runReviewSection, "Use Termux clipboard route", saved.copyViaTermux);
-        autoHudToggle = toggle(runReviewSection, "Live Android progress", saved.autoHud);
-        foregroundToggle = toggle(runReviewSection, "Open Termux in foreground while running", !AppSettings.runInBackground(this));
-        yesToggle = toggle(runReviewSection, "Non-interactive --yes", saved.assumeYes);
-        runOverlayToggle = toggle(runReviewSection, "Show floating HUD", saved.overlay);
-        environmentInput = field(runReviewSection, "Environment assignments", saved.environmentAssignments, "NAME=value", false);
-        extraGlobalInput = field(runReviewSection, "Additional global arguments", saved.extraGlobalArguments, "Flags before the subcommand", true);
-        extraOperationInput = field(runReviewSection, "Additional operation arguments", saved.extraOperationArguments, "Arguments after the subcommand", true);
-        commandPreview = ui.text("", UiTypography.Role.BODY_SMALL, ui.palette.text); commandPreview.setTypeface(Typeface.MONOSPACE); commandPreview.setTextIsSelectable(true); commandPreview.setPadding(ui.dp(12),ui.dp(10),ui.dp(12),ui.dp(10)); commandPreview.setBackground(ui.flat(ui.palette.surfaceRaised,10)); commandPreview.setContentDescription("Generated devtool command preview");
-        runReviewSection.addView(ui.sectionTitle("Command preview"));
+        runReviewSection.addView(ui.text("Review the workflow first. Output routing, environment flags and exact command details are tucked below.", UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        runReviewSection.addView(ui.button("Show exact command", ui.palette.cyan, v -> {
+            commandPreview.setVisibility(commandPreview.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+            ((Button) v).setText(commandPreview.getVisibility() == View.VISIBLE ? "Hide exact command" : "Show exact command");
+        }));
+        copyToggle = ui.toggle("Copy result", saved.copy);
+        copyViaTermuxToggle = ui.toggle("Use Termux clipboard route", saved.copyViaTermux);
+        autoHudToggle = ui.toggle("Live Android progress", saved.autoHud);
+        foregroundToggle = ui.toggle("Open Termux in foreground while running", !AppSettings.runInBackground(this));
+        runOverlayToggle = ui.toggle("Show floating HUD", saved.overlay);
+        environmentInput = ui.input(saved.environmentAssignments, "NAME=value", false);
+        extraGlobalInput = ui.input(saved.extraGlobalArguments, "Flags before the subcommand", true);
+        extraOperationInput = ui.input(saved.extraOperationArguments, "Arguments after the subcommand", true);
+        runReviewAdvancedSection = progressiveSection(runReviewSection, "Advanced output", "Show advanced output", "Hide advanced output", () -> runReviewAdvancedOpen = !runReviewAdvancedOpen, runReviewAdvancedOpen);
+        runReviewAdvancedSection.addView(copyToggle);
+        runReviewAdvancedSection.addView(copyViaTermuxToggle);
+        runReviewAdvancedSection.addView(autoHudToggle);
+        runReviewAdvancedSection.addView(foregroundToggle);
+        runReviewAdvancedSection.addView(runOverlayToggle);
+        TextView envLabel = label("Environment assignments"); ui.labelInput(envLabel, environmentInput, "Environment assignments", "NAME=value"); runReviewAdvancedSection.addView(envLabel); runReviewAdvancedSection.addView(environmentInput);
+        TextView globalLabel = label("Additional global arguments"); ui.labelInput(globalLabel, extraGlobalInput, "Additional global arguments", "Flags before the subcommand"); runReviewAdvancedSection.addView(globalLabel); runReviewAdvancedSection.addView(extraGlobalInput);
+        TextView opLabel = label("Additional operation arguments"); ui.labelInput(opLabel, extraOperationInput, "Additional operation arguments", "Arguments after the subcommand"); runReviewAdvancedSection.addView(opLabel); runReviewAdvancedSection.addView(extraOperationInput);
+        yesToggle = ui.toggle("Non-interactive --yes", saved.assumeYes);
+        runDangerZoneSection = progressiveSection(runReviewSection, "Danger zone", "Show danger zone", "Hide danger zone", () -> runDangerZoneOpen = !runDangerZoneOpen, runDangerZoneOpen);
+        runDangerZoneSection.addView(yesToggle);
+        runDangerZoneSection.addView(ui.text("Use this for intentional noninteractive writes only. Destructive operations still ask for confirmation before launch.", UiTypography.Role.BODY_SMALL, ui.palette.yellow));
+        commandPreview = ui.text("", UiTypography.Role.BODY_SMALL, ui.palette.text); commandPreview.setTypeface(Typeface.MONOSPACE); commandPreview.setTextIsSelectable(true); commandPreview.setPadding(ui.dp(12),ui.dp(10),ui.dp(12),ui.dp(10)); commandPreview.setBackground(ui.flat(ui.palette.surfaceRaised,10)); commandPreview.setContentDescription("Generated devtool command preview"); commandPreview.setVisibility(View.GONE);
         runReviewSection.addView(commandPreview);
         runReviewSection.addView(ui.secondaryButton("Copy command", v -> copyText("Devtool command", commandPreview.getText().toString())));
         runReviewSection.addView(ui.secondaryButton("Save as defaults", v -> { saveRunConfig(); AppSettings.clearRunDraft(this); runDraft=readRunConfig().copy(); Toast.makeText(this,"Run defaults saved",Toast.LENGTH_SHORT).show(); }));
@@ -459,7 +514,7 @@ public final class MainActivity extends Activity {
         watchPreview(repoInput, runWorkdirInput, targetInput, artifactInput, commitInput, customInput, chrootInput,
                 testProfileInput, testSelectorsInput, testTagsInput, testExcludeTagsInput, testPathInput, testClassInput, testMethodInput,
                 environmentInput, extraGlobalInput, extraOperationInput);
-        testCatalogSearch.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){} public void onTextChanged(CharSequence s,int a,int b,int c){populateTestCatalog();} public void afterTextChanged(Editable s){}});
+        testCatalogSearch.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int b,int c){} public void onTextChanged(CharSequence s,int a,int b,int c){populateTestCatalog();} public void afterTextChanged(Editable s){} });
         chrootToggle.setOnCheckedChangeListener((button,checked)->{syncExecutionControls(true);updatePreview();});
         for(Switch value:new Switch[]{rootBridgeToggle,copyToggle,copyViaTermuxToggle,autoHudToggle,foregroundToggle,validateToggle,commitToggle,yesToggle,runOverlayToggle,listTestsToggle,instrumentedToggle}) value.setOnCheckedChangeListener((button,checked)->updatePreview());
         syncExecutionControls(false); updateOperationVisibility(); updatePreview(); populateTestCatalog(); showRunStage(runStage);
@@ -878,6 +933,42 @@ public final class MainActivity extends Activity {
         return spinner;
     }
 
+    private LinearLayout progressiveSection(LinearLayout parent, String label, String showText, String hideText, Runnable toggleState, boolean initiallyOpen) {
+        LinearLayout section = new LinearLayout(this);
+        section.setOrientation(LinearLayout.VERTICAL);
+        section.setPadding(ui.dp(10), ui.dp(8), ui.dp(10), ui.dp(8));
+        section.setBackground(ui.flat(ui.palette.surfaceRaised, 10));
+        Button toggle = ui.secondaryButton(initiallyOpen ? hideText : showText, v -> {
+            boolean opening = section.getVisibility() != View.VISIBLE;
+            section.setVisibility(opening ? View.VISIBLE : View.GONE);
+            ((Button) v).setText(opening ? hideText : showText);
+            toggleState.run();
+        });
+        toggle.setContentDescription(label + ", " + (initiallyOpen ? "expanded" : "collapsed"));
+        parent.addView(toggle);
+        section.setVisibility(initiallyOpen ? View.VISIBLE : View.GONE);
+        parent.addView(section);
+        return section;
+    }
+
+    private boolean selectedRunNeedsTests() {
+        if (operationInput == null) return true;
+        String operation = String.valueOf(operationInput.getSelectedItem());
+        boolean apply = operation.equals("apply-overlay") || operation.equals("apply-overlays");
+        return operation.equals("test") || operation.equals("validate") || apply;
+    }
+
+    private int visibleRunStepCount() { return selectedRunNeedsTests() ? 4 : 3; }
+
+    private int visibleRunStepIndex() { return selectedRunNeedsTests() ? runStage : (runStage < 2 ? runStage : 2); }
+
+    private String runStageName(int stage) {
+        if (stage == 0) return "Project";
+        if (stage == 1) return "Operation";
+        if (stage == 2) return "Tests";
+        return "Review";
+    }
+
     private View buildRunActionBar() {
         LinearLayout bar=new LinearLayout(this);bar.setOrientation(ui.verticalActions()?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(ui.dp(12),ui.dp(8),ui.dp(12),ui.dp(8));bar.setBackgroundColor(ui.palette.surface);
         runBackButton=ui.secondaryButton("Back",v->showRunStage(runStage-1));runStageLabel=ui.text("", UiTypography.Role.LABEL, ui.palette.muted);runStageLabel.setGravity(Gravity.CENTER);
@@ -895,8 +986,10 @@ public final class MainActivity extends Activity {
     }
 
     private void showRunStage(int stage) {
-        runStage=Math.max(0,Math.min(3,stage));if(runProjectSection!=null)runProjectSection.setVisibility(runStage==0?View.VISIBLE:View.GONE);if(runOperationSection!=null)runOperationSection.setVisibility(runStage==1?View.VISIBLE:View.GONE);if(runTestsSection!=null)runTestsSection.setVisibility(runStage==2?View.VISIBLE:View.GONE);if(runReviewSection!=null)runReviewSection.setVisibility(runStage==3?View.VISIBLE:View.GONE);
-        if(runStageLabel!=null){String stageText="Step "+(runStage+1)+" of 4\n"+new String[]{"Project","Operation","Tests","Review"}[runStage];runStageLabel.setText(stageText);runStageLabel.setContentDescription(stageText.replace("\n",", "));runStageLabel.announceForAccessibility(stageText.replace("\n",", "));}if(runBackButton!=null)runBackButton.setEnabled(runStage>0);if(runNextButton!=null)runNextButton.setVisibility(runStage<3?View.VISIBLE:View.GONE);if(runExecuteButton!=null)runExecuteButton.setVisibility(runStage==3?View.VISIBLE:View.GONE);captureRunDraft();
+        runStage=Math.max(0,Math.min(3,stage));
+        if(!selectedRunNeedsTests()&&runStage==2)runStage=3;
+        if(runProjectSection!=null)runProjectSection.setVisibility(runStage==0?View.VISIBLE:View.GONE);if(runOperationSection!=null)runOperationSection.setVisibility(runStage==1?View.VISIBLE:View.GONE);if(runTestsSection!=null)runTestsSection.setVisibility(runStage==2?View.VISIBLE:View.GONE);if(runReviewSection!=null)runReviewSection.setVisibility(runStage==3?View.VISIBLE:View.GONE);
+        if(runStageLabel!=null){String stageText="Step "+(visibleRunStepIndex()+1)+" of "+visibleRunStepCount()+"\n"+runStageName(runStage);runStageLabel.setText(stageText);runStageLabel.setContentDescription(stageText.replace("\n",", "));runStageLabel.announceForAccessibility(stageText.replace("\n",", "));}if(runBackButton!=null)runBackButton.setEnabled(runStage>0);if(runNextButton!=null){runNextButton.setVisibility(runStage<3?View.VISIBLE:View.GONE);runNextButton.setText(!selectedRunNeedsTests()&&runStage==1?"Review":"Next");}if(runExecuteButton!=null)runExecuteButton.setVisibility(runStage==3?View.VISIBLE:View.GONE);captureRunDraft();
     }
 
     private void updateOperationVisibility() {

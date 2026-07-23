@@ -1,0 +1,141 @@
+{
+  "applied_at": "2026-07-23T21:44:43.609192Z",
+  "artifact": "/storage/emulated/0/Download/devtool_notification_accessibility_polish_overlay.zip",
+  "artifact_name": "devtool_notification_accessibility_polish_overlay.zip",
+  "type": "overlay",
+  "sha256": "adf23c0adbde26ecb5a5e55834048c76a64232119f60d2206e5cd82628e74132",
+  "status": "ok",
+  "validation_status": "ok",
+  "commit_message": "",
+  "commit_hash": "",
+  "file_count": 9,
+  "change_counts": {
+    "add": 2,
+    "modify": 7
+  },
+  "manifest": {
+    "schema_version": 2,
+    "type": "overlay",
+    "target": "devtool",
+    "name": "devtool_notification_accessibility_polish_overlay",
+    "description": "Polish Android notification readability and accessibility with stronger progress/state hierarchy, content descriptions, and 48dp action-target contracts.",
+    "release": "1.1.0",
+    "devtool_version": "1.1.0",
+    "desktop_version": "0.4.0",
+    "android_version": "1.14.0",
+    "android_version_code": 27,
+    "artifact_type": "overlay",
+    "slice": 18,
+    "features": [
+      "7dp compact, expanded, and large-text notification progress rails",
+      "dominant chip-style notification state label so status is not color-only",
+      "RemoteViews accessibility descriptions for state, progress, status, phase, workspace, elapsed, and actions",
+      "48dp notification action-target preservation",
+      "notification UI contract visual-prominence and accessibility requirements",
+      "focused validation for notification accessibility and parity"
+    ],
+    "apply": {
+      "atomic": true,
+      "conflict_policy": "overwrite",
+      "path_policy": "repository-relative",
+      "requires_clean_worktree": false
+    },
+    "validation": {
+      "required": true,
+      "restore": false,
+      "build": false,
+      "test": false,
+      "script": {
+        "path": ".devtool-artifact/validate_phase12_notification_accessibility.sh",
+        "runner": "bash",
+        "sha256": "ad26d071e3f0a5f6caaa3af8c567033d056146b4f25839cf76b2e0ce86874361",
+        "timeout_seconds": 120
+      },
+      "expected": {
+        "restore": "skip",
+        "build": "skip",
+        "tests": "skip"
+      },
+      "focused_tests": 12,
+      "notes": "Built-in restore/build/test are intentionally skipped. The embedded validator runs source-audit, focused notification tests, and direct source assertions for this Android notification accessibility slice so unrelated baseline failures do not roll back the UI-only overlay."
+    },
+    "key_files": [
+      "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+      "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+      "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+      "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+      "android/devtool-live-hud/app/src/main/res/values/styles.xml",
+      "android/devtool-live-hud/docs/notification-ui-contract.json",
+      "tests/test_notification_accessibility_polish.py",
+      "PHASE_12_NOTIFICATION_ACCESSIBILITY_POLISH.md",
+      "CHANGELOG.md"
+    ],
+    "inventory": {
+      "format": 1,
+      "entries": [
+        {
+          "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/NotificationController.java",
+          "action": "modify",
+          "sha256": "b4803cb559623d34507e82ba22ceb97f280123606e98064a5dede6cbd6761aad",
+          "size": 27158,
+          "source_sha256": "5d23b3fd5f86c90d899a456fa0ae812c3ab3b5ab163b9c900eb82f04a81e727f"
+        },
+        {
+          "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml",
+          "action": "modify",
+          "sha256": "028e3ffc394f7d88531965633eac3f8e7453004f9c25e866d862845d03308ab8",
+          "size": 4512,
+          "source_sha256": "124eab0913d87468015da69080c85f6dc8d3a041f84e04a16d3ebb3f0654f42a"
+        },
+        {
+          "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml",
+          "action": "modify",
+          "sha256": "b0885645999a61eb7c78a68e6150a9d209d92dbf02ee11b8a8a36edd15b6a31c",
+          "size": 16107,
+          "source_sha256": "1af3c371334549c3d5a00ce0e2379771e1941291bc17441209f01ee77aaa961e"
+        },
+        {
+          "path": "android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml",
+          "action": "modify",
+          "sha256": "90fd1d7e98551166de87f525f10e800232a89dc0e9b945950852ddcfde366f6f",
+          "size": 13598,
+          "source_sha256": "396543c7945003737527a23460d60940f1fce46cea73acefa9d3b0e69ca23065"
+        },
+        {
+          "path": "android/devtool-live-hud/app/src/main/res/values/styles.xml",
+          "action": "modify",
+          "sha256": "b85cd552b05c31d81f0f8f29d7c5e72acf14fbbd14851e86db7d5b0a5faddeae",
+          "size": 3900,
+          "source_sha256": "4ab36510092d4858751c132ed8cc622a6d907c659ce62cde3dbca0093cc820a9"
+        },
+        {
+          "path": "android/devtool-live-hud/docs/notification-ui-contract.json",
+          "action": "modify",
+          "sha256": "603d1cfbebcf450dce243a3e6a0780d82f6a6e0fe981cecc6b44554cc5b83685",
+          "size": 2247,
+          "source_sha256": "6b66ad668895c947c1b25eae8590c2711d1a963fece943810a8658f4d44f6fc8"
+        },
+        {
+          "path": "tests/test_notification_accessibility_polish.py",
+          "action": "add",
+          "sha256": "66cf4a9c5dba559c72988ad309eb44cc9cf0ee43333b00e415f648e68d1f7c8d",
+          "size": 4367
+        },
+        {
+          "path": "PHASE_12_NOTIFICATION_ACCESSIBILITY_POLISH.md",
+          "action": "add",
+          "sha256": "1ad8a15b2029b5cb13935b44904d56e70747cbad46e93d41f07321e57e3465a1",
+          "size": 994
+        },
+        {
+          "path": "CHANGELOG.md",
+          "action": "modify",
+          "sha256": "481f343f64676433eaf5a0729cc7aab6398973230fce7a58038146560224625b",
+          "size": 13225,
+          "source_sha256": "ad14c10a6e8096877514453d157b87eb6d4e6cff60008d1d42f2cc38664cc825"
+        }
+      ]
+    }
+  },
+  "history_id": "9da27937e55e4f44beebf93fe6f8eaca"
+}

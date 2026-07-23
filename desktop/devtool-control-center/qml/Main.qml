@@ -24,7 +24,7 @@ ApplicationWindow {
     Theme { id: theme }
 
     header: Rectangle {
-        implicitHeight: root.veryNarrowMode ? 56 : 64
+        implicitHeight: root.veryNarrowMode ? 48 : 52
         color: theme.elevatedSurface
         border.color: theme.border
         border.width: 1
@@ -37,30 +37,12 @@ ApplicationWindow {
             Label {
                 text: root.veryNarrowMode ? "Devtool" : "Devtool Control Center"
                 color: theme.windowText
-                font.pointSize: root.veryNarrowMode ? theme.cardTitlePointSize : theme.pageTitlePointSize
+                font.pointSize: root.veryNarrowMode ? theme.cardTitlePointSize : theme.cardTitlePointSize + 1
                 font.weight: Font.DemiBold
                 font.letterSpacing: 0
                 lineHeight: theme.titleLineHeight
                 Accessible.role: Accessible.Heading
                 Accessible.name: text
-            }
-            Rectangle {
-                visible: !root.narrowMode
-                radius: 6
-                color: theme.infoSurface
-                implicitWidth: phaseLabel.implicitWidth + 12
-                implicitHeight: 24
-                Accessible.ignored: true
-                Label {
-                    id: phaseLabel
-                    anchors.centerIn: parent
-                    text: "1.0 · Multi-runner"
-                    color: theme.info
-                    font.pointSize: theme.smallPointSize
-                    font.weight: Font.DemiBold
-                    font.letterSpacing: 0
-                    lineHeight: theme.compactLineHeight
-                }
             }
             Item { Layout.fillWidth: true }
             Label {
@@ -120,7 +102,7 @@ ApplicationWindow {
                         SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/overview.svg"; text: "Overview"; selected: root.pageIndex === 0; onClicked: root.pageIndex = 0 }
                         SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/run.svg"; text: "Run"; selected: root.pageIndex === 1; onClicked: root.pageIndex = 1 }
                         SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/artifacts.svg"; text: "Artifacts"; selected: root.pageIndex === 2; onClicked: root.pageIndex = 2 }
-                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/diagnostics.svg"; text: "Diagnostics"; selected: root.pageIndex === 3; onClicked: root.pageIndex = 3 }
+                        SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/diagnostics.svg"; text: "Logs"; selected: root.pageIndex === 3; onClicked: root.pageIndex = 3 }
                         SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/history.svg"; text: "History"; selected: root.pageIndex === 4; onClicked: root.pageIndex = 4 }
                         SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/repositories.svg"; text: "Repositories"; selected: root.pageIndex === 5; onClicked: root.pageIndex = 5 }
                         SidebarButton { width: parent.width; compact: root.narrowMode; iconSource: "qrc:/qt/qml/Devtool/ControlCenter/icons/settings.svg"; text: "Settings"; selected: root.pageIndex === 6; onClicked: root.pageIndex = 6 }
@@ -150,7 +132,17 @@ ApplicationWindow {
                 Accessible.name: "Current page"
             }
 
-            Component { id: overviewPageComponent; OverviewPage { onOpenRun: function(run) { hudStore.selectedRunId = run.run_id; root.pageIndex = 3 } } }
+            Component {
+                id: overviewPageComponent
+                OverviewPage {
+                    onOpenRun: function(run) {
+                        hudStore.selectedRunId = run.run_id
+                        root.pageIndex = 3
+                    }
+                    onOpenRunPage: root.pageIndex = 1
+                    onOpenLogsPage: root.pageIndex = 3
+                }
+            }
             Component { id: runPageComponent; RunPage { } }
             Component { id: artifactsPageComponent; ArtifactsPage { } }
             Component { id: diagnosticsPageComponent; DiagnosticsPage { } }

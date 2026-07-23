@@ -92,6 +92,8 @@ final class NotificationController {
         if (!update.isTerminal()) requestPromotedOngoing(builder);
         if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(update.criticalText());
         builder.getExtras().putString("devtool.expanded_text", update.expandedText());
+        builder.getExtras().putString("devtool.status_lead", update.notificationStatusLead());
+        builder.getExtras().putString("devtool.status_detail", update.notificationStatusDetail());
         builder.getExtras().putString("devtool.run_id", update.runId);
         builder.getExtras().putString("devtool.project_type", update.projectType);
         builder.getExtras().putString("devtool.execution_environment", update.executionEnvironment);
@@ -110,18 +112,31 @@ final class NotificationController {
     private void bindHeader(RemoteViews views, HudUpdate update, boolean expanded) {
         String mode = update.notificationMode();
         int accent = accentColor(mode);
+        String stateLabel = update.notificationStateLabel();
+        String taskTitle = update.notificationTaskTitle();
+        String progressLabel = update.notificationProgressLabel();
+        String statusLead = update.notificationStatusLead();
+        String statusDetail = update.notificationStatusDetail();
         views.setInt(R.id.notification_root, "setBackgroundResource", cardDrawable(mode));
         views.setInt(R.id.notification_app_icon, "setBackgroundResource", badgeDrawable(mode));
         views.setInt(R.id.notification_app_icon, "setColorFilter", accent);
         views.setInt(R.id.notification_state_dot, "setColorFilter", accent);
         views.setTextColor(R.id.notification_state_label, accent);
         views.setTextColor(R.id.notification_progress_label, accent);
-        views.setTextViewText(R.id.notification_state_label, update.notificationStateLabel());
-        views.setTextViewText(R.id.notification_task_title, update.notificationTaskTitle());
-        views.setTextViewText(R.id.notification_progress_label, update.notificationProgressLabel());
+        views.setTextColor(R.id.notification_status_lead, accent);
+        views.setTextViewText(R.id.notification_state_label, stateLabel);
+        views.setTextViewText(R.id.notification_task_title, taskTitle);
+        views.setTextViewText(R.id.notification_progress_label, progressLabel);
+        views.setTextViewText(R.id.notification_status_lead, update.notificationStatusLead());
+        views.setTextViewText(R.id.notification_status_detail, update.notificationStatusDetail());
         views.setProgressBar(R.id.notification_progress, 100, update.displayProgress(), update.indeterminate && !update.isTerminal());
         views.setContentDescription(R.id.notification_root,
-                update.notificationStateLabel() + ". " + update.notificationTaskTitle() + ". " + update.notificationCompactStatus());
+                stateLabel + ". " + taskTitle + ". Progress " + progressLabel + ". " + update.notificationStatusLine());
+        views.setContentDescription(R.id.notification_state_label, "State " + stateLabel);
+        views.setContentDescription(R.id.notification_progress_label, "Progress " + progressLabel);
+        views.setContentDescription(R.id.notification_progress, "Progress " + progressLabel);
+        views.setContentDescription(R.id.notification_status_lead, statusLead);
+        views.setContentDescription(R.id.notification_status_detail, statusDetail);
         if (Build.VERSION.SDK_INT >= 31) {
             views.setColorStateList(R.id.notification_progress, "setProgressTintList", ColorStateList.valueOf(accent));
         }
@@ -156,6 +171,7 @@ final class NotificationController {
         // elapsed tile alive locally even when the build output is quiet and no
         // new bridge payload arrives for a few seconds.
         views.setChronometer(R.id.notification_metric_elapsed, base, null, !update.isTerminal());
+        views.setContentDescription(R.id.notification_metric_elapsed, "Elapsed time");
     }
 
     private void bindPhases(RemoteViews views, HudUpdate update, int maxRows) {
@@ -168,8 +184,10 @@ final class NotificationController {
             HudUpdate.Step step = visible.get(i);
             views.setViewVisibility(PHASE_ROWS[i], View.VISIBLE);
             String[] label = splitStepLabel(step.label);
+            String detail = phaseDetail(update, step, label[1]);
             views.setTextViewText(PHASE_NAMES[i], label[0]);
-            views.setTextViewText(PHASE_DETAILS[i], phaseDetail(update, step, label[1]));
+            views.setTextViewText(PHASE_DETAILS[i], detail);
+            views.setContentDescription(PHASE_ROWS[i], label[0] + ". " + detail);
             int icon = step.succeeded() ? R.drawable.ic_phase_done
                     : step.failed() ? R.drawable.ic_phase_failed
                     : step.running() ? R.drawable.ic_phase_active
@@ -247,6 +265,8 @@ final class NotificationController {
                 ? update.current + "/" + update.total
                 : workspace.progress + "%";
         views.setTextViewText(R.id.notification_workspace_progress, workspaceProgress);
+        views.setContentDescription(R.id.notification_workspace_card,
+                "Workspace " + workspace.name + ". " + workspace.meta + ". Progress " + workspaceProgress);
         String remaining = update.remainingWorkspacesText();
         views.setTextViewText(R.id.notification_workspace_remaining, remaining);
         views.setViewVisibility(R.id.notification_workspace_remaining, remaining.isEmpty() ? View.GONE : View.VISIBLE);

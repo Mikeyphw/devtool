@@ -73,3 +73,17 @@ IDs at:
 
 Native captures are supplemental. The portable snapshots and state tests remain
 mandatory on every platform.
+
+
+## UI/UX roadmap final contract
+
+The final roadmap gate is `tests/test_ui_contract_finalization.py`. It ties together the accepted contracts from the HUD parity/autosize, typography/navigation, Overview/Run-flow, detailed HUD, and notification accessibility overlays.
+
+This test is intentionally source-contract based so it can run on Termux/chroot systems without a Qt display server or Android emulator. Native screenshot captures remain supplemental, but the final contract must verify the following on every platform:
+
+- Desktop HUD content-aware auto-size remains present and HUD detail is not removed.
+- Android floating HUD persists and clamps its position.
+- Android notification compact, expanded, and large-text layouts keep status lines below the progress rail.
+- Notification progress rails, state-label prominence, content descriptions, and 48 dp action targets remain in sync with `notification-ui-contract.json`.
+- Overview remains action-first and Run remains progressively disclosed.
+- User-facing navigation keeps the Logs label and compact Android page-title scale.

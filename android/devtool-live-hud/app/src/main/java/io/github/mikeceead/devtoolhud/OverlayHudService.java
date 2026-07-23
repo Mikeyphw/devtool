@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
@@ -36,6 +37,10 @@ import java.util.Map;
 public final class OverlayHudService extends Service {
     private static final String PREFS = "overlay_hud";
     private static final String KEY_ENABLED = "enabled";
+    private static final String KEY_X = "x";
+    private static final String KEY_Y = "y";
+    private static final int DEFAULT_X_DP = 12;
+    private static final int DEFAULT_Y_DP = 72;
     private static final String CHANNEL_ID = "devtool_overlay_service_v1";
     private static final int SERVICE_NOTIFICATION_ID = 7201;
     private static final long TERMINAL_LINGER_MS = 10_000L;
@@ -185,6 +190,18 @@ public final class OverlayHudService extends Service {
         super.onDestroy();
     }
 
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        handler.post(() -> {
+            if (windowManager == null || windowParams == null || overlayRoot == null) return;
+            int preferredWidth = largeText() ? dp(520) : dp(380);
+            windowParams.width = Math.min(preferredWidth, getResources().getDisplayMetrics().widthPixels - dp(24));
+            clampAndUpdateOverlayPosition();
+        });
+    }
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;
@@ -283,12 +300,14 @@ public final class OverlayHudService extends Service {
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         windowParams.gravity = Gravity.TOP | Gravity.END;
-        windowParams.x = dp(12);
-        windowParams.y = dp(72);
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        windowParams.x = clampInt(prefs.getInt(KEY_X, dp(DEFAULT_X_DP)), 0, maxOverlayX(width));
+        windowParams.y = clampInt(prefs.getInt(KEY_Y, dp(DEFAULT_Y_DP)), 0, maxOverlayY(0));
         windowParams.windowAnimations = android.R.style.Animation_Toast;
 
         try {
             windowManager.addView(overlayRoot, windowParams);
+            overlayRoot.post(this::clampAndUpdateOverlayPosition);
             render();
         } catch (RuntimeException ignored) {
             overlayRoot = null;
@@ -307,8 +326,8 @@ public final class OverlayHudService extends Service {
                 return true;
             case MotionEvent.ACTION_MOVE:
                 // Gravity.END makes positive x move inward from the right edge.
-                windowParams.x = Math.max(0, dragStartX - Math.round(event.getRawX() - dragStartRawX));
-                windowParams.y = Math.max(0, dragStartY + Math.round(event.getRawY() - dragStartRawY));
+                windowParams.x = clampInt(dragStartX - Math.round(event.getRawX() - dragStartRawX), 0, maxOverlayX(windowParams.width));
+                windowParams.y = clampInt(dragStartY + Math.round(event.getRawY() - dragStartRawY), 0, maxOverlayY(overlayRoot.getHeight()));
                 try {
                     windowManager.updateViewLayout(overlayRoot, windowParams);
                 } catch (RuntimeException ignored) {
@@ -316,10 +335,50 @@ public final class OverlayHudService extends Service {
                 return true;
             case MotionEvent.ACTION_UP:
                 view.performClick();
+                saveHudPosition();
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                saveHudPosition();
                 return true;
             default:
                 return false;
         }
+    }
+
+
+    private void clampAndUpdateOverlayPosition() {
+        if (windowManager == null || windowParams == null || overlayRoot == null) return;
+        windowParams.x = clampInt(windowParams.x, 0, maxOverlayX(windowParams.width));
+        windowParams.y = clampInt(windowParams.y, 0, maxOverlayY(overlayRoot.getHeight()));
+        try {
+            windowManager.updateViewLayout(overlayRoot, windowParams);
+        } catch (RuntimeException ignored) {
+        }
+        saveHudPosition();
+    }
+
+    private void saveHudPosition() {
+        if (windowParams == null) return;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt(KEY_X, windowParams.x)
+                .putInt(KEY_Y, windowParams.y)
+                .apply();
+    }
+
+    private int maxOverlayX(int width) {
+        int displayWidth = getResources().getDisplayMetrics().widthPixels;
+        int safeWidth = width > 0 ? width : (overlayRoot != null ? overlayRoot.getWidth() : dp(380));
+        return Math.max(0, displayWidth - safeWidth - dp(8));
+    }
+
+    private int maxOverlayY(int height) {
+        int displayHeight = getResources().getDisplayMetrics().heightPixels;
+        int safeHeight = height > 0 ? height : (overlayRoot != null ? overlayRoot.getHeight() : dp(224));
+        return Math.max(0, displayHeight - safeHeight - dp(8));
+    }
+
+    private int clampInt(int value, int low, int high) {
+        return Math.max(low, Math.min(high, value));
     }
 
     private void render() {
@@ -340,15 +399,17 @@ public final class OverlayHudService extends Service {
         headerCount.setText(countText);
         headerCount.setContentDescription(countText);
         List<HudUpdate> ordered = new ArrayList<>(currentRuns.values());
-        for (int index = ordered.size() - 1; index >= 0; index--) cardsContainer.addView(card(ordered.get(index)));
+        for (int index = ordered.size() - 1; index >= 0; index--) cardsContainer.addView(card(ordered.get(index), index == ordered.size() - 1));
+        cardsContainer.post(this::clampAndUpdateOverlayPosition);
     }
 
-    private View card(HudUpdate update) {
+    private View card(HudUpdate update, boolean primaryRun) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(10), dp(9), dp(10), dp(9));
         int accent = statusColor(update);
-        card.setBackground(rounded(palette.surface, 13, Color.TRANSPARENT, 0));
+        card.setBackground(rounded(primaryRun ? palette.surface : palette.surfaceRaised, 13, primaryRun ? accent : Color.TRANSPARENT, primaryRun ? 1 : 0));
+        card.setAlpha(primaryRun ? 1.0f : 0.86f);
         card.setContentDescription(update.title() + ". " + update.status + ". " + update.detail + ". " + update.displayProgress() + " percent.");
         card.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
@@ -357,22 +418,32 @@ public final class OverlayHudService extends Service {
         cardParams.setMargins(0, dp(9), 0, 0);
         card.setLayoutParams(cardParams);
 
+        TextView section = label(primaryRun ? "Current run" : "Recent run", UiTypography.Role.CAPTION, primaryRun ? accent : palette.muted);
+        section.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        section.setPadding(0, 0, 0, dp(4));
+        card.addView(section);
+
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = label(update.title(), UiTypography.Role.CARD_TITLE, palette.text);
         title.setMaxLines(largeText() ? 2 : 1);
         titleRow.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        TextView percent = label(update.criticalText(), UiTypography.Role.BODY_SMALL, accent);
+        TextView percent = label(update.criticalText(), primaryRun ? UiTypography.Role.CARD_TITLE : UiTypography.Role.BODY_SMALL, accent);
         titleRow.addView(percent);
         card.addView(titleRow);
 
-        TextView detail = label(update.detail, UiTypography.Role.LABEL, palette.text);
+        TextView statusLead = label(statusGlyph(update) + " " + update.notificationStatusLead(), UiTypography.Role.LABEL, accent);
+        statusLead.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        statusLead.setPadding(0, dp(4), 0, 0);
+        card.addView(statusLead);
+
+        TextView detail = label(update.notificationStatusDetail(), UiTypography.Role.LABEL, palette.text);
         detail.setMaxLines(2);
-        detail.setPadding(0, dp(4), 0, dp(6));
+        detail.setPadding(0, dp(1), 0, dp(6));
         card.addView(detail);
 
-        TextView runner = label(update.runnerLabel() + " · " + update.environmentLabel(), UiTypography.Role.CAPTION, palette.muted);
+        TextView runner = label("Runner · " + update.runnerLabel() + " · " + update.environmentLabel(), UiTypography.Role.CAPTION, palette.muted);
         runner.setPadding(0, 0, 0, dp(5));
         card.addView(runner);
 
@@ -387,6 +458,11 @@ public final class OverlayHudService extends Service {
         }
         card.addView(overallProgress, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(8)));
+
+        TextView pipelineHeading = label("Pipeline", UiTypography.Role.CAPTION, palette.muted);
+        pipelineHeading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        pipelineHeading.setPadding(0, dp(7), 0, dp(2));
+        card.addView(pipelineHeading);
 
         LinearLayout pipeline = new LinearLayout(this);
         pipeline.setOrientation(LinearLayout.VERTICAL);
@@ -442,10 +518,22 @@ public final class OverlayHudService extends Service {
         metrics.append("\n").append(update.errors).append(" errors · ")
                 .append(update.warnings).append(" warnings");
         if (!update.commit.isEmpty()) metrics.append("\nCommit ").append(update.commit);
+        TextView metricsHeading = label("Metrics", UiTypography.Role.CAPTION, palette.muted);
+        metricsHeading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        metricsHeading.setPadding(0, dp(7), 0, dp(1));
+        card.addView(metricsHeading);
         TextView meta = label(metrics.toString(), UiTypography.Role.CAPTION, palette.muted);
-        meta.setPadding(0, dp(6), 0, 0);
+        meta.setPadding(0, dp(2), 0, 0);
         card.addView(meta);
         return card;
+    }
+
+    private String statusGlyph(HudUpdate update) {
+        if (update.succeeded()) return "✓";
+        if (update.failedState()) return "✕";
+        if (update.status.equals("interrupted") || update.status.equals("cancelled")) return "!";
+        if (update.status.equals("waiting")) return "…";
+        return "●";
     }
 
     private int stepColor(HudUpdate.Step step) {

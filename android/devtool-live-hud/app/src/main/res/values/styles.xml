@@ -42,6 +42,11 @@
     <style name="TextAppearance.Devtool.Notification.Badge" parent="android:style/TextAppearance.Material.Caption">
         <item name="android:textSize">10sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/notification_running</item>
     </style>
+
+    <style name="TextAppearance.Devtool.Notification.State" parent="android:style/TextAppearance.Material.Caption">
+        <item name="android:textSize">11sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/notification_running</item><item name="android:textAllCaps">true</item>
+    </style>
+
     <style name="TextAppearance.Devtool.Notification.Action" parent="android:style/TextAppearance.Material.Button">
         <item name="android:textSize">12sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/notification_running</item><item name="android:textAllCaps">false</item>
     </style>

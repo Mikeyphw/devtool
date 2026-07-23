@@ -44,11 +44,13 @@ def test_expanded_layout_contains_mock_hierarchy() -> None:
         "notification_app_icon", "notification_state_dot", "notification_state_label",
         "notification_task_title", "notification_compact_status",
         "notification_progress_label", "notification_progress",
+        "notification_status_lead", "notification_status_detail",
     } <= compact
     assert {
         "notification_artifact", "notification_workspace_name", "notification_workspace_index",
         "notification_phase_row_1", "notification_phase_row_2", "notification_phase_row_3",
         "notification_workspace_current", "notification_workspace_meta",
+        "notification_status_lead", "notification_status_detail",
         "notification_workspace_remaining", "notification_metric_tests",
         "notification_metric_warnings", "notification_metric_errors",
         "notification_metric_elapsed", "notification_action_1",
@@ -112,3 +114,23 @@ def test_notification_resources_and_contract_are_parseable() -> None:
     assert contract["layout"] == "mock-v1"
     assert contract["actions"]["running"] == ["Open log", "Copy summary", "Cancel"]
     assert contract["actions"]["failed"] == ["Open log", "Copy error", "Retry"]
+    assert contract["parity"]["status_lines_below_progress"] is True
+
+
+def test_notification_status_lines_match_desktop_hud_semantics() -> None:
+    controller = read(JAVA / "NotificationController.java")
+    update = read(JAVA / "HudUpdate.java")
+    compact_xml = read(RES / "layout" / "notification_devtool_compact.xml")
+    expanded_xml = read(RES / "layout" / "notification_devtool_expanded.xml")
+    large_xml = read(RES / "layout" / "notification_devtool_expanded_large_text.xml")
+    assert "String notificationStatusLead()" in update
+    assert "String notificationStatusDetail()" in update
+    assert "String notificationStatusLine()" in update
+    assert "views.setTextViewText(R.id.notification_status_lead, update.notificationStatusLead())" in controller
+    assert "views.setTextViewText(R.id.notification_status_detail, update.notificationStatusDetail())" in controller
+    assert 'putString("devtool.status_lead", update.notificationStatusLead())' in controller
+    assert 'putString("devtool.status_detail", update.notificationStatusDetail())' in controller
+    for xml in (compact_xml, expanded_xml, large_xml):
+        assert '@+id/notification_status_lead' in xml
+        assert '@+id/notification_status_detail' in xml
+        assert xml.index('@+id/notification_progress') < xml.index('@+id/notification_status_lead')

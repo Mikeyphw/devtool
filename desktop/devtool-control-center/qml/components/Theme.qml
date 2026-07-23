@@ -60,13 +60,15 @@ Item {
     readonly property string monospaceFamily: typeof uiMonospaceFont !== "undefined" && uiMonospaceFont ? uiMonospaceFont : "monospace"
     readonly property real platformBodyPointSize: Math.max(10.0, Qt.application.font.pointSize > 0 ? Qt.application.font.pointSize : 11.0)
     readonly property real typeScale: Math.max(1.0, Math.min(2.0, platformBodyPointSize / 11.0))
-    readonly property real pageTitlePointSize: 23.0 * typeScale
-    readonly property real cardTitlePointSize: 13.5 * typeScale
-    readonly property real metricValuePointSize: 19.0 * typeScale
+    readonly property real pageTitlePointSize: 24.0 * typeScale
+    readonly property real sectionTitlePointSize: 15.0 * typeScale
+    readonly property real cardTitlePointSize: 14.0 * typeScale
+    readonly property real metricValuePointSize: 20.0 * typeScale
     readonly property real bodyPointSize: 11.0 * typeScale
-    readonly property real smallPointSize: 10.0 * typeScale
-    readonly property real captionPointSize: 9.5 * typeScale
-    readonly property real titleLineHeight: 1.24
+    readonly property real labelPointSize: 10.0 * typeScale
+    readonly property real smallPointSize: labelPointSize
+    readonly property real captionPointSize: 9.0 * typeScale
+    readonly property real titleLineHeight: 1.20
     readonly property real bodyLineHeight: 1.42
     readonly property real compactLineHeight: 1.22
     readonly property int navigationIconSize: Math.round(20 * Math.min(typeScale, 1.5))

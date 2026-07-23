@@ -1,0 +1,110 @@
+{
+  "applied_at": "2026-07-23T21:39:12.665457Z",
+  "artifact": "/storage/emulated/0/Download/devtool_detailed_hud_layout_polish_overlay.zip",
+  "artifact_name": "devtool_detailed_hud_layout_polish_overlay.zip",
+  "type": "overlay",
+  "sha256": "c753aeba6e998d004a1de52841e159e42394416980ece5daf4274fc5235fb99d",
+  "status": "ok",
+  "validation_status": "ok",
+  "commit_message": "",
+  "commit_hash": "",
+  "file_count": 5,
+  "change_counts": {
+    "add": 2,
+    "modify": 3
+  },
+  "manifest": {
+    "schema_version": 2,
+    "type": "overlay",
+    "target": "devtool",
+    "name": "devtool_detailed_hud_layout_polish_overlay",
+    "description": "Preserve detailed HUD content while improving desktop/Android HUD scan hierarchy, Android floating position persistence, and bounds handling.",
+    "release": "1.1.0",
+    "devtool_version": "1.1.0",
+    "desktop_version": "0.4.0",
+    "android_version": "1.14.0",
+    "android_version_code": 27,
+    "artifact_type": "overlay",
+    "slice": 17,
+    "features": [
+      "desktop HUD current-run region and state glyph status line",
+      "desktop HUD workspace-lanes section and quieter inactive lanes",
+      "desktop HUD diagnostics parser grouping while preserving parser details",
+      "Android floating HUD saved x/y position restore",
+      "Android floating HUD drag, display, rotation, and font-scale clamping",
+      "Android floating HUD current/recent run hierarchy while preserving pipeline and metrics",
+      "focused validation proving HUD detail was not reduced"
+    ],
+    "apply": {
+      "atomic": true,
+      "conflict_policy": "overwrite",
+      "path_policy": "repository-relative",
+      "requires_clean_worktree": false
+    },
+    "validation": {
+      "required": true,
+      "restore": false,
+      "build": false,
+      "test": false,
+      "script": {
+        "path": ".devtool-artifact/validate_phase11_detailed_hud_layout.sh",
+        "runner": "bash",
+        "sha256": "f521389f5eaca812b9e1d59bbcd419e7ee1be14b34c20bdb6c39705d5d421324",
+        "timeout_seconds": 120
+      },
+      "expected": {
+        "restore": "skip",
+        "build": "skip",
+        "tests": "skip"
+      },
+      "focused_tests": 12,
+      "notes": "Built-in restore/build/test are intentionally skipped. The embedded validator runs source-audit, focused HUD tests, and direct source assertions for the detailed HUD layout polish slice so unrelated baseline failures do not roll back this UI-only overlay."
+    },
+    "key_files": [
+      "desktop/devtool-control-center/qml/CompactHud.qml",
+      "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java",
+      "tests/test_detailed_hud_layout_polish.py",
+      "PHASE_11_DETAILED_HUD_LAYOUT_POLISH.md",
+      "CHANGELOG.md"
+    ],
+    "inventory": {
+      "format": 1,
+      "entries": [
+        {
+          "path": "desktop/devtool-control-center/qml/CompactHud.qml",
+          "action": "modify",
+          "sha256": "3c80844e78b674927d47b2fbe9252346b4d211e1829d4b7aff2a0d64becf52bc",
+          "size": 62135,
+          "source_sha256": "e0785a1f129ff34e639408f315f2540be8a7cea5446f1a1d019307833979be00"
+        },
+        {
+          "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java",
+          "action": "modify",
+          "sha256": "c5abff10ab00110f5aec9a95d87a4c8741f42dbed9d1695518425ff93dd95778",
+          "size": 28369,
+          "source_sha256": "c543e5c8ac1e6eec4c7d0c88288903db6ac8b4b309d28ee0c1e88dbe3c4728d4"
+        },
+        {
+          "path": "tests/test_detailed_hud_layout_polish.py",
+          "action": "add",
+          "sha256": "49675a22fa8878cf4caf43cafdf9023058f2b677d94eb430fd7e2a67e5bbf1f4",
+          "size": 2754
+        },
+        {
+          "path": "PHASE_11_DETAILED_HUD_LAYOUT_POLISH.md",
+          "action": "add",
+          "sha256": "f1312f327270bae02338b497bb45259f74a7f2dd38979a37d70e9a7afd396dc0",
+          "size": 1787
+        },
+        {
+          "path": "CHANGELOG.md",
+          "action": "modify",
+          "sha256": "ad14c10a6e8096877514453d157b87eb6d4e6cff60008d1d42f2cc38664cc825",
+          "size": 13006,
+          "source_sha256": "a148f30aa6aae90bba4976b81f197afef4df91cc0b1d2c4d8a84629fceadafd5"
+        }
+      ]
+    }
+  },
+  "history_id": "50a1c8602dd24565aacf5b616327c34d"
+}

@@ -104,6 +104,7 @@ class ProjectConfig:
     project_root: str = ""
     toolchain_manager: str = "auto"
     runner_options: dict[str, Any] = field(default_factory=dict)
+    global_config_path: Path | None = None
 
     def resolve_repo_relative(self, value: str) -> str:
         if not value:

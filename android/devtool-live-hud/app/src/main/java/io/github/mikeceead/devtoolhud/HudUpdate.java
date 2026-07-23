@@ -521,6 +521,52 @@ final class HudUpdate {
         return scopeText() + " · " + localProgressText();
     }
 
+    String notificationStatusLead() {
+        String mode = notificationMode();
+        if (mode.equals("failed") && rollbackState()) return "Critical";
+        if (mode.equals("failed")) return "Failure";
+        if (mode.equals("rollback")) return "Rollback";
+        if (mode.equals("recovered")) return "Recovered";
+        if (mode.equals("success") || (mode.equals("warning") && isTerminal())) return "Complete";
+        if (mode.equals("stopped")) return "Stopped";
+        int total = Math.max(workspaceTotal, workspaces.size());
+        if (total > 1) {
+            int index = Math.max(1, Math.min(total, workspaceIndex > 0 ? workspaceIndex : 1));
+            return "Workspace " + index + " of " + total;
+        }
+        return phaseLabel();
+    }
+
+    String notificationStatusDetail() {
+        String mode = notificationMode();
+        if (mode.equals("recovered")) return "Failure contained; repository restored";
+        if (mode.equals("failed") && rollbackState()) return "Operation and rollback both failed";
+        if (mode.equals("failed")) return firstUseful(detail, summary, "", "Validation stopped; rollback pending");
+        if (mode.equals("rollback")) return "Reverting all applied workspace changes";
+        if (mode.equals("success") || (mode.equals("warning") && isTerminal())) return completionDetail();
+        if (mode.equals("stopped")) return firstUseful(detail, summary, "", "Run stopped before completion");
+        return firstUseful(detail, localProgressText(), "", "Waiting for the next update");
+    }
+
+    String notificationStatusLine() {
+        return notificationStatusLead() + " · " + notificationStatusDetail();
+    }
+
+    private String completionDetail() {
+        int tests = passed + failed + skipped;
+        if (tests > 0) {
+            StringBuilder text = new StringBuilder()
+                    .append(passed).append(" passed · ").append(failed).append(" failed");
+            if (skipped > 0) text.append(" · ").append(skipped).append(" skipped");
+            if (warnings > 0) text.append(" · ").append(warnings).append(" warnings");
+            if (errors > 0) text.append(" · ").append(errors).append(" errors");
+            return text.toString();
+        }
+        int total = Math.max(workspaceTotal, workspaces.size());
+        if (total > 1) return "All " + total + " workspaces and validators passed";
+        return firstUseful(detail, summary, "", "All validators passed");
+    }
+
     Workspace activeWorkspace() {
         for (Workspace item : workspaces) if (item.active()) return item;
         if (!workspaces.isEmpty()) {

@@ -54,7 +54,7 @@ final class UiKit {
 
     TextView sectionTitle(String value) {
         TextView view = text(value, UiTypography.Role.CARD_TITLE, palette.text);
-        view.setLetterSpacing(0.02f);
+        view.setLetterSpacing(0.01f);
         view.setPadding(0, dp(24), 0, dp(8));
         if (Build.VERSION.SDK_INT >= 28) view.setAccessibilityHeading(true);
         view.setContentDescription(value + " section");
@@ -127,8 +127,8 @@ final class UiKit {
         UiTypography.apply(button, UiTypography.Role.CAPTION);
         button.setAllCaps(false);
         button.setGravity(Gravity.CENTER);
-        button.setTextColor(selected ? palette.green : palette.muted);
-        button.setBackground(flat(selected ? withAlpha(palette.green, 22) : palette.background, 16));
+        button.setTextColor(selected ? palette.text : palette.muted);
+        button.setBackground(flat(selected ? withAlpha(palette.green, 36) : palette.background, 16));
         button.setMinHeight(dp(56));
         button.setMinimumHeight(dp(56));
         button.setPadding(dp(6), dp(7), dp(6), dp(6));

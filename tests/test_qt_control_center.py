@@ -83,7 +83,7 @@ class QtControlCenterPhaseTwoSourceTests(unittest.TestCase):
         self.assertIn("RepositoriesPage.qml", qrc)
         main_qml = (root / "qml" / "Main.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Artifacts"', main_qml)
-        self.assertIn('text: "Diagnostics"', main_qml)
+        self.assertIn('text: "Logs"', main_qml)
 
 class QtControlCenterPhaseThreeSourceTests(unittest.TestCase):
     def test_phase_three_ipc_sources_are_packaged(self) -> None:

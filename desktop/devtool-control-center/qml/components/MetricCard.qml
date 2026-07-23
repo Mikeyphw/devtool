@@ -29,7 +29,7 @@ Rectangle {
         Label {
             text: root.label
             color: theme.mutedText
-            font.pointSize: theme.captionPointSize
+            font.pointSize: theme.labelPointSize
             font.weight: Font.DemiBold
             font.letterSpacing: 0
             lineHeight: theme.compactLineHeight

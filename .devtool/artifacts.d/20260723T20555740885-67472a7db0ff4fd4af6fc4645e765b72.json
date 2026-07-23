@@ -1,0 +1,184 @@
+{
+  "applied_at": "2026-07-23T20:55:57.408855Z",
+  "artifact": "/storage/emulated/0/Download/devtool_ui_typography_navigation_polish_overlay.zip",
+  "artifact_name": "devtool_ui_typography_navigation_polish_overlay.zip",
+  "type": "overlay",
+  "sha256": "961c38a76ad266121980fbc353f7376c34148efae4e6134d8747e3f54c8612e6",
+  "status": "ok",
+  "validation_status": "ok",
+  "commit_message": "",
+  "commit_hash": "",
+  "file_count": 14,
+  "change_counts": {
+    "add": 2,
+    "modify": 12
+  },
+  "manifest": {
+    "schema_version": 2,
+    "type": "overlay",
+    "target": "devtool",
+    "name": "devtool_ui_typography_navigation_polish_overlay",
+    "description": "Polish desktop and Android typography, headers, selected navigation state, and human-readable Logs/readiness copy without reducing HUD detail.",
+    "release": "1.1.0",
+    "devtool_version": "1.1.0",
+    "desktop_version": "0.4.0",
+    "android_version": "1.14.0",
+    "android_version_code": 27,
+    "artifact_type": "overlay",
+    "slice": 15,
+    "features": [
+      "desktop integer typography tokens and named label/section roles",
+      "desktop header height reduced and static version chip removed from daily chrome",
+      "desktop sidebar selected state strengthened with an accent rail",
+      "desktop navigation copy changes Diagnostics to Logs while preserving existing page implementation",
+      "desktop Overview metric labels changed from all caps to sentence case",
+      "Android PAGE_TITLE compacted to 24sp with matching legacy mapping",
+      "Android phone page header padding reduced with wide-only DEVTOOL overline",
+      "Android readiness and Logs quick-action copy humanized",
+      "focused validation for typography/navigation polish without changing HUD detail"
+    ],
+    "apply": {
+      "atomic": true,
+      "conflict_policy": "overwrite",
+      "path_policy": "repository-relative",
+      "requires_clean_worktree": false
+    },
+    "validation": {
+      "required": true,
+      "restore": false,
+      "build": false,
+      "test": false,
+      "script": {
+        "path": ".devtool-artifact/validate_phase9_typography_navigation.sh",
+        "runner": "bash",
+        "sha256": "021f4d8785360eecd7a72b03757958b5e10e1e09474be50dbbebe1ce36b1580f",
+        "timeout_seconds": 120
+      },
+      "expected": {
+        "restore": "skip",
+        "build": "skip",
+        "tests": "skip"
+      },
+      "focused_tests": 6,
+      "notes": "Built-in restore/build/test are intentionally skipped. The embedded validator runs source-audit, targeted pytest checks, and direct source assertions for the typography/navigation polish slice so unrelated baseline failures do not roll back this UI-only overlay."
+    },
+    "key_files": [
+      "desktop/devtool-control-center/qml/components/Theme.qml",
+      "desktop/devtool-control-center/qml/components/SectionHeading.qml",
+      "desktop/devtool-control-center/qml/components/MetricCard.qml",
+      "desktop/devtool-control-center/qml/components/SidebarButton.qml",
+      "desktop/devtool-control-center/qml/Main.qml",
+      "desktop/devtool-control-center/qml/pages/OverviewPage.qml",
+      "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiTypography.java",
+      "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiKit.java",
+      "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java",
+      "tests/test_typography_remediation.py",
+      "tests/test_qt_control_center.py",
+      "tests/test_ui_typography_navigation_polish.py",
+      "PHASE_9_UI_TYPOGRAPHY_NAVIGATION_POLISH.md",
+      "CHANGELOG.md"
+    ],
+    "inventory": {
+      "format": 1,
+      "entries": [
+        {
+          "path": "desktop/devtool-control-center/qml/components/Theme.qml",
+          "action": "modify",
+          "sha256": "51a53e9798f5084248b593882d6be051c5f791642422b9dd1d92d141015a9fc1",
+          "size": 4805,
+          "source_sha256": "232add19675d1a647a796a0b7c31d961cf3c9a689ff13471a2b1e4036a8f4824"
+        },
+        {
+          "path": "desktop/devtool-control-center/qml/components/SectionHeading.qml",
+          "action": "modify",
+          "sha256": "720902244539eb47981f816411ac44ae4c9f1215d350d628c70a8acdd00eb4f0",
+          "size": 315,
+          "source_sha256": "2f2963e989318579a0cee5312c105d6ad9901b3da8c8bc48d1df0f94bfd22eb7"
+        },
+        {
+          "path": "desktop/devtool-control-center/qml/components/MetricCard.qml",
+          "action": "modify",
+          "sha256": "546f47b21124155b5ca8ec644022888c31e56f474789aa2166821f1b2b3a0624",
+          "size": 1046,
+          "source_sha256": "282956ac8a876ff99a5ce8fa85d82108ca166ee61a2b5b4ee8ecea9e2a470d9b"
+        },
+        {
+          "path": "desktop/devtool-control-center/qml/components/SidebarButton.qml",
+          "action": "modify",
+          "sha256": "701675e34c7c8344ab2e6d20c956810bdad971b18da3509db7856735e7df6cec",
+          "size": 2627,
+          "source_sha256": "03593f9501f356ed975e2f8b669fa986dfe128947cb5f550b225762ec91e9ea9"
+        },
+        {
+          "path": "desktop/devtool-control-center/qml/Main.qml",
+          "action": "modify",
+          "sha256": "1f3f9d293bc34ab48f9667c76256e953b61d48102ca33ad5330cd904530818b5",
+          "size": 9018,
+          "source_sha256": "670bd3912fda4ace2b30f69f88293c22e641cfec9d465e17da4a79bfcb050be0"
+        },
+        {
+          "path": "desktop/devtool-control-center/qml/pages/OverviewPage.qml",
+          "action": "modify",
+          "sha256": "130afdc1163ca36a70c654c94c6ccd9934750cc01aba8afaf74c059c139981b4",
+          "size": 4379,
+          "source_sha256": "efed14d0b1fe38ff2b57a24bbce3e9f1f22c23a1920afa607cb6872cfaa45c90"
+        },
+        {
+          "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiTypography.java",
+          "action": "modify",
+          "sha256": "dff885ccfe756688330416efe0fdf580876288ea899c944c47cc91eff0f4dbba",
+          "size": 1676,
+          "source_sha256": "1e305ba0a253f3ff9af34e03ce41ba779ec98bdaa20f4b61dfb298789cdd1e55"
+        },
+        {
+          "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiKit.java",
+          "action": "modify",
+          "sha256": "f88b3ad237f9136576dab9bbcbbc2d12d70ea3ce1a3f528d35889b9e6891d990",
+          "size": 12131,
+          "source_sha256": "a2a59db3c72115790ef274cbf70d76e938c41ae734199d46b99a34128d72a49d"
+        },
+        {
+          "path": "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java",
+          "action": "modify",
+          "sha256": "ce93a307f3cc9469b346f0f5e3022d906aac758ec194b79d984cce707d47cf98",
+          "size": 105711,
+          "source_sha256": "96327928b82f4de7921b5db365f16f9b75574ec48950708ed317f1d238085256"
+        },
+        {
+          "path": "tests/test_typography_remediation.py",
+          "action": "modify",
+          "sha256": "53a3136495bcd1530f257b6c5d40599c5559f8d6449896c0a0923d154e5ffd31",
+          "size": 6863,
+          "source_sha256": "dfecd263d08bd56e44643ad29ad58fbdd75d4bda583cddf415fcde1337a24423"
+        },
+        {
+          "path": "tests/test_qt_control_center.py",
+          "action": "modify",
+          "sha256": "38247336c69bff81bd58cd238d1e217e9b4e17fc06468bd0757de1dd380cb851",
+          "size": 31385,
+          "source_sha256": "7db6012276ce51003b228d1097b35bb74e07853fa54bafa8555425388eff688c"
+        },
+        {
+          "path": "tests/test_ui_typography_navigation_polish.py",
+          "action": "add",
+          "sha256": "b81cb407d32b8d1fb2ac566eca9cdf1204933832af4f0d0d89088c0505aa9174",
+          "size": 2404
+        },
+        {
+          "path": "PHASE_9_UI_TYPOGRAPHY_NAVIGATION_POLISH.md",
+          "action": "add",
+          "sha256": "b9b1a4f341b92decb23bb21ed3492dff89fb7ae64b065936a67ac20eb7fcbcda",
+          "size": 1960
+        },
+        {
+          "path": "CHANGELOG.md",
+          "action": "modify",
+          "sha256": "bb17faf3b96ed9016de7e24cb2ccea5ce71c66da6336b69594e4d00ab6575fc0",
+          "size": 12546,
+          "source_sha256": "c1da280e3afffbe6d7f8040019558a3760efcd1545e0a5ea9f8add9785b36076"
+        }
+      ]
+    }
+  },
+  "history_id": "67472a7db0ff4fd4af6fc4645e765b72"
+}
