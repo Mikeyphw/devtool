@@ -300,7 +300,8 @@ def test_android_notification_has_live_summary_actions_and_stale_update_gate() -
     assert "displayProgress()" in notification
     assert "BridgeUpdateGate.accept" in receiver
     assert 'intent.getLongExtra("sequence"' in gate
-    assert "sequence <= lastSequence" in gate
+    assert "sequence < lastSequence" in gate
+    assert "sequence == lastSequence && updatedAt <= lastUpdated" in gate
     assert "ACTION_COPY_SUMMARY" in action
     assert 'return "Devtool · " + phaseLabel()' in hud_update
     assert "if (succeeded()) return 100" in hud_update

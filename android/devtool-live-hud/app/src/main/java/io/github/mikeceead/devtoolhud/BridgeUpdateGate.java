@@ -24,7 +24,11 @@ final class BridgeUpdateGate {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         long lastSequence = prefs.getLong("seq:" + runId, -1L);
         long lastUpdated = prefs.getLong("updated:" + runId, -1L);
-        if (sequence > 0L && sequence <= lastSequence) return false;
+        if (sequence > 0L && sequence < lastSequence) return false;
+        // Heartbeats intentionally reuse the authoritative build sequence while
+        // carrying a newer timestamp.  Accept them so custom notification
+        // RemoteViews repaint while the underlying build parser is quiet.
+        if (sequence > 0L && sequence == lastSequence && updatedAt <= lastUpdated) return false;
         if (sequence <= 0L && updatedAt <= lastUpdated) return false;
 
         String activeRun = prefs.getString(KEY_ACTIVE_RUN, "");

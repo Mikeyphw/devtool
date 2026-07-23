@@ -58,7 +58,7 @@
         </LinearLayout>
             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:minHeight="46dp" android:layout_weight="1" android:orientation="vertical" android:gravity="center_vertical" android:paddingStart="7dp" android:paddingTop="5dp" android:paddingEnd="5dp" android:paddingBottom="5dp" android:background="@drawable/notification_metric" android:layout_marginStart="4dp">
             <TextView style="@style/TextAppearance.Devtool.Notification.Badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Elapsed" android:textColor="@color/notification_soft" />
-            <TextView android:id="@+id/notification_metric_elapsed" style="@style/TextAppearance.Devtool.Notification.Workspace" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" />
+            <Chronometer android:id="@+id/notification_metric_elapsed" style="@style/TextAppearance.Devtool.Notification.Workspace" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" />
         </LinearLayout>
         </LinearLayout>
     </LinearLayout>

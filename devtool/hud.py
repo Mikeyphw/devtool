@@ -1562,6 +1562,9 @@ class AndroidAppHud:
     100 ms only adds lag.  History remains available to the app through logs.
     """
 
+    HEARTBEAT_INTERVAL_SECONDS = 5
+    TERMINAL_STATUSES = {"ok", "failed", "skipped", "cancelled", "interrupted"}
+
     def __init__(self, *, recent_events: int = DEFAULT_RECENT_EVENTS, overlay: bool | None = None) -> None:
         self.recent_events = max(0, int(recent_events))
         self.overlay = overlay
@@ -1761,6 +1764,14 @@ class AndroidAppHud:
             duration_ms = int(float(duration_seconds) * 1000) if duration_seconds is not None else 0
         except (TypeError, ValueError):
             duration_ms = 0
+        now_ms = int(time.time() * 1000)
+        raw_updated_at_ms = self._timestamp_ms(state.raw.get("updated_at")) if isinstance(state.raw, dict) else now_ms
+        is_terminal = status in self.TERMINAL_STATUSES
+        heartbeat_bucket = 0 if is_terminal else int(time.time() // self.HEARTBEAT_INTERVAL_SECONDS)
+        # For quiet builds, a heartbeat is the only payload delta.  Advance the
+        # timestamp so the Android stale-update gate accepts the repaint even
+        # when the build sequence has not changed.
+        updated_at_ms = max(raw_updated_at_ms, now_ms) if not is_terminal else raw_updated_at_ms
 
         raw_targets = state.raw.get("targets") if isinstance(state.raw, dict) else None
         target_values = [str(item).strip() for item in raw_targets if str(item).strip()] if isinstance(raw_targets, list) else []
@@ -1803,7 +1814,8 @@ class AndroidAppHud:
         payload: dict[str, Any] = {
             "run_id": run_id,
             "sequence": int(_coerce_int(state.raw.get("sequence")) or 0),
-            "updated_at_ms": self._timestamp_ms(state.raw.get("updated_at")),
+            "updated_at_ms": updated_at_ms,
+            "heartbeat": heartbeat_bucket,
             "status": status,
             "task": task_title,
             "artifact": raw_artifact,
@@ -1849,6 +1861,7 @@ class AndroidAppHud:
             payload.get("current"), payload.get("total"), payload.get("passed"),
             payload.get("failed"), payload.get("skipped"), payload.get("warnings"),
             payload.get("errors"), payload.get("steps_json"), payload.get("workspaces_json"),
+            payload.get("heartbeat"),
         )
         if signature == self.last_signature:
             return

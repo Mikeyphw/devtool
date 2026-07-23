@@ -1994,6 +1994,11 @@ class NodeRunner(ProjectRunner):
             return ["npm", "run", script]
         return [manager, "run", script]
 
+    def _metadata(self, config: ProjectConfig, root: Path, **extra: object) -> dict[str, object]:
+        metadata = _tool_metadata(self.kind, root, package_manager=self._manager(config), **extra)
+        metadata["progress_parser"] = "npm"
+        return metadata
+
     def capabilities_for(self, config: ProjectConfig) -> RunnerCapabilities:
         scripts = self._scripts(config)
         return RunnerCapabilities(
@@ -2036,7 +2041,7 @@ class NodeRunner(ProjectRunner):
             "run": config.run_command, "package": config.package_command,
         }.get(action, "")
         if explicit:
-            spec = CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))
+            spec = CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=self._metadata(config, root, explicit=True))
             if action in {"test", "wine-test"}:
                 from .test_selection import apply_test_selection
                 spec = apply_test_selection(config, spec)
@@ -2059,7 +2064,7 @@ class NodeRunner(ProjectRunner):
                     argv.append("--frozen-lockfile")
             else:
                 raise SystemExit(f"Unsupported Node package manager: {manager}")
-            return [CommandSpec("restore", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, package_manager=manager))]
+            return [CommandSpec("restore", argv, env=env, cwd=str(root), metadata=self._metadata(config, root))]
         script = {"build": "build", "test": "test", "wine-test": "test", "lint": "lint", "clean": "clean"}.get(action)
         if action == "lint" and "lint" not in scripts and "check" in scripts:
             script = "check"
@@ -2074,7 +2079,7 @@ class NodeRunner(ProjectRunner):
             for selected_script in selected_scripts:
                 if selected_script not in scripts:
                     raise SystemExit(f"package.json has no '{selected_script}' script.")
-                spec = CommandSpec(action.replace("wine-", ""), self._script_argv(config, selected_script), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, node_script=selected_script))
+                spec = CommandSpec(action.replace("wine-", ""), self._script_argv(config, selected_script), env=env, cwd=str(root), metadata=self._metadata(config, root, node_script=selected_script))
                 if action in {"test", "wine-test"}:
                     spec = apply_test_selection(config, spec)
                 specs.append(spec)
@@ -2083,10 +2088,10 @@ class NodeRunner(ProjectRunner):
             script = "start" if "start" in scripts else "dev" if "dev" in scripts else ""
             if not script:
                 raise SystemExit("package.json has no start/dev script and no run_command is configured.")
-            return [CommandSpec("run", self._script_argv(config, script), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, node_script=script))]
+            return [CommandSpec("run", self._script_argv(config, script), env=env, cwd=str(root), metadata=self._metadata(config, root, node_script=script))]
         if action == "package":
             argv = [manager, "pack"] if manager != "yarn" else ["yarn", "pack"]
-            return [CommandSpec("package", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root))]
+            return [CommandSpec("package", argv, env=env, cwd=str(root), metadata=self._metadata(config, root))]
         raise SystemExit(f"Unsupported Node action: {action}")
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:

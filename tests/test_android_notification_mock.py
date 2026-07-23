@@ -82,6 +82,22 @@ def test_workspace_payload_is_end_to_end_and_part_of_refresh_identity() -> None:
     assert "parseWorkspaces(this.workspacesJson)" in update
     assert "remainingWorkspacesText()" in update
 
+def test_android_notification_has_live_elapsed_and_heartbeat_refresh() -> None:
+    controller = read(JAVA / "NotificationController.java")
+    gate = read(JAVA / "BridgeUpdateGate.java")
+    hud = read(ROOT / "devtool" / "hud.py")
+    expanded = read(RES / "layout" / "notification_devtool_expanded.xml")
+    large = read(RES / "layout" / "notification_devtool_expanded_large_text.xml")
+    assert "views.setChronometer(R.id.notification_metric_elapsed" in controller
+    assert "SystemClock.elapsedRealtime()" in controller
+    assert '<Chronometer android:id="@+id/notification_metric_elapsed"' in expanded
+    assert '<Chronometer android:id="@+id/notification_metric_elapsed"' in large
+    assert "HEARTBEAT_INTERVAL_SECONDS = 5" in hud
+    assert '"heartbeat": heartbeat_bucket' in hud
+    signature = hud[hud.index("signature = (", hud.index("class AndroidAppHud")):]
+    assert 'payload.get("heartbeat")' in signature
+    assert "sequence == lastSequence && updatedAt <= lastUpdated" in gate
+
 
 def test_notification_resources_and_contract_are_parseable() -> None:
     for path in [

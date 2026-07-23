@@ -34,6 +34,23 @@ def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | N
     elif use_sudo is True and not sudo.strip():
         sudo = "sudo"
 
+    # Make every command executed inside chroot see Linuxbrew first.
+    #
+    # This is injected into the zsh -lc payload, not the host devtool process,
+    # so commands such as npm/python/node resolved by chrootctl use Linuxbrew
+    # before the chroot's default PATH.
+    #
+    # Override with:
+    #   DEVTOOL_CHROOT_PATH_PREFIX=/custom/bin:/other/bin
+    #
+    # Disable with:
+    #   DEVTOOL_CHROOT_PATH_PREFIX=
+    path_prefix = os.environ.get("DEVTOOL_CHROOT_PATH_PREFIX", "/home/linuxbrew/.linuxbrew/bin")
+    path_prefix = path_prefix.strip()
+    if path_prefix:
+        # Quote only the static prefix. Keep "$PATH" expandable inside chroot.
+        command = "export PATH=" + shlex.quote(path_prefix) + ':"$PATH"; ' + command
+
     argv: list[str] = []
     if sudo.strip():
         argv.append(sudo.strip())

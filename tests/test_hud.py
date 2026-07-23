@@ -620,6 +620,25 @@ def test_android_forwarder_retries_failed_broadcast() -> None:
     assert len(calls) == 2
 
 
+def test_android_payload_includes_running_heartbeat(monkeypatch) -> None:
+    hud = AndroidAppHud()
+    monkeypatch.setattr("devtool.hud.time.time", lambda: 50.0)
+    state = HudState(status="running", phase_name="build", repo_name="demo", raw={"run_id": "heartbeat", "sequence": 7})
+    action, payload = hud._payload(state, Path("/tmp/heartbeat"))
+    assert action == "update"
+    assert payload["heartbeat"] == 10
+    assert payload["updated_at_ms"] >= 50000
+    signature = (
+        payload.get("run_id"), payload.get("sequence"), action, payload.get("status"),
+        payload.get("phase"), payload.get("progress"), payload.get("phase_progress"),
+        payload.get("current"), payload.get("total"), payload.get("passed"),
+        payload.get("failed"), payload.get("skipped"), payload.get("warnings"),
+        payload.get("errors"), payload.get("steps_json"), payload.get("workspaces_json"),
+        payload.get("heartbeat"),
+    )
+    assert payload["heartbeat"] in signature
+
+
 
 def test_state_reader_prefers_newer_sequence_over_higher_stale_phase_percentage(tmp_path: Path) -> None:
     import json

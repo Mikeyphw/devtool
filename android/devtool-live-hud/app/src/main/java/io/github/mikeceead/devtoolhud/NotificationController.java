@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.os.Build;
+import android.os.SystemClock;
 import android.view.View;
 import android.widget.RemoteViews;
 
@@ -136,14 +137,25 @@ final class NotificationController {
         if (largeText) {
             views.setTextViewText(R.id.notification_metrics_summary,
                     "Tests " + update.testsMetricText() + " · " + update.warnings + " warnings · "
-                            + update.errors + " errors · " + update.elapsedText());
+                            + update.errors + " errors");
         } else {
             views.setTextViewText(R.id.notification_metric_tests, update.testsMetricText());
             views.setTextViewText(R.id.notification_metric_warnings, Integer.toString(update.warnings));
             views.setTextViewText(R.id.notification_metric_errors, Integer.toString(update.errors));
-            views.setTextViewText(R.id.notification_metric_elapsed, update.elapsedText());
         }
+        bindElapsedMetric(views, update);
         bindActions(views, update);
+    }
+
+    private void bindElapsedMetric(RemoteViews views, HudUpdate update) {
+        long elapsedMs = update.durationMs > 0L
+                ? update.durationMs
+                : Math.max(0L, System.currentTimeMillis() - update.startedAtMs);
+        long base = SystemClock.elapsedRealtime() - elapsedMs;
+        // The custom RemoteViews layout is a snapshot.  Chronometer keeps the
+        // elapsed tile alive locally even when the build output is quiet and no
+        // new bridge payload arrives for a few seconds.
+        views.setChronometer(R.id.notification_metric_elapsed, base, null, !update.isTerminal());
     }
 
     private void bindPhases(RemoteViews views, HudUpdate update, int maxRows) {
