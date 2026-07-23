@@ -314,6 +314,41 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
         bootstrap = next(spec for spec in specs if spec.name == "venv")
         self.assertTrue(bootstrap.metadata["implicit_environment_bootstrap"])
 
+    def test_python_skip_restore_refreshes_missing_asyncio_validator_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = root / ".devtool" / "venvs" / "python"
+            bin_dir = env / "bin"
+            bin_dir.mkdir(parents=True)
+            python = bin_dir / "python"
+            python.write_text(
+                "#!/bin/sh\n"
+                "case \"$*\" in\n"
+                "  *'import pytest_asyncio'*) exit 1 ;;\n"
+                "  *'import pytest'*) exit 0 ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_demo.py").write_text(
+                "import pytest\n\n@pytest.mark.asyncio\nasync def test_demo(): pass\n",
+                encoding="utf-8",
+            )
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "venv", "environment": str(env)}},
+            )
+            specs = build_validation_specs(config, skip_restore=True)
+        names = [spec.name for spec in specs]
+        self.assertIn("restore", names)
+        self.assertLess(names.index("restore"), names.index("test"))
+        self.assertTrue(any(spec.argv[-1] == "pytest-asyncio" and spec.metadata["implicit_environment_bootstrap"] for spec in specs))
+
     def test_android_gradle_receives_environment_aware_worker_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"HOME": tmp, "DEVTOOL_MAX_WORKERS": "2"}, clear=False):
             root = Path(tmp)

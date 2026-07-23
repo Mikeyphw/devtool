@@ -1419,7 +1419,10 @@ class PythonRunner(ProjectRunner):
         if info.manager != "venv":
             return False
         plan = self._plan(config)
-        return bool(plan.environment_root and not Path(plan.python).is_file())
+        if plan.environment_root and not Path(plan.python).is_file():
+            return True
+        from .python_support import missing_auto_validator_dependencies
+        return bool(missing_auto_validator_dependencies(info, plan))
 
     def _validation_scope(self, config: ProjectConfig):
         from .python_support import python_validation_scope

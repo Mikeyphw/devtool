@@ -1568,6 +1568,27 @@ def _declares_pytest_async_plugin(root: Path) -> bool:
     return any(_declares_requirement(root, name) for name in ("pytest-asyncio", "anyio", "pytest-trio", "pytest-tornasync", "pytest-twisted"))
 
 
+def _can_import_with_python(python: str, module: str) -> bool:
+    proc = subprocess.run(
+        [python, "-c", f"import {module}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def missing_auto_validator_dependencies(info: PythonProjectInfo, plan: PythonEnvironmentPlan) -> tuple[str, ...]:
+    if info.manager != "venv" or info.framework != "pytest" or not Path(plan.python).is_file():
+        return ()
+    missing: list[str] = []
+    if not _declares_requirement(info.root, "pytest") and not _can_import_with_python(plan.python, "pytest"):
+        missing.append("pytest")
+    if _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root) and not _can_import_with_python(plan.python, "pytest_asyncio"):
+        missing.append("pytest-asyncio")
+    return tuple(missing)
+
+
 def _prepare_declared_validator_dependencies(root: Path, info: PythonProjectInfo, plan: PythonEnvironmentPlan, args: argparse.Namespace) -> PythonEnvironmentPlan:
     dependencies = list(dict.fromkeys([*args.dependency, *declared_group_dependencies(root, args.group)]))
     if not dependencies:
