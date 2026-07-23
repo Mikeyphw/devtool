@@ -886,6 +886,8 @@ def build_sync_command(
         commands.append([*pip_base, "-r", requirement])
     if info.framework == "pytest" and not _declares_requirement(info.root, "pytest"):
         commands.append([*pip_base, "pytest"])
+    if info.framework == "pytest" and _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root):
+        commands.append([*pip_base, "pytest-asyncio"])
     if install_project and (info.root / "pyproject.toml").is_file():
         extra_text = f"[{','.join(extras)}]" if extras else ""
         commands.append([*pip_base, "-e", f".{extra_text}"])
@@ -1545,6 +1547,25 @@ def _declares_requirement(root: Path, name: str) -> bool:
         except OSError:
             pass
     return any(pattern.search(item.lower()) for item in candidates)
+
+
+def _uses_pytest_asyncio(root: Path) -> bool:
+    tests_root = root / "tests"
+    candidates = tests_root.rglob("*.py") if tests_root.is_dir() else root.glob("test*.py")
+    for path in candidates:
+        if any(part in IGNORED_DIRECTORIES for part in path.relative_to(root).parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "@pytest.mark.asyncio" in text.replace(" ", ""):
+            return True
+    return False
+
+
+def _declares_pytest_async_plugin(root: Path) -> bool:
+    return any(_declares_requirement(root, name) for name in ("pytest-asyncio", "anyio", "pytest-trio", "pytest-tornasync", "pytest-twisted"))
 
 
 def _prepare_declared_validator_dependencies(root: Path, info: PythonProjectInfo, plan: PythonEnvironmentPlan, args: argparse.Namespace) -> PythonEnvironmentPlan:

@@ -265,6 +265,20 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
                 specs = build_specs(config, "restore")
         self.assertTrue(any(spec.argv[-1] == "pytest" and spec.argv[-4:-1] == ["-m", "pip", "install"] for spec in specs))
 
+    def test_python_venv_restore_installs_pytest_asyncio_for_asyncio_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_demo.py").write_text(
+                "import pytest\n\n@pytest.mark.asyncio\nasync def test_demo(): pass\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(repo_root=root, project_root=str(root), kind="python", runner_options={"python": {"manager": "venv"}})
+                specs = build_specs(config, "restore")
+        self.assertTrue(any(spec.argv[-1] == "pytest-asyncio" and spec.argv[-4:-1] == ["-m", "pip", "install"] for spec in specs))
+
     def test_python_hatch_restore_ignores_stale_venv_environment_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
