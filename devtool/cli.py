@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import os
 import shlex
@@ -1780,13 +1780,34 @@ def _print_test_catalog(config: ProjectConfig, args: argparse.Namespace, *, as_j
     return 0
 
 
+def _config_for_validation_planning(config: ProjectConfig, args: argparse.Namespace) -> ProjectConfig:
+    """Return a config whose execution fields match the selected backend.
+
+    Validation specs are built before the generic execution wrapper runs.  When
+    Termux auto-chroot backend mode is active, Python environment planning must
+    already know that the commands will run in the chroot; otherwise it can
+    embed a Termux-host interpreter or venv path into commands that are later
+    executed inside Ubuntu.
+    """
+
+    plan = _execution_plan_for_args(config, args)
+    effective = plan.effective
+    chroot_name = plan.chroot_name or config.chroot_name
+    if plan.uses_chroot:
+        effective = EXECUTION_CHROOT
+    if effective == config.execution_environment and chroot_name == config.chroot_name:
+        return config
+    return replace(config, execution_environment=effective, chroot_name=chroot_name)
+
+
 def _validation_specs(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
     _apply_runner_cli_options(config, args)
+    planning_config = _config_for_validation_planning(config, args)
     skip_restore, skip_build, skip_test = _validation_skip_values(args)
     if skip_restore and skip_build and skip_test:
         parser.error("Validation would run no commands. Clear at least one skip flag.")
     return build_validation_specs(
-        config,
+        planning_config,
         wine=args.command in {"wine-validate", "wv"},
         skip_restore=skip_restore,
         skip_build=skip_build,
@@ -3915,8 +3936,9 @@ def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: 
             results.append(OperationResult("release-notes", ["git", "log"], 0, 0.0, text, [], log_path=str(path or "")))
             raw.append(text)
             continue
-        specs = build_specs(config, name)
-        more, text = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
+        planning_config = _config_for_validation_planning(config, args)
+        specs = build_specs(planning_config, name)
+        more, text = _run_specs_for_args(planning_config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
         results.extend(more)
         raw.append(text)
         if any(r.returncode != 0 for r in more) and not continue_on_error:
@@ -5122,9 +5144,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "batch":
         results, raw_output = _handle_batch(config, args, log_path=log_path, tasker_progress=tasker_progress)
     else:
-        specs = build_specs(config, args.command)
+        planning_config = _config_for_validation_planning(config, args)
+        specs = build_specs(planning_config, args.command)
         specs = _maybe_apply_test_no_build_flag(specs, args, parser)
-        results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
+        results, raw_output = _run_specs_for_args(planning_config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
 
     if stale_recovery_results:
         results = [*stale_recovery_results, *results]

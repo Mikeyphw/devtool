@@ -2134,6 +2134,833 @@
         }
       },
       "history_id": "d57f8bd273a14ef6ba98ac0e463dba15"
+    },
+    {
+      "applied_at": "2026-07-23T23:04:50.138210Z",
+      "artifact": "/storage/emulated/0/Download/devtool_python_chroot_env_consistency_overlay.zip",
+      "artifact_name": "devtool_python_chroot_env_consistency_overlay.zip",
+      "type": "overlay",
+      "sha256": "c7c79b9d3981d1841ac55b12fe9f67269685556384b6a01918cb81559ef11486",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 7,
+      "change_counts": {
+        "add": 2,
+        "modify": 5
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_python_chroot_env_consistency_overlay",
+        "description": "Ensure Python projects routed through Android/Termux chroot policy build and validate with one consistent chroot-local Python environment.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 21,
+        "features": [
+          "Python validation spec planning now resolves effective chroot execution before restore/test commands are built",
+          "Python chroot plans avoid embedding Termux-host Python interpreter paths inside chroot commands",
+          "venv restore installs pyproject build-system.requires before editable project install",
+          "editable pyproject installs use pip --no-build-isolation -e . to avoid temporary build-env stalls",
+          "Python restore phases are labeled venv, restore:test-tools, restore:build-system, restore:project, and restore:requirements",
+          "focused regression tests cover Python chroot planning, build-system restore, restore labels, global chroot policy, and Termux host chroot wrapping"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": false,
+          "script": {
+            "path": ".devtool-artifact/validate_phase15_python_chroot_env.sh",
+            "runner": "bash",
+            "sha256": "a2d9f20733f297d089b2779105a992ec0f974b6b0c6bdae7584b4ec5b5458e03",
+            "timeout_seconds": 180
+          },
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "skip"
+          },
+          "focused_tests": 75,
+          "notes": "Built-in restore/build/test are skipped. The embedded validator runs source-audit plus focused Python chroot/global-config/Termux wrapping/Python support tests."
+        },
+        "key_files": [
+          "devtool/cli.py",
+          "devtool/python_support.py",
+          "devtool/project_runners.py",
+          "tests/test_python_chroot_env_consistency.py",
+          "docs/CONFIGURATION.md",
+          "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md"
+        ],
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "91464ea69831691b89be05332d6068a665bdfe6184ee2a76c06e2b79cfe52481",
+              "size": 13944,
+              "source_sha256": "32cd2b8d688de745a13acbbe07f779ee3e89ac78e53a574ffa70e7a1baa5592d"
+            },
+            {
+              "path": "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md",
+              "action": "add",
+              "sha256": "3f331bb822154b00c8cab9bc487ae9535b0a3132b229b0bd23d8ec0f528e232d",
+              "size": 1726
+            },
+            {
+              "path": "devtool/cli.py",
+              "action": "modify",
+              "sha256": "b3109e3c008d7e6c16575b7561a8bf039bd07084808f2d249ffccb79e30738a7",
+              "size": 246872,
+              "source_sha256": "962e6e09e62ee56f90fa31947e634286ad2d8144bd2e594b6ab62eea79e394a9"
+            },
+            {
+              "path": "devtool/project_runners.py",
+              "action": "modify",
+              "sha256": "5690e7b626469233f9386c58f4ec4d8aa5dc5f9bb14f9d8246f684dcb9751a17",
+              "size": 136597,
+              "source_sha256": "e2223b65419f95159118106d6236c2e1fb003609b6b2300842960f5aa3eb54e7"
+            },
+            {
+              "path": "devtool/python_support.py",
+              "action": "modify",
+              "sha256": "f0791dcbd3a0051edbe7f281f10455a245abfb9234e3cd3b74689b9b83b9880b",
+              "size": 102968,
+              "source_sha256": "49f8067a5d3d3d0d213dc21d56f5f8815e0778a5b860bd55b5407b09523c520c"
+            },
+            {
+              "path": "docs/CONFIGURATION.md",
+              "action": "modify",
+              "sha256": "fd26571582aabd201b198a72f8526d43e99d6b5083f71fd5b883d9fe3cc11904",
+              "size": 3511,
+              "source_sha256": "dd8aa9e7b08ca7328ce7e57146da05b4f055b98922dc9a64e7a326fce58eee6a"
+            },
+            {
+              "path": "tests/test_python_chroot_env_consistency.py",
+              "action": "add",
+              "sha256": "2cdd24bf7e5f026bb4585eb6f942ad74744d4278a021176fdea463ac703a4ac0",
+              "size": 3707
+            }
+          ]
+        }
+      },
+      "history_id": "652923c906274cdfbef1f777d9bc23a4"
+    },
+    {
+      "applied_at": "2026-07-23T23:05:21.934615Z",
+      "artifact": "/storage/emulated/0/Download/devtool_python_chroot_env_consistency_overlay.zip",
+      "artifact_name": "devtool_python_chroot_env_consistency_overlay.zip",
+      "type": "overlay",
+      "sha256": "c7c79b9d3981d1841ac55b12fe9f67269685556384b6a01918cb81559ef11486",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 7,
+      "change_counts": {
+        "add": 2,
+        "modify": 5
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_python_chroot_env_consistency_overlay",
+        "description": "Ensure Python projects routed through Android/Termux chroot policy build and validate with one consistent chroot-local Python environment.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 21,
+        "features": [
+          "Python validation spec planning now resolves effective chroot execution before restore/test commands are built",
+          "Python chroot plans avoid embedding Termux-host Python interpreter paths inside chroot commands",
+          "venv restore installs pyproject build-system.requires before editable project install",
+          "editable pyproject installs use pip --no-build-isolation -e . to avoid temporary build-env stalls",
+          "Python restore phases are labeled venv, restore:test-tools, restore:build-system, restore:project, and restore:requirements",
+          "focused regression tests cover Python chroot planning, build-system restore, restore labels, global chroot policy, and Termux host chroot wrapping"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": false,
+          "script": {
+            "path": ".devtool-artifact/validate_phase15_python_chroot_env.sh",
+            "runner": "bash",
+            "sha256": "a2d9f20733f297d089b2779105a992ec0f974b6b0c6bdae7584b4ec5b5458e03",
+            "timeout_seconds": 180
+          },
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "skip"
+          },
+          "focused_tests": 75,
+          "notes": "Built-in restore/build/test are skipped. The embedded validator runs source-audit plus focused Python chroot/global-config/Termux wrapping/Python support tests."
+        },
+        "key_files": [
+          "devtool/cli.py",
+          "devtool/python_support.py",
+          "devtool/project_runners.py",
+          "tests/test_python_chroot_env_consistency.py",
+          "docs/CONFIGURATION.md",
+          "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md"
+        ],
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "91464ea69831691b89be05332d6068a665bdfe6184ee2a76c06e2b79cfe52481",
+              "size": 13944,
+              "source_sha256": "32cd2b8d688de745a13acbbe07f779ee3e89ac78e53a574ffa70e7a1baa5592d"
+            },
+            {
+              "path": "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md",
+              "action": "add",
+              "sha256": "3f331bb822154b00c8cab9bc487ae9535b0a3132b229b0bd23d8ec0f528e232d",
+              "size": 1726
+            },
+            {
+              "path": "devtool/cli.py",
+              "action": "modify",
+              "sha256": "b3109e3c008d7e6c16575b7561a8bf039bd07084808f2d249ffccb79e30738a7",
+              "size": 246872,
+              "source_sha256": "962e6e09e62ee56f90fa31947e634286ad2d8144bd2e594b6ab62eea79e394a9"
+            },
+            {
+              "path": "devtool/project_runners.py",
+              "action": "modify",
+              "sha256": "5690e7b626469233f9386c58f4ec4d8aa5dc5f9bb14f9d8246f684dcb9751a17",
+              "size": 136597,
+              "source_sha256": "e2223b65419f95159118106d6236c2e1fb003609b6b2300842960f5aa3eb54e7"
+            },
+            {
+              "path": "devtool/python_support.py",
+              "action": "modify",
+              "sha256": "f0791dcbd3a0051edbe7f281f10455a245abfb9234e3cd3b74689b9b83b9880b",
+              "size": 102968,
+              "source_sha256": "49f8067a5d3d3d0d213dc21d56f5f8815e0778a5b860bd55b5407b09523c520c"
+            },
+            {
+              "path": "docs/CONFIGURATION.md",
+              "action": "modify",
+              "sha256": "fd26571582aabd201b198a72f8526d43e99d6b5083f71fd5b883d9fe3cc11904",
+              "size": 3511,
+              "source_sha256": "dd8aa9e7b08ca7328ce7e57146da05b4f055b98922dc9a64e7a326fce58eee6a"
+            },
+            {
+              "path": "tests/test_python_chroot_env_consistency.py",
+              "action": "add",
+              "sha256": "2cdd24bf7e5f026bb4585eb6f942ad74744d4278a021176fdea463ac703a4ac0",
+              "size": 3707
+            }
+          ]
+        }
+      },
+      "history_id": "16d49a9fdd9a4695a4729ae6923834f5"
+    },
+    {
+      "applied_at": "2026-07-23T23:06:18.724275Z",
+      "artifact": "/storage/emulated/0/Download/devtool_python_chroot_env_consistency_overlay.zip",
+      "artifact_name": "devtool_python_chroot_env_consistency_overlay.zip",
+      "type": "overlay",
+      "sha256": "c7c79b9d3981d1841ac55b12fe9f67269685556384b6a01918cb81559ef11486",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 7,
+      "change_counts": {
+        "add": 2,
+        "modify": 5
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_python_chroot_env_consistency_overlay",
+        "description": "Ensure Python projects routed through Android/Termux chroot policy build and validate with one consistent chroot-local Python environment.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 21,
+        "features": [
+          "Python validation spec planning now resolves effective chroot execution before restore/test commands are built",
+          "Python chroot plans avoid embedding Termux-host Python interpreter paths inside chroot commands",
+          "venv restore installs pyproject build-system.requires before editable project install",
+          "editable pyproject installs use pip --no-build-isolation -e . to avoid temporary build-env stalls",
+          "Python restore phases are labeled venv, restore:test-tools, restore:build-system, restore:project, and restore:requirements",
+          "focused regression tests cover Python chroot planning, build-system restore, restore labels, global chroot policy, and Termux host chroot wrapping"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": false,
+          "script": {
+            "path": ".devtool-artifact/validate_phase15_python_chroot_env.sh",
+            "runner": "bash",
+            "sha256": "a2d9f20733f297d089b2779105a992ec0f974b6b0c6bdae7584b4ec5b5458e03",
+            "timeout_seconds": 180
+          },
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "skip"
+          },
+          "focused_tests": 75,
+          "notes": "Built-in restore/build/test are skipped. The embedded validator runs source-audit plus focused Python chroot/global-config/Termux wrapping/Python support tests."
+        },
+        "key_files": [
+          "devtool/cli.py",
+          "devtool/python_support.py",
+          "devtool/project_runners.py",
+          "tests/test_python_chroot_env_consistency.py",
+          "docs/CONFIGURATION.md",
+          "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md"
+        ],
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "91464ea69831691b89be05332d6068a665bdfe6184ee2a76c06e2b79cfe52481",
+              "size": 13944,
+              "source_sha256": "32cd2b8d688de745a13acbbe07f779ee3e89ac78e53a574ffa70e7a1baa5592d"
+            },
+            {
+              "path": "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md",
+              "action": "add",
+              "sha256": "3f331bb822154b00c8cab9bc487ae9535b0a3132b229b0bd23d8ec0f528e232d",
+              "size": 1726
+            },
+            {
+              "path": "devtool/cli.py",
+              "action": "modify",
+              "sha256": "b3109e3c008d7e6c16575b7561a8bf039bd07084808f2d249ffccb79e30738a7",
+              "size": 246872,
+              "source_sha256": "962e6e09e62ee56f90fa31947e634286ad2d8144bd2e594b6ab62eea79e394a9"
+            },
+            {
+              "path": "devtool/project_runners.py",
+              "action": "modify",
+              "sha256": "5690e7b626469233f9386c58f4ec4d8aa5dc5f9bb14f9d8246f684dcb9751a17",
+              "size": 136597,
+              "source_sha256": "e2223b65419f95159118106d6236c2e1fb003609b6b2300842960f5aa3eb54e7"
+            },
+            {
+              "path": "devtool/python_support.py",
+              "action": "modify",
+              "sha256": "f0791dcbd3a0051edbe7f281f10455a245abfb9234e3cd3b74689b9b83b9880b",
+              "size": 102968,
+              "source_sha256": "49f8067a5d3d3d0d213dc21d56f5f8815e0778a5b860bd55b5407b09523c520c"
+            },
+            {
+              "path": "docs/CONFIGURATION.md",
+              "action": "modify",
+              "sha256": "fd26571582aabd201b198a72f8526d43e99d6b5083f71fd5b883d9fe3cc11904",
+              "size": 3511,
+              "source_sha256": "dd8aa9e7b08ca7328ce7e57146da05b4f055b98922dc9a64e7a326fce58eee6a"
+            },
+            {
+              "path": "tests/test_python_chroot_env_consistency.py",
+              "action": "add",
+              "sha256": "2cdd24bf7e5f026bb4585eb6f942ad74744d4278a021176fdea463ac703a4ac0",
+              "size": 3707
+            }
+          ]
+        }
+      },
+      "history_id": "580b0d3aa1074a99b4d4f33910fb2063"
+    },
+    {
+      "applied_at": "2026-07-23T23:07:18.762251Z",
+      "artifact": "/storage/emulated/0/Download/devtool_python_chroot_env_consistency_overlay.zip",
+      "artifact_name": "devtool_python_chroot_env_consistency_overlay.zip",
+      "type": "overlay",
+      "sha256": "c7c79b9d3981d1841ac55b12fe9f67269685556384b6a01918cb81559ef11486",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 7,
+      "change_counts": {
+        "add": 2,
+        "modify": 5
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_python_chroot_env_consistency_overlay",
+        "description": "Ensure Python projects routed through Android/Termux chroot policy build and validate with one consistent chroot-local Python environment.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 21,
+        "features": [
+          "Python validation spec planning now resolves effective chroot execution before restore/test commands are built",
+          "Python chroot plans avoid embedding Termux-host Python interpreter paths inside chroot commands",
+          "venv restore installs pyproject build-system.requires before editable project install",
+          "editable pyproject installs use pip --no-build-isolation -e . to avoid temporary build-env stalls",
+          "Python restore phases are labeled venv, restore:test-tools, restore:build-system, restore:project, and restore:requirements",
+          "focused regression tests cover Python chroot planning, build-system restore, restore labels, global chroot policy, and Termux host chroot wrapping"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": false,
+          "script": {
+            "path": ".devtool-artifact/validate_phase15_python_chroot_env.sh",
+            "runner": "bash",
+            "sha256": "a2d9f20733f297d089b2779105a992ec0f974b6b0c6bdae7584b4ec5b5458e03",
+            "timeout_seconds": 180
+          },
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "skip"
+          },
+          "focused_tests": 75,
+          "notes": "Built-in restore/build/test are skipped. The embedded validator runs source-audit plus focused Python chroot/global-config/Termux wrapping/Python support tests."
+        },
+        "key_files": [
+          "devtool/cli.py",
+          "devtool/python_support.py",
+          "devtool/project_runners.py",
+          "tests/test_python_chroot_env_consistency.py",
+          "docs/CONFIGURATION.md",
+          "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md"
+        ],
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "91464ea69831691b89be05332d6068a665bdfe6184ee2a76c06e2b79cfe52481",
+              "size": 13944,
+              "source_sha256": "32cd2b8d688de745a13acbbe07f779ee3e89ac78e53a574ffa70e7a1baa5592d"
+            },
+            {
+              "path": "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md",
+              "action": "add",
+              "sha256": "3f331bb822154b00c8cab9bc487ae9535b0a3132b229b0bd23d8ec0f528e232d",
+              "size": 1726
+            },
+            {
+              "path": "devtool/cli.py",
+              "action": "modify",
+              "sha256": "b3109e3c008d7e6c16575b7561a8bf039bd07084808f2d249ffccb79e30738a7",
+              "size": 246872,
+              "source_sha256": "962e6e09e62ee56f90fa31947e634286ad2d8144bd2e594b6ab62eea79e394a9"
+            },
+            {
+              "path": "devtool/project_runners.py",
+              "action": "modify",
+              "sha256": "5690e7b626469233f9386c58f4ec4d8aa5dc5f9bb14f9d8246f684dcb9751a17",
+              "size": 136597,
+              "source_sha256": "e2223b65419f95159118106d6236c2e1fb003609b6b2300842960f5aa3eb54e7"
+            },
+            {
+              "path": "devtool/python_support.py",
+              "action": "modify",
+              "sha256": "f0791dcbd3a0051edbe7f281f10455a245abfb9234e3cd3b74689b9b83b9880b",
+              "size": 102968,
+              "source_sha256": "49f8067a5d3d3d0d213dc21d56f5f8815e0778a5b860bd55b5407b09523c520c"
+            },
+            {
+              "path": "docs/CONFIGURATION.md",
+              "action": "modify",
+              "sha256": "fd26571582aabd201b198a72f8526d43e99d6b5083f71fd5b883d9fe3cc11904",
+              "size": 3511,
+              "source_sha256": "dd8aa9e7b08ca7328ce7e57146da05b4f055b98922dc9a64e7a326fce58eee6a"
+            },
+            {
+              "path": "tests/test_python_chroot_env_consistency.py",
+              "action": "add",
+              "sha256": "2cdd24bf7e5f026bb4585eb6f942ad74744d4278a021176fdea463ac703a4ac0",
+              "size": 3707
+            }
+          ]
+        }
+      },
+      "history_id": "4a13cedf1ad64dcf82ade5f95ca80c3a"
+    },
+    {
+      "applied_at": "2026-07-23T23:12:35.987968Z",
+      "artifact": "/storage/emulated/0/Download/devtool_python_chroot_env_consistency_overlay.zip",
+      "artifact_name": "devtool_python_chroot_env_consistency_overlay.zip",
+      "type": "overlay",
+      "sha256": "24f298b28914b78733e0c0d5a2cc6bcb659f32e4da523fea0a60054ab2c9ec4c",
+      "status": "ok",
+      "validation_status": "ok",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 7,
+      "change_counts": {
+        "add": 2,
+        "modify": 5
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_python_chroot_env_consistency_overlay",
+        "description": "Ensure Python projects routed through Android/Termux chroot policy build and validate with one consistent chroot-local Python environment, without changing existing dotnet/proot wrapping behavior.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 21,
+        "features": [
+          "Python validation spec planning now resolves effective chroot execution before restore/test commands are built",
+          "Python chroot plans avoid embedding Termux-host Python interpreter paths inside chroot commands",
+          "venv restore installs pyproject build-system.requires before editable project install",
+          "editable pyproject installs use pip --no-build-isolation -e . to avoid temporary build-env stalls",
+          "Python restore phases are labeled venv, restore:test-tools, restore:build-system, restore:project, and restore:requirements",
+          "focused deterministic validation excludes environment-dependent real-proot tests while source-auditing the repo"
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": false,
+          "script": {
+            "path": ".devtool-artifact/validate_phase15_python_chroot_env.sh",
+            "runner": "bash",
+            "sha256": "1d6d47aad05a78d22e7c054ef105402cc6e85cb2433b9a1905278bcb4db2d9f4",
+            "timeout_seconds": 180
+          },
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "skip"
+          },
+          "focused_tests": 34,
+          "notes": "Built-in restore/build/test are skipped. The embedded validator runs source-audit plus deterministic Python chroot and Python support tests. Environment-dependent Termux real-proot wrapper tests are left to the normal repo suite."
+        },
+        "key_files": [
+          "devtool/cli.py",
+          "devtool/python_support.py",
+          "devtool/project_runners.py",
+          "tests/test_python_chroot_env_consistency.py",
+          "docs/CONFIGURATION.md",
+          "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md"
+        ],
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "91464ea69831691b89be05332d6068a665bdfe6184ee2a76c06e2b79cfe52481",
+              "size": 13944,
+              "source_sha256": "32cd2b8d688de745a13acbbe07f779ee3e89ac78e53a574ffa70e7a1baa5592d"
+            },
+            {
+              "path": "PHASE_15_PYTHON_CHROOT_ENV_CONSISTENCY.md",
+              "action": "add",
+              "sha256": "3f331bb822154b00c8cab9bc487ae9535b0a3132b229b0bd23d8ec0f528e232d",
+              "size": 1726
+            },
+            {
+              "path": "devtool/cli.py",
+              "action": "modify",
+              "sha256": "b3109e3c008d7e6c16575b7561a8bf039bd07084808f2d249ffccb79e30738a7",
+              "size": 246872,
+              "source_sha256": "962e6e09e62ee56f90fa31947e634286ad2d8144bd2e594b6ab62eea79e394a9"
+            },
+            {
+              "path": "devtool/project_runners.py",
+              "action": "modify",
+              "sha256": "5690e7b626469233f9386c58f4ec4d8aa5dc5f9bb14f9d8246f684dcb9751a17",
+              "size": 136597,
+              "source_sha256": "e2223b65419f95159118106d6236c2e1fb003609b6b2300842960f5aa3eb54e7"
+            },
+            {
+              "path": "devtool/python_support.py",
+              "action": "modify",
+              "sha256": "f0791dcbd3a0051edbe7f281f10455a245abfb9234e3cd3b74689b9b83b9880b",
+              "size": 102968,
+              "source_sha256": "49f8067a5d3d3d0d213dc21d56f5f8815e0778a5b860bd55b5407b09523c520c"
+            },
+            {
+              "path": "docs/CONFIGURATION.md",
+              "action": "modify",
+              "sha256": "fd26571582aabd201b198a72f8526d43e99d6b5083f71fd5b883d9fe3cc11904",
+              "size": 3511,
+              "source_sha256": "dd8aa9e7b08ca7328ce7e57146da05b4f055b98922dc9a64e7a326fce58eee6a"
+            },
+            {
+              "path": "tests/test_python_chroot_env_consistency.py",
+              "action": "add",
+              "sha256": "2cdd24bf7e5f026bb4585eb6f942ad74744d4278a021176fdea463ac703a4ac0",
+              "size": 3707
+            }
+          ]
+        }
+      },
+      "history_id": "c1372564f07f43f1a414775d90863ab7"
+    },
+    {
+      "applied_at": "2026-07-23T23:35:52.956646Z",
+      "artifact": "/storage/emulated/0/Download/devtool_python_chroot_venv_bootstrap_overlay.zip",
+      "artifact_name": "devtool_python_chroot_venv_bootstrap_overlay.zip",
+      "type": "overlay",
+      "sha256": "fb7e8ded4470daaa76ac6b71cf483c808699a637d2a877b3066305e1e30b7c5a",
+      "status": "ok",
+      "validation_status": "ok",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 5,
+      "change_counts": {
+        "add": 1,
+        "modify": 4
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_python_chroot_venv_bootstrap_overlay",
+        "description": "Ensure Python chroot validation always bootstraps the guest venv before restore commands, avoiding missing chroot-local bin/python failures.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 22,
+        "features": [
+          "PythonEnvironmentPlan now carries the selected execution environment.",
+          "Chroot Python venv restore always emits a venv bootstrap phase before pip restore commands.",
+          "Termux host Python paths translated for chroot preserve versioned executable names such as python3.14.",
+          "Regression tests cover stale host-side venv paths and chroot guest venv bootstrap planning."
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": false,
+          "script": {
+            "path": ".devtool-artifact/validate_phase16_python_chroot_venv_bootstrap.sh",
+            "runner": "bash",
+            "sha256": "5da8818593f96a8cb22d5f2b018a00a5a980ee74507b1f3ae4c5986dc37a7dad",
+            "timeout_seconds": 180
+          },
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "skip"
+          },
+          "focused_tests": 36,
+          "notes": "Runs source-audit plus deterministic Python chroot and Python support tests."
+        },
+        "key_files": [
+          "devtool/python_support.py",
+          "tests/test_python_chroot_env_consistency.py",
+          "docs/CONFIGURATION.md",
+          "PHASE_16_PYTHON_CHROOT_VENV_BOOTSTRAP.md"
+        ],
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "18c30fc5f2dafa209faf88b158d367bd1545e10b2ff455e763107006f7c657f2",
+              "size": 14332,
+              "source_sha256": "91464ea69831691b89be05332d6068a665bdfe6184ee2a76c06e2b79cfe52481"
+            },
+            {
+              "path": "PHASE_16_PYTHON_CHROOT_VENV_BOOTSTRAP.md",
+              "action": "add",
+              "sha256": "19b0befe14f215b3c3a2bd38678dfe5942fa917a2cdaa406d2cf7138f448ab16",
+              "size": 1310
+            },
+            {
+              "path": "devtool/python_support.py",
+              "action": "modify",
+              "sha256": "4d07efee9e10a3b462ab8ccb21d35c4dc63cef56cdee526535204594d128eb16",
+              "size": 103612,
+              "source_sha256": "f0791dcbd3a0051edbe7f281f10455a245abfb9234e3cd3b74689b9b83b9880b"
+            },
+            {
+              "path": "docs/CONFIGURATION.md",
+              "action": "modify",
+              "sha256": "d6caf63dee4d68b3e10cf5dff7006989a13ee528c272df1c9b353e5d6703e222",
+              "size": 4223,
+              "source_sha256": "fd26571582aabd201b198a72f8526d43e99d6b5083f71fd5b883d9fe3cc11904"
+            },
+            {
+              "path": "tests/test_python_chroot_env_consistency.py",
+              "action": "modify",
+              "sha256": "1328b0b93ba431d9016b5d71e20c81073814d46d457e48ee9897d6b7a59fbc1f",
+              "size": 5662,
+              "source_sha256": "2cdd24bf7e5f026bb4585eb6f942ad74744d4278a021176fdea463ac703a4ac0"
+            }
+          ]
+        }
+      },
+      "history_id": "712bc832521940e9b0d0e5401139fdf4"
+    },
+    {
+      "applied_at": "2026-07-23T23:57:25.676390Z",
+      "artifact": "/storage/emulated/0/Download/devtool_android_aidl_arm_tooling_overlay.zip",
+      "artifact_name": "devtool_android_aidl_arm_tooling_overlay.zip",
+      "type": "overlay",
+      "sha256": "9cdb7374e2d81b6bd0449ec8b771bec657793655dd2df481b815da18cf652663",
+      "status": "rolled-back",
+      "validation_status": "failed",
+      "commit_message": "",
+      "commit_hash": "",
+      "file_count": 4,
+      "change_counts": {
+        "add": 1,
+        "modify": 3
+      },
+      "manifest": {
+        "schema_version": 2,
+        "type": "overlay",
+        "target": "devtool",
+        "name": "devtool_android_aidl_arm_tooling_overlay",
+        "description": "Repair Android/Gradle AIDL builds on ARM Linux chroots by wrapping incompatible SDK aidl with a native aidl executable.",
+        "release": "1.1.0",
+        "devtool_version": "1.1.0",
+        "desktop_version": "0.4.0",
+        "android_version": "1.14.0",
+        "android_version_code": 27,
+        "artifact_type": "overlay",
+        "slice": 24,
+        "features": [
+          "Detect AIDL source trees in Android projects.",
+          "Treat SDK build-tools aidl as a host-compatibility probe.",
+          "Install/use native aidl on ARM hosts when AIDL sources are present.",
+          "Wrap incompatible SDK build-tools aidl with a native aidl executable before Gradle runs.",
+          "Fail early with a clear native-aidl remediation message when automatic repair is unavailable."
+        ],
+        "apply": {
+          "atomic": true,
+          "conflict_policy": "overwrite",
+          "path_policy": "repository-relative",
+          "requires_clean_worktree": false
+        },
+        "validation": {
+          "required": true,
+          "restore": false,
+          "build": false,
+          "test": false,
+          "script": {
+            "path": ".devtool-artifact/validate_phase18_android_aidl_arm_tooling.sh",
+            "runner": "bash",
+            "sha256": "9545c286ede1c6786833b1fd4953e1cb5f4c5746582f84c68f7f658694692d09",
+            "timeout_seconds": 180
+          },
+          "expected": {
+            "restore": "skip",
+            "build": "skip",
+            "tests": "skip"
+          },
+          "focused_tests": 52,
+          "notes": "Runs py_compile plus deterministic Android runner tests."
+        },
+        "key_files": [
+          "devtool/android_build.py",
+          "tests/test_android_runner.py",
+          "PHASE_18_ANDROID_AIDL_ARM_TOOLING.md"
+        ],
+        "inventory": {
+          "format": 1,
+          "entries": [
+            {
+              "path": "CHANGELOG.md",
+              "action": "modify",
+              "sha256": "29735f42eac46ff59a49bfe093feaff3f8b7f819a88183971eafad2c1dd051dc",
+              "size": 14551,
+              "source_sha256": "18c30fc5f2dafa209faf88b158d367bd1545e10b2ff455e763107006f7c657f2"
+            },
+            {
+              "path": "PHASE_18_ANDROID_AIDL_ARM_TOOLING.md",
+              "action": "add",
+              "sha256": "98d44979944473a5744b1bfd1590c1fda2f1bc63d80dd5fb7cfe8e2cc2b8b2b5",
+              "size": 1544
+            },
+            {
+              "path": "devtool/android_build.py",
+              "action": "modify",
+              "sha256": "ebdf0479c293e00d2630049b8b7c6c2b78545bab0d9a6e53605afbd80caa9ab4",
+              "size": 100000,
+              "source_sha256": "e8c46fb1d9e5bc1df729957bacfee10b1e740e96ddeea51390af43d6fa76fdbf"
+            },
+            {
+              "path": "tests/test_android_runner.py",
+              "action": "modify",
+              "sha256": "2da8a054dafe5147bf0d076fccc567cd7eedb59777924d5c05ee116c8671b5d5",
+              "size": 59779,
+              "source_sha256": "ec842cc8b425d4d23bc4425c0d210b7741167a15f44a0246ff0c2f84e2aee9e2"
+            }
+          ]
+        }
+      },
+      "history_id": "dc7edac28b794436bee323137b0d26ea"
     }
   ]
 }

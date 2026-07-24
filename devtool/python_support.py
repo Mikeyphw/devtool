@@ -138,6 +138,7 @@ class PythonEnvironmentPlan:
     compatible: bool
     compatibility_detail: str
     bootstrap_python: str = ""
+    execution_environment: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -611,10 +612,12 @@ def resolve_bootstrap_python(
     """
 
     if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(configured):
-        return "python3"
+        requested = Path(str(configured)).name
+        return requested if requested.startswith("python") else "python3"
     resolved = resolve_python_executable(root, configured, environment)
     if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(resolved):
-        return "python3"
+        requested = Path(str(resolved)).name
+        return requested if requested.startswith("python") else "python3"
     return resolved
 
 
@@ -739,7 +742,7 @@ def resolve_environment(
     )
     return PythonEnvironmentPlan(
         info.manager, python, prefix, environment_root, fingerprint, inputs,
-        compatible, detail, bootstrap_python,
+        compatible, detail, bootstrap_python, execution_environment,
     )
 
 
@@ -876,7 +879,11 @@ def build_sync_command(
 
     venv_root = Path(plan.environment_root) if plan.environment_root else default_python_environment_root(info.root)
     venv_python = venv_root / "bin" / "python"
-    if not venv_python.is_file():
+    # When specs are planned on the Termux host but executed inside a chroot,
+    # a host-side Path.exists() check cannot tell whether the guest venv exists.
+    # Always emit an idempotent venv bootstrap for chroot plans so the check runs
+    # in the same environment as the later pip/test commands.
+    if _is_chroot_execution_environment(plan.execution_environment) or not venv_python.is_file():
         commands.append([plan.bootstrap_python or plan.python, "-m", "venv", str(venv_root)])
     pip_base = [str(venv_python), "-m", "pip", "install"]
     if offline:
@@ -894,12 +901,34 @@ def build_sync_command(
         commands.append([*pip_base, "pytest"])
     if info.framework == "pytest" and _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root):
         commands.append([*pip_base, "pytest-asyncio"])
+    build_requires = list(build_system_requirements(info.root)) if (info.root / "pyproject.toml").is_file() else []
+    if install_project and build_requires:
+        commands.append([*pip_base, *build_requires])
     if install_project and (info.root / "pyproject.toml").is_file():
         extra_text = f"[{','.join(extras)}]" if extras else ""
-        commands.append([*pip_base, "-e", f".{extra_text}"])
+        commands.append([*pip_base, "--no-build-isolation", "-e", f".{extra_text}"])
     elif not requirements and (info.root / "setup.py").is_file():
         commands.append([*pip_base, "-e", "."])
     return commands
+
+
+
+
+def build_system_requirements(root: Path) -> tuple[str, ...]:
+    """Return PEP 517 build-system requirements declared by ``pyproject.toml``.
+
+    The venv restore path installs these into the project environment before an
+    editable install and then disables pip build isolation.  That keeps Termux
+    host-backed chroot validation from hanging on a silent temporary build env
+    and guarantees the editable install uses the same interpreter that later
+    runs tests.
+    """
+
+    data = load_pyproject(root, strict=False)
+    build_system = data.get("build-system") if isinstance(data, dict) else {}
+    if not isinstance(build_system, dict):
+        return ()
+    return tuple(_list(build_system.get("requires")))
 
 
 def _hatch_environment_python(root: Path) -> Path | None:
@@ -1616,7 +1645,7 @@ def _prepare_declared_validator_dependencies(root: Path, info: PythonProjectInfo
         if proc.returncode:
             raise PythonProjectError("Unable to prepare declared validator dependencies:\n" + proc.stdout.strip())
         marker.write_text(plan.fingerprint + "\n", encoding="utf-8")
-    return PythonEnvironmentPlan("venv", str(python), (str(python),), str(env_root), plan.fingerprint, plan.fingerprint_inputs, True, plan.compatibility_detail, plan.bootstrap_python)
+    return PythonEnvironmentPlan("venv", str(python), (str(python),), str(env_root), plan.fingerprint, plan.fingerprint_inputs, True, plan.compatibility_detail, plan.bootstrap_python, plan.execution_environment)
 
 
 def run_validator(args: argparse.Namespace) -> int:

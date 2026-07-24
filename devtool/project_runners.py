@@ -1573,6 +1573,29 @@ class PythonRunner(ProjectRunner):
             ))
         return specs
 
+    def _restore_phase_name(self, command: list[str]) -> str:
+        if len(command) >= 3 and command[1:3] == ["-m", "venv"]:
+            return "venv"
+        if "-r" in command:
+            return "restore:requirements"
+        if "--no-build-isolation" in command and "-e" in command:
+            return "restore:project"
+        if "-e" in command:
+            return "restore:project"
+        install_index = -1
+        for index, token in enumerate(command):
+            if token == "install":
+                install_index = index
+                break
+        packages = command[install_index + 1:] if install_index >= 0 else command
+        packages = [item for item in packages if not str(item).startswith("-")]
+        normalized = {str(item).split("[", 1)[0].split("==", 1)[0].split(">=", 1)[0].split("<=", 1)[0].lower() for item in packages}
+        if normalized and normalized <= {"pytest", "pytest-asyncio"}:
+            return "restore:test-tools"
+        if any(item.startswith("setuptools") or item in {"wheel", "build", "hatchling", "flit_core", "poetry-core"} for item in normalized):
+            return "restore:build-system"
+        return "restore"
+
     def _restore_specs(self, config: ProjectConfig) -> list[CommandSpec]:
         from .python_support import build_sync_command
         if config.restore_command:
@@ -1593,7 +1616,7 @@ class PythonRunner(ProjectRunner):
         )
         specs: list[CommandSpec] = []
         for command in commands:
-            name = "venv" if len(command) >= 3 and command[1:3] == ["-m", "venv"] else "restore"
+            name = self._restore_phase_name(command)
             specs.append(CommandSpec(
                 name, command, env=self._env(config), cwd=str(self._root(config)),
                 metadata=_tool_metadata(self.kind, self._root(config), manager=info.manager),

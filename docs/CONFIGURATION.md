@@ -132,3 +132,17 @@ select = ["..."]
 Those sections describe a repository. Keep them in `.devtool.toml`.
 
 `devtool config doctor --global` warns when repo-scoped sections or command-scoped validation filters appear in the global file.
+
+## Python projects in Termux chroot policy
+
+`[termux_chroot].project_kinds` may include `"python"` when Python validation should run inside the configured Android/Termux chroot. When Python is routed this way, Devtool plans the venv, restore, editable install, tests, and source audit for the chroot backend before commands are wrapped. This avoids host/chroot venv mismatches.
+
+For Python projects that declare `build-system.requires`, Devtool installs those build requirements into the project venv and uses `pip install --no-build-isolation -e .` for editable installs. This keeps build dependencies in the same chroot-local environment that later runs validation.
+
+
+
+## Python projects in Android/Termux chroot
+
+When `[termux_chroot].project_kinds` includes `python`, Devtool plans Python validation for the selected chroot before building restore/test specs. The venv bootstrap phase is always emitted for chroot plans because host-side filesystem checks cannot prove that the guest venv exists. This keeps `venv`, `restore:test-tools`, `restore:build-system`, `restore:project`, tests, and source audit in one execution environment.
+
+For Python 3.14 Termux hosts, Devtool preserves the executable name (`python3.14`) when translating host Python paths into chroot bootstrap commands, so Linuxbrew/Ubuntu Python versions can match the active host interpreter where available.

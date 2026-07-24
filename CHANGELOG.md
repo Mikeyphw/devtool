@@ -1,5 +1,6 @@
 ## Android 1.14.0
 
+- Fixed Python validation under Android/Termux chroot policy so venv creation, restore, project install, tests and source audit are planned for the same chroot backend; editable installs now preinstall build-system requirements and use `--no-build-isolation` to avoid silent temporary-build-env stalls.
 - Added sparse user global configuration with `devtool config path/show/defaults/init/edit/doctor --global`, editor launch that prefers micro, CLI preference defaults, and Android/Termux chroot project-kind policy.
 - Finalized the UI/UX contract after the HUD, notification, typography, navigation, Overview, and Run-flow polish stack, including documentation and focused regression gates for all accepted surfaces.
 - Polished Android notification accessibility: 7dp progress rails, dominant chip-style state labels, content descriptions for progress/status/phase/workspace/action surfaces, and contract tests for 48dp action targets.
@@ -58,6 +59,12 @@
 - Made Android validation memory handling root-aware: hairline `MemAvailable` dips no longer abort builds, sustained and hard-emergency thresholds remain enforced, and Termux root may perform one conservative clean-page-cache reclaim before rollback.
 - Added `--ignore-checksum` for checksum-only artifact recovery without disabling repository, inventory, size, conflict, or validation-policy checks.
 - Added an Android-safe validation profile that splits Gradle validation phases, limits workers, logical CPUs, and heap, disables parallel/daemon-heavy behavior, lowers process priority, and aborts before critically low free memory can destabilize the phone.
+
+### Phase 16 - Python chroot venv bootstrap guard
+
+- Ensured Python chroot validation always emits a venv bootstrap phase before restore/test commands.
+- Preserved configured Python executable version names such as `python3.14` when translating Termux host Python paths for chroot execution.
+- Added regression coverage for stale host-side venv paths that are missing inside the chroot.
 
 ## 1.1.0 — 2026-07-16
 

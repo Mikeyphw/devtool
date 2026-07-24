@@ -1,0 +1,107 @@
+{
+  "applied_at": "2026-07-23T23:35:52.956646Z",
+  "artifact": "/storage/emulated/0/Download/devtool_python_chroot_venv_bootstrap_overlay.zip",
+  "artifact_name": "devtool_python_chroot_venv_bootstrap_overlay.zip",
+  "type": "overlay",
+  "sha256": "fb7e8ded4470daaa76ac6b71cf483c808699a637d2a877b3066305e1e30b7c5a",
+  "status": "ok",
+  "validation_status": "ok",
+  "commit_message": "",
+  "commit_hash": "",
+  "file_count": 5,
+  "change_counts": {
+    "add": 1,
+    "modify": 4
+  },
+  "manifest": {
+    "schema_version": 2,
+    "type": "overlay",
+    "target": "devtool",
+    "name": "devtool_python_chroot_venv_bootstrap_overlay",
+    "description": "Ensure Python chroot validation always bootstraps the guest venv before restore commands, avoiding missing chroot-local bin/python failures.",
+    "release": "1.1.0",
+    "devtool_version": "1.1.0",
+    "desktop_version": "0.4.0",
+    "android_version": "1.14.0",
+    "android_version_code": 27,
+    "artifact_type": "overlay",
+    "slice": 22,
+    "features": [
+      "PythonEnvironmentPlan now carries the selected execution environment.",
+      "Chroot Python venv restore always emits a venv bootstrap phase before pip restore commands.",
+      "Termux host Python paths translated for chroot preserve versioned executable names such as python3.14.",
+      "Regression tests cover stale host-side venv paths and chroot guest venv bootstrap planning."
+    ],
+    "apply": {
+      "atomic": true,
+      "conflict_policy": "overwrite",
+      "path_policy": "repository-relative",
+      "requires_clean_worktree": false
+    },
+    "validation": {
+      "required": true,
+      "restore": false,
+      "build": false,
+      "test": false,
+      "script": {
+        "path": ".devtool-artifact/validate_phase16_python_chroot_venv_bootstrap.sh",
+        "runner": "bash",
+        "sha256": "5da8818593f96a8cb22d5f2b018a00a5a980ee74507b1f3ae4c5986dc37a7dad",
+        "timeout_seconds": 180
+      },
+      "expected": {
+        "restore": "skip",
+        "build": "skip",
+        "tests": "skip"
+      },
+      "focused_tests": 36,
+      "notes": "Runs source-audit plus deterministic Python chroot and Python support tests."
+    },
+    "key_files": [
+      "devtool/python_support.py",
+      "tests/test_python_chroot_env_consistency.py",
+      "docs/CONFIGURATION.md",
+      "PHASE_16_PYTHON_CHROOT_VENV_BOOTSTRAP.md"
+    ],
+    "inventory": {
+      "format": 1,
+      "entries": [
+        {
+          "path": "CHANGELOG.md",
+          "action": "modify",
+          "sha256": "18c30fc5f2dafa209faf88b158d367bd1545e10b2ff455e763107006f7c657f2",
+          "size": 14332,
+          "source_sha256": "91464ea69831691b89be05332d6068a665bdfe6184ee2a76c06e2b79cfe52481"
+        },
+        {
+          "path": "PHASE_16_PYTHON_CHROOT_VENV_BOOTSTRAP.md",
+          "action": "add",
+          "sha256": "19b0befe14f215b3c3a2bd38678dfe5942fa917a2cdaa406d2cf7138f448ab16",
+          "size": 1310
+        },
+        {
+          "path": "devtool/python_support.py",
+          "action": "modify",
+          "sha256": "4d07efee9e10a3b462ab8ccb21d35c4dc63cef56cdee526535204594d128eb16",
+          "size": 103612,
+          "source_sha256": "f0791dcbd3a0051edbe7f281f10455a245abfb9234e3cd3b74689b9b83b9880b"
+        },
+        {
+          "path": "docs/CONFIGURATION.md",
+          "action": "modify",
+          "sha256": "d6caf63dee4d68b3e10cf5dff7006989a13ee528c272df1c9b353e5d6703e222",
+          "size": 4223,
+          "source_sha256": "fd26571582aabd201b198a72f8526d43e99d6b5083f71fd5b883d9fe3cc11904"
+        },
+        {
+          "path": "tests/test_python_chroot_env_consistency.py",
+          "action": "modify",
+          "sha256": "1328b0b93ba431d9016b5d71e20c81073814d46d457e48ee9897d6b7a59fbc1f",
+          "size": 5662,
+          "source_sha256": "2cdd24bf7e5f026bb4585eb6f942ad74744d4278a021176fdea463ac703a4ac0"
+        }
+      ]
+    }
+  },
+  "history_id": "712bc832521940e9b0d0e5401139fdf4"
+}
