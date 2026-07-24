@@ -228,11 +228,12 @@ _devtool_validation_args() {
     '--restart-session[replace an existing non-transactional session]' \
     '--retry-failed[retry the cached failed phase and dependents]' \
     '--next[run only the next pending phase]' \
-    '--phase[run a named pending phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
-    '--through[run pending phases through this phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--phase[run a named phase plus pending prerequisites]:phase:(static preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--phase-only[run exactly one pending phase]:phase:(static preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--through[run pending phases through this phase]:phase:(static preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
     '--complete[run all remaining phases]' \
-    '--from-phase[start this invocation at a named phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
-    '--pause-after[pause after a named phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--from-phase[start this invocation at a named phase]:phase:(static preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--pause-after[pause after a named phase]:phase:(static preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
     '--max-phases[maximum phases for this invocation]:count:' \
     '--max-runtime[pause at a phase boundary after this duration]:duration:' \
     '--require-complete[return failure when the invocation pauses incomplete]' \
@@ -241,15 +242,19 @@ _devtool_validation_args() {
     '--stop-above-temperature[pause above this device temperature]:celsius:' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phase invocations]' \
+    '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
+    '--validation-profile[alias for --resource-profile]:profile:(automatic android-low-power standard)' \
+    '--rollback-on-failure[roll back an attached apply transaction on phase failure]' \
     '--session[specific validation session ID]:session:' \
     '--keep-changes[keep repository changes when aborting]' \
-    '1:validation action or artifact scope:(start next resume status finalize abort overlay overlays)' \
+    '1:validation action or artifact scope:(start next resume continue status checkpoint finalize abort overlay overlays)' \
     '2:artifact:_devtool_artifact_path'
 }
 
 _devtool_apply_args() {
   _arguments \
     '--validate[run validation after applying]' \
+    '--defer-validate[apply now and create a resumable validation session]' \
     '--no-validate[disable validation requested by the artifact manifest]' \
     '--test-profile[saved test profile for artifact validation]:profile:_devtool_test_profiles' \
     '*--select[select tests by type, suite, tag, class, or name]:selector:' \
@@ -282,10 +287,11 @@ _devtool_apply_args() {
     '--resume[resume the active validation session]' \
     '--retry-failed[retry the cached failed validation phase]' \
     '--next[run only the next validation phase]' \
-    '--phase[run a named validation phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
-    '--through[run validation through this phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--phase[run a named phase plus pending prerequisites]:phase:(static preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--phase-only[run exactly one pending validation phase]:phase:(static preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--through[run validation through this phase]:phase:(static preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
     '--complete[run all remaining validation phases]' \
-    '--pause-after[pause after a named validation phase]:phase:(preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
+    '--pause-after[pause after a named validation phase]:phase:(static preflight dependencies compile resources unit-test package artifact-check lint instrumentation finalize)' \
     '--max-phases[maximum phases for this invocation]:count:' \
     '--max-runtime[pause at a phase boundary after this duration]:duration:' \
     '--require-complete[fail when validation pauses incomplete]' \
@@ -294,6 +300,9 @@ _devtool_apply_args() {
     '--stop-above-temperature[pause above this temperature]:celsius:' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phases]' \
+    '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
+    '--validation-profile[alias for --resource-profile]:profile:(automatic android-low-power standard)' \
+    '--rollback-on-failure[roll back on validation phase failure]' \
     '--session[specific validation session ID]:session:' \
     '--commit[commit after successful apply and validation]:message:' \
     '--no-commit[disable a commit requested by the artifact manifest]' \

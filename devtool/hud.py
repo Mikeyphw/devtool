@@ -423,6 +423,9 @@ def human_phase_name(value: str) -> str:
         "dotnet-validation": ".NET validation",
         "android-validation": "Android validation",
         "gradle-validation": "Gradle validation",
+        "validation-deferred": "Validation deferred",
+        "validation-paused": "Validation paused",
+        "validation-session-complete": "Validation complete",
         "apply-overlay": "Apply overlay",
         "apply-snapshot": "Apply snapshot",
         "apply-rollback": "Rollback",
@@ -802,6 +805,9 @@ def completion_copy_text(state: HudState) -> str:
             "wine-test": "Ran Wine test suite",
             "git-commit": "Committed repository changes",
             "artifact-cleanup": "Cleaned applied artifact",
+            "validation-deferred": "Created deferred validation checkpoint",
+            "validation-paused": "Paused validation at checkpoint",
+            "validation-session-complete": "Completed staged validation",
             "apply-rollback": "Rolled back changes",
         }
         lines.extend(("", "Actions completed:"))
@@ -881,7 +887,10 @@ def _operation_step_key(name: str) -> str:
         return "build"
     if key in {"test", "tests", "wine-test"} or key.endswith("-test"):
         return "test"
-    if key in {"artifact-validate-script", "artifact-validation-expectations", "external-validation"} or "validate-script" in key:
+    if key in {
+        "artifact-validate-script", "artifact-validation-expectations", "external-validation",
+        "validation-deferred", "validation-paused", "validation-session-complete",
+    } or "validate-script" in key or key.startswith("validation-"):
         return "validate"
     if key in {"git-add", "git-commit", "git-commit-skipped", "commit"}:
         return "commit"

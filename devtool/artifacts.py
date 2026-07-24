@@ -348,7 +348,14 @@ def artifact_validation_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     policy.setdefault("restore", True)
     policy.setdefault("build", True)
     policy.setdefault("test", True)
+    mode = str(policy.get("mode") or "").strip().lower()
+    if mode:
+        policy["required"] = mode == "required"
+        if mode == "disabled":
+            policy.update({"restore": False, "build": False, "test": False})
     policy.setdefault("rollback_on_failure", True)
+    policy.setdefault("allow_deferred", True)
+    policy.setdefault("minimum_phase", "finalize")
     policy.setdefault("test_profile", "")
     policy.setdefault("execution_environment", "")
     return policy
@@ -417,8 +424,10 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
         return False
     ok = True
     script = raw.get("script") if isinstance(raw.get("script"), dict) else {}
+    mode = str(raw.get("mode") or "").strip().lower()
     phases = [bool(raw.get(name, True)) for name in ("restore", "build", "test")]
-    if bool(raw.get("required", False)) and not any(phases) and not script:
+    required = mode == "required" if mode else bool(raw.get("required", False))
+    if required and not any(phases) and not script:
         ok = False
         messages.append("Required validation must enable restore, build, test, or an artifact script.")
     expected = raw.get("expected")
@@ -433,6 +442,23 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
                     f"validation.expected.{key} must be one of: "
                     f"{', '.join(sorted(_VALIDATION_EXPECTED_OUTCOMES))}."
                 )
+    if "mode" in raw:
+        mode = str(raw.get("mode") or "").strip().lower()
+        if mode not in {"required", "optional", "disabled"}:
+            ok = False
+            messages.append("validation.mode must be one of: required, optional, disabled.")
+    if "allow_deferred" in raw and not isinstance(raw.get("allow_deferred"), bool):
+        ok = False
+        messages.append("validation.allow_deferred must be a boolean.")
+    if "minimum_phase" in raw:
+        minimum_phase = str(raw.get("minimum_phase") or "").strip().lower().replace("_", "-")
+        allowed_phases = {
+            "static", "preflight", "dependencies", "compile", "resources",
+            "unit-test", "package", "artifact-check", "lint", "instrumentation", "finalize", "final",
+        }
+        if minimum_phase not in allowed_phases:
+            ok = False
+            messages.append(f"Unsupported validation.minimum_phase: {minimum_phase!r}.")
     if "rollback_on_failure" in raw and not isinstance(raw.get("rollback_on_failure"), bool):
         ok = False
         messages.append("validation.rollback_on_failure must be a boolean.")

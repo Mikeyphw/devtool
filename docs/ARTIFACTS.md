@@ -202,3 +202,20 @@ devtool bundle overlays \
   --out "$HOME/Downloads/s3mo_s3oc_diagnostics_bundle.zip" \
   s3mo_overlay.zip s3oc_overlay.zip
 ```
+
+## Deferred validation policy
+
+Schema-v2 artifacts may make staged validation explicit:
+
+```json
+{
+  "validation": {
+    "mode": "required",
+    "allow_deferred": true,
+    "minimum_phase": "finalize",
+    "rollback_on_failure": true
+  }
+}
+```
+
+`apply-overlay --defer-validate` applies transactionally, preserves the backup, retains the source artifact until finalization, and creates an active validation session. An embedded artifact validator becomes the `static` session phase, so it is checkpointed rather than postponed invisibly to the end. Commit and artifact cleanup occur only after the session completes. `validation.allow_deferred=false` rejects this mode.

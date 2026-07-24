@@ -110,6 +110,7 @@ from .validation_sessions import (
     spec_map as validation_spec_map,
     status_payload as validation_status_payload,
     status_text as validation_status_text,
+    checkpoint_text as validation_checkpoint_text,
     sync_plan as sync_validation_plan,
 )
 from .single_run import SingleRunLock
@@ -194,6 +195,7 @@ def split_runner_passthrough_args(raw_args: list[str]) -> tuple[list[str], list[
 
 def _add_apply_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact; required artifact validation is enabled automatically")
+    cmd.add_argument("--defer-validate", action="store_true", help="Apply now, preserve rollback state, and create a resumable validation session without running a phase")
     cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested or required by the artifact manifest")
     cmd.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
     _add_validation_test_selection_flags(cmd)
@@ -572,7 +574,8 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--retry-failed", action="store_true", help="Retry the cached failed phase and every dependent phase")
     selection = cmd.add_mutually_exclusive_group()
     selection.add_argument("--next", dest="validation_next", action="store_true", help="Run only the next pending phase")
-    selection.add_argument("--phase", default="", help="Run a named pending phase")
+    selection.add_argument("--phase", default="", help="Run a named phase and every still-pending prerequisite")
+    selection.add_argument("--phase-only", default="", help="Run only one named pending phase without automatically including prerequisites")
     selection.add_argument("--through", default="", help="Run pending phases through this phase")
     selection.add_argument("--complete", dest="validation_complete", action="store_true", help="Run every remaining phase")
     cmd.add_argument("--from-phase", default="", help="Start this invocation at a named phase")
@@ -586,6 +589,8 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     daemon = cmd.add_mutually_exclusive_group()
     daemon.add_argument("--stop-gradle-after-phase", action="store_true", help="Stop Gradle daemons after each completed phase")
     daemon.add_argument("--keep-gradle-daemon", action="store_true", help="Keep Gradle daemons available between phase invocations")
+    cmd.add_argument("--resource-profile", "--validation-profile", "--profile", dest="validation_resource_profile", choices=["automatic", "android-low-power", "standard"], default="automatic", help="Validation resource profile; android-low-power uses one worker, two CPUs, no daemon, and low priority")
+    cmd.add_argument("--rollback-on-failure", action="store_true", help="Immediately roll back an attached apply transaction when a validation phase fails")
     cmd.add_argument("--keep-changes", action="store_true", help="When aborting through `validate abort`, keep the applied repository changes")
     cmd.add_argument("--session", default="", help="Specific validation session ID")
 
@@ -1518,7 +1523,11 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
 
     validation = artifact_validation_policy(manifest)
     if validation and not getattr(args, "no_validate", False) and not preview_only:
-        if bool(validation.get("required", False)) and not getattr(args, "validate_only", False):
+        if (
+            not getattr(args, "defer_validate", False)
+            and bool(validation.get("required", False))
+            and not getattr(args, "validate_only", False)
+        ):
             args.validate = True
         if not bool(validation.get("restore", True)):
             args.skip_restore = True
@@ -1526,7 +1535,7 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
             args.skip_build = True
         if not bool(validation.get("test", True)):
             args.skip_test = True
-    if getattr(args, "no_validate", False):
+    if getattr(args, "no_validate", False) or getattr(args, "defer_validate", False):
         args.validate = False
 
     enabled, message, strategy = artifact_commit_policy(manifest)
@@ -1555,7 +1564,7 @@ def _normalize_command_aliases(args: argparse.Namespace) -> None:
     command = str(getattr(args, "command", "") or "")
     if command in {"validate", "v"}:
         action = str(getattr(args, "validate_scope", "") or "").strip().lower()
-        if action in {"start", "next", "resume", "status", "finalize", "abort"}:
+        if action in {"start", "next", "resume", "continue", "status", "checkpoint", "finalize", "abort"}:
             args.validate_scope = ""
             if action == "start":
                 args._devtool_validation_mode = "start"
@@ -1564,12 +1573,13 @@ def _normalize_command_aliases(args: argparse.Namespace) -> None:
             elif action == "next":
                 args.sequential = True
                 args.validation_next = True
-            elif action == "resume":
+            elif action in {"resume", "continue"}:
                 args._devtool_validation_mode = "resume"
                 args.sequential = True
                 args.resume = True
-            elif action == "status":
+            elif action in {"status", "checkpoint"}:
                 args.command = "validation-status"
+                args._devtool_validation_checkpoint = action == "checkpoint"
             elif action == "finalize":
                 args.command = "validation-finalize"
             elif action == "abort":
@@ -1612,18 +1622,28 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
             parser.error(f"validate {scope} requires an artifact archive")
     if args.command not in APPLY_COMMANDS:
         return
-    if _resumable_validation_requested(args) and not (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
-        parser.error("Sequential/resumable validation flags on apply require --validate or --validate-only.")
-    if getattr(args, "no_validate", False) and (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
-        parser.error("--no-validate cannot be combined with --validate or --validate-only.")
+    deferred = bool(getattr(args, "defer_validate", False))
+    if _resumable_validation_requested(args) and not (getattr(args, "validate", False) or getattr(args, "validate_only", False) or deferred):
+        parser.error("Sequential/resumable validation flags on apply require --validate, --validate-only, or --defer-validate.")
+    if getattr(args, "no_validate", False) and (getattr(args, "validate", False) or getattr(args, "validate_only", False) or deferred):
+        parser.error("--no-validate cannot be combined with --validate, --validate-only, or --defer-validate.")
+    if deferred and (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
+        parser.error("--defer-validate cannot be combined with --validate or --validate-only.")
+    if deferred and any(str(getattr(args, name, "") or "").strip() for name in ("phase", "phase_only", "through", "from_phase", "pause_after")):
+        parser.error("Phase selection is not used during --defer-validate; apply first, then run `devtool validate continue ...`.")
     if getattr(args, "no_commit", False) and str(getattr(args, "commit", "") or "").strip():
         parser.error("--no-commit cannot be combined with --commit.")
-    if (args.skip_restore or args.skip_build or args.skip_test) and not (args.validate or args.validate_only):
-        parser.error("--skip-restore, --skip-build, and --skip-test require --validate or --validate-only.")
+    if getattr(args, "no_rollback_on_failure", False) and getattr(args, "rollback_on_failure", False):
+        parser.error("--rollback-on-failure cannot be combined with --no-rollback-on-failure.")
+    if (args.skip_restore or args.skip_build or args.skip_test) and not (args.validate or args.validate_only or deferred):
+        parser.error("--skip-restore, --skip-build, and --skip-test require --validate, --validate-only, or --defer-validate.")
     if args.validate_only and args.validate:
         parser.error("--validate and --validate-only cannot be combined.")
     if args.validate_only and args.commit:
         parser.error("--validate-only cannot be combined with --commit.")
+    manifest = dict(getattr(args, "_devtool_declared_manifest", {}) or {})
+    if deferred and manifest and not bool(artifact_validation_policy(manifest).get("allow_deferred", True)):
+        parser.error("This artifact explicitly forbids deferred validation.")
     preview_only = getattr(args, "preview", False) or (getattr(args, "diff", False) and not getattr(args, "interactive", False))
     if preview_only and (args.validate or args.validate_only or args.commit):
         parser.error("--preview/--diff cannot be combined with validation or commit flags unless --interactive is used with --diff.")
@@ -2042,6 +2062,7 @@ def _resumable_validation_requested(args: argparse.Namespace) -> bool:
         or getattr(args, "retry_failed", False)
         or getattr(args, "validation_next", False)
         or str(getattr(args, "phase", "") or "").strip()
+        or str(getattr(args, "phase_only", "") or "").strip()
         or str(getattr(args, "through", "") or "").strip()
         or str(getattr(args, "from_phase", "") or "").strip()
         or str(getattr(args, "pause_after", "") or "").strip()
@@ -2055,7 +2076,36 @@ def _resumable_validation_requested(args: argparse.Namespace) -> bool:
     )
 
 
+def _apply_validation_resource_profile(config: ProjectConfig, args: argparse.Namespace) -> None:
+    profile = str(getattr(args, "validation_resource_profile", "automatic") or "automatic").strip().lower()
+    if profile == "automatic":
+        return
+    validation = config.runner_options.setdefault("validation", {})
+    if not isinstance(validation, dict):
+        validation = {}
+        config.runner_options["validation"] = validation
+    gradle = config.runner_options.setdefault("gradle", {})
+    if not isinstance(gradle, dict):
+        gradle = {}
+        config.runner_options["gradle"] = gradle
+    if profile == "android-low-power":
+        validation.update({
+            "android_safe": True,
+            "max_workers": 1,
+            "cpu_limit": 2,
+            "split_gradle": True,
+            "no_daemon": True,
+            "low_priority": True,
+            "parallel": False,
+            "fail_fast": True,
+        })
+        gradle.update({"no_daemon": True, "parallel": False, "build_cache": True})
+    elif profile == "standard":
+        validation["android_safe"] = False
+
+
 def _enable_resumable_validation(config: ProjectConfig, args: argparse.Namespace) -> None:
+    _apply_validation_resource_profile(config, args)
     if config.kind not in {"android", "gradle"}:
         raise ValidationSessionError(
             "Persistent sequential validation is currently supported for Android/Gradle targets."
@@ -2092,11 +2142,14 @@ def _validation_session_options(args: argparse.Namespace) -> dict[str, object]:
         "require_complete": bool(getattr(args, "require_complete", False)),
         "stop_gradle_after_phase": bool(getattr(args, "stop_gradle_after_phase", False)),
         "keep_gradle_daemon": bool(getattr(args, "keep_gradle_daemon", False)),
+        "validation_resource_profile": str(getattr(args, "validation_resource_profile", "automatic") or "automatic"),
+        "rollback_on_failure": bool(getattr(args, "rollback_on_failure", False)),
     }
 
 
 def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str, manifest: dict) -> dict[str, object]:
     artifact_values = _artifact_arg_list(getattr(args, "artifact", ""))
+    validation_policy = artifact_validation_policy(manifest)
     return {
         "command": str(getattr(args, "command", "") or "apply-overlay"),
         "artifacts": artifact_values,
@@ -2112,11 +2165,37 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "no_manifest_check": bool(getattr(args, "no_manifest_check", False)),
         "ignore_checksum": bool(getattr(args, "ignore_checksum", False)),
         "validate_only": bool(getattr(args, "validate_only", False)),
-        "rollback_on_failure": _rollback_on_failure_enabled(args, artifact_validation_policy(manifest)),
+        "rollback_on_failure": _rollback_on_failure_enabled(args, validation_policy),
+        "validation_mode": "deferred" if bool(getattr(args, "defer_validate", False)) else "sequential",
+        "minimum_phase": str(validation_policy.get("minimum_phase") or "finalize"),
+        "resource_profile": str(getattr(args, "validation_resource_profile", "automatic") or "automatic"),
+        "artifact_script_in_plan": bool(validation_policy.get("script")) and not bool(getattr(args, "no_artifact_script", False)),
         "target": str(getattr(args, "target", "") or artifact_target(manifest)),
         "solution": str(getattr(args, "solution", "") or artifact_solution(manifest)),
         "transaction_path": transaction_path,
     }
+
+
+def _with_artifact_validation_phase(
+    specs: list[CommandSpec],
+    context: dict[str, object] | None,
+) -> list[CommandSpec]:
+    context = dict(context or {})
+    if not bool(context.get("artifact_script_in_plan", False)):
+        return specs
+    artifacts = [str(item) for item in context.get("artifacts") or [] if str(item)]
+    if len(artifacts) != 1:
+        return specs
+    static = CommandSpec(
+        "artifact-validate-script",
+        ["artifact-validate-script", artifacts[0]],
+        metadata={
+            "validation_phase_name": "static",
+            "validation_phase_key": "artifact:static:0",
+            "devtool_internal_validation": "artifact-script",
+        },
+    )
+    return [static, *specs]
 
 
 def _load_or_create_validation_session(
@@ -2138,12 +2217,17 @@ def _load_or_create_validation_session(
     if not start_new and active is not None:
         # A resumed plan must retain its original skip/daemon choices. Runtime,
         # battery, temperature and phase selection are intentionally per-run.
-        for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon"):
+        for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "rollback_on_failure"):
             if name in active.options:
                 setattr(args, name, active.options[name])
 
     _enable_resumable_validation(config, args)
-    specs = _validation_specs_for_args(config, args, parser)
+    effective_context = dict(apply_context or (active.apply_context if active is not None else {}) or {})
+    script_only = bool(effective_context.get("artifact_script_in_plan", False)) and all(
+        bool(getattr(args, name, False)) for name in ("skip_restore", "skip_build", "skip_test")
+    )
+    specs = [] if script_only else _validation_specs_for_args(config, args, parser)
+    specs = _with_artifact_validation_phase(specs, effective_context)
     if start_new:
         if active is not None and active.transaction_path:
             raise ValidationSessionError(
@@ -2241,7 +2325,7 @@ def _finalize_validation_session(
             artifact_path = resolve_artifact_path(artifact_values[0])
         except Exception:
             artifact_path = None
-    if artifact_path is not None and not any(result.returncode != 0 for result in results):
+    if artifact_path is not None and not bool(context.get("artifact_script_in_plan", False)) and not any(result.returncode != 0 for result in results):
         script_result, script_raw = _artifact_script_result(
             config,
             final_args,
@@ -2345,9 +2429,12 @@ def _run_validation_session(
     if through and pause_after and through != pause_after:
         raise ValidationSessionError("--through and --pause-after must name the same phase when combined.")
     through = through or pause_after
+    phase = str(getattr(args, "phase", "") or "").strip()
+    phase_only = str(getattr(args, "phase_only", "") or "").strip()
     keys = select_phase_keys(
         session,
-        phase=str(getattr(args, "phase", "") or "").strip(),
+        phase=phase or phase_only,
+        exact_phase=bool(phase_only),
         through=through,
         from_phase=str(getattr(args, "from_phase", "") or "").strip(),
         next_only=bool(getattr(args, "validation_next", False)),
@@ -2382,15 +2469,45 @@ def _run_validation_session(
                 session_id=session.session_id,
                 phase=phase.name,
             )
-        phase_results, phase_raw = _run_specs_for_args(
-            config,
-            [spec],
-            args,
-            continue_on_error=False,
-            log_path=log_path,
-            tasker_progress=tasker_progress,
-            shutdown_dotnet=False,
-        )
+        if str(spec.metadata.get("devtool_internal_validation") or "") == "artifact-script":
+            context = dict(session.apply_context or {})
+            artifacts = [str(item) for item in context.get("artifacts") or [] if str(item)]
+            artifact_path = resolve_artifact_path(artifacts[0]) if len(artifacts) == 1 else None
+            internal_result: OperationResult | None = None
+            phase_raw = ""
+            if artifact_path is not None:
+                internal_result, phase_raw = _artifact_script_result(
+                    config,
+                    args,
+                    artifact_path,
+                    dict(context.get("manifest") or {}),
+                    target=str(context.get("target") or ""),
+                    solution=str(context.get("solution") or ""),
+                    log_path=log_path,
+                    tasker_progress=tasker_progress,
+                )
+            if internal_result is None:
+                internal_result = OperationResult(
+                    "artifact-validate-script",
+                    list(spec.argv),
+                    0,
+                    0.0,
+                    "No embedded artifact validator was required.",
+                    [],
+                    skipped=True,
+                    metadata=dict(spec.metadata),
+                )
+            phase_results = [internal_result]
+        else:
+            phase_results, phase_raw = _run_specs_for_args(
+                config,
+                [spec],
+                args,
+                continue_on_error=False,
+                log_path=log_path,
+                tasker_progress=tasker_progress,
+                shutdown_dotnet=False,
+            )
         result = phase_results[-1]
         record_phase_result(session, key, result)
         results.extend(phase_results)
@@ -2404,7 +2521,7 @@ def _run_validation_session(
     raw_output = "\n\n".join(raw_sections)
     if session.failed:
         context = dict(session.apply_context or {})
-        rollback_enabled = _rollback_on_failure_enabled(args, context)
+        rollback_enabled = bool(getattr(args, "rollback_on_failure", False)) or _rollback_on_failure_enabled(args, context)
         if session.transaction_path and rollback_enabled:
             evidence = preserve_validation_evidence(
                 config.repo_root,
@@ -2458,6 +2575,8 @@ def _handle_validation_status(config: ProjectConfig, args: argparse.Namespace, *
     session = _validation_management_session(config, args)
     if machine:
         print(json.dumps(validation_status_payload(session), ensure_ascii=False, indent=2))
+    elif bool(getattr(args, "_devtool_validation_checkpoint", False)):
+        print(validation_checkpoint_text(session))
     else:
         print(validation_status_text(session))
     return 0
@@ -3031,6 +3150,127 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     result.output = result.output + manifest_note
     return _return_apply(result, text)
 
+
+
+def _run_deferred_apply(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    log_path: Path | str | None,
+    tasker_progress: TaskerProgressSink | None,
+) -> tuple[list[OperationResult], str]:
+    apply_results, apply_raw = _run_apply(
+        config,
+        args,
+        args.command,
+        getattr(args, "artifact", ""),
+        log_path=log_path,
+        tasker_progress=tasker_progress,
+    )
+    if not apply_results or any(result.returncode != 0 for result in apply_results):
+        return apply_results, apply_raw
+
+    manifest = dict(getattr(args, "_devtool_artifact_manifest", {}) or {})
+    policy = artifact_validation_policy(manifest)
+    if not bool(policy.get("allow_deferred", True)):
+        transaction_path = _apply_transaction_path(apply_results)
+        if transaction_path:
+            rollback_result, rollback_raw = _run_transaction_rollback(
+                transaction_path,
+                reason="artifact policy forbids deferred validation",
+                tasker_progress=tasker_progress,
+                log_path=log_path,
+            )
+            return [*apply_results, rollback_result], apply_raw + "\n\n" + rollback_raw
+        raise ValidationSessionError("This artifact explicitly forbids deferred validation.")
+
+    transaction_path = _apply_transaction_path(apply_results)
+    try:
+        config = _reload_config_after_artifact_apply(args, config, manifest)
+        _apply_artifact_validation_defaults(config, args, manifest)
+        context = _validation_apply_context(args, transaction_path=transaction_path, manifest=manifest)
+        session, _specs = _load_or_create_validation_session(
+            config,
+            args,
+            parser,
+            transaction_path=transaction_path,
+            apply_context=context,
+        )
+    except BaseException as exc:
+        failure = OperationResult(
+            "validation-session",
+            ["devtool", "validate", "continue"],
+            1,
+            0.0,
+            f"Could not create deferred validation session: {type(exc).__name__}: {exc}",
+            [Issue("error", "validation-session", "", type(exc).__name__, str(exc))],
+            failure_kind="validation_session_error",
+        )
+        results = [*apply_results, failure]
+        raw = apply_raw + "\n\n" + failure.output
+        if transaction_path:
+            rollback_result, rollback_raw = _run_transaction_rollback(
+                transaction_path,
+                reason="deferred validation session creation failed",
+                tasker_progress=tasker_progress,
+                log_path=log_path,
+            )
+            results.append(rollback_result)
+            raw += "\n\n" + rollback_raw
+        return results, raw
+    mark_validation_paused(session, "validation deferred after artifact apply")
+    completed, total, next_phase = _session_pause_metadata(session)
+    mark_transaction_pending_validation(
+        transaction_path,
+        session_id=session.session_id,
+        next_phase=next_phase,
+        completed_phases=completed,
+        phase_total=total,
+        deferred=True,
+    )
+    deferred = OperationResult(
+        "validation-deferred",
+        ["devtool", "validate", "continue"],
+        0,
+        0.0,
+        (
+            f"Applied artifact and deferred validation.\n"
+            f"session: {session.session_id}\n"
+            f"phases: {len(session.phases)}\n"
+            f"next_phase: {next_phase or '-'}\n"
+            "rollback: available until validation finalization"
+        ),
+        [],
+        metadata={
+            "validation_session_id": session.session_id,
+            "validation_session_status": "deferred",
+            "validation_complete": False,
+            "validation_deferred": True,
+            "next_phase": next_phase,
+            "completed_phases": completed,
+            "phase_total": total,
+            "transaction_path": transaction_path,
+            "recovery_available": bool(transaction_path),
+            "resource_profile": str(getattr(args, "validation_resource_profile", "automatic") or "automatic"),
+        },
+    )
+    for result in apply_results:
+        result.metadata.setdefault("validation_session_id", session.session_id)
+        result.metadata.setdefault("validation_deferred", True)
+    results = [*apply_results, deferred]
+    if args.command in {"apply-overlay", "ao"}:
+        artifact_values = _artifact_arg_list(getattr(args, "artifact", ""))
+        label = Path(artifact_values[0]).name if artifact_values else "Overlay"
+        _tag_overlay_results(
+            results,
+            index=1,
+            total=1,
+            label=label,
+            target=config.selected_target or "",
+            artifact=artifact_values[0] if artifact_values else "",
+        )
+    return results, apply_raw + "\n\n" + deferred.output
 
 
 def _run_resumable_apply(
@@ -4864,7 +5104,7 @@ def main(argv: list[str] | None = None) -> int:
                     "An applied artifact is waiting for resumable validation.\n"
                     f"transaction: {stale_transaction}\n"
                     f"session: {transaction_session or '-'}\n"
-                    "Resume it with 'devtool resume-validation' or abort it with 'devtool validation-abort'. "
+                    "Resume it with 'devtool validate continue' or abort it with 'devtool validation-abort'. "
                     "The pending changes were not rolled back automatically."
                 ),
                 [],
@@ -4924,7 +5164,22 @@ def main(argv: list[str] | None = None) -> int:
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
 
     if args.command in APPLY_COMMANDS:
-        if _resumable_validation_requested(args):
+        if bool(getattr(args, "defer_validate", False)):
+            try:
+                results, raw_output = _run_deferred_apply(
+                    config,
+                    args,
+                    parser,
+                    log_path=log_path,
+                    tasker_progress=tasker_progress,
+                )
+            except ValidationSessionError as exc:
+                results = [OperationResult(
+                    "validation-session", ["devtool", "validate", "continue"], 2, 0.0, str(exc), [],
+                    failure_kind="validation_session_error",
+                )]
+                raw_output = str(exc)
+        elif _resumable_validation_requested(args):
             try:
                 results, raw_output = _run_resumable_apply(
                     config,

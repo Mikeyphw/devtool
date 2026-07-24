@@ -23,6 +23,7 @@ from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 
 SESSION_SCHEMA_VERSION = 1
 DEFAULT_PHASE_ORDER = (
+    "static",
     "preflight",
     "dependencies",
     "compile",
@@ -131,6 +132,21 @@ def active_session_marker(repo_root: Path) -> Path:
     return session_root(repo_root) / "active.json"
 
 
+def validation_plan_path(repo_root: Path) -> Path:
+    return session_root(repo_root) / "validation-plan.json"
+
+
+def rollback_point_path(repo_root: Path) -> Path:
+    return session_root(repo_root) / "rollback-point.json"
+
+
+def normalize_phase_name(value: str | None) -> str:
+    """Normalize CLI/manifest phase aliases to durable session names."""
+
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    return "finalize" if normalized == "final" else normalized
+
+
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
@@ -157,7 +173,24 @@ def _session_from_dict(payload: dict[str, Any]) -> ValidationSession:
 def save_session(session: ValidationSession, *, active: bool | None = None) -> Path:
     session.updated_at = _utc_now()
     path = session_path(Path(session.repo_root), session.session_id)
-    _atomic_write_json(path, session.as_dict())
+    payload = session.as_dict()
+    _atomic_write_json(path, payload)
+    plan_payload = {
+        "schema_version": SESSION_SCHEMA_VERSION,
+        "session_id": session.session_id,
+        "status": session.status,
+        "validation_mode": str(session.apply_context.get("validation_mode") or "standalone"),
+        "artifact": session.apply_context.get("artifact") or session.apply_context.get("artifacts") or "",
+        "resource_profile": session.options.get("validation_resource_profile") or "automatic",
+        "transaction_path": session.transaction_path,
+        "recovery_available": bool(session.transaction_path),
+        "phases": [
+            {"key": item.key, "name": item.name, "label": item.label, "status": item.status}
+            for item in session.phases
+        ],
+        "updated_at": session.updated_at,
+    }
+    _atomic_write_json(validation_plan_path(Path(session.repo_root)), plan_payload)
     if active is True:
         _atomic_write_json(
             active_session_marker(Path(session.repo_root)),
@@ -170,6 +203,17 @@ def save_session(session: ValidationSession, *, active: bool | None = None) -> P
                 "updated_at": session.updated_at,
             },
         )
+        if session.transaction_path:
+            _atomic_write_json(
+                rollback_point_path(Path(session.repo_root)),
+                {
+                    "schema_version": SESSION_SCHEMA_VERSION,
+                    "session_id": session.session_id,
+                    "transaction_path": session.transaction_path,
+                    "status": session.status,
+                    "updated_at": session.updated_at,
+                },
+            )
     elif active is False:
         marker = active_session_marker(Path(session.repo_root))
         try:
@@ -178,6 +222,7 @@ def save_session(session: ValidationSession, *, active: bool | None = None) -> P
             current = {}
         if not current or str(current.get("session_id") or "") == session.session_id:
             marker.unlink(missing_ok=True)
+            rollback_point_path(Path(session.repo_root)).unlink(missing_ok=True)
     return path
 
 
@@ -410,6 +455,13 @@ def create_session(
         apply_context=dict(apply_context or {}),
         options=dict(options or {}),
     )
+    # Deferred apply sessions keep a transaction/rollback point available.
+    # Store this explicitly so checkpoint output and recovery UX do not need
+    # to infer it from filesystem state later.
+    if transaction_path:
+        session.options.setdefault("recovery_available", True)
+    elif session.options.get("rollback_point"):
+        session.options.setdefault("recovery_available", True)
     save_session(session, active=True)
     return session
 
@@ -442,7 +494,7 @@ def sync_plan(session: ValidationSession, specs: Sequence[CommandSpec]) -> list[
 
 def _phase_rank(name: str) -> int:
     try:
-        return DEFAULT_PHASE_ORDER.index(name)
+        return DEFAULT_PHASE_ORDER.index(normalize_phase_name(name))
     except ValueError:
         return len(DEFAULT_PHASE_ORDER)
 
@@ -487,6 +539,10 @@ def reconcile_inputs(session: ValidationSession, config: ProjectConfig) -> str:
         invalidation = "resources"
     elif current.get("tests") != session.fingerprints.get("tests"):
         invalidation = "unit-test"
+    if invalidation and any(item.name == "static" for item in session.phases):
+        # Embedded artifact validators may inspect any repository surface.
+        # Re-run them whenever downstream inputs change between checkpoints.
+        invalidation = "static"
     if invalidation:
         invalidate_from(session, invalidation, f"{invalidation} inputs changed since the previous checkpoint")
     session.fingerprints = current
@@ -508,14 +564,19 @@ def retry_failed(session: ValidationSession) -> str:
 
 
 def _matching_indices(session: ValidationSession, name: str) -> list[int]:
-    normalized = name.strip().lower()
-    return [index for index, item in enumerate(session.phases) if item.name == normalized or item.key == name]
+    normalized = normalize_phase_name(name)
+    return [
+        index
+        for index, item in enumerate(session.phases)
+        if normalize_phase_name(item.name) == normalized or item.key == name
+    ]
 
 
 def select_phase_keys(
     session: ValidationSession,
     *,
     phase: str = "",
+    exact_phase: bool = False,
     through: str = "",
     from_phase: str = "",
     next_only: bool = False,
@@ -527,9 +588,15 @@ def select_phase_keys(
         return []
     selected: list[int]
     if phase:
-        selected = [index for index in _matching_indices(session, phase) if session.phases[index].status == "pending"]
-        if not selected:
+        matches = [index for index in _matching_indices(session, phase) if session.phases[index].status == "pending"]
+        if not matches:
             raise ValidationSessionError(f"No pending validation phase matches: {phase}")
+        if exact_phase:
+            selected = matches
+        else:
+            # Named phases include every still-pending prerequisite by default.
+            end = matches[-1]
+            selected = [index for index in pending_indices if index <= end]
     else:
         start = pending_indices[0]
         if from_phase:
@@ -673,32 +740,68 @@ def status_payload(session: ValidationSession) -> dict[str, Any]:
     payload = session.as_dict()
     payload["pending"] = [item.name for item in session.phases if item.status == "pending"]
     payload["failed_phases"] = [item.name for item in session.phases if item.status == "failed"]
+    context = dict(session.apply_context or {})
+    payload["validation_mode"] = str(context.get("validation_mode") or "standalone")
+    payload["artifact"] = context.get("artifact") or context.get("artifacts") or ""
+    payload["recovery_available"] = bool(session.transaction_path and Path(session.transaction_path).exists())
+    payload["resource_profile"] = str(session.options.get("validation_resource_profile") or session.options.get("resource_profile") or "automatic")
+    payload["minimum_phase"] = str(context.get("minimum_phase") or "finalize")
+    payload["safe_checkpoint"] = not session.failed and session.status in {"created", "paused", "completed"}
     return payload
 
 
 def status_text(session: ValidationSession) -> str:
     completed = sum(item.status in _TERMINAL_PHASE_STATES for item in session.phases)
     next_phase = session.next_pending()
+    context = dict(session.apply_context or {})
+    mode = str(context.get("validation_mode") or "standalone")
+    artifact = context.get("artifact") or context.get("artifacts") or ""
     lines = [
         f"Validation session: {session.session_id}",
         f"Status: {session.status}",
+        f"Mode: {mode}",
         f"Project: {session.project_root}",
         f"Target: {session.target or '-'}",
         f"Variant: {session.variant or '-'}",
+        f"Resource profile: {session.options.get('validation_resource_profile') or session.options.get('resource_profile') or 'automatic'}",
         f"Progress: {completed}/{len(session.phases)} phases",
         f"Next: {next_phase.label if next_phase else '-'}",
     ]
+    if artifact:
+        lines.append(f"Artifact: {artifact}")
     if session.paused_reason:
         lines.append(f"Pause reason: {session.paused_reason}")
     if session.invalidated_from:
         lines.append(f"Invalidated from: {session.invalidated_from}")
     if session.transaction_path:
-        lines.append(f"Pending transaction: {session.transaction_path}")
+        lines.append(f"Recovery: available ({session.transaction_path})")
     lines.append("Phases:")
     for item in session.phases:
         marker = {"succeeded": "ok", "skipped": "skip", "failed": "FAIL", "running": "run"}.get(item.status, "wait")
         lines.append(f"  [{marker:4}] {item.index}/{item.total} {item.label}")
     return "\n".join(lines)
+
+
+def checkpoint_text(session: ValidationSession) -> str:
+    """Render a compact, decision-oriented validation checkpoint."""
+    payload = status_payload(session)
+    completed = int(payload.get("completed_phases") or 0)
+    total = int(payload.get("phase_total") or 0)
+    next_phase = str(payload.get("next_phase") or "-")
+    artifact = payload.get("artifact") or "-"
+    return "\n".join([
+        "Validation checkpoint",
+        f"Session: {session.session_id}",
+        f"Artifact: {artifact}",
+        f"Apply state: {'validation pending' if session.transaction_path else 'standalone'}",
+        f"Validation: {session.status}",
+        f"Completed: {completed}/{total}",
+        f"Next: {next_phase}",
+        f"Minimum phase: {payload.get('minimum_phase') or 'finalize'}",
+        f"Resource profile: {payload.get('resource_profile') or 'automatic'}",
+        f"Recovery available: {'yes' if payload.get('recovery_available') or session.options.get('recovery_available') else 'no'}",
+        f"Safe checkpoint: {'yes' if payload.get('safe_checkpoint') else 'no'}",
+    ])
 
 
 def _read_int(path: Path) -> int | None:
@@ -799,6 +902,9 @@ def pause_result(session: ValidationSession, reason: str, *, require_complete: b
             "remaining_phases": sum(item.status == "pending" for item in session.phases),
             "completed_phases": sum(item.status in _TERMINAL_PHASE_STATES for item in session.phases),
             "phase_total": len(session.phases),
+            "artifact": session.apply_context.get("artifact") or session.apply_context.get("artifacts") or "",
+            "recovery_available": bool(session.transaction_path and Path(session.transaction_path).exists()),
+            "resource_profile": session.options.get("validation_resource_profile") or "automatic",
         },
     )
 
@@ -818,5 +924,8 @@ def completion_result(session: ValidationSession) -> OperationResult:
             "remaining_phases": 0,
             "completed_phases": len(session.phases),
             "phase_total": len(session.phases),
+            "artifact": session.apply_context.get("artifact") or session.apply_context.get("artifacts") or "",
+            "recovery_available": False,
+            "resource_profile": session.options.get("validation_resource_profile") or "automatic",
         },
     )

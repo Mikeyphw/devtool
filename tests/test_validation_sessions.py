@@ -26,6 +26,8 @@ from devtool.validation_sessions import (
     reconcile_inputs,
     record_phase_result,
     retry_failed,
+    select_phase_keys,
+    checkpoint_text,
 )
 
 
@@ -74,9 +76,46 @@ class ResumableValidationTests(unittest.TestCase):
 
     def test_validate_nested_actions_are_supported(self) -> None:
         parser = build_parser()
-        for action in ("start", "next", "resume", "status", "finalize", "abort"):
+        for action in ("start", "next", "resume", "continue", "status", "checkpoint", "finalize", "abort"):
             args = parser.parse_args(["validate", action])
             self.assertEqual(args.validate_scope, action)
+
+    def test_parser_exposes_deferred_validation_and_low_power_profile(self) -> None:
+        args = build_parser().parse_args([
+            "apply-overlay", "--defer-validate", "--profile", "android-low-power", "demo.zip",
+        ])
+        self.assertTrue(args.defer_validate)
+        self.assertEqual(args.validation_resource_profile, "android-low-power")
+
+    def test_named_phase_includes_pending_prerequisites_and_phase_only_does_not(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = validation_config(root)
+            specs = [
+                CommandSpec("preflight", ["true"], metadata={"validation_phase_name": "preflight"}),
+                CommandSpec("dependencies", ["true"], metadata={"validation_phase_name": "dependencies"}),
+                CommandSpec("compile", ["true"], metadata={"validation_phase_name": "compile"}),
+            ]
+            session = create_session(config, specs)
+            self.assertEqual(len(select_phase_keys(session, phase="compile")), 3)
+            self.assertEqual(len(select_phase_keys(session, phase="compile", exact_phase=True)), 1)
+
+    def test_checkpoint_text_reports_recovery_and_safe_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = validation_config(root)
+            session = create_session(
+                config,
+                [CommandSpec("compile", ["true"], metadata={"validation_phase_name": "compile"})],
+                transaction_path="/tmp/devtool-transaction.json",
+                apply_context={"validation_mode": "deferred", "artifact": "patch.zip"},
+                options={"validation_resource_profile": "android-low-power"},
+            )
+            text = checkpoint_text(session)
+            self.assertIn("Recovery available: yes", text)
+            self.assertIn("Safe checkpoint: yes", text)
 
     def test_cli_runs_one_durable_phase_per_invocation_and_resumes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -97,6 +136,98 @@ class ResumableValidationTests(unittest.TestCase):
                 self.assertEqual(second_rc, 0)
                 self.assertEqual(resumed.session_id, active.session_id)
                 self.assertEqual(resumed.phases[1].status, "skipped")
+
+    def test_deferred_apply_preserves_transaction_and_runs_embedded_validator_as_static_phase(self) -> None:
+        import hashlib
+        import json
+        import os
+        import subprocess
+
+        def digest(payload: bytes) -> str:
+            return hashlib.sha256(payload).hexdigest()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            make_android_project(repo)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "devtool@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Devtool Tests"], cwd=repo, check=True)
+            (repo / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "Base"], cwd=repo, check=True)
+            base_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, stdout=subprocess.PIPE
+            ).stdout.strip()
+
+            payload = b"class DeferredPatched\n"
+            script = b'#!/usr/bin/env bash\nset -euo pipefail\nprintf "ok\n" > "$DEVTOOL_REPO_ROOT/static-ran.txt"\n'
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "repository": {"name": "repo"},
+                "inventory": {"format": 1, "entries": [{
+                    "path": "app/src/main/kotlin/Deferred.kt",
+                    "action": "add",
+                    "sha256": digest(payload),
+                    "size": len(payload),
+                }]},
+                "validation": {
+                    "mode": "required",
+                    "allow_deferred": True,
+                    "minimum_phase": "finalize",
+                    "restore": False,
+                    "build": False,
+                    "test": False,
+                    "rollback_on_failure": True,
+                    "script": {
+                        "path": ".devtool-artifact/validate.sh",
+                        "runner": "bash",
+                        "sha256": digest(script),
+                        "timeout_seconds": 30,
+                    },
+                },
+                "apply": {"commit": {"enabled": True, "message": "Apply deferred overlay"}},
+            }
+            artifact = root / "deferred.zip"
+            with ZipFile(artifact, "w") as archive:
+                archive.writestr(".devtool-artifact.json", json.dumps(manifest))
+                archive.writestr(".devtool-artifact/validate.sh", script)
+                archive.writestr("app/src/main/kotlin/Deferred.kt", payload)
+
+            env = {"DEVTOOL_XDG_DIR": str(root / "xdg")}
+            with patch.dict(os.environ, env, clear=False), patch("devtool.cli.render_summary"):
+                apply_rc = main([
+                    "--repo", str(repo), "--yes", "--no-clipboard",
+                    "apply-overlay", "--defer-validate", "--profile", "android-low-power",
+                    "--keep-artifact", str(artifact),
+                ])
+            self.assertEqual(apply_rc, 0)
+            self.assertTrue((repo / "app/src/main/kotlin/Deferred.kt").exists())
+            self.assertEqual(
+                subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, stdout=subprocess.PIPE).stdout.strip(),
+                base_head,
+            )
+            session = load_active_session(repo, required=True)
+            self.assertEqual([phase.name for phase in session.phases], ["static"])
+            self.assertEqual(session.options["validation_resource_profile"], "android-low-power")
+            self.assertEqual(read_transaction(session.transaction_path)["status"], "applied-validation-deferred")
+
+            with patch.dict(os.environ, env, clear=False), patch("devtool.cli.render_summary"):
+                resume_rc = main([
+                    "--repo", str(repo), "--no-clipboard",
+                    "validate", "continue", "--phase", "static",
+                ])
+            self.assertEqual(resume_rc, 0)
+            self.assertTrue((repo / "static-ran.txt").exists())
+            self.assertIsNone(load_active_session(repo))
+            self.assertFalse(Path(session.transaction_path).exists())
+            self.assertTrue(artifact.exists())
+            subject = subprocess.run(
+                ["git", "log", "-1", "--pretty=%s"], cwd=repo, check=True, text=True, stdout=subprocess.PIPE
+            ).stdout.strip()
+            self.assertEqual(subject, "Apply deferred overlay")
 
     def test_changed_file_scope_selects_minimum_safe_phase_plan(self) -> None:
         expected = {

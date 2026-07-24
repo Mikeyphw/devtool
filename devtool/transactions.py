@@ -475,6 +475,7 @@ def transaction_pending_validation(transaction_path: str | Path | None) -> bool:
     try:
         return str(read_transaction(transaction_path).get("status") or "") in {
             "applied-pending-validation",
+            "applied-validation-deferred",
             "validation-running",
             "partially-validated",
         }
@@ -532,6 +533,7 @@ def mark_transaction_pending_validation(
     next_phase: str = "",
     completed_phases: int = 0,
     phase_total: int = 0,
+    deferred: bool = False,
 ) -> None:
     """Persist a transaction across devtool processes while validation is paused."""
     if not transaction_path:
@@ -541,7 +543,13 @@ def mark_transaction_pending_validation(
         return
     tx = _read_json(path)
     tx.update({
-        "status": "partially-validated" if completed_phases else "applied-pending-validation",
+        "status": (
+            "partially-validated"
+            if completed_phases
+            else "applied-validation-deferred"
+            if deferred
+            else "applied-pending-validation"
+        ),
         "validation_session_id": session_id,
         "current_validation_phase": "",
         "next_validation_phase": next_phase,
