@@ -10,6 +10,7 @@ AppScrollView {
     signal openLogsPage()
     Theme { id: theme }
     clip: true
+    contentHeight: overviewColumn.implicitHeight
 
     function runningCount() {
         return hudStore.activeRuns.filter(function(r) { return r.status === "running" }).length
@@ -25,6 +26,20 @@ AppScrollView {
             return runningCount() ? "Open live work" : "Validate current repository"
         return "Choose a repository"
     }
+    function selectedRepoName() {
+        return appController.repository ? appController.repository.split("/").pop() : ""
+    }
+    function latestRunRepoName() {
+        if (!hudStore.activeRuns.length) return ""
+        return String(hudStore.activeRuns[0].repo_name || "")
+    }
+    function latestRunHeading() {
+        if (!hudStore.activeRuns.length) return "Latest run"
+        const latest = latestRunRepoName()
+        const selected = selectedRepoName()
+        if (latest && selected && latest !== selected) return "Latest run from another repository"
+        return "Latest run"
+    }
     function primaryActionDetail() {
         if (runningCount())
             return runningCount() + " operation" + (runningCount() === 1 ? " is" : "s are") + " running. Open the detailed HUD or inspect the latest run."
@@ -34,6 +49,7 @@ AppScrollView {
     }
 
     ColumnLayout {
+        id: overviewColumn
         width: root.availableWidth
         spacing: theme.sectionSpacing
 
@@ -122,7 +138,7 @@ AppScrollView {
 
         SectionHeading {
             Layout.leftMargin: theme.pageMargin
-            text: hudStore.activeRuns.length ? "Latest run" : "Latest run"
+            text: root.latestRunHeading()
         }
 
         RunCard {

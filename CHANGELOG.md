@@ -1,5 +1,6 @@
 ## Android 1.14.0
 
+- Fixed desktop HUD resizing/autosize regressions with real drag-resize handles, content-height-driven auto-sizing, scrollable capped content, and double-click reset back to auto-size.
 - Fixed Python validation under Android/Termux chroot policy so venv creation, restore, project install, tests and source audit are planned for the same chroot backend; editable installs now preinstall build-system requirements and use `--no-build-isolation` to avoid silent temporary-build-env stalls.
 - Added sparse user global configuration with `devtool config path/show/defaults/init/edit/doctor --global`, editor launch that prefers micro, CLI preference defaults, and Android/Termux chroot project-kind policy.
 - Finalized the UI/UX contract after the HUD, notification, typography, navigation, Overview, and Run-flow polish stack, including documentation and focused regression gates for all accepted surfaces.

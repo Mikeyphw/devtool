@@ -35,9 +35,9 @@ ApplicationWindow {
             anchors.rightMargin: root.veryNarrowMode ? 10 : 16
             spacing: root.veryNarrowMode ? 8 : 12
             Label {
-                text: root.veryNarrowMode ? "Devtool" : "Devtool Control Center"
+                text: "Devtool"
                 color: theme.windowText
-                font.pointSize: root.veryNarrowMode ? theme.cardTitlePointSize : theme.cardTitlePointSize + 1
+                font.pointSize: theme.cardTitlePointSize
                 font.weight: Font.DemiBold
                 font.letterSpacing: 0
                 lineHeight: theme.titleLineHeight
@@ -47,12 +47,12 @@ ApplicationWindow {
             Item { Layout.fillWidth: true }
             Label {
                 visible: !root.veryNarrowMode
-                text: appController.repository ? appController.repository.split("/").pop() : "No repository"
+                text: appController.repository ? "Selected: " + appController.repository.split("/").pop() : "No repository selected"
                 color: theme.mutedText
                 font.pointSize: theme.smallPointSize
                 elide: Text.ElideMiddle
                 Layout.maximumWidth: root.narrowMode ? 140 : 280
-                Accessible.name: "Current repository, " + text
+                Accessible.name: text
             }
             Rectangle {
                 width: 9

@@ -8,5 +8,6 @@ ScrollView {
     contentWidth: availableWidth
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
     ScrollBar.vertical.policy: contentHeight > availableHeight ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+    ScrollBar.vertical.interactive: true
     background: Rectangle { color: theme.window }
 }

@@ -96,7 +96,41 @@ Item {
             wrapMode: Text.Wrap
         }
 
+        SurfaceCard {
+            visible: repositoryModel.count === 0
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 260
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 48, 560)
+                spacing: 10
+                Label {
+                    Layout.fillWidth: true
+                    text: "No saved repositories"
+                    color: theme.windowText
+                    font.pointSize: theme.cardTitlePointSize
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "Add your first repository, or keep using the current Run path without saving it here."
+                    color: theme.mutedText
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                Flow {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 8
+                    AppButton { text: "Add repository…"; variant: "primary"; onClicked: repositoryDialog.open() }
+                    AppButton { text: "Use current repo"; enabled: appController.repository !== ""; onClicked: { repositoryModel.addRepository(appController.repository); repositoryModel.refresh(); root.selectRepository(0) } }
+                }
+            }
+        }
+
         GridLayout {
+            visible: repositoryModel.count > 0
             Layout.fillWidth: true
             Layout.fillHeight: true
             columns: root.narrowMode ? 1 : 2
@@ -211,6 +245,7 @@ Item {
 
                     TabBar {
                         id: detailTabs
+                        visible: !!root.selectedRepo.path
                         Layout.fillWidth: true
                         background: Rectangle { color: theme.recessedSurface; border.color: theme.border; border.width: 1 }
                         AppTabButton { text: "Activity" }

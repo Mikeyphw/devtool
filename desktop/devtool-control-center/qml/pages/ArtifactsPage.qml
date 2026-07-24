@@ -3,9 +3,10 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import Devtool.ControlCenter.Components 1.0
 
-Item {
+AppScrollView {
     id: root
-    readonly property bool narrowMode: width < 780
+    readonly property bool narrowMode: availableWidth < 780
+    contentHeight: artifactsColumn.implicitHeight + 20
     readonly property bool hasSummary: Object.keys(artifactInspector.summary).length > 0
     Theme { id: theme }
 
@@ -22,12 +23,14 @@ Item {
     }
 
     ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: theme.pageMargin
+        id: artifactsColumn
+        width: Math.max(0, root.availableWidth - 2 * theme.pageMargin)
+        x: theme.pageMargin
         spacing: 14
 
         RowLayout {
             Layout.fillWidth: true
+            Layout.topMargin: 20
             PageHeading { text: "Artifacts" }
             Item { Layout.fillWidth: true }
             AppButton {
@@ -91,11 +94,13 @@ Item {
         SurfaceCard {
             visible: !root.hasSummary && artifactInspector.error === ""
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.minimumHeight: 260
+            Layout.fillHeight: false
+            Layout.minimumHeight: 190
+            implicitHeight: artifactEmptyColumn.implicitHeight + 42
             ColumnLayout {
+                id: artifactEmptyColumn
                 anchors.centerIn: parent
-                width: Math.min(parent.width - 48, 520)
+                width: Math.min(parent.width - 48, 640)
                 spacing: 10
                 Image {
                     Layout.alignment: Qt.AlignHCenter
@@ -117,16 +122,24 @@ Item {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: "Choose an overlay or bundle to review its manifest, inventory, validation, and repository diff before applying it."
+                    text: "Choose an overlay or bundle, inspect the latest downloaded artifact, or validate the current path before applying it."
                     color: theme.mutedText
                     wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
                 }
-                AppButton {
+                Flow {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "Open artifact…"
-                    variant: "primary"
-                    onClicked: artifactDialog.open()
+                    spacing: 8
+                    AppButton {
+                        text: "Open artifact…"
+                        variant: "primary"
+                        onClicked: artifactDialog.open()
+                    }
+                    AppButton {
+                        text: "Inspect current path"
+                        enabled: artifactInspector.artifactPath !== ""
+                        onClicked: artifactInspector.inspect(true)
+                    }
                 }
             }
         }

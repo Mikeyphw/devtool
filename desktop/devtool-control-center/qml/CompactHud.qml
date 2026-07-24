@@ -40,6 +40,13 @@ Window {
     property string expandedLaneKey: ""
     property bool copiedFeedback: false
     property double nowMs: Date.now()
+    property bool manualResizeActive: false
+    property real manualResizeStartScreenX: 0
+    property real manualResizeStartScreenY: 0
+    property real manualResizeStartWidth: 0
+    property real manualResizeStartHeight: 0
+    property bool manualResizeRightEdge: false
+    property bool manualResizeBottomEdge: false
 
     Theme { id: theme }
     Timer { interval: 1000; running: true; repeat: true; onTriggered: root.nowMs = Date.now() }
@@ -66,26 +73,27 @@ Window {
     }
     function desiredHudWidth() {
         const laneCount = scopedLanes().length
-        let contentWidth = 620
-        if (laneCount > 1) contentWidth = 720
+        let contentWidth = Math.max(620, headerContent ? headerContent.implicitWidth + contentSizePadding + 48 : 620)
+        if (lowerContent) contentWidth = Math.max(contentWidth, lowerContent.implicitWidth + contentSizePadding + 24)
+        if (laneCount > 1) contentWidth = Math.max(contentWidth, 720)
         if (parserExpanded) contentWidth = Math.max(contentWidth, 700)
         if (String(taskTitle()).length > 44 || String(repositorySubtitle()).length > 56) contentWidth = Math.max(contentWidth, 680)
         return clampValue(contentWidth, minimumWidth, maximumWidth)
     }
-    function desiredWorkspaceHeight() {
-        if (!workspaceColumn || scopedLanes().length <= 0) return 0
-        return Math.min(342, workspaceColumn.implicitHeight)
+    function maxBodyHeight() {
+        const screenHeight = Screen.availableHeight > 0 ? Screen.availableHeight : 900
+        const headerHeight = headerContent ? headerContent.implicitHeight + 28 : 168
+        return Math.max(96, screenHeight - headerHeight - 96)
     }
-    function desiredLowerHeight() {
-        let value = 0
-        if (scopedLanes().length > 0) value += desiredWorkspaceHeight()
-        if (parserExpanded && parserContent) value += parserContent.implicitHeight + 30
-        return Math.max(96, value)
+    function preferredBodyHeight() {
+        if (!lowerContent) return 96
+        const contentHeight = Math.max(lowerContent.implicitHeight, workspaceColumn ? workspaceColumn.implicitHeight : 0)
+        return clampValue(contentHeight, 96, maxBodyHeight())
     }
     function desiredHudHeight() {
-        const headerHeight = headerCard ? headerCard.implicitHeight || headerCard.Layout.preferredHeight : 168
-        const lowerHeight = desiredLowerHeight()
-        return clampValue(headerHeight + lowerHeight + contentSizePadding + 12, minimumHeight, maximumHeight)
+        const headerHeight = headerContent ? headerContent.implicitHeight + 28 : 168
+        const bodyHeight = preferredBodyHeight()
+        return clampValue(headerHeight + bodyHeight + contentSizePadding + 10, minimumHeight, maximumHeight)
     }
     function scheduleContentSize() {
         if (autoSizeEnabled && !userSizedHud && autoSizeTimer) autoSizeTimer.restart()
@@ -94,6 +102,7 @@ Window {
         if (!autoSizeEnabled || userSizedHud) return
         const nextWidth = desiredHudWidth()
         const nextHeight = desiredHudHeight()
+        if (bodyScroll) bodyScroll.Layout.preferredHeight = Math.max(96, nextHeight - (headerContent ? headerContent.implicitHeight + 28 : 168) - contentSizePadding - 10)
         if (Math.abs(root.width - nextWidth) > 2) root.width = nextWidth
         if (Math.abs(root.height - nextHeight) > 2) root.height = nextHeight
         clampToScreenBounds()
@@ -105,6 +114,32 @@ Window {
         const nextY = clampValue(root.y, 8, Math.max(8, availableHeight - root.height - 8))
         if (root.x !== nextX) root.x = nextX
         if (root.y !== nextY) root.y = nextY
+    }
+    function beginManualResize(screenX, screenY, rightEdge, bottomEdge) {
+        autoSizeEnabled = false
+        userSizedHud = true
+        manualResizeActive = true
+        manualResizeStartScreenX = screenX
+        manualResizeStartScreenY = screenY
+        manualResizeStartWidth = root.width
+        manualResizeStartHeight = root.height
+        manualResizeRightEdge = rightEdge
+        manualResizeBottomEdge = bottomEdge
+    }
+    function updateManualResize(screenX, screenY) {
+        if (!manualResizeActive) return
+        if (manualResizeRightEdge) root.width = clampValue(manualResizeStartWidth + screenX - manualResizeStartScreenX, minimumWidth, maximumWidth)
+        if (manualResizeBottomEdge) root.height = clampValue(manualResizeStartHeight + screenY - manualResizeStartScreenY, minimumHeight, maximumHeight)
+        clampToScreenBounds()
+    }
+    function endManualResize() {
+        manualResizeActive = false
+    }
+    function resetManualResizeToAuto() {
+        userSizedHud = false
+        autoSizeEnabled = true
+        manualResizeActive = false
+        scheduleContentSize()
     }
 
     function steps() { return run.steps || [] }
@@ -742,11 +777,15 @@ Window {
                 id: bodyScroll
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.preferredHeight: root.preferredBodyHeight()
                 Layout.minimumHeight: 96
                 clip: true
                 background: Rectangle { color: "transparent" }
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                contentHeight: lowerContent.implicitHeight
+                contentWidth: availableWidth
                 ScrollBar.vertical.policy: lowerContent.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                ScrollBar.vertical.interactive: true
 
                 ColumnLayout {
                     id: lowerContent
@@ -780,7 +819,10 @@ Window {
                         clip: true
                         background: Rectangle { color: "transparent" }
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        contentHeight: workspaceColumn.implicitHeight
+                        contentWidth: availableWidth
                         ScrollBar.vertical.policy: workspaceColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                        ScrollBar.vertical.interactive: true
 
                         Column {
                             id: workspaceColumn
@@ -1124,6 +1166,16 @@ Window {
             function onImplicitWidthChanged() { root.scheduleContentSize() }
         }
         Connections {
+            target: headerContent
+            function onImplicitHeightChanged() { root.scheduleContentSize() }
+            function onImplicitWidthChanged() { root.scheduleContentSize() }
+        }
+        Connections {
+            target: lowerContent
+            function onImplicitHeightChanged() { root.scheduleContentSize() }
+            function onImplicitWidthChanged() { root.scheduleContentSize() }
+        }
+        Connections {
             target: workspaceColumn
             function onImplicitHeightChanged() { root.scheduleContentSize() }
         }
@@ -1144,35 +1196,76 @@ Window {
         Shortcut { sequence: "Ctrl+D"; onActivated: parserExpanded = !parserExpanded }
         Shortcut { sequence: "Escape"; onActivated: Qt.quit() }
 
-        MouseArea {
+        Rectangle {
+            id: resizeGrip
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            width: 18
-            height: 18
-            cursorShape: Qt.SizeFDiagCursor
-            acceptedButtons: Qt.LeftButton
-            onPressed: { root.userSizedHud = true; root.startSystemResize(Qt.RightEdge | Qt.BottomEdge) }
-            onDoubleClicked: { root.userSizedHud = false; root.scheduleContentSize() }
+            width: 20
+            height: 20
+            radius: 8
+            color: resizeCorner.containsMouse || root.manualResizeActive ? theme.alpha(theme.accent, 0.18) : "transparent"
+            border.color: resizeCorner.containsMouse || root.manualResizeActive ? theme.alpha(theme.accent, 0.42) : "transparent"
+
+            MouseArea {
+                id: resizeCorner
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.SizeFDiagCursor
+                acceptedButtons: Qt.LeftButton
+                onPressed: {
+                    const p = resizeCorner.mapToGlobal(Qt.point(mouse.x, mouse.y))
+                    root.beginManualResize(p.x, p.y, true, true)
+                }
+                onPositionChanged: {
+                    const p = resizeCorner.mapToGlobal(Qt.point(mouse.x, mouse.y))
+                    root.updateManualResize(p.x, p.y)
+                }
+                onReleased: root.endManualResize()
+                onCanceled: root.endManualResize()
+                onDoubleClicked: root.resetManualResizeToAuto()
+            }
         }
         MouseArea {
+            id: resizeRightEdge
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.bottom: parent.bottom
-            width: 8
+            width: 10
+            hoverEnabled: true
             cursorShape: Qt.SizeHorCursor
             acceptedButtons: Qt.LeftButton
-            onPressed: { root.userSizedHud = true; root.startSystemResize(Qt.RightEdge) }
-            onDoubleClicked: { root.userSizedHud = false; root.scheduleContentSize() }
+            onPressed: {
+                const p = resizeRightEdge.mapToGlobal(Qt.point(mouse.x, mouse.y))
+                root.beginManualResize(p.x, p.y, true, false)
+            }
+            onPositionChanged: {
+                const p = resizeRightEdge.mapToGlobal(Qt.point(mouse.x, mouse.y))
+                root.updateManualResize(p.x, p.y)
+            }
+            onReleased: root.endManualResize()
+            onCanceled: root.endManualResize()
+            onDoubleClicked: root.resetManualResizeToAuto()
         }
         MouseArea {
+            id: resizeBottomEdge
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 8
+            height: 10
+            hoverEnabled: true
             cursorShape: Qt.SizeVerCursor
             acceptedButtons: Qt.LeftButton
-            onPressed: { root.userSizedHud = true; root.startSystemResize(Qt.BottomEdge) }
-            onDoubleClicked: { root.userSizedHud = false; root.scheduleContentSize() }
+            onPressed: {
+                const p = resizeBottomEdge.mapToGlobal(Qt.point(mouse.x, mouse.y))
+                root.beginManualResize(p.x, p.y, false, true)
+            }
+            onPositionChanged: {
+                const p = resizeBottomEdge.mapToGlobal(Qt.point(mouse.x, mouse.y))
+                root.updateManualResize(p.x, p.y)
+            }
+            onReleased: root.endManualResize()
+            onCanceled: root.endManualResize()
+            onDoubleClicked: root.resetManualResizeToAuto()
         }
     }
 }

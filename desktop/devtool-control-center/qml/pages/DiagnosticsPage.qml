@@ -15,7 +15,7 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            PageHeading { text: "Diagnostics" }
+            PageHeading { text: "Logs" }
             Item { Layout.fillWidth: true }
             AppComboBox {
                 id: runPicker
@@ -68,8 +68,8 @@ Item {
                 Layout.preferredWidth: 160
                 height: 58
                 radius: theme.controlRadius
-                color: theme.errorSurface
-                border.color: theme.alpha(theme.error, 0.35)
+                color: (hudStore.activeRun.errors || 0) > 0 ? theme.errorSurface : theme.recessedSurface
+                border.color: (hudStore.activeRun.errors || 0) > 0 ? theme.alpha(theme.error, 0.35) : theme.border
                 Label { anchors.centerIn: parent; text: "ERRORS  " + (hudStore.activeRun.errors || 0); color: theme.error; font.weight: Font.DemiBold; font.pointSize: theme.smallPointSize }
             }
             Rectangle {
@@ -77,8 +77,8 @@ Item {
                 Layout.preferredWidth: 180
                 height: 58
                 radius: theme.controlRadius
-                color: theme.warningSurface
-                border.color: theme.alpha(theme.warning, 0.35)
+                color: (hudStore.activeRun.warnings || 0) > 0 ? theme.warningSurface : theme.recessedSurface
+                border.color: (hudStore.activeRun.warnings || 0) > 0 ? theme.alpha(theme.warning, 0.35) : theme.border
                 Label { anchors.centerIn: parent; text: "WARNINGS  " + (hudStore.activeRun.warnings || 0); color: theme.warning; font.weight: Font.DemiBold; font.pointSize: theme.smallPointSize }
             }
             Label { Layout.fillWidth: true; Layout.columnSpan: root.narrowMode ? 2 : 1; text: hudStore.activeRun.message || "No active diagnostic context"; color: theme.mutedText; elide: Text.ElideRight; font.pointSize: theme.bodyPointSize; Accessible.name: text }
@@ -89,6 +89,7 @@ Item {
             Layout.fillHeight: true
             clip: true
             spacing: 8
+            visible: hudStore.diagnostics.length > 0
             model: hudStore.diagnostics
             delegate: Rectangle {
                 required property var modelData
@@ -151,12 +152,44 @@ Item {
             }
         }
 
-        Label {
+        SurfaceCard {
             visible: hudStore.diagnostics.length === 0
-            text: "Detailed diagnostics appear after compilers and tests report issues. Live counts remain available above."
-            color: theme.subtleText
-            wrapMode: Text.Wrap
-            font.pointSize: theme.bodyPointSize
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 220
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 48, 560)
+                spacing: 10
+                StatusMark {
+                    Layout.alignment: Qt.AlignHCenter
+                    kind: "ok"
+                    markColor: theme.success
+                    markSize: 28
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: hudStore.activeRun.message || "Completed successfully"
+                    color: theme.windowText
+                    font.pointSize: theme.cardTitlePointSize
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "No diagnostics were reported for this run. Live counts remain available above."
+                    color: theme.mutedText
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                Flow {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 8
+                    AppButton { text: "Copy summary"; onClicked: appController.copyText(hudStore.focusedSummary(hudStore.activeRun)) }
+                    AppButton { text: "Open log"; enabled: !!hudStore.activeRun.log_path; onClicked: appController.openPath(hudStore.activeRun.log_path || "") }
+                }
+            }
         }
     }
 }

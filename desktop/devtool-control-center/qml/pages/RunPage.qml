@@ -88,6 +88,41 @@ Item {
         }
         return commandText()!==""
     }
+    function currentHomePrefix() {
+        const repo = String(appController.repository || "")
+        if (repo.indexOf("/home/") === 0) {
+            const parts = repo.split("/")
+            return parts.length > 2 ? "/home/" + parts[2] : ""
+        }
+        if (repo.indexOf("/data/data/com.termux/files/home") === 0)
+            return "/data/data/com.termux/files/home"
+        return ""
+    }
+    function normalizedRepoPath(path) {
+        let value = String(path || "")
+        const home = currentHomePrefix()
+        if (home) {
+            if (value.indexOf("$HOME") === 0) value = home + value.slice(5)
+            if (value.indexOf("~") === 0) value = home + value.slice(1)
+        }
+        while (value.length > 1 && value.endsWith("/")) value = value.slice(0, -1)
+        return value
+    }
+    function clipboardCandidateInfo() {
+        return appController.parseDevtoolCommand(appController.clipboardCandidateText || "")
+    }
+    function clipboardCandidateRepo() {
+        return normalizedRepoPath((clipboardCandidateInfo() || {}).repository || "")
+    }
+    function clipboardCandidateRepoMismatch() {
+        const commandRepo = clipboardCandidateRepo()
+        const currentRepo = normalizedRepoPath(appController.repository || "")
+        return commandRepo !== "" && currentRepo !== "" && commandRepo !== currentRepo
+    }
+    function clipboardCandidateMismatchText() {
+        return "Clipboard command targets " + clipboardCandidateRepo() + ", while this form is set to " + normalizedRepoPath(appController.repository || "") + ". Review before running."
+    }
+
     function runWorkflowNow(){appController.runWorkflow(operation,target.text,projectType.currentText,executionEnvironment.currentText,testProfile.text,testSelectors.text,testTags.text,testExcludeTags.text,testPath.text,testClass.text,testMethod.text,listTests.checked,instrumented.checked,validate.checked,commit.checked,message.text,keep.checked,manifestOverride.checked,selectedCopyMode(),autoHud.checked,hudMode.currentText)}
     function requestRun(){if(isDangerousOperation())dangerConfirmation.open();else runWorkflowNow()}
 
@@ -116,8 +151,8 @@ Item {
         background: Rectangle{color:theme.elevatedSurface;radius:theme.cardRadius;border.color:theme.strongBorder;border.width:1}
         contentItem: ColumnLayout {
             anchors.fill:parent;anchors.margins:18;spacing:12
-            Label{text:"Run detected command?";color:theme.windowText;font.pointSize:theme.cardTitlePointSize;font.weight:Font.DemiBold}
-            Label{Layout.fillWidth:true;text:"This opens the copied command in your preferred external terminal only after confirmation. Review every argument first.";color:theme.warning;wrapMode:Text.Wrap}
+            Label{text:"Review detected command";color:theme.windowText;font.pointSize:theme.cardTitlePointSize;font.weight:Font.DemiBold}
+            Label{Layout.fillWidth:true;text:root.clipboardCandidateRepoMismatch()?root.clipboardCandidateMismatchText():"Review every argument first. You can fill the workflow form or run the reviewed command in your preferred terminal.";color:root.clipboardCandidateRepoMismatch()?theme.warning:theme.mutedText;wrapMode:Text.Wrap}
             Label {
                 text: "Cleaned command"
                 color: theme.mutedText
@@ -129,8 +164,17 @@ Item {
             RowLayout{Layout.fillWidth:true;AppButton{text:"Cancel";variant:"ghost";onClicked:commandConfirmation.close()}
 Item{Layout.fillWidth:true}
 AppButton {
-                    text: "Run command"
-                    variant: "primary"
+                    text: "Use command values"
+                    variant: "default"
+                    onClicked: {
+                        root.applyImportedCommand(appController.parseDevtoolCommand(root.importedCommand))
+                        root.currentStage = 3
+                        commandConfirmation.close()
+                    }
+                }
+AppButton {
+                    text: "Run reviewed command"
+                    variant: root.clipboardCandidateRepoMismatch() ? "danger" : "primary"
                     onClicked: {
                         commandConfirmation.close()
                         appController.runHistoricalCommand(root.importedCommand, appController.repository)
@@ -159,7 +203,7 @@ AppButton{text:"Continue";variant:"danger";onClicked:{dangerConfirmation.close()
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: stickyBar.top
-        contentHeight: workflowColumn.implicitHeight
+        contentHeight: workflowColumn.implicitHeight + 20
         ColumnLayout {
             id: workflowColumn
             width: Math.max(0, workflowScroll.availableWidth)
@@ -187,6 +231,8 @@ AppButton {
                 Layout.rightMargin: theme.pageMargin
                 visible: appController.clipboardCandidateText !== ""
                 implicitHeight: clipboardCandidateColumn.implicitHeight + 28
+                color: root.clipboardCandidateRepoMismatch() ? theme.warningSurface : theme.surface
+                border.color: root.clipboardCandidateRepoMismatch() ? theme.alpha(theme.warning, 0.55) : theme.border
                 ColumnLayout {
                     id: clipboardCandidateColumn
                     anchors.fill: parent
@@ -204,8 +250,15 @@ AppButton {
                         font.family: theme.monospaceFamily
                         elide: Text.ElideMiddle
                     }
+                    Label {
+                        visible: root.clipboardCandidateRepoMismatch()
+                        Layout.fillWidth: true
+                        text: root.clipboardCandidateMismatchText()
+                        color: theme.warning
+                        wrapMode: Text.Wrap
+                    }
                     AppButton {
-                        text: "Run command…"
+                        text: "Review command…"
                         variant: "primary"
                         onClicked: {
                             appController.captureClipboardCandidate()
@@ -260,12 +313,19 @@ AppButton {
 AppTextField{accessibleName:"Repository root";accessibleDescription:"Repository where devtool will run";Layout.fillWidth:true;text:appController.repository;onTextEdited:appController.repository=text;placeholderText:"Repository root"}
 AppButton{text:"Browse…";onClicked:repoDialog.open()}
                     }
-                    AppButton{text:root.projectAdvancedOpen?"Hide project options":"Show project options";variant:"ghost";onClicked:root.projectAdvancedOpen=!root.projectAdvancedOpen}
+                    AppButton{text:root.projectAdvancedOpen?"▾ Hide project options":"▸ Show project options";variant:"default";onClicked:root.projectAdvancedOpen=!root.projectAdvancedOpen}
                     GridLayout{visible:root.projectAdvancedOpen;Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
                         Label{text:"Project type";color:theme.mutedText}
 AppComboBox{id:projectType;accessibleName:"Project type";accessibleDescription:"Select the project runner";Layout.fillWidth:true;model:["auto","dotnet","android","gradle","python","command"]}
 Label{text:"Auto is recommended unless a repo needs a forced runner.";color:theme.subtleText;wrapMode:Text.Wrap}
                     }
+                }
+            }
+            SurfaceCard { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===0;implicitHeight:projectContextColumn.implicitHeight+28
+                ColumnLayout{id:projectContextColumn;anchors.fill:parent;anchors.margins:14;spacing:8
+                    Label{text:"Project context";color:theme.windowText;font.weight:Font.DemiBold}
+                    Label{Layout.fillWidth:true;text:appController.repository?"Selected repository: "+appController.repository:"Choose a repository to continue.";color:theme.mutedText;font.family:appController.repository?theme.monospaceFamily:"";elide:Text.ElideMiddle}
+                    Label{Layout.fillWidth:true;text:root.clipboardCandidateRepoMismatch()?"Detected clipboard command points to another repository. Review it before applying values.":"Use project options only when auto detection needs help.";color:root.clipboardCandidateRepoMismatch()?theme.warning:theme.subtleText;wrapMode:Text.Wrap}
                 }
             }
             SurfaceCard { Layout.fillWidth:true;Layout.leftMargin:theme.pageMargin;Layout.rightMargin:theme.pageMargin;visible:root.currentStage===1;implicitHeight:operationColumn.implicitHeight+32
@@ -289,7 +349,7 @@ Item{}
 AppTextField{id:message;accessibleName:"Commit message";Layout.fillWidth:true;visible:root.isApplyOperation()||root.operation==="Commit";placeholderText:"Artifact manifest may provide this"}
 Item{}
                     }
-                    AppButton{text:root.operationAdvancedOpen?"Hide advanced execution":"Show advanced execution";variant:"ghost";onClicked:root.operationAdvancedOpen=!root.operationAdvancedOpen}
+                    AppButton{text:root.operationAdvancedOpen?"▾ Hide advanced execution":"▸ Show advanced execution";variant:"default";onClicked:root.operationAdvancedOpen=!root.operationAdvancedOpen}
                     GridLayout{visible:root.operationAdvancedOpen;Layout.fillWidth:true;columns:root.narrowMode?1:3;columnSpacing:12;rowSpacing:12
                         Label{text:"Execution";color:theme.mutedText}
 AppComboBox{id:executionEnvironment;accessibleName:"Execution environment";accessibleDescription:"Select where devtool should execute";Layout.fillWidth:true;model:["auto","native-termux","chroot","desktop-linux","android-device","external-device"]}

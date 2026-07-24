@@ -6,6 +6,7 @@ import Devtool.ControlCenter.Components 1.0
 AppScrollView {
     id: root
     Theme { id: theme }
+    contentHeight: settingsPageColumn.implicitHeight
     PathPickerDialog {
         id: stateDialog
         selectFolder: true
@@ -14,6 +15,7 @@ AppScrollView {
     }
 
     ColumnLayout {
+        id: settingsPageColumn
         width: root.availableWidth
         spacing: theme.sectionSpacing
         PageHeading { text: "Settings"; Layout.leftMargin: theme.pageMargin; Layout.topMargin: 20 }
@@ -62,7 +64,7 @@ AppScrollView {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: "Kitty is preferred. The launcher prepends ~/.local/share/mise/shims to PATH so desktop runs use the same dotnet SDK as your terminal."
+                    text: "The launcher prepends ~/.local/share/mise/shims to PATH so desktop runs use the same SDKs as your terminal."
                     color: theme.subtleText
                     wrapMode: Text.Wrap
                     font.pointSize: theme.captionPointSize

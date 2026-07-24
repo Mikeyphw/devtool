@@ -8,6 +8,7 @@ AppScrollView {
     property var selectedRun: ({})
     readonly property bool narrowMode: availableWidth < 720
     Theme { id: theme }
+    contentHeight: historyColumn.implicitHeight
     Accessible.role: Accessible.Pane
     Accessible.name: "Run history"
     Accessible.description: "Search completed runs, inspect details, copy commands, and rerun workflows"
@@ -96,7 +97,7 @@ AppScrollView {
             anchors.fill: parent
             anchors.margins: 18
             spacing: 12
-            Label { text: "Clear all run history?"; color: theme.windowText; font.pointSize: theme.cardTitlePointSize; font.weight: Font.DemiBold; Accessible.role: Accessible.Heading; Accessible.name: text }
+            Label { text: "Clear all run history?"; color: theme.windowText; font.pointSize: theme.bodyPointSize; font.weight: Font.DemiBold; Accessible.role: Accessible.Heading; Accessible.name: text }
             Label { Layout.fillWidth: true; text: "This removes saved run metadata. Repositories, artifacts, and log files are not deleted."; color: theme.mutedText; wrapMode: Text.Wrap }
             Item { Layout.fillHeight: true }
             RowLayout {
@@ -109,6 +110,7 @@ AppScrollView {
     }
 
     ColumnLayout {
+        id: historyColumn
         width: root.availableWidth
         spacing: 14
         RowLayout {
@@ -149,7 +151,7 @@ AppScrollView {
                 Layout.fillWidth: true
                 Layout.leftMargin: theme.pageMargin
                 Layout.rightMargin: theme.pageMargin
-                implicitHeight: cardContent.implicitHeight + 28
+                implicitHeight: cardContent.implicitHeight + 20
                 activeFocusOnTab: true
                 Accessible.role: Accessible.Button
                 Accessible.name: (modelData.title || "devtool") + ", " + String(modelData.status || "") + ", " + (modelData.summary || "No summary")
@@ -162,9 +164,9 @@ AppScrollView {
                 ColumnLayout {
                     id: cardContent
                     anchors.fill: parent
-                    anchors.margins: 14
-                    spacing: 8
-                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 5; radius: 3; color: modelData.status === "ok" ? theme.success : modelData.status === "failed" ? theme.error : theme.info; Accessible.ignored: true }
+                    anchors.margins: 10
+                    spacing: 6
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: modelData.status === "failed" ? 4 : 2; radius: 2; opacity: modelData.status === "ok" ? 0.55 : 0.9; color: modelData.status === "ok" ? theme.success : modelData.status === "failed" ? theme.error : theme.info; Accessible.ignored: true }
                     GridLayout {
                         Layout.fillWidth: true
                         columns: root.narrowMode ? 1 : 2
