@@ -29,8 +29,10 @@ from .clipboard import copy_text
 from .apply_notifications import ApplyNotification, post_apply_notification
 from .execution import build_chroot_exec_argv
 from .execution_environments import (
+    assert_chroot_path_safe,
     chroot_environment_assignments,
     default_termux_chroot_path_map,
+    is_termux_host,
     translate_guest_path,
     translate_host_path,
 )
@@ -340,16 +342,7 @@ def build_runner_command(config: RunnerConfig, forwarded: list[str]) -> list[str
 
 
 def _is_termux_host_env(env: Mapping[str, str] | None = None) -> bool:
-    env = env or os.environ
-    prefix = env.get("PREFIX", "")
-    home = env.get("HOME", "")
-    return bool(
-        env.get("TERMUX_VERSION")
-        or env.get("TERMUX_APP_PID")
-        or prefix.startswith("/data/data/com.termux/")
-        or "com.termux" in prefix
-        or home.startswith("/data/data/com.termux/files/home")
-    )
+    return is_termux_host(env or os.environ)
 
 
 def _truthy_env(name: str, default: str = "0", *, env: Mapping[str, str] | None = None) -> bool:
@@ -556,6 +549,17 @@ _CHROOT_PATH_LIST_ENV_KEYS = {
     "PKG_CONFIG_PATH",
     "PYTHONPATH",
 }
+_CHROOT_DROP_TERMUX_PATH_KEYS = {
+    "PREFIX",
+    "JAVA_HOME",
+    "ANDROID_HOME",
+    "ANDROID_SDK_ROOT",
+    "GRADLE_HOME",
+    "VIRTUAL_ENV",
+    "PYTHONHOME",
+    "TMPDIR",
+}
+_TERMUX_PREFIX_BIN = "/data/data/com.termux/files/usr/bin/"
 
 
 def _translate_env_value_for_chroot(
@@ -581,22 +585,30 @@ def _translate_env_value_for_chroot(
     if key in _CHROOT_PATH_LIST_ENV_KEYS:
         parts: list[str] = []
         for part in text.split(os.pathsep):
+            if part.startswith("/data/data/com.termux/files/usr"):
+                # The chroot supplies its own toolchain PATH and libraries.
+                continue
             if part.startswith(("/", "~/")):
                 parts.append(_translate_path(part, mappings, cwd=cwd))
             else:
                 parts.append(part)
         return os.pathsep.join(parts)
 
-    if text.startswith(("/", "~/")):
-        translated = _translate_path(text, mappings, cwd=cwd)
-        if key == "DEVTOOL_BUILD_CACHE_ROOT":
-            translated = translated.replace(
-                "/devtool/build/native-termux/",
-                "/devtool/build/chroot/",
-            )
-        return translated
+    if key in _CHROOT_DROP_TERMUX_PATH_KEYS and text.startswith("/data/data/com.termux/"):
+        return ""
 
-    return text
+    translated = text
+    for host, guest in mappings:
+        if host and host in translated:
+            translated = translated.replace(host.rstrip("/"), guest.rstrip("/") or "/")
+    if translated.startswith(("/", "~/")):
+        translated = _translate_path(translated, mappings, cwd=cwd)
+    if key == "DEVTOOL_BUILD_CACHE_ROOT":
+        translated = translated.replace(
+            "/devtool/build/native-termux/",
+            "/devtool/build/chroot/",
+        )
+    return translated
 
 
 def translate_environment_for_chroot(
@@ -626,15 +638,41 @@ def translate_environment_for_chroot(
     return translated, tuple(sorted(changed))
 
 
+def _translate_token_for_chroot(
+    token: str,
+    *,
+    mappings: Iterable[tuple[str, str]],
+    cwd: str | None,
+    executable: bool = False,
+) -> str:
+    text = str(token)
+    if text.startswith(_TERMUX_PREFIX_BIN):
+        # A Termux executable path cannot be mounted into the Ubuntu chroot.
+        # Resolve tools from the guest PATH. Python is deliberately normalized
+        # to python3 because the guest need not provide the host minor version.
+        name = Path(text).name
+        if re.fullmatch(r"python(?:3(?:\.\d+)?)?", name):
+            return "python3"
+        return name
+    translated = text
+    for host, guest in mappings:
+        if host and host in translated:
+            translated = translated.replace(host.rstrip("/"), guest.rstrip("/") or "/")
+    if _looks_like_path(translated) and translated.startswith(("/", "~/")):
+        translated = _translate_path(translated, mappings, cwd=cwd)
+    return translated
+
+
 def translate_argv_paths_for_chroot(argv: list[str], *, mappings: Iterable[tuple[str, str]], cwd: str | None = None) -> list[str]:
-    """Translate absolute host paths inside a command argv to chroot paths."""
+    """Translate host paths and reject any native-Termux residue."""
+    mapping_items = list(mappings)
     translated: list[str] = []
     index = 0
     while index < len(argv):
         token = argv[index]
         flag, value, value_index = _consume_value(argv, index)
         if value is not None and flag in _PATH_VALUE_FLAGS:
-            translated_value = _translate_path(value, mappings, cwd=cwd)
+            translated_value = _translate_token_for_chroot(value, mappings=mapping_items, cwd=cwd)
             if "=" in token and token.startswith("--"):
                 translated.append(f"{flag}={translated_value}")
             else:
@@ -643,15 +681,13 @@ def translate_argv_paths_for_chroot(argv: list[str], *, mappings: Iterable[tuple
             index = value_index + 1
             continue
         if value is not None and value_index != index:
-            translated.append(token)
-            translated.append(value)
+            translated.append(_translate_token_for_chroot(token, mappings=mapping_items, cwd=cwd, executable=(index == 0)))
+            translated.append(_translate_token_for_chroot(value, mappings=mapping_items, cwd=cwd))
             index = value_index + 1
             continue
-        if _looks_like_path(token) and token.startswith(("/", "~/")):
-            translated.append(_translate_path(token, mappings, cwd=cwd))
-        else:
-            translated.append(token)
+        translated.append(_translate_token_for_chroot(token, mappings=mapping_items, cwd=cwd, executable=(index == 0)))
         index += 1
+    assert_chroot_path_safe(translated, context="chroot command")
     return translated
 
 
@@ -688,7 +724,13 @@ def wrap_specs_for_termux_host_chroot(
             mappings=mappings,
             cwd=host_cwd,
         )
+        assert_chroot_path_safe(
+            [chroot_cwd, *argv, *translated_env.values()],
+            context=f"{spec.name} chroot plan",
+        )
         for key, value in sorted(translated_env.items()):
+            if value == "" and key in _CHROOT_DROP_TERMUX_PATH_KEYS:
+                continue
             if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(key)):
                 assignment_values.append(f"{key}={value}")
         assignments = " ".join(shlex.quote(item) for item in assignment_values)
@@ -1095,6 +1137,9 @@ def _analyze_plain_log(text: str) -> dict[str, int | str]:
 def run_auto_chroot(argv: list[str], *, env: Mapping[str, str] | None = None, cwd: str | None = None) -> int:
     env = dict(env or os.environ)
     cwd = cwd or os.getcwd()
+    if not _is_termux_host_env(env):
+        print("devtool android chroot: chroot delegation is allowed only from native Termux", file=sys.stderr)
+        return 2
     try:
         config, forwarded = translate_devtool_args(argv, env=env, cwd=cwd)
     except ValueError as exc:

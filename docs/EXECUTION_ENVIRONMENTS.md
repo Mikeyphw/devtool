@@ -28,7 +28,9 @@ devtool --host -r "$HOME/Code/demo" validate
 `--host` means the environment where the current devtool process is running. On
 Termux that is `native-termux`; on ordinary Linux it is `desktop-linux`.
 `--chroot NAME` remains a compatibility shortcut for selecting `chroot` and
-setting its name.
+setting its name. Chroot delegation is accepted only on native Termux. On
+desktop Linux it fails preflight even when `chrootctl` is installed; when
+Devtool is already inside the chroot, recursive delegation is suppressed.
 
 ## Configuration
 
@@ -73,7 +75,7 @@ chroot-toolchain execution.
 
 Termux/chroot path translation is implemented once in
 `devtool.execution_environments` and reused by the legacy Termux frontend.
-Default mappings include:
+Default mappings are created only on native Termux and include:
 
 ```text
 /data/data/com.termux/files/home -> /home/termux
@@ -96,4 +98,9 @@ implementation.
 
 ## Android auto selection
 
-Android/Gradle commands can run natively in Termux or through the configured chroot. Auto mode uses the existing host-UI/chroot-toolchain backend when it is available, preserving Termux-side progress and notification state. Set `prefer_native_termux = true` in the target's Android settings or pass `--execution-environment native-termux` to force native execution. The sparse user global config may extend this policy with `[termux_chroot] project_kinds`, allowing additional project kinds such as Python to use the same Android/Termux chroot backend while leaving repo `.devtool.toml` and explicit CLI flags in control.
+Android/Gradle commands can run natively in Termux or through the configured chroot. This automatic policy is never evaluated on a PC. Auto mode uses the existing host-UI/chroot-toolchain backend when it is available, preserving Termux-side progress and notification state. Set `prefer_native_termux = true` in the target's Android settings or pass `--execution-environment native-termux` to force native execution. The sparse user global config may extend this policy with `[termux_chroot] project_kinds`, allowing additional project kinds such as Python to use the same Android/Termux chroot backend while leaving repo `.devtool.toml` and explicit CLI flags in control.
+
+
+## Path isolation
+
+Before guest execution, Devtool translates shared paths and rejects any remaining native Termux path in command arguments, working directories, or environment values. Host-only toolchain variables are removed when they point into `/data/data/com.termux`. A versioned Termux Python executable is resolved through guest `python3` rather than assuming the same minor version exists in Ubuntu.

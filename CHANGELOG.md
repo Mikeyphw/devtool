@@ -1,3 +1,16 @@
+## Unreleased validation/execution audit
+- Android builds now automatically suppress AGP's experimental-option warning when Devtool injects a custom `android.aapt2FromMavenOverride`, while preserving other user-configured warning suppressions.
+
+- Made the Termux dotnet proot `/etc` shim resilient to read-only or stripped HOME/PREFIX state; Devtool now tries configured, Termux, XDG-state, and temporary writable locations instead of attempting `/usr/var/devtool`.
+- Made the complete test suite hermetic across desktop and live Termux hosts; ambient global config, chroot/HUD identity, and clipboard state no longer alter unrelated tests.
+- Tightened Termux detection to canonical prefix/home paths, made auto-chroot fall back to native Termux for unmapped repositories, and kept explicit chroot requests strict.
+- Reworked diagnostics path normalization into a batch-local string fast path, eliminating the phone-side 25,000-diagnostic performance regression.
+- Audited and hardened resumable validation planning: stable phase identities, command fingerprints, downstream-only invalidation, legacy artifact-check removal, and clear stale-rollback boundaries.
+- Removed overlay/archive verification from repository validation. Artifacts remain verified during inspect/apply, while package now means project packaging only.
+- Restricted Android/Termux chroot delegation to native Termux or an already-entered chroot; desktop Linux can no longer auto-select or launch the Android chroot.
+- Added strict host/guest path isolation, dropped Termux-only toolchain variables before Ubuntu execution, and resolved leaked Termux Python paths through guest `python3`.
+- Made automatic project-kind selection repository-root aware, root-marker first, and safely explicit for mixed workspaces.
+
 ## Android 1.14.0
 
 - Fixed desktop HUD resizing/autosize regressions with real drag-resize handles, content-height-driven auto-sizing, scrollable capped content, and double-click reset back to auto-size.
@@ -18,6 +31,8 @@
 
 ## Unreleased
 
+- Made resumable validation milestones unmistakable: every phase now announces `Phase X of Y` when it starts, prints an explicit completed/skipped/interrupted/failed banner when it ends, reports overall completion at phase boundaries, and emits a terminal `VALIDATION COMPLETE` banner when no phases remain. The same counters flow through Tasker and HUD event summaries.
+- Fixed resumable validation cancellation and process-death recovery: interrupted phases return to the pending queue, stale persisted `running` phases are reclaimed automatically, deferred-apply rollback points remain intact, and repeated `devtool validate continue` invocations advance one phase at a time without requiring `--next`.
 - Added Android repository Phase 6 mobile hardening: adaptive navigation rails and split panes for tablets/foldables, large-text-safe vertical actions, live Git queue timing and reordering, pinned-run retention, configurable indexed-data cleanup, and optional SQLite compaction.
 - Added passive credential-remediation guidance with copyable commands, explicit host-fingerprint warnings, and no automatic remote probes or secret display.
 - Added Phase 6 accessibility instrumentation for responsive profiles, labeled controls, and 48 dp touch targets; upgraded the Android indexed database to schema 6.
@@ -38,7 +53,7 @@
 
 - Added the Android Repositories destination as a root-aware read-only port of the desktop Repo page, including explicit and discovered repositories, temporary live entries, environment-aware identity, status/branch/remote inspection, active run and artifact correlation, rooted browsing, repository-owner shell launch, and Overview/Activity/Runs/Metadata detail views.
 - Replaced Android SharedPreferences run history with a SQLite-backed runs, structured logs, repositories, activity, source, and cursor model; added legacy migration and exact-run Timeline/Problems/Raw/Metadata viewing.
-- Added durable resumable Android/Gradle validation sessions with preflight, dependency, compile, resource, unit-test, package, artifact verification, lint, instrumentation, and finalization checkpoints. Sessions survive process death, preserve pending apply transactions, support phase/range/runtime/power controls, cache failures, invalidate only affected downstream phases, and report overall phase progress to terminal, machine output, desktop HUD, and Android HUD.
+- Added durable resumable Android/Gradle validation sessions with preflight, dependency, compile, resource, unit-test, package, lint, instrumentation, and finalization checkpoints. Sessions survive process death, preserve pending apply transactions, support phase/range/runtime/power controls, cache failures, invalidate only affected downstream phases, and report overall phase progress to terminal, machine output, desktop HUD, and Android HUD.
 - Added changed-file phase planning, per-phase Android resource profiles, optional Gradle daemon shutdown after each phase, explicit retry/finalize/abort/status commands, and paused-apply notifications that no longer claim an incomplete overlay was fully applied.
 
 - Made native-app installation fingerprint-aware: desktop packages rebuild only when relevant sources or the packaged version change, while Android APKs rebuild through the repo-owned `android_hud` chroot target and reinstall only when the installed APK hash differs.
@@ -64,7 +79,7 @@
 ### Phase 16 - Python chroot venv bootstrap guard
 
 - Ensured Python chroot validation always emits a venv bootstrap phase before restore/test commands.
-- Preserved configured Python executable version names such as `python3.14` when translating Termux host Python paths for chroot execution.
+- Resolved Termux-host Python paths through guest `python3` so Ubuntu does not inherit an unavailable host minor-version executable.
 - Added regression coverage for stale host-side venv paths that are missing inside the chroot.
 
 ## 1.1.0 — 2026-07-16
@@ -124,3 +139,15 @@
 - Devtool CLI: 1.1.0
 - Devtool Control Center: 0.4.0
 - Devtool Live HUD: 1.7.0 (`versionCode 18`)
+
+## Validation/UI contract reconciliation
+
+- Reviewed the five suspected UI regressions from the full-suite audit.
+- Clarified Android test selection and desktop external-terminal execution.
+- Replaced brittle source-literal tests with behavioral contracts for current responsive, staged, and release-qualified UI behavior.
+
+## Termux proot test isolation follow-up
+
+- Prevented Termux .NET runner tests from launching the device's real `proot` binary when it is installed.
+- Forced the mocked subprocess fallback explicitly so the tests remain hermetic on both desktop Linux and live Termux.
+- Kept production proot execution unchanged.

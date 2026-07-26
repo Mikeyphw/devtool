@@ -767,6 +767,11 @@ def should_prefer_android_chroot(config: ProjectConfig) -> bool:
     ``prefer_native_termux = true``.
     """
 
+    # Chroot auto-selection is a Termux-host policy. A desktop Linux machine
+    # may have a command named chrootctl, but that must never opt a project into
+    # the Android/Termux chroot backend.
+    if detect_current_environment() != NATIVE_TERMUX:
+        return False
     allowed = _termux_chroot_project_kinds(config)
     if "all" not in allowed and config.kind not in allowed:
         return False

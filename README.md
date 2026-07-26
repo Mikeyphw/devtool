@@ -209,10 +209,23 @@ Long Gradle validation can be checkpointed instead of keeping one Termux/chroot
 process alive for the whole pipeline:
 
 ```bash
-devtool -r "$HOME/Code/app" validate start --next
-devtool -r "$HOME/Code/app" validate resume --through package
-devtool -r "$HOME/Code/app" validate resume --complete
+devtool -r "$HOME/Code/app" validate start
+# Run this same command once per checkpoint:
+devtool -r "$HOME/Code/app" validate continue
+devtool -r "$HOME/Code/app" validate continue
 ```
+
+`validate continue` runs exactly the next pending phase by default. Each run prints
+`VALIDATION PHASE X OF Y` before work begins and an explicit phase-completed
+banner afterward. At a checkpoint, Devtool reports the last completed phase and
+the next pending phase. Once every phase succeeds, it prints a terminal
+`VALIDATION COMPLETE` banner and confirms that no pending phases remain.
+`--through`, `--phase`, and `--complete` remain available for advanced batching. Ctrl+C and
+Control Center cancellation return the current phase to `pending`; if Termux,
+the chroot, Gradle, or Devtool is killed before recording the result, the next
+`validate continue` automatically recovers the stale `running` phase and retries
+it. The attached apply transaction remains available and is not rolled back for
+an interruption.
 
 The same controls work after `apply-overlay --validate --sequential`; the apply
 transaction and rollback backup stay pending until validation is finalized. See

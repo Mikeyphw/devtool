@@ -34,7 +34,9 @@ def test_desktop_run_workflow_is_staged_sticky_and_complete() -> None:
     controller = read(DESKTOP / "src" / "AppController.cpp")
 
     assert "property int currentStage" in qml
-    assert 'readonly property var stages: ["Project", "Operation", "Tests", "Review"]' in qml
+    assert 'readonly property var allStages: ["Project", "Operation", "Tests", "Review"]' in qml
+    assert 'readonly property var compactStages: ["Project", "Operation", "Review"]' in qml
+    assert 'readonly property var stages: root.needsTests() ? root.allStages : root.compactStages' in qml
     assert "id:stickyBar" in qml
     assert "anchors.bottom: stickyBar.top" in qml or "anchors.bottom:stickyBar.top" in qml
     for operation in (
@@ -99,7 +101,14 @@ def test_android_run_and_history_workflows_cover_slice_two() -> None:
     store = read(ANDROID / "RunStore.java")
     catalog = read(ANDROID / "TestCatalog.java")
 
-    for token in ("runStage", "buildRunActionBar", "showRunStage", '"Step "+(runStage+1)+" of 4'):
+    for token in (
+        "runStage",
+        "buildRunActionBar",
+        "showRunStage",
+        "visibleRunStepCount()",
+        "visibleRunStepIndex()",
+        '"Step "+(visibleRunStepIndex()+1)+" of "+visibleRunStepCount()',
+    ):
         assert token in activity
     for operation in ('"run"', '"package"', '"clean"', '"inspect"'):
         assert operation in builder

@@ -413,6 +413,8 @@ Item{}
                 ColumnLayout{id:reviewColumn;anchors.fill:parent;anchors.margins:16;spacing:12
                     Label{text:"Review and run";color:theme.windowText;font.pointSize:theme.cardTitlePointSize;font.weight:Font.DemiBold}
                     Label{Layout.fillWidth:true;text:"Confirm the workflow shape first. Output routing, environment flags, and exact command details are still available below.";color:theme.mutedText;wrapMode:Text.Wrap}
+                    Label{text:"External terminal execution";color:theme.windowText;font.weight:Font.DemiBold}
+                    Label{Layout.fillWidth:true;text:"Running opens the reviewed command in " + (appController.preferredTerminal ? appController.preferredTerminal.split("/").pop() : "your preferred terminal") + ". Devtool output remains visible there while the Control Center tracks progress.";color:theme.mutedText;wrapMode:Text.Wrap}
                     RowLayout{visible:root.isApplyOperation();AppCheckBox{id:validate;text:"Validate";checked:true}
 AppCheckBox{id:commit;text:"Commit";checked:true}
 AppCheckBox{id:keep;text:"Keep artifact"}

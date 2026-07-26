@@ -62,6 +62,14 @@ without restoring files. Finalization runs artifact validators and expectations,
 creates the requested commit, marks the transaction complete, records history,
 and only then performs artifact cleanup.
 
+A real validation failure is terminal for an attached apply transaction. When
+rollback-on-failure is enabled, devtool preserves evidence, restores the backup,
+marks every unrun phase `cancelled`, records the session as
+`failed-rolled-back`, and clears the active validation and rollback markers. A
+rollback failure records `rollback-failed` and keeps the session active only so
+`validate abort` can retry repository recovery; validation cannot continue.
+Interruptions remain resumable and do not use this failure path.
+
 ## Failure evidence
 
 Before rollback, devtool copies available logs and structured report files to:

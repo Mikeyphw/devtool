@@ -749,9 +749,9 @@ class AndroidGradleRunner(ProjectRunner):
         lint_tasks, lint_scope, lint_modules = android_validation_lint_tasks(config)
         change_scope = android_validation_change_scope(config)
         allowed_by_scope = {
-            "full": {"preflight", "dependencies", "compile", "resources", "unit-test", "package", "artifact-check", "lint", "instrumentation", "finalize"},
-            "source": {"compile", "unit-test", "package", "artifact-check", "lint", "instrumentation", "finalize"},
-            "resources": {"resources", "package", "artifact-check", "lint", "finalize"},
+            "full": {"preflight", "dependencies", "compile", "resources", "unit-test", "package", "lint", "instrumentation", "finalize"},
+            "source": {"compile", "unit-test", "package", "lint", "instrumentation", "finalize"},
+            "resources": {"resources", "package", "lint", "finalize"},
             "tests": {"unit-test", "lint", "instrumentation", "finalize"},
             "docs": {"finalize"},
         }
@@ -777,8 +777,6 @@ class AndroidGradleRunner(ProjectRunner):
             *,
             report_parsers: list[str] | None = None,
             scan_artifacts: bool = False,
-            collect_artifacts: bool = False,
-            verify_artifacts: bool = False,
         ) -> CommandSpec:
             unique_tasks = list(dict.fromkeys(item for item in tasks if item))
             plan_action = "build" if phase in {"compile", "resources", "package"} else "test" if phase == "unit-test" else "lint" if phase == "lint" else "restore"
@@ -791,8 +789,8 @@ class AndroidGradleRunner(ProjectRunner):
                 "gradle_tasks": unique_tasks,
                 "android_builder": str(plan.builder),
                 "project_root": str(project_root),
-                "collect_artifacts": collect_artifacts,
-                "verify_artifacts": verify_artifacts,
+                "collect_artifacts": False,
+                "verify_artifacts": False,
                 "progress_parser": "gradle",
                 "report_parser": parsers[0] if parsers else "",
                 "report_parsers": parsers,
@@ -829,20 +827,20 @@ class AndroidGradleRunner(ProjectRunner):
                 spec = apply_test_selection(config, spec)
             return spec
 
-        def internal_phase(phase: str, message: str, *, artifact_check: bool = False) -> CommandSpec:
+        def internal_phase(phase: str, message: str) -> CommandSpec:
             policy = resolve_android_validation_phase_policy(config, phase)
             return CommandSpec(
                 f"{self.kind}-validation-{phase}",
-                [sys.executable, "-c", f"print({message!r})"],
+                ["sh", "-c", 'printf "%s\\n" "$1"', "devtool", message],
                 env=optimized_validation_env(config, self.kind),
                 cwd=str(project_root),
                 metadata={
                     "runner": self.kind,
                     "project_type": self.kind,
                     "project_root": str(project_root),
-                    "gradle_tasks": configured_tasks(config, "build") if artifact_check else [],
-                    "collect_artifacts": artifact_check,
-                    "verify_artifacts": artifact_check,
+                    "gradle_tasks": [],
+                    "collect_artifacts": False,
+                    "verify_artifacts": False,
                     "progress_parser": "generic",
                     "validation_components": [phase],
                     "validation_phase_name": phase,
@@ -871,9 +869,7 @@ class AndroidGradleRunner(ProjectRunner):
             specs.append(gradle_phase("unit-test", phase_tasks("unit-test", configured_tasks(config, "test")), report_parsers=["gradle-junit"]))
         if not skip_build and phase_enabled("package"):
             package_tasks = phase_tasks("package", configured_tasks(config, "build"))
-            specs.append(gradle_phase("package", package_tasks, scan_artifacts=True))
-        if not skip_build and phase_enabled("artifact-check"):
-            specs.append(internal_phase("artifact-check", "Verifying produced Android/Gradle artifacts", artifact_check=True))
+            specs.append(gradle_phase("package", package_tasks, scan_artifacts=False))
         if lint_tasks and phase_enabled("lint"):
             specs.append(gradle_phase("lint", phase_tasks("lint", lint_tasks), report_parsers=["android-lint"]))
 
@@ -1080,19 +1076,15 @@ class AndroidGradleRunner(ProjectRunner):
                     report_parsers.append("android-lint")
                 validation_components = list(components)
                 if validation_phase:
-                    validation_components = (
-                        ["package", "artifact-check"]
-                        if validation_phase == "package" and "build" in components
-                        else [validation_phase]
-                    )
+                    validation_components = [validation_phase]
                 metadata = {
                     "runner": self.kind,
                     "project_type": self.kind,
                     "gradle_tasks": unique_tasks,
                     "android_builder": str(plan.builder),
                     "project_root": str(android_project_root(config)),
-                    "collect_artifacts": "build" in components,
-                    "verify_artifacts": "build" in components,
+                    "collect_artifacts": False,
+                    "verify_artifacts": False,
                     "progress_parser": "gradle",
                     "report_parser": report_parsers[0] if report_parsers else "",
                     "report_parsers": report_parsers,
@@ -1125,7 +1117,7 @@ class AndroidGradleRunner(ProjectRunner):
                         *android_builder_arguments_for_tasks(
                             config,
                             unique_tasks,
-                            scan_artifacts="build" in components,
+                            scan_artifacts=False,
                             validation=True,
                             validation_phase=validation_phase,
                         ),

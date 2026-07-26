@@ -458,7 +458,7 @@ public final class MainActivity extends Activity {
         content.addView(runOperationSection);
 
         runTestsSection = ui.surface();
-        runTestsSection.addView(ui.sectionTitle("3 · Tests"));
+        runTestsSection.addView(ui.sectionTitle("3 · Test selection"));
         runTestsSection.addView(ui.text("Discover the real devtool test catalog, search it, and select tests without typing framework IDs.", UiTypography.Role.BODY_SMALL, ui.palette.muted));
         testProfileInput = field(runTestsSection, "Saved profile", saved.testProfile, "quick, full, parser…", false);
         runTestsSection.addView(ui.button("Discover tests", ui.palette.cyan, v -> discoverTestsOnAndroid()));

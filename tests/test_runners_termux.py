@@ -108,6 +108,7 @@ class RunnersTermuxTests(unittest.TestCase):
                     "proot": "/data/data/com.termux/files/usr/bin/proot",
                     "dotnet": "/data/data/com.termux/files/usr/bin/dotnet",
                 }.get(name)),
+                patch("devtool.runners.subprocess.Popen", side_effect=OSError("force mocked run fallback")),
                 patch("devtool.runners.subprocess.run", side_effect=fake_run),
             ):
                 results, _ = run_specs(config, [spec], verbose=False)
@@ -116,6 +117,54 @@ class RunnersTermuxTests(unittest.TestCase):
             self.assertEqual(results[0].argv[0], "proot")
             self.assertEqual([result.name for result in results], ["build"])
             self.assertEqual(calls, [["build", "Demo.sln"]])
+
+    def test_termux_dotnet_proot_etc_falls_back_from_read_only_state_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp) / "repo"
+            repo_root.mkdir()
+            runtime_root = Path(tmp) / "runtime"
+            config = ProjectConfig(repo_root=repo_root, kind="dotnet")
+            spec = CommandSpec("build", ["dotnet", "build", "Demo.sln"])
+
+            def fake_run(argv, cwd, env, text, stdout, stderr, check):
+                shim = Path(argv[2].split(":", 1)[0])
+                self.assertTrue(shim.is_relative_to(runtime_root))
+                self.assertTrue((shim / "os-release").exists())
+
+                class Result:
+                    returncode = 0
+                    stdout = "ok"
+
+                return Result()
+
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "TERMUX_VERSION": "1",
+                        "PREFIX": "/proc/termux-prefix",
+                        "HOME": "/usr",
+                        "XDG_STATE_HOME": "/proc/devtool-state",
+                        "DEVTOOL_XDG_DIR": "",
+                    },
+                    clear=False,
+                ),
+                patch("devtool.runners.tempfile.gettempdir", return_value=str(runtime_root)),
+                patch("devtool.runners.shutil.which", side_effect=lambda name: {
+                    "proot": "/data/data/com.termux/files/usr/bin/proot",
+                    "dotnet": "/data/data/com.termux/files/usr/bin/dotnet",
+                }.get(name)),
+                patch("devtool.runners.subprocess.Popen", side_effect=OSError("force mocked run fallback")),
+                patch("devtool.runners.subprocess.run", side_effect=fake_run),
+            ):
+                results, _ = run_specs(
+                    config,
+                    [spec],
+                    verbose=False,
+                    log_path=runtime_root / "run.log",
+                )
+
+            self.assertEqual(results[0].returncode, 0)
 
     def test_run_specs_honors_termux_dotnet_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -139,6 +188,7 @@ class RunnersTermuxTests(unittest.TestCase):
                     "proot": "/data/data/com.termux/files/usr/bin/proot",
                     "dotnet": "/data/data/com.termux/files/usr/bin/dotnet",
                 }.get(name)),
+                patch("devtool.runners.subprocess.Popen", side_effect=OSError("force mocked run fallback")),
                 patch("devtool.runners.subprocess.run", side_effect=fake_run),
             ):
                 results, _ = run_specs(config, [spec], verbose=False)

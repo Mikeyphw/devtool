@@ -233,7 +233,6 @@ def resolve_android_validation_phase_policy(
         "resources": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1024, base.gradle_heap_mb)},
         "unit-test": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit)},
         "package": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1280, base.gradle_heap_mb)},
-        "artifact-check": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
         "lint": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1536, base.gradle_heap_mb)},
         "instrumentation": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": max(768, base.gradle_heap_mb)},
         "finalize": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},

@@ -356,6 +356,11 @@ def artifact_validation_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     policy.setdefault("rollback_on_failure", True)
     policy.setdefault("allow_deferred", True)
     policy.setdefault("minimum_phase", "finalize")
+    minimum_phase = str(policy.get("minimum_phase") or "finalize").strip().lower().replace("_", "-")
+    # Legacy manifests may still name the removed artifact-check checkpoint.
+    # Repository validation no longer inspects the already-accepted archive, so
+    # the closest meaningful checkpoint is package.
+    policy["minimum_phase"] = "package" if minimum_phase == "artifact-check" else minimum_phase
     policy.setdefault("test_profile", "")
     policy.setdefault("execution_environment", "")
     return policy

@@ -75,7 +75,7 @@ def test_desktop_workflow_and_history_reflow_at_narrow_widths() -> None:
     assert "activeFocusOnTab: true" in history
     assert "Accessible.role: Accessible.Dialog" in history
 
-    assert "readonly property bool narrowMode: width < 780" in artifacts
+    assert "readonly property bool narrowMode: availableWidth < 780" in artifacts
     assert "columns: root.narrowMode ? 2 : 5" in artifacts
     assert "readonly property bool narrowMode: width < 760" in diagnostics
     assert "columns: root.narrowMode ? 2 : 3" in diagnostics

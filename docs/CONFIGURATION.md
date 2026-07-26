@@ -89,6 +89,10 @@ aapt2_provider = "auto"
 aapt2_fallback_path = "/sdcard/Download/aapt2-arm64-v8a.bin"
 ```
 
+## Automatic project type
+
+`kind = "auto"` inspects the repository passed with `-r`, even when the active `.devtool.toml` lives in a parent workspace. One root-local marker wins over unrelated nested projects. Ambiguous root markers, or multiple nested project kinds with no root owner, are rejected until you choose `[project].kind`, `--project-type`, or a typed `--target`.
+
 ## Android/Termux chroot project policy
 
 Historically Devtool's Termux auto-chroot behavior was Android/Gradle-first. The global preference file can now choose which project kinds may be routed through the configured chroot when running from native Termux:

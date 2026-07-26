@@ -775,23 +775,27 @@ def _human_event_message(
     clean = _human_detail(message)
     normalized = (event_type or "").replace("_", "-")
     status_key = (status or "").lower()
-    detail = _coalesced_dotnet_validation_detail(metadata or {})
+    event_metadata = metadata or {}
+    detail = _coalesced_dotnet_validation_detail(event_metadata)
+    phase_index = int(event_metadata.get("validation_phase_index") or 0)
+    phase_total = int(event_metadata.get("validation_phase_total") or 0)
+    counter = f"Phase {phase_index} of {phase_total} · " if phase_index > 0 and phase_total > 0 else ""
     if normalized == "phase-started":
         if detail:
-            return f"Starting {human_phase}: {detail}"
-        return f"Starting {human_phase}"
+            return f"{counter}Starting {human_phase}: {detail}"
+        return f"{counter}Starting {human_phase}"
     if normalized == "phase-finished":
         if status_key == "failed":
             if detail:
-                return f"{human_phase} failed: {detail}"
-            return f"{human_phase} failed"
+                return f"{counter}{human_phase} failed: {detail}"
+            return f"{counter}{human_phase} failed"
         if status_key == "skipped":
             if detail:
-                return f"{human_phase} skipped: {detail}"
-            return f"{human_phase} skipped"
+                return f"{counter}{human_phase} skipped: {detail}"
+            return f"{counter}{human_phase} skipped"
         if detail:
-            return f"{human_phase} completed: {detail}"
-        return f"{human_phase} completed"
+            return f"{counter}{human_phase} completed: {detail}"
+        return f"{counter}{human_phase} completed"
     if normalized == "finished":
         return "Devtool finished successfully" if status_key == "ok" else "Devtool finished with errors"
     return clean or f"{human_phase} is running"

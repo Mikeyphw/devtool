@@ -30,12 +30,12 @@ DEFAULT_PHASE_ORDER = (
     "resources",
     "unit-test",
     "package",
-    "artifact-check",
     "lint",
     "instrumentation",
     "finalize",
 )
 _TERMINAL_PHASE_STATES = {"succeeded", "skipped"}
+_INTERRUPTED_RETURN_CODES = {130}
 _CODE_SUFFIXES = {
     ".java", ".kt", ".groovy", ".scala", ".c", ".cc", ".cpp", ".cxx",
     ".h", ".hh", ".hpp", ".rs", ".go", ".py", ".js", ".ts", ".tsx",
@@ -68,6 +68,11 @@ class PhaseRecord:
     issues: list[dict[str, Any]] = field(default_factory=list)
     log_path: str = ""
     invalidated_reason: str = ""
+    spec_fingerprint: str = ""
+    interruption_count: int = 0
+    last_interrupted_at: str = ""
+    last_interrupted_reason: str = ""
+    last_interrupted_returncode: int | None = None
 
 
 @dataclass(slots=True)
@@ -350,6 +355,40 @@ def input_fingerprints(repo_root: Path) -> dict[str, str]:
     return {name: digest.hexdigest() for name, digest in digests.items()}
 
 
+def spec_fingerprint(spec: CommandSpec) -> str:
+    """Return a stable fingerprint for validation-relevant command inputs."""
+
+    metadata_keys = (
+        "validation_phase_name",
+        "validation_components",
+        "gradle_tasks",
+        "project_root",
+        "workspace",
+        "bundle_target",
+        "matrix",
+        "target",
+        "test_selection",
+    )
+    payload = {
+        "name": spec.name,
+        "argv": list(spec.argv),
+        "cwd": str(spec.cwd or ""),
+        "env": {str(key): str(value) for key, value in sorted(spec.env.items())},
+        "metadata": {key: spec.metadata.get(key) for key in metadata_keys if key in spec.metadata},
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _phase_scope(spec: CommandSpec) -> str:
+    return str(
+        spec.metadata.get("workspace")
+        or spec.metadata.get("bundle_target")
+        or spec.metadata.get("matrix")
+        or spec.metadata.get("target")
+        or "repository"
+    ).strip() or "repository"
+
 def phase_name_for_spec(spec: CommandSpec) -> str:
     explicit = str(spec.metadata.get("validation_phase_name") or "").strip().lower()
     if explicit:
@@ -366,33 +405,41 @@ def phase_name_for_spec(spec: CommandSpec) -> str:
     return "finalize" if "final" in name else name.replace("android-validation-", "")
 
 
-def phase_key_for_spec(spec: CommandSpec, index: int) -> str:
+def phase_key_for_spec(spec: CommandSpec, index: int = 0) -> str:
     explicit = str(spec.metadata.get("validation_phase_key") or "").strip()
     if explicit:
         return explicit
     phase = phase_name_for_spec(spec)
-    scope = str(
-        spec.metadata.get("workspace")
-        or spec.metadata.get("bundle_target")
-        or spec.metadata.get("matrix")
-        or spec.metadata.get("target")
-        or "repository"
-    ).strip()
-    return f"{scope}:{phase}:{index}"
+    scope = _phase_scope(spec)
+    occurrence = int(spec.metadata.get("validation_phase_occurrence") or 1)
+    return f"{scope}:{phase}:{occurrence}"
 
 
 def annotate_specs(specs: Sequence[CommandSpec], *, session_id: str = "") -> list[CommandSpec]:
     total = len(specs)
     annotated: list[CommandSpec] = []
+    occurrences: dict[tuple[str, str], int] = {}
     for index, spec in enumerate(specs, start=1):
         metadata = dict(spec.metadata)
         phase_name = phase_name_for_spec(spec)
+        identity = (_phase_scope(spec), phase_name)
+        occurrences[identity] = occurrences.get(identity, 0) + 1
+        metadata["validation_phase_occurrence"] = occurrences[identity]
+        # Rebuild generated keys so plan insertions/removals do not make every
+        # later phase look unrelated. Explicit non-generated keys are retained.
+        existing_key = str(metadata.get("validation_phase_key") or "").strip()
+        generated_suffix = existing_key.rsplit(":", 1)[-1] if existing_key else ""
+        if existing_key and not generated_suffix.isdigit():
+            phase_key = existing_key
+        else:
+            metadata.pop("validation_phase_key", None)
+            phase_key = phase_key_for_spec(CommandSpec(spec.name, list(spec.argv), env=dict(spec.env), cwd=spec.cwd, metadata=metadata), index)
         metadata.update(
             {
                 "validation_resumable": True,
                 "validation_session_id": session_id,
                 "validation_phase_name": phase_name,
-                "validation_phase_key": phase_key_for_spec(spec, index),
+                "validation_phase_key": phase_key,
                 "validation_phase_index": index,
                 "validation_phase_total": total,
             }
@@ -417,6 +464,7 @@ def phase_records(specs: Sequence[CommandSpec]) -> list[PhaseRecord]:
                 spec_name=spec.name,
                 index=index,
                 total=total,
+                spec_fingerprint=spec_fingerprint(spec),
             )
         )
     return records
@@ -466,29 +514,100 @@ def create_session(
     return session
 
 
+def _reset_phase(phase: PhaseRecord, reason: str) -> None:
+    phase.status = "pending"
+    phase.returncode = None
+    phase.started_at = ""
+    phase.finished_at = ""
+    phase.duration_seconds = 0.0
+    phase.output_tail = ""
+    phase.issues = []
+    phase.log_path = ""
+    phase.invalidated_reason = reason
+
+
+def _invalidate_from_index(session: ValidationSession, start: int, reason: str) -> None:
+    invalidated = False
+    for phase in session.phases[start:]:
+        if phase.status != "pending" or phase.returncode is not None:
+            invalidated = True
+        _reset_phase(phase, reason)
+    if invalidated:
+        session.invalidated_from = session.phases[start].name if start < len(session.phases) else ""
+        session.status = "paused"
+        session.paused_reason = reason
+
+
 def sync_plan(session: ValidationSession, specs: Sequence[CommandSpec]) -> list[CommandSpec]:
+    """Synchronize a durable session without replaying unrelated phases.
+
+    Phase identity is stable across insertions/removals. Legacy index-based keys
+    are matched by phase/spec identity. Removed artifact-check phases are simply
+    discarded because archive verification is not repository validation.
+    """
+
     annotated = annotate_specs(list(specs), session_id=session.session_id)
-    current = {item.key: item for item in session.phases}
+    fresh_records = phase_records(annotated)
+    unused = list(session.phases)
     rebuilt: list[PhaseRecord] = []
-    plan_changed = False
-    for fresh in phase_records(annotated):
-        previous = current.get(fresh.key)
+    earliest_dependency_change: int | None = None
+
+    def take_previous(fresh: PhaseRecord) -> PhaseRecord | None:
+        for candidate in unused:
+            if candidate.key == fresh.key:
+                unused.remove(candidate)
+                return candidate
+        exact = [candidate for candidate in unused if normalize_phase_name(candidate.name) == normalize_phase_name(fresh.name) and candidate.spec_name == fresh.spec_name]
+        if len(exact) == 1:
+            unused.remove(exact[0])
+            return exact[0]
+        same_name = [candidate for candidate in unused if normalize_phase_name(candidate.name) == normalize_phase_name(fresh.name)]
+        if len(same_name) == 1:
+            unused.remove(same_name[0])
+            return same_name[0]
+        return None
+
+    for index, fresh in enumerate(fresh_records):
+        previous = take_previous(fresh)
         if previous is None:
             rebuilt.append(fresh)
-            plan_changed = True
+            # A newly inserted prerequisite invalidates already-completed later
+            # work, but a new tail phase does not replay earlier checkpoints.
+            if any(item.status in _TERMINAL_PHASE_STATES for item in session.phases[index:]):
+                earliest_dependency_change = index if earliest_dependency_change is None else min(earliest_dependency_change, index)
             continue
+        old_fingerprint = previous.spec_fingerprint
+        previous.key = fresh.key
         previous.index = fresh.index
         previous.total = fresh.total
         previous.name = fresh.name
         previous.label = fresh.label
         previous.spec_name = fresh.spec_name
+        previous.spec_fingerprint = fresh.spec_fingerprint
         rebuilt.append(previous)
-    if set(current) != {item.key for item in rebuilt}:
-        plan_changed = True
+        if old_fingerprint and old_fingerprint != fresh.spec_fingerprint and previous.status in _TERMINAL_PHASE_STATES:
+            earliest_dependency_change = index if earliest_dependency_change is None else min(earliest_dependency_change, index)
+
+    # Obsolete archive/artifact checks never invalidate repository phases. Other
+    # removed failed phases no longer poison the synchronized session either.
     session.phases = rebuilt
-    if plan_changed:
-        invalidate_from(session, "preflight", "validation plan changed")
-    save_session(session, active=True)
+    total = len(rebuilt)
+    for index, phase in enumerate(rebuilt, start=1):
+        phase.index = index
+        phase.total = total
+
+    if earliest_dependency_change is not None and earliest_dependency_change < len(rebuilt):
+        _invalidate_from_index(session, earliest_dependency_change, "validation plan changed at this phase")
+
+    if any(item.status == "failed" for item in rebuilt):
+        session.status = "failed"
+    elif session.complete:
+        session.status = "completed"
+    elif session.status not in {"running", "rollback-failed"}:
+        session.status = "paused" if any(item.status in _TERMINAL_PHASE_STATES for item in rebuilt) else "created"
+        if session.status == "paused" and not session.paused_reason:
+            session.paused_reason = "validation plan synchronized"
+    save_session(session, active=session.status not in {"completed", "aborted", "failed-rolled-back"})
     return annotated
 
 
@@ -549,6 +668,55 @@ def reconcile_inputs(session: ValidationSession, config: ProjectConfig) -> str:
     session.git_head = _git_head(config.repo_root)
     save_session(session, active=True)
     return invalidation
+
+
+def _interruption_reason(result: OperationResult) -> str:
+    failure_kind = str(result.failure_kind or "").strip().lower()
+    output = str(result.output or "")
+    if failure_kind in {"cancelled", "canceled", "interrupted", "user_interrupt"}:
+        return failure_kind.replace("_", " ")
+    if int(result.returncode or 0) in _INTERRUPTED_RETURN_CODES:
+        return "interrupted by user or control-center cancellation"
+    lowered = output.lower()
+    if "interrupted by user" in lowered or "cancelled from devtool control center" in lowered:
+        return "interrupted by user or control-center cancellation"
+    return ""
+
+
+def recover_interrupted_phases(
+    session: ValidationSession,
+    *,
+    reason: str = "previous validation process ended before recording a phase result",
+) -> list[str]:
+    """Return persisted ``running`` phases to the pending queue.
+
+    A phase is marked running before its child process starts. If Termux, the
+    chroot, Gradle, or Devtool is killed before the result is recorded, the next
+    Devtool process is the only possible owner of the session. Persisted running
+    records are therefore stale and safe to retry.
+    """
+
+    recovered: list[str] = []
+    now = _utc_now()
+    for phase in session.phases:
+        if phase.status != "running":
+            continue
+        phase.status = "pending"
+        phase.returncode = None
+        phase.finished_at = now
+        phase.interruption_count += 1
+        phase.last_interrupted_at = now
+        phase.last_interrupted_reason = reason
+        phase.last_interrupted_returncode = None
+        phase.invalidated_reason = reason
+        recovered.append(phase.name)
+    if recovered:
+        names = ", ".join(recovered)
+        session.status = "paused"
+        session.paused_reason = f"recovered interrupted phase(s): {names}"
+        session.last_error = ""
+        save_session(session, active=True)
+    return recovered
 
 
 def retry_failed(session: ValidationSession) -> str:
@@ -631,6 +799,11 @@ def mark_phase_running(session: ValidationSession, key: str) -> PhaseRecord:
     phase = session.phase_by_key(key)
     if phase is None:
         raise ValidationSessionError(f"Validation phase is not part of session {session.session_id}: {key}")
+    if phase.status != "pending":
+        raise ValidationSessionError(
+            f"Validation phase {phase.name!r} is {phase.status}, not pending. "
+            "Run `devtool validate checkpoint` and resume the next pending phase."
+        )
     phase.status = "running"
     phase.attempts += 1
     phase.started_at = _utc_now()
@@ -660,7 +833,21 @@ def record_phase_result(session: ValidationSession, key: str, result: OperationR
         }
         for issue in result.issues
     ]
-    if result.returncode == 0:
+    interruption = _interruption_reason(result)
+    if interruption:
+        # Cancellation is a pause, not a validation verdict. Keep the phase at
+        # the head of the pending queue and preserve the rollback transaction.
+        phase.status = "pending"
+        phase.returncode = None
+        phase.interruption_count += 1
+        phase.last_interrupted_at = phase.finished_at
+        phase.last_interrupted_reason = interruption
+        phase.last_interrupted_returncode = int(result.returncode)
+        phase.invalidated_reason = interruption
+        session.status = "paused"
+        session.paused_reason = f"{phase.label} was interrupted and remains pending"
+        session.last_error = ""
+    elif result.returncode == 0:
         phase.status = "skipped" if result.skipped else "succeeded"
         session.status = "completed" if session.complete else "paused"
         session.paused_reason = "" if session.complete else "phase boundary reached"
@@ -691,7 +878,69 @@ def mark_completed(session: ValidationSession) -> None:
     save_session(session, active=False)
 
 
+def _cancel_unfinished_phases(session: ValidationSession, reason: str) -> list[str]:
+    """Turn every unrun validation phase into a terminal cancelled record."""
+
+    cancelled: list[str] = []
+    finished_at = _utc_now()
+    for phase in session.phases:
+        if phase.status not in {"pending", "running"}:
+            continue
+        phase.status = "cancelled"
+        phase.returncode = None
+        phase.finished_at = finished_at
+        phase.invalidated_reason = reason
+        cancelled.append(phase.name)
+    return cancelled
+
+
+def mark_failure_terminal(
+    session: ValidationSession,
+    reason: str,
+    *,
+    rollback_attempted: bool,
+    rollback_succeeded: bool,
+) -> None:
+    """Seal an attached validation failure after its rollback attempt.
+
+    Deferred and sequential apply validation own a repository transaction. Once
+    a phase fails and rollback is enabled, continuing later phases would validate
+    source that is no longer applied. Make the verdict terminal, cancel every
+    unfinished phase, and clear the active marker after a successful rollback.
+    A failed rollback deliberately remains active so ``validation-abort`` can
+    retry recovery without allowing validation to continue.
+    """
+
+    cancelled = _cancel_unfinished_phases(session, reason)
+    context = dict(session.apply_context or {})
+    if session.transaction_path:
+        context["failed_transaction_path"] = session.transaction_path
+    context["rollback_attempted"] = bool(rollback_attempted)
+    context["rollback_succeeded"] = bool(rollback_succeeded)
+    context["cancelled_phases"] = cancelled
+    session.apply_context = context
+    session.paused_reason = reason
+    session.finalized_at = _utc_now()
+
+    if rollback_succeeded:
+        session.status = "failed-rolled-back"
+        session.transaction_path = ""
+        save_session(session, active=False)
+    elif rollback_attempted:
+        session.status = "rollback-failed"
+        save_session(session, active=True)
+    else:
+        session.status = "failed"
+        save_session(session, active=True)
+
+
 def mark_aborted(session: ValidationSession, reason: str) -> None:
+    _cancel_unfinished_phases(session, reason)
+    if session.transaction_path and not Path(session.transaction_path).exists():
+        context = dict(session.apply_context or {})
+        context["aborted_transaction_path"] = session.transaction_path
+        session.apply_context = context
+        session.transaction_path = ""
     session.status = "aborted"
     session.paused_reason = reason
     session.finalized_at = _utc_now()
@@ -740,6 +989,7 @@ def status_payload(session: ValidationSession) -> dict[str, Any]:
     payload = session.as_dict()
     payload["pending"] = [item.name for item in session.phases if item.status == "pending"]
     payload["failed_phases"] = [item.name for item in session.phases if item.status == "failed"]
+    payload["cancelled_phases"] = [item.name for item in session.phases if item.status == "cancelled"]
     context = dict(session.apply_context or {})
     payload["validation_mode"] = str(context.get("validation_mode") or "standalone")
     payload["artifact"] = context.get("artifact") or context.get("artifacts") or ""
@@ -747,6 +997,8 @@ def status_payload(session: ValidationSession) -> dict[str, Any]:
     payload["resource_profile"] = str(session.options.get("validation_resource_profile") or session.options.get("resource_profile") or "automatic")
     payload["minimum_phase"] = str(context.get("minimum_phase") or "finalize")
     payload["safe_checkpoint"] = not session.failed and session.status in {"created", "paused", "completed"}
+    payload["interrupted_phases"] = [item.name for item in session.phases if item.interruption_count > 0]
+    payload["interruption_count"] = sum(item.interruption_count for item in session.phases)
     return payload
 
 
@@ -777,8 +1029,9 @@ def status_text(session: ValidationSession) -> str:
         lines.append(f"Recovery: available ({session.transaction_path})")
     lines.append("Phases:")
     for item in session.phases:
-        marker = {"succeeded": "ok", "skipped": "skip", "failed": "FAIL", "running": "run"}.get(item.status, "wait")
-        lines.append(f"  [{marker:4}] {item.index}/{item.total} {item.label}")
+        marker = {"succeeded": "ok", "skipped": "skip", "failed": "FAIL", "running": "run", "cancelled": "stop"}.get(item.status, "wait")
+        retry_note = f" (retry after {item.interruption_count} interruption(s))" if item.status == "pending" and item.interruption_count else ""
+        lines.append(f"  [{marker:4}] {item.index}/{item.total} {item.label}{retry_note}")
     return "\n".join(lines)
 
 
@@ -800,6 +1053,7 @@ def checkpoint_text(session: ValidationSession) -> str:
         f"Minimum phase: {payload.get('minimum_phase') or 'finalize'}",
         f"Resource profile: {payload.get('resource_profile') or 'automatic'}",
         f"Recovery available: {'yes' if payload.get('recovery_available') or session.options.get('recovery_available') else 'no'}",
+        f"Recovered interruptions: {payload.get('interruption_count') or 0}",
         f"Safe checkpoint: {'yes' if payload.get('safe_checkpoint') else 'no'}",
     ])
 
@@ -879,16 +1133,31 @@ def parse_duration_seconds(value: str | int | float | None) -> float:
 
 def pause_result(session: ValidationSession, reason: str, *, require_complete: bool = False) -> OperationResult:
     next_phase = session.next_pending()
+    completed_records = [item for item in session.phases if item.status in _TERMINAL_PHASE_STATES]
+    completed_count = len(completed_records)
+    latest = max(completed_records, key=lambda item: item.index) if completed_records else None
+    latest_line = (
+        f"Last completed: phase {latest.index} of {latest.total} · {latest.label}\n"
+        if latest is not None
+        else "Last completed: none\n"
+    )
+    next_line = (
+        f"Next phase: {next_phase.index} of {next_phase.total} · {next_phase.label}"
+        if next_phase is not None
+        else "Next phase: none"
+    )
     return OperationResult(
         "validation-paused",
         ["devtool", "resume-validation"],
         1 if require_complete else 0,
         0.0,
         (
-            f"Validation session {session.session_id} paused.\n"
-            f"reason: {reason}\n"
-            f"completed: {sum(item.status in _TERMINAL_PHASE_STATES for item in session.phases)}/{len(session.phases)}\n"
-            f"next_phase: {next_phase.name if next_phase else '-'}"
+            "VALIDATION PAUSED AT A PHASE BOUNDARY\n"
+            f"Session: {session.session_id}\n"
+            f"Reason: {reason}\n"
+            f"Overall progress: {completed_count} of {len(session.phases)} phases completed\n"
+            f"{latest_line}"
+            f"{next_line}"
         ),
         [],
         skipped=not require_complete,
@@ -910,12 +1179,19 @@ def pause_result(session: ValidationSession, reason: str, *, require_complete: b
 
 
 def completion_result(session: ValidationSession) -> OperationResult:
+    total = len(session.phases)
     return OperationResult(
         "validation-session-complete",
         ["devtool", "validation-finalize", session.session_id],
         0,
         0.0,
-        f"Validation session {session.session_id} completed all {len(session.phases)} phases.",
+        (
+            "VALIDATION COMPLETE\n"
+            f"Session: {session.session_id}\n"
+            f"Completed: {total} of {total} phases\n"
+            "All validation phases completed successfully.\n"
+            "No pending validation phases remain."
+        ),
         [],
         metadata={
             "validation_session_id": session.session_id,

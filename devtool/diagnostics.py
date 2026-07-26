@@ -88,20 +88,44 @@ _DOTNET_TEST_RESULT_LINE = re.compile(
 _TEST_RUN_FAILED = re.compile(r"\bTest Run Failed\b", re.IGNORECASE)
 
 
+def _make_relativizer(repo_root: Path):
+    """Return a cheap lexical path formatter for one diagnostics batch.
+
+    ``parse_issues`` may process tens of thousands of unique paths. Rebuilding
+    ``Path`` objects and the normalized repository root for every match is
+    needlessly expensive on Android storage, so the batch parser keeps one
+    string-only closure. Paths outside the repository retain their original
+    spelling, matching the historical public behavior.
+    """
+
+    root = os.path.normpath(os.path.abspath(os.path.expanduser(os.fspath(repo_root))))
+    prefix = root.rstrip(os.sep) + os.sep
+
+    def format_path(path_text: str) -> str:
+        if not path_text or path_text == "-":
+            return "-"
+        try:
+            expanded = os.path.expanduser(path_text)
+            if os.path.isabs(expanded):
+                normalized = os.path.normpath(expanded)
+                if normalized == root:
+                    return "."
+                if normalized.startswith(prefix):
+                    return normalized[len(prefix):]
+                return path_text
+
+            normalized = os.path.normpath(expanded)
+            if normalized == ".." or normalized.startswith(".." + os.sep):
+                return path_text
+            return normalized
+        except (OSError, ValueError):
+            return path_text
+
+    return format_path
+
+
 def relativize(repo_root: Path, path_text: str) -> str:
-    if not path_text or path_text == "-":
-        return "-"
-    try:
-        # Diagnostic paths are display metadata, not filesystem authorities.
-        # Normalize lexically instead of resolving every unique path through
-        # the filesystem; large builds commonly contain tens of thousands of
-        # distinct diagnostics and Path.resolve() dominates parse time.
-        root = Path(os.path.abspath(os.path.expanduser(os.fspath(repo_root))))
-        expanded = os.path.expanduser(path_text)
-        path = Path(os.path.normpath(expanded if os.path.isabs(expanded) else os.path.join(root, expanded)))
-        return str(path.relative_to(root))
-    except (OSError, ValueError):
-        return path_text
+    return _make_relativizer(repo_root)(path_text)
 
 
 def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]:
@@ -112,6 +136,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
     aar_dependencies: list[tuple[str, int]] = []
     aar_current: tuple[str, int] | None = None
     lines = output.splitlines()
+    relative_path = _make_relativizer(repo_root)
     index = 0
 
     while index < len(lines):
@@ -126,7 +151,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 issues.append(Issue(
                     "error",
                     command_name,
-                    relativize(repo_root, match.group("file")),
+                    relative_path(match.group("file")),
                     "PYTEST",
                     match.group("message").strip(),
                 ))
@@ -139,7 +164,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 issues.append(Issue(
                     match.group("severity").lower(),
                     command_name,
-                    relativize(repo_root, match.group("file")),
+                    relative_path(match.group("file")),
                     "ANDROID",
                     match.group("message").strip(),
                     line=int(match.group("line")),
@@ -154,7 +179,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 issues.append(Issue(
                     "warning",
                     command_name,
-                    relativize(repo_root, location.group("file")),
+                    relative_path(location.group("file")),
                     match.group("code").upper(),
                     match.group("message").strip(),
                     line=int(location.group("line")),
@@ -168,7 +193,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 issues.append(Issue(
                     severity=match.group("severity").lower(),
                     command=command_name,
-                    file=relativize(repo_root, match.group("file")),
+                    file=relative_path(match.group("file")),
                     code=match.group("code"),
                     message=match.group("message").strip(),
                     line=int(match.group("line")),
@@ -256,7 +281,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 issues.append(Issue(
                     severity,
                     command_name,
-                    relativize(repo_root, match.group("file")),
+                    relative_path(match.group("file")),
                     (match.group("code") or "MYPY").upper(),
                     match.group("message").strip(),
                     line=int(match.group("line")),
@@ -273,7 +298,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 issues.append(Issue(
                     severity,
                     command_name,
-                    relativize(repo_root, match.group("file")),
+                    relative_path(match.group("file")),
                     "CC",
                     match.group("message").strip(),
                     line=int(match.group("line")),
@@ -286,7 +311,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             issues.append(Issue(
                 severity=match.group("severity").lower(),
                 command=command_name,
-                file=relativize(repo_root, match.group("file")),
+                file=relative_path(match.group("file")),
                 code=match.group("code"),
                 message=match.group("message").strip(),
                 line=int(match.group("line")),
@@ -326,7 +351,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             issues.append(Issue(
                 "error",
                 command_name,
-                relativize(repo_root, match.group("file")),
+                relative_path(match.group("file")),
                 "PYTEST",
                 match.group("message").strip(),
             ))
@@ -335,7 +360,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
 
         match = _UNITTEST_FAILURE.match(stripped)
         if match:
-            issues.append(Issue("error", command_name, relativize(repo_root, match.group("file")), "UNITTEST", stripped))
+            issues.append(Issue("error", command_name, relative_path(match.group("file")), "UNITTEST", stripped))
             index += 1
             continue
 
@@ -346,7 +371,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             issues.append(Issue(
                 severity,
                 command_name,
-                relativize(repo_root, match.group("file")),
+                relative_path(match.group("file")),
                 "KOTLIN",
                 match.group("message").strip(),
                 line=line_number,
@@ -359,7 +384,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             issues.append(Issue(
                 match.group("severity").lower(),
                 command_name,
-                relativize(repo_root, match.group("file")),
+                relative_path(match.group("file")),
                 "ANDROID",
                 match.group("message").strip(),
                 line=int(match.group("line")),
@@ -372,7 +397,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             issues.append(Issue(
                 match.group("severity").lower(),
                 command_name,
-                relativize(repo_root, match.group("file")),
+                relative_path(match.group("file")),
                 "MANIFEST",
                 match.group("message").strip(),
                 line=int(match.group("line")),
@@ -388,7 +413,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             issues.append(Issue(
                 severity,
                 command_name,
-                relativize(repo_root, match.group("file")),
+                relative_path(match.group("file")),
                 "CC",
                 match.group("message").strip(),
                 line=int(match.group("line")),
@@ -404,7 +429,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             issues.append(Issue(
                 severity,
                 command_name,
-                relativize(repo_root, match.group("file")),
+                relative_path(match.group("file")),
                 (match.group("code") or "MYPY").upper(),
                 match.group("message").strip(),
                 line=int(match.group("line")),
@@ -421,7 +446,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             issues.append(Issue(
                 severity,
                 command_name,
-                relativize(repo_root, match.group("file")),
+                relative_path(match.group("file")),
                 code,
                 match.group("message").strip(),
                 line=int(match.group("line")),
@@ -466,7 +491,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
 
         match = _CARGO_FILE.match(stripped)
         if match and cargo_pending is not None:
-            cargo_pending.file = relativize(repo_root, match.group("file"))
+            cargo_pending.file = relative_path(match.group("file"))
             cargo_pending.line = int(match.group("line"))
             index += 1
             continue

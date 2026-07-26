@@ -511,6 +511,19 @@ def _phase_from_event(event: dict[str, Any]) -> str:
     return _coerce_str(phase.get("name") or event.get("phase_name") or event.get("command"))
 
 
+def _validation_phase_counter(event: dict[str, Any]) -> str:
+    """Return a human phase counter for resumable validation events."""
+
+    phase = event.get("phase") if isinstance(event.get("phase"), dict) else {}
+    result = event.get("result") if isinstance(event.get("result"), dict) else {}
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    index = _coerce_int(phase.get("index") or metadata.get("validation_phase_index"))
+    total = _coerce_int(phase.get("total") or metadata.get("validation_phase_total"))
+    if index is None or total is None or index <= 0 or total <= 0:
+        return ""
+    return f"Phase {index} of {total} · "
+
+
 def _event_message(event: dict[str, Any]) -> str:
     progress = event.get("progress") if isinstance(event.get("progress"), dict) else {}
     return _coerce_str(event.get("message") or progress.get("detail") or event.get("text"))
@@ -600,21 +613,23 @@ def friendly_event_line(event: dict[str, Any]) -> str | None:
             return parsed
 
     if event_type == "phase-started":
-        return f"Starting {phase}" if phase else "Starting next step"
+        counter = _validation_phase_counter(event)
+        return f"{counter}Starting {phase}" if phase else f"{counter}Starting next step"
 
     if event_type == "phase-finished":
+        counter = _validation_phase_counter(event)
         if _phase_from_event(event).strip().lower().replace("_", "-") == "apply-rollback":
             if status in {"ok", "complete", "completed", "success"}:
                 return "Changes rolled back"
             if status == "failed":
                 return "Rollback failed"
         if status in {"ok", "complete", "completed", "success"}:
-            return f"{phase} completed" if phase else "Step completed"
+            return f"{counter}{phase} completed" if phase else f"{counter}Step completed"
         if status == "failed":
-            return f"{phase} failed" if phase else "Step failed"
+            return f"{counter}{phase} failed" if phase else f"{counter}Step failed"
         if status == "skipped":
-            return f"{phase} skipped" if phase else "Step skipped"
-        return f"{phase}: {human_status(status)}" if phase else human_status(status)
+            return f"{counter}{phase} skipped" if phase else f"{counter}Step skipped"
+        return f"{counter}{phase}: {human_status(status)}" if phase else f"{counter}{human_status(status)}"
 
     if event_type == "finished":
         if status in {"ok", "complete", "completed", "success"}:

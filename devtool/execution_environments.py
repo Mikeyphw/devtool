@@ -31,6 +31,9 @@ EXECUTION_ENVIRONMENTS = (
 )
 
 _CHROOT_CONTEXT_VALUES = {"chroot", "android-chroot", "termux-chroot"}
+_TERMUX_ROOT_PREFIX = "/data/data/com.termux/"
+_TERMUX_HOME_PREFIX = "/data/data/com.termux/files/home"
+_TERMUX_PREFIX_PREFIX = "/data/data/com.termux/files/usr"
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,8 +114,10 @@ def is_termux_host(env: Mapping[str, str] | None = None) -> bool:
     home = str(env.get("HOME", ""))
     return bool(
         env.get("TERMUX_VERSION")
-        or prefix.startswith("/data/data/com.termux/")
-        or home.startswith("/data/data/com.termux/")
+        or prefix == _TERMUX_PREFIX_PREFIX
+        or prefix.startswith(_TERMUX_PREFIX_PREFIX + "/")
+        or home == _TERMUX_HOME_PREFIX
+        or home.startswith(_TERMUX_HOME_PREFIX + "/")
     )
 
 
@@ -162,7 +167,10 @@ def default_termux_chroot_path_map(env: Mapping[str, str] | None = None) -> tupl
     env = env or os.environ
     mappings = list(_split_path_map(env.get("DEVTOOL_TERMUX_CHROOT_PATH_MAP", "")))
 
-    termux_home = str(env.get("HOME", "")).strip()
+    # Automatic host→guest mappings are meaningful only on the native Termux
+    # host. Desktop Linux must never invent a chroot home mapping from its own
+    # HOME, because that can make ordinary PC paths look chroot-compatible.
+    termux_home = str(env.get("HOME", "")).strip() if is_termux_host(env) else ""
     chroot_home = str(env.get("DEVTOOL_TERMUX_CHROOT_HOME", "")).strip()
     if not chroot_home:
         explicit_user = str(env.get("DEVTOOL_TERMUX_CHROOT_USER", "")).strip()
@@ -250,7 +258,9 @@ def resolve_execution_plan(
     env = env or os.environ
     current = detect_current_environment(env)
     request = normalize_execution_environment(requested if requested and requested != AUTO else configured)
-    mappings = coerce_path_map(path_map or default_termux_chroot_path_map(env))
+    mappings = coerce_path_map(
+        default_termux_chroot_path_map(env) if path_map is None else path_map
+    )
 
     if request == AUTO:
         effective = current
@@ -309,6 +319,12 @@ def preflight_execution(
     if plan.effective == CHROOT:
         if plan.current == CHROOT:
             checks.append(PreflightCheck("chroot-context", "ready", "already inside chroot"))
+        elif plan.current != NATIVE_TERMUX:
+            checks.append(PreflightCheck(
+                "chroot-host",
+                "incompatible",
+                f"chroot execution is available only from native Termux; current environment is {plan.current}",
+            ))
         else:
             executable = shutil.which(os.environ.get("DEVTOOL_CHROOTCTL", "chrootctl"))
             checks.append(PreflightCheck("chrootctl", "ready" if executable else "missing", executable or "chrootctl not found"))
@@ -317,12 +333,9 @@ def preflight_execution(
             if changed:
                 mapping_status = "ready"
                 mapping_detail = mapped
-            elif plan.current == NATIVE_TERMUX:
+            else:
                 mapping_status = "incompatible"
                 mapping_detail = f"no Termux-to-chroot mapping for {repo.resolve()}"
-            else:
-                mapping_status = "optional"
-                mapping_detail = f"identity path assumed: {repo.resolve()}"
             checks.append(PreflightCheck("path-map", mapping_status, mapping_detail))
     elif plan.effective == NATIVE_TERMUX:
         checks.append(PreflightCheck("termux", "ready" if plan.current == NATIVE_TERMUX else "incompatible", plan.current))
@@ -335,6 +348,38 @@ def preflight_execution(
 
     return ExecutionPreflight(plan=plan, checks=tuple(checks))
 
+
+
+def termux_path_leaks(values: Iterable[str]) -> tuple[str, ...]:
+    """Return unique native-Termux paths still present in command material."""
+
+    leaks: list[str] = []
+    for raw in values:
+        text = str(raw or "")
+        if _TERMUX_ROOT_PREFIX not in text:
+            continue
+        for token in text.replace("=", " ").replace(":", " ").split():
+            start = token.find(_TERMUX_ROOT_PREFIX)
+            if start < 0:
+                continue
+            candidate = token[start:].strip("'\";,()[]{}")
+            if candidate and candidate not in leaks:
+                leaks.append(candidate)
+    return tuple(leaks)
+
+
+def assert_chroot_path_safe(values: Iterable[str], *, context: str = "command") -> None:
+    """Reject native-Termux paths before a command executes inside a chroot."""
+
+    leaks = termux_path_leaks(values)
+    if not leaks:
+        return
+    rendered = ", ".join(leaks[:5])
+    suffix = f" (+{len(leaks) - 5} more)" if len(leaks) > 5 else ""
+    raise ValueError(
+        f"{context} contains native Termux path(s) that are not valid inside the chroot: "
+        f"{rendered}{suffix}. Configure guest paths or select native-termux execution."
+    )
 
 def chroot_environment_assignments(chroot_name: str) -> tuple[str, ...]:
     return (

@@ -60,10 +60,10 @@ splits that plan into durable checkpoints:
 
 ```text
 preflight -> dependencies -> compile -> resources -> unit-test -> package
-          -> artifact-check -> lint -> instrumentation -> finalize
+          -> lint -> instrumentation -> finalize
 ```
 
-Each invocation may stop at a phase boundary and continue later. State is stored
+Each invocation may stop at a phase boundary and continue later. Overlay/archive integrity is checked during inspect/apply, not again during repository validation. State is stored
 under `.devtool/state/android-validation/<session-id>/state.json`; the active
 session marker is `.devtool/state/android-validation/active.json`. Gradle's
 project cache, `GRADLE_USER_HOME`, dependency cache, and build outputs are kept.
@@ -298,3 +298,16 @@ instrumentation
 
 See [`TEST_SELECTION.md`](TEST_SELECTION.md) for profiles and framework-native
 class, method, tag, path, failed-test, and changed-file selection.
+
+### Custom AAPT2 warning suppression
+
+When Devtool selects a custom AAPT2 executable, it automatically passes:
+
+```text
+-Pandroid.aapt2FromMavenOverride=<selected-aapt2>
+-Pandroid.suppressUnsupportedOptionWarnings=android.aapt2FromMavenOverride
+```
+
+Existing comma-separated suppressions supplied through Gradle passthrough
+arguments are merged. No suppression property is added when Android Gradle
+Plugin uses its default AAPT2.

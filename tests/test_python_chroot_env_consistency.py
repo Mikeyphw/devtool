@@ -24,7 +24,13 @@ class PythonChrootEnvironmentConsistencyTests(unittest.TestCase):
                 _devtool_chroot_name="",
                 _devtool_chroot_path_map=None,
             )
-            planned = _config_for_validation_planning(config, args)
+            from unittest.mock import patch
+            with patch.dict("os.environ", {
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+            }, clear=True):
+                planned = _config_for_validation_planning(config, args)
         self.assertEqual(planned.execution_environment, "chroot")
         self.assertEqual(planned.chroot_name, "androidos")
 
@@ -43,7 +49,7 @@ class PythonChrootEnvironmentConsistencyTests(unittest.TestCase):
                 environment=str(root / ".devtool" / "venv"),
                 execution_environment="chroot",
             )
-        self.assertEqual(plan.bootstrap_python, "python3.14")
+        self.assertEqual(plan.bootstrap_python, "python3")
 
     def test_venv_restore_installs_build_system_then_project_without_build_isolation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -105,6 +111,6 @@ class PythonChrootVenvBootstrapRegressionTests(unittest.TestCase):
                 environment=str(root / ".devtool" / "venv"),
                 execution_environment="chroot",
             )
-        self.assertEqual(plan.bootstrap_python, "python3.14")
+        self.assertEqual(plan.bootstrap_python, "python3")
         commands = build_sync_command(info, plan, install_project=True)
-        self.assertEqual(commands[0][0], "python3.14")
+        self.assertEqual(commands[0][0], "python3")

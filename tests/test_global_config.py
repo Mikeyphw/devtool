@@ -128,10 +128,15 @@ class GlobalConfigTests(unittest.TestCase):
                 kind="python",
                 runner_options={"termux_chroot": {"project_kinds": ["python"]}},
             )
-            with patch("devtool.android_integration.shutil.which", return_value="/usr/bin/chrootctl"):
+            termux = {
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+            }
+            with patch.dict("os.environ", termux, clear=True), patch("devtool.android_integration.shutil.which", return_value="/usr/bin/chrootctl"):
                 self.assertTrue(should_prefer_android_chroot(config))
             default_config = ProjectConfig(repo_root=Path(tmp), kind="python", runner_options={})
-            with patch("devtool.android_integration.shutil.which", return_value="/usr/bin/chrootctl"):
+            with patch.dict("os.environ", termux, clear=True), patch("devtool.android_integration.shutil.which", return_value="/usr/bin/chrootctl"):
                 self.assertFalse(should_prefer_android_chroot(default_config))
 
     def test_global_config_template_documents_chroot_project_kinds(self) -> None:

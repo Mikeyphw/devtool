@@ -373,8 +373,10 @@ def test_android_builder_exposes_project_environment_and_selective_tests() -> No
     for field in ("projectType", "executionEnvironment", "testProfile", "testSelectors", "instrumented"):
         assert field in config
         assert field in settings
-    assert 'sectionTitle("Test selection")' in main
-    assert "Command preview" in main
+    assert 'sectionTitle("3 · Test selection")' in main
+    assert "Discover tests" in main
+    assert "Show exact command" in main
+    assert "Generated devtool command preview" in main
 
 
 def test_android_notification_and_app_preserve_gradle_task_totals() -> None:

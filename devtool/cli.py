@@ -50,11 +50,13 @@ from .cache_cleanup import cleanup_devtool_caches
 from .artifact_validation import run_artifact_validation_script
 from .artifact_inspection import inspect_artifact
 from .detect import detect_repo, render_detect_text
-from .execution import apply_matrix, wrap_specs_for_chroot
+from .execution import apply_matrix
 from .execution_environments import (
     AUTO as EXECUTION_AUTO,
     CHROOT as EXECUTION_CHROOT,
+    NATIVE_TERMUX as EXECUTION_NATIVE_TERMUX,
     EXECUTION_ENVIRONMENTS,
+    assert_chroot_path_safe,
     detect_current_environment,
     inside_chroot,
     preflight_execution,
@@ -90,7 +92,6 @@ from .validation_sessions import (
     ValidationSession,
     ValidationSessionError,
     annotate_specs as annotate_validation_specs,
-    clear_active_session,
     completion_result as validation_completion_result,
     create_session as create_validation_session,
     guard_reason as validation_guard_reason,
@@ -98,13 +99,16 @@ from .validation_sessions import (
     load_session as load_validation_session,
     mark_aborted as mark_validation_aborted,
     mark_completed as mark_validation_completed,
+    mark_failure_terminal as mark_validation_failure_terminal,
     mark_paused as mark_validation_paused,
     mark_phase_running,
     parse_duration_seconds,
     pause_result as validation_pause_result,
     reconcile_inputs as reconcile_validation_inputs,
     record_phase_result,
+    recover_interrupted_phases as recover_interrupted_validation_phases,
     retry_failed as retry_failed_validation,
+    save_session as save_validation_session,
     select_phase_keys,
     session_operation_results,
     spec_map as validation_spec_map,
@@ -196,6 +200,7 @@ def split_runner_passthrough_args(raw_args: list[str]) -> tuple[list[str], list[
 def _add_apply_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact; required artifact validation is enabled automatically")
     cmd.add_argument("--defer-validate", action="store_true", help="Apply now, preserve rollback state, and create a resumable validation session without running a phase")
+    cmd.add_argument("--static-validate", action="store_true", help="Apply artifact and run only artifact/static validation scripts without Gradle validation phases")
     cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested or required by the artifact manifest")
     cmd.add_argument("--test-profile", default="", help="Saved test profile used by artifact validation")
     _add_validation_test_selection_flags(cmd)
@@ -573,7 +578,7 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--restart-session", action="store_true", help="Replace an existing non-transactional validation session")
     cmd.add_argument("--retry-failed", action="store_true", help="Retry the cached failed phase and every dependent phase")
     selection = cmd.add_mutually_exclusive_group()
-    selection.add_argument("--next", dest="validation_next", action="store_true", help="Run only the next pending phase")
+    selection.add_argument("--next", dest="validation_next", action="store_true", help="Run only the next pending phase (the default for `validate continue`)")
     selection.add_argument("--phase", default="", help="Run a named phase and every still-pending prerequisite")
     selection.add_argument("--phase-only", default="", help="Run only one named pending phase without automatically including prerequisites")
     selection.add_argument("--through", default="", help="Run pending phases through this phase")
@@ -1571,7 +1576,9 @@ def _normalize_command_aliases(args: argparse.Namespace) -> None:
                 args.sequential = True
                 args.restart_session = True
             elif action == "next":
+                args._devtool_validation_mode = "resume"
                 args.sequential = True
+                args.resume = True
                 args.validation_next = True
             elif action in {"resume", "continue"}:
                 args._devtool_validation_mode = "resume"
@@ -1811,6 +1818,11 @@ def _config_for_validation_planning(config: ProjectConfig, args: argparse.Namesp
     """
 
     plan = _execution_plan_for_args(config, args)
+    if plan.uses_chroot and plan.current not in {EXECUTION_NATIVE_TERMUX, EXECUTION_CHROOT}:
+        raise SystemExit(
+            "Chroot validation is available only from native Termux. "
+            f"Current environment: {plan.current}. Use --execution-environment desktop-linux on this host."
+        )
     effective = plan.effective
     chroot_name = plan.chroot_name or config.chroot_name
     if plan.uses_chroot:
@@ -1842,6 +1854,7 @@ def _matrix_items(args: argparse.Namespace) -> list[str]:
 
 def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
     requested = str(getattr(args, "execution_environment", EXECUTION_AUTO) or EXECUTION_AUTO)
+    auto_promoted_to_chroot = False
     if bool(getattr(args, "instrumented", False)):
         requested = detect_current_environment()
     if bool(getattr(args, "host", False)):
@@ -1849,10 +1862,11 @@ def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
     elif str(getattr(args, "chroot", "") or "").strip():
         requested = EXECUTION_CHROOT
     elif requested == EXECUTION_AUTO and str(config.execution_environment or EXECUTION_AUTO) == EXECUTION_AUTO:
-        if detect_current_environment() == "native-termux":
+        if detect_current_environment() == EXECUTION_NATIVE_TERMUX:
             from .android_integration import should_prefer_android_chroot
             if should_prefer_android_chroot(config):
                 requested = EXECUTION_CHROOT
+                auto_promoted_to_chroot = True
 
     chroot_name = str(
         getattr(args, "chroot", "")
@@ -1860,13 +1874,41 @@ def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
         or config.chroot_name
         or "androidos"
     ).strip()
-    return resolve_execution_plan(
+    plan = resolve_execution_plan(
         requested=requested,
         configured=config.execution_environment,
         chroot_name=chroot_name,
         device_serial=config.device_serial,
         path_map=getattr(args, "_devtool_chroot_path_map", None),
     )
+
+    # Auto mode is a preference, not a trap. If the repository is outside all
+    # configured Termux→chroot mappings, keep execution native rather than
+    # selecting chroot and failing later with host-only paths. Explicit
+    # ``--chroot`` or configured ``execution_environment = "chroot"`` remains
+    # strict and is rejected by the normal preflight when it cannot be mapped.
+    if auto_promoted_to_chroot and plan.uses_chroot:
+        path_check = next(
+            (item for item in preflight_execution(config.repo_root, plan).checks if item.name == "path-map"),
+            None,
+        )
+        if path_check is not None and path_check.status == "incompatible":
+            fallback = resolve_execution_plan(
+                requested=EXECUTION_NATIVE_TERMUX,
+                configured=EXECUTION_NATIVE_TERMUX,
+                chroot_name=chroot_name,
+                device_serial=config.device_serial,
+                path_map=getattr(args, "_devtool_chroot_path_map", None),
+            )
+            return replace(
+                fallback,
+                requested=EXECUTION_AUTO,
+                reason=(
+                    "auto kept native Termux because the repository path is not "
+                    "mapped into the configured chroot"
+                ),
+            )
+    return plan
 
 
 def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec], args: argparse.Namespace) -> list[CommandSpec]:
@@ -1893,7 +1935,7 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
     if plan.uses_chroot and plan.current != EXECUTION_CHROOT:
         host_specs = [spec for spec in specs if str(spec.metadata.get("execution_environment") or "") == "android-device"]
         chroot_specs = [spec for spec in specs if spec not in host_specs]
-        if bool(getattr(args, "_devtool_termux_host_chroot_backend", False)):
+        if plan.current == EXECUTION_NATIVE_TERMUX:
             from .termux_chroot_runner import wrap_specs_for_termux_host_chroot
 
             chroot_specs = wrap_specs_for_termux_host_chroot(
@@ -1903,11 +1945,24 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
                 path_map=[mapping.as_tuple() for mapping in plan.path_map],
             )
         else:
-            chroot_specs = wrap_specs_for_chroot(chroot_specs, plan.chroot_name)
+            # preflight_execution rejects this path. Keep the branch defensive
+            # for callers that bypass preflight in custom integrations.
+            raise SystemExit(
+                "Chroot execution is available only from native Termux; "
+                f"current environment is {plan.current}."
+            )
         # Preserve original phase ordering when host-only instrumentation follows
         # chroot build/test phases.
         wrapped_iter = iter(chroot_specs)
         specs = [spec if spec in host_specs else next(wrapped_iter) for spec in specs]
+    elif plan.current == EXECUTION_CHROOT:
+        # Commands launched directly inside the chroot must never inherit
+        # native-Termux paths from repository/global configuration.
+        for spec in specs:
+            assert_chroot_path_safe(
+                [str(spec.cwd or ""), *spec.argv, *spec.env.values()],
+                context=f"{spec.name} execution plan",
+            )
 
     for spec in specs:
         metadata = dict(spec.metadata)
@@ -2248,6 +2303,9 @@ def _load_or_create_validation_session(
             raise ValidationSessionError("No active validation session exists.")
         if transaction_path and session.transaction_path and transaction_path != session.transaction_path:
             raise ValidationSessionError("The active validation session belongs to a different apply transaction.")
+        recovered = recover_interrupted_validation_phases(session)
+        if recovered and session.transaction_path:
+            _mark_session_transaction_pending(session)
         specs = sync_validation_plan(session, specs)
         reconcile_validation_inputs(session, config)
         if session.failed:
@@ -2266,6 +2324,55 @@ def _session_pause_metadata(session: ValidationSession) -> tuple[int, int, str]:
     completed = sum(item.status in {"succeeded", "skipped"} for item in session.phases)
     next_phase = session.next_pending()
     return completed, len(session.phases), next_phase.name if next_phase else ""
+
+
+def _validation_console_enabled(args: argparse.Namespace) -> bool:
+    """Return whether human-facing validation milestone banners may be printed."""
+
+    return not bool(getattr(args, "json", False) or getattr(args, "machine", ""))
+
+
+def _announce_validation_phase_started(args: argparse.Namespace, phase: object) -> None:
+    if not _validation_console_enabled(args):
+        return
+    index = int(getattr(phase, "index", 0) or 0)
+    total = int(getattr(phase, "total", 0) or 0)
+    label = str(getattr(phase, "label", "validation") or "validation")
+    console.print()
+    console.print(f"[bold cyan]▶ VALIDATION PHASE {index} OF {total}[/bold cyan]")
+    console.print(f"[bold]{label}[/bold] [dim]started[/dim]")
+
+
+def _announce_validation_phase_finished(args: argparse.Namespace, session: ValidationSession, phase: object) -> None:
+    if not _validation_console_enabled(args):
+        return
+    index = int(getattr(phase, "index", 0) or 0)
+    total = int(getattr(phase, "total", 0) or 0)
+    label = str(getattr(phase, "label", "validation") or "validation")
+    status = str(getattr(phase, "status", "") or "")
+    completed = sum(item.status in {"succeeded", "skipped"} for item in session.phases)
+    if status == "succeeded":
+        console.print(f"[bold green]✓ VALIDATION PHASE {index} OF {total} COMPLETED[/bold green]")
+        console.print(f"[green]{label}[/green] [dim]· Overall {completed} of {total} phases complete[/dim]")
+    elif status == "skipped":
+        console.print(f"[bold yellow]○ VALIDATION PHASE {index} OF {total} SKIPPED[/bold yellow]")
+        console.print(f"[yellow]{label}[/yellow] [dim]· Overall {completed} of {total} phases complete[/dim]")
+    elif status == "pending":
+        console.print(f"[bold yellow]Ⅱ VALIDATION PHASE {index} OF {total} INTERRUPTED[/bold yellow]")
+        console.print(f"[yellow]{label} remains pending and can be resumed.[/yellow]")
+    else:
+        console.print(f"[bold red]✗ VALIDATION PHASE {index} OF {total} FAILED[/bold red]")
+        console.print(f"[red]{label}[/red]")
+
+
+def _announce_validation_session_completed(args: argparse.Namespace, session: ValidationSession) -> None:
+    if not _validation_console_enabled(args):
+        return
+    total = len(session.phases)
+    console.print()
+    console.print("[bold green]════════ VALIDATION COMPLETE ════════[/bold green]")
+    console.print(f"[bold green]✓ {total} of {total} phases completed successfully[/bold green]")
+    console.print(f"[dim]Session {session.session_id} is finalized. No validation phases remain.[/dim]")
 
 
 def _mark_session_transaction_pending(session: ValidationSession) -> None:
@@ -2362,14 +2469,21 @@ def _finalize_validation_session(
         )
         results.append(rollback_result)
         raw_output += "\n\n" + rollback_raw
-        session.status = "failed"
         session.last_error = "resumable validation finalization failed"
-        clear_active_session(session)
+        mark_validation_failure_terminal(
+            session,
+            "validation failed; apply transaction rollback completed"
+            if rollback_result.returncode == 0
+            else "validation failed; apply transaction rollback failed and requires recovery",
+            rollback_attempted=True,
+            rollback_succeeded=rollback_result.returncode == 0,
+        )
         return results, raw_output
 
     results, raw_output = _maybe_commit_after_apply(config, final_args, results, raw_output, log_path=log_path)
     if session.transaction_path:
         if any(result.returncode != 0 for result in results):
+            rollback_result: OperationResult | None = None
             if rollback_enabled:
                 rollback_result, rollback_raw = _run_transaction_rollback(
                     session.transaction_path,
@@ -2379,9 +2493,18 @@ def _finalize_validation_session(
                 )
                 results.append(rollback_result)
                 raw_output += "\n\n" + rollback_raw
-            session.status = "failed"
             session.last_error = "post-validation commit failed"
-            clear_active_session(session)
+            if rollback_result is not None:
+                mark_validation_failure_terminal(
+                    session,
+                    "post-validation commit failed; apply transaction rollback completed"
+                    if rollback_result.returncode == 0
+                    else "post-validation commit failed; apply transaction rollback failed and requires recovery",
+                    rollback_attempted=True,
+                    rollback_succeeded=rollback_result.returncode == 0,
+                )
+            else:
+                save_validation_session(session, active=True)
             return results, raw_output
         mark_transaction_completed(session.transaction_path)
 
@@ -2463,6 +2586,7 @@ def _run_validation_session(
         if spec is None:
             raise ValidationSessionError(f"Validation plan no longer contains phase key: {key}")
         phase = mark_phase_running(session, key)
+        _announce_validation_phase_started(args, phase)
         if session.transaction_path:
             mark_transaction_validation_running(
                 session.transaction_path,
@@ -2509,11 +2633,14 @@ def _run_validation_session(
                 shutdown_dotnet=False,
             )
         result = phase_results[-1]
-        record_phase_result(session, key, result)
+        recorded_phase = record_phase_result(session, key, result)
+        _announce_validation_phase_finished(args, session, recorded_phase)
         results.extend(phase_results)
         if phase_raw:
             raw_sections.append(phase_raw)
         if result.returncode != 0:
+            if recorded_phase.status == "pending" and recorded_phase.last_interrupted_at:
+                pause_reason = session.paused_reason or f"{recorded_phase.label} was interrupted and remains pending"
             break
         if not session.complete:
             _mark_session_transaction_pending(session)
@@ -2538,7 +2665,14 @@ def _run_validation_session(
             )
             results.append(rollback_result)
             raw_output += ("\n\n" if raw_output else "") + rollback_raw
-            clear_active_session(session)
+            mark_validation_failure_terminal(
+                session,
+                "validation phase failed; apply transaction rollback completed"
+                if rollback_result.returncode == 0
+                else "validation phase failed; apply transaction rollback failed and requires recovery",
+                rollback_attempted=True,
+                rollback_succeeded=rollback_result.returncode == 0,
+            )
         return results, raw_output, session
 
     if session.complete:
@@ -2551,6 +2685,8 @@ def _run_validation_session(
             log_path=log_path,
             tasker_progress=tasker_progress,
         )
+        if session.status == "completed":
+            _announce_validation_session_completed(args, session)
         return results, raw_output, session
 
     pause_reason = pause_reason or "requested phase boundary reached"
@@ -2568,7 +2704,11 @@ def _run_validation_session(
 
 def _validation_management_session(config: ProjectConfig, args: argparse.Namespace) -> ValidationSession:
     requested = str(getattr(args, "session", "") or "").strip()
-    return load_validation_session(config.repo_root, requested) if requested else load_active_session(config.repo_root, required=True)
+    session = load_validation_session(config.repo_root, requested) if requested else load_active_session(config.repo_root, required=True)
+    recovered = recover_interrupted_validation_phases(session)
+    if recovered and session.transaction_path:
+        _mark_session_transaction_pending(session)
+    return session
 
 
 def _handle_validation_status(config: ProjectConfig, args: argparse.Namespace, *, machine: bool) -> int:
@@ -4601,6 +4741,12 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
     """
     if bool(getattr(args, "no_auto_chroot", False)) or inside_chroot():
         return None
+    # Auto/full chroot routing is an Android Termux feature. Never inspect or
+    # invoke chrootctl from ordinary desktop Linux, even when repo/global config
+    # requests chroot execution. Generic execution preflight will report an
+    # explicit chroot request as incompatible later.
+    if detect_current_environment() != EXECUTION_NATIVE_TERMUX:
+        return None
     requested_environment = str(getattr(args, "execution_environment", EXECUTION_AUTO) or EXECUTION_AUTO)
     if requested_environment == EXECUTION_AUTO and not bool(getattr(args, "host", False)) and not str(getattr(args, "chroot", "") or "").strip():
         try:
@@ -4684,9 +4830,13 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
             args.copy_via = "termux"
         return None
     except Exception as exc:
-        if os.environ.get("DEVTOOL_AUTO_CHROOT_STRICT", "0").strip().lower() in {"1", "true", "yes"}:
-            raise
-        console.print(f"[yellow]Auto chroot unavailable; running on host: {exc}[/yellow]")
+        explicit = (
+            requested_environment == EXECUTION_CHROOT
+            or bool(str(getattr(args, "chroot", "") or "").strip())
+        )
+        if explicit or os.environ.get("DEVTOOL_AUTO_CHROOT_STRICT", "0").strip().lower() in {"1", "true", "yes"}:
+            raise SystemExit(f"Chroot execution requested but unavailable: {exc}") from exc
+        console.print(f"[yellow]Auto chroot unavailable; running in native Termux: {exc}[/yellow]")
     return None
 
 
@@ -5104,8 +5254,8 @@ def main(argv: list[str] | None = None) -> int:
                     "An applied artifact is waiting for resumable validation.\n"
                     f"transaction: {stale_transaction}\n"
                     f"session: {transaction_session or '-'}\n"
-                    "Resume it with 'devtool validate continue' or abort it with 'devtool validation-abort'. "
-                    "The pending changes were not rolled back automatically."
+                    "Run 'devtool validate continue' once per phase, or abort it with 'devtool validation-abort'. "
+                    "Interrupted validation phases remain pending and the applied changes are not rolled back automatically."
                 ),
                 [],
                 failure_kind="validation_pending",
@@ -5155,6 +5305,28 @@ def main(argv: list[str] | None = None) -> int:
             _release_single_run_lock(args)
             return 1
 
+        # Applying another artifact may intentionally clean up a stale apply
+        # transaction and continue with the new transactional operation. Other
+        # commands stop at the recovery boundary: silently running restore,
+        # build, test, or validation against a just-rolled-back tree is
+        # surprising and can hide why repository state changed.
+        if args.command not in APPLY_COMMANDS:
+            finished_at = datetime.now(timezone.utc)
+            recovery_output = (
+                rollback_raw
+                + "\n\nRequested command was not executed. Re-run it after reviewing the restored repository."
+            )
+            totals, summary_text, json_text, machine_text = _emit_summary(
+                [rollback_result], config, as_json=False, payload_mode=effective_payload,
+                raw_output=recovery_output, command=args.command, started_at=started_at,
+                finished_at=finished_at, machine_format="pretty",
+            )
+            _write_json_payload(args.machine_file, machine_text)
+            _maybe_copy(recovery_output, summary_text, json_text, args)
+            _finish_live_progress(tasker_progress, totals=totals, results=[rollback_result])
+            _release_single_run_lock(args)
+            return 1
+
         stale_recovery_results = [rollback_result]
         stale_recovery_raw = rollback_raw
 
@@ -5164,6 +5336,8 @@ def main(argv: list[str] | None = None) -> int:
             _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
 
     if args.command in APPLY_COMMANDS:
+        if bool(getattr(args, "static_validate", False)):
+            args.validate_only = False
         if bool(getattr(args, "defer_validate", False)):
             try:
                 results, raw_output = _run_deferred_apply(
@@ -5271,6 +5445,24 @@ def main(argv: list[str] | None = None) -> int:
                     if expectation is not None:
                         results.append(expectation)
                         raw_output += "\n\n=== Validation expectations ===\n" + expectation.output
+                if getattr(args, "static_validate", False) and results and results[-1].returncode == 0:
+                    artifact_path = resolve_artifact_path(args.artifact)
+                    manifest = read_artifact_manifest(artifact_path)
+                    script_result, script_raw = _artifact_script_result(
+                        config, args, artifact_path, manifest,
+                        target=str(getattr(args, "target", "") or artifact_target(manifest)),
+                        solution=str(getattr(args, "solution", "") or artifact_solution(manifest)),
+                        log_path=log_path,
+                        tasker_progress=tasker_progress,
+                    )
+                    if script_result is not None:
+                        results.append(script_result)
+                        raw_output += "\n\n" + script_raw
+                    expectation = _validation_expectation_result(manifest, results)
+                    if expectation is not None:
+                        results.append(expectation)
+                        raw_output += "\n\n=== Validation expectations ===\n" + expectation.output
+
                 validation_policy = artifact_validation_policy(read_artifact_manifest(args.artifact))
                 rollback_enabled = _rollback_on_failure_enabled(args, validation_policy)
                 if transaction_path and rollback_enabled and _has_failed_after_apply(results):

@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .config import discover_dotnet_candidates, discover_gradle_roots, detect_project_kind, find_config
+from .config import discover_dotnet_candidates, discover_gradle_roots, detect_project_kind, detect_project_kind_details, find_config
 
 IGNORED_DIRS = {".git", ".devtool", "bin", "obj", "node_modules", "venv", ".venv", "dist", "build", "__pycache__"}
 
@@ -82,11 +82,15 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
     test_projects = [p for p in csprojs if "test" in p.name.lower() or "tests" in {part.lower() for part in p.parts}]
     runnable_projects = [p for p in csprojs if p not in test_projects]
     config_path = find_config(repo_root, None)
+    kind_details = detect_project_kind_details(repo_root)
 
     return {
         "repo_root": str(repo_root),
         "repo_name": repo_root.name,
-        "kind": detect_project_kind(repo_root),
+        "kind": kind_details["kind"],
+        "kind_candidates": list(kind_details["candidates"]),
+        "root_kind_candidates": list(kind_details["root_candidates"]),
+        "kind_reason": kind_details["reason"],
         "git": (repo_root / ".git").exists(),
         "git_dirty": _git_dirty(repo_root),
         "config": _rel(repo_root, config_path) if config_path else "",
@@ -151,6 +155,9 @@ def render_detect_text(info: dict[str, Any]) -> str:
     lines = [
         f"repo: {info.get('repo_root', '-')}",
         f"kind: {info.get('kind', '-')}",
+        f"kind_reason: {info.get('kind_reason', '-')}",
+        f"kind_candidates: {', '.join(info.get('kind_candidates', [])) or '-'}",
+        f"root_kind_candidates: {', '.join(info.get('root_kind_candidates', [])) or '-'}",
         f"git: {'yes' if info.get('git') else 'no'} dirty={info.get('git_dirty')}",
         f"config: {info.get('config') or '-'}",
         f"solutions: {dotnet.get('solution_count', 0)}",

@@ -229,17 +229,59 @@ def _resolve_termux_dotnet() -> str | None:
 
 
 def _termux_proot_etc_dir() -> Path:
+    """Return a writable synthetic ``/etc`` tree for Termux dotnet.
+
+    The normal location lives below Termux ``PREFIX`` or Devtool's state
+    directory. Tests, stripped environments, and unusual launchers may expose
+    a read-only HOME such as ``/usr`` while still explicitly declaring
+    ``TERMUX_VERSION``. In that case, fall back to the process temporary
+    directory instead of attempting to create ``/usr/var/devtool``.
+    """
+
+    candidates: list[Path] = []
+    override = os.environ.get("DEVTOOL_TERMUX_PROOT_ROOT", "").strip()
+    if override:
+        candidates.append(Path(override).expanduser())
+
     prefix = os.environ.get("PREFIX", "").strip()
     if prefix:
-        base = Path(prefix) / "var" / "devtool" / "proot"
-    else:
-        base = state_dir() / "proot"
-    etc_dir = base / "etc"
-    etc_dir.mkdir(parents=True, exist_ok=True)
-    os_release = etc_dir / "os-release"
-    if not os_release.exists() or os_release.read_text(encoding="utf-8", errors="ignore") != _TERMUX_DOTNET_OS_RELEASE:
-        os_release.write_text(_TERMUX_DOTNET_OS_RELEASE, encoding="utf-8")
-    return etc_dir
+        candidates.append(Path(prefix).expanduser() / "var" / "devtool" / "proot")
+
+    candidates.append(state_dir() / "proot")
+    candidates.append(
+        Path(tempfile.gettempdir())
+        / f"devtool-{getattr(os, 'getuid', lambda: 0)()}"
+        / "proot"
+    )
+
+    attempted: list[str] = []
+    seen: set[str] = set()
+    for base in candidates:
+        normalized = str(base)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        etc_dir = base / "etc"
+        try:
+            etc_dir.mkdir(parents=True, exist_ok=True)
+            os_release = etc_dir / "os-release"
+            current = (
+                os_release.read_text(encoding="utf-8", errors="ignore")
+                if os_release.exists()
+                else ""
+            )
+            if current != _TERMUX_DOTNET_OS_RELEASE:
+                os_release.write_text(_TERMUX_DOTNET_OS_RELEASE, encoding="utf-8")
+            return etc_dir
+        except OSError as exc:
+            attempted.append(f"{etc_dir}: {exc}")
+
+    details = "; ".join(attempted) or "no candidate directories were available"
+    raise RuntimeError(
+        "Unable to create a writable Termux proot /etc shim. "
+        "Set DEVTOOL_TERMUX_PROOT_ROOT to a writable directory. "
+        f"Attempts: {details}"
+    )
 
 
 def _prepare_termux_dotnet(argv: list[str]) -> tuple[list[str], str | None]:

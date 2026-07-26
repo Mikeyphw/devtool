@@ -239,7 +239,7 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
                 runner_options={"python": {"manager": "venv", "environment": ".devtool/venvs/python"}},
             )
             specs = build_specs(config, "restore")
-        self.assertEqual([spec.name for spec in specs], ["restore", "python-environment"])
+        self.assertEqual([spec.name for spec in specs], ["restore:project", "python-environment"])
         self.assertNotEqual(specs[0].argv[2:4], ["venv", str(python.parent.parent)])
         self.assertEqual(specs[0].metadata["manager"], "venv")
         self.assertIn("environment_fingerprint", specs[1].metadata)
@@ -345,8 +345,10 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
             )
             specs = build_validation_specs(config, skip_restore=True)
         names = [spec.name for spec in specs]
-        self.assertIn("restore", names)
-        self.assertLess(names.index("restore"), names.index("test"))
+        self.assertIn("restore:test-tools", names)
+        self.assertIn("restore:project", names)
+        self.assertLess(names.index("restore:test-tools"), names.index("test"))
+        self.assertLess(names.index("restore:project"), names.index("test"))
         self.assertTrue(any(spec.argv[-1] == "pytest-asyncio" and spec.metadata["implicit_environment_bootstrap"] for spec in specs))
 
     def test_android_gradle_receives_environment_aware_worker_default(self) -> None:

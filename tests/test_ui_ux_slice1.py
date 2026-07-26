@@ -70,8 +70,10 @@ def test_runner_terminology_is_shared_and_not_dotnet_specific() -> None:
     assert "projectUnitLabel()" in compact
     assert 'text: "Details"' in compact
     assert "Waiting for runner output" in compact
-    assert "1.0 · Multi-runner" in main
-    assert "1.0 · MULTI-RUNNER" not in main
+    assert 'title: "Devtool Control Center"' in main
+    assert 'text: "Devtool"' in main
+    assert "Multi-runner" not in main
+    assert "MULTI-RUNNER" not in main
     assert "String runnerLabel()" in hud_update
     assert "String environmentLabel()" in hud_update
 

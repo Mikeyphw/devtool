@@ -46,8 +46,81 @@ class ConfigTests(unittest.TestCase):
             stream = io.StringIO()
             with redirect_stderr(stream):
                 kind = detect_project_kind(root)
-            self.assertEqual(kind, "dotnet")
-            self.assertIn("explicitly", stream.getvalue())
+            self.assertEqual(kind, "unknown")
+            self.assertIn("refusing to guess", stream.getvalue())
+
+    def test_mixed_repo_requires_explicit_kind_or_typed_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "App.sln").write_text("", encoding="utf-8")
+            (root / "pyproject.toml").write_text("[project]\nname='x'\nversion='0.1.0'\n", encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "Mixed repository has no safe default project type"):
+                load_project_config(str(root), None, kind_override="auto")
+
+    def test_typed_target_resolves_mixed_repo_before_chroot_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            android = root / "app" / "XDM.Android"
+            android.mkdir(parents=True)
+            (root / "App.sln").write_text("", encoding="utf-8")
+            (android / "settings.gradle.kts").write_text('include(":app")\n', encoding="utf-8")
+            (android / "build.gradle.kts").write_text(
+                'plugins { id("com.android.application") version "8.8.0" apply false }\n',
+                encoding="utf-8",
+            )
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='auto'\n\n"
+                "[targets.mobile]\ntype='android'\nroot='app/XDM.Android'\n",
+                encoding="utf-8",
+            )
+
+            config = load_project_config(str(root), None, target_name="mobile", kind_override="auto")
+
+            self.assertEqual(config.kind, "android")
+            self.assertEqual(config.selected_target, "mobile")
+
+
+    def test_root_python_marker_outranks_nested_android_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+            android = root / "examples" / "mobile"
+            android.mkdir(parents=True)
+            (android / "settings.gradle.kts").write_text('include(":app")\n', encoding="utf-8")
+            (android / "build.gradle.kts").write_text(
+                'plugins { id("com.android.application") version "8.8.0" apply false }\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(detect_project_kind(root), "python")
+            self.assertEqual(load_project_config(str(root), None).kind, "python")
+
+    def test_multiple_nested_project_kinds_without_root_marker_refuse_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            py = root / "tools" / "python"
+            py.mkdir(parents=True)
+            (py / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+            android = root / "apps" / "android"
+            android.mkdir(parents=True)
+            (android / "settings.gradle.kts").write_text('include(":app")\n', encoding="utf-8")
+            (android / "build.gradle.kts").write_text(
+                'plugins { id("com.android.application") version "8.8.0" apply false }\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(SystemExit, "Mixed repository has no safe default project type"):
+                load_project_config(str(root), None)
+
+    def test_mixed_repo_template_requires_explicit_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "App.sln").write_text("", encoding="utf-8")
+            (root / "pyproject.toml").write_text("[project]\nname='x'\nversion='0.1.0'\n", encoding="utf-8")
+            stream = io.StringIO()
+            with redirect_stderr(stream):
+                text = generate_template(root)
+            self.assertIn("# Mixed repository detected: dotnet, python.", text)
+            self.assertIn('kind = "auto"', text)
+            self.assertNotIn('kind = "unknown"', text)
 
     def test_auto_kind_override_does_not_mask_explicit_config_kind(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -175,6 +248,20 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.run_target, str((root / "apps" / "foo" / "Foo.App.csproj").resolve()))
             self.assertEqual(config.targets["foo"].cwd, str((root / "apps" / "foo").resolve()))
 
+
+
+    def test_auto_kind_detection_uses_requested_repo_not_parent_config_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            child = workspace / "tools" / "worker"
+            child.mkdir(parents=True)
+            (workspace / "package.json").write_text('{"name":"workspace"}\n', encoding="utf-8")
+            (workspace / ".devtool.toml").write_text("[project]\nkind='auto'\n", encoding="utf-8")
+            (child / "pyproject.toml").write_text("[project]\nname='worker'\nversion='0.1.0'\n", encoding="utf-8")
+            config = load_project_config(str(child), None)
+            self.assertEqual(config.kind, "python")
+            self.assertEqual(config.repo_root, child.resolve())
+            self.assertEqual(config.config_path, workspace / ".devtool.toml")
 
     def test_execution_environment_configuration_and_target_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

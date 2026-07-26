@@ -16,8 +16,11 @@ def test_desktop_overview_is_action_first_and_actions_wrap() -> None:
     assert 'text: "Next action"' in overview
     assert 'text: "Snapshot"' in overview
     assert 'text: "Quick actions"' in overview
-    assert overview.index('text: "Next action"') < overview.index('Latest run')
-    assert overview.index('Latest run') < overview.index('text: "Snapshot"')
+    next_action = overview.index('text: "Next action"')
+    latest_run_section = overview.index('text: root.latestRunHeading()')
+    snapshot = overview.index('text: "Snapshot"')
+    assert next_action < latest_run_section
+    assert latest_run_section < snapshot
     assert overview.index('text: "Snapshot"') < overview.index('text: "Quick actions"')
     assert 'Flow {' in overview
     assert 'GridLayout {' in overview and 'columns: root.availableWidth < 640 ? 1 : root.availableWidth < 980 ? 2 : 4' in overview

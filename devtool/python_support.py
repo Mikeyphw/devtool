@@ -612,12 +612,13 @@ def resolve_bootstrap_python(
     """
 
     if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(configured):
-        requested = Path(str(configured)).name
-        return requested if requested.startswith("python") else "python3"
+        # A versioned Termux executable name is not evidence that the guest has
+        # the same minor version installed. Resolve through the guest's normal
+        # python3 command instead of leaking host toolchain assumptions.
+        return "python3"
     resolved = resolve_python_executable(root, configured, environment)
     if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(resolved):
-        requested = Path(str(resolved)).name
-        return requested if requested.startswith("python") else "python3"
+        return "python3"
     return resolved
 
 

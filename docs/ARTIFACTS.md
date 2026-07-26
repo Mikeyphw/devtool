@@ -219,3 +219,11 @@ Schema-v2 artifacts may make staged validation explicit:
 ```
 
 `apply-overlay --defer-validate` applies transactionally, preserves the backup, retains the source artifact until finalization, and creates an active validation session. An embedded artifact validator becomes the `static` session phase, so it is checkpointed rather than postponed invisibly to the end. Commit and artifact cleanup occur only after the session completes. `validation.allow_deferred=false` rejects this mode.
+
+Advance the session with one repeatable command:
+
+```bash
+devtool -r REPO --target TARGET validate continue
+```
+
+With no selector, `validate continue` runs exactly the next pending phase. A phase interrupted with Ctrl+C or Control Center cancellation is returned to `pending`, not cached as passed or failed, and does not trigger rollback. A phase left as `running` by process death is reclaimed automatically on the next continue/status/checkpoint command. The matching deferred-apply transaction is converted back to pending-validation state, so stale-apply recovery never mistakes an interrupted validation checkpoint for an abandoned repository apply.

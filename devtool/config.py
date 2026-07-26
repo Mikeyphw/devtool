@@ -249,8 +249,9 @@ def load_project_config(
         or str(project_section.get("solution", "")).strip()
         or str(project_section.get("project", "")).strip()
     )
+    kind_details = detect_project_kind_details(repo_root) if kind == "auto" else {"kind": kind, "candidates": (), "root_candidates": (), "reason": "explicit"}
     if kind == "auto":
-        detected_kind = detect_project_kind(config_root)
+        detected_kind = str(kind_details["kind"])
         # Apply-time manifests may point at a solution/project that the overlay is
         # about to create. Treat that declaration as authoritative .NET intent
         # instead of requiring the target to exist before extraction.
@@ -263,6 +264,14 @@ def load_project_config(
     selected_target_hint = targets.get(target_name.strip()) if target_name.strip() else None
     if selected_target_hint is not None and selected_target_hint.kind:
         detected_kind = selected_target_hint.kind
+    if detected_kind == "unknown" and len(kind_details.get("candidates", ())) > 1 and selected_target_hint is None:
+        available = ", ".join(kind_details["candidates"])
+        named = ", ".join(sorted(targets)) or "<none>"
+        raise SystemExit(
+            "Mixed repository has no safe default project type "
+            f"({available}). Set [project].kind, pass --project-type, or select a typed --target. "
+            f"Named targets: {named}."
+        )
     # Legacy [project].default_target is intentionally ignored. Devtool no longer
     # chooses a target implicitly; use --target, --solution, or artifact metadata.
 
@@ -412,7 +421,15 @@ def load_project_config(
     )
 
 
-def detect_project_kind(repo_root: Path) -> str:
+def detect_project_kind_details(repo_root: Path) -> dict[str, Any]:
+    """Resolve a safe default kind, preferring exactly one root-local marker.
+
+    Nested Android/desktop/demo projects must not steal the default from a
+    repository-root Python, Node, or other project. When the root itself is
+    ambiguous, or only multiple nested kinds exist, Devtool refuses to guess.
+    """
+
+    repo_root = repo_root.expanduser().resolve()
     dotnet_candidates = discover_dotnet_candidates(repo_root)
     android_markers = discover_gradle_roots(repo_root, android_only=True)
     gradle_markers = discover_gradle_roots(repo_root, android_only=False)
@@ -431,20 +448,66 @@ def detect_project_kind(repo_root: Path) -> str:
         "meson": (repo_root / "meson.build").is_file(),
         "make": any((repo_root / name).is_file() for name in ("Makefile", "makefile", "GNUmakefile")),
     }
-    kinds = [name for name, present in markers.items() if present]
-    if len(kinds) > 1:
-        print(
-            f"devtool: mixed project markers ({', '.join(kinds)}) found under {repo_root}. "
-            "Set [project].kind explicitly in .devtool.toml or select a named target.",
-            file=sys.stderr,
-        )
-    for kind in (
+    root_markers = {
+        "dotnet": any(path.parent.resolve() == repo_root for path in dotnet_candidates),
+        "android": repo_root in android_markers,
+        "gradle": repo_root in gradle_markers and repo_root not in android_markers,
+        "python": repo_root in python_roots,
+        "node": markers["node"],
+        "rust": markers["rust"],
+        "go": markers["go"],
+        "maven": markers["maven"],
+        "cmake": markers["cmake"],
+        "meson": markers["meson"],
+        "make": markers["make"],
+    }
+    order = (
         "dotnet", "android", "gradle", "python", "node", "rust", "go",
         "maven", "cmake", "meson", "make",
-    ):
-        if markers[kind]:
-            return kind
-    return "unknown"
+    )
+    candidates = tuple(name for name in order if markers[name])
+    root_candidates = tuple(name for name in order if root_markers[name])
+    if len(root_candidates) == 1:
+        kind = root_candidates[0]
+        reason = "single repository-root project marker"
+    elif len(root_candidates) > 1:
+        kind = "unknown"
+        reason = "multiple repository-root project markers"
+    elif len(candidates) == 1:
+        kind = candidates[0]
+        reason = "single nested project kind"
+    elif len(candidates) > 1:
+        kind = "unknown"
+        reason = "multiple nested project kinds"
+    else:
+        kind = "unknown"
+        reason = "no supported project markers"
+    return {
+        "kind": kind,
+        "candidates": candidates,
+        "root_candidates": root_candidates,
+        "reason": reason,
+    }
+
+
+def detect_project_kinds(repo_root: Path) -> tuple[str, ...]:
+    return tuple(detect_project_kind_details(repo_root)["candidates"])
+
+
+def detect_project_kind(repo_root: Path) -> str:
+    details = detect_project_kind_details(repo_root)
+    kinds = tuple(details["candidates"])
+    selected = str(details["kind"])
+    if len(kinds) > 1:
+        roots = ", ".join(details["root_candidates"]) or "none"
+        verdict = f"using root-local {selected}" if selected != "unknown" else "refusing to guess"
+        print(
+            f"devtool: mixed project markers ({', '.join(kinds)}) found under {repo_root}; "
+            f"root markers: {roots}; {verdict}. "
+            "Set [project].kind explicitly or select a typed target.",
+            file=sys.stderr,
+        )
+    return selected
 
 
 def _gradle_root_is_android(root: Path) -> bool:
@@ -822,7 +885,15 @@ def _detect_node_manager(repo_root: Path) -> str:
 
 def generate_template(repo_root: Path) -> str:
     repo_root = repo_root.resolve()
+    detected_kinds = detect_project_kinds(repo_root)
     kind = detect_project_kind(repo_root)
+    template_kind = kind if kind != "unknown" else "auto"
+    ambiguity_note = ""
+    if len(detected_kinds) > 1:
+        ambiguity_note = (
+            "# Mixed repository detected: " + ", ".join(detected_kinds) + ".\n"
+            "# Replace project.kind=auto or define/select typed targets before running commands.\n"
+        )
     build_target = _default_build_target(repo_root, kind, {})
     run_target = ""
     run_module = ""
@@ -903,8 +974,8 @@ def generate_template(repo_root: Path) -> str:
     elif kind == "node":
         node_manager = _detect_node_manager(repo_root)
 
-    return f"""[project]
-kind = "{kind}" # auto | dotnet | android | gradle | python | node | rust | go | maven | cmake | meson | make | command | unknown
+    return f"""{ambiguity_note}[project]
+kind = "{template_kind}" # auto | dotnet | android | gradle | python | node | rust | go | maven | cmake | meson | make | command
 build_target = "{_display(repo_root, build_target)}"
 run_target = "{run_target}"
 variant = ""{target_blocks}

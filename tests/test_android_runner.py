@@ -23,6 +23,7 @@ from devtool.android_build import (
     parse_args,
     split_gradle_passthrough_args,
     gradle_jvmargs,
+    gradle_arguments_with_aapt2_override,
     should_cleanup_gradle,
     planned_artifact_names,
     select_revanced_asset,
@@ -163,9 +164,11 @@ class AndroidProjectInspectionTests(unittest.TestCase):
                 runner_options={"android": {"auto_sdk": True}},
             )
             with patch.dict(os.environ, {
+                "HOME": str(root / "home"),
+                "PREFIX": "/usr",
                 "DEVTOOL_ANDROID_BUILDER": str(root / "state" / "build-apk"),
                 "DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "state" / "events.gradle"),
-            }, clear=False):
+            }, clear=True):
                 args = android_builder_arguments(config, "build")
                 inspect_rows = dict(android_inspect_rows(config))
                 doctor_rows = dict(android_doctor_rows(config))
@@ -200,6 +203,18 @@ class AndroidProjectInspectionTests(unittest.TestCase):
                     runner_options={"android": {"prefer_native_termux": True}},
                 )
                 self.assertFalse(should_prefer_android_chroot(native_config))
+
+
+    def test_android_chroot_is_never_auto_selected_on_desktop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+            with patch.dict(os.environ, {"HOME": "/home/mike", "PREFIX": "/usr"}, clear=True), patch(
+                "devtool.android_integration.shutil.which",
+                return_value="/usr/bin/chrootctl",
+            ):
+                self.assertFalse(should_prefer_android_chroot(config))
 
     def test_revanced_asset_selection_prefers_arm_archives(self) -> None:
         release = {
@@ -628,6 +643,50 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         self.assertIn("-Dorg.gradle.parallel=false", build_command)
         self.assertIn("-Pkotlin.compiler.execution.strategy=in-process", build_command)
 
+    def test_custom_aapt2_suppresses_experimental_option_warning(self) -> None:
+        arguments = gradle_arguments_with_aapt2_override([], Path("/opt/devtool/aapt2"))
+
+        self.assertIn(
+            "-Pandroid.aapt2FromMavenOverride=/opt/devtool/aapt2",
+            arguments,
+        )
+        self.assertIn(
+            "-Pandroid.suppressUnsupportedOptionWarnings=android.aapt2FromMavenOverride",
+            arguments,
+        )
+        self.assertEqual(arguments[-1], "--console=plain")
+
+    def test_custom_aapt2_merges_existing_warning_suppressions(self) -> None:
+        arguments = gradle_arguments_with_aapt2_override(
+            [
+                "-Pandroid.suppressUnsupportedOptionWarnings=android.otherExperimentalOption",
+                "--console=rich",
+            ],
+            Path("/opt/devtool/aapt2"),
+        )
+
+        suppression = next(
+            value
+            for value in arguments
+            if value.startswith("-Pandroid.suppressUnsupportedOptionWarnings=")
+        )
+        self.assertEqual(
+            suppression,
+            "-Pandroid.suppressUnsupportedOptionWarnings="
+            "android.otherExperimentalOption,android.aapt2FromMavenOverride",
+        )
+        self.assertEqual(
+            sum(value.startswith("-Pandroid.suppressUnsupportedOptionWarnings=") for value in arguments),
+            1,
+        )
+        self.assertEqual(arguments[-1], "--console=rich")
+
+    def test_default_agp_aapt2_does_not_add_suppression_property(self) -> None:
+        arguments = gradle_arguments_with_aapt2_override([], None)
+
+        self.assertFalse(any("aapt2FromMavenOverride" in value for value in arguments))
+        self.assertFalse(any("suppressUnsupportedOptionWarnings" in value for value in arguments))
+
     def test_gradle_build_continues_across_independent_task_failures_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -756,9 +815,11 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             )
             init_script = root / ".state" / "devtool-events.init.gradle"
             with patch.dict(os.environ, {
+                "HOME": str(root / "home"),
+                "PREFIX": "/usr",
                 "DEVTOOL_ANDROID_BUILDER": str(staged),
                 "DEVTOOL_GRADLE_INIT_SCRIPT": str(init_script),
-            }, clear=False):
+            }, clear=True):
                 build = build_specs(config, "build")[0]
                 validation = build_validation_specs(config)
                 init_script_exists = init_script.is_file()
@@ -888,7 +949,7 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         )
         self.assertEqual(
             [spec.metadata["validation_components"] for spec in validation],
-            [["package", "artifact-check"], ["unit-test"], ["lint"]],
+            [["package"], ["unit-test"], ["lint"]],
         )
         self.assertEqual(
             [spec.metadata["validation_resource_profile"] for spec in validation],

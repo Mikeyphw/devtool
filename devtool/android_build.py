@@ -41,6 +41,8 @@ DEFAULT_GRADLE_VERSION = "8.13"
 REVANCED_REPOSITORY = "ReVanced/aapt2"
 REVANCED_API = f"https://api.github.com/repos/{REVANCED_REPOSITORY}"
 ANDROID_CMDLINE_TOOLS_URL = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
+AAPT2_OVERRIDE_PROPERTY = "android.aapt2FromMavenOverride"
+UNSUPPORTED_OPTION_WARNINGS_PROPERTY = "android.suppressUnsupportedOptionWarnings"
 
 
 class BuildError(RuntimeError):
@@ -2009,6 +2011,51 @@ def normalize_gradle_arguments(arguments: Sequence[str], *, plain_console: bool 
     return normalized
 
 
+def gradle_arguments_with_aapt2_override(
+    arguments: Sequence[str],
+    aapt2: Path | None,
+    *,
+    plain_console: bool = True,
+) -> list[str]:
+    """Normalize Gradle arguments and silence the custom-AAPT2 AGP warning.
+
+    Android Gradle Plugin labels ``android.aapt2FromMavenOverride`` as an
+    experimental option. Whenever Devtool injects that property, also add it to
+    ``android.suppressUnsupportedOptionWarnings``. Existing comma-separated
+    suppressions from Gradle passthrough arguments are retained.
+    """
+
+    normalized = normalize_gradle_arguments(arguments, plain_console=plain_console)
+    if aapt2 is None:
+        return normalized
+
+    suppression_prefix = f"-P{UNSUPPORTED_OPTION_WARNINGS_PROPERTY}="
+    suppressions: list[str] = []
+    remaining: list[str] = []
+    for argument in normalized:
+        value = str(argument)
+        if value.startswith(suppression_prefix):
+            configured = value[len(suppression_prefix):]
+            for item in configured.split(","):
+                item = item.strip()
+                if item and item not in suppressions:
+                    suppressions.append(item)
+            continue
+        remaining.append(value)
+
+    if AAPT2_OVERRIDE_PROPERTY not in suppressions:
+        suppressions.append(AAPT2_OVERRIDE_PROPERTY)
+
+    properties = [
+        f"-P{AAPT2_OVERRIDE_PROPERTY}={aapt2}",
+        f"-P{UNSUPPORTED_OPTION_WARNINGS_PROPERTY}={','.join(suppressions)}",
+    ]
+
+    console = [item for item in remaining if item.startswith("--console=")]
+    remaining = [item for item in remaining if not item.startswith("--console=")]
+    return [*properties, *remaining, *console]
+
+
 def split_gradle_passthrough_args(raw_args: Sequence[str]) -> tuple[list[str], list[str]]:
     raw: list[str] = []
     extra_gradle_args: list[str] = []
@@ -2467,9 +2514,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         command.append("--parallel")
     if args.build_cache:
         command.append("--build-cache")
-    if aapt2:
-        command.append(f"-Pandroid.aapt2FromMavenOverride={aapt2}")
-    command.extend(normalize_gradle_arguments(args.gradle_args, plain_console=args.plain_console))
+    command.extend(
+        gradle_arguments_with_aapt2_override(
+            args.gradle_args,
+            aapt2,
+            plain_console=args.plain_console,
+        )
+    )
 
     heading("Build")
     if jvmargs:

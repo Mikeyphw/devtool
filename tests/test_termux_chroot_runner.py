@@ -8,7 +8,7 @@ from unittest.mock import patch
 from devtool.clipboard import ClipboardResult
 from devtool.execution import build_chroot_exec_argv, wrap_specs_for_chroot
 from devtool.models import CommandSpec, ProjectConfig
-from devtool.termux_chroot_runner import _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, repair_termux_home_mapping, should_delegate_full_for_chroot_only_repo, translate_devtool_args, wrap_specs_for_termux_host_chroot
+from devtool.termux_chroot_runner import _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, repair_termux_home_mapping, run_auto_chroot, should_delegate_full_for_chroot_only_repo, translate_devtool_args, wrap_specs_for_termux_host_chroot
 from devtool.runners import run_specs
 
 
@@ -116,7 +116,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
 
     def test_copy_flag_is_host_handled_with_machine_file(self) -> None:
         with tempfile.TemporaryDirectory() as home:
-            env = {"HOME": home, "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike"}
+            env = {"HOME": home, "PREFIX": "/data/data/com.termux/files/usr", "TERMUX_VERSION": "0.119", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike"}
             config, forwarded = translate_devtool_args(
                 ["--copy", "--copy-via", "termux", "--repo", f"{home}/Code/demo", "validate"],
                 env=env,
@@ -226,6 +226,39 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         self.assertEqual(wrapped[0].metadata["chroot_cwd"], "/home/termux/Code/demo")
         self.assertEqual(wrapped[0].metadata["progress_argv"], spec.argv)
         self.assertEqual(wrapped[0].metadata["progress_cwd"], "/data/data/com.termux/files/home/Code/demo")
+
+
+    def test_wrapper_strips_termux_toolchain_paths_before_chroot_execution(self) -> None:
+        spec = CommandSpec(
+            "artifact-validator",
+            ["env", "/data/data/com.termux/files/usr/bin/python3.14", "-V"],
+            env={
+                "PATH": "/data/data/com.termux/files/usr/bin:/usr/bin",
+                "JAVA_HOME": "/data/data/com.termux/files/usr/lib/jvm/java-17",
+                "CUSTOM_ROOT": "/data/data/com.termux/files/home/Code/demo",
+            },
+            cwd="/data/data/com.termux/files/home/Code/demo",
+        )
+        wrapped = wrap_specs_for_termux_host_chroot(
+            [spec],
+            "androidos",
+            repo_root="/data/data/com.termux/files/home/Code/demo",
+            env={
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+            },
+        )[0]
+        command = wrapped.argv[-1]
+        self.assertIn("env python3 -V", command)
+        self.assertIn("PATH=/usr/bin", command)
+        self.assertIn("CUSTOM_ROOT=/home/termux/Code/demo", command)
+        self.assertNotIn("JAVA_HOME=", command)
+        self.assertNotIn("/data/data/com.termux/", command)
+
+    def test_full_chroot_runner_refuses_desktop_linux(self) -> None:
+        with patch.dict("os.environ", {"HOME": "/home/mike"}, clear=True):
+            self.assertEqual(run_auto_chroot(["validate"]), 2)
 
     def test_run_specs_uses_original_dotnet_command_for_wrapped_progress(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
