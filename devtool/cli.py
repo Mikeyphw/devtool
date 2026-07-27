@@ -136,7 +136,7 @@ INTERACTIVE_COPY_COMMANDS = {
 
 
 PROGRESS_CAPABLE_COMMANDS = {
-    "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v",
+    "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v", "validate-all",
     "wine-validate", "wv", "start-validation", "sv", "resume-validation", "rv",
     "validation-finalize", "vf", "validation-abort", "va",
     "run", "rn", "package", "pkg", "clean", "cl",
@@ -308,6 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("test", ["t"]),
         ("lint", []),
         ("validate", ["v"]),
+        ("validate-all", []),
         ("wine-validate", ["wv"]),
         ("run", ["rn"]),
         ("package", ["pkg"]),
@@ -355,7 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--changed", action="store_true", help="Select tests related to changed files")
             cmd.add_argument("--changed-from", default="HEAD", help="Git base for --changed")
             cmd.add_argument("--instrumented", action="store_true", help="Run Android instrumentation tests on a device")
-        if name in {"validate", "wine-validate"}:
+        if name in {"validate", "validate-all", "wine-validate"}:
             _add_validation_skip_flags(cmd)
             if name == "validate":
                 cmd.add_argument("validate_scope", nargs="?", help="Optional artifact validation scope: overlay or overlays")
@@ -1748,7 +1749,7 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
     profile = str(getattr(args, "profile", "") or getattr(args, "test_profile", "") or "").strip()
     if not profile:
         validation = config.runner_options.get("validation", {})
-        if isinstance(validation, dict) and args.command in {"validate", "v", "wine-validate", "wv", *APPLY_COMMANDS}:
+        if isinstance(validation, dict) and args.command in {"validate", "v", "validate-all", "wine-validate", "wv", *APPLY_COMMANDS}:
             profile = str(validation.get("test_profile") or "").strip()
     if profile:
         selection["profile"] = profile
@@ -5212,7 +5213,7 @@ def main(argv: list[str] | None = None) -> int:
     _apply_runner_cli_options(config, args)
     if args.command in {"test", "t"} and bool(getattr(args, "list_tests", False)):
         return _print_test_catalog(config, args, as_json=False)
-    continue_on_error = args.continue_on_error and not args.fail_fast
+    continue_on_error = (args.continue_on_error or args.command == "validate-all") and not args.fail_fast
     log_path = new_log_path()
     log_path.touch(exist_ok=True)
     _ensure_run_id(args)
@@ -5541,7 +5542,7 @@ def main(argv: list[str] | None = None) -> int:
         if cache_cleanup_result is not None:
             results = [cache_cleanup_result, *results]
             raw_output = cache_cleanup_result.output + ("\n\n" + raw_output if raw_output else "")
-    elif args.command in {"validate", "v", "wine-validate", "wv"}:
+    elif args.command in {"validate", "v", "validate-all", "wine-validate", "wv"}:
         if getattr(args, "watch", False):
             def _run_once() -> int:
                 run_log_path = new_log_path()

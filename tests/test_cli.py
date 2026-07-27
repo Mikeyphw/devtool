@@ -262,6 +262,14 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.skip_build)
         self.assertFalse(args.skip_test)
 
+    def test_parser_accepts_validate_all_with_validation_flags(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["validate-all", "--skip-restore", "--skip-build", "--matrix", "debug,release"])
+        self.assertEqual(args.command, "validate-all")
+        self.assertTrue(args.skip_restore)
+        self.assertTrue(args.skip_build)
+        self.assertEqual(args.matrix, "debug,release")
+
     def test_parser_rejects_removed_commands(self) -> None:
         parser = build_parser()
         with self.assertRaises(SystemExit):
@@ -565,6 +573,69 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(rc, 0)
             self.assertEqual(captured, ["test"])
+
+    def test_validate_all_continues_on_error_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            captured: list[bool] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.append(bool(kwargs.get("continue_on_error")))
+                return ([
+                    OperationResult("restore", ["dotnet", "restore"], 1, 0.0, "restore failed", []),
+                    OperationResult("build", ["dotnet", "build"], 1, 0.0, "build failed", []),
+                ], "validate output")
+
+            with (
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "validate-all"])
+
+            self.assertEqual(rc, 1)
+            self.assertEqual(captured, [True])
+
+    def test_validate_all_fail_fast_overrides_aggregate_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            captured: list[bool] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.append(bool(kwargs.get("continue_on_error")))
+                return ([OperationResult("restore", ["dotnet", "restore"], 1, 0.0, "restore failed", [])], "validate output")
+
+            with (
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--fail-fast", "validate-all"])
+
+            self.assertEqual(rc, 1)
+            self.assertEqual(captured, [False])
+
+    def test_validate_remains_fail_fast_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            captured: list[bool] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.append(bool(kwargs.get("continue_on_error")))
+                return ([OperationResult("restore", ["dotnet", "restore"], 1, 0.0, "restore failed", [])], "validate output")
+
+            with (
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "validate"])
+
+            self.assertEqual(rc, 1)
+            self.assertEqual(captured, [False])
 
     def test_config_defaults_prints_template(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

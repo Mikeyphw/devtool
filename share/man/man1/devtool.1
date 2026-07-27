@@ -70,6 +70,12 @@ Run the runner-specific validation pipeline. Also accepts the optional artifact 
 and
 .B overlays.
 .TP
+.B validate-all
+Run the runner-specific validation pipeline and continue through independent phases
+after failures so the final summary includes every captured error. Use
+.B --fail-fast
+to stop at the first failed phase.
+.TP
 .B wine-validate " | " wv
 Run validation with the configured Wine environment.
 .TP
@@ -126,6 +132,8 @@ policy, embedded validator, and final commit metadata.
 .B batch " STEP..."
 Run ordered operations such as
 .B validate
+or
+.B validate-all
 or
 .BR apply-overlay=/path/file.zip .
 .TP

@@ -85,6 +85,7 @@ _devtool_steps() {
     'test:run tests'
     'lint:run lint and static analysis'
     'validate:run the target validation pipeline'
+    'validate-all:run validation and collect all independent failures'
     'wine-validate:validate with Wine environment settings'
     'run:run project'
     'package:package project'
@@ -110,6 +111,7 @@ _devtool_commands() {
     'lint:run configured lint and static-analysis tools'
     'validate:run runner-specific validation'
     'v:alias for validate'
+    'validate-all:run runner-specific validation and collect all independent failures'
     'start-validation:start a persistent sequential validation session'
     'sv:alias for start-validation'
     'resume-validation:resume a persistent sequential validation session'
@@ -375,12 +377,26 @@ _devtool() {
         validation-abort|va)
           _arguments '--session[specific validation session ID]:session:' '--keep-changes[keep repository changes instead of rolling back]'
           ;;
-        wine-validate|wv)
+        validate-all|wine-validate|wv)
           _arguments \
             '--skip-restore[skip dependency restore]' \
             '--skip-build[skip project build]' \
             '--skip-test[skip project tests]' \
             '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
+            '*--select[select tests by type, suite, tag, class, or name]:selector:' \
+            '*--id[select an exact framework test ID]:test id:' \
+            '*--tag[include a test tag or trait]:tag:' \
+            '*--exclude-tag[exclude a test tag or trait]:tag:' \
+            '*--path[select tests below a source path or package]:path:_files' \
+            '*--class[select a test class]:class:' \
+            '*--tests[select a test class]:class:' \
+            '*--method[select a test method]:method:' \
+            '--filter[framework-native test filter]:filter:' \
+            '(--task --test-task)'{--task,--test-task}'[native test task/script/target override]:task:' \
+            '--failed[rerun tests that failed in the previous structured run]' \
+            '--changed[select tests related to changed files]' \
+            '--changed-from[Git base for changed test selection]:revision:' \
+            '--instrumented[run Android instrumentation tests on a device]' \
             '--watch[rerun validation when files change]' \
             '--watch-interval[seconds between watch polls]:seconds:' \
             '--matrix[comma-separated runtime IDs, target names, or variants]:matrix:' \
