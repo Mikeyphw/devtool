@@ -189,6 +189,7 @@ _devtool_test_args() {
     '*--exclude-tag[exclude a test tag or trait]:tag:' \
     '*--path[select tests below a source path]:path:_files' \
     '*--class[select a test class]:class:' \
+    '*--tests[select a test class]:class:' \
     '*--method[select a test method]:method:' \
     '--filter[framework-native test filter]:filter:' \
     '--task[Gradle test task override]:task:' \
@@ -210,6 +211,7 @@ _devtool_validation_args() {
     '*--exclude-tag[exclude a test tag or trait]:tag:' \
     '*--path[select tests below a source path or package]:path:_files' \
     '*--class[select a test class]:class:' \
+    '*--tests[select a test class]:class:' \
     '*--method[select a test method]:method:' \
     '--filter[framework-native test filter]:filter:' \
     '(--task --test-task)'{--task,--test-task}'[native test task/script/target override]:task:' \
@@ -264,6 +266,7 @@ _devtool_apply_args() {
     '*--exclude-tag[exclude a test tag or trait]:tag:' \
     '*--path[select tests below a source path or package]:path:_files' \
     '*--class[select a test class]:class:' \
+    '*--tests[select a test class]:class:' \
     '*--method[select a test method]:method:' \
     '--filter[framework-native test filter]:filter:' \
     '(--task --test-task)'{--task,--test-task}'[native test task/script/target override]:task:' \

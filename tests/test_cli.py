@@ -2059,11 +2059,12 @@ class ApplyOverlayValidationSelectionTests(unittest.TestCase):
             "apply-overlay", "--validate",
             "--task", ":media:test",
             "--task", ":app:testDebugUnitTest",
-            "--class", "BrowserHandoffParserTest",
+            "--tests", "BrowserHandoffParserTest",
+            "--tests", "DownloadActionPlannerTest",
             "artifact.zip",
         ])
         self.assertEqual(args.test_task, [":media:test", ":app:testDebugUnitTest"])
-        self.assertEqual(args.test_classes, ["BrowserHandoffParserTest"])
+        self.assertEqual(args.test_classes, ["BrowserHandoffParserTest", "DownloadActionPlannerTest"])
 
     def test_apply_overlay_validate_forwards_dotnet_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
