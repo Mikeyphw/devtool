@@ -1471,7 +1471,7 @@ public final class MainActivity extends Activity {
         heading.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = ui.text(record.title, UiTypography.Role.CARD_TITLE, ui.palette.text);
         heading.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        TextView badge = ui.text(record.status.toUpperCase(), UiTypography.Role.CAPTION, statusColor(record.status));
+        TextView badge = ui.text(record.status.toUpperCase(Locale.ROOT), UiTypography.Role.CAPTION, statusColor(record.status));
         badge.setPadding(ui.dp(9), ui.dp(5), ui.dp(9), ui.dp(5));
         badge.setBackground(ui.flat(ui.palette.surfaceRaised, 999));
         heading.addView(badge);

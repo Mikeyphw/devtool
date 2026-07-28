@@ -9,7 +9,14 @@ public final class TaskerPluginReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null || !TaskerProtocol.ACTION_FIRE_SETTING.equals(intent.getAction())) return;
-        Bundle config = intent.getBundleExtra(TaskerProtocol.EXTRA_BUNDLE);
+        intent.setExtrasClassLoader(TaskerPluginReceiver.class.getClassLoader());
+        Bundle config;
+        try {
+            config = intent.getBundleExtra(TaskerProtocol.EXTRA_BUNDLE);
+        } catch (RuntimeException exception) {
+            failImmediately("Tasker action bundle could not be read. Open and save it again in Tasker.");
+            return;
+        }
         if (config == null || !TaskerAuthorization.matches(context,
                 config.getString(TaskerProtocol.KEY_AUTH_TOKEN, ""))) {
             failImmediately("Tasker action is not authorized. Open and save it again in Tasker.");

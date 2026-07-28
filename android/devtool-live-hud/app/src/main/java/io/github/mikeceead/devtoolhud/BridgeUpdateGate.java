@@ -4,6 +4,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 
+import java.util.Locale;
+
 /** Reject delayed or replayed bridge broadcasts before they touch the UI. */
 final class BridgeUpdateGate {
     private static final String PREFS = "bridge_update_order";
@@ -16,7 +18,7 @@ final class BridgeUpdateGate {
         String runId = clean(intent.getStringExtra("run_id"), "default");
         long sequence = intent.getLongExtra("sequence", 0L);
         long updatedAt = intent.getLongExtra("updated_at_ms", System.currentTimeMillis());
-        String status = clean(intent.getStringExtra("status"), "running").toLowerCase();
+        String status = clean(intent.getStringExtra("status"), "running").toLowerCase(Locale.ROOT);
         boolean terminal = status.equals("ok") || status.equals("failed")
                 || status.equals("cancelled") || status.equals("interrupted")
                 || status.equals("skipped");

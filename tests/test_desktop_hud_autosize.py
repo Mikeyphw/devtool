@@ -40,3 +40,12 @@ def test_desktop_hud_cpp_no_longer_forces_fixed_720_width() -> None:
     assert "&QWindow::widthChanged" in cpp
     assert "&QWindow::heightChanged" in cpp
     assert "ensureHudIsVisible(window)" in cpp
+
+
+def test_desktop_hud_width_autosize_does_not_feed_on_layout_width() -> None:
+    qml = read(HUD_QML)
+    width_function = qml.split("function desiredHudWidth()", 1)[1].split("function maxBodyHeight()", 1)[0]
+    assert "automaticMaximumWidth" in qml
+    assert "headerContent.implicitWidth" not in width_function
+    assert "lowerContent.implicitWidth" not in width_function
+    assert "function onImplicitWidthChanged() { root.scheduleContentSize() }" not in qml

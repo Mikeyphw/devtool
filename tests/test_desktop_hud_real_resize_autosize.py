@@ -29,6 +29,9 @@ def test_hud_autosize_uses_real_content_and_scrolls_when_capped() -> None:
     assert "contentWidth: availableWidth" in qml
     assert "ScrollBar.vertical.interactive: true" in qml
     assert "Layout.preferredHeight: root.preferredBodyHeight()" in qml
+    assert "Layout.preferredHeight: workspaceColumn.implicitHeight" in qml
+    assert "Math.min(342, workspaceColumn.implicitHeight)" not in qml
+    assert "ScrollBar.vertical.interactive: false" in qml
     assert "target: headerContent" in qml
     assert "target: lowerContent" in qml
     assert "target: workspaceColumn" in qml

@@ -1,5 +1,7 @@
 package io.github.mikeceead.devtoolhud;
 
+import java.util.Locale;
+
 final class DevtoolRunConfig {
     String operation = "apply-overlay";
     String projectType = "auto";
@@ -41,9 +43,9 @@ final class DevtoolRunConfig {
     }
 
     String validationError() {
-        String environment = clean(executionEnvironment, "auto").toLowerCase();
-        String type = clean(projectType, "auto").toLowerCase();
-        String op = clean(operation, "status").toLowerCase();
+        String environment = clean(executionEnvironment, "auto").toLowerCase(Locale.ROOT);
+        String type = clean(projectType, "auto").toLowerCase(Locale.ROOT);
+        String op = clean(operation, "status").toLowerCase(Locale.ROOT);
         if (useChroot && !(environment.equals("auto") || environment.equals("chroot"))) {
             return "Direct chroot mode cannot be combined with execution environment " + environment;
         }

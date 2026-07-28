@@ -7,11 +7,16 @@ import android.os.Bundle;
 import android.util.Base64;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class RootBridgeManager {
     static final String ACTION_UPDATED = "io.github.mikeceead.devtoolhud.ROOT_BRIDGE_UPDATED";
@@ -30,6 +35,8 @@ final class RootBridgeManager {
     private static volatile Process activeProcess;
     private static volatile String activeRunId = "";
     private static final int MAX_OUTPUT = 64_000;
+    private static final long SHORT_COMMAND_TIMEOUT_SECONDS = 12L;
+    private static final long CONTROL_COMMAND_TIMEOUT_SECONDS = 120L;
 
     private RootBridgeManager() {}
 
@@ -98,7 +105,7 @@ final class RootBridgeManager {
         setState(app, "checking", "", "");
         EXECUTOR.execute(() -> {
             String token = BridgeSecrets.getOrCreateToken(app);
-            CommandResult result = rootCommand(bridgeInvocation("status " + shellQuote(token)));
+            CommandResult result = rootCommand(bridgeInvocation("status " + shellQuote(token)), SHORT_COMMAND_TIMEOUT_SECONDS);
             if (result.exitCode == 0 && result.output.contains("\"installed\":true")) {
                 boolean enabled = result.output.contains("\"enabled\":true");
                 if (!enabled) {
@@ -116,14 +123,14 @@ final class RootBridgeManager {
                 setState(app, state, detail, version);
             } else if (result.output.contains("DEVTOOL_ROOT_MODULE_MISSING")) {
                 setState(app, "missing", "The optional root bridge module is not installed.", "");
-            } else if (result.exitCode == 126 || result.output.toLowerCase().contains("permission denied")
-                    || result.output.toLowerCase().contains("cannot run program \"su\"")
-                    || result.output.toLowerCase().contains("not allowed")) {
+            } else if (result.exitCode == 126 || result.output.toLowerCase(Locale.ROOT).contains("permission denied")
+                    || result.output.toLowerCase(Locale.ROOT).contains("cannot run program \"su\"")
+                    || result.output.toLowerCase(Locale.ROOT).contains("not allowed")) {
                 setState(app, "denied", compact(result.output, "Root permission was denied"), "");
             } else if (result.exitCode == 127) {
                 setState(app, "denied", compact(result.output, "Root access is unavailable"), "");
             } else {
-                String lower = result.output.toLowerCase();
+                String lower = result.output.toLowerCase(Locale.ROOT);
                 if (lower.contains("not found") || lower.contains("no such file")) {
                     setState(app, "missing", "The optional root bridge module is not installed.", "");
                 } else {
@@ -138,11 +145,11 @@ final class RootBridgeManager {
         setState(app, "checking", "Pairing the root bridge.", "");
         String token = BridgeSecrets.getOrCreateToken(app);
         EXECUTOR.execute(() -> {
-            CommandResult result = rootCommand(bridgeInvocation("pair " + shellQuote(token)));
+            CommandResult result = rootCommand(bridgeInvocation("pair " + shellQuote(token)), SHORT_COMMAND_TIMEOUT_SECONDS);
             if (result.exitCode == 0 && result.output.contains("DEVTOOL_ROOT_BRIDGE_PAIRED")) {
                 refresh(app);
             } else {
-                setState(app, result.output.toLowerCase().contains("permission denied") ? "denied" : "error",
+                setState(app, result.output.toLowerCase(Locale.ROOT).contains("permission denied") ? "denied" : "error",
                         compact(result.output, "Root bridge pairing failed"), "");
             }
         });
@@ -201,7 +208,7 @@ final class RootBridgeManager {
         String cleanWorkdir = workdir == null || workdir.trim().isEmpty() ? "/" : workdir.trim();
         EXECUTOR.execute(() -> {
             String shell = "cd " + shellQuote(cleanWorkdir) + " && " + cleanCommand;
-            CommandResult result = rootCommand(shell);
+            CommandResult result = rootCommand(shell, CONTROL_COMMAND_TIMEOUT_SECONDS);
             ValidationController.handleResult(app, operation, result.exitCode, result.output, "", "", "root-bridge");
         });
         return new TermuxCommandRunner.LaunchResult(true, executionId, "");
@@ -216,7 +223,8 @@ final class RootBridgeManager {
             activeRunId = "";
         }
         String token = BridgeSecrets.getOrCreateToken(context);
-        EXECUTOR.execute(() -> rootCommand(bridgeInvocation("cancel " + shellQuote(token) + " " + shellQuote(runId))));
+        EXECUTOR.execute(() -> rootCommand(bridgeInvocation("cancel " + shellQuote(token) + " " + shellQuote(runId)),
+                SHORT_COMMAND_TIMEOUT_SECONDS));
         return true;
     }
 
@@ -263,16 +271,43 @@ final class RootBridgeManager {
     }
 
     private static CommandResult rootCommand(String shell) {
+        return rootCommand(shell, SHORT_COMMAND_TIMEOUT_SECONDS);
+    }
+
+    private static CommandResult rootCommand(String shell, long timeoutSeconds) {
+        Process process = null;
+        Thread readerThread = null;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        AtomicBoolean truncated = new AtomicBoolean(false);
         try {
-            Process process = new ProcessBuilder("su", "-c", shell).redirectErrorStream(true).start();
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    process.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) appendLimited(output, line + "\n");
+            process = new ProcessBuilder("su", "-c", shell).redirectErrorStream(true).start();
+            Process runningProcess = process;
+            readerThread = new Thread(() -> copyLimited(runningProcess.getInputStream(), output, truncated),
+                    "devtool-root-command-reader");
+            readerThread.start();
+            long safeTimeout = Math.max(1L, timeoutSeconds);
+            boolean completed = false;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(safeTimeout);
+            while (System.nanoTime() < deadline) {
+                if (process.waitFor(100L, TimeUnit.MILLISECONDS)) {
+                    completed = true;
+                    break;
+                }
             }
-            return new CommandResult(process.waitFor(), output.toString());
+            if (!completed) {
+                process.destroy();
+                if (!process.waitFor(1L, TimeUnit.SECONDS)) process.destroyForcibly();
+                if (readerThread != null) readerThread.join(1_000L);
+                String message = "Root bridge command timed out after " + safeTimeout + "s";
+                String captured = outputText(output);
+                return new CommandResult(124, captured.isEmpty() ? message : message + "\n" + captured);
+            }
+            if (readerThread != null) readerThread.join(1_000L);
+            String captured = outputText(output);
+            if (truncated.get()) captured = "[output truncated]\n" + captured;
+            return new CommandResult(process.exitValue(), captured);
         } catch (Exception exception) {
+            if (process != null) process.destroy();
             return new CommandResult(127, exception.getMessage() == null
                     ? exception.getClass().getSimpleName() : exception.getMessage());
         }
@@ -288,7 +323,42 @@ final class RootBridgeManager {
 
     private static boolean isAllowedDevtoolCommand(String command) {
         String compact = command.replace('\n', ' ').replaceAll("\\s+", " ").trim();
-        return compact.matches("(?:[A-Za-z_][A-Za-z0-9_]*=[^ ]+ )*(?:devtool|devtool-androidos)(?: |$).*");
+        return !containsShellControlSyntax(command)
+                && compact.matches("(?:[A-Za-z_][A-Za-z0-9_]*=[^ ]+ )*(?:devtool|devtool-androidos)(?: |$).*");
+    }
+
+    private static boolean containsShellControlSyntax(String command) {
+        boolean singleQuoted = false;
+        boolean doubleQuoted = false;
+        boolean escaped = false;
+        for (int i = 0; i < command.length(); i++) {
+            char c = command.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\' && !singleQuoted) {
+                escaped = true;
+                continue;
+            }
+            if (c == '\'' && !doubleQuoted) {
+                singleQuoted = !singleQuoted;
+                continue;
+            }
+            if (c == '"' && !singleQuoted) {
+                doubleQuoted = !doubleQuoted;
+                continue;
+            }
+            if (singleQuoted || doubleQuoted) continue;
+            if (c == '\n' || c == '\r' || c == ';' || c == '`'
+                    || c == '<' || c == '>' || c == '|' || c == '&') {
+                return true;
+            }
+            if (c == '$' && i + 1 < command.length() && command.charAt(i + 1) == '(') {
+                return true;
+            }
+        }
+        return singleQuoted || doubleQuoted || escaped;
     }
 
     private static void setState(Context context, String state, String detail, String version) {
@@ -333,6 +403,27 @@ final class RootBridgeManager {
     private static void appendLimited(StringBuilder target, String value) {
         target.append(value);
         if (target.length() > MAX_OUTPUT) target.delete(0, target.length() - MAX_OUTPUT);
+    }
+
+    private static void copyLimited(InputStream input, ByteArrayOutputStream output, AtomicBoolean truncated) {
+        byte[] buffer = new byte[4096];
+        try {
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+                if (output.size() > MAX_OUTPUT) {
+                    byte[] bytes = output.toByteArray();
+                    output.reset();
+                    output.write(bytes, bytes.length - MAX_OUTPUT, MAX_OUTPUT);
+                    truncated.set(true);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static String outputText(ByteArrayOutputStream output) {
+        return new String(output.toByteArray(), StandardCharsets.UTF_8);
     }
 
     private static final class CommandResult {

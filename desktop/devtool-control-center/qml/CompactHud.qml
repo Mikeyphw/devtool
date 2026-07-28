@@ -21,6 +21,7 @@ Window {
     // Legacy autosize marker: contentLayout.implicitHeight + 32
     readonly property int initialHudWidth: clampValue(620, minimumWidth, maximumWidth)
     readonly property int initialHudHeight: clampValue(360, minimumHeight, maximumHeight)
+    readonly property int automaticMaximumWidth: Math.min(maximumWidth, 760)
     property bool autoSizeEnabled: true
     property bool userSizedHud: false
     readonly property int contentSizePadding: 32
@@ -73,12 +74,11 @@ Window {
     }
     function desiredHudWidth() {
         const laneCount = scopedLanes().length
-        let contentWidth = Math.max(620, headerContent ? headerContent.implicitWidth + contentSizePadding + 48 : 620)
-        if (lowerContent) contentWidth = Math.max(contentWidth, lowerContent.implicitWidth + contentSizePadding + 24)
+        let contentWidth = 620
         if (laneCount > 1) contentWidth = Math.max(contentWidth, 720)
         if (parserExpanded) contentWidth = Math.max(contentWidth, 700)
         if (String(taskTitle()).length > 44 || String(repositorySubtitle()).length > 56) contentWidth = Math.max(contentWidth, 680)
-        return clampValue(contentWidth, minimumWidth, maximumWidth)
+        return clampValue(contentWidth, minimumWidth, automaticMaximumWidth)
     }
     function maxBodyHeight() {
         const screenHeight = Screen.availableHeight > 0 ? Screen.availableHeight : 900
@@ -814,15 +814,15 @@ Window {
                     ScrollView {
                         id: workspaceScroll
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(342, workspaceColumn.implicitHeight)
+                        Layout.preferredHeight: workspaceColumn.implicitHeight
                         visible: scopedLanes().length > 0
                         clip: true
                         background: Rectangle { color: "transparent" }
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                         contentHeight: workspaceColumn.implicitHeight
                         contentWidth: availableWidth
-                        ScrollBar.vertical.policy: workspaceColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
-                        ScrollBar.vertical.interactive: true
+                        ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+                        ScrollBar.vertical.interactive: false
 
                         Column {
                             id: workspaceColumn
@@ -1163,17 +1163,14 @@ Window {
         Connections {
             target: contentLayout
             function onImplicitHeightChanged() { root.scheduleContentSize() }
-            function onImplicitWidthChanged() { root.scheduleContentSize() }
         }
         Connections {
             target: headerContent
             function onImplicitHeightChanged() { root.scheduleContentSize() }
-            function onImplicitWidthChanged() { root.scheduleContentSize() }
         }
         Connections {
             target: lowerContent
             function onImplicitHeightChanged() { root.scheduleContentSize() }
-            function onImplicitWidthChanged() { root.scheduleContentSize() }
         }
         Connections {
             target: workspaceColumn

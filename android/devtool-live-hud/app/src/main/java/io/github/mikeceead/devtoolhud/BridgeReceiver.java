@@ -9,6 +9,7 @@ import android.widget.Toast;
 public final class BridgeReceiver extends BroadcastReceiver {
     private static final String TAG = "DevtoolHudBridge";
     private static final String TOAST_PREFS = "bridge_toasts";
+    private static final int MAX_TOAST_LENGTH = 260;
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -19,9 +20,17 @@ public final class BridgeReceiver extends BroadcastReceiver {
         }
 
         String action = intent.getAction() == null ? "" : intent.getAction();
+        if (!isExpectedBridgeAction(context, action)) {
+            Log.w(TAG, "Rejected bridge update with unexpected action " + action);
+            return;
+        }
         String runId = intent.getStringExtra("run_id");
         if (action.endsWith("TOAST")) {
             showToast(context, intent.getStringExtra("toast"));
+            return;
+        }
+        if (runId == null || runId.trim().isEmpty()) {
+            Log.w(TAG, "Rejected bridge update without a run id");
             return;
         }
         if (!action.endsWith("CANCEL") && !BridgeUpdateGate.accept(context, intent)) {
@@ -57,6 +66,16 @@ public final class BridgeReceiver extends BroadcastReceiver {
     private static void showToast(Context context, String text) {
         String clean = text == null ? "" : text.trim();
         if (clean.isEmpty()) return;
+        if (clean.length() > MAX_TOAST_LENGTH) clean = clean.substring(0, MAX_TOAST_LENGTH);
         Toast.makeText(context.getApplicationContext(), clean, Toast.LENGTH_SHORT).show();
+    }
+
+    private static boolean isExpectedBridgeAction(Context context, String action) {
+        String prefix = context.getPackageName() + ".";
+        return (prefix + "UPDATE").equals(action)
+                || (prefix + "COMPLETE").equals(action)
+                || (prefix + "FAIL").equals(action)
+                || (prefix + "CANCEL").equals(action)
+                || (prefix + "TOAST").equals(action);
     }
 }

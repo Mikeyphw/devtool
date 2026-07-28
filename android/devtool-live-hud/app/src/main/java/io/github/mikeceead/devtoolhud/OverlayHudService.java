@@ -28,6 +28,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,7 +49,7 @@ public final class OverlayHudService extends Service {
     static final String ACTION_START = "io.github.mikeceead.devtoolhud.OVERLAY_START";
     static final String ACTION_STOP = "io.github.mikeceead.devtoolhud.OVERLAY_STOP";
 
-    private static volatile OverlayHudService instance;
+    private static volatile WeakReference<OverlayHudService> instance = new WeakReference<>(null);
     private static final Map<String, HudUpdate> pendingUpdates = new LinkedHashMap<>();
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -78,7 +79,7 @@ public final class OverlayHudService extends Service {
     }
 
     static boolean isRunning() {
-        return instance != null;
+        return activeInstance() != null;
     }
 
     static void setEnabled(Context context, boolean enabled) {
@@ -105,7 +106,7 @@ public final class OverlayHudService extends Service {
             cancel(update.runId);
             return;
         }
-        OverlayHudService active = instance;
+        OverlayHudService active = activeInstance();
         if (active != null) {
             active.postUpdate(update);
             return;
@@ -125,14 +126,14 @@ public final class OverlayHudService extends Service {
             if (runId == null || runId.isEmpty()) pendingUpdates.clear();
             else pendingUpdates.remove(runId);
         }
-        OverlayHudService active = instance;
+        OverlayHudService active = activeInstance();
         if (active != null) active.removeRun(runId);
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        instance = this;
+        instance = new WeakReference<>(this);
         palette = AppPalette.resolve(this);
         if (!hasPermission(this)) {
             stopSelf();
@@ -173,7 +174,7 @@ public final class OverlayHudService extends Service {
 
     @Override
     public void onDestroy() {
-        instance = null;
+        if (activeInstance() == this) instance = new WeakReference<>(null);
         for (Runnable removal : removals.values()) handler.removeCallbacks(removal);
         removals.clear();
         currentRuns.clear();
@@ -205,6 +206,11 @@ public final class OverlayHudService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    private static OverlayHudService activeInstance() {
+        WeakReference<OverlayHudService> ref = instance;
+        return ref == null ? null : ref.get();
     }
 
     private void postUpdate(HudUpdate update) {
