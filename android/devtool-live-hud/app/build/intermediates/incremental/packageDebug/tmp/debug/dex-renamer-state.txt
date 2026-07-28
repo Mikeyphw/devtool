@@ -1,0 +1,7 @@
+#Tue Jul 28 05:08:58 UTC 2026
+base.1=/home/termux/Code/devtool/android/devtool-live-hud/app/build/intermediates/dex/debug/mergeProjectDexDebug/8/classes.dex
+path.1=8/classes.dex
+base.0=/home/termux/Code/devtool/android/devtool-live-hud/app/build/intermediates/dex/debug/mergeProjectDexDebug/0/classes.dex
+renamed.1=classes2.dex
+renamed.0=classes.dex
+path.0=0/classes.dex

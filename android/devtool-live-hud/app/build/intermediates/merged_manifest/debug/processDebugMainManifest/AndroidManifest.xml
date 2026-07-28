@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.mikeceead.devtoolhud.debug"
+    android:versionCode="30"
+    android:versionName="1.16.0-debug" >
+
+    <uses-sdk
+        android:minSdkVersion="26"
+        android:targetSdkVersion="36" />
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <queries>
+        <package android:name="com.termux" />
+        <package android:name="net.dinglisch.android.taskerm" />
+        <package android:name="net.dinglisch.android.tasker" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:debuggable="true"
+        android:extractNativeLibs="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.DevtoolHud" >
+        <activity
+            android:name="io.github.mikeceead.devtoolhud.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop" >
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name="io.github.mikeceead.devtoolhud.LogViewerActivity"
+            android:exported="true"
+            android:label="Devtool Log" >
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="logs"
+                    android:pathPrefix="/run/"
+                    android:scheme="devtool" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name="io.github.mikeceead.devtoolhud.ValidationEvidenceActivity"
+            android:exported="false"
+            android:label="Validation Evidence" />
+        <activity
+            android:name="io.github.mikeceead.devtoolhud.RepositoryDetailActivity"
+            android:exported="false"
+            android:label="Repository" />
+        <activity
+            android:name="io.github.mikeceead.devtoolhud.RepositoryPickerActivity"
+            android:exported="false"
+            android:label="Choose Repository" />
+        <activity
+            android:name="io.github.mikeceead.devtoolhud.GitDiffActivity"
+            android:exported="false"
+            android:label="Git Diff" />
+        <activity
+            android:name="io.github.mikeceead.devtoolhud.GitCommitActivity"
+            android:exported="false"
+            android:label="Commit Details" />
+        <activity
+            android:name="io.github.mikeceead.devtoolhud.TaskerPluginActivity"
+            android:exported="true"
+            android:label="@string/tasker_action_name"
+            android:theme="@style/Theme.DevtoolHud" >
+            <intent-filter>
+                <action android:name="com.twofortyfouram.locale.intent.action.EDIT_SETTING" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name="io.github.mikeceead.devtoolhud.OverlayHudService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false" >
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled developer build, test, validation and commit progress overlay." />
+        </service>
+        <service
+            android:name="io.github.mikeceead.devtoolhud.TermuxResultService"
+            android:enabled="true"
+            android:exported="false" />
+
+        <receiver
+            android:name="io.github.mikeceead.devtoolhud.TaskerPluginReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:label="@string/tasker_action_name" >
+            <intent-filter>
+                <action android:name="com.twofortyfouram.locale.intent.action.FIRE_SETTING" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="io.github.mikeceead.devtoolhud.BridgeReceiver"
+            android:enabled="true"
+            android:exported="true" >
+            <intent-filter>
+                <action android:name="io.github.mikeceead.devtoolhud.UPDATE" />
+                <action android:name="io.github.mikeceead.devtoolhud.COMPLETE" />
+                <action android:name="io.github.mikeceead.devtoolhud.FAIL" />
+                <action android:name="io.github.mikeceead.devtoolhud.CANCEL" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="io.github.mikeceead.devtoolhud.ActionReceiver"
+            android:enabled="true"
+            android:exported="false" />
+    </application>
+
+</manifest>
