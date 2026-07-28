@@ -61,6 +61,46 @@ from .tasker import TaskerProgressSink
 console = create_console()
 
 
+def _format_report_issue_location(issue: Issue) -> str:
+    location = str(issue.file or "").strip()
+    if not location or location == "-":
+        return ""
+    if issue.line is not None:
+        return f" ({location}:{issue.line})"
+    return f" ({location})"
+
+
+def _append_report_issue_summary(
+    output: str,
+    issues: Sequence[Issue],
+    *,
+    title: str,
+    codes: set[str],
+    limit: int = 12,
+) -> str:
+    selected = [
+        issue
+        for issue in issues
+        if issue.severity == "error" and issue.code in codes and str(issue.message or "").strip()
+    ]
+    if not selected:
+        return output
+    existing = output or ""
+    lines: list[str] = []
+    for issue in selected:
+        message = str(issue.message or "").strip()
+        if message and message in existing:
+            continue
+        lines.append(f"- {message}{_format_report_issue_location(issue)}")
+    if not lines:
+        return output
+    prefix = output.rstrip() + "\n" if output else ""
+    rendered = prefix + f"{title}:\n" + "\n".join(lines[:limit]) + "\n"
+    if len(lines) > limit:
+        rendered += f"- ... and {len(lines) - limit} more failure(s).\n"
+    return rendered
+
+
 def _memory_snapshot() -> tuple[int | None, int | None, int | None, float | None, float | None]:
     """Return MemAvailable, SwapFree, SwapTotal and memory PSI avg10 values."""
 
@@ -1489,6 +1529,16 @@ def run_specs(
                             + f"{tests.get('skipped', 0)} skipped, "
                             + f"{tests.get('total', 0)} total.\n"
                         )
+                    output = _append_report_issue_summary(
+                        output,
+                        collection.issues,
+                        title=(
+                            "Devtool Gradle test failures"
+                            if report_parser == "gradle-junit"
+                            else "Devtool test failures"
+                        ),
+                        codes={"GRADLE_TEST", "ANDROID_INSTRUMENTATION"},
+                    )
                     try:
                         from .test_selection import save_failed_test_ids
                         failed_ids = [issue.message.split(":", 1)[0] for issue in collection.issues if issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION"}]
@@ -1591,6 +1641,14 @@ def run_specs(
             result_metadata["resource_guard_triggered"] = kind == "resource"
             result_metadata["timed_out"] = kind == "timeout"
         failure_kind = classify_failure(spec.name, output, returncode)
+        if any(issue.severity == "error" and issue.code == "GRADLE_MEMORY_GUARD" for issue in issues):
+            failure_kind = "resource_interrupted"
+        elif any(
+            issue.severity == "error"
+            and issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION", "UNITTEST", "PYTEST", "VSTEST"}
+            for issue in issues
+        ):
+            failure_kind = "test_failure"
         if supervisor_events:
             failure_kind = {
                 "resource": "resource_interrupted",

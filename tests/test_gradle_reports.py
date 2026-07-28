@@ -113,10 +113,34 @@ class GradleReportTests(unittest.TestCase):
                 },
             )
             results, _ = run_specs(config, [spec], verbose=False, shutdown_dotnet=False)
+            saved_log = Path(results[0].log_path).read_text(encoding="utf-8")
 
         self.assertEqual(results[0].returncode, 1)
+        self.assertEqual(results[0].failure_kind, "test_failure")
         self.assertEqual(results[0].metadata["tests"]["total"], 3)
         self.assertIn("Devtool Gradle tests", results[0].output)
+        self.assertIn("Devtool Gradle test failures", results[0].output)
+        self.assertIn("demo.Tests.fails: expected true", results[0].output)
+        self.assertIn("src/test/DemoTest.kt:42", results[0].output)
+        self.assertIn("Devtool Gradle test failures", saved_log)
+        self.assertIn("demo.Tests.fails: expected true", saved_log)
+
+    def test_run_specs_classifies_memory_guard_as_resource_interruption(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "memory_guard.py"
+            script.write_text(
+                "print('warning: Emergency memory guard stopped Gradle after hard emergency floor: 165 MiB available; configured warning guard 256 MiB.')\n"
+                "raise SystemExit(75)\n",
+                encoding="utf-8",
+            )
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+            spec = CommandSpec("android-validation-build", ["python3", str(script)], cwd=str(root))
+            results, _ = run_specs(config, [spec], verbose=False, shutdown_dotnet=False)
+
+        self.assertEqual(results[0].returncode, 75)
+        self.assertEqual(results[0].issues[0].code, "GRADLE_MEMORY_GUARD")
+        self.assertEqual(results[0].failure_kind, "resource_interrupted")
 
     def test_run_specs_keeps_successful_android_lint_report_errors_nonfatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
