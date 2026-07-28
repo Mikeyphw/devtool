@@ -304,6 +304,7 @@ class HudTests(unittest.TestCase):
         self.assertIn("- warning 12", text)
         self.assertIn("Errors:", text)
         self.assertIn("- src/App.kt:8: error LintError: Failure 2", text)
+        self.assertLess(text.index("Errors:"), text.index("Warnings:"))
 
     def test_render_ascii_bar_clamps_progress(self) -> None:
         self.assertEqual(render_ascii_bar(5, 10, width=10), "█████░░░░░")

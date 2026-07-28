@@ -12,6 +12,7 @@ from .console_utils import is_termux_environment
 
 CLIPBOARD_STARTUP_GRACE_SECONDS = 0.15
 TERMUX_CLIPBOARD_TIMEOUT_SECONDS = 8.0
+DESKTOP_CLIPBOARD_VERIFY_TIMEOUT_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,50 @@ def _run_termux_clipboard_command(command: list[str], text: str, backend: str) -
     return ClipboardResult(False, backend=backend, reason=reason)
 
 
+def _read_desktop_clipboard(backend: str) -> ClipboardResult | str:
+    if backend == "xclip":
+        command = ["xclip", "-selection", "clipboard", "-o"]
+    elif backend == "xsel":
+        command = ["xsel", "--clipboard", "--output"]
+    else:
+        return ""
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=DESKTOP_CLIPBOARD_VERIFY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return ClipboardResult(
+            False,
+            backend=backend,
+            reason=f"{backend} clipboard readback did not finish within {DESKTOP_CLIPBOARD_VERIFY_TIMEOUT_SECONDS:g} seconds",
+        )
+    except OSError as exc:
+        return ClipboardResult(False, backend=backend, reason=f"{backend} clipboard readback failed: {exc}")
+    if completed.returncode != 0:
+        error = str(completed.stderr or "").strip()
+        reason = f"{backend} clipboard readback exited with status {completed.returncode}"
+        if error:
+            reason = f"{reason}: {error}"
+        return ClipboardResult(False, backend=backend, reason=reason)
+    return str(completed.stdout or "")
+
+
+def _verify_desktop_clipboard_write(text: str, backend: str) -> ClipboardResult:
+    if backend not in {"xclip", "xsel"}:
+        return ClipboardResult(True, backend=backend)
+    readback = _read_desktop_clipboard(backend)
+    if isinstance(readback, ClipboardResult):
+        return readback
+    if readback != text:
+        return ClipboardResult(False, backend=backend, reason=f"{backend} clipboard readback did not match the copied summary.")
+    return ClipboardResult(True, backend=backend)
+
+
 def _run_clipboard_command(command: list[str], text: str, backend: str) -> ClipboardResult:
     if backend == "termux-clipboard-set":
         return _run_termux_clipboard_command(command, text, backend)
@@ -149,7 +194,7 @@ def _run_clipboard_command(command: list[str], text: str, backend: str) -> Clipb
     time.sleep(CLIPBOARD_STARTUP_GRACE_SECONDS)
     returncode = process.poll()
     if returncode is None or returncode == 0:
-        return ClipboardResult(True, backend=backend)
+        return _verify_desktop_clipboard_write(text, backend)
 
     return ClipboardResult(
         False,

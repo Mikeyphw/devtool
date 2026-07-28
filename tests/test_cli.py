@@ -1168,6 +1168,29 @@ artifact-cleanup: ok exit=0 time=0.10s
             rendered = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
             self.assertIn("nope", rendered)
 
+    def test_final_copy_runs_after_live_progress_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            events: list[str] = []
+
+            def finish_progress(*_args, **_kwargs):
+                events.append("finish")
+
+            def copy_summary(*_args, **_kwargs):
+                events.append("copy")
+                return __import__("devtool.clipboard").clipboard.ClipboardResult(True, backend="test")
+
+            with (
+                patch("devtool.cli._finish_live_progress", side_effect=finish_progress),
+                patch("devtool.cli.copy_text", side_effect=copy_summary),
+            ):
+                rc = main(["--repo", str(root), "--copy", "--dry-run", "validate"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(events[-2:], ["finish", "copy"])
+
     def test_copy_allows_success_after_stale_recovery_cleanup(self) -> None:
         args = SimpleNamespace(
             no_clipboard=False,

@@ -206,7 +206,11 @@ static QJsonObject mergeRunState(const QJsonObject &current, const QJsonObject &
 
     const QString oldStatus = current.value("status").toString();
     const QString newStatus = incoming.value("status").toString();
-    if (terminalStatus(oldStatus) && !terminalStatus(newStatus)) merged["status"] = oldStatus;
+    if (terminalStatus(oldStatus) && !terminalStatus(newStatus)) {
+        merged["status"] = oldStatus;
+        for (const auto &key : {"summary", "completion_detail", "completion_headline", "rolled_back", "rollback_failed", "failure_phase", "tests"})
+            if (current.contains(key)) merged[key] = current.value(key);
+    }
     if (current.value("errors").toInt() > incoming.value("errors").toInt()) merged["errors"] = current.value("errors");
     if (current.value("warnings").toInt() > incoming.value("warnings").toInt()) merged["warnings"] = current.value("warnings");
     return merged;
@@ -440,6 +444,8 @@ QJsonObject HudStateStore::normalize(QJsonObject state) const {
     QJsonValue duration = completion.value("duration_seconds");
     if (duration.isUndefined() || duration.isNull()) duration = completion.value("duration_s");
     state["duration_seconds"] = duration;
+    if (state.value("summary").toString().trimmed().isEmpty() && !completion.value("summary").toString().trimmed().isEmpty())
+        state["summary"] = completion.value("summary");
     state["completion_headline"] = completion.value("headline");
     state["completion_detail"] = completion.value("detail");
     state["rolled_back"] = completion.value("rolled_back").toBool();
@@ -555,14 +561,18 @@ void HudStateStore::rebuildWatchList() {
 QVariantList HudStateStore::stepsFor(const QVariantMap &run) const { return run.value("steps").toList(); }
 QString HudStateStore::focusedSummary(const QVariantMap &run) const {
     const QString command = run.value("command").toString();
+    const QString status = run.value("status").toString();
+    const QString finalSummary = run.value("summary").toString().trimmed();
+    if (terminalStatus(status) && !finalSummary.isEmpty()) return finalSummary;
     QString statusLabel;
     if (run.value("rollback_failed").toBool()) statusLabel = QStringLiteral("Failed; rollback also failed");
     else if (run.value("rolled_back").toBool()) statusLabel = QStringLiteral("Failed; repository restored by rollback");
-    else if (run.value("status").toString() == QStringLiteral("ok")) statusLabel = QStringLiteral("Completed successfully");
-    else if (run.value("status").toString() == QStringLiteral("running")) statusLabel = QStringLiteral("Running");
+    else if (status == QStringLiteral("ok")) statusLabel = QStringLiteral("Completed successfully");
+    else if (status == QStringLiteral("running")) statusLabel = QStringLiteral("Running");
     else statusLabel = QStringLiteral("Failed");
 
     QString output = QStringLiteral("Devtool — ") + humanCommand(command);
+    if (status == QStringLiteral("running")) output = QStringLiteral("Live HUD snapshot — current state, not final result\n\n") + output;
     output += QStringLiteral("\nStatus: ") + statusLabel;
     const QString repository = run.value("repo_name").toString();
     if (!repository.isEmpty()) output += QStringLiteral("\nRepository: ") + repository;

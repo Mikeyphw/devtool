@@ -510,6 +510,7 @@ def _overlay_panel(info: dict[str, object], results: list[OperationResult], targ
         )
 
     issue_items = [issue for result in results for issue in result.issues]
+    issue_items.sort(key=lambda issue: 0 if issue.severity == "error" else 1)
     body: list[object] = [metrics, Text(""), actions]
     if issue_items:
         warning_table = Table(box=None, show_header=False, expand=True, padding=(0, 1))

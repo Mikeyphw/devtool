@@ -801,6 +801,36 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertEqual(session.phases[0].attempt_history[0].verdict, "code-failed")
             self.assertEqual(session.failure_action, "pause")
 
+    def test_validation_abort_relocates_stale_session_repo_root_before_save(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            config = validation_config(root)
+            session = create_session(
+                config,
+                [CommandSpec("compile", ["gradle", "compile"], metadata={"validation_phase_name": "compile"})],
+            )
+            state_path = root / ".devtool" / "state" / "android-validation" / session.session_id / "state.json"
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            stale_root = "/data/data/com.termux/files/home/Code/dustui"
+            payload["repo_root"] = stale_root
+            payload["project_root"] = stale_root
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            relocated = load_session(root, session.session_id)
+            self.assertEqual(relocated.repo_root, str(root.resolve()))
+            self.assertEqual(relocated.project_root, str(root.resolve()))
+
+            abort_rc = main(["--repo", str(root), "validation-abort", "--keep-changes"])
+            self.assertEqual(abort_rc, 0)
+            self.assertIsNone(load_active_session(root))
+            persisted = load_session(root, session.session_id)
+            self.assertEqual(persisted.status, "aborted-kept-changes")
+            self.assertEqual(persisted.repo_root, str(root.resolve()))
+
     def test_resource_failure_pauses_and_keeps_phase_retryable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

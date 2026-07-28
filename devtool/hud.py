@@ -835,10 +835,6 @@ def completion_copy_text(state: HudState) -> str:
             suffix = f" ({float(duration):.2f}s)" if isinstance(duration, (int, float)) else ""
             status = str(action.get("status") or "ok")
             lines.append(f"- {label}{suffix}" if status == "ok" else f"- {label}: {status}{suffix}")
-    warning_details = completion.get("warning_details") if isinstance(completion.get("warning_details"), list) else []
-    if warning_details:
-        lines.extend(("", "Warnings:"))
-        lines.extend(f"- {item}" for item in warning_details if item)
     diagnostics = completion.get("diagnostics") if isinstance(completion.get("diagnostics"), list) else []
     error_details = [
         str(item.get("detail") or item.get("message") or "").strip()
@@ -848,6 +844,10 @@ def completion_copy_text(state: HudState) -> str:
     if error_details:
         lines.extend(("", "Errors:"))
         lines.extend(f"- {item}" for item in error_details if item)
+    warning_details = completion.get("warning_details") if isinstance(completion.get("warning_details"), list) else []
+    if warning_details:
+        lines.extend(("", "Warnings:"))
+        lines.extend(f"- {item}" for item in warning_details if item)
     commit_hash = str(completion.get("commit_hash") or "").strip()
     if commit_hash:
         lines.extend(("", f"Git commit: {commit_hash}"))

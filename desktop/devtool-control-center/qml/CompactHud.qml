@@ -614,8 +614,8 @@ Window {
                             AppButton {
                                 text: ""
                                 iconSource: copiedFeedback ? "qrc:/qt/qml/Devtool/ControlCenter/icons/done.svg" : "qrc:/qt/qml/Devtool/ControlCenter/icons/copy.svg"
-                                accessibleName: copiedFeedback ? "Summary copied" : "Copy run summary"
-                                accessibleDescription: "Copy the current run summary. Keyboard shortcut Control+C."
+                                accessibleName: copiedFeedback ? "Run details copied" : "Copy run details"
+                                accessibleDescription: "Copy the current live snapshot or final summary. Keyboard shortcut Control+C."
                                 variant: "ghost"
                                 compact: true
                                 implicitWidth: 40

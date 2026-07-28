@@ -762,9 +762,9 @@ def _write_json_payload(path_text: str, json_payload: str) -> None:
     path.write_text(json_payload + ("" if json_payload.endswith("\n") else "\n"), encoding="utf-8")
     console.print(f"[green]Wrote JSON payload[/green] {path}")
 
-def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argparse.Namespace) -> None:
+def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argparse.Namespace):
     if args.no_clipboard:
-        return
+        return None
 
     import re as _re
 
@@ -781,7 +781,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     for pattern, reason in suppression_patterns:
         if not payload_ok and _re.search(pattern, raw_output, _re.IGNORECASE | _re.DOTALL):
             console.print(f"[yellow]Clipboard copy skipped because the {reason}.[/yellow]")
-            return
+            return None
 
     repair_lines = repair_summary_lines_from_payload(payload)
 
@@ -1329,14 +1329,16 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             )
         else:
             console.print(
-                f"[yellow]{result.reason or 'Clipboard copy failed.'}[/yellow]"
+                f"[yellow]{label} was not copied to clipboard"
+                f"{f' via {result.backend}' if result.backend else ''}: "
+                f"{result.reason or 'Clipboard copy failed.'}[/yellow]"
             )
-        return
+        return result
 
     if args.command not in INTERACTIVE_COPY_COMMANDS:
-        return
+        return None
     if not console.is_interactive or not sys.stdin.isatty() or not to_copy.strip():
-        return
+        return None
 
     copy_now = Confirm.ask(
         f"Copy {label.lower()} to clipboard?",
@@ -1355,8 +1357,12 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             )
         else:
             console.print(
-                f"[yellow]{result.reason or 'Clipboard copy failed.'}[/yellow]"
+                f"[yellow]{label} was not copied to clipboard"
+                f"{f' via {result.backend}' if result.backend else ''}: "
+                f"{result.reason or 'Clipboard copy failed.'}[/yellow]"
             )
+        return result
+    return None
 
 def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[str, str]:
     explicit_stdout = args.stdout_payload
@@ -6546,8 +6552,8 @@ def main(argv: list[str] | None = None) -> int:
                 finished_at=finished_at, machine_format="pretty",
             )
             _write_json_payload(args.machine_file, machine_text)
-            _maybe_copy(pending_result.output, summary_text, json_text, args)
             _finish_live_progress(tasker_progress, totals=totals, results=[pending_result])
+            _maybe_copy(pending_result.output, summary_text, json_text, args)
             _release_single_run_lock(args)
             return 1
 
@@ -6576,8 +6582,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             duration_seconds = sum(r.duration_seconds for r in results)
             _write_json_payload(args.machine_file, _machine_json_text)
-            _maybe_copy(raw_output, summary_text, json_text, args)
             _finish_live_progress(tasker_progress, totals=totals, results=results)
+            _maybe_copy(raw_output, summary_text, json_text, args)
             if args.command in APPLY_COMMANDS:
                 notify_apply_finished(args, config, results, totals)
             _release_single_run_lock(args)
@@ -6600,8 +6606,8 @@ def main(argv: list[str] | None = None) -> int:
                 finished_at=finished_at, machine_format="pretty",
             )
             _write_json_payload(args.machine_file, machine_text)
-            _maybe_copy(recovery_output, summary_text, json_text, args)
             _finish_live_progress(tasker_progress, totals=totals, results=[rollback_result])
+            _maybe_copy(recovery_output, summary_text, json_text, args)
             _release_single_run_lock(args)
             return 1
 
@@ -6985,8 +6991,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     duration_seconds = sum(r.duration_seconds for r in results)
     _write_json_payload(args.machine_file, _machine_json_text)
-    _maybe_copy(raw_output, summary_text, json_text, args)
     _finish_live_progress(tasker_progress, totals=totals, results=results)
+    _maybe_copy(raw_output, summary_text, json_text, args)
     if args.command in APPLY_COMMANDS:
         notify_apply_finished(args, config, results, totals)
     _write_performance_report(args, results, started_at=started_at, finished_at=finished_at, config=config)

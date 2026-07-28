@@ -162,6 +162,32 @@ class SummaryRenderingTests(unittest.TestCase):
         self.assertIn("abc1234", output)
         self.assertIn("def5678", output)
 
+    def test_overlay_summary_shows_errors_before_warning_overflow(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=100)
+        meta = {"overlay_index": 1, "overlay_total": 1, "overlay_label": "UI", "overlay_target": "android"}
+        warnings = [
+            Issue("warning", "test", f"src/Test{index}.kt", "KOTLIN", f"warning {index}", line=index)
+            for index in range(12)
+        ]
+        error = Issue(
+            "error",
+            "test",
+            "app/build/test-results/testDebugUnitTest/TEST-demo.xml",
+            "GRADLE_TEST",
+            "demo.Test.fails: assertion failed",
+        )
+        results = [
+            OperationResult("apply-overlay", ["apply"], 0, 0.1, "ok", [], metadata=meta),
+            OperationResult("test", ["test"], 1, 0.2, "failed", [*warnings, error], metadata=meta),
+        ]
+
+        render_summary(results, console_obj=console)
+        output = stream.getvalue()
+
+        self.assertLess(output.index("assertion failed"), output.index("warning 0"))
+        self.assertIn("5 more issue(s); see full log", output)
+
     def test_render_summary_shows_repair_summary_for_fixable_failures(self) -> None:
         stream = StringIO()
         console = Console(file=stream, force_terminal=False, width=90)

@@ -510,6 +510,29 @@ def _session_from_dict(payload: dict[str, Any]) -> ValidationSession:
     return ValidationSession(**values)
 
 
+def _session_payload_for_repo(payload: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    current_repo = str(repo_root.expanduser().resolve())
+    stored_repo = str(payload.get("repo_root") or "").strip()
+    if not stored_repo or stored_repo == current_repo:
+        return payload
+
+    relocated = dict(payload)
+    relocated["repo_root"] = current_repo
+    stored_project = str(payload.get("project_root") or "").strip()
+    if stored_project:
+        old_repo = Path(stored_repo).expanduser()
+        old_project = Path(stored_project).expanduser()
+        try:
+            relative_project = old_project.relative_to(old_repo)
+        except ValueError:
+            relative_project = None
+        if old_project == old_repo:
+            relocated["project_root"] = current_repo
+        elif relative_project is not None:
+            relocated["project_root"] = str((Path(current_repo) / relative_project).resolve())
+    return relocated
+
+
 def _legacy_attempt_verdict(phase: dict[str, Any]) -> str:
     status = str(phase.get("status") or "").strip().lower()
     if status in {"succeeded", "passed", "skipped", "not-applicable"}:
@@ -731,7 +754,7 @@ def load_session(repo_root: Path, session_id: str) -> ValidationSession:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationSessionError(f"Invalid validation session state: {path}: {exc}") from exc
-    migrated = _migrate_session_payload(payload)
+    migrated = _session_payload_for_repo(_migrate_session_payload(payload), repo_root)
     return _session_from_dict(migrated)
 
 
