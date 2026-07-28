@@ -3,6 +3,88 @@
 Devtool applies project overlays, validates builds and tests, records transactions, produces handoff summaries, and can publish one live run to the desktop HUD or the Android Devtool Frontend.
 
 
+## Deferred validation reliability
+
+Deferred and sequential validation use revisioned schema-v4 sessions with a
+durable dependency graph and attempt history. A test, compile, lint, or
+validator failure blocks the session and preserves the patched working tree plus
+rollback point by default. Interruptions and verified resource/environment
+failures remain retryable rather than being mislabeled as bad code.
+
+Phase selection follows declared prerequisites, input fingerprints invalidate
+only affected graph branches, and a phase success is discarded when relevant
+inputs change while it is running. Unsafe plan drift requires an explicit
+audited acceptance.
+
+```bash
+devtool -r /path/to/repo validate continue
+devtool -r /path/to/repo validate continue --retry-failed
+devtool -r /path/to/repo validate recover
+devtool -r /path/to/repo validate reset --from-phase compile
+devtool -r /path/to/repo validate accept-plan-change --reason "Reviewed plan update"
+devtool -r /path/to/repo validate abort --keep-changes
+devtool -r /path/to/repo validate abort
+```
+
+Use `--failure-action rollback` only when immediate restoration is desired.
+Rollback is journaled per path, staged and hash-verified, and can resume after an
+interruption. `validate status`, `validate checkpoint`, and validation
+`--dry-run` previews do not mutate session state. Resource and infrastructure
+interruptions have bounded automatic retries; use `--no-auto-retry` for fully
+manual retry control.
+
+### Stable validation control API
+
+Phase 28 adds a versioned machine surface for the Android app and other
+frontends. Read operations are lock-free and non-mutating; control requests use
+optimistic concurrency so an old notification cannot alter a newer session.
+
+```bash
+devtool -r /path/to/repo validate status --json
+devtool -r /path/to/repo validate plan --json
+devtool -r /path/to/repo validate events --after-event EVENT_ID --json
+
+devtool -r /path/to/repo validate run --scope next --if-revision 12 --json
+devtool -r /path/to/repo validate run --scope through --through package --if-revision 13 --json
+devtool -r /path/to/repo validate run --scope selected --phase compile --phase lint --if-revision 14 --json
+devtool -r /path/to/repo validate run --scope remaining --if-revision 15 --json
+
+devtool -r /path/to/repo validate pause --after-phase --if-revision 16 --json
+devtool -r /path/to/repo validate stop --if-revision 17 --json
+```
+
+Every response uses `api_version: 1`, returns the current session revision, and
+includes stable `state`, `effective_state`, `reason`, `message`, and `data`
+fields. Accepted mutations advance the revision. Heartbeats prove liveness
+without advancing it. Durable JSONL events support cursor polling without
+replaying the entire log. Exit codes are `0` accepted, `2` invalid request, `3`
+stale revision, `4` blocked session, `5` recovery required, and `6` control
+unavailable. Use `--machine compact` for compact JSON or `--machine-file PATH`
+to mirror the exact envelope to a file.
+
+## Android Validation Workbench
+
+Phases 29–31 add a dedicated validation surface inside the Android Run destination. The app consumes the Phase 28 API-v1 envelopes, persists sessions/phases/attempts in SQLite, and sends revision-guarded controls through the original Termux or root execution environment.
+
+The Workbench can run the next phase, all remaining phases, selected phases plus their dependency closure, or every phase through a named checkpoint. It exposes pause-after-phase, immediate stop, cancel-pause, retry and safe retry, graph-aware reset, finalization, keep-changes abandonment, and confirmed journaled rollback. Validation failure continues to preserve the patched tree and rollback point.
+
+The normal custom notification now has a validation presentation with overall phase progress, previous/current/next phase rows, and state-specific actions. Old notification actions cannot mutate a newer session because every action includes the session revision, repository identity, and active attempt identity. Equal-revision telemetry snapshots are ordered by the authoritative session timestamp. Rollback remains available only inside the confirmed Workbench danger section.
+
+Phase 31.1 adds structured executor identity, immutable Android attempt evidence, live current-phase percentages, explicit recovery and safe retry, a cached evidence viewer, and rollback confirmation with journal/backup/dirty-tree context. See `PHASE_31_1_VALIDATION_COMPLETION.md`.
+
+See `PHASE_29_31_ANDROID_VALIDATION_WORKBENCH.md`.
+
+## Durable validation reports
+
+Completed, blocked, recovered, and aborted validation sessions write a durable validation report under `.devtool/reports/validation/`. Reports include the complete phase plan, immutable attempt evidence, original and final Git heads, diagnostics, resource-profile changes, rollback outcome, commit outcome, and final verdict.
+
+```bash
+devtool validate report --json
+python3 tools/validate-validation-release.py
+```
+
+Android Logs displays validation sessions as distinct validation history cards with an **Open report** action. Finalization refuses stale inputs or incomplete required checkpoints. Release candidates must run the Phase 32–33 validation seal and the Android toolchain gate described in [`docs/RELEASE_QUALIFICATION.md`](docs/RELEASE_QUALIFICATION.md).
+
 ## Devtool 1.1.0: native release qualification
 
 Slice 5 adds executable release gates for every distributable. The canonical
@@ -220,7 +302,9 @@ devtool -r "$HOME/Code/app" validate continue
 banner afterward. At a checkpoint, Devtool reports the last completed phase and
 the next pending phase. Once every phase succeeds, it prints a terminal
 `VALIDATION COMPLETE` banner and confirms that no pending phases remain.
-`--through`, `--phase`, and `--complete` remain available for advanced batching. Ctrl+C and
+`--through`, `--phase`, and `--complete` remain available for advanced batching.
+Selections include unmet dependencies automatically; `--phase-only` refuses an
+unsafe prerequisite bypass. Ctrl+C and
 Control Center cancellation return the current phase to `pending`; if Termux,
 the chroot, Gradle, or Devtool is killed before recording the result, the next
 `validate continue` automatically recovers the stale `running` phase and retries
@@ -497,3 +581,5 @@ regular-expression chain. See `docs/UI_REGRESSION.md`.
 Devtool run logs are retained under the XDG state directory and rotated automatically. Defaults keep at most 120 logs for 30 days, cap retained data at 128 MiB, and bound an individual log to 12 MiB while preserving its beginning and newest output. Tune these limits with `DEVTOOL_LOG_MAX_FILES`, `DEVTOOL_LOG_MAX_AGE_DAYS`, `DEVTOOL_LOG_MAX_TOTAL_MB`, and `DEVTOOL_LOG_MAX_FILE_MB`.
 
 The Android companion keeps a separate private structured app log. Its Logs page can browse either stream, search and filter entries, open bounded Devtool log tails through Termux RunCommand, copy/share visible output, rotate retained Devtool logs, or clear each stream independently.
+
+Sealed final reports use a content hash and a write-once `.final.json` path; later report requests cannot overwrite the final evidence.

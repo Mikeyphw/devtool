@@ -43,3 +43,17 @@ automated matrix is green.
 - [ ] Run `tools/make-release-candidate.sh --require-native --desktop --android`.
 - [ ] Verify `SHA256SUMS.all` from a second machine.
 - [ ] Create an annotated `v1.1.0-rc.3` tag only after all automated and manual rows pass.
+
+## Phase 32–33 validation seal
+
+- [ ] `python3 tools/validate-validation-release.py` passes the 16-scenario validation failure matrix.
+- [ ] A generated validation report contains the source artifact, original/final Git heads, every phase and attempt, diagnostics, rollback outcome, commit outcome, and final verdict.
+- [ ] Android Logs renders command runs and validation sessions as distinct cards; Open report shows phase and attempt evidence.
+- [ ] Finalization rejects stale repository inputs, incomplete required phases, and an unsatisfied minimum checkpoint.
+- [ ] `python3 tools/release-qualify.py --require-android --device-tests` passes on the release host.
+- [ ] The Android Gradle build completes lint, JVM tests, signed release APK verification, and connected instrumentation when device tests are enabled.
+- [ ] Record the release report, Android SDK/build-tools versions, device/API level, APK certificate digest, and Git commit.
+
+- The complete Python regression inventory runs in four deterministic balanced pytest groups to isolate hangs while preserving complete coverage.
+
+Sealed final reports use a content hash and a write-once `.final.json` path; later report requests cannot overwrite the final evidence.

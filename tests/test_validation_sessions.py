@@ -30,6 +30,8 @@ from devtool.validation_sessions import (
     retry_failed,
     select_phase_keys,
     checkpoint_text,
+    save_session,
+    status_payload,
     sync_plan,
 )
 
@@ -74,7 +76,7 @@ class ResumableValidationTests(unittest.TestCase):
                 CommandSpec("lint", ["gradle", "lintDebug"], metadata={"validation_phase_name": "lint"}),
             ]
             session = create_session(config, old_specs)
-            session.phases[0].status = "succeeded"
+            session.phases[0].status = "passed"
             session.phases[0].returncode = 0
             session.phases[1].status = "failed"
             session.phases[1].returncode = 127
@@ -85,7 +87,7 @@ class ResumableValidationTests(unittest.TestCase):
             ]
             sync_plan(session, new_specs)
             self.assertEqual([phase.name for phase in session.phases], ["package", "lint"])
-            self.assertEqual(session.phases[0].status, "succeeded")
+            self.assertEqual(session.phases[0].status, "passed")
             self.assertEqual(session.phases[1].status, "pending")
             self.assertEqual(session.next_pending().name, "lint")
 
@@ -100,10 +102,10 @@ class ResumableValidationTests(unittest.TestCase):
             ]
             session = create_session(config, base)
             for phase in session.phases:
-                phase.status = "succeeded"
+                phase.status = "passed"
                 phase.returncode = 0
             sync_plan(session, [*base, CommandSpec("lint", ["gradle", "lint"], metadata={"validation_phase_name": "lint"})])
-            self.assertEqual([phase.status for phase in session.phases], ["succeeded", "succeeded", "pending"])
+            self.assertEqual([phase.status for phase in session.phases], ["passed", "passed", "pending"])
 
     def test_plan_sync_command_change_invalidates_changed_phase_and_downstream_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -117,7 +119,7 @@ class ResumableValidationTests(unittest.TestCase):
             ]
             session = create_session(config, base)
             for phase in session.phases:
-                phase.status = "succeeded"
+                phase.status = "passed"
                 phase.returncode = 0
             changed = [
                 base[0],
@@ -125,7 +127,7 @@ class ResumableValidationTests(unittest.TestCase):
                 base[2],
             ]
             sync_plan(session, changed)
-            self.assertEqual([phase.status for phase in session.phases], ["succeeded", "pending", "pending"])
+            self.assertEqual([phase.status for phase in session.phases], ["passed", "pending", "passed"])
             self.assertEqual(session.invalidated_from, "unit-test")
 
     def test_android_resumable_validation_has_no_artifact_phase_or_artifact_flags(self) -> None:
@@ -158,7 +160,7 @@ class ResumableValidationTests(unittest.TestCase):
 
     def test_validate_nested_actions_are_supported(self) -> None:
         parser = build_parser()
-        for action in ("start", "next", "resume", "continue", "status", "checkpoint", "finalize", "abort"):
+        for action in ("start", "next", "resume", "continue", "status", "checkpoint", "finalize", "abort", "recover"):
             args = parser.parse_args(["validate", action])
             self.assertEqual(args.validate_scope, action)
 
@@ -181,7 +183,8 @@ class ResumableValidationTests(unittest.TestCase):
             ]
             session = create_session(config, specs)
             self.assertEqual(len(select_phase_keys(session, phase="compile")), 3)
-            self.assertEqual(len(select_phase_keys(session, phase="compile", exact_phase=True)), 1)
+            with self.assertRaisesRegex(Exception, "unsatisfied dependencies"):
+                select_phase_keys(session, phase="compile", exact_phase=True)
 
     def test_checkpoint_text_reports_recovery_and_safe_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -200,49 +203,71 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertIn("Safe checkpoint: yes", text)
 
     def test_cli_runs_one_durable_phase_per_invocation_and_resumes(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "repo"
-            root.mkdir()
-            make_android_project(root)
-            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
-            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):
-                with patch("devtool.cli.render_summary"):
-                    first_rc = main(["--repo", str(root), "--dry-run", "--no-clipboard", "validate", "start", "--next"])
-                active = load_active_session(root, required=True)
-                self.assertEqual(first_rc, 0)
-                self.assertEqual(active.phases[0].status, "skipped")
-                self.assertEqual(active.phases[1].status, "pending")
-                with patch("devtool.cli.render_summary"):
-                    second_rc = main(["--repo", str(root), "--dry-run", "--no-clipboard", "validate", "resume", "--next"])
-                resumed = load_active_session(root, required=True)
-                self.assertEqual(second_rc, 0)
-                self.assertEqual(resumed.session_id, active.session_id)
-                self.assertEqual(resumed.phases[1].status, "skipped")
+        def fake_run(_config, specs, _args, **_kwargs):
+            results = [
+                OperationResult(spec.name, list(spec.argv), 0, 0.01, "ok", [], metadata=dict(spec.metadata))
+                for spec in specs
+            ]
+            return results, "\n".join(result.name for result in results)
 
-    def test_cli_recovers_stale_running_phase_and_retries_it_with_plain_continue(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"
             root.mkdir()
             make_android_project(root)
             (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
             env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
-            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
-                self.assertEqual(main(["--repo", str(root), "--dry-run", "--no-clipboard", "validate", "start"]), 0)
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                first_rc = main(["--repo", str(root), "--no-clipboard", "validate", "start", "--next"])
+            active = load_active_session(root, required=True)
+            self.assertEqual(first_rc, 0)
+            self.assertEqual(active.phases[0].status, "passed")
+            self.assertEqual(active.phases[1].status, "pending")
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                second_rc = main(["--repo", str(root), "--no-clipboard", "validate", "resume", "--next"])
+            resumed = load_active_session(root, required=True)
+            self.assertEqual(second_rc, 0)
+            self.assertEqual(resumed.session_id, active.session_id)
+            self.assertEqual(resumed.phases[1].status, "passed")
+
+    def test_cli_recovers_stale_running_phase_and_retries_it_with_plain_continue(self) -> None:
+        def fake_run(_config, specs, _args, **_kwargs):
+            results = [
+                OperationResult(spec.name, list(spec.argv), 0, 0.01, "ok", [], metadata=dict(spec.metadata))
+                for spec in specs
+            ]
+            return results, "\n".join(result.name for result in results)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "start"]), 0)
             session = load_active_session(root, required=True)
             stale = next(phase for phase in session.phases if phase.status == "pending")
             mark_phase_running(session, stale.key)
+            stale.owner_pid = 99999999
+            stale.owner_process_start = "dead"
+            stale.attempt_history[-1].owner_pid = 99999999
+            stale.attempt_history[-1].owner_process_start = "dead"
+            stale.heartbeat_at = "2000-01-01T00:00:00Z"
+            stale.attempt_history[-1].heartbeat_at = stale.heartbeat_at
+            save_session(session, active=True)
 
-            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
-                rc = main(["--repo", str(root), "--dry-run", "--no-clipboard", "validate", "continue"] )
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                rc = main(["--repo", str(root), "--no-clipboard", "validate", "continue"])
 
             resumed = load_active_session(root, required=True)
             recovered_phase = resumed.phase_by_key(stale.key)
             self.assertEqual(rc, 0)
             self.assertIsNotNone(recovered_phase)
-            self.assertEqual(recovered_phase.status, "skipped")
+            self.assertEqual(recovered_phase.status, "passed")
             self.assertEqual(recovered_phase.interruption_count, 1)
+            self.assertEqual([attempt.verdict for attempt in recovered_phase.attempt_history[-2:]], ["interrupted", "passed"])
 
-    def test_checkpoint_recovers_stale_validation_without_rolling_back_attached_apply(self) -> None:
+    def test_checkpoint_is_read_only_for_a_live_attached_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"
             root.mkdir()
@@ -252,13 +277,12 @@ class ResumableValidationTests(unittest.TestCase):
             artifact = Path(tmp) / "overlay.zip"
             with ZipFile(artifact, "w") as archive:
                 archive.writestr("app/src/main/kotlin/Main.kt", "class After\n")
-            with patch("devtool.transactions._rsync", return_value="rsync"), patch("devtool.transactions._run_rsync", return_value=""):
-                tx = create_apply_transaction(
-                    root,
-                    artifact,
-                    artifact_type="overlay",
-                    preview={"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]},
-                )
+            tx = create_apply_transaction(
+                root,
+                artifact,
+                artifact_type="overlay",
+                preview={"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]},
+            )
             changed.write_text("class After\n", encoding="utf-8")
             config = validation_config(root)
             session = create_session(
@@ -269,18 +293,71 @@ class ResumableValidationTests(unittest.TestCase):
             )
             mark_phase_running(session, session.phases[0].key)
             mark_transaction_validation_running(tx["path"], session_id=session.session_id, phase="preflight")
+            before_revision = load_active_session(root, required=True).revision
 
             env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
-                rc = main(["--repo", str(root), "--no-clipboard", "validate", "checkpoint"] )
+                rc = main(["--repo", str(root), "--no-clipboard", "validate", "checkpoint"])
 
-            recovered = load_active_session(root, required=True)
-            transaction = read_transaction(tx["path"] )
+            observed = load_active_session(root, required=True)
+            transaction = read_transaction(tx["path"])
             self.assertEqual(rc, 0)
-            self.assertEqual(recovered.phases[0].status, "pending")
-            self.assertEqual(transaction["status"], "applied-pending-validation")
+            self.assertEqual(observed.phases[0].status, "running")
+            self.assertEqual(observed.revision, before_revision)
+            self.assertTrue(status_payload(observed)["live_attempts"][0]["owner_alive"])
+            self.assertEqual(transaction["status"], "validation-running")
             self.assertTrue(Path(tx["path"]).exists())
             self.assertEqual(changed.read_text(encoding="utf-8"), "class After\n")
+
+    def test_explicit_recover_reclaims_only_a_dead_phase_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            config = validation_config(root)
+            specs = [CommandSpec("compile", ["true"], metadata={"validation_phase_name": "compile"})]
+            session = create_session(config, specs)
+            phase = mark_phase_running(session, session.phases[0].key)
+            phase.owner_pid = 99999999
+            phase.owner_process_start = "dead"
+            phase.attempt_history[-1].owner_pid = 99999999
+            phase.attempt_history[-1].owner_process_start = "dead"
+            phase.heartbeat_at = "2000-01-01T00:00:00Z"
+            phase.attempt_history[-1].heartbeat_at = phase.heartbeat_at
+            save_session(session, active=True)
+
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
+                rc = main(["--repo", str(root), "--no-clipboard", "validate", "recover"])
+
+            recovered = load_active_session(root, required=True)
+            self.assertEqual(rc, 0)
+            self.assertEqual(recovered.phases[0].status, "interrupted")
+            self.assertEqual(recovered.phases[0].interruption_count, 1)
+
+    def test_explicit_recover_does_not_reclaim_a_live_phase_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            config = validation_config(root)
+            session = create_session(
+                config,
+                [CommandSpec("compile", ["true"], metadata={"validation_phase_name": "compile"})],
+            )
+            mark_phase_running(session, session.phases[0].key)
+            before = load_active_session(root, required=True)
+
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
+                rc = main(["--repo", str(root), "--no-clipboard", "validate", "recover"])
+
+            observed = load_active_session(root, required=True)
+            self.assertEqual(rc, 0)
+            self.assertEqual(observed.phases[0].status, "running")
+            self.assertEqual(observed.revision, before.revision)
 
     def test_deferred_apply_preserves_transaction_and_runs_embedded_validator_as_static_phase(self) -> None:
         import hashlib
@@ -406,16 +483,16 @@ class ResumableValidationTests(unittest.TestCase):
             first = session.phases[0]
             record_phase_result(session, first.key, OperationResult("preflight", ["true"], 0, 1.0, "ok", []))
             loaded = load_session(root, session.session_id)
-            self.assertEqual(loaded.phases[0].status, "succeeded")
+            self.assertEqual(loaded.phases[0].status, "passed")
             self.assertEqual(load_active_session(root).session_id, session.session_id)
 
             (root / "app" / "src" / "main" / "kotlin" / "Main.kt").write_text("class Changed\n", encoding="utf-8")
             invalidated = reconcile_inputs(loaded, config)
-            self.assertEqual(invalidated, "compile")
-            self.assertEqual(loaded.phases[0].status, "succeeded")
+            self.assertEqual(invalidated, "source")
+            self.assertEqual(loaded.phases[0].status, "passed")
             self.assertEqual([phase.status for phase in loaded.phases[1:]], ["pending", "pending"])
 
-    def test_control_c_keeps_phase_pending_without_marking_validation_failed(self) -> None:
+    def test_control_c_marks_phase_interrupted_without_validation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_android_project(root)
@@ -434,14 +511,15 @@ class ResumableValidationTests(unittest.TestCase):
                     "Interrupted by user. Child process was terminated.", [],
                 ),
             )
-            self.assertEqual(recorded.status, "pending")
+            self.assertEqual(recorded.status, "interrupted")
+            self.assertEqual(recorded.last_verdict, "interrupted")
             self.assertEqual(recorded.interruption_count, 1)
             self.assertEqual(recorded.last_interrupted_returncode, 130)
             self.assertFalse(session.failed)
             self.assertEqual(session.status, "paused")
             self.assertEqual(select_phase_keys(session), [recorded.key])
 
-    def test_stale_running_phase_is_recovered_as_next_sequential_phase(self) -> None:
+    def test_dead_owner_running_phase_is_recovered_as_interrupted_and_retryable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_android_project(root)
@@ -451,34 +529,46 @@ class ResumableValidationTests(unittest.TestCase):
                 CommandSpec("dependencies", ["true"], metadata={"validation_phase_name": "dependencies"}),
             ]
             session = create_session(config, specs)
-            mark_phase_running(session, session.phases[0].key)
+            phase = mark_phase_running(session, session.phases[0].key)
+            phase.owner_pid = 99999999
+            phase.owner_process_start = "dead"
+            phase.attempt_history[-1].owner_pid = 99999999
+            phase.attempt_history[-1].owner_process_start = "dead"
+            save_session(session, active=True)
 
             reloaded = load_session(root, session.session_id)
             recovered = recover_interrupted_phases(reloaded)
 
             self.assertEqual(recovered, ["preflight"])
-            self.assertEqual(reloaded.phases[0].status, "pending")
+            self.assertEqual(reloaded.phases[0].status, "interrupted")
             self.assertEqual(reloaded.phases[0].interruption_count, 1)
             self.assertEqual(select_phase_keys(reloaded), [reloaded.phases[0].key])
             self.assertIn("recovered interrupted", reloaded.paused_reason)
 
     def test_validate_continue_defaults_to_exactly_one_next_phase(self) -> None:
+        def fake_run(_config, specs, _args, **_kwargs):
+            results = [
+                OperationResult(spec.name, list(spec.argv), 0, 0.01, "ok", [], metadata=dict(spec.metadata))
+                for spec in specs
+            ]
+            return results, "\n".join(result.name for result in results)
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"
             root.mkdir()
             make_android_project(root)
             (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
-            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):
-                with patch("devtool.cli.render_summary"):
-                    first_rc = main(["--repo", str(root), "--dry-run", "--no-clipboard", "validate", "start"])
-                first = load_active_session(root, required=True)
-                self.assertEqual(first_rc, 0)
-                self.assertEqual(sum(phase.status == "skipped" for phase in first.phases), 1)
-                with patch("devtool.cli.render_summary"):
-                    second_rc = main(["--repo", str(root), "--dry-run", "--no-clipboard", "validate", "continue"])
-                second = load_active_session(root, required=True)
-                self.assertEqual(second_rc, 0)
-                self.assertEqual(sum(phase.status == "skipped" for phase in second.phases), 2)
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                first_rc = main(["--repo", str(root), "--no-clipboard", "validate", "start"])
+            first = load_active_session(root, required=True)
+            self.assertEqual(first_rc, 0)
+            self.assertEqual(sum(phase.status == "passed" for phase in first.phases), 1)
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                second_rc = main(["--repo", str(root), "--no-clipboard", "validate", "continue"])
+            second = load_active_session(root, required=True)
+            self.assertEqual(second_rc, 0)
+            self.assertEqual(sum(phase.status == "passed" for phase in second.phases), 2)
 
     def test_failed_phase_is_cached_and_explicitly_retryable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -498,11 +588,20 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertEqual([phase.status for phase in session.phases], ["pending", "pending"])
             self.assertIn("explicit retry", session.phases[0].invalidated_reason)
 
-    def test_attached_deferred_failure_rolls_back_and_cancels_pending_phases(self) -> None:
+    def test_attached_deferred_failure_blocks_and_preserves_pending_phases_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_android_project(root)
             config = validation_config(root)
+            artifact = Path(tmp) / "overlay.zip"
+            with ZipFile(artifact, "w") as archive:
+                archive.writestr("app/src/main/kotlin/Main.kt", "class Patched\n")
+            tx = create_apply_transaction(
+                root,
+                artifact,
+                artifact_type="overlay",
+                preview={"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]},
+            )
             specs = [
                 CommandSpec("compile", ["false"], metadata={"validation_phase_name": "compile"}),
                 CommandSpec("package", ["true"], metadata={"validation_phase_name": "package"}),
@@ -510,21 +609,16 @@ class ResumableValidationTests(unittest.TestCase):
             session = create_session(
                 config,
                 specs,
-                transaction_path=str(root / ".devtool" / "transactions" / "tx" / "transaction.json"),
-                apply_context={
-                    "validation_mode": "deferred",
-                    "rollback_on_failure": True,
-                    "artifact": "repair.zip",
-                },
+                transaction_path=tx["path"],
+                apply_context={"validation_mode": "deferred", "artifact": "repair.zip"},
             )
             parser = build_parser()
             args = parser.parse_args(["validate", "continue"])
             failure = OperationResult("compile", ["gradle", "compile"], 1, 0.2, "compile failed", [])
-            rollback = OperationResult("apply-rollback", ["rsync", "rollback"], 0, 0.1, "rollback completed", [])
 
             with patch("devtool.cli._load_or_create_validation_session", return_value=(session, specs)), \
                     patch("devtool.cli._run_specs_for_args", return_value=([failure], "compile failed")), \
-                    patch("devtool.cli._run_transaction_rollback", return_value=(rollback, "rollback completed")) as rollback_call:
+                    patch("devtool.cli._run_transaction_rollback") as rollback_call:
                 results, raw_output, returned = _run_validation_session(
                     config,
                     args,
@@ -534,21 +628,18 @@ class ResumableValidationTests(unittest.TestCase):
                     continue_on_error=False,
                 )
 
-            rollback_call.assert_called_once()
+            rollback_call.assert_not_called()
             self.assertIs(returned, session)
-            self.assertEqual([phase.status for phase in session.phases], ["failed", "cancelled"])
-            self.assertEqual(session.status, "failed-rolled-back")
-            self.assertEqual(session.transaction_path, "")
-            self.assertEqual(session.apply_context["cancelled_phases"], ["package"])
-            self.assertTrue(session.apply_context["rollback_succeeded"])
-            self.assertIsNone(load_active_session(root))
-            persisted = load_session(root, session.session_id)
-            self.assertEqual(persisted.status, "failed-rolled-back")
-            self.assertEqual([phase.status for phase in persisted.phases], ["failed", "cancelled"])
-            self.assertIn("rollback completed", raw_output)
-            self.assertEqual(results[-1].name, "apply-rollback")
+            self.assertEqual([phase.status for phase in session.phases], ["failed", "pending"])
+            self.assertEqual(session.status, "blocked")
+            self.assertEqual(session.transaction_path, tx["path"])
+            self.assertEqual(read_transaction(tx["path"])["status"], "validation-blocked")
+            self.assertTrue(Path(tx["path"]).exists())
+            self.assertIsNotNone(load_active_session(root))
+            self.assertIn("Applied changes: retained", raw_output)
+            self.assertEqual(results[-1].name, "validation-blocked")
 
-    def test_failed_rollback_cancels_validation_but_keeps_recovery_session_active(self) -> None:
+    def test_explicit_rollback_policy_seals_remaining_phases_and_keeps_failed_recovery_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_android_project(root)
@@ -562,10 +653,10 @@ class ResumableValidationTests(unittest.TestCase):
                 config,
                 specs,
                 transaction_path=transaction_path,
-                apply_context={"validation_mode": "deferred", "rollback_on_failure": True},
+                apply_context={"validation_mode": "deferred"},
             )
             parser = build_parser()
-            args = parser.parse_args(["validate", "continue"])
+            args = parser.parse_args(["validate", "continue", "--failure-action", "rollback"])
             failure = OperationResult("compile", ["gradle", "compile"], 1, 0.2, "compile failed", [])
             rollback = OperationResult("apply-rollback", ["rsync", "rollback"], 1, 0.1, "rollback failed", [])
 
@@ -581,13 +672,13 @@ class ResumableValidationTests(unittest.TestCase):
                     continue_on_error=False,
                 )
 
-            self.assertEqual([phase.status for phase in session.phases], ["failed", "cancelled"])
+            self.assertEqual([phase.status for phase in session.phases], ["failed", "skipped"])
             self.assertEqual(session.status, "rollback-failed")
             self.assertEqual(session.transaction_path, transaction_path)
             active = load_active_session(root, required=True)
             self.assertEqual(active.session_id, session.session_id)
             self.assertEqual(active.status, "rollback-failed")
-            self.assertEqual(active.next_pending(), None)
+            self.assertIsNone(active.next_pending())
             self.assertFalse(active.apply_context["rollback_succeeded"])
 
     def test_overlay_apply_pauses_transaction_and_finalizes_later(self) -> None:
@@ -619,7 +710,7 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertEqual(first_rc, 0)
             self.assertEqual((root / "app" / "src" / "main" / "kotlin" / "Main.kt").read_text(encoding="utf-8"), "class Patched\n")
             self.assertEqual([phase.name for phase in session.phases], ["compile", "unit-test", "package", "lint", "finalize"])
-            self.assertEqual(session.phases[0].status, "succeeded")
+            self.assertEqual(session.phases[0].status, "passed")
             self.assertTrue(transaction.exists())
             self.assertTrue(transaction_pending_validation(transaction))
 
@@ -658,6 +749,278 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertEqual(state["status"], "partially-validated")
             self.assertEqual(state["pid"], 0)
             self.assertEqual(state["next_validation_phase"], "resources")
+
+    def test_dry_run_preview_never_creates_or_advances_a_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
+                rc = main(["--repo", str(root), "--dry-run", "--no-clipboard", "validate", "start", "--complete"])
+            self.assertEqual(rc, 0)
+            self.assertIsNone(load_active_session(root))
+
+    def test_schema_v1_failure_migrates_to_blocked_with_attempt_history(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            session_id = "legacy-session"
+            state_path = root / ".devtool" / "state" / "android-validation" / session_id / "state.json"
+            state_path.parent.mkdir(parents=True)
+            state_path.write_text(json.dumps({
+                "schema_version": 1,
+                "session_id": session_id,
+                "repo_root": str(root.resolve()),
+                "project_root": str(root.resolve()),
+                "project_type": "android",
+                "target": "",
+                "variant": "",
+                "status": "failed",
+                "created_at": "2026-07-27T00:00:00Z",
+                "updated_at": "2026-07-27T00:01:00Z",
+                "phases": [{
+                    "key": "compile",
+                    "name": "compile",
+                    "label": "compile",
+                    "spec_name": "compile",
+                    "index": 1,
+                    "total": 1,
+                    "status": "failed",
+                    "returncode": 1,
+                    "output_tail": "compile failed",
+                }],
+                "fingerprints": {},
+            }), encoding="utf-8")
+            session = load_session(root, session_id)
+            self.assertEqual(session.status, "blocked")
+            self.assertEqual(session.phases[0].status, "failed")
+            self.assertEqual(session.phases[0].attempt_history[0].verdict, "code-failed")
+            self.assertEqual(session.failure_action, "pause")
+
+    def test_resource_failure_pauses_and_keeps_phase_retryable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = validation_config(root)
+            session = create_session(
+                config,
+                [CommandSpec("compile", ["gradle", "compile"], metadata={"validation_phase_name": "compile"})],
+            )
+            phase = mark_phase_running(session, session.phases[0].key)
+            recorded = record_phase_result(
+                session,
+                phase.key,
+                OperationResult(
+                    "compile",
+                    ["gradle", "compile"],
+                    137,
+                    2.0,
+                    "Process killed by earlyoom after memory pressure",
+                    [],
+                    failure_kind="memory-pressure",
+                ),
+            )
+            self.assertEqual(recorded.status, "interrupted")
+            self.assertEqual(recorded.last_verdict, "resource-failed")
+            self.assertEqual(session.status, "paused")
+            self.assertFalse(session.failed)
+            self.assertEqual(select_phase_keys(session), [recorded.key])
+
+    def test_missing_deferred_validator_blocks_and_preserves_transaction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = validation_config(root)
+            artifact = Path(tmp) / "overlay.zip"
+            with ZipFile(artifact, "w") as archive:
+                archive.writestr("app/src/main/kotlin/Main.kt", "class Patched\n")
+            tx = create_apply_transaction(
+                root,
+                artifact,
+                artifact_type="overlay",
+                preview={"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]},
+            )
+            artifact.unlink()
+            spec = CommandSpec(
+                "artifact-validate-script",
+                ["artifact-validate-script", "missing.zip"],
+                metadata={
+                    "validation_phase_name": "static",
+                    "devtool_internal_validation": "artifact-script",
+                },
+            )
+            session = create_session(
+                config,
+                [spec],
+                transaction_path=tx["path"],
+                apply_context={
+                    "validation_mode": "deferred",
+                    "artifacts": [str(artifact)],
+                    "artifact_script_in_plan": True,
+                },
+            )
+            parser = build_parser()
+            args = parser.parse_args(["validate", "continue"])
+            with patch("devtool.cli._load_or_create_validation_session", return_value=(session, [spec])):
+                results, raw_output, returned = _run_validation_session(
+                    config,
+                    args,
+                    parser,
+                    log_path=None,
+                    tasker_progress=None,
+                    continue_on_error=False,
+                )
+            self.assertIs(returned, session)
+            self.assertEqual(session.status, "blocked")
+            self.assertEqual(session.phases[0].last_verdict, "code-failed")
+            self.assertEqual(read_transaction(tx["path"])["status"], "validation-blocked")
+            self.assertTrue(Path(tx["path"]).exists())
+            self.assertIn("source artifact is missing", raw_output)
+            self.assertEqual(results[-1].name, "validation-blocked")
+
+    def test_explicit_rollback_policy_restores_tree_and_closes_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            target = root / "app" / "src" / "main" / "kotlin" / "Main.kt"
+            target.write_text("class Old\n", encoding="utf-8")
+            artifact = Path(tmp) / "overlay.zip"
+            with ZipFile(artifact, "w") as archive:
+                archive.writestr("app/src/main/kotlin/Main.kt", "class New\n")
+            tx = create_apply_transaction(
+                root,
+                artifact,
+                artifact_type="overlay",
+                preview={"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]},
+            )
+            target.write_text("class New\n", encoding="utf-8")
+            config = validation_config(root)
+            specs = [
+                CommandSpec("compile", ["false"], metadata={"validation_phase_name": "compile"}),
+                CommandSpec("package", ["true"], metadata={"validation_phase_name": "package"}),
+            ]
+            session = create_session(
+                config,
+                specs,
+                transaction_path=tx["path"],
+                apply_context={"validation_mode": "deferred"},
+            )
+            parser = build_parser()
+            args = parser.parse_args(["validate", "continue", "--failure-action", "rollback"])
+            failure = OperationResult("compile", ["false"], 1, 0.1, "compile failed", [])
+            with patch("devtool.cli._load_or_create_validation_session", return_value=(session, specs)), \
+                    patch("devtool.cli._run_specs_for_args", return_value=([failure], "compile failed")):
+                results, _raw, returned = _run_validation_session(
+                    config,
+                    args,
+                    parser,
+                    log_path=None,
+                    tasker_progress=None,
+                    continue_on_error=False,
+                )
+            self.assertIs(returned, session)
+            self.assertEqual(target.read_text(encoding="utf-8"), "class Old\n")
+            self.assertEqual(session.status, "aborted-rolled-back")
+            self.assertEqual([phase.status for phase in session.phases], ["failed", "skipped"])
+            self.assertFalse(Path(tx["path"]).exists())
+            self.assertIsNone(load_active_session(root))
+            self.assertEqual(results[-1].name, "apply-rollback")
+
+    def test_abort_keep_changes_detaches_transaction_without_trapping_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            target = root / "app" / "src" / "main" / "kotlin" / "Main.kt"
+            artifact = Path(tmp) / "overlay.zip"
+            with ZipFile(artifact, "w") as archive:
+                archive.writestr("app/src/main/kotlin/Main.kt", "class Kept\n")
+            tx = create_apply_transaction(
+                root,
+                artifact,
+                artifact_type="overlay",
+                preview={"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]},
+            )
+            target.write_text("class Kept\n", encoding="utf-8")
+            session = create_session(
+                validation_config(root),
+                [CommandSpec("compile", ["true"], metadata={"validation_phase_name": "compile"})],
+                transaction_path=tx["path"],
+                apply_context={"validation_mode": "deferred"},
+            )
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
+                rc = main(["--repo", str(root), "--no-clipboard", "validate", "abort", "--keep-changes"])
+            persisted = load_session(root, session.session_id)
+            self.assertEqual(rc, 0)
+            self.assertEqual(target.read_text(encoding="utf-8"), "class Kept\n")
+            self.assertEqual(persisted.status, "aborted-kept-changes")
+            self.assertEqual(persisted.transaction_path, "")
+            self.assertFalse(Path(tx["path"]).exists())
+            self.assertIsNone(load_active_session(root))
+
+    def test_post_validation_commit_failure_keeps_validated_tree_and_transaction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = validation_config(root)
+            artifact = Path(tmp) / "overlay.zip"
+            with ZipFile(artifact, "w") as archive:
+                archive.writestr("app/src/main/kotlin/Main.kt", "class Patched\n")
+            tx = create_apply_transaction(
+                root,
+                artifact,
+                artifact_type="overlay",
+                preview={"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]},
+            )
+            spec = CommandSpec("compile", ["true"], metadata={"validation_phase_name": "compile"})
+            session = create_session(
+                config,
+                [spec],
+                transaction_path=tx["path"],
+                apply_context={
+                    "validation_mode": "deferred",
+                    "command": "apply-overlay",
+                    "artifact": str(artifact),
+                    "artifacts": [str(artifact)],
+                    "commit": "Apply validated overlay",
+                    "keep_artifact": True,
+                    "manifest": {},
+                },
+            )
+            parser = build_parser()
+            args = parser.parse_args(["validate", "continue"])
+            success = OperationResult("compile", ["true"], 0, 0.1, "ok", [], metadata=dict(spec.metadata))
+            commit_failure = OperationResult("git-commit", ["git", "commit"], 1, 0.1, "signing failed", [])
+
+            def fail_commit(_config, _args, results, raw_output, **_kwargs):
+                return [*results, commit_failure], raw_output + "\n\nsigning failed"
+
+            with patch("devtool.cli._load_or_create_validation_session", return_value=(session, [spec])), \
+                    patch("devtool.cli._run_specs_for_args", return_value=([success], "ok")), \
+                    patch("devtool.cli._maybe_commit_after_apply", side_effect=fail_commit), \
+                    patch("devtool.cli._run_transaction_rollback") as rollback_call:
+                results, _raw, returned = _run_validation_session(
+                    config,
+                    args,
+                    parser,
+                    log_path=None,
+                    tasker_progress=None,
+                    continue_on_error=False,
+                )
+            rollback_call.assert_not_called()
+            self.assertIs(returned, session)
+            self.assertEqual(session.status, "validated-uncommitted")
+            self.assertEqual(session.phases[0].status, "passed")
+            self.assertEqual(read_transaction(tx["path"])["status"], "validated-uncommitted")
+            self.assertTrue(Path(tx["path"]).exists())
+            self.assertIsNotNone(load_active_session(root))
+            self.assertEqual(results[-1].name, "git-commit")
 
     def test_apply_notification_reports_pause_instead_of_success(self) -> None:
         args = SimpleNamespace(command="apply-overlay", artifact="demo.zip")

@@ -30,7 +30,7 @@ def test_phase6_retention_preserves_active_and_pinned_runs():
     database = read("DevtoolDatabase.java")
     settings = read("AppSettings.java")
     manager = read("RetentionManager.java")
-    assert "private static final int VERSION = 6" in database
+    assert "private static final int VERSION = 9" in database
     assert "pinned INTEGER NOT NULL DEFAULT 0" in database
     assert "status IN ('ok','failed','cancelled','interrupted','skipped') AND pinned=0" in database
     assert "state NOT IN ('queued','running','orphaned')" in database
@@ -90,7 +90,7 @@ def test_phase6_pin_controls_and_retention_settings_are_exposed():
 def test_phase6_release_metadata():
     build = (ROOT / "android/devtool-live-hud/app/build.gradle").read_text()
     versions = json.loads((ROOT / "release/versions.json").read_text())
-    assert "versionCode 27" in build
-    assert "versionName '1.14.0'" in build
-    assert versions["android"]["version_name"] == "1.14.0"
-    assert versions["android"]["version_code"] == 27
+    assert "versionCode 30" in build
+    assert "versionName '1.16.0'" in build
+    assert versions["android"]["version_name"] == "1.16.0"
+    assert versions["android"]["version_code"] == 30

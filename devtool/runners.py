@@ -487,6 +487,8 @@ def _iter_process_output_lines(
     completion_idle_grace: float | None = None,
     completion_status_detector: Callable[[str], int | None] | None = None,
     memory_guard_mb: int = 0,
+    supervisor_probe: Callable[[], tuple[str, str] | dict | str | None] | None = None,
+    heartbeat_callback: Callable[[], None] | None = None,
 ):
     """Yield child output without waiting forever for pipe EOF.
 
@@ -525,6 +527,8 @@ def _iter_process_output_lines(
     memory_guard_hard_samples = 0
     memory_guard_reclaim_attempted = False
     memory_guard_checked_at = 0.0
+    supervisor_checked_at = 0.0
+    heartbeat_checked_at = 0.0
     memory_guard_history: deque[int] = deque(maxlen=12)
     memory_guard_details = ""
     memory_guard_sustained_limit, memory_guard_hard_limit = _memory_guard_limits(memory_guard_mb)
@@ -602,6 +606,57 @@ def _iter_process_output_lines(
                     for line in emit_and_track(decoder.decode(chunk)):
                         yield line
                 break
+
+            now_monotonic = time.monotonic()
+            if heartbeat_callback is not None and (now_monotonic - heartbeat_checked_at) >= 1.0:
+                heartbeat_checked_at = now_monotonic
+                try:
+                    heartbeat_callback()
+                except Exception:
+                    pass
+            if supervisor_probe is not None and (now_monotonic - supervisor_checked_at) >= 1.0:
+                supervisor_checked_at = now_monotonic
+                event = None
+                try:
+                    event = supervisor_probe()
+                except Exception as exc:
+                    event = {"kind": "environment", "reason": f"supervisor probe failed: {type(exc).__name__}: {exc}"}
+                kind = ""
+                reason = ""
+                if isinstance(event, dict):
+                    kind = str(event.get("kind") or "").strip().lower()
+                    reason = str(event.get("reason") or "").strip()
+                elif isinstance(event, tuple) and len(event) >= 2:
+                    kind = str(event[0] or "").strip().lower()
+                    reason = str(event[1] or "").strip()
+                elif isinstance(event, str) and event.strip():
+                    kind = "resource"
+                    reason = event.strip()
+                if kind:
+                    assumed_codes = {"timeout": 124, "interrupted": 130, "resource": 75, "environment": 76}
+                    setattr(proc, "_devtool_assumed_returncode", assumed_codes.get(kind, 76))
+                    setattr(proc, "_devtool_supervisor_event", {"kind": kind, "reason": reason})
+                    message = f"\nDevtool validation supervisor stopped process: {kind}: {reason or 'policy requested stop'}.\n"
+                    for line in emit_and_track(message):
+                        yield line
+                    try:
+                        os.killpg(proc.pid, 15)
+                    except Exception:
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                    try:
+                        proc.wait(timeout=3.0)
+                    except Exception:
+                        try:
+                            os.killpg(proc.pid, 9)
+                        except Exception:
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                    break
 
             if memory_guard_mb > 0 and (time.monotonic() - memory_guard_checked_at) >= 1.0:
                 memory_guard_checked_at = time.monotonic()
@@ -806,6 +861,9 @@ def _run_process_live(
     live_log_path: Path | str | None = None,
     live_log_header: str = "",
     memory_guard_mb: int = 0,
+    supervisor_probe: Callable[[], tuple[str, str] | dict | str | None] | None = None,
+    heartbeat_callback: Callable[[], None] | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> tuple[int, str]:
     live_log_handle = None
     if live_log_path is not None:
@@ -926,36 +984,36 @@ def _run_process_live(
         # parser active only for Tasker/progress events; do not render a second
         # Rich live display over the raw output.
         tracker.enabled = False
-    if tracker is not None and tasker_progress is not None:
-        def _tasker_update(snapshot: dict) -> None:
-            phase = tasker_progress.current_phase or {}
-            display_target = str(phase.get("target") or phase.get("workspace") or snapshot.get("target") or "")
-            tasker_progress.progress(
-                detail=str(snapshot.get("detail") or ""),
-                completed=snapshot.get("completed"),
-                total=snapshot.get("total"),
-                percent=snapshot.get("percent"),
-                target=display_target,
-                warnings=snapshot.get("warnings"),
-                errors=snapshot.get("errors"),
-                metrics={
-                    key: snapshot.get(key)
-                    for key in (
-                        "command",
-                        "unit_label",
-                        "tests_passed",
-                        "tests_failed",
-                        "tests_skipped",
-                        "tests_total",
-                        "test_assemblies",
-                        "current_task",
-                        "current_test",
-                    )
-                    if snapshot.get(key) is not None
-                },
-                force=bool(snapshot.get("force", False)),
-            )
-        tracker.update_callback = _tasker_update
+    if tracker is not None and (tasker_progress is not None or progress_callback is not None):
+        def _progress_update(snapshot: dict) -> None:
+            if tasker_progress is not None:
+                phase = tasker_progress.current_phase or {}
+                display_target_value = str(phase.get("target") or phase.get("workspace") or snapshot.get("target") or "")
+                tasker_progress.progress(
+                    detail=str(snapshot.get("detail") or ""),
+                    completed=snapshot.get("completed"),
+                    total=snapshot.get("total"),
+                    percent=snapshot.get("percent"),
+                    target=display_target_value,
+                    warnings=snapshot.get("warnings"),
+                    errors=snapshot.get("errors"),
+                    metrics={
+                        key: snapshot.get(key)
+                        for key in (
+                            "command", "unit_label", "tests_passed", "tests_failed",
+                            "tests_skipped", "tests_total", "test_assemblies",
+                            "current_task", "current_test",
+                        )
+                        if snapshot.get(key) is not None
+                    },
+                    force=bool(snapshot.get("force", False)),
+                )
+            if progress_callback is not None:
+                try:
+                    progress_callback(dict(snapshot))
+                except Exception:
+                    pass
+        tracker.update_callback = _progress_update
     def _interrupt_process() -> None:
         try:
             if os.name == "posix":
@@ -1006,6 +1064,8 @@ def _run_process_live(
                 completion_idle_grace=completion_idle_grace,
                 completion_status_detector=completion_detector,
                 memory_guard_mb=memory_guard_mb,
+                supervisor_probe=supervisor_probe,
+                heartbeat_callback=heartbeat_callback,
             ):
                 output_parts.append(line)
                 _append_live_log(line)
@@ -1022,6 +1082,8 @@ def _run_process_live(
                 completion_idle_grace=completion_idle_grace,
                 completion_status_detector=completion_detector,
                 memory_guard_mb=memory_guard_mb,
+                supervisor_probe=supervisor_probe,
+                heartbeat_callback=heartbeat_callback,
             ):
                 output_parts.append(line)
                 _append_live_log(line)
@@ -1230,6 +1292,9 @@ def run_specs(
     log_path: Path | str | None = None,
     tasker_progress: TaskerProgressSink | None = None,
     shutdown_dotnet: bool | None = None,
+    supervisor_probe: Callable[[], tuple[str, str] | dict | str | None] | None = None,
+    heartbeat_callback: Callable[[], None] | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw_sections: list[str] = []
@@ -1325,6 +1390,9 @@ def run_specs(
                     live_log_path=log_path,
                     live_log_header=command_line + "\n" if log_path is not None else "",
                     memory_guard_mb=memory_guard_mb,
+                    supervisor_probe=supervisor_probe,
+                    heartbeat_callback=heartbeat_callback,
+                    progress_callback=progress_callback,
                 )
             else:
                 if progress_parser == "gradle" or dotnet_progress_plan(progress_argv, progress_cwd):
@@ -1346,6 +1414,9 @@ def run_specs(
                         live_log_path=log_path,
                         live_log_header=command_line + "\n" if log_path is not None else "",
                         memory_guard_mb=memory_guard_mb,
+                        supervisor_probe=supervisor_probe,
+                        heartbeat_callback=heartbeat_callback,
+                        progress_callback=progress_callback,
                     )
                 else:
                     with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
@@ -1364,6 +1435,9 @@ def run_specs(
                             live_log_path=log_path,
                             live_log_header=command_line + "\n" if log_path is not None else "",
                             memory_guard_mb=memory_guard_mb,
+                            supervisor_probe=supervisor_probe,
+                            heartbeat_callback=heartbeat_callback,
+                            progress_callback=progress_callback,
                         )
         finally:
             if cleanup_dir:
@@ -1503,7 +1577,27 @@ def run_specs(
                 "treating this command as failed.\n"
             )
             returncode = 1
+        supervisor_events = []
+        for match in re.finditer(
+            r"Devtool validation supervisor stopped process:\s*([a-z-]+):\s*(.+?)(?:\.|$)",
+            output,
+            re.IGNORECASE,
+        ):
+            supervisor_events.append({"kind": match.group(1).lower(), "reason": match.group(2).strip()})
+        if supervisor_events:
+            result_metadata["supervisor_events"] = supervisor_events
+            result_metadata["supervisor_reason"] = supervisor_events[-1]["reason"]
+            kind = supervisor_events[-1]["kind"]
+            result_metadata["resource_guard_triggered"] = kind == "resource"
+            result_metadata["timed_out"] = kind == "timeout"
         failure_kind = classify_failure(spec.name, output, returncode)
+        if supervisor_events:
+            failure_kind = {
+                "resource": "resource_interrupted",
+                "timeout": "command_timeout",
+                "interrupted": "interrupted",
+                "environment": "environment_failure",
+            }.get(supervisor_events[-1]["kind"], failure_kind)
         raw_text = command_line + "\n" + output
         if log_path is not None:
             if output != process_output:

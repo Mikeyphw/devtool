@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from dataclasses import asdict, replace
 import json
 import os
@@ -86,11 +87,26 @@ from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
-from .transactions import devtool_xdg_dir, find_active_transaction, mark_transaction_completed, mark_transaction_pending_validation, mark_transaction_validation_running, read_transaction, rollback_transaction, transaction_pending_validation, transaction_root
+from .transactions import (
+    abandon_transaction,
+    devtool_xdg_dir,
+    find_active_transaction,
+    mark_transaction_completed,
+    mark_transaction_pending_validation,
+    mark_transaction_validated,
+    mark_transaction_validation_blocked,
+    mark_transaction_validation_running,
+    read_transaction,
+    rollback_transaction,
+    transaction_pending_validation,
+    transaction_root,
+)
 from .validation_evidence import preserve_validation_evidence
 from .validation_sessions import (
     ValidationSession,
     ValidationSessionError,
+    ValidationControlRequestError,
+    accept_plan_change as accept_validation_plan_change,
     annotate_specs as annotate_validation_specs,
     completion_result as validation_completion_result,
     create_session as create_validation_session,
@@ -101,21 +117,55 @@ from .validation_sessions import (
     mark_completed as mark_validation_completed,
     mark_failure_terminal as mark_validation_failure_terminal,
     mark_paused as mark_validation_paused,
+    mark_validated_uncommitted as mark_validation_validated_uncommitted,
+    heartbeat_phase as heartbeat_validation_phase,
+    input_fingerprints as validation_input_fingerprints,
+    update_phase_progress as update_validation_phase_progress,
+    read_control_request as read_validation_control_request,
+    write_control_request as write_validation_control_request,
+    clear_control_request as clear_validation_control_request,
+    read_events as read_validation_events,
+    append_event as append_validation_event,
     mark_phase_running,
     parse_duration_seconds,
     pause_result as validation_pause_result,
     reconcile_inputs as reconcile_validation_inputs,
     record_phase_result,
     recover_interrupted_phases as recover_interrupted_validation_phases,
+    reset_all as reset_all_validation,
+    reset_phase as reset_validation_phase,
     retry_failed as retry_failed_validation,
     save_session as save_validation_session,
     select_phase_keys,
+    required_checkpoint_satisfied as validation_checkpoint_satisfied,
     session_operation_results,
     spec_map as validation_spec_map,
     status_payload as validation_status_payload,
     status_text as validation_status_text,
     checkpoint_text as validation_checkpoint_text,
     sync_plan as sync_validation_plan,
+)
+from .validation_reports import (
+    finalization_issues as validation_finalization_issues,
+    load_validation_report,
+    report_path as validation_report_path,
+    write_validation_report,
+)
+from .validation_control import (
+    EXIT_CONTROL_UNAVAILABLE as VALIDATION_EXIT_CONTROL_UNAVAILABLE,
+    EXIT_INVALID_REQUEST as VALIDATION_EXIT_INVALID_REQUEST,
+    EXIT_OK as VALIDATION_EXIT_OK,
+    EXIT_RECOVERY_REQUIRED as VALIDATION_EXIT_RECOVERY_REQUIRED,
+    EXIT_SESSION_BLOCKED as VALIDATION_EXIT_SESSION_BLOCKED,
+    EXIT_STALE_REVISION as VALIDATION_EXIT_STALE_REVISION,
+    ValidationControlError,
+    error_response as validation_control_error_response,
+    exit_code_for_session as validation_control_exit_code,
+    plan_payload as validation_plan_payload,
+    require_revision as require_validation_revision,
+    response as validation_control_response,
+    reason_for_session as validation_control_reason,
+    status_api_payload as validation_status_api_payload,
 )
 from .single_run import SingleRunLock
 
@@ -138,7 +188,10 @@ INTERACTIVE_COPY_COMMANDS = {
 PROGRESS_CAPABLE_COMMANDS = {
     "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v", "validate-all",
     "wine-validate", "wv", "start-validation", "sv", "resume-validation", "rv",
-    "validation-finalize", "vf", "validation-abort", "va",
+    "validation-finalize", "vf", "validation-abort", "va", "validation-recover", "vrec",
+    "validation-reset", "vreset", "validation-accept-plan-change", "vapc",
+    "validation-plan", "vplan", "validation-pause", "vpause", "validation-stop", "vstop",
+    "validation-events", "vevents", "validation-report", "vreport",
     "run", "rn", "package", "pkg", "clean", "cl",
     "apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as", "batch", "commit", "ci", "tag",
 }
@@ -546,13 +599,67 @@ def build_parser() -> argparse.ArgumentParser:
 
     validation_status = subparsers.add_parser("validation-status", aliases=["vs"], help="Show the active resumable validation session")
     validation_status.add_argument("--session", default="", help="Specific validation session ID")
+    _add_validation_api_output_flags(validation_status)
+    validation_status.add_argument("--events", action="store_true", help="Include durable validation events")
+    validation_status.add_argument("--after-event", default="", help="Return events after this event ID")
+    validation_status.add_argument("--event-limit", type=int, default=100, help="Maximum event records to return")
+
+    validation_plan = subparsers.add_parser("validation-plan", aliases=["vplan"], help="Show the durable validation phase plan")
+    validation_plan.add_argument("--session", default="", help="Specific validation session ID")
+    _add_validation_api_output_flags(validation_plan)
+
+    validation_pause = subparsers.add_parser("validation-pause", aliases=["vpause"], help="Pause a validation session at the next phase boundary")
+    validation_pause.add_argument("--session", default="", help="Specific validation session ID")
+    validation_pause.add_argument("--if-revision", type=int, default=-1, help="Apply only when the session revision matches")
+    validation_pause.add_argument("--after-phase", action="store_true", default=True, help="Finish the current phase before pausing")
+    validation_pause.add_argument("--cancel", dest="cancel_pause", action="store_true", help="Cancel a pending pause-after-phase request and keep validation running")
+    _add_validation_api_output_flags(validation_pause)
+
+    validation_stop = subparsers.add_parser("validation-stop", aliases=["vstop"], help="Stop the current validation phase and leave it retryable")
+    validation_stop.add_argument("--session", default="", help="Specific validation session ID")
+    validation_stop.add_argument("--if-revision", type=int, default=-1, help="Apply only when the session revision matches")
+    _add_validation_api_output_flags(validation_stop)
+
+    validation_events = subparsers.add_parser("validation-events", aliases=["vevents"], help="Read durable validation session events")
+    validation_events.add_argument("--session", default="", help="Specific validation session ID")
+    validation_events.add_argument("--after-event", default="", help="Return events after this event ID")
+    validation_events.add_argument("--limit", type=int, default=100, help="Maximum event records to return")
+    _add_validation_api_output_flags(validation_events)
+
+    validation_report = subparsers.add_parser("validation-report", aliases=["vreport"], help="Show the durable validation report")
+    validation_report.add_argument("--session", default="", help="Specific validation session ID")
+    _add_validation_api_output_flags(validation_report)
 
     validation_abort = subparsers.add_parser("validation-abort", aliases=["va"], help="Abort a resumable validation session")
     validation_abort.add_argument("--session", default="", help="Specific validation session ID")
     validation_abort.add_argument("--keep-changes", action="store_true", help="Do not roll back a pending artifact transaction")
+    validation_abort.add_argument("--rollback", action="store_true", help="Explicitly roll back a pending artifact transaction")
+    validation_abort.add_argument("--if-revision", type=int, default=-1, help="Apply only when the session revision matches")
+    _add_validation_api_output_flags(validation_abort)
 
     validation_finalize = subparsers.add_parser("validation-finalize", aliases=["vf"], help="Finalize a completed resumable validation session")
     validation_finalize.add_argument("--session", default="", help="Specific validation session ID")
+    validation_finalize.add_argument("--if-revision", type=int, default=-1, help="Apply only when the session revision matches")
+    _add_validation_api_output_flags(validation_finalize)
+
+    validation_recover = subparsers.add_parser("validation-recover", aliases=["vrec"], help="Recover an interrupted validation attempt or resume a failed rollback")
+    validation_recover.add_argument("--session", default="", help="Specific validation session ID")
+    validation_recover.add_argument("--if-revision", type=int, default=-1, help="Apply only when the session revision matches")
+    _add_validation_api_output_flags(validation_recover)
+
+    validation_reset = subparsers.add_parser("validation-reset", aliases=["vreset"], help="Reset one phase and its dependents, or all validation progress")
+    validation_reset.add_argument("--session", default="", help="Specific validation session ID")
+    validation_reset.add_argument("--phase", default="", help="Reset this phase and every dependent phase")
+    validation_reset.add_argument("--from-phase", default="", help="Alias for --phase")
+    validation_reset.add_argument("--all", dest="reset_all", action="store_true", help="Reset all validation verdicts while retaining attempt evidence")
+    validation_reset.add_argument("--if-revision", type=int, default=-1, help="Apply only when the session revision matches")
+    _add_validation_api_output_flags(validation_reset)
+
+    validation_accept = subparsers.add_parser("validation-accept-plan-change", aliases=["vapc"], help="Explicitly accept an incompatible validation plan change")
+    validation_accept.add_argument("--session", default="", help="Specific validation session ID")
+    validation_accept.add_argument("--reason", required=True, help="Audit reason for accepting the plan change")
+    validation_accept.add_argument("--if-revision", type=int, default=-1, help="Apply only when the session revision matches")
+    _add_validation_api_output_flags(validation_accept)
 
     subparsers.add_parser("targets", aliases=["tg"])
 
@@ -573,6 +680,12 @@ def _add_validation_skip_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--skip-test", action="store_true", help="Skip test during validation")
 
 
+def _add_validation_api_output_flags(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument("--json", action="store_true", help="Emit a stable validation-control JSON response")
+    cmd.add_argument("--machine", choices=["pretty", "compact"], default="", help="Machine response formatting; implies --json")
+    cmd.add_argument("--machine-file", default=argparse.SUPPRESS, help="Also write the validation-control JSON envelope to this file")
+
+
 def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--sequential", action="store_true", help="Use a persistent Android/Gradle validation session")
     cmd.add_argument("--resume", action="store_true", help="Resume the active validation session")
@@ -580,11 +693,11 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--retry-failed", action="store_true", help="Retry the cached failed phase and every dependent phase")
     selection = cmd.add_mutually_exclusive_group()
     selection.add_argument("--next", dest="validation_next", action="store_true", help="Run only the next pending phase (the default for `validate continue`)")
-    selection.add_argument("--phase", default="", help="Run a named phase and every still-pending prerequisite")
+    selection.add_argument("--phase", action="append", default=[], help="Run a named phase and every still-pending prerequisite; repeat with --scope selected")
     selection.add_argument("--phase-only", default="", help="Run only one named pending phase without automatically including prerequisites")
     selection.add_argument("--through", default="", help="Run pending phases through this phase")
     selection.add_argument("--complete", dest="validation_complete", action="store_true", help="Run every remaining phase")
-    cmd.add_argument("--from-phase", default="", help="Start this invocation at a named phase")
+    cmd.add_argument("--from-phase", "--from", dest="from_phase", default="", help="Start this invocation at a named phase")
     cmd.add_argument("--pause-after", default="", help="Pause after this phase (alias for --through)")
     cmd.add_argument("--max-phases", type=int, default=0, help="Maximum phase boundaries to cross in this invocation")
     cmd.add_argument("--max-runtime", default="", help="Stop before the next phase after this runtime budget, such as 15m or 1h")
@@ -592,13 +705,34 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--stop-below-battery", type=int, default=0, metavar="PERCENT", help="Pause before a phase when battery is below this percentage")
     cmd.add_argument("--require-charging", action="store_true", help="Pause before a phase unless the Android device is charging")
     cmd.add_argument("--stop-above-temperature", type=float, default=0.0, metavar="CELSIUS", help="Pause before a phase when device temperature exceeds this value")
+    cmd.add_argument("--stop-below-disk-mb", type=int, default=256, metavar="MIB", help="Pause a running validation phase when repository free space falls below this threshold; 0 disables")
     daemon = cmd.add_mutually_exclusive_group()
     daemon.add_argument("--stop-gradle-after-phase", action="store_true", help="Stop Gradle daemons after each completed phase")
     daemon.add_argument("--keep-gradle-daemon", action="store_true", help="Keep Gradle daemons available between phase invocations")
     cmd.add_argument("--resource-profile", "--validation-profile", "--profile", dest="validation_resource_profile", choices=["automatic", "android-low-power", "standard"], default="automatic", help="Validation resource profile; android-low-power uses one worker, two CPUs, no daemon, and low priority")
+    cmd.add_argument("--max-infrastructure-retries", type=int, default=1, metavar="COUNT", help="Automatically retry environment/tooling interruptions this many times per phase")
+    cmd.add_argument("--max-resource-retries", type=int, default=1, metavar="COUNT", help="Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available")
+    cmd.add_argument("--no-auto-retry", action="store_true", help="Disable automatic infrastructure and resource retries for this session")
     cmd.add_argument("--rollback-on-failure", action="store_true", help="Immediately roll back an attached apply transaction when a validation phase fails")
+    cmd.add_argument(
+        "--failure-action",
+        choices=["pause", "rollback", "keep", "prompt"],
+        default="",
+        help="Action after a sequential validation failure; pause preserves the tree and rollback point",
+    )
     cmd.add_argument("--keep-changes", action="store_true", help="When aborting through `validate abort`, keep the applied repository changes")
     cmd.add_argument("--session", default="", help="Specific validation session ID")
+    cmd.add_argument("--all", dest="reset_all", action="store_true", help=argparse.SUPPRESS)
+    cmd.add_argument("--reason", default="", help=argparse.SUPPRESS)
+    cmd.add_argument("--scope", dest="validation_run_scope", choices=["next", "through", "selected", "remaining"], default="", help="Stable validation run scope")
+    cmd.add_argument("--if-revision", type=int, default=-1, help="Apply the control request only when the session revision matches")
+    cmd.add_argument("--after-phase", action="store_true", help="For validate pause, finish the active phase before pausing")
+    cmd.add_argument("--cancel", dest="cancel_pause", action="store_true", help="For validate pause, cancel a pending pause request")
+    cmd.add_argument("--rollback", action="store_true", help="For validate abort, explicitly roll back the attached transaction")
+    cmd.add_argument("--events", action="store_true", help="Include durable events in validation status JSON")
+    cmd.add_argument("--after-event", default="", help="Return events after this event ID")
+    cmd.add_argument("--event-limit", "--limit", dest="event_limit", type=int, default=100, help="Maximum event records to return")
+    _add_validation_api_output_flags(cmd)
 
 
 def _add_validation_test_selection_flags(cmd: argparse.ArgumentParser) -> None:
@@ -1564,42 +1698,159 @@ def _rollback_on_failure_enabled(args: argparse.Namespace, policy: dict[str, obj
     return bool(policy.get("rollback_on_failure", True))
 
 
+def _validation_failure_action(
+    args: argparse.Namespace,
+    context: dict[str, object] | None = None,
+) -> str:
+    """Resolve sequential/deferred failure policy without inheriting destructive defaults."""
+
+    explicit = str(getattr(args, "failure_action", "") or "").strip().lower()
+    if explicit:
+        return explicit
+    if bool(getattr(args, "rollback_on_failure", False)):
+        return "rollback"
+    if bool(getattr(args, "keep_changes", False)):
+        return "keep"
+    context = dict(context or {})
+    configured = str(context.get("failure_action") or "").strip().lower()
+    if configured in {"pause", "rollback", "keep", "prompt"}:
+        return configured
+    # The old boolean is honored only when it was explicitly preserved in the
+    # durable context. New deferred sessions default to non-destructive pause.
+    if bool(context.get("legacy_rollback_on_failure_explicit", False)):
+        return "rollback" if bool(context.get("rollback_on_failure", False)) else "pause"
+    return "pause"
+
+
+def _resolve_prompted_failure_action(args: argparse.Namespace, action: str, *, phase_label: str) -> str:
+    """Resolve ``prompt`` only in an interactive human CLI; machines fail safe to pause."""
+
+    if action != "prompt":
+        return action
+    if not _validation_console_enabled(args) or not getattr(sys.stdin, "isatty", lambda: False)():
+        return "pause"
+    console.print(f"[bold yellow]Validation failed at {phase_label}.[/bold yellow]")
+    if Confirm.ask("Roll back the applied changes now?", default=False, console=console):
+        return "rollback"
+    if Confirm.ask("Detach the rollback point and keep the applied changes without a validation verdict?", default=False, console=console):
+        return "keep"
+    console.print("[yellow]Validation paused; changes and rollback point were retained.[/yellow]")
+    return "pause"
+
+
 def _normalize_command_aliases(args: argparse.Namespace) -> None:
     if getattr(args, "command", "") == "apply":
         args.command = str(getattr(args, "normalized_command", "") or "apply-overlay")
     command = str(getattr(args, "command", "") or "")
     if command in {"validate", "v"}:
         action = str(getattr(args, "validate_scope", "") or "").strip().lower()
-        if action in {"start", "next", "resume", "continue", "status", "checkpoint", "finalize", "abort"}:
+        if action in {"start", "next", "run", "resume", "continue", "retry", "status", "checkpoint", "plan", "events", "report", "pause", "stop", "finalize", "abort", "recover", "reset", "accept-plan-change"}:
             args.validate_scope = ""
             if action == "start":
                 args._devtool_validation_mode = "start"
+                args._devtool_validation_api_action = "start"
                 args.sequential = True
                 args.restart_session = True
             elif action == "next":
                 args._devtool_validation_mode = "resume"
+                args._devtool_validation_api_action = "run"
                 args.sequential = True
                 args.resume = True
                 args.validation_next = True
-            elif action in {"resume", "continue"}:
+            elif action == "run":
                 args._devtool_validation_mode = "resume"
+                args._devtool_validation_api_action = "run"
+                args.sequential = True
+                args.resume = True
+            elif action == "retry":
+                args._devtool_validation_mode = "resume"
+                args._devtool_validation_api_action = "retry"
+                args.sequential = True
+                args.resume = True
+                args.retry_failed = True
+            elif action == "resume":
+                args._devtool_validation_mode = "resume"
+                args._devtool_validation_api_action = "resume"
+                args.sequential = True
+                args.resume = True
+            elif action == "continue":
+                args._devtool_validation_mode = "resume"
+                args._devtool_validation_api_action = "run"
                 args.sequential = True
                 args.resume = True
             elif action in {"status", "checkpoint"}:
                 args.command = "validation-status"
+                args._devtool_validation_api_action = "status"
                 args._devtool_validation_checkpoint = action == "checkpoint"
+            elif action == "plan":
+                args.command = "validation-plan"
+                args._devtool_validation_api_action = "plan"
+            elif action == "events":
+                args.command = "validation-events"
+                args._devtool_validation_api_action = "events"
+            elif action == "report":
+                args.command = "validation-report"
+                args._devtool_validation_api_action = "report"
+            elif action == "pause":
+                args.command = "validation-pause"
+                args._devtool_validation_api_action = "pause"
+            elif action == "stop":
+                args.command = "validation-stop"
+                args._devtool_validation_api_action = "stop"
             elif action == "finalize":
                 args.command = "validation-finalize"
+                args._devtool_validation_api_action = "finalize"
             elif action == "abort":
                 args.command = "validation-abort"
+                args._devtool_validation_api_action = "abort"
+            elif action == "recover":
+                args.command = "validation-recover"
+                args._devtool_validation_api_action = "recover"
+            elif action == "reset":
+                args.command = "validation-reset"
+                args._devtool_validation_api_action = "reset"
+            elif action == "accept-plan-change":
+                args.command = "validation-accept-plan-change"
+                args._devtool_validation_api_action = "accept-plan-change"
             command = str(args.command)
+        api_action = str(getattr(args, "_devtool_validation_api_action", "") or "")
+        if api_action in {"start", "run", "resume", "retry"}:
+            scope = str(getattr(args, "validation_run_scope", "") or "").strip().lower()
+            if not scope:
+                if bool(getattr(args, "validation_next", False)):
+                    scope = "next"
+                elif bool(getattr(args, "validation_complete", False)):
+                    scope = "remaining"
+                elif str(getattr(args, "through", "") or "").strip():
+                    scope = "through"
+                elif _validation_phase_values(args):
+                    scope = "selected"
+                else:
+                    scope = "remaining" if api_action == "resume" and _validation_json_requested(args) else "next"
+                args.validation_run_scope = scope
+            if scope == "next":
+                args.validation_next = True
+                args.validation_complete = False
+            elif scope == "remaining":
+                args.validation_complete = True
+                args.validation_next = False
+            elif scope == "through":
+                args.validation_next = False
+                args.validation_complete = False
+            elif scope == "selected":
+                args.validation_next = False
+                args.validation_complete = False
     if command in {"start-validation", "sv"}:
         args._devtool_validation_mode = "start"
+        if _validation_json_requested(args):
+            args._devtool_validation_api_action = "start"
         args.sequential = True
         args.restart_session = True
         args.command = "validate"
     elif command in {"resume-validation", "rv"}:
         args._devtool_validation_mode = "resume"
+        if _validation_json_requested(args):
+            args._devtool_validation_api_action = "resume"
         args.sequential = True
         args.resume = True
         args.command = "validate"
@@ -1628,6 +1879,19 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
             parser.error("validate positional form is only supported as: validate overlay <archive> or validate overlays <bundle>")
         if scope in {"overlay", "overlays"} and not getattr(args, "validate_artifact", ""):
             parser.error(f"validate {scope} requires an artifact archive")
+        api_action = str(getattr(args, "_devtool_validation_api_action", "") or "")
+        run_scope = str(getattr(args, "validation_run_scope", "") or "")
+        phases = _validation_phase_values(args)
+        if api_action in {"start", "run", "resume", "retry"}:
+            if run_scope == "through" and not str(getattr(args, "through", "") or "").strip():
+                if not _validation_json_requested(args):
+                    parser.error("validate run --scope through requires --through PHASE")
+            if run_scope == "selected" and not phases:
+                if not _validation_json_requested(args):
+                    parser.error("validate run --scope selected requires one or more --phase PHASE values")
+            if run_scope in {"next", "remaining"} and (phases or str(getattr(args, "through", "") or "").strip()):
+                if not _validation_json_requested(args):
+                    parser.error(f"validate run --scope {run_scope} cannot be combined with --phase or --through")
     if args.command not in APPLY_COMMANDS:
         return
     deferred = bool(getattr(args, "defer_validate", False))
@@ -2096,6 +2360,9 @@ def _run_specs_for_args(
     log_path: Path | str | None = None,
     tasker_progress: TaskerProgressSink | None = None,
     shutdown_dotnet: bool | None = None,
+    supervisor_probe=None,
+    heartbeat_callback=None,
+    progress_callback=None,
 ) -> tuple[list[OperationResult], str]:
     return run_specs(
         config,
@@ -2106,8 +2373,81 @@ def _run_specs_for_args(
         log_path=log_path,
         tasker_progress=tasker_progress,
         shutdown_dotnet=shutdown_dotnet,
+        supervisor_probe=supervisor_probe,
+        heartbeat_callback=heartbeat_callback,
+        progress_callback=progress_callback,
     )
 
+
+
+def _validation_phase_values(args: argparse.Namespace) -> list[str]:
+    value = getattr(args, "phase", [])
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _validation_json_requested(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "json", False) or str(getattr(args, "machine", "") or ""))
+
+
+def _validation_machine_text(payload: dict[str, object], args: argparse.Namespace) -> str:
+    compact = str(getattr(args, "machine", "") or "") == "compact"
+    return json.dumps(payload, ensure_ascii=False, indent=None if compact else 2, separators=(",", ":") if compact else None)
+
+
+def _emit_validation_control_payload(payload: dict[str, object], args: argparse.Namespace) -> None:
+    text = _validation_machine_text(payload, args)
+    print(text)
+    path_text = str(getattr(args, "machine_file", "") or "")
+    if path_text:
+        path = Path(path_text).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + ("" if text.endswith("\n") else "\n"), encoding="utf-8")
+
+
+def _validate_validation_api_request(args: argparse.Namespace) -> None:
+    action = str(getattr(args, "_devtool_validation_api_action", "") or "")
+    if action not in {"start", "run", "resume", "retry"}:
+        return
+    scope = str(getattr(args, "validation_run_scope", "") or "next")
+    phases = _validation_phase_values(args)
+    through = str(getattr(args, "through", "") or "").strip()
+    if scope == "through":
+        if not through:
+            raise ValidationControlError(
+                "invalid_request",
+                "Validation scope 'through' requires --through PHASE.",
+                VALIDATION_EXIT_INVALID_REQUEST,
+            )
+        if phases:
+            raise ValidationControlError(
+                "invalid_request",
+                "Validation scope 'through' cannot be combined with --phase.",
+                VALIDATION_EXIT_INVALID_REQUEST,
+            )
+    elif scope == "selected":
+        if not phases:
+            raise ValidationControlError(
+                "invalid_request",
+                "Validation scope 'selected' requires at least one --phase PHASE.",
+                VALIDATION_EXIT_INVALID_REQUEST,
+            )
+        if through:
+            raise ValidationControlError(
+                "invalid_request",
+                "Validation scope 'selected' cannot be combined with --through.",
+                VALIDATION_EXIT_INVALID_REQUEST,
+            )
+    elif scope in {"next", "remaining"} and (phases or through):
+        raise ValidationControlError(
+            "invalid_request",
+            f"Validation scope {scope!r} cannot be combined with --phase or --through.",
+            VALIDATION_EXIT_INVALID_REQUEST,
+        )
 
 
 def _resumable_validation_requested(args: argparse.Namespace) -> bool:
@@ -2117,7 +2457,7 @@ def _resumable_validation_requested(args: argparse.Namespace) -> bool:
         or getattr(args, "restart_session", False)
         or getattr(args, "retry_failed", False)
         or getattr(args, "validation_next", False)
-        or str(getattr(args, "phase", "") or "").strip()
+        or bool(_validation_phase_values(args))
         or str(getattr(args, "phase_only", "") or "").strip()
         or str(getattr(args, "through", "") or "").strip()
         or str(getattr(args, "from_phase", "") or "").strip()
@@ -2187,7 +2527,7 @@ def _enable_resumable_validation(config: ProjectConfig, args: argparse.Namespace
 
 
 def _validation_session_options(args: argparse.Namespace) -> dict[str, object]:
-    return {
+    options = {
         "skip_restore": bool(getattr(args, "skip_restore", False)),
         "skip_build": bool(getattr(args, "skip_build", False)),
         "skip_test": bool(getattr(args, "skip_test", False)),
@@ -2195,18 +2535,25 @@ def _validation_session_options(args: argparse.Namespace) -> dict[str, object]:
         "stop_below_battery": int(getattr(args, "stop_below_battery", 0) or 0),
         "require_charging": bool(getattr(args, "require_charging", False)),
         "stop_above_temperature": float(getattr(args, "stop_above_temperature", 0.0) or 0.0),
+        "stop_below_disk_mb": max(0, int(getattr(args, "stop_below_disk_mb", 256) or 0)),
         "require_complete": bool(getattr(args, "require_complete", False)),
         "stop_gradle_after_phase": bool(getattr(args, "stop_gradle_after_phase", False)),
         "keep_gradle_daemon": bool(getattr(args, "keep_gradle_daemon", False)),
         "validation_resource_profile": str(getattr(args, "validation_resource_profile", "automatic") or "automatic"),
+        "max_infrastructure_retries": 0 if bool(getattr(args, "no_auto_retry", False)) else max(0, int(getattr(args, "max_infrastructure_retries", 1) or 0)),
+        "max_resource_retries": 0 if bool(getattr(args, "no_auto_retry", False)) else max(0, int(getattr(args, "max_resource_retries", 1) or 0)),
+        "no_auto_retry": bool(getattr(args, "no_auto_retry", False)),
         "rollback_on_failure": bool(getattr(args, "rollback_on_failure", False)),
     }
+    options["failure_action"] = _validation_failure_action(args, options)
+    return options
 
 
 def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str, manifest: dict) -> dict[str, object]:
     artifact_values = _artifact_arg_list(getattr(args, "artifact", ""))
     validation_policy = artifact_validation_policy(manifest)
-    return {
+    raw_validation = manifest.get("validation") if isinstance(manifest.get("validation"), dict) else {}
+    context: dict[str, object] = {
         "command": str(getattr(args, "command", "") or "apply-overlay"),
         "artifacts": artifact_values,
         "artifact": artifact_values[0] if len(artifact_values) == 1 else artifact_values,
@@ -2222,6 +2569,7 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "ignore_checksum": bool(getattr(args, "ignore_checksum", False)),
         "validate_only": bool(getattr(args, "validate_only", False)),
         "rollback_on_failure": _rollback_on_failure_enabled(args, validation_policy),
+        "legacy_rollback_on_failure_explicit": "rollback_on_failure" in raw_validation,
         "validation_mode": "deferred" if bool(getattr(args, "defer_validate", False)) else "sequential",
         "minimum_phase": str(validation_policy.get("minimum_phase") or "finalize"),
         "resource_profile": str(getattr(args, "validation_resource_profile", "automatic") or "automatic"),
@@ -2230,6 +2578,14 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "solution": str(getattr(args, "solution", "") or artifact_solution(manifest)),
         "transaction_path": transaction_path,
     }
+    configured_action = str(raw_validation.get("failure_action") or "").strip().lower()
+    if configured_action in {"pause", "rollback", "keep", "prompt"}:
+        context["failure_action"] = configured_action
+    elif "rollback_on_failure" in raw_validation:
+        context["failure_action"] = "rollback" if bool(raw_validation.get("rollback_on_failure")) else "pause"
+    else:
+        context["failure_action"] = _validation_failure_action(args, context)
+    return context
 
 
 def _with_artifact_validation_phase(
@@ -2266,6 +2622,9 @@ def _load_or_create_validation_session(
     active = load_validation_session(config.repo_root, requested_session) if requested_session else load_active_session(config.repo_root)
     mode = str(getattr(args, "_devtool_validation_mode", "") or "").strip()
     explicitly_resuming = mode == "resume" or bool(getattr(args, "resume", False)) or bool(requested_session)
+    if active is not None and str(getattr(args, "_devtool_validation_api_action", "") or ""):
+        previous_revision = require_validation_revision(active, _validation_expected_revision(args))
+        args._devtool_validation_previous_revision = previous_revision
     if explicitly_resuming and active is None:
         raise ValidationSessionError("No matching active validation session exists to resume.")
 
@@ -2273,7 +2632,7 @@ def _load_or_create_validation_session(
     if not start_new and active is not None:
         # A resumed plan must retain its original skip/daemon choices. Runtime,
         # battery, temperature and phase selection are intentionally per-run.
-        for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "rollback_on_failure"):
+        for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "max_infrastructure_retries", "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action"):
             if name in active.options:
                 setattr(args, name, active.options[name])
 
@@ -2289,12 +2648,17 @@ def _load_or_create_validation_session(
             raise ValidationSessionError(
                 "The active validation session owns a pending apply transaction. Resume or abort it instead of replacing it."
             )
+        session_options = _validation_session_options(args)
+        session_options["execution_environment"] = str(config.execution_environment or "auto")
+        session_options["chroot_name"] = str(config.chroot_name or "")
+        session_options["linux_user"] = str(os.environ.get("USER") or "")
+        session_options["failure_action"] = _validation_failure_action(args, dict(apply_context or {}))
         session = create_validation_session(
             config,
             specs,
             transaction_path=transaction_path,
             apply_context=dict(apply_context or {}),
-            options=_validation_session_options(args),
+            options=session_options,
             replace_active=bool(active is not None),
         )
         specs = annotate_validation_specs(specs, session_id=session.session_id)
@@ -2304,7 +2668,12 @@ def _load_or_create_validation_session(
             raise ValidationSessionError("No active validation session exists.")
         if transaction_path and session.transaction_path and transaction_path != session.transaction_path:
             raise ValidationSessionError("The active validation session belongs to a different apply transaction.")
-        recovered = recover_interrupted_validation_phases(session)
+        if session.status in {"rollback-running", "rollback-failed", "recovery-required"}:
+            raise ValidationSessionError(
+                f"Validation session {session.session_id} is in {session.status!r}. "
+                "Run `devtool validate recover` before continuing validation."
+            )
+        recovered = recover_interrupted_validation_phases(session, stale_after_seconds=5.0)
         if recovered and session.transaction_path:
             _mark_session_transaction_pending(session)
         specs = sync_validation_plan(session, specs)
@@ -2322,7 +2691,7 @@ def _load_or_create_validation_session(
 
 
 def _session_pause_metadata(session: ValidationSession) -> tuple[int, int, str]:
-    completed = sum(item.status in {"succeeded", "skipped"} for item in session.phases)
+    completed = sum(item.status in {"passed", "not-applicable", "succeeded", "skipped"} for item in session.phases)
     next_phase = session.next_pending()
     return completed, len(session.phases), next_phase.name if next_phase else ""
 
@@ -2351,14 +2720,14 @@ def _announce_validation_phase_finished(args: argparse.Namespace, session: Valid
     total = int(getattr(phase, "total", 0) or 0)
     label = str(getattr(phase, "label", "validation") or "validation")
     status = str(getattr(phase, "status", "") or "")
-    completed = sum(item.status in {"succeeded", "skipped"} for item in session.phases)
-    if status == "succeeded":
+    completed = sum(item.status in {"passed", "not-applicable", "succeeded", "skipped"} for item in session.phases)
+    if status in {"passed", "succeeded"}:
         console.print(f"[bold green]✓ VALIDATION PHASE {index} OF {total} COMPLETED[/bold green]")
         console.print(f"[green]{label}[/green] [dim]· Overall {completed} of {total} phases complete[/dim]")
-    elif status == "skipped":
+    elif status in {"not-applicable", "skipped"}:
         console.print(f"[bold yellow]○ VALIDATION PHASE {index} OF {total} SKIPPED[/bold yellow]")
         console.print(f"[yellow]{label}[/yellow] [dim]· Overall {completed} of {total} phases complete[/dim]")
-    elif status == "pending":
+    elif status == "interrupted":
         console.print(f"[bold yellow]Ⅱ VALIDATION PHASE {index} OF {total} INTERRUPTED[/bold yellow]")
         console.print(f"[yellow]{label} remains pending and can be resumed.[/yellow]")
     else:
@@ -2399,13 +2768,23 @@ def _finalize_validation_session(
     log_path: Path | str | None,
     tasker_progress: TaskerProgressSink | None,
 ) -> tuple[list[OperationResult], str]:
-    if not session.complete:
-        paused = validation_pause_result(session, "not all validation phases are complete", require_complete=True)
+    changed_domains = reconcile_validation_inputs(session, config)
+    integrity_issues = validation_finalization_issues(session, validation_input_fingerprints(config.repo_root))
+    if changed_domains or integrity_issues or not session.complete or not validation_checkpoint_satisfied(session):
+        reason = "; ".join(integrity_issues) or "required validation checkpoint is not satisfied"
+        paused = validation_pause_result(session, reason, require_complete=True)
+        try:
+            session.report_path = str(write_validation_report(session))
+            save_validation_session(session, active=True)
+        except Exception:
+            pass
         return [*results, paused], raw_output + ("\n\n" if raw_output else "") + paused.output
 
     context = dict(session.apply_context or {})
     if not context:
-        mark_validation_completed(session)
+        mark_validation_completed(session, commit_status="not-requested")
+        session.report_path = str(write_validation_report(session, commit_status="not-requested", sealed=True))
+        save_validation_session(session, active=False)
         completed = validation_completion_result(session)
         return [*results, completed], raw_output + ("\n\n" if raw_output else "") + completed.output
 
@@ -2447,14 +2826,34 @@ def _finalize_validation_session(
         if script_result is not None:
             results.append(script_result)
             raw_output += ("\n\n" if raw_output else "") + script_raw
+    elif (
+        artifact_validation_policy(manifest).get("script")
+        and not bool(context.get("artifact_script_in_plan", False))
+        and artifact_path is None
+    ):
+        missing = OperationResult(
+            "artifact-validate-script",
+            ["artifact-validate-script", *(artifact_values or ["<missing>"])],
+            2,
+            0.0,
+            "Deferred validation artifact is unavailable; the required embedded validator cannot run.",
+            [],
+            failure_kind="deferred_artifact_missing",
+        )
+        results.append(missing)
+        raw_output += ("\n\n" if raw_output else "") + missing.output
 
     expectation = _validation_expectation_result(manifest, [*historical_results, *results])
     if expectation is not None:
         results.append(expectation)
         raw_output += ("\n\n" if raw_output else "") + "=== Validation expectations ===\n" + expectation.output
 
-    rollback_enabled = _rollback_on_failure_enabled(args, context)
-    if session.transaction_path and rollback_enabled and any(result.returncode != 0 for result in results):
+    finalization_failed = any(result.returncode != 0 for result in results)
+    action = _validation_failure_action(args, context)
+    if finalization_failed:
+        action = _resolve_prompted_failure_action(args, action, phase_label="finalization")
+    session.failure_action = action
+    if finalization_failed:
         evidence = preserve_validation_evidence(
             config.repo_root,
             [*historical_results, *results],
@@ -2462,51 +2861,70 @@ def _finalize_validation_session(
         )
         if evidence:
             raw_output += f"\n\nValidation evidence preserved: {evidence}"
-        rollback_result, rollback_raw = _run_transaction_rollback(
-            session.transaction_path,
-            reason="resumable validation finalization failed",
-            tasker_progress=tasker_progress,
-            log_path=log_path,
-        )
-        results.append(rollback_result)
-        raw_output += "\n\n" + rollback_raw
         session.last_error = "resumable validation finalization failed"
-        mark_validation_failure_terminal(
-            session,
-            "validation failed; apply transaction rollback completed"
-            if rollback_result.returncode == 0
-            else "validation failed; apply transaction rollback failed and requires recovery",
-            rollback_attempted=True,
-            rollback_succeeded=rollback_result.returncode == 0,
-        )
+        session.status = "blocked"
+        session.paused_reason = "validation finalization failed; applied changes were retained"
+        if session.transaction_path and action == "rollback":
+            rollback_result, rollback_raw = _run_transaction_rollback(
+                session.transaction_path,
+                reason="explicit rollback policy after resumable validation finalization failure",
+                tasker_progress=tasker_progress,
+                log_path=log_path,
+            )
+            results.append(rollback_result)
+            raw_output += "\n\n" + rollback_raw
+            mark_validation_failure_terminal(
+                session,
+                "validation failed; apply transaction rollback completed"
+                if rollback_result.returncode == 0
+                else "validation failed; apply transaction rollback failed and requires recovery",
+                rollback_attempted=True,
+                rollback_succeeded=rollback_result.returncode == 0,
+            )
+        elif session.transaction_path and action == "keep":
+            abandon_transaction(
+                session.transaction_path,
+                reason="validation finalization failed and failure_action=keep retained changes",
+            )
+            mark_validation_aborted(
+                session,
+                "validation finalization failed; changes retained without rollback",
+                kept_changes=True,
+            )
+        else:
+            if session.transaction_path:
+                mark_transaction_validation_blocked(
+                    session.transaction_path,
+                    session_id=session.session_id,
+                    failed_phase="finalize",
+                    verdict="code-failed",
+                )
+            try:
+                session.report_path = str(write_validation_report(session))
+            except Exception:
+                pass
+            save_validation_session(session, active=True)
         return results, raw_output
 
-    results, raw_output = _maybe_commit_after_apply(config, final_args, results, raw_output, log_path=log_path)
     if session.transaction_path:
-        if any(result.returncode != 0 for result in results):
-            rollback_result: OperationResult | None = None
-            if rollback_enabled:
-                rollback_result, rollback_raw = _run_transaction_rollback(
-                    session.transaction_path,
-                    reason="resumable validation commit failed",
-                    tasker_progress=tasker_progress,
-                    log_path=log_path,
-                )
-                results.append(rollback_result)
-                raw_output += "\n\n" + rollback_raw
-            session.last_error = "post-validation commit failed"
-            if rollback_result is not None:
-                mark_validation_failure_terminal(
-                    session,
-                    "post-validation commit failed; apply transaction rollback completed"
-                    if rollback_result.returncode == 0
-                    else "post-validation commit failed; apply transaction rollback failed and requires recovery",
-                    rollback_attempted=True,
-                    rollback_succeeded=rollback_result.returncode == 0,
-                )
-            else:
-                save_validation_session(session, active=True)
-            return results, raw_output
+        mark_transaction_validated(
+            session.transaction_path,
+            session_id=session.session_id,
+            commit_pending=bool(str(final_args.commit or "").strip()),
+        )
+    commit_start = len(results)
+    results, raw_output = _maybe_commit_after_apply(config, final_args, results, raw_output, log_path=log_path)
+    commit_failed = any(result.returncode != 0 for result in results[commit_start:])
+    if commit_failed:
+        mark_validation_validated_uncommitted(session, "post-validation commit failed")
+        if session.transaction_path:
+            mark_transaction_validated(
+                session.transaction_path,
+                session_id=session.session_id,
+                commit_pending=True,
+            )
+        return results, raw_output
+    if session.transaction_path:
         mark_transaction_completed(session.transaction_path)
 
     if not bool(getattr(final_args, "dry_run", False)) and not final_args.keep_artifact:
@@ -2516,13 +2934,59 @@ def _finalize_validation_session(
             delete_on_failure=final_args.delete_artifact_on_failure,
         )
         if cleanup is not None:
+            if cleanup.returncode != 0:
+                cleanup = OperationResult(
+                    cleanup.name,
+                    cleanup.argv,
+                    0,
+                    cleanup.duration_seconds,
+                    "Administrative warning: " + cleanup.output,
+                    [Issue("warning", cleanup.name, "", "ArtifactCleanupWarning", cleanup.output)],
+                    failure_kind="",
+                    metadata={**cleanup.metadata, "administrative_warning": True},
+                )
             results.append(cleanup)
             raw_output += ("\n\n" if raw_output else "") + "$ " + " ".join(cleanup.argv) + "\n" + cleanup.output
 
+    commit_requested = bool(str(final_args.commit or "").strip())
+    commit_hash = latest_commit_hash(config.repo_root) if commit_requested else ""
+    commit_status = "committed" if commit_requested else "not-requested"
+    mark_validation_completed(session, commit_status=commit_status, commit_hash=commit_hash)
+    final_args._devtool_validation_session_id = session.session_id
+    final_args._devtool_validation_report_path = str(validation_report_path(
+        config.repo_root, session.session_id, sealed=True,
+    ))
+    final_args._devtool_validation_final_verdict = "validated"
+    history_warning = ""
     if not getattr(final_args, "_devtool_history_recorded", False):
-        _record_apply_history(config, final_args, [*historical_results, *results])
-        final_args._devtool_history_recorded = True
-    mark_validation_completed(session)
+        try:
+            _record_apply_history(config, final_args, [*historical_results, *results])
+            history_error = str(getattr(final_args, "_devtool_history_error", "") or "")
+            if history_error:
+                raise RuntimeError(history_error)
+            final_args._devtool_history_recorded = True
+        except Exception as exc:
+            history_warning = f"HistoryWriteWarning: {type(exc).__name__}: {exc}"
+            warning = OperationResult(
+                "validation-history-warning",
+                ["devtool", "history", "record"],
+                0,
+                0.0,
+                f"Administrative warning: validation passed, but history recording failed: {type(exc).__name__}: {exc}",
+                [Issue("warning", "validation-history", "", "HistoryWriteWarning", str(exc))],
+                metadata={"administrative_warning": True},
+            )
+            results.append(warning)
+            raw_output += ("\n\n" if raw_output else "") + warning.output
+    try:
+        session.report_path = str(write_validation_report(
+            session, commit_status=commit_status, commit_hash=commit_hash,
+            administrative_warnings=[history_warning] if history_warning else [],
+            sealed=True,
+        ))
+        save_validation_session(session, active=False)
+    except Exception:
+        pass
     completed = validation_completion_result(session)
     results.append(completed)
     raw_output += ("\n\n" if raw_output else "") + completed.output
@@ -2540,6 +3004,84 @@ def _run_validation_session(
     transaction_path: str = "",
     apply_context: dict[str, object] | None = None,
 ) -> tuple[list[OperationResult], str, ValidationSession]:
+    if bool(getattr(args, "dry_run", False)):
+        requested = str(getattr(args, "session", "") or "").strip()
+        mode = str(getattr(args, "_devtool_validation_mode", "") or "").strip()
+        active = load_validation_session(config.repo_root, requested) if requested else load_active_session(config.repo_root)
+        start_new = mode == "start" or bool(getattr(args, "restart_session", False)) or active is None
+        _enable_resumable_validation(config, args)
+        effective_context = dict(apply_context or (active.apply_context if active is not None else {}) or {})
+        script_only = bool(effective_context.get("artifact_script_in_plan", False)) and all(
+            bool(getattr(args, name, False)) for name in ("skip_restore", "skip_build", "skip_test")
+        )
+        preview_specs = [] if script_only else _validation_specs_for_args(config, args, parser)
+        preview_specs = _with_artifact_validation_phase(preview_specs, effective_context)
+        if start_new:
+            preview_options = _validation_session_options(args)
+            preview_options["execution_environment"] = str(config.execution_environment or "auto")
+            preview_options["chroot_name"] = str(config.chroot_name or "")
+            preview_options["linux_user"] = str(os.environ.get("USER") or "")
+            preview_options["failure_action"] = _validation_failure_action(args, effective_context)
+            session = create_validation_session(
+                config,
+                preview_specs,
+                transaction_path=transaction_path,
+                apply_context=effective_context,
+                options=preview_options,
+                persist=False,
+            )
+        else:
+            if active is None:
+                raise ValidationSessionError("No active validation session exists to preview.")
+            session = active
+
+        through = str(getattr(args, "through", "") or getattr(args, "pause_after", "") or "").strip()
+        phase_values = _validation_phase_values(args)
+        phase = phase_values[0] if phase_values else ""
+        phase_only = str(getattr(args, "phase_only", "") or "").strip()
+        keys = select_phase_keys(
+            session,
+            phase=phase or phase_only,
+            selected_phases=phase_values if str(getattr(args, "validation_run_scope", "") or "") == "selected" else (),
+            exact_phase=bool(phase_only),
+            through=through,
+            from_phase=str(getattr(args, "from_phase", "") or "").strip(),
+            next_only=bool(getattr(args, "validation_next", False)),
+            complete=bool(getattr(args, "validation_complete", False)),
+            max_phases=max(0, int(getattr(args, "max_phases", 0) or 0)),
+        )
+        selected = [session.phase_by_key(key) for key in keys]
+        lines = [
+            "VALIDATION PREVIEW",
+            f"Session: {session.session_id if not start_new else '(new session not created)'}",
+            f"Failure action: {session.failure_action}",
+            "Session state was not changed.",
+            "Would run:",
+        ]
+        lines.extend(
+            f"  {item.index}/{item.total} {item.label}"
+            for item in selected
+            if item is not None
+        )
+        if not selected:
+            lines.append("  No runnable phases")
+        preview = OperationResult(
+            "validation-preview",
+            ["devtool", "validate", "--dry-run"],
+            0,
+            0.0,
+            "\n".join(lines),
+            [],
+            skipped=True,
+            metadata={
+                "validation_preview": True,
+                "validation_session_id": "" if start_new else session.session_id,
+                "selected_phase_keys": keys,
+                "state_changed": False,
+            },
+        )
+        return [preview], preview.output, session
+
     session, specs = _load_or_create_validation_session(
         config,
         args,
@@ -2553,11 +3095,13 @@ def _run_validation_session(
     if through and pause_after and through != pause_after:
         raise ValidationSessionError("--through and --pause-after must name the same phase when combined.")
     through = through or pause_after
-    phase = str(getattr(args, "phase", "") or "").strip()
+    phase_values = _validation_phase_values(args)
+    phase = phase_values[0] if phase_values else ""
     phase_only = str(getattr(args, "phase_only", "") or "").strip()
     keys = select_phase_keys(
         session,
         phase=phase or phase_only,
+        selected_phases=phase_values if str(getattr(args, "validation_run_scope", "") or "") == "selected" else (),
         exact_phase=bool(phase_only),
         through=through,
         from_phase=str(getattr(args, "from_phase", "") or "").strip(),
@@ -2571,6 +3115,39 @@ def _run_validation_session(
     runtime_budget = parse_duration_seconds(getattr(args, "max_runtime", ""))
     pause_reason = ""
 
+    safe_retry_mapping: dict[str, CommandSpec] | None = None
+    safe_retry_config: ProjectConfig | None = None
+
+    def _safe_retry_plan() -> tuple[ProjectConfig, dict[str, CommandSpec]]:
+        nonlocal safe_retry_config, safe_retry_mapping
+        if safe_retry_config is not None and safe_retry_mapping is not None:
+            return safe_retry_config, safe_retry_mapping
+        safe_retry_config = copy.deepcopy(config)
+        safe_args = copy.copy(args)
+        safe_args.validation_resource_profile = "android-low-power"
+        _apply_validation_resource_profile(safe_retry_config, safe_args)
+        safe_specs = _validation_specs_for_args(safe_retry_config, safe_args, parser)
+        safe_specs = _with_artifact_validation_phase(safe_specs, dict(session.apply_context or {}))
+        safe_specs = annotate_validation_specs(safe_specs, session_id=session.session_id)
+        safe_retry_mapping = validation_spec_map(safe_specs)
+        return safe_retry_config, safe_retry_mapping
+
+    def _retry_limit(verdict: str) -> int:
+        if verdict == "resource-failed":
+            return max(0, int(session.options.get("max_resource_retries", getattr(args, "max_resource_retries", 1)) or 0))
+        if verdict == "environment-failed":
+            return max(0, int(session.options.get("max_infrastructure_retries", getattr(args, "max_infrastructure_retries", 1)) or 0))
+        return 0
+
+    def _automatic_retry_number(phase_record) -> tuple[int, int]:
+        verdict = str(phase_record.last_verdict or "")
+        limit = _retry_limit(verdict)
+        matching_attempts = sum(
+            1 for item in phase_record.attempt_history
+            if str(item.verdict or "") == verdict
+        )
+        return matching_attempts, limit
+
     for key in keys:
         if runtime_budget > 0 and results and time.monotonic() - started >= runtime_budget:
             pause_reason = f"runtime budget of {runtime_budget:g}s reached at a phase boundary"
@@ -2583,84 +3160,246 @@ def _run_validation_session(
         if guard:
             pause_reason = guard
             break
-        spec = mapping.get(key)
-        if spec is None:
+        base_spec = mapping.get(key)
+        if base_spec is None:
             raise ValidationSessionError(f"Validation plan no longer contains phase key: {key}")
-        phase = mark_phase_running(session, key)
-        _announce_validation_phase_started(args, phase)
-        if session.transaction_path:
-            mark_transaction_validation_running(
-                session.transaction_path,
-                session_id=session.session_id,
-                phase=phase.name,
-            )
-        if str(spec.metadata.get("devtool_internal_validation") or "") == "artifact-script":
-            context = dict(session.apply_context or {})
-            artifacts = [str(item) for item in context.get("artifacts") or [] if str(item)]
-            artifact_path = resolve_artifact_path(artifacts[0]) if len(artifacts) == 1 else None
-            internal_result: OperationResult | None = None
-            phase_raw = ""
-            if artifact_path is not None:
-                internal_result, phase_raw = _artifact_script_result(
-                    config,
+
+        active_spec = base_spec
+        active_config = config
+        automatic_retry = False
+        retry_profile = ""
+        while True:
+            phase = mark_phase_running(session, key)
+            _announce_validation_phase_started(args, phase)
+
+            def _phase_supervisor_probe():
+                control = read_validation_control_request(session)
+                control_matches_attempt = (
+                    not str(control.get("active_attempt_id") or "")
+                    or str(control.get("active_attempt_id") or "") == phase.current_attempt_id
+                )
+                if str(control.get("action") or "") == "stop-now" and control_matches_attempt:
+                    return ("interrupted", "stop requested through validation control API")
+                if runtime_budget > 0 and (time.monotonic() - started) >= runtime_budget:
+                    return ("timeout", f"invocation runtime budget of {runtime_budget:g}s was reached")
+                reason = validation_guard_reason(
+                    stop_below_battery=int(getattr(args, "stop_below_battery", 0) or 0),
+                    require_charging=bool(getattr(args, "require_charging", False)),
+                    stop_above_temperature=float(getattr(args, "stop_above_temperature", 0.0) or 0.0),
+                )
+                if reason:
+                    return ("resource", reason)
+                disk_limit_mb = max(0, int(getattr(args, "stop_below_disk_mb", session.options.get("stop_below_disk_mb", 256)) or 0))
+                if disk_limit_mb > 0:
+                    try:
+                        free_mb = shutil.disk_usage(config.repo_root).free // (1024 * 1024)
+                        if free_mb < disk_limit_mb:
+                            return ("resource", f"repository free space {free_mb} MiB is below the {disk_limit_mb} MiB validation guard")
+                    except OSError:
+                        pass
+                return None
+
+            def _phase_heartbeat():
+                heartbeat_validation_phase(session, key)
+
+            def _phase_progress(snapshot):
+                update_validation_phase_progress(session, key, dict(snapshot or {}))
+
+            if session.transaction_path:
+                mark_transaction_validation_running(
+                    session.transaction_path,
+                    session_id=session.session_id,
+                    phase=phase.name,
+                )
+            if str(active_spec.metadata.get("devtool_internal_validation") or "") == "artifact-script":
+                context = dict(session.apply_context or {})
+                artifacts = [str(item) for item in context.get("artifacts") or [] if str(item)]
+                artifact_path = resolve_artifact_path(artifacts[0]) if len(artifacts) == 1 else None
+                internal_result: OperationResult | None = None
+                phase_raw = ""
+                if artifact_path is not None:
+                    expected_sha = str(context.get("artifact_sha") or "").strip().lower()
+                    actual_sha = sha256_file(artifact_path) if expected_sha else ""
+                    if expected_sha and actual_sha.lower() != expected_sha:
+                        internal_result = OperationResult(
+                            "artifact-validate-script",
+                            list(active_spec.argv),
+                            2,
+                            0.0,
+                            (
+                                "Deferred validation artifact changed after apply.\n"
+                                f"artifact: {artifact_path}\n"
+                                f"expected_sha256: {expected_sha}\n"
+                                f"actual_sha256: {actual_sha}"
+                            ),
+                            [],
+                            failure_kind="deferred_artifact_changed",
+                            metadata=dict(active_spec.metadata),
+                        )
+                    else:
+                        internal_result, phase_raw = _artifact_script_result(
+                            active_config,
+                            args,
+                            artifact_path,
+                            dict(context.get("manifest") or {}),
+                            target=str(context.get("target") or ""),
+                            solution=str(context.get("solution") or ""),
+                            log_path=log_path,
+                            tasker_progress=tasker_progress,
+                        )
+                if internal_result is None:
+                    internal_result = OperationResult(
+                        "artifact-validate-script",
+                        list(active_spec.argv),
+                        2,
+                        0.0,
+                        (
+                            "Deferred validation cannot run because its source artifact is missing or ambiguous.\n"
+                            f"expected_artifacts: {artifacts or ['<none>']}\n"
+                            "The embedded validator is a required validation prerequisite."
+                        ),
+                        [],
+                        failure_kind="deferred_artifact_missing",
+                        metadata=dict(active_spec.metadata),
+                    )
+                if not phase_raw:
+                    phase_raw = internal_result.output
+                phase_results = [internal_result]
+            else:
+                attempt_metadata = dict(active_spec.metadata)
+                if automatic_retry:
+                    attempt_metadata["validation_automatic_retry"] = True
+                    attempt_metadata["validation_retry_profile"] = retry_profile
+                attempt_spec = replace(active_spec, metadata=attempt_metadata)
+                phase_results, phase_raw = _run_specs_for_args(
+                    active_config,
+                    [attempt_spec],
                     args,
-                    artifact_path,
-                    dict(context.get("manifest") or {}),
-                    target=str(context.get("target") or ""),
-                    solution=str(context.get("solution") or ""),
+                    continue_on_error=False,
                     log_path=log_path,
                     tasker_progress=tasker_progress,
+                    shutdown_dotnet=False,
+                    supervisor_probe=_phase_supervisor_probe,
+                    heartbeat_callback=_phase_heartbeat,
+                    progress_callback=_phase_progress,
                 )
-            if internal_result is None:
-                internal_result = OperationResult(
-                    "artifact-validate-script",
-                    list(spec.argv),
-                    0,
-                    0.0,
-                    "No embedded artifact validator was required.",
-                    [],
-                    skipped=True,
-                    metadata=dict(spec.metadata),
-                )
-            phase_results = [internal_result]
-        else:
-            phase_results, phase_raw = _run_specs_for_args(
-                config,
-                [spec],
-                args,
-                continue_on_error=False,
-                log_path=log_path,
-                tasker_progress=tasker_progress,
-                shutdown_dotnet=False,
+            result = next(
+                (item for item in phase_results if not bool((item.metadata or {}).get("cleanup"))),
+                phase_results[0],
             )
-        result = phase_results[-1]
-        recorded_phase = record_phase_result(session, key, result)
-        _announce_validation_phase_finished(args, session, recorded_phase)
-        results.extend(phase_results)
-        if phase_raw:
-            raw_sections.append(phase_raw)
-        if result.returncode != 0:
-            if recorded_phase.status == "pending" and recorded_phase.last_interrupted_at:
+            for cleanup_result in phase_results:
+                if cleanup_result is result or not bool((cleanup_result.metadata or {}).get("cleanup")):
+                    continue
+                if cleanup_result.returncode != 0:
+                    cleanup_result.metadata["validation_original_returncode"] = int(cleanup_result.returncode)
+                    cleanup_result.metadata["validation_original_failure_kind"] = str(cleanup_result.failure_kind or "")
+                    cleanup_result.metadata["validation_administrative_warning"] = True
+                    cleanup_result.returncode = 0
+                    cleanup_result.failure_kind = ""
+                    cleanup_result.skipped = True
+            recorded_phase = record_phase_result(session, key, result)
+            _announce_validation_phase_finished(args, session, recorded_phase)
+            if recorded_phase.status in {"interrupted", "stale"}:
+                # A paused/retryable validation attempt is evidence, not a failed
+                # CLI operation. Preserve its original process verdict in the
+                # durable attempt and metadata while allowing the invocation to
+                # end cleanly unless --require-complete makes the pause fatal.
+                result.metadata["validation_original_returncode"] = int(result.returncode)
+                result.metadata["validation_original_failure_kind"] = str(result.failure_kind or "")
+                result.metadata["validation_attempt_verdict"] = recorded_phase.last_verdict
+                result.metadata["validation_pause_evidence"] = True
+                result.returncode = 0
+                result.failure_kind = ""
+                result.skipped = True
+            results.extend(phase_results)
+            if phase_raw:
+                raw_sections.append(phase_raw)
+
+            control = read_validation_control_request(session)
+            control_action = str(control.get("action") or "")
+            control_matches_attempt = (
+                not str(control.get("active_attempt_id") or "")
+                or str(control.get("active_attempt_id") or "") == recorded_phase.attempt_history[-1].attempt_id
+            )
+            if control_action == "stop-now" and control_matches_attempt:
+                clear_validation_control_request(session, request_id=str(control.get("request_id") or ""))
+                append_validation_event(session, "stop-completed", data={
+                    "phase": recorded_phase.name,
+                    "attempt_id": recorded_phase.attempt_history[-1].attempt_id if recorded_phase.attempt_history else "",
+                })
+                pause_reason = session.paused_reason or f"{recorded_phase.label} was stopped and remains retryable"
+            elif control_action == "pause-after-phase" and control_matches_attempt:
+                clear_validation_control_request(session, request_id=str(control.get("request_id") or ""))
+                if recorded_phase.status in {"passed", "not-applicable"}:
+                    append_validation_event(session, "pause-boundary-reached", data={"phase": recorded_phase.name})
+                    pause_reason = f"pause requested after {recorded_phase.label}"
+                else:
+                    append_validation_event(session, "pause-request-cleared", data={
+                        "phase": recorded_phase.name,
+                        "phase_status": recorded_phase.status,
+                    })
+            elif control_action and not control_matches_attempt:
+                clear_validation_control_request(session, request_id=str(control.get("request_id") or ""))
+                append_validation_event(session, "control-request-expired", data={
+                    "request_id": str(control.get("request_id") or ""),
+                    "action": control_action,
+                    "active_attempt_id": str(control.get("active_attempt_id") or ""),
+                })
+
+            if recorded_phase.status in {"passed", "not-applicable"}:
+                break
+
+            retry_number, retry_limit = _automatic_retry_number(recorded_phase)
+            if recorded_phase.status == "interrupted" and retry_limit > 0 and retry_number <= retry_limit:
+                retry_profile = ""
+                active_spec = base_spec
+                active_config = config
+                latest_attempt = recorded_phase.attempt_history[-1] if recorded_phase.attempt_history else None
+                recommended = str(getattr(latest_attempt, "recommended_profile", "") or "")
+                if recommended == "android-low-power":
+                    active_config, retry_mapping = _safe_retry_plan()
+                    active_spec = retry_mapping.get(key, base_spec)
+                    retry_profile = recommended
+                automatic_retry = True
+                raw_sections.append(
+                    f"Automatic validation retry {retry_number} of {retry_limit} for {recorded_phase.label}"
+                    + (f" using {retry_profile}" if retry_profile else "")
+                )
+                continue
+
+            if recorded_phase.status == "interrupted" and recorded_phase.last_interrupted_at:
                 pause_reason = session.paused_reason or f"{recorded_phase.label} was interrupted and remains pending"
+            elif recorded_phase.status == "stale":
+                pause_reason = session.paused_reason or f"{recorded_phase.label} inputs changed during execution"
+            break
+
+        if recorded_phase.status not in {"passed", "not-applicable"}:
             break
         if not session.complete:
             _mark_session_transaction_pending(session)
+        if pause_reason:
+            break
 
     raw_output = "\n\n".join(raw_sections)
     if session.failed:
         context = dict(session.apply_context or {})
-        rollback_enabled = bool(getattr(args, "rollback_on_failure", False)) or _rollback_on_failure_enabled(args, context)
-        if session.transaction_path and rollback_enabled:
-            evidence = preserve_validation_evidence(
-                config.repo_root,
-                [*session_operation_results(session), *results],
-                run_id=str(getattr(args, "_devtool_run_id", "") or ""),
-            )
-            if evidence:
-                raw_output += ("\n\n" if raw_output else "") + f"Validation evidence preserved: {evidence}"
+        action = _validation_failure_action(args, context)
+        failed_phase = next((item for item in session.phases if item.status == "failed"), None)
+        action = _resolve_prompted_failure_action(
+            args, action, phase_label=failed_phase.label if failed_phase is not None else "validation"
+        )
+        session.failure_action = action
+        evidence = preserve_validation_evidence(
+            config.repo_root,
+            [*session_operation_results(session), *results],
+            run_id=str(getattr(args, "_devtool_run_id", "") or ""),
+        )
+        if evidence:
+            raw_output += ("\n\n" if raw_output else "") + f"Validation evidence preserved: {evidence}"
+        if session.transaction_path and action == "rollback":
             rollback_result, rollback_raw = _run_transaction_rollback(
                 session.transaction_path,
-                reason="resumable validation phase failed",
+                reason="explicit rollback policy after resumable validation phase failure",
                 tasker_progress=tasker_progress,
                 log_path=log_path,
             )
@@ -2674,6 +3413,51 @@ def _run_validation_session(
                 rollback_attempted=True,
                 rollback_succeeded=rollback_result.returncode == 0,
             )
+        elif session.transaction_path and action == "keep":
+            abandon_transaction(
+                session.transaction_path,
+                reason="validation failed and failure_action=keep retained the applied changes",
+            )
+            mark_validation_aborted(
+                session,
+                "validation failed; applied changes retained without rollback",
+                kept_changes=True,
+            )
+        else:
+            if session.transaction_path:
+                mark_transaction_validation_blocked(
+                    session.transaction_path,
+                    session_id=session.session_id,
+                    failed_phase=failed_phase.name if failed_phase is not None else "unknown",
+                    verdict=failed_phase.last_verdict if failed_phase is not None else "code-failed",
+                )
+            save_validation_session(session, active=True)
+            blocked = OperationResult(
+                "validation-blocked",
+                ["devtool", "validate", "retry"],
+                0,
+                0.0,
+                (
+                    "VALIDATION BLOCKED\n"
+                    f"Session: {session.session_id}\n"
+                    f"Failed phase: {failed_phase.label if failed_phase is not None else 'unknown'}\n"
+                    "Applied changes: retained\n"
+                    f"Rollback point: {'retained' if session.transaction_path else 'not attached'}\n"
+                    "Fix the reported problem and run `devtool validate continue --retry-failed`, "
+                    "or explicitly abort with rollback."
+                ),
+                [],
+                skipped=True,
+                metadata={
+                    "validation_session_id": session.session_id,
+                    "validation_session_status": session.status,
+                    "validation_failure_action": action,
+                    "changes_retained": True,
+                    "recovery_available": bool(session.transaction_path),
+                },
+            )
+            results.append(blocked)
+            raw_output += ("\n\n" if raw_output else "") + blocked.output
         return results, raw_output, session
 
     if session.complete:
@@ -2703,35 +3487,450 @@ def _run_validation_session(
     return results, raw_output, session
 
 
-def _validation_management_session(config: ProjectConfig, args: argparse.Namespace) -> ValidationSession:
+def _validation_management_session(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    *,
+    recover: bool = True,
+) -> ValidationSession:
     requested = str(getattr(args, "session", "") or "").strip()
     session = load_validation_session(config.repo_root, requested) if requested else load_active_session(config.repo_root, required=True)
-    recovered = recover_interrupted_validation_phases(session)
-    if recovered and session.transaction_path:
-        _mark_session_transaction_pending(session)
+    if recover:
+        recovered = recover_interrupted_validation_phases(session, stale_after_seconds=5.0)
+        if recovered and session.transaction_path:
+            _mark_session_transaction_pending(session)
     return session
 
 
+def _validation_expected_revision(args: argparse.Namespace) -> int | None:
+    raw = getattr(args, "if_revision", -1)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
 def _handle_validation_status(config: ProjectConfig, args: argparse.Namespace, *, machine: bool) -> int:
-    session = _validation_management_session(config, args)
-    if machine:
-        print(json.dumps(validation_status_payload(session), ensure_ascii=False, indent=2))
+    session = _validation_management_session(config, args, recover=False)
+    if machine or _validation_json_requested(args):
+        data = validation_status_api_payload(
+            session,
+            include_events=bool(getattr(args, "events", False)),
+            after_event_id=str(getattr(args, "after_event", "") or ""),
+            event_limit=max(1, int(getattr(args, "event_limit", 100) or 100)),
+        )
+        payload = validation_control_response(
+            "status",
+            accepted=True,
+            session=session,
+            reason=validation_control_reason(session),
+            message="Validation status returned.",
+            data=data,
+        )
+        _emit_validation_control_payload(payload, args)
     elif bool(getattr(args, "_devtool_validation_checkpoint", False)):
         print(validation_checkpoint_text(session))
     else:
         print(validation_status_text(session))
+    return validation_control_exit_code(session) if _validation_json_requested(args) else 0
+
+
+def _handle_validation_plan(config: ProjectConfig, args: argparse.Namespace) -> int:
+    session = _validation_management_session(config, args, recover=False)
+    data = validation_plan_payload(session)
+    if _validation_json_requested(args):
+        _emit_validation_control_payload(
+            validation_control_response(
+                "plan",
+                accepted=True,
+                session=session,
+                reason=validation_control_reason(session),
+                message="Validation plan returned.",
+                data=data,
+            ),
+            args,
+        )
+    else:
+        print(f"Validation plan: {session.session_id} (revision {session.revision})")
+        for phase in data["phases"]:
+            deps = ",".join(phase["depends_on"]) or "-"
+            print(f"  {phase['index']}/{phase['total']} {phase['label']} [{phase['status']}] deps={deps}")
+    return validation_control_exit_code(session) if _validation_json_requested(args) else 0
+
+
+def _handle_validation_events(config: ProjectConfig, args: argparse.Namespace) -> int:
+    session = _validation_management_session(config, args, recover=False)
+    events = read_validation_events(
+        session,
+        after_event_id=str(getattr(args, "after_event", "") or ""),
+        limit=max(1, int(getattr(args, "limit", getattr(args, "event_limit", 100)) or 100)),
+    )
+    after_event_id = str(getattr(args, "after_event", "") or "")
+    payload = validation_control_response(
+        "events",
+        accepted=True,
+        session=session,
+        reason=validation_control_reason(session),
+        message=f"Returned {len(events)} validation event(s).",
+        data={
+            "events": events,
+            "cursor": {
+                "after_event_id": after_event_id,
+                "returned": len(events),
+                "next_event_id": str(events[-1].get("event_id") or "") if events else after_event_id,
+            },
+        },
+    )
+    if _validation_json_requested(args):
+        _emit_validation_control_payload(payload, args)
+    else:
+        for event in events:
+            print(f"{event.get('timestamp','')} {event.get('type','')} revision={event.get('revision','')}")
+    return 0
+
+
+
+def _handle_validation_report(config: ProjectConfig, args: argparse.Namespace) -> int:
+    session = _validation_management_session(config, args, recover=False)
+    report = load_validation_report(config.repo_root, session.session_id)
+    if not report:
+        path = write_validation_report(session)
+        session.report_path = str(path)
+        save_validation_session(session, active=session.status not in {"completed", "aborted-kept-changes", "aborted-rolled-back"})
+        report = load_validation_report(config.repo_root, session.session_id)
+    if _validation_json_requested(args):
+        _emit_validation_control_payload({
+            "api_version": 1,
+            "accepted": True,
+            "action": "report",
+            "session_id": session.session_id,
+            "revision": session.revision,
+            "state": session.status,
+            "message": "Validation report loaded.",
+            "reason": "",
+            "data": {"report": report, "report_path": session.report_path},
+        }, args)
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+def _handle_validation_pause_control(config: ProjectConfig, args: argparse.Namespace) -> int:
+    session = _validation_management_session(config, args, recover=False)
+    previous = require_validation_revision(session, _validation_expected_revision(args))
+    if bool(getattr(args, "cancel_pause", False)):
+        current = read_validation_control_request(session)
+        if str(current.get("action") or "") != "pause-after-phase":
+            raise ValidationControlError(
+                "control_unavailable",
+                "No pause-after-phase request is pending.",
+                VALIDATION_EXIT_CONTROL_UNAVAILABLE,
+            )
+        request_id = str(current.get("request_id") or "")
+        if not clear_validation_control_request(session, request_id=request_id):
+            raise ValidationControlError(
+                "control_unavailable",
+                "The pending pause request changed before it could be cancelled.",
+                VALIDATION_EXIT_CONTROL_UNAVAILABLE,
+            )
+        save_validation_session(session, active=True)
+        append_validation_event(session, "pause-cancelled", data={"request_id": request_id})
+        message = "Pending pause cancelled; validation will keep running."
+        payload = validation_control_response(
+            "pause", accepted=True, session=session, previous_revision=previous,
+            message=message, data={"cancelled_request_id": request_id},
+        )
+        if _validation_json_requested(args):
+            _emit_validation_control_payload(payload, args)
+        else:
+            console.print(f"[green]{message}[/green]")
+        return 0
+    if session.status == "blocked":
+        raise ValidationControlError(
+            "session_blocked",
+            "Validation is blocked by a failed phase; retry, reset, or abort the session instead.",
+            VALIDATION_EXIT_SESSION_BLOCKED,
+        )
+    if session.status in {"validated", "validated-uncommitted", "completed", "aborted-kept-changes", "aborted-rolled-back"}:
+        raise ValidationControlError(
+            "control_unavailable",
+            f"Validation pause is unavailable while the session is {session.status}.",
+            VALIDATION_EXIT_CONTROL_UNAVAILABLE,
+        )
+    running = [phase for phase in session.phases if phase.status == "running"]
+    if running:
+        try:
+            request = write_validation_control_request(
+                session, "pause-after-phase", expected_revision=previous, requested_by="validation-api"
+            )
+        except ValidationControlRequestError as exc:
+            raise ValidationControlError(
+                exc.reason,
+                str(exc),
+                VALIDATION_EXIT_STALE_REVISION if exc.reason == "stale_revision" else VALIDATION_EXIT_CONTROL_UNAVAILABLE,
+            ) from exc
+        message = f"Validation will pause after {running[0].label}."
+        data = {"request": request, "active_phase": running[0].name}
+    else:
+        clear_validation_control_request(session)
+        mark_validation_paused(session, "pause requested through validation control API")
+        message = "Validation is paused."
+        data = {"request": {}, "active_phase": ""}
+    payload = validation_control_response(
+        "pause", accepted=True, session=session, previous_revision=previous, message=message, data=data
+    )
+    if _validation_json_requested(args):
+        _emit_validation_control_payload(payload, args)
+    else:
+        console.print(f"[yellow]{message}[/yellow]")
+    return 0
+
+
+def _handle_validation_stop_control(config: ProjectConfig, args: argparse.Namespace) -> int:
+    session = _validation_management_session(config, args, recover=False)
+    previous = require_validation_revision(session, _validation_expected_revision(args))
+    running = [phase for phase in session.phases if phase.status == "running"]
+    if not running:
+        raise ValidationControlError(
+            "control_unavailable",
+            "No validation phase is currently running; there is nothing to stop.",
+            VALIDATION_EXIT_CONTROL_UNAVAILABLE,
+        )
+    try:
+        request = write_validation_control_request(
+            session, "stop-now", expected_revision=previous, requested_by="validation-api"
+        )
+    except ValidationControlRequestError as exc:
+        raise ValidationControlError(
+            exc.reason,
+            str(exc),
+            VALIDATION_EXIT_STALE_REVISION if exc.reason == "stale_revision" else VALIDATION_EXIT_CONTROL_UNAVAILABLE,
+        ) from exc
+    message = f"Stop requested for {running[0].label}; the attempt will remain retryable."
+    data = {"request": request, "active_phase": running[0].name}
+    payload = validation_control_response(
+        "stop", accepted=True, session=session, previous_revision=previous, message=message, data=data
+    )
+    if _validation_json_requested(args):
+        _emit_validation_control_payload(payload, args)
+    else:
+        console.print(f"[yellow]{message}[/yellow]")
+    return 0
+
+
+def _handle_validation_recover(config: ProjectConfig, args: argparse.Namespace) -> int:
+    """Recover only provably dead phase owners or resume a journaled rollback."""
+
+    session = _validation_management_session(config, args, recover=False)
+    previous = require_validation_revision(session, _validation_expected_revision(args))
+    data: dict[str, object] = {}
+    message = ""
+    exit_code = 0
+    if session.status in {"rollback-running", "rollback-failed"}:
+        if not session.transaction_path:
+            session.status = "recovery-required"
+            session.last_error = "rollback recovery was requested but the transaction path is unavailable"
+            session.paused_reason = "manual transaction recovery is required"
+            save_validation_session(session, active=True)
+            message = session.last_error
+            exit_code = VALIDATION_EXIT_RECOVERY_REQUIRED
+        else:
+            def _rollback_event(data):
+                append_validation_event(session, "rollback-progress", data=dict(data or {}))
+
+            result = rollback_transaction(
+                session.transaction_path,
+                reason="explicit validation recovery resumed the attached rollback",
+                progress_callback=_rollback_event,
+            )
+            data["rollback"] = {"returncode": result.returncode, "output": result.output}
+            if result.returncode != 0:
+                session.status = "rollback-failed"
+                session.last_error = result.output
+                session.paused_reason = "rollback remains incomplete and resumable"
+                save_validation_session(session, active=True)
+                append_validation_event(session, "rollback-failed", data={"output": result.output})
+                message = result.output
+                exit_code = VALIDATION_EXIT_RECOVERY_REQUIRED
+            else:
+                mark_validation_aborted(
+                    session,
+                    "rollback recovery completed; applied changes were restored",
+                    rolled_back=True,
+                )
+                append_validation_event(session, "rollback-completed", data={})
+                message = f"Recovered validation session {session.session_id}; rollback completed and verified."
+    else:
+        recovered = recover_interrupted_validation_phases(session, stale_after_seconds=5.0)
+        data["recovered_phases"] = recovered
+        if recovered:
+            if session.transaction_path:
+                _mark_session_transaction_pending(session)
+            append_validation_event(session, "session-recovered", data={"phases": recovered})
+            message = "Recovered interrupted validation phase(s): " + ", ".join(recovered) + "."
+        else:
+            live = [item for item in session.phases if item.status == "running"]
+            if live:
+                labels = ", ".join(item.label for item in live)
+                message = f"No recovery was performed. The validation owner is still alive for: {labels}."
+            else:
+                message = f"Validation session {session.session_id} has no interrupted phase to recover."
+
+    payload = validation_control_response(
+        "recover",
+        accepted=exit_code == 0,
+        session=session,
+        previous_revision=previous,
+        message=message,
+        reason="recovery_required" if exit_code else "",
+        data=data,
+    )
+    if _validation_json_requested(args):
+        _emit_validation_control_payload(payload, args)
+    else:
+        console.print(("[green]" if exit_code == 0 else "[red]") + message + ("[/green]" if exit_code == 0 else "[/red]"))
+    return exit_code
+
+
+def _handle_validation_reset(config: ProjectConfig, args: argparse.Namespace) -> int:
+    session = _validation_management_session(config, args, recover=False)
+    previous = require_validation_revision(session, _validation_expected_revision(args))
+    live = [item for item in session.phases if item.status == "running"]
+    if live:
+        labels = ", ".join(item.label for item in live)
+        raise ValidationControlError(
+            "control_unavailable",
+            f"Cannot reset validation while a phase is running: {labels}",
+            VALIDATION_EXIT_CONTROL_UNAVAILABLE,
+        )
+    if bool(getattr(args, "reset_all", False)):
+        reset = reset_all_validation(session)
+        message = f"Reset all {len(reset)} validation phase verdicts. Attempt evidence was retained."
+    else:
+        phase_values = _validation_phase_values(args)
+        phase = (phase_values[0] if phase_values else str(getattr(args, "from_phase", "") or "").strip())
+        if not phase:
+            raise ValidationControlError(
+                "invalid_request",
+                "validation reset requires --phase PHASE, --from-phase PHASE, or --all.",
+                VALIDATION_EXIT_INVALID_REQUEST,
+            )
+        reset = reset_validation_phase(session, phase)
+        message = f"Reset {len(reset)} phase(s) from {phase!r}; attempt evidence was retained."
+    append_validation_event(session, "validation-reset", data={"phase_keys": reset})
+    payload = validation_control_response(
+        "reset", accepted=True, session=session, previous_revision=previous, message=message, data={"reset_phase_keys": reset}
+    )
+    if _validation_json_requested(args):
+        _emit_validation_control_payload(payload, args)
+    else:
+        console.print(f"[green]{message}[/green]")
+    return 0
+
+
+def _handle_validation_accept_plan_change(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> int:
+    session = _validation_management_session(config, args, recover=False)
+    previous = require_validation_revision(session, _validation_expected_revision(args))
+    if any(item.status == "running" for item in session.phases):
+        raise ValidationControlError(
+            "control_unavailable",
+            "Cannot accept a plan change while a validation phase is running.",
+            VALIDATION_EXIT_CONTROL_UNAVAILABLE,
+        )
+    reason = str(getattr(args, "reason", "") or "").strip()
+    if not reason:
+        raise ValidationControlError("invalid_request", "Accepting a validation plan change requires --reason.")
+    for name in (
+        "skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase",
+        "keep_gradle_daemon", "validation_resource_profile", "max_infrastructure_retries",
+        "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action",
+    ):
+        if name in session.options:
+            setattr(args, name, session.options[name])
+    _enable_resumable_validation(config, args)
+    context = dict(session.apply_context or {})
+    script_only = bool(context.get("artifact_script_in_plan", False)) and all(
+        bool(getattr(args, name, False)) for name in ("skip_restore", "skip_build", "skip_test")
+    )
+    specs = [] if script_only else _validation_specs_for_args(config, args, parser)
+    specs = _with_artifact_validation_phase(specs, context)
+    accept_validation_plan_change(session, specs, reason=reason)
+    reconcile_validation_inputs(session, config)
+    append_validation_event(session, "plan-change-accepted", data={"reason": reason})
+    message = "Accepted validation plan change. Affected phases were invalidated safely."
+    payload = validation_control_response(
+        "accept-plan-change", accepted=True, session=session, previous_revision=previous, message=message, data={"reason": reason}
+    )
+    if _validation_json_requested(args):
+        _emit_validation_control_payload(payload, args)
+    else:
+        console.print(f"[green]{message}[/green]")
     return 0
 
 
 def _handle_validation_abort(config: ProjectConfig, args: argparse.Namespace) -> int:
     session = _validation_management_session(config, args)
-    if session.transaction_path and not bool(getattr(args, "keep_changes", False)):
-        result = rollback_transaction(session.transaction_path, reason="validation session aborted by user")
+    previous = require_validation_revision(session, _validation_expected_revision(args))
+    keep_changes = bool(getattr(args, "keep_changes", False))
+    rollback_requested = bool(getattr(args, "rollback", False))
+    if keep_changes and rollback_requested:
+        raise ValidationControlError("invalid_request", "--keep-changes cannot be combined with --rollback.")
+    if _validation_json_requested(args) and not (keep_changes or rollback_requested):
+        raise ValidationControlError(
+            "invalid_request",
+            "Machine-controlled abort requires either --keep-changes or --rollback.",
+        )
+    data: dict[str, object] = {"kept_changes": keep_changes, "rollback_requested": rollback_requested or not keep_changes}
+    if session.transaction_path and keep_changes:
+        abandon_transaction(
+            session.transaction_path,
+            reason="validation session aborted by user while retaining applied changes",
+        )
+        mark_validation_aborted(session, "aborted by user; applied changes retained", kept_changes=True)
+        message = "Validation session aborted; applied changes were retained without a validation verdict."
+    elif session.transaction_path:
+        append_validation_event(session, "rollback-started", data={})
+        def _rollback_event(data):
+            append_validation_event(session, "rollback-progress", data=dict(data or {}))
+
+        result = rollback_transaction(
+            session.transaction_path,
+            reason="validation session aborted by user",
+            progress_callback=_rollback_event,
+        )
+        data["rollback"] = {"returncode": result.returncode, "output": result.output}
         if result.returncode != 0:
-            console.print(f"[red]{result.output}[/red]")
-            return 1
-    mark_validation_aborted(session, "aborted by user")
-    console.print(f"[yellow]Aborted validation session {session.session_id}.[/yellow]")
+            session.status = "rollback-failed"
+            session.last_error = result.output
+            session.paused_reason = "rollback failed and must be resumed"
+            save_validation_session(session, active=True)
+            append_validation_event(session, "rollback-failed", data={"output": result.output})
+            payload = validation_control_response(
+                "abort", accepted=False, session=session, previous_revision=previous,
+                reason="recovery_required", message=result.output, data=data,
+            )
+            if _validation_json_requested(args):
+                _emit_validation_control_payload(payload, args)
+            else:
+                console.print(f"[red]{result.output}[/red]")
+            return VALIDATION_EXIT_RECOVERY_REQUIRED
+        mark_validation_aborted(session, "aborted by user; applied changes rolled back", rolled_back=True)
+        append_validation_event(session, "rollback-completed", data={})
+        message = "Validation session aborted; applied changes were rolled back and verified."
+    else:
+        mark_validation_aborted(session, "aborted by user", kept_changes=True)
+        message = "Validation session aborted. No attached transaction required rollback."
+    payload = validation_control_response(
+        "abort", accepted=True, session=session, previous_revision=previous, message=message, data=data
+    )
+    if _validation_json_requested(args):
+        _emit_validation_control_payload(payload, args)
+    else:
+        console.print(f"[yellow]{message}[/yellow]")
     return 0
 
 
@@ -2743,6 +3942,9 @@ def _handle_validation_finalize(
     tasker_progress: TaskerProgressSink | None,
 ) -> tuple[list[OperationResult], str]:
     session = _validation_management_session(config, args)
+    previous = require_validation_revision(session, _validation_expected_revision(args))
+    args._devtool_validation_previous_revision = previous
+    args._devtool_validation_final_session = session
     return _finalize_validation_session(
         config,
         args,
@@ -2799,6 +4001,11 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         )
         if getattr(args, "_devtool_artifact_sha", ""):
             entry["sha256"] = args._devtool_artifact_sha
+        validation_session_id = str(getattr(args, "_devtool_validation_session_id", "") or "")
+        if validation_session_id:
+            entry["validation_session_id"] = validation_session_id
+            entry["validation_report_path"] = str(getattr(args, "_devtool_validation_report_path", "") or "")
+            entry["validation_final_verdict"] = str(getattr(args, "_devtool_validation_final_verdict", "") or "validated")
         history_entry_path = append_history(config.repo_root, entry)
         try:
             args._devtool_history_paths = [
@@ -2808,6 +4015,7 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         except Exception:
             args._devtool_history_paths = [".devtool/artifacts.json"]
     except Exception as exc:
+        args._devtool_history_error = f"{type(exc).__name__}: {exc}"
         console.print(f"[yellow]Could not write artifact history: {exc}[/yellow]")
 
 
@@ -5136,16 +6344,58 @@ def main(argv: list[str] | None = None) -> int:
         with _single_run_guard(config.repo_root, args):
             return _rollback(config, args)
 
-    if args.command in {"validation-status", "vs", "validation-abort", "va"}:
+    if args.command in {
+        "validation-status", "vs", "validation-plan", "vplan", "validation-events", "vevents", "validation-report", "vreport",
+        "validation-pause", "vpause", "validation-stop", "vstop",
+        "validation-abort", "va", "validation-recover", "vrec",
+        "validation-reset", "vreset", "validation-accept-plan-change", "vapc",
+    }:
         config = _load_command_config(args)
         try:
             if args.command in {"validation-status", "vs"}:
                 return _handle_validation_status(config, args, machine=False)
+            if args.command in {"validation-plan", "vplan"}:
+                return _handle_validation_plan(config, args)
+            if args.command in {"validation-events", "vevents"}:
+                return _handle_validation_events(config, args)
+            if args.command in {"validation-report", "vreport"}:
+                return _handle_validation_report(config, args)
+            # Pause/stop must be able to publish an atomic control request while
+            # the validation process owns the repository run lock.
+            if args.command in {"validation-pause", "vpause"}:
+                return _handle_validation_pause_control(config, args)
+            if args.command in {"validation-stop", "vstop"}:
+                return _handle_validation_stop_control(config, args)
             with _single_run_guard(config.repo_root, args):
+                if args.command in {"validation-recover", "vrec"}:
+                    return _handle_validation_recover(config, args)
+                if args.command in {"validation-reset", "vreset"}:
+                    return _handle_validation_reset(config, args)
+                if args.command in {"validation-accept-plan-change", "vapc"}:
+                    return _handle_validation_accept_plan_change(config, args, parser)
                 return _handle_validation_abort(config, args)
+        except ValidationControlError as exc:
+            if _validation_json_requested(args):
+                session = None
+                try:
+                    session = _validation_management_session(config, args, recover=False)
+                except ValidationSessionError:
+                    pass
+                _emit_validation_control_payload(validation_control_error_response(
+                    str(getattr(args, "_devtool_validation_api_action", "") or args.command), exc, session
+                ), args)
+            else:
+                console.print(f"[red]{exc}[/red]")
+            return exc.exit_code
         except ValidationSessionError as exc:
-            console.print(f"[red]{exc}[/red]")
-            return 2
+            if _validation_json_requested(args):
+                error = ValidationControlError("invalid_request", str(exc), VALIDATION_EXIT_INVALID_REQUEST)
+                _emit_validation_control_payload(validation_control_error_response(
+                    str(getattr(args, "_devtool_validation_api_action", "") or args.command), error
+                ), args)
+            else:
+                console.print(f"[red]{exc}[/red]")
+            return VALIDATION_EXIT_INVALID_REQUEST
 
     if args.command in {"doctor", "dr", "status", "st", "inspect", "info", "release-notes", "tag"} or args.command in {"commit", "ci"}:
         repo = Path(args.repo or Path.cwd()).resolve()
@@ -5530,7 +6780,29 @@ def main(argv: list[str] | None = None) -> int:
             results, raw_output = _handle_validation_finalize(
                 config, args, log_path=log_path, tasker_progress=tasker_progress
             )
+        except ValidationControlError as exc:
+            if _validation_json_requested(args):
+                session = None
+                try:
+                    session = _validation_management_session(config, args, recover=False)
+                except ValidationSessionError:
+                    pass
+                _emit_validation_control_payload(validation_control_error_response("finalize", exc, session), args)
+                _finish_live_progress(tasker_progress, totals={"passed": 0, "failed": 1, "skipped": 0}, results=[])
+                _release_single_run_lock(args)
+                return exc.exit_code
+            results = [OperationResult(
+                "validation-finalize", ["devtool", "validation-finalize"], 2, 0.0, str(exc), [],
+                failure_kind="validation_session_error",
+            )]
+            raw_output = str(exc)
         except ValidationSessionError as exc:
+            if _validation_json_requested(args):
+                error = ValidationControlError("invalid_request", str(exc), VALIDATION_EXIT_INVALID_REQUEST)
+                _emit_validation_control_payload(validation_control_error_response("finalize", error), args)
+                _finish_live_progress(tasker_progress, totals={"passed": 0, "failed": 1, "skipped": 0}, results=[])
+                _release_single_run_lock(args)
+                return error.exit_code
             results = [OperationResult(
                 "validation-finalize", ["devtool", "validation-finalize"], 2, 0.0, str(exc), [],
                 failure_kind="validation_session_error",
@@ -5572,6 +6844,7 @@ def main(argv: list[str] | None = None) -> int:
             if getattr(args, "watch", False):
                 parser.error("--watch cannot be combined with resumable sequential validation.")
             try:
+                _validate_validation_api_request(args)
                 results, raw_output, _session = _run_validation_session(
                     config,
                     args,
@@ -5580,7 +6853,34 @@ def main(argv: list[str] | None = None) -> int:
                     tasker_progress=tasker_progress,
                     continue_on_error=continue_on_error,
                 )
+                args._devtool_validation_final_session = _session
+            except ValidationControlError as exc:
+                if _validation_json_requested(args):
+                    session = None
+                    try:
+                        session = _validation_management_session(config, args, recover=False)
+                    except ValidationSessionError:
+                        pass
+                    _emit_validation_control_payload(validation_control_error_response(
+                        str(getattr(args, "_devtool_validation_api_action", "") or "run"), exc, session
+                    ), args)
+                    _finish_live_progress(tasker_progress, totals={"passed": 0, "failed": 1, "skipped": 0}, results=[])
+                    _release_single_run_lock(args)
+                    return exc.exit_code
+                results = [OperationResult(
+                    "validation-session", ["devtool", "resume-validation"], 2, 0.0, str(exc), [],
+                    failure_kind="validation_session_error",
+                )]
+                raw_output = str(exc)
             except ValidationSessionError as exc:
+                if _validation_json_requested(args) and str(getattr(args, "_devtool_validation_api_action", "") or ""):
+                    error = ValidationControlError("invalid_request", str(exc), VALIDATION_EXIT_INVALID_REQUEST)
+                    _emit_validation_control_payload(validation_control_error_response(
+                        str(getattr(args, "_devtool_validation_api_action", "") or "run"), error
+                    ), args)
+                    _finish_live_progress(tasker_progress, totals={"passed": 0, "failed": 1, "skipped": 0}, results=[])
+                    _release_single_run_lock(args)
+                    return error.exit_code
                 results = [OperationResult(
                     "validation-session", ["devtool", "resume-validation"], 2, 0.0, str(exc), [],
                     failure_kind="validation_session_error",
@@ -5600,6 +6900,49 @@ def main(argv: list[str] | None = None) -> int:
     if stale_recovery_results:
         results = [*stale_recovery_results, *results]
         raw_output = stale_recovery_raw + ("\n\n" + raw_output if raw_output else "")
+
+    validation_api_action = str(getattr(args, "_devtool_validation_api_action", "") or "")
+    validation_api_session = getattr(args, "_devtool_validation_final_session", None)
+    if validation_api_action and _validation_json_requested(args) and isinstance(validation_api_session, ValidationSession):
+        phase_results = [
+            item for item in results
+            if str(item.metadata.get("validation_phase_key") or "")
+        ]
+        result_data = [{
+            "name": item.name,
+            "returncode": int(item.returncode),
+            "failure_kind": str(item.failure_kind or ""),
+            "skipped": bool(item.skipped),
+            "duration_seconds": float(item.duration_seconds or 0.0),
+            "phase_key": str(item.metadata.get("validation_phase_key") or ""),
+            "phase_name": str(item.metadata.get("validation_phase_name") or item.name),
+        } for item in phase_results]
+        payload = validation_control_response(
+            validation_api_action,
+            accepted=True,
+            session=validation_api_session,
+            reason=validation_control_reason(validation_api_session),
+            previous_revision=getattr(args, "_devtool_validation_previous_revision", None),
+            message=(
+                "Validation request completed." if validation_api_session.status not in {"blocked", "recovery-required", "rollback-failed"}
+                else "Validation request completed with a session state requiring attention."
+            ),
+            data={
+                "scope": str(getattr(args, "validation_run_scope", "") or ""),
+                "status": validation_status_api_payload(validation_api_session),
+                "results": result_data,
+            },
+        )
+        _emit_validation_control_payload(payload, args)
+        totals = {
+            "passed": sum(1 for item in results if item.returncode == 0 and not item.skipped),
+            "failed": sum(1 for item in results if item.returncode != 0),
+            "skipped": sum(1 for item in results if item.skipped),
+        }
+        _finish_live_progress(tasker_progress, totals=totals, results=results)
+        _write_performance_report(args, results, started_at=started_at, finished_at=datetime.now(timezone.utc), config=config)
+        _release_single_run_lock(args)
+        return validation_control_exit_code(validation_api_session)
 
     finished_at = datetime.now(timezone.utc)
     totals, summary_text, json_text, _machine_json_text = _emit_summary(

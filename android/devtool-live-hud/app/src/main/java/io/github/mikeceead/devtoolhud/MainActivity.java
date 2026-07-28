@@ -54,6 +54,9 @@ public final class MainActivity extends Activity {
 
     private UiKit ui;
     private int currentPage;
+    private boolean runValidationSection;
+    private String requestedValidationSessionId = "";
+    private View validationActionBar;
     private TextView statusView;
     private TextView tokenView;
     private TextView commandPreview;
@@ -135,8 +138,11 @@ public final class MainActivity extends Activity {
             } else if (RootLogIndexer.ACTION_UPDATED.equals(intent.getAction())) {
                 String error = intent.getStringExtra(RootLogIndexer.EXTRA_ERROR);
                 if (error != null) logIndexError = error;
+            } else if (ValidationStore.ACTION_UPDATED.equals(intent.getAction())) {
+                String error = intent.getStringExtra(ValidationStore.EXTRA_ERROR);
+                if (error != null && !error.trim().isEmpty()) Toast.makeText(MainActivity.this, error, Toast.LENGTH_LONG).show();
             }
-            if (currentPage != 1) rebuildUi();
+            if (currentPage != 1 || runValidationSection) rebuildUi();
         }
     };
 
@@ -153,6 +159,7 @@ public final class MainActivity extends Activity {
         historySeverity = AppSettings.logSeverity(this);
         historyRepositoryId = AppSettings.logRepository(this);
         applyLogRepositoryIntent(getIntent());
+        applyValidationIntent(getIntent());
         currentPage = resolveRequestedPage(getIntent());
         rebuildUi();
         maybeOpenRequestedRun(getIntent());
@@ -164,6 +171,7 @@ public final class MainActivity extends Activity {
         setIntent(intent);
         if (intent != null) {
             applyLogRepositoryIntent(intent);
+            applyValidationIntent(intent);
             currentPage = resolveRequestedPage(intent);
             AppSettings.setPage(this, currentPage);
             rebuildUi();
@@ -181,6 +189,7 @@ public final class MainActivity extends Activity {
             filter.addAction(RootBridgeManager.ACTION_UPDATED);
             filter.addAction(RepositoryStore.ACTION_UPDATED);
             filter.addAction(RootLogIndexer.ACTION_UPDATED);
+            filter.addAction(ValidationStore.ACTION_UPDATED);
             if (Build.VERSION.SDK_INT >= 33) registerReceiver(runUpdates, filter, Context.RECEIVER_NOT_EXPORTED);
             else registerReceiver(runUpdates, filter);
             receiverRegistered = true;
@@ -200,7 +209,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (ui != null && (currentPage == 0 || currentPage == 3 || currentPage == 4)) rebuildUi();
+        if (ui != null && (currentPage == 0 || currentPage == 3 || currentPage == 4 || (currentPage == 1 && runValidationSection))) rebuildUi();
         else if (statusView != null) refreshStatus();
     }
 
@@ -248,7 +257,10 @@ public final class MainActivity extends Activity {
         scroll.addView(buildPage());
         pageColumn.addView(scroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
-        if (currentPage == 1) pageColumn.addView(buildRunActionBar());
+        if (currentPage == 1) {
+            if (runValidationSection && validationActionBar != null) pageColumn.addView(validationActionBar);
+            else pageColumn.addView(buildRunActionBar());
+        }
 
         if (ui.wideLayout()) {
             root.addView(buildNavigationRail(), new LinearLayout.LayoutParams(
@@ -336,7 +348,9 @@ public final class MainActivity extends Activity {
     }
 
     private String pageSubtitle() {
-        if (currentPage == 1) return "Build and run a devtool workflow without writing shell commands.";
+        if (currentPage == 1) return runValidationSection
+                ? "Control durable validation phases, retries and recovery."
+                : "Build and run a devtool workflow without writing shell commands.";
         if (currentPage == 2) return "Search run output, problems and metadata.";
         if (currentPage == 3) return "Inspect saved, discovered and live repositories across Termux and chroots.";
         if (currentPage == 4) return "Manage appearance, permissions, pairing and advanced execution.";
@@ -413,6 +427,34 @@ public final class MainActivity extends Activity {
     }
 
     private void buildRunPage(LinearLayout content) {
+        LinearLayout mode = new LinearLayout(this);
+        mode.setOrientation(LinearLayout.HORIZONTAL);
+        Button commandMode = ui.secondaryButton("New command", v -> {
+            runValidationSection = false; AppSettings.setRunSection(this, "command"); rebuildUi();
+        });
+        Button validationMode = ui.secondaryButton("Validation", v -> {
+            captureRunDraft(); runValidationSection = true; AppSettings.setRunSection(this, "validation"); rebuildUi();
+        });
+        commandMode.setTextColor(runValidationSection ? ui.palette.muted : ui.palette.green);
+        validationMode.setTextColor(runValidationSection ? ui.palette.green : ui.palette.muted);
+        LinearLayout.LayoutParams modeParams = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        modeParams.setMargins(ui.dp(3), 0, ui.dp(3), ui.dp(8));
+        mode.addView(commandMode, modeParams);
+        LinearLayout.LayoutParams validationModeParams = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        validationModeParams.setMargins(ui.dp(3), 0, ui.dp(3), ui.dp(8));
+        mode.addView(validationMode, validationModeParams);
+        content.addView(mode);
+        if (runValidationSection) {
+            ValidationSessionRecord validationSession = requestedValidationSessionId.isEmpty()
+                    ? ValidationStore.active(this) : ValidationStore.find(this, requestedValidationSessionId);
+            if (validationSession == null) validationSession = ValidationStore.latest(this);
+            String fallbackRepo = AppSettings.runConfig(this).repo;
+            ValidationWorkbenchView workbench = new ValidationWorkbenchView(this, ui, validationSession, this::rebuildUi);
+            content.addView(workbench.buildPage(fallbackRepo));
+            validationActionBar = workbench.buildActionBar();
+            return;
+        }
+        validationActionBar = null;
         DevtoolRunConfig saved = runDraft != null ? runDraft.copy() : AppSettings.runDraft(this);
         if (saved == null) saved = AppSettings.runConfig(this);
         runDraft = saved.copy();
@@ -588,7 +630,7 @@ public final class MainActivity extends Activity {
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         content.addView(list);
-        Runnable refresh = () -> populateHistoryList(list, RunStore.all(this), search.getText().toString(),
+        Runnable refresh = () -> populateHistoryList(list, RunStore.all(this), ValidationStore.all(this), search.getText().toString(),
                 String.valueOf(status.getSelectedItem()), String.valueOf(project.getSelectedItem()),
                 String.valueOf(severity.getSelectedItem()), historyRepositoryId);
         search.addTextChangedListener(new TextWatcher() {
@@ -1008,7 +1050,7 @@ public final class MainActivity extends Activity {
         try{DevtoolRunConfig config=readRunConfig().copy();config.operation="test";config.listTests=true;config.testSelectors="";config.testTags="";config.testExcludeTags="";config.testPath="";config.testClass="";config.testMethod="";String command=DevtoolCommandBuilder.build(config);runRaw(command,resolvedWorkdir(config),config.overlay,config.useRootBridge);Toast.makeText(this,"Test discovery started. Return to Tests after it finishes.",Toast.LENGTH_LONG).show();}catch(RuntimeException error){Toast.makeText(this,"Could not start discovery: "+error.getMessage(),Toast.LENGTH_LONG).show();}
     }
 
-    private void populateHistoryList(LinearLayout parent, List<RunRecord> records, String query,
+    private void populateHistoryList(LinearLayout parent, List<RunRecord> records, List<ValidationSessionRecord> validations, String query,
                                      String status, String project, String severity,
                                      String repositoryId) {
         parent.removeAllViews();
@@ -1034,13 +1076,82 @@ public final class MainActivity extends Activity {
             parent.addView(compactHistoryCard(record));
             shown++;
         }
+        for (ValidationSessionRecord validation : validations) {
+            String validationStatus = validationHistoryStatus(validation);
+            if (!wantedRepository.isEmpty() && !wantedRepository.equals(validation.repositoryId)) continue;
+            if (!wantedStatus.equals("all") && !validationStatus.equals(wantedStatus)) continue;
+            if (!wantedProject.equals("all") && !validation.projectType.equalsIgnoreCase(wantedProject)) continue;
+            if (wantedSeverity.equals("error") && validation.reportErrors <= 0 && !validation.blocked() && !validation.recoveryRequired()) continue;
+            if (wantedSeverity.equals("warning") && validation.reportWarnings <= 0) continue;
+            if (wantedSeverity.equals("success") && !validation.validated()) continue;
+            String hay = join("\n", "validation", validation.title(), validation.repoRoot, validation.target,
+                    validation.finalVerdict, validation.state, validation.lastError, validation.pausedReason,
+                    validation.artifact, validation.commitHash, validation.reportPath).toLowerCase(Locale.ROOT);
+            if (!needle.isEmpty() && !hay.contains(needle)) continue;
+            parent.addView(validationHistoryCard(validation));
+            shown++;
+        }
         if (shown == 0) {
             LinearLayout empty = ui.surface();
-            empty.addView(ui.text(records.isEmpty() ? "No logs yet" : "No runs match the current search and filters.",
+            empty.addView(ui.text(records.isEmpty() && validations.isEmpty() ? "No logs yet" : "No runs match the current search and filters.",
                     UiTypography.Role.CARD_TITLE, ui.palette.text));
             if (records.isEmpty()) empty.addView(ui.button("Create a run", ui.palette.cyan, v -> switchPage(1)));
             parent.addView(empty);
         }
+    }
+
+    private String validationHistoryStatus(ValidationSessionRecord session) {
+        if (session.validated()) return "ok";
+        if (session.blocked() || session.recoveryRequired()) return "failed";
+        if (session.state.startsWith("aborted-")) return "cancelled";
+        for (ValidationPhaseRecord phase : session.phases) if (phase.status.equals("interrupted")) return "interrupted";
+        return "waiting";
+    }
+
+    private View validationHistoryCard(ValidationSessionRecord session) {
+        LinearLayout card = ui.surface();
+        String verdict = session.finalVerdict.isEmpty() ? session.state : session.finalVerdict;
+        card.setContentDescription(session.title() + " validation. " + verdict + ". "
+                + session.completedPhases + " of " + session.phaseTotal + " phases.");
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.addView(ui.text(session.title() + " validation", UiTypography.Role.CARD_TITLE, ui.palette.text),
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        heading.addView(ui.text("VALIDATION · " + verdict.toUpperCase(Locale.ROOT), UiTypography.Role.CAPTION,
+                session.validated() ? ui.palette.green : session.blocked() || session.recoveryRequired() ? ui.palette.red : ui.palette.yellow));
+        card.addView(heading);
+        card.addView(ui.text(join(" · ", session.repoRoot, session.target, humanProjectType(session.projectType),
+                        session.cleanExecutorKind(), DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                                .format(new Date(session.updatedAtMs))),
+                UiTypography.Role.LABEL, ui.palette.muted));
+        String summary = session.completedPhases + " of " + session.phaseTotal + " phases"
+                + " · " + session.reportErrors + " errors · " + session.reportWarnings + " warnings";
+        if (!session.commitStatus.isEmpty() && !session.commitStatus.equals("not-requested")) summary += " · commit " + session.commitStatus;
+        card.addView(ui.text(summary, UiTypography.Role.BODY_SMALL, ui.palette.text));
+        if (!session.lastError.isEmpty()) card.addView(ui.text(session.lastError, UiTypography.Role.BODY_SMALL, ui.palette.red));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(ui.verticalActions() ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        Button report = ui.button("Open report", ui.palette.cyan, v -> startActivity(
+                new Intent(this, ValidationEvidenceActivity.class)
+                        .putExtra(ValidationEvidenceActivity.EXTRA_SESSION_ID, session.sessionId)));
+        Button workbench = ui.secondaryButton(session.terminal() ? "View Workbench" : "Continue validation", v -> {
+            requestedValidationSessionId = session.sessionId;
+            runValidationSection = true;
+            AppSettings.setRunSection(this, "validation");
+            switchPage(1);
+        });
+        Button repository = ui.secondaryButton("Repository", v -> startActivity(
+                new Intent(this, RepositoryDetailActivity.class)
+                        .putExtra(RepositoryDetailActivity.EXTRA_REPOSITORY_ID, session.repositoryId)));
+        repository.setEnabled(!session.repositoryId.isEmpty());
+        if (ui.verticalActions()) { actions.addView(report); actions.addView(workbench); actions.addView(repository); }
+        else {
+            actions.addView(report, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(workbench, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(repository, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        card.addView(actions);
+        return card;
     }
 
     private boolean matchesSeverity(RunRecord record, String severity) {
@@ -1594,6 +1705,7 @@ public final class MainActivity extends Activity {
     }
 
     private void captureRunDraft() {
+        if (runValidationSection) return;
         if (currentPage != 1 || operationInput == null || repoInput == null) return;
         try {
             runDraft = readRunConfig().copy();
@@ -1711,6 +1823,26 @@ public final class MainActivity extends Activity {
         long seconds = Math.max(0L, durationMs / 1000L);
         if (seconds < 60L) return seconds + "s";
         return seconds / 60L + "m " + seconds % 60L + "s";
+    }
+
+    private void applyValidationIntent(Intent intent) {
+        if (intent == null) {
+            runValidationSection = "validation".equals(AppSettings.runSection(this));
+            return;
+        }
+        String section = intent.getStringExtra("run_section");
+        if (section != null) {
+            runValidationSection = "validation".equals(section);
+            AppSettings.setRunSection(this, runValidationSection ? "validation" : "command");
+            intent.removeExtra("run_section");
+        } else {
+            runValidationSection = "validation".equals(AppSettings.runSection(this));
+        }
+        String sessionId = intent.getStringExtra(ValidationStore.EXTRA_SESSION_ID);
+        if (sessionId != null && !sessionId.trim().isEmpty()) {
+            requestedValidationSessionId = sessionId.trim();
+            intent.removeExtra(ValidationStore.EXTRA_SESSION_ID);
+        }
     }
 
     private void applyLogRepositoryIntent(Intent intent) {

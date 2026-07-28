@@ -1,30 +1,37 @@
 {
-  "name": "devtool_android_repositories_phase7_support_bundle",
-  "release": "1.1.0-rc.3",
+  "name": "devtool_validation_reporting_release_seal_phases_32_33",
+  "release": "1.1.0",
   "devtool_version": "1.1.0",
   "desktop_version": "0.4.0",
-  "android_version": "1.14.0",
-  "android_version_code": 27,
+  "android_version": "1.16.0",
+  "android_version_code": 30,
   "artifact_type": "overlay",
-  "slice": 13,
+  "slice": "32-33",
   "features": [
-    "redacted Android support bundle for field diagnostics",
-    "settings card to copy and share support bundles",
-    "opt-in redacted recent command inclusion disabled by default",
-    "support bundle captures app, device, root bridge, settings, database, runs, repositories and operations",
-    "raw stdout, stderr and launch logs excluded from support output",
-    "secret redaction for bridge tokens, HTTPS credentials, authorization headers, common secret assignments and private-key blocks"
+    "schema-v5 durable validation reports with original and final Git heads",
+    "write-once content-hashed final report snapshots and compact status summaries",
+    "finalization integrity gates for required phases checkpoints fingerprints and transaction health",
+    "report-linked artifact history and Android validation history cards",
+    "16-scenario failure and interruption qualification matrix",
+    "deterministic four-group complete Python regression runner",
+    "process-group supervised release gates with per-gate logs and machine report",
+    "Android schema-9 report persistence and app version 1.16.0 code 30"
   ],
   "key_files": [
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/SupportBundle.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/SupportRedactor.java",
+    "devtool/validation_reports.py",
+    "devtool/validation_sessions.py",
+    "devtool/cli.py",
+    "devtool/release_qualification.py",
+    "tools/validate-validation-release.py",
+    "tools/run-pytest-split.py",
+    "docs/validation-release-scenarios.json",
     "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/AppSettings.java",
-    "tests/test_android_repositories_phase7.py",
-    "docs/ANDROID_LOGS_REPOSITORIES.md"
+    "PHASE_32_33_VALIDATION_REPORTING_RELEASE_SEAL.md"
   ],
   "validation": {
-    "focused_tests": 156,
-    "notes": "Full pytest run was started but timed out before completion; focused Android/repository/Tasker slice passed."
+    "tests_passed": 897,
+    "tests_failed": 0,
+    "subtests_passed": 42,
+    "notes": "The complete Python inventory passed in four deterministic groups. Dedicated validation-report, 16-scenario, Android source, shell syntax, and deterministic source-archive gates passed. Android Gradle compilation remains unavailable because this container has no Android SDK or cached Gradle distribution."
   }
 }

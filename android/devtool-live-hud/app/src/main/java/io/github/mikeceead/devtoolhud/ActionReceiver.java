@@ -15,11 +15,54 @@ public final class ActionReceiver extends BroadcastReceiver {
     static final String ACTION_CANCEL_RUN = "io.github.mikeceead.devtoolhud.CANCEL_RUN";
     static final String ACTION_RETRY = "io.github.mikeceead.devtoolhud.RETRY";
     static final String ACTION_KEEP_VISIBLE = "io.github.mikeceead.devtoolhud.KEEP_VISIBLE";
+    static final String ACTION_VALIDATION_PAUSE = "io.github.mikeceead.devtoolhud.VALIDATION_PAUSE";
+    static final String ACTION_VALIDATION_STOP = "io.github.mikeceead.devtoolhud.VALIDATION_STOP";
+    static final String ACTION_VALIDATION_CANCEL_PAUSE = "io.github.mikeceead.devtoolhud.VALIDATION_CANCEL_PAUSE";
+    static final String ACTION_VALIDATION_RESUME = "io.github.mikeceead.devtoolhud.VALIDATION_RESUME";
+    static final String ACTION_VALIDATION_RETRY = "io.github.mikeceead.devtoolhud.VALIDATION_RETRY";
+    static final String ACTION_VALIDATION_RETRY_SAFE = "io.github.mikeceead.devtoolhud.VALIDATION_RETRY_SAFE";
+    static final String ACTION_VALIDATION_RECOVER = "io.github.mikeceead.devtoolhud.VALIDATION_RECOVER";
 
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null) return;
         String action = intent.getAction();
+        if (ACTION_VALIDATION_PAUSE.equals(action) || ACTION_VALIDATION_STOP.equals(action)
+                || ACTION_VALIDATION_CANCEL_PAUSE.equals(action) || ACTION_VALIDATION_RESUME.equals(action) || ACTION_VALIDATION_RETRY.equals(action)
+                || ACTION_VALIDATION_RETRY_SAFE.equals(action) || ACTION_VALIDATION_RECOVER.equals(action)) {
+            String sessionId = intent.getStringExtra(ValidationStore.EXTRA_SESSION_ID);
+            ValidationSessionRecord session = ValidationStore.find(context, sessionId);
+            long expectedRevision = intent.getLongExtra("expected_revision", -1L);
+            String expectedAttempt = intent.getStringExtra("expected_attempt_id");
+            String expectedRepository = intent.getStringExtra("repository_id");
+            if (session == null) {
+                Toast.makeText(context, "Validation session is no longer available", Toast.LENGTH_LONG).show();
+                return;
+            }
+            ValidationPhaseRecord active = session.activePhase();
+            boolean stale = expectedRevision >= 0 && expectedRevision != session.revision;
+            if (!stale && expectedRepository != null && !expectedRepository.trim().isEmpty()) {
+                stale = !session.identityMatches(expectedRepository);
+            }
+            if (!stale && expectedAttempt != null && !expectedAttempt.isEmpty()) {
+                stale = active == null || !expectedAttempt.equals(active.currentAttemptId);
+            }
+            if (stale) {
+                Toast.makeText(context, "Validation has already advanced; opening current state", Toast.LENGTH_LONG).show();
+                openValidation(context, session.sessionId);
+                return;
+            }
+            TermuxCommandRunner.LaunchResult result;
+            if (ACTION_VALIDATION_PAUSE.equals(action)) result = ValidationController.pause(context, session);
+            else if (ACTION_VALIDATION_CANCEL_PAUSE.equals(action)) result = ValidationController.cancelPause(context, session);
+            else if (ACTION_VALIDATION_STOP.equals(action)) result = ValidationController.stop(context, session);
+            else if (ACTION_VALIDATION_RETRY_SAFE.equals(action)) result = ValidationController.retry(context, session, true);
+            else if (ACTION_VALIDATION_RETRY.equals(action)) result = ValidationController.retry(context, session, false);
+            else if (ACTION_VALIDATION_RECOVER.equals(action)) result = ValidationController.recover(context, session);
+            else result = ValidationController.resume(context, session);
+            ValidationController.showLaunchResult(context, result, "Validation action requested");
+            return;
+        }
         if (ACTION_DISMISS.equals(action)) {
             String runId = intent.getStringExtra("run_id");
             new NotificationController(context).cancel(runId);
@@ -93,4 +136,13 @@ public final class ActionReceiver extends BroadcastReceiver {
             OverlayHudService.setEnabled(context, false);
         }
     }
+    private static void openValidation(Context context, String sessionId) {
+        Intent open = new Intent(context, MainActivity.class)
+                .putExtra("open_page", 1)
+                .putExtra("run_section", "validation")
+                .putExtra(ValidationStore.EXTRA_SESSION_ID, sessionId)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        context.startActivity(open);
+    }
+
 }

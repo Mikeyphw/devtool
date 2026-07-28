@@ -188,6 +188,25 @@ final class RootBridgeManager {
         return new TermuxCommandRunner.LaunchResult(true, executionId, "");
     }
 
+    static TermuxCommandRunner.LaunchResult runValidationControl(Context context, String command,
+                                                                  String workdir, String operation) {
+        String cleanCommand = command == null ? "" : command.trim();
+        if (cleanCommand.isEmpty()) return new TermuxCommandRunner.LaunchResult(false, -1, "Command is empty");
+        if (!isReady(context)) return new TermuxCommandRunner.LaunchResult(false, -1, "Optional root bridge is not connected");
+        if (!isAllowedDevtoolCommand(cleanCommand)) {
+            return new TermuxCommandRunner.LaunchResult(false, -1, "Root validation control only accepts generated devtool commands");
+        }
+        int executionId = nextExecutionId();
+        Context app = context.getApplicationContext();
+        String cleanWorkdir = workdir == null || workdir.trim().isEmpty() ? "/" : workdir.trim();
+        EXECUTOR.execute(() -> {
+            String shell = "cd " + shellQuote(cleanWorkdir) + " && " + cleanCommand;
+            CommandResult result = rootCommand(shell);
+            ValidationController.handleResult(app, operation, result.exitCode, result.output, "", "", "root-bridge");
+        });
+        return new TermuxCommandRunner.LaunchResult(true, executionId, "");
+    }
+
     static boolean cancel(Context context, String runId) {
         if (runId == null || !runId.startsWith("root-")) return false;
         Process process = activeProcess;

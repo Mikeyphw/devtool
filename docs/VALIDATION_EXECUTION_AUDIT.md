@@ -17,8 +17,11 @@ automatic project-kind selection.
 - Removed legacy `artifact-check` records are discarded during session
   synchronization without replaying a completed package phase.
 - Interrupted phases return to `pending`. A genuine deferred validation failure
-  rolls back the apply transaction, marks future phases `cancelled`, and closes
-  the session as `failed-rolled-back`.
+  blocks the session, preserves the applied tree and rollback point, and leaves
+  dependent phases pending unless an explicit rollback policy is selected.
+- Schema-v4 machine controls use optimistic session revisions. Read-only status,
+  plan, and event polling cannot reclaim a live phase, while accepted pause/stop
+  requests advance the durable revision without heartbeat churn.
 - A stale apply rollback is a recovery boundary for non-apply commands. The
   requested command is not executed until the user reviews the restored tree
   and runs it again.
@@ -59,3 +62,7 @@ argv and environment variables, Python bootstrap selection, root-versus-nested
 project markers, stable session keys, plan insertions/removals, command
 fingerprint changes, stale rollback boundaries, and removal of repository
 artifact checks.
+
+## Phase 32–33 report and release audit
+
+Validation sessions write schema-1 reports under `.devtool/reports/validation/`. Finalization rechecks required phase states, minimum checkpoints, and repository input fingerprints. The release scenario matrix is machine-readable at `docs/validation-release-scenarios.json` and is enforced by `tools/validate-validation-release.py`.

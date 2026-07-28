@@ -4,8 +4,8 @@
   "devtool": "1.1.0",
   "desktop": "0.4.0",
   "android": {
-    "version_name": "1.14.0",
-    "version_code": 27,
+    "version_name": "1.16.0",
+    "version_code": 30,
     "application_id": "io.github.mikeceead.devtoolhud"
   },
   "minimums": {

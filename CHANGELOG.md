@@ -1,4 +1,36 @@
+## Unreleased validation reporting and release seal
+- Added Phase 32 immutable validation reports with complete phase/attempt evidence, original and final Git heads, rollback and commit outcomes, report-linked artifact history, and strict finalization integrity checks.
+- Added distinct Android validation history cards and a complete report view backed by Android database schema 9.
+- Added Phase 33's 16-scenario failure matrix, dedicated validation and Android source release gates, and the `tools/validate-validation-release.py` qualification runner.
+- Bumped Devtool Live HUD to 1.16.0 (`versionCode 30`).
+
+## Unreleased Android validation completion
+- Closed the Phase 31 audit gaps with atomic revision/timestamp rejection, immutable attempt upserts, structured repository/executor identity enforcement, real phase-progress events, stale-heartbeat recovery leases, and rollback progress events.
+- Added Workbench recovery and safe-retry actions, a dedicated validation evidence viewer, actionable command/log/report copy controls, and rollback confirmation with path, backup-health, dirty-tree, repository identity, and recovery-state context.
+- Added notification repository checks and recovery actions; current-phase percentage now comes from the live validation progress stream while overall progress remains phase-based.
+- Implemented interactive `failure_action=prompt` for human terminals with machine-safe pause fallback.
+- Bumped Devtool Live HUD to 1.15.1 (`versionCode 29`) and Android database schema 8.
+
+## Unreleased Android validation workbench
+- Added Phases 29–31: a durable Android validation database and API-v1 bridge, a full Run → Validation Workbench, and validation-aware notifications built on the existing custom notification surface.
+- Added next/through/selected/all-remaining scopes with visible prerequisite locking, phase attempt/evidence details, phone and wide-layout controls, safe pause/stop/retry/reset/finalize flows, and confirmed keep-changes or journaled rollback actions.
+- Added stale notification protection using session revision and attempt identity, a real cancel-pause control, root/Termux result convergence, sparse-response reconciliation, and direct session deep links.
+- Initial Workbench release shipped as Devtool Live HUD 1.15.0 (`versionCode 28`) with Android database schema 7; Phase 31.1 supersedes it with 1.15.1/schema 8.
+
+## Unreleased validation control API
+- Added Phase 28's API-v1 validation control surface with stable JSON envelopes for status, plan, scoped run, retry, pause, stop, reset, finalize, abort, recover, and event polling.
+- Upgraded durable sessions to schema v4 with schema-v1/v2/v3 migration, optimistic `--if-revision` concurrency, revision-preserving worker saves, and stale-action exit code 3.
+- Added lock-free read operations and atomic out-of-band pause/stop requests so Android controls remain responsive while a validation phase owns the repository lock.
+- Added append-only cursor-readable validation events, explicit blocked/recovery/unavailable exit codes, compact machine output, and uncontaminated `--machine-file` mirroring.
+
 ## Unreleased validation/execution audit
+- Added schema-v3 dependency-aware validation plans with prerequisite closure, required/minimum checkpoint enforcement, graph-specific invalidation, explicit unsafe plan-drift acceptance, and reset-from-phase controls.
+- Added configuration/source/resource/test input-domain fingerprints with pre/post attempt snapshots; successful commands are discarded as stale when relevant inputs change during execution.
+- Added shared validation failure classification, active-child heartbeat/resource/runtime supervision, corroborated exit-137 handling, and bounded infrastructure/resource retries with an Android low-power fallback profile.
+- Rebuilt deferred/sequential validation around schema-v2 session, phase, and attempt states with durable attempt history, ownership metadata, revisioned checkpoints, and automatic migration from schema-v1 sessions.
+- Changed deferred validation failure handling to block and preserve the applied tree plus rollback point by default. Explicit `--failure-action rollback` retains the previous destructive policy; commit and administrative failures no longer erase successfully validated code.
+- Made validation status/checkpoint reads strictly non-mutating, made `--dry-run` a state-free preview, added dead-owner-safe `validate recover`, and made missing or changed deferred validator artifacts fail closed.
+- Replaced destructive one-shot transaction restore with a per-path journaled rollback that stages, hashes, atomically swaps, verifies, archives terminal summaries, and can resume after interruption. `validate abort --keep-changes` now closes the transaction cleanly.
 - Android builds now automatically suppress AGP's experimental-option warning when Devtool injects a custom `android.aapt2FromMavenOverride`, while preserving other user-configured warning suppressions.
 
 - Made the Termux dotnet proot `/etc` shim resilient to read-only or stripped HOME/PREFIX state; Devtool now tries configured, Termux, XDG-state, and temporary writable locations instead of attempting `/usr/var/devtool`.

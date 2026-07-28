@@ -4,7 +4,8 @@
 Designed for ordinary Linux hosts and ARM64 Ubuntu chroots running through
 Termux. It prefers a project's Gradle wrapper, reuses existing Java/Android SDK
 installations, installs only missing SDK packages when sdkmanager is available,
-and can obtain a native AAPT2 from ReVanced releases on ARM hosts.
+can obtain a native AAPT2 from ReVanced releases on ARM hosts, and repairs the
+remaining ARM64-incompatible SDK build-tools from Commit451 releases.
 
 Examples:
     python3 gradle-build.py ~/Code/my-app
@@ -34,12 +35,14 @@ import zipfile
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, MutableMapping, Sequence
 
 APP_NAME = "gradle-build"
 DEFAULT_GRADLE_VERSION = "8.13"
 REVANCED_REPOSITORY = "ReVanced/aapt2"
 REVANCED_API = f"https://api.github.com/repos/{REVANCED_REPOSITORY}"
+ARM_BUILD_TOOLS_REPOSITORY = "Commit451/android-arm-build-tools"
+ARM_BUILD_TOOLS_NATIVE_NAMES = ("aidl", "zipalign", "split-select")
 ANDROID_CMDLINE_TOOLS_URL = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
 AAPT2_OVERRIDE_PROPERTY = "android.aapt2FromMavenOverride"
 UNSUPPORTED_OPTION_WARNINGS_PROPERTY = "android.suppressUnsupportedOptionWarnings"
@@ -421,6 +424,19 @@ def ensure_executable(path: Path, label: str) -> Path:
     return path
 
 
+def format_transfer_size(byte_count: int) -> str:
+    value = float(max(0, byte_count))
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if value < 1024.0 or candidate == units[-1]:
+            break
+        value /= 1024.0
+    precision = 0 if unit == "B" else 1
+    return f"{value:.{precision}f} {unit}"
+
+
 def download(
     url: str,
     destination: Path,
@@ -442,9 +458,66 @@ def download(
     request_headers.update(headers or {})
     request = urllib.request.Request(url, headers=request_headers)
     heading(f"Downloading {url}")
+    info(f"Destination: {destination}")
     try:
         with urllib.request.urlopen(request, timeout=60) as response, temporary.open("wb") as output:
-            shutil.copyfileobj(response, output)
+            raw_total = response.headers.get("Content-Length") if response.headers else None
+            try:
+                total = max(0, int(raw_total)) if raw_total else 0
+            except (TypeError, ValueError):
+                total = 0
+
+            downloaded = 0
+            started = time.monotonic()
+            last_reported_bucket = -1
+            last_reported_at = started
+            while True:
+                chunk = response.read(256 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                downloaded += len(chunk)
+                now = time.monotonic()
+                elapsed = max(now - started, 0.001)
+                rate = int(downloaded / elapsed)
+
+                if total > 0:
+                    percent = min(100, int(downloaded * 100 / total))
+                    bucket = min(100, (percent // 5) * 5)
+                    should_report = (
+                        bucket > last_reported_bucket
+                        or downloaded >= total
+                        or now - last_reported_at >= 5.0
+                    )
+                    if should_report:
+                        info(
+                            "Download progress: "
+                            f"{percent:3d}% "
+                            f"({format_transfer_size(downloaded)} / {format_transfer_size(total)}, "
+                            f"{format_transfer_size(rate)}/s)"
+                        )
+                        last_reported_bucket = bucket
+                        last_reported_at = now
+                elif now - last_reported_at >= 5.0:
+                    info(
+                        "Download progress: "
+                        f"{format_transfer_size(downloaded)} "
+                        f"({format_transfer_size(rate)}/s)"
+                    )
+                    last_reported_at = now
+
+            elapsed = max(time.monotonic() - started, 0.001)
+            if total <= 0:
+                info(
+                    "Download complete: "
+                    f"{format_transfer_size(downloaded)} "
+                    f"({format_transfer_size(int(downloaded / elapsed))}/s)"
+                )
+            elif downloaded < total:
+                warn(
+                    "Download server reported "
+                    f"{format_transfer_size(total)}, but received {format_transfer_size(downloaded)}"
+                )
     except (OSError, urllib.error.URLError) as exc:
         temporary.unlink(missing_ok=True)
         fail(f"Download failed: {url}\n{exc}")
@@ -937,6 +1010,208 @@ def obtain_revanced_aapt2(
     return validate_aapt2(target, dry_run=dry_run)
 
 
+def _checksum_from_manifest(text: str, asset_name: str) -> str | None:
+    """Return the SHA-256 recorded for ``asset_name`` in SHA256SUMS text."""
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if len(parts) < 2:
+            continue
+        digest = parts[0].lower()
+        name = parts[-1].lstrip("*")
+        if name == asset_name and re.fullmatch(r"[0-9a-f]{64}", digest):
+            return digest
+    return None
+
+
+def native_tool_matches_host(path: Path, machine: str | None = None) -> bool:
+    """Return whether a native SDK executable can run on the current host.
+
+    Script launchers and other non-ELF tools are accepted. ELF executables must
+    declare the same machine as the host.
+    """
+
+    if not path.is_file():
+        return False
+    try:
+        metadata = path.stat()
+        header = path.read_bytes()[:4096]
+    except OSError:
+        return False
+    executable_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    if metadata.st_size <= 0 or not metadata.st_mode & executable_bits:
+        return False
+    if not header.startswith(b"\x7fELF"):
+        return True
+    detected = _elf_machine(header)
+    return detected is None or detected == (machine or normalized_machine())
+
+
+def obtain_commit451_arm64_tool(
+    cache_root: Path,
+    build_tools_version: str,
+    tool_name: str,
+    *,
+    offline: bool,
+    force: bool,
+    dry_run: bool,
+) -> Path:
+    """Download and verify one Commit451 linux-arm64 build-tools executable."""
+
+    if tool_name not in ARM_BUILD_TOOLS_NATIVE_NAMES:
+        fail(f"Unsupported ARM build-tools executable: {tool_name}")
+    if normalized_machine() != "arm64":
+        fail("Commit451 Android build-tools are only used on ARM64 Linux hosts")
+
+    tag = f"platform-tools-{build_tools_version}"
+    base_url = (
+        f"https://github.com/{ARM_BUILD_TOOLS_REPOSITORY}/releases/download/{tag}"
+    )
+    release_dir = cache_root / "android-build-tools" / "commit451" / tag
+    manifest = release_dir / "SHA256SUMS"
+    target = release_dir / tool_name
+
+    download(
+        f"{base_url}/SHA256SUMS",
+        manifest,
+        offline=offline,
+        force=force,
+    )
+    download(
+        f"{base_url}/{tool_name}",
+        target,
+        offline=offline,
+        force=force,
+    )
+
+    if dry_run:
+        info(
+            f"Would verify Commit451 ARM64 {tool_name} for Build Tools "
+            f"{build_tools_version}"
+        )
+        return target
+
+    try:
+        checksum_text = manifest.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        fail(f"Could not read Commit451 checksum manifest: {manifest}\n{exc}")
+    expected = _checksum_from_manifest(checksum_text, tool_name)
+    if expected is None:
+        fail(
+            f"Commit451 checksum manifest does not contain {tool_name}: {manifest}"
+        )
+    actual = sha256(target)
+    if actual != expected:
+        target.unlink(missing_ok=True)
+        fail(
+            f"Checksum mismatch for Commit451 {tool_name}: expected {expected}, "
+            f"received {actual}"
+        )
+
+    ensure_executable(target, f"Commit451 ARM64 {tool_name}")
+    try:
+        header = target.read_bytes()[:4096]
+    except OSError as exc:
+        fail(f"Could not inspect Commit451 {tool_name}: {target}\n{exc}")
+    detected = _elf_machine(header)
+    if detected != "arm64":
+        fail(
+            f"Commit451 {tool_name} is not an ARM64 ELF executable: "
+            f"{target} ({detected or 'unknown architecture'})"
+        )
+    return target
+
+
+def arm64_build_tools_replacements_needed(
+    sdk_root: Path,
+    build_tools_version: str | None,
+) -> list[str]:
+    """List SDK native tools missing or incompatible on an ARM64 host."""
+
+    if normalized_machine() != "arm64" or not build_tools_version:
+        return []
+    directory = sdk_root / "build-tools" / build_tools_version
+    if not directory.is_dir():
+        return []
+    return [
+        name
+        for name in ARM_BUILD_TOOLS_NATIVE_NAMES
+        if not native_tool_matches_host(directory / name, "arm64")
+    ]
+
+
+def ensure_arm64_build_tools_compatible(
+    sdk_root: Path,
+    build_tools_version: str | None,
+    cache_root: Path,
+    *,
+    provider: str,
+    offline: bool,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    """Repair x86-only AIDL/zipalign/split-select in an ARM64 Android SDK."""
+
+    if normalized_machine() != "arm64" or not build_tools_version:
+        return
+    if provider == "none":
+        return
+    if provider not in {"auto", "commit451"}:
+        fail(f"Unsupported ARM build-tools provider: {provider}")
+
+    directory = sdk_root / "build-tools" / build_tools_version
+    if not directory.is_dir():
+        return
+    replacements = arm64_build_tools_replacements_needed(
+        sdk_root,
+        build_tools_version,
+    )
+    if not replacements and not force:
+        info(
+            f"ARM64 SDK build-tools ready: {build_tools_version} "
+            f"({', '.join(ARM_BUILD_TOOLS_NATIVE_NAMES)})"
+        )
+        return
+    if not sdk_root_is_writable_for_install(sdk_root):
+        fail(
+            "Android SDK contains incompatible native build-tools and cannot be "
+            f"repaired because it is read-only: {sdk_root}"
+        )
+
+    heading(f"Repairing Android Build Tools {build_tools_version} for ARM64")
+    selected = list(ARM_BUILD_TOOLS_NATIVE_NAMES) if force else replacements
+    for tool_name in selected:
+        source = obtain_commit451_arm64_tool(
+            cache_root,
+            build_tools_version,
+            tool_name,
+            offline=offline,
+            force=force,
+            dry_run=dry_run,
+        )
+        target = directory / tool_name
+        if dry_run:
+            info(f"Would install ARM64 {tool_name}: {source} -> {target}")
+            continue
+
+        backup = target.with_name(target.name + ".google-x86_64")
+        if target.exists() or target.is_symlink():
+            if not backup.exists() and not target.is_symlink():
+                target.replace(backup)
+            else:
+                target.unlink(missing_ok=True)
+        temporary = target.with_name(target.name + ".devtool.tmp")
+        shutil.copy2(source, temporary)
+        temporary.chmod(temporary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        temporary.replace(target)
+        if not native_tool_matches_host(target, "arm64"):
+            fail(f"Installed ARM64 {tool_name} failed architecture validation: {target}")
+        info(f"Installed ARM64 {tool_name}: {target}")
+
+
 @dataclass(frozen=True)
 class ProjectInfo:
     root: Path
@@ -1236,7 +1511,9 @@ def sdk_host_compatible(sdk_root: Path) -> bool:
     if not build_tools:
         return True
 
-    probe_names = ("aapt2", "zipalign")
+    # AAPT2 is provided independently through the ReVanced override on ARM.
+    # The remaining native SDK tools must match the host architecture.
+    probe_names = ARM_BUILD_TOOLS_NATIVE_NAMES
     for version in build_tools[:2]:
         directory = sdk_root / "build-tools" / version
         for name in probe_names:
@@ -1266,6 +1543,46 @@ def _elf_machine(header: bytes) -> str | None:
         62: "x86_64",
         183: "arm64",
     }.get(machine)
+
+
+def managed_sdk_root_for_host(cache_root: Path) -> Path:
+    """Return a writable managed SDK location compatible with this host.
+
+    The legacy ``android-sdk`` cache may have been populated by another host
+    architecture. Preserve it rather than mutating it in place, and use an
+    architecture-qualified cache when its build tools are incompatible.
+    """
+
+    base = (cache_root / "android-sdk").expanduser().resolve()
+    if not base.exists() or sdk_host_compatible(base):
+        return base
+    return (cache_root / f"android-sdk-{normalized_machine()}").expanduser().resolve()
+
+
+def sdk_root_is_writable_for_install(sdk_root: Path) -> bool:
+    """Return whether SDK components can be created below ``sdk_root``."""
+
+    candidate = sdk_root.expanduser()
+    if candidate.exists():
+        return candidate.is_dir() and os.access(candidate, os.W_OK | os.X_OK)
+
+    parent = candidate.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    return parent.is_dir() and os.access(parent, os.W_OK | os.X_OK)
+
+
+def configure_android_sdk_env(env: MutableMapping[str, str], sdk_root: Path) -> None:
+    """Point Android tooling at ``sdk_root`` and prepend its executable paths."""
+
+    env["ANDROID_HOME"] = str(sdk_root)
+    env["ANDROID_SDK_ROOT"] = str(sdk_root)
+    additions = [
+        str(sdk_root / "cmdline-tools" / "latest" / "bin"),
+        str(sdk_root / "platform-tools"),
+    ]
+    current = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
+    env["PATH"] = os.pathsep.join([*additions, *[entry for entry in current if entry not in additions]])
 
 
 def discover_sdk_root(explicit: Path | None, project_root: Path | None = None) -> Path | None:
@@ -1307,7 +1624,11 @@ def discover_sdk_root_with_source(
             continue
         if candidate.is_dir():
             if not sdk_host_compatible(resolved):
-                if explicit_candidate:
+                if explicit_candidate or sdk_root_is_writable_for_install(resolved):
+                    warn(
+                        "Android SDK contains incompatible native build-tools and "
+                        f"will be repaired for this host: {resolved} ({source})"
+                    )
                     return resolved, source
                 skipped_incompatible.add(resolved)
                 warn(f"Skipping Android SDK with incompatible host build tools: {resolved} ({source})")
@@ -1352,6 +1673,13 @@ def ensure_sdkmanager_available(
     if existing is not None and not force:
         info(f"Reusing sdkmanager: {existing}")
         return existing
+
+    if not sdk_root_is_writable_for_install(sdk_root):
+        fail(
+            "Android SDK command-line tools are missing and the selected SDK "
+            f"is not writable: {sdk_root}. Use a writable --sdk-root or allow "
+            "Devtool to use its managed SDK cache."
+        )
 
     archive = cache_root / "android" / "commandlinetools-linux-latest.zip"
     download(ANDROID_CMDLINE_TOOLS_URL, archive, offline=offline, force=force)
@@ -1502,6 +1830,86 @@ def clear_android_download_debris(sdk_root: Path, *, dry_run: bool) -> None:
                 info(f"Cleared Android download cache: {candidate}")
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_SDKMANAGER_PERCENT_RE = re.compile(r"(?<!\d)(\d{1,3})%")
+
+
+def run_sdkmanager_with_progress(
+    command: Sequence[str | os.PathLike[str]],
+    *,
+    env: Mapping[str, str],
+    input_text: str | None,
+    dry_run: bool,
+) -> subprocess.CompletedProcess[str]:
+    """Run sdkmanager while turning CR-only updates into visible log lines."""
+
+    rendered = [str(part) for part in command]
+    print("+", shell_join(rendered), flush=True)
+    if dry_run:
+        return subprocess.CompletedProcess(rendered, 0, "", "")
+
+    info("SDK installation progress: starting")
+    try:
+        process = subprocess.Popen(
+            rendered,
+            env=dict(env),
+            stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except PermissionError as exc:
+        fail(f"Permission denied while launching sdkmanager: {rendered[0]}\n{exc}")
+    except FileNotFoundError as exc:
+        fail(f"sdkmanager not found: {rendered[0]}\n{exc}")
+
+    if input_text is not None and process.stdin is not None:
+        try:
+            process.stdin.write(input_text)
+            process.stdin.close()
+        except BrokenPipeError:
+            pass
+
+    captured: list[str] = []
+    last_percent = -5
+    last_progress_line = ""
+    last_plain_line = ""
+    assert process.stdout is not None
+    for raw_line in process.stdout:
+        # TextIO's universal-newline handling converts sdkmanager's carriage
+        # returns into iterable lines, which keeps progress visible in pipes,
+        # Devtool logs, notifications, and HUDs.
+        line = _ANSI_ESCAPE_RE.sub("", raw_line).strip()
+        if not line:
+            continue
+        captured.append(line)
+        match = _SDKMANAGER_PERCENT_RE.search(line)
+        if match:
+            percent = min(100, max(0, int(match.group(1))))
+            should_report = (
+                percent >= last_percent + 5
+                or percent in {0, 100}
+                or (line != last_progress_line and percent == last_percent)
+            )
+            if should_report:
+                detail = re.sub(r"^[\[\]=#>.\-\s]*\d{1,3}%\s*", "", line).strip(" []")
+                suffix = f" · {detail}" if detail and detail != line else ""
+                info(f"SDK installation progress: {percent:3d}%{suffix}")
+                last_percent = percent
+                last_progress_line = line
+            continue
+
+        if line != last_plain_line:
+            info(f"sdkmanager: {line}")
+            last_plain_line = line
+
+    returncode = int(process.wait())
+    if returncode == 0 and last_percent < 100:
+        info("SDK installation progress: 100% · complete")
+    return subprocess.CompletedProcess(rendered, returncode, "\n".join(captured), "")
+
+
 def install_sdk_packages_with_repair(
     manager: Path,
     sdk_root: Path,
@@ -1511,11 +1919,10 @@ def install_sdk_packages_with_repair(
     dry_run: bool,
 ) -> None:
     command = [manager, f"--sdk_root={sdk_root}", *packages]
-    result = run(
+    result = run_sdkmanager_with_progress(
         command,
         env=env,
         input_text="y\n" * 200,
-        check=False,
         dry_run=dry_run,
     )
     if dry_run or result.returncode == 0:
@@ -1530,11 +1937,10 @@ def install_sdk_packages_with_repair(
         elif kind == "platforms" and version:
             remove_path(sdk_root / "platforms" / version, dry_run=False)
 
-    retry = run(
+    retry = run_sdkmanager_with_progress(
         command,
         env=env,
         input_text="y\n" * 200,
-        check=False,
         dry_run=False,
     )
     if retry.returncode != 0:
@@ -1574,6 +1980,19 @@ def update_local_properties(project_root: Path, sdk_root: Path) -> None:
         info(f"Reusing SDK path from {target}")
 
 
+def default_build_tools_version(project: ProjectInfo) -> str:
+    """Choose a modern Build Tools release with published ARM64 binaries."""
+
+    if project.compile_sdk is not None:
+        if project.compile_sdk >= 37:
+            return f"{project.compile_sdk}.0.0"
+        if project.compile_sdk == 36:
+            return "36.0.0"
+        if project.compile_sdk == 35:
+            return "35.0.1"
+    return "35.0.0"
+
+
 def ensure_android_sdk(
     project: ProjectInfo,
     sdk_root: Path | None,
@@ -1586,16 +2005,19 @@ def ensure_android_sdk(
     cmake_override: str,
     skip_install: bool,
     offline: bool,
-    env: Mapping[str, str],
+    env: MutableMapping[str, str],
     dry_run: bool,
+    arm_build_tools_provider: str = "auto",
+    allow_managed_fallback: bool = True,
 ) -> tuple[Path, str | None, str | None, str | None, str | None]:
     if not project.android:
         fail("Internal error: ensure_android_sdk called for a non-Android project")
     if sdk_root is None:
         if skip_install:
             fail("Android SDK not found and --skip-sdk-install was used. Set ANDROID_HOME/ANDROID_SDK_ROOT or pass --sdk-root.")
-        sdk_root = cache_root / "android-sdk"
+        sdk_root = managed_sdk_root_for_host(cache_root)
         sdk_root.mkdir(parents=True, exist_ok=True)
+        configure_android_sdk_env(env, sdk_root)
         info(f"Using managed Android SDK: {sdk_root}")
 
     platform_id: str | None
@@ -1615,7 +2037,11 @@ def ensure_android_sdk(
             build_tools = project.build_tools
         else:
             installed_versions = installed_build_tools_versions(sdk_root)
-            build_tools = installed_versions[0] if installed_versions else "35.0.0"
+            build_tools = (
+                installed_versions[0]
+                if installed_versions
+                else default_build_tools_version(project)
+            )
 
     if ndk_override == "none":
         ndk_version = None
@@ -1637,20 +2063,75 @@ def ensure_android_sdk(
     else:
         cmake_version = project.cmake_version
 
-    missing: list[str] = []
-    incomplete_paths: list[Path] = []
-    if platform_id and not (sdk_root / "platforms" / platform_id / "android.jar").is_file():
-        missing.append(f"platforms;{platform_id}")
-        incomplete_paths.append(sdk_root / "platforms" / platform_id)
-    if build_tools and not (sdk_root / "build-tools" / build_tools).is_dir():
-        missing.append(f"build-tools;{build_tools}")
-        incomplete_paths.append(sdk_root / "build-tools" / build_tools)
-    if ndk_version and not ndk_is_ready(sdk_root, ndk_version):
-        missing.append(f"ndk;{ndk_version}")
-        incomplete_paths.append(sdk_root / "ndk" / ndk_version)
-    if cmake_version and not cmake_is_ready(sdk_root, cmake_version):
-        missing.append(f"cmake;{cmake_version}")
-        incomplete_paths.append(sdk_root / "cmake" / cmake_version)
+    def collect_missing(root: Path) -> tuple[list[str], list[Path]]:
+        missing_packages: list[str] = []
+        incomplete: list[Path] = []
+        if platform_id and not (root / "platforms" / platform_id / "android.jar").is_file():
+            missing_packages.append(f"platforms;{platform_id}")
+            incomplete.append(root / "platforms" / platform_id)
+        if build_tools and not (root / "build-tools" / build_tools).is_dir():
+            missing_packages.append(f"build-tools;{build_tools}")
+            incomplete.append(root / "build-tools" / build_tools)
+        if ndk_version and not ndk_is_ready(root, ndk_version):
+            missing_packages.append(f"ndk;{ndk_version}")
+            incomplete.append(root / "ndk" / ndk_version)
+        if cmake_version and not cmake_is_ready(root, cmake_version):
+            missing_packages.append(f"cmake;{cmake_version}")
+            incomplete.append(root / "cmake" / cmake_version)
+        return missing_packages, incomplete
+
+    missing, incomplete_paths = collect_missing(sdk_root)
+    native_replacements = (
+        arm64_build_tools_replacements_needed(sdk_root, build_tools)
+        if arm_build_tools_provider != "none"
+        else []
+    )
+
+    if (
+        (missing or native_replacements)
+        and not skip_install
+        and not sdk_root_is_writable_for_install(sdk_root)
+    ):
+        if not allow_managed_fallback:
+            fail(
+                "The selected Android SDK requires additional packages but is not writable: "
+                f"{sdk_root}. Choose a writable --sdk-root."
+            )
+
+        previous_sdk_root = sdk_root
+        sdk_root = managed_sdk_root_for_host(cache_root)
+        if sdk_root == previous_sdk_root:
+            fail(
+                "The managed Android SDK requires additional packages but is not writable: "
+                f"{sdk_root}. Check the cache directory permissions."
+            )
+        if sdk_root.name != "android-sdk":
+            warn(
+                "The default managed Android SDK cache contains incompatible host "
+                f"build tools; using {sdk_root}"
+            )
+        warn(
+            f"Selected Android SDK is read-only and needs additional packages: {previous_sdk_root}; "
+            f"falling back to managed SDK: {sdk_root}"
+        )
+        sdk_root.mkdir(parents=True, exist_ok=True)
+        if not sdk_root_is_writable_for_install(sdk_root):
+            fail(f"Managed Android SDK path is not writable: {sdk_root}")
+        configure_android_sdk_env(env, sdk_root)
+
+        if build_tools_override == "auto" and not project.build_tools:
+            installed_versions = installed_build_tools_versions(sdk_root)
+            build_tools = (
+                installed_versions[0]
+                if installed_versions
+                else default_build_tools_version(project)
+            )
+        missing, incomplete_paths = collect_missing(sdk_root)
+        native_replacements = (
+            arm64_build_tools_replacements_needed(sdk_root, build_tools)
+            if arm_build_tools_provider != "none"
+            else []
+        )
 
     if missing:
         if skip_install:
@@ -1706,6 +2187,15 @@ def ensure_android_sdk(
             info(f"NDK: {ndk_version}")
         if cmake_version:
             info(f"CMake: {cmake_version}")
+    ensure_arm64_build_tools_compatible(
+        sdk_root,
+        build_tools,
+        cache_root,
+        provider=arm_build_tools_provider,
+        offline=offline,
+        force=force_setup,
+        dry_run=dry_run,
+    )
     update_local_properties(project.root, sdk_root)
     return sdk_root, platform_id, build_tools, ndk_version, cmake_version
 
@@ -2110,6 +2600,15 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
         help="AAPT2 source when --aapt2 is omitted; auto uses ReVanced on ARM Android builds",
     )
     parser.add_argument("-R", "--aapt2-release", default="latest", help="ReVanced AAPT2 tag or latest")
+    parser.add_argument(
+        "--arm-build-tools-provider",
+        choices=("auto", "commit451", "none"),
+        default="auto",
+        help=(
+            "ARM64 provider for SDK aidl/zipalign/split-select; auto repairs "
+            "incompatible Google binaries from Commit451 releases"
+        ),
+    )
 
     parser.add_argument("-s", "--sdk-root", type=Path, help="Android SDK root")
     parser.add_argument("-P", "--android-platform", default="auto", help="android-36, 36, auto, or none")
@@ -2414,19 +2913,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if project.android:
         sdk_root, sdk_source = discover_sdk_root_with_source(args.sdk_root, project.root)
         if sdk_root is None and not args.skip_sdk_install:
-            sdk_root = cache_root / "android-sdk"
+            sdk_root = managed_sdk_root_for_host(cache_root)
             sdk_source = "managed cache"
         if sdk_root:
             sdk_root.mkdir(parents=True, exist_ok=True)
-            env["ANDROID_HOME"] = str(sdk_root)
-            env["ANDROID_SDK_ROOT"] = str(sdk_root)
-            env["PATH"] = os.pathsep.join(
-                [
-                    str(sdk_root / "cmdline-tools" / "latest" / "bin"),
-                    str(sdk_root / "platform-tools"),
-                    env["PATH"],
-                ]
-            )
+            configure_android_sdk_env(env, sdk_root)
             if sdk_source:
                 info(f"SDK path source: {sdk_source}")
             if args.auto_sdk and not args.skip_sdk_install:
@@ -2444,6 +2935,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             offline=args.offline,
             env=env,
             dry_run=args.dry_run,
+            arm_build_tools_provider=args.arm_build_tools_provider,
+            allow_managed_fallback=args.sdk_root is None,
         )
 
     aapt2: Path | None = None

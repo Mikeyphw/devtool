@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "title": "Devtool validation release failure matrix",
+  "scenarios": [
+    {
+      "id": "user-stop",
+      "expected_state": "paused with the active phase retryable",
+      "automated_tests": [
+        "tests/test_validation_control_api.py::ValidationControlApiTests::test_stop_now_request_is_persisted_for_the_live_attempt"
+      ]
+    },
+    {
+      "id": "pause-after-phase",
+      "expected_state": "pausing until the current phase finishes, then paused at a clean boundary",
+      "automated_tests": [
+        "tests/test_validation_control_api.py::ValidationControlApiTests::test_pause_after_phase_request_is_persisted_for_the_live_attempt"
+      ]
+    },
+    {
+      "id": "android-app-death",
+      "expected_state": "CLI session remains authoritative and Android rejects stale cached updates after relaunch",
+      "automated_tests": [
+        "tests/test_phase31_1_validation_completion.py::test_android_store_rejects_stale_revisions_and_never_deletes_attempt_history"
+      ]
+    },
+    {
+      "id": "termux-death",
+      "expected_state": "dead-owned running phase is recovered as interrupted and retryable",
+      "automated_tests": [
+        "tests/test_validation_sessions.py::ResumableValidationTests::test_dead_owner_running_phase_is_recovered_as_interrupted_and_retryable"
+      ]
+    },
+    {
+      "id": "resource-exit-137",
+      "expected_state": "resource-failed pause with no code-failure verdict",
+      "automated_tests": [
+        "tests/test_validation_sessions.py::ResumableValidationTests::test_resource_failure_pauses_and_keeps_phase_retryable"
+      ]
+    },
+    {
+      "id": "genuine-test-failure",
+      "expected_state": "blocked with the applied tree and rollback point retained",
+      "automated_tests": [
+        "tests/test_validation_sessions.py::ResumableValidationTests::test_attached_deferred_failure_blocks_and_preserves_pending_phases_by_default"
+      ]
+    },
+    {
+      "id": "source-change-during-phase",
+      "expected_state": "successful command result discarded and phase marked stale",
+      "automated_tests": [
+        "tests/test_validation_phase25_27.py::test_phase_success_is_discarded_when_inputs_change_during_attempt"
+      ]
+    },
+    {
+      "id": "plan-change",
+      "expected_state": "unsafe plan drift enters recovery-required until explicitly accepted",
+      "automated_tests": [
+        "tests/test_validation_phase25_27.py::test_required_phase_removal_requires_explicit_acceptance"
+      ]
+    },
+    {
+      "id": "missing-validator",
+      "expected_state": "finalization blocks closed and preserves the transaction",
+      "automated_tests": [
+        "tests/test_validation_sessions.py::ResumableValidationTests::test_missing_deferred_validator_blocks_and_preserves_transaction"
+      ]
+    },
+    {
+      "id": "commit-failure",
+      "expected_state": "validated-uncommitted with validated source retained",
+      "automated_tests": [
+        "tests/test_validation_sessions.py::ResumableValidationTests::test_post_validation_commit_failure_keeps_validated_tree_and_transaction"
+      ]
+    },
+    {
+      "id": "rollback-interruption",
+      "expected_state": "rollback-failed with journal checkpoints available for resume",
+      "automated_tests": [
+        "tests/test_transactions.py::TransactionalApplyTests::test_journaled_rollback_failure_is_resumable"
+      ]
+    },
+    {
+      "id": "stale-notification",
+      "expected_state": "revision and attempt mismatch rejected without mutating the current session",
+      "automated_tests": [
+        "tests/test_phase31_1_validation_completion.py::test_notification_actions_enforce_repository_revision_attempt_and_recovery"
+      ]
+    },
+    {
+      "id": "dry-run-attached",
+      "expected_state": "preview only; session, phases, transaction and rollback data unchanged",
+      "automated_tests": [
+        "tests/test_validation_sessions.py::ResumableValidationTests::test_dry_run_preview_never_creates_or_advances_a_session"
+      ]
+    },
+    {
+      "id": "status-live-owner",
+      "expected_state": "read-only status leaves a live phase owner untouched",
+      "automated_tests": [
+        "tests/test_validation_sessions.py::ResumableValidationTests::test_explicit_recover_does_not_reclaim_a_live_phase_owner"
+      ]
+    },
+    {
+      "id": "keep-changes-abort",
+      "expected_state": "transaction archived as abandoned-kept-changes and repository unlocked",
+      "automated_tests": [
+        "tests/test_validation_sessions.py::ResumableValidationTests::test_abort_keep_changes_detaches_transaction_without_trapping_repo"
+      ]
+    },
+    {
+      "id": "minimum-phase-missing",
+      "expected_state": "session creation or finalization refuses an unreachable required checkpoint",
+      "automated_tests": [
+        "tests/test_validation_phase25_27.py::test_minimum_phase_must_exist_and_pass"
+      ]
+    }
+  ]
+}

@@ -77,13 +77,92 @@ devtool -r "$HOME/Code/app" validate next
 devtool -r "$HOME/Code/app" validate resume --through package
 devtool -r "$HOME/Code/app" validate resume --complete
 devtool -r "$HOME/Code/app" validate status
+devtool -r "$HOME/Code/app" validate recover
 devtool -r "$HOME/Code/app" validate abort
+devtool -r "$HOME/Code/app" validate abort --keep-changes
 ```
 
 The equivalent top-level commands are `start-validation`, `resume-validation`,
-`validation-status`, `validation-finalize`, and `validation-abort`. A failed
-phase is cached and is not repeated while its inputs are unchanged. Use
-`--retry-failed` to retry it explicitly.
+`validation-status`, `validation-finalize`, `validation-recover`,
+`validation-reset`, `validation-accept-plan-change`, and `validation-abort`. A
+failed phase blocks the session while preserving the
+applied tree and rollback point. It is not repeated while its inputs are
+unchanged; use `--retry-failed` after fixing the issue or when an explicit retry
+is appropriate. `validate status` and `validate checkpoint` never reclaim or
+rewrite a live attempt.
+
+
+### Android validation control API
+
+The Android app must consume the stable JSON control surface rather than parse
+terminal prose. Session schema v4 exposes an API-v1 envelope and an append-only
+JSONL event stream:
+
+```bash
+devtool -r "$REPO" validate status --events --json
+devtool -r "$REPO" validate plan --json
+devtool -r "$REPO" validate events --after-event "$CURSOR" --limit 100 --json
+
+devtool -r "$REPO" validate run --scope next --if-revision "$REV" --json
+devtool -r "$REPO" validate run --scope through --through package --if-revision "$REV" --json
+devtool -r "$REPO" validate run --scope selected --phase compile --phase lint --if-revision "$REV" --json
+devtool -r "$REPO" validate run --scope remaining --if-revision "$REV" --json
+
+devtool -r "$REPO" validate pause --after-phase --if-revision "$REV" --json
+devtool -r "$REPO" validate pause --cancel --if-revision "$REV" --json
+devtool -r "$REPO" validate stop --if-revision "$REV" --json
+devtool -r "$REPO" validate retry --if-revision "$REV" --json
+devtool -r "$REPO" validate reset --from compile --if-revision "$REV" --json
+devtool -r "$REPO" validate finalize --if-revision "$REV" --json
+devtool -r "$REPO" validate abort --keep-changes --if-revision "$REV" --json
+devtool -r "$REPO" validate abort --rollback --if-revision "$REV" --json
+devtool -r "$REPO" validate recover --if-revision "$REV" --json
+```
+
+`status`, `plan`, and `events` never acquire the repository run lock or mutate
+the session. `pause` and `stop` write an atomic out-of-band control request, so
+they still work while the validation worker owns that lock. An accepted control
+advances the session revision. A worker with an older in-memory copy merges the
+durable revision before its next heartbeat or phase-result save, preventing a
+revision rollback.
+
+The app should send the revision it most recently rendered. Exit code `3` means
+the action came from stale UI and the app should refresh. Exit `4` means a
+failed phase blocks the session, `5` means recovery is required, and `6` means
+the requested control is not available in the current state. A pending pause or
+stop appears as `effective_state: pausing` or `stopping` without falsifying the
+durable phase verdict.
+
+Events include session creation, phase start/finish, pause/stop requests, blocked
+and validated transitions, reset/plan acceptance, rollback transitions, and
+completion. Poll with the returned `next_event_id`; cursor reads return events
+after that ID in chronological order.
+
+Failure policy for durable validation is explicit:
+
+```bash
+devtool validate continue --failure-action pause      # default, preserve changes and rollback
+devtool validate continue --failure-action rollback   # restore immediately after a code/test failure
+devtool validate continue --failure-action keep       # close transaction and retain unvalidated changes
+```
+
+`--dry-run` previews the selected phases without creating, advancing, or
+finalizing a session. Running phases record PID/process-start ownership. Recovery
+only reclaims owners that are provably dead, so Android status polling cannot
+accidentally reset a live Gradle phase.
+
+Phase selection uses a dependency graph. `--phase package` includes every
+unsatisfied prerequisite. `--phase-only package` is accepted only when all of
+its prerequisites have already passed. A removed required phase, reordered
+graph, or changed phase identity pauses in `recovery-required`; accept a
+reviewed change with `validate accept-plan-change --reason "..."` or restart the
+session. `validation.minimum_phase` is enforced before finalization.
+
+Input fingerprints are tracked by configuration, source, resources, and tests.
+A phase that exits 0 after one of its relevant domains changed is marked stale
+and must run again. `validate reset --from-phase compile` resets Compile and its
+dependents while retaining attempt evidence; `validate reset --all` clears all
+verdicts.
 
 Useful boundaries and guards:
 
@@ -97,10 +176,17 @@ Useful boundaries and guards:
 --require-charging
 --stop-above-temperature 44
 --require-complete
+--max-infrastructure-retries 1
+--max-resource-retries 1
+--no-auto-retry
 ```
 
-Runtime budgets are checked only between phases. Devtool lets the active Gradle
-phase finish, checkpoints it, then pauses. `--stop-gradle-after-phase` reclaims
+Runtime, battery, charging, and thermal guards are checked both between phases
+and while a child process is active. A supervised stop is recorded as a
+retryable timeout/resource/environment attempt, not a code failure. Corroborated
+resource failures may retry with the `android-low-power` profile. Exit 137 is
+not called an out-of-memory failure without supporting guard or output evidence.
+`--stop-gradle-after-phase` reclaims
 daemon memory after every invocation; `--keep-gradle-daemon` keeps the warm JVM.
 The target may set `validation.stop_daemon_after_phase = true` as its default.
 

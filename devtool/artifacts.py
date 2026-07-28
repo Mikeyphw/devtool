@@ -354,6 +354,10 @@ def artifact_validation_policy(manifest: dict[str, Any]) -> dict[str, Any]:
         if mode == "disabled":
             policy.update({"restore": False, "build": False, "test": False})
     policy.setdefault("rollback_on_failure", True)
+    if "failure_action" not in policy:
+        policy["failure_action"] = (
+            "rollback" if "rollback_on_failure" in raw and bool(raw.get("rollback_on_failure")) else "pause"
+        )
     policy.setdefault("allow_deferred", True)
     policy.setdefault("minimum_phase", "finalize")
     minimum_phase = str(policy.get("minimum_phase") or "finalize").strip().lower().replace("_", "-")
@@ -467,6 +471,11 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
     if "rollback_on_failure" in raw and not isinstance(raw.get("rollback_on_failure"), bool):
         ok = False
         messages.append("validation.rollback_on_failure must be a boolean.")
+    if "failure_action" in raw:
+        action = str(raw.get("failure_action") or "").strip().lower()
+        if action not in {"pause", "rollback", "keep", "prompt"}:
+            ok = False
+            messages.append("validation.failure_action must be one of: pause, rollback, keep, prompt.")
     if "test_profile" in raw and not isinstance(raw.get("test_profile"), str):
         ok = False
         messages.append("validation.test_profile must be a string.")
@@ -1143,6 +1152,7 @@ def create_overlay_bundle(
             "required": bool(validation_required),
             "strategy": validation_strategy,
             "rollback_on_failure": True,
+            "failure_action": "pause",
         },
     }
     clean_repository = {str(key): str(value).strip() for key, value in (repository or {}).items() if str(value).strip()}

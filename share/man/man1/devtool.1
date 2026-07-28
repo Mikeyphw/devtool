@@ -70,6 +70,48 @@ Run the runner-specific validation pipeline. Also accepts the optional artifact 
 and
 .B overlays.
 .TP
+.B start-validation " | " sv
+Create a persistent sequential validation session.
+.TP
+.B resume-validation " | " rv
+Resume a persistent validation session.
+.TP
+.B validation-status " | " vs
+Show the active session without mutating or recovering it.
+.TP
+.B validation-plan " | " vplan
+Show the durable phase graph, dependency metadata, checkpoint requirements, and current verdicts.
+.TP
+.B validation-events " | " vevents
+Read append-only validation events, optionally after an event cursor.
+.TP
+.B validation-report " | " vreport
+Show or generate the immutable durable validation report for a session.
+.TP
+.B validation-pause " | " vpause
+Request a pause after the currently running phase. This control does not wait for the repository run lock.
+.TP
+.B validation-stop " | " vstop
+Request immediate termination of the active phase while preserving it as retryable.
+.TP
+.B validation-reset " | " vreset
+Reset one phase and its graph dependents with
+.BR --phase " or " --from-phase ;
+use
+.B --all
+to reset all verdicts while retaining attempt evidence.
+.TP
+.B validation-accept-plan-change " | " vapc
+Accept an incompatible validation graph change with a required
+.BR --reason .
+.TP
+.B validation-recover " | " vrec
+Recover a provably dead phase owner or resume an incomplete rollback.
+.TP
+.B validation-abort " | " va
+Abort and roll back a session, or retain applied changes with
+.BR --keep-changes .
+.TP
 .B validate-all
 Run the runner-specific validation pipeline and continue through independent phases
 after failures so the final summary includes every captured error. Use
@@ -444,6 +486,93 @@ Validate comma-separated runtime IDs, target names, or variants.
 .TP
 .BR --matrix-mode " rid|target|variant"
 Interpret matrix values as runtime IDs, named targets, or build/test variants.
+.SS Durable Android/Gradle validation
+.TP
+.BR --phase " PHASE"
+Run the named phase and every unsatisfied dependency.
+.TP
+.BR --phase-only " PHASE"
+Run exactly one phase only when its prerequisites are already complete.
+.TP
+.BR --through " PHASE"
+Run every eligible phase through the selected checkpoint.
+.TP
+.B --complete
+Run all remaining required phases.
+.TP
+.BR --from-phase " PHASE"
+Start at a phase whose prerequisites are already complete.
+.TP
+.BR --max-infrastructure-retries " COUNT"
+Bound automatic environment/tooling retries per phase.
+.TP
+.BR --max-resource-retries " COUNT"
+Bound corroborated resource retries per phase. Resource retries may use the Android low-power profile.
+.TP
+.B --no-auto-retry
+Disable automatic environment and resource retries.
+.TP
+.BR --max-runtime " DURATION"
+Supervise the active child and pause when the invocation budget is reached.
+.TP
+.BR --stop-below-battery " PERCENT"
+Pause before or during a phase when the Android battery is too low.
+.TP
+.B --require-charging
+Pause unless the Android device is charging.
+.TP
+.BR --stop-above-temperature " CELSIUS"
+Pause before or during a phase when the device exceeds the thermal limit.
+.PP
+Durable sessions store an explicit dependency graph and independent configuration, source, resource, and test fingerprints. A successful command is discarded as stale if relevant inputs change while it runs. Artifact minimum phases are enforced at creation and finalization. Unsafe graph drift requires
+.B validation-accept-plan-change --reason
+or a session restart.
+.SS Stable validation control API
+Schema-v4 sessions expose API-v1 JSON envelopes for Android and automation clients. Use nested forms such as:
+.PP
+.nf
+  devtool validate status --json
+  devtool validate plan --json
+  devtool validate events --after-event EVENT_ID --json
+  devtool validate report --json
+  devtool validate run --scope next --if-revision REV --json
+  devtool validate run --scope through --through package --if-revision REV --json
+  devtool validate run --scope selected --phase compile --phase lint --if-revision REV --json
+  devtool validate run --scope remaining --if-revision REV --json
+  devtool validate pause --after-phase --if-revision REV --json
+  devtool validate pause --cancel --if-revision REV --json
+  devtool validate stop --if-revision REV --json
+.fi
+.TP
+.BR --session " ID"
+Address a specific durable validation session instead of the active session.
+.TP
+.BR --if-revision " REV"
+Apply a mutation only when the durable session revision matches. Accepted controls advance the revision; liveness heartbeats do not.
+.TP
+.BR --scope " next|through|selected|remaining"
+Choose the stable run scope. Selected phases include unmet dependency closure.
+.TP
+.B --json
+Emit one API-v1 validation-control envelope.
+.TP
+.BR --machine " pretty|compact"
+Emit the same envelope using pretty or compact JSON formatting.
+.TP
+.BR --machine-file " PATH"
+Mirror the exact JSON envelope to a file without adding status prose to stdout.
+.TP
+.BR --after-event " EVENT_ID"
+Return durable events after a previously received cursor.
+.TP
+.BR --event-limit " COUNT"
+Bound event records included with status.
+.PP
+Status, plan, and event reads are non-mutating. Pause and stop publish atomic out-of-band requests while the validator owns the repository lock. Machine abort requires an explicit
+.B --keep-changes
+or
+.B --rollback
+choice.
 .PP
 Normal .NET validation is optimized as:
 .PP
@@ -507,7 +636,16 @@ Explicitly delete a failed source artifact. By default failed artifacts are pres
 retry and diagnosis.
 .TP
 .B --no-rollback-on-failure
-Disable rollback when an apply or its validation fails.
+Disable rollback when an immediate apply or its non-resumable validation fails.
+.TP
+.BR --failure-action " pause|rollback|keep|prompt"
+Choose the result of a deferred or sequential validation failure. The default is
+.B pause,
+which preserves both the applied tree and rollback point. Use
+.B rollback
+for immediate verified restoration or
+.B keep
+to close the transaction while retaining changes without a successful verdict.
 .TP
 .BR --commit " MESSAGE"
 Commit after successful apply and optional validation.
@@ -528,10 +666,17 @@ and
 .B --tag
 also apply to artifact validation.
 .SH TRANSACTIONAL APPLY AND EVIDENCE
-Before mutation, devtool backs up paths touched by the artifact. If extraction, validation,
-artifact verification, commit preparation, or interruption fails, those paths are restored.
-The final result retains the original failed phase while recording whether rollback
-succeeded.
+Before mutation, devtool backs up paths touched by the artifact. Immediate apply failures
+retain the traditional rollback behavior. Deferred and sequential validation failures block
+and preserve the applied tree plus rollback point unless an explicit rollback policy is
+selected. Commit failure after successful validation leaves the session validated but
+uncommitted.
+.PP
+Rollback uses a per-path journal. Existing content is restored through staged, hash-verified,
+atomic replacements; newly added paths are quarantined and verified absent. Interrupted
+rollback remains active and can be resumed with
+.B devtool validate recover.
+Status, checkpoint, and validation dry-run operations do not mutate durable session state.
 .PP
 Validation logs, machine reports, test results, lint diagnostics, and artifact evidence are
 stored outside the repository before rollback. Generated build/cache directories are not
@@ -540,6 +685,48 @@ transaction content. Failed input artifacts are preserved by default.
 Runner cleanup is performed in a finalization step. .NET invokes
 .BR "dotnet build-server shutdown" ;
 Gradle stops scoped daemons; Python runner-created subprocesses are terminated.
+.SH RESUMABLE VALIDATION
+Deferred and sequential validation is persisted as a dependency graph. Each phase records
+its prerequisite keys, required/optional status, scope, input domains, and attempt history.
+Selecting a phase with
+.B --phase
+includes every unmet prerequisite. Selecting it with
+.B --phase-only
+refuses to run when a prerequisite is not already complete.
+.PP
+Use
+.B devtool validate reset --from-phase PHASE
+to reset a phase and all graph dependents while retaining attempt evidence, or
+.B devtool validate reset --all
+to reset every verdict. Unsafe plan drift, including removal of a required phase, phase
+reordering, or identity/scope changes, enters recovery-required state. Review the new plan
+and use
+.B devtool validate accept-plan-change --reason REASON
+for an audited acceptance, or restart the session. The equivalent top-level controls are
+.B validation-reset
+and
+.B validation-accept-plan-change.
+.PP
+The artifact
+.B validation.minimum_phase
+checkpoint is enforced when the session is created and when it is finalized. Configuration,
+source, resource, and test inputs are fingerprinted independently. A phase result is discarded
+as stale when one of its relevant input domains changes while that phase is running.
+.PP
+Validation attempts distinguish code and test failures from user interruption, timeout,
+toolchain gaps, environment loss, and corroborated resource pressure. Active phases publish
+heartbeats and enforce runtime, battery, charging, and thermal guards while the child process
+is running. Exit 137 without supporting resource evidence is treated as an environment
+interruption rather than being labeled out-of-memory.
+.PP
+.B --max-infrastructure-retries COUNT
+and
+.B --max-resource-retries COUNT
+bound automatic retries per phase. Corroborated resource failures may retry with the
+.B android-low-power
+profile. Use
+.B --no-auto-retry
+for manual-only retry control.
 .SH ANDROID AND GRADLE
 The Android runner integrates the same backend used by the
 .B build-apk
@@ -686,8 +873,6 @@ The former standalone notification, Tasker, and multi-run lease options are not 
 and
 .BR --no-wait .
 .SH EXIT STATUS
-Zero indicates success. Non-zero indicates command failure, validation failure, invalid
-configuration/artifact, unsupported execution environment, interruption, or rollback/recovery
-that requires the requested operation to be rerun.
+Zero indicates success or an accepted validation-control request. For the stable validation control API, 2 means invalid request, 3 stale session revision, 4 a blocked validation session, 5 recovery required, and 6 control unavailable in the current state. Other non-zero values indicate command failure, invalid configuration/artifact, unsupported execution environment, interruption, or rollback/recovery that requires the requested operation to be rerun.
 .SH AUTHOR
 OpenAI

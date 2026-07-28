@@ -91,7 +91,7 @@ def test_phase7_redactor_removes_tokens_credentials_and_private_keys(tmp_path: P
 def test_phase7_version_contract() -> None:
     build = (APP / "app" / "build.gradle").read_text(encoding="utf-8")
     versions = json.loads((ROOT / "release" / "versions.json").read_text(encoding="utf-8"))
-    assert "versionCode 27" in build
-    assert "versionName '1.14.0'" in build
-    assert versions["android"]["version_name"] == "1.14.0"
-    assert versions["android"]["version_code"] == 27
+    assert "versionCode 30" in build
+    assert "versionName '1.16.0'" in build
+    assert versions["android"]["version_name"] == "1.16.0"
+    assert versions["android"]["version_code"] == 30

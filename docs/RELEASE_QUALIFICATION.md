@@ -88,3 +88,21 @@ prefix. It writes `release-artifacts.json` and `SHA256SUMS` next to the archive.
 
 Failure jobs retain logs, UI snapshots, lint output, test reports, and native
 build diagnostics as CI artifacts.
+
+## Validation reporting release gate
+
+Phases 32–33 add an explicit validation release seal:
+
+```bash
+python3 tools/validate-validation-release.py
+```
+
+The tool validates `docs/validation-release-scenarios.json`, runs every mapped failure scenario, checks validation report persistence and Android history/report contracts, then executes the portable release qualification. On the release machine, require the native Android gate:
+
+```bash
+python3 tools/validate-validation-release.py --require-android --device-tests
+```
+
+The portable source gate cannot substitute for Android lint, unit tests, signed APK verification, or connected instrumentation. Missing Android SDK components are a release failure whenever `--require-android` is set.
+
+- The complete Python regression inventory runs in four deterministic balanced pytest groups to isolate hangs while preserving complete coverage.

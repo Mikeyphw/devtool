@@ -5,7 +5,12 @@ ROOT=$(cd -- "$(dirname -- "$0")" && pwd)
 PREFIX="${PREFIX:-$HOME/.local}"
 BIN_DIR="$PREFIX/bin"
 MAN_DIR="$PREFIX/share/man/man1"
-ZSH_DIR="$PREFIX/share/zsh/site-functions"
+SYSTEM_ZSH_DIR="$PREFIX/share/zsh/site-functions"
+DOTCLI_ZSH_DIR="$HOME/.local/share/dotcli/dotfiles/common/completions"
+ZSH_DIR="$SYSTEM_ZSH_DIR"
+ZSH_DIR_SOURCE="system"
+ZSH_FPATH_STATUS="unchecked"
+ZSH_FPATH_MATCH=""
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 INSTALLER_STATE_DIR="$STATE_HOME/devtool/installer"
 
@@ -87,7 +92,9 @@ while (($#)); do
       PREFIX="$2"
       BIN_DIR="$PREFIX/bin"
       MAN_DIR="$PREFIX/share/man/man1"
-      ZSH_DIR="$PREFIX/share/zsh/site-functions"
+      SYSTEM_ZSH_DIR="$PREFIX/share/zsh/site-functions"
+      ZSH_DIR="$SYSTEM_ZSH_DIR"
+      ZSH_DIR_SOURCE="system"
       shift 2
       ;;
     --dry-run) DRY_RUN=true; shift ;;
@@ -110,6 +117,90 @@ run() {
   printf '%q ' "$@"
   printf '\n'
   "$DRY_RUN" || "$@"
+}
+
+# DEVTOOL_COMPLETION_PATH_PATCH_V2
+detect_zsh_fpath() {
+  local match
+  ZSH_FPATH_MATCH=""
+
+  if ! command -v zsh >/dev/null 2>&1; then
+    ZSH_FPATH_STATUS="zsh-unavailable"
+    return
+  fi
+
+  # Canonical comparison recognizes aliases and symlinks such as:
+  # ~/.completions/common -> DotCLI's managed completion directory.
+  if match=$(
+    DEVTOOL_COMPLETION_DIR="$ZSH_DIR" zsh -lic '
+      target=${DEVTOOL_COMPLETION_DIR:A}
+
+      for entry in "${fpath[@]}"; do
+        if [[ ${entry:A} == "$target" ]]; then
+          print -r -u 3 -- "$entry"
+          exit 0
+        fi
+      done
+
+      exit 1
+    ' 3>&1 >/dev/null 2>/dev/null
+  ); then
+    ZSH_FPATH_STATUS="present"
+    ZSH_FPATH_MATCH="$match"
+  else
+    ZSH_FPATH_STATUS="missing"
+  fi
+}
+
+print_zsh_fpath_status() {
+  case "$ZSH_FPATH_STATUS" in
+    present)
+      printf '  Zsh fpath:         already configured via %s\n' \
+        "$ZSH_FPATH_MATCH"
+      ;;
+    missing)
+      printf '  Zsh fpath:         selected directory is not currently present\n'
+      ;;
+    zsh-unavailable)
+      printf '  Zsh fpath:         not checked because zsh is unavailable\n'
+      ;;
+    *)
+      printf '  Zsh fpath:         not checked\n'
+      ;;
+  esac
+}
+
+install_zsh_completion() {
+  ZSH_DIR="$SYSTEM_ZSH_DIR"
+  ZSH_DIR_SOURCE="system"
+
+  if run mkdir -p "$SYSTEM_ZSH_DIR" &&
+     run install -m 0644 \
+       "$ROOT/completions/_devtool" \
+       "$SYSTEM_ZSH_DIR/_devtool"
+  then
+    :
+  else
+    ZSH_DIR="$DOTCLI_ZSH_DIR"
+    ZSH_DIR_SOURCE="DotCLI fallback"
+
+    printf \
+      'warning: could not install the Zsh completion in the system path: %s\n' \
+      "$SYSTEM_ZSH_DIR" >&2
+    printf \
+      'warning: falling back to DotCLI: %s\n' \
+      "$DOTCLI_ZSH_DIR" >&2
+
+    run mkdir -p "$DOTCLI_ZSH_DIR"
+    run install -m 0644 \
+      "$ROOT/completions/_devtool" \
+      "$DOTCLI_ZSH_DIR/_devtool"
+  fi
+
+  detect_zsh_fpath
+  printf '  Zsh completion:    %s (%s)\n' \
+    "$ZSH_DIR" "$ZSH_DIR_SOURCE"
+  print_zsh_fpath_status
 }
 
 shell_join() {
@@ -318,11 +409,16 @@ printf 'Installation plan:\n'
 printf '  Core CLI:          %s\n' "$([[ "$INSTALL_CORE" == true ]] && echo install || echo skip)"
 printf '  Native app:        %s\n' "$([[ "$APP_CHOICE" == yes ]] && echo "smart build/install $APP_MODE" || echo skip)"
 printf '  Root bridge module:%s\n' "$([[ "$ROOT_MODULE_CHOICE" == yes ]] && echo ' smart build/install' || echo ' skip')"
-printf '  Clipboard service: %s\n\n' "$([[ "$CLIPBOARD_CHOICE" == yes ]] && echo install/update || echo unchanged)"
+printf '  Clipboard service: %s\n' "$([[ "$CLIPBOARD_CHOICE" == yes ]] && echo install/update || echo unchanged)"
+if "$INSTALL_CORE"; then
+  printf '  Zsh completion:    %s (primary)\n' "$SYSTEM_ZSH_DIR"
+  printf '                     %s (DotCLI fallback)\n' "$DOTCLI_ZSH_DIR"
+fi
+printf '\n'
 
 if "$INSTALL_CORE"; then
   printf '== Core CLI ==\n'
-  run mkdir -p "$BIN_DIR" "$MAN_DIR" "$ZSH_DIR"
+  run mkdir -p "$BIN_DIR" "$MAN_DIR"
   pip_args=(install -e .)
   if [[ "$PREFIX" == "$HOME/.local" ]]; then
     pip_args=(install --user -e .)
@@ -337,7 +433,7 @@ if "$INSTALL_CORE"; then
     (cd "$ROOT" && python3 -m pip "${pip_args[@]}")
   fi
   run install -m 0644 "$ROOT/share/man/man1/devtool.1" "$MAN_DIR/devtool.1"
-  run install -m 0644 "$ROOT/completions/_devtool" "$ZSH_DIR/_devtool"
+  install_zsh_completion
 
   if [[ "$APP_MODE" == android && -f "$ROOT/android/devtool-live-hud/tools/devtool-live-hud" ]]; then
     run install -m 0755 "$ROOT/android/devtool-live-hud/tools/devtool-live-hud" "$BIN_DIR/devtool-live-hud"
@@ -657,5 +753,12 @@ if [[ "$ROOT_MODULE_CHOICE" == yes ]]; then
 fi
 printf '\nShell setup (when not already configured):\n'
 printf '  export PATH="$HOME/.local/bin:$PATH"\n'
-printf '  fpath=("$HOME/.local/share/zsh/site-functions" $fpath)\n'
-printf '  autoload -Uz compinit && compinit\n'
+if "$INSTALL_CORE"; then
+  if [[ "$ZSH_FPATH_STATUS" == present ]]; then
+    printf '  Zsh completion path is already in fpath via: %s\n' \
+      "$ZSH_FPATH_MATCH"
+  else
+    printf '  fpath=(%q $fpath)\n' "$ZSH_DIR"
+  fi
+  printf '  autoload -Uz compinit && compinit\n'
+fi

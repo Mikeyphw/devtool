@@ -100,5 +100,73 @@
     "workspace_card_content_description": true,
     "action_min_height_dp": 48,
     "action_content_descriptions": true
+  },
+  "validation": {
+    "presentation": "validation-session",
+    "phase_rows": [
+      "previous",
+      "current",
+      "next"
+    ],
+    "progress": {
+      "system_bar": "overall phase completion",
+      "active_phase": "phase-specific progress or indeterminate",
+      "active_phase_source": "validation phase-progress events"
+    },
+    "rollback_action": "workbench confirmation only",
+    "stale_action_policy": "open current workbench state without mutation",
+    "action_identity": [
+      "session_id",
+      "revision",
+      "attempt_id",
+      "repository_id"
+    ],
+    "actions": {
+      "running": [
+        "Open",
+        "Pause after phase",
+        "Stop now"
+      ],
+      "pausing": [
+        "Open",
+        "Keep running",
+        "Stop now"
+      ],
+      "paused": [
+        "Resume",
+        "Change scope",
+        "Open"
+      ],
+      "blocked": [
+        "Review",
+        "Retry phase",
+        "Copy failure"
+      ],
+      "resource_paused": [
+        "Retry safely",
+        "Open",
+        "Copy status"
+      ],
+      "validated": [
+        "Open report",
+        "Copy summary",
+        "Dismiss"
+      ],
+      "validated_uncommitted": [
+        "Fix commit",
+        "Copy error",
+        "Open"
+      ],
+      "recovery_required": [
+        "Recover",
+        "Open",
+        "Copy status"
+      ]
+    },
+    "action_identity_guards": [
+      "session revision",
+      "repository identity",
+      "active attempt id"
+    ]
   }
 }

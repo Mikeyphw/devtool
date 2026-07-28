@@ -14,7 +14,7 @@ import java.util.Set;
 
 final class DevtoolDatabase extends SQLiteOpenHelper {
     private static final String NAME = "devtool_android.db";
-    private static final int VERSION = 6;
+    private static final int VERSION = 9;
 
     static int schemaVersion() { return VERSION; }
     private static volatile DevtoolDatabase instance;
@@ -102,6 +102,8 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
                 + "byte_offset INTEGER NOT NULL DEFAULT 0, size_bytes INTEGER NOT NULL DEFAULT 0, modified_at INTEGER NOT NULL DEFAULT 0,"
                 + "parser_type TEXT NOT NULL DEFAULT 'text', partial_line TEXT NOT NULL DEFAULT '', last_scan_at INTEGER NOT NULL DEFAULT 0,"
                 + "PRIMARY KEY(source_id, path))");
+
+        createValidationTables(db);
     }
 
     @Override
@@ -144,6 +146,103 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
             db.execSQL("CREATE INDEX IF NOT EXISTS runs_retention_idx ON runs(pinned, status, updated_at_ms DESC)");
             db.execSQL("CREATE INDEX IF NOT EXISTS repository_operations_retention_idx ON repository_operations(state, finished_at)");
         }
+        if (oldVersion < 7) {
+            createValidationTables(db);
+        }
+        if (oldVersion < 8) {
+            addColumn(db, "validation_sessions", "executor_kind TEXT NOT NULL DEFAULT 'native-termux'");
+            addColumn(db, "validation_sessions", "executor_name TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "executor_transport TEXT NOT NULL DEFAULT 'termux'");
+            addColumn(db, "validation_sessions", "executor_workdir TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "executor_linux_user TEXT NOT NULL DEFAULT 'termux'");
+            addColumn(db, "validation_sessions", "rollback_status TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "rollback_error TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "rollback_total_paths INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "validation_sessions", "rollback_verified_paths INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "validation_sessions", "rollback_backup_healthy INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "validation_sessions", "uncommitted_changes INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "validation_phases", "progress_detail TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_phases", "progress_completed INTEGER NOT NULL DEFAULT -1");
+            addColumn(db, "validation_phases", "progress_total_value INTEGER NOT NULL DEFAULT -1");
+            addColumn(db, "validation_phases", "progress_unit TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_phases", "progress_updated_at TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_phases", "workspace TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_phases", "command_json TEXT NOT NULL DEFAULT '[]'");
+            addColumn(db, "validation_phases", "signal INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "validation_phases", "issues_json TEXT NOT NULL DEFAULT '[]'");
+            addColumn(db, "validation_phases", "classification_evidence_json TEXT NOT NULL DEFAULT '[]'");
+            addColumn(db, "validation_phases", "supervisor_events_json TEXT NOT NULL DEFAULT '[]'");
+            addColumn(db, "validation_phases", "input_snapshot_before_json TEXT NOT NULL DEFAULT '{}'");
+            addColumn(db, "validation_phases", "input_snapshot_after_json TEXT NOT NULL DEFAULT '{}'");
+            addColumn(db, "validation_attempts", "session_revision INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "validation_attempts", "signal INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "validation_attempts", "argv_json TEXT NOT NULL DEFAULT '[]'");
+            addColumn(db, "validation_attempts", "issues_json TEXT NOT NULL DEFAULT '[]'");
+            addColumn(db, "validation_attempts", "input_snapshot_before_json TEXT NOT NULL DEFAULT '{}'");
+            addColumn(db, "validation_attempts", "input_snapshot_after_json TEXT NOT NULL DEFAULT '{}'");
+            addColumn(db, "validation_attempts", "classification_evidence_json TEXT NOT NULL DEFAULT '[]'");
+            addColumn(db, "validation_attempts", "supervisor_events_json TEXT NOT NULL DEFAULT '[]'");
+            addColumn(db, "validation_attempts", "resource_profile TEXT NOT NULL DEFAULT ''");
+        }
+        if (oldVersion < 9) {
+            addColumn(db, "validation_sessions", "report_path TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "report_generated_at TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "final_verdict TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "commit_status TEXT NOT NULL DEFAULT 'not-requested'");
+            addColumn(db, "validation_sessions", "commit_hash TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "initial_git_head TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "final_git_head TEXT NOT NULL DEFAULT ''");
+            addColumn(db, "validation_sessions", "report_warnings INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "validation_sessions", "report_errors INTEGER NOT NULL DEFAULT 0");
+        }
+    }
+
+    private static void addColumn(SQLiteDatabase db, String table, String declaration) {
+        try { db.execSQL("ALTER TABLE " + table + " ADD COLUMN " + declaration); }
+        catch (android.database.SQLException ignored) {}
+    }
+
+    private static void createValidationTables(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS validation_sessions ("
+                + "session_id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, effective_state TEXT NOT NULL,"
+                + "repo_root TEXT NOT NULL, project_root TEXT NOT NULL, repository_id TEXT NOT NULL DEFAULT '', project_type TEXT NOT NULL DEFAULT 'auto',"
+                + "target TEXT NOT NULL DEFAULT '', variant TEXT NOT NULL DEFAULT '', artifact TEXT NOT NULL DEFAULT '', validation_mode TEXT NOT NULL DEFAULT 'standalone',"
+                + "execution_environment TEXT NOT NULL DEFAULT 'native-termux', failure_action TEXT NOT NULL DEFAULT 'pause', resource_profile TEXT NOT NULL DEFAULT 'automatic',"
+                + "required_checkpoint_name TEXT NOT NULL DEFAULT 'finalize', recommended_retry_profile TEXT NOT NULL DEFAULT '', transaction_path TEXT NOT NULL DEFAULT '',"
+                + "paused_reason TEXT NOT NULL DEFAULT '', invalidated_from TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '', last_message TEXT NOT NULL DEFAULT '',"
+                + "last_reason TEXT NOT NULL DEFAULT '', latest_event_id TEXT NOT NULL DEFAULT '', scope_mode TEXT NOT NULL DEFAULT 'next', scope_through TEXT NOT NULL DEFAULT '',"
+                + "scope_selected_json TEXT NOT NULL DEFAULT '[]', created_at_ms INTEGER NOT NULL DEFAULT 0, updated_at_ms INTEGER NOT NULL DEFAULT 0,"
+                + "recovery_available INTEGER NOT NULL DEFAULT 0, required_checkpoint_satisfied INTEGER NOT NULL DEFAULT 0,"
+                + "completed_phases INTEGER NOT NULL DEFAULT 0, phase_total INTEGER NOT NULL DEFAULT 0,"
+                + "executor_kind TEXT NOT NULL DEFAULT 'native-termux', executor_name TEXT NOT NULL DEFAULT '', executor_transport TEXT NOT NULL DEFAULT 'termux',"
+                + "executor_workdir TEXT NOT NULL DEFAULT '', executor_linux_user TEXT NOT NULL DEFAULT 'termux', rollback_status TEXT NOT NULL DEFAULT '',"
+                + "rollback_error TEXT NOT NULL DEFAULT '', rollback_total_paths INTEGER NOT NULL DEFAULT 0, rollback_verified_paths INTEGER NOT NULL DEFAULT 0,"
+                + "rollback_backup_healthy INTEGER NOT NULL DEFAULT 0, uncommitted_changes INTEGER NOT NULL DEFAULT 0,"
+                + "report_path TEXT NOT NULL DEFAULT '', report_generated_at TEXT NOT NULL DEFAULT '', final_verdict TEXT NOT NULL DEFAULT '',"
+                + "commit_status TEXT NOT NULL DEFAULT 'not-requested', commit_hash TEXT NOT NULL DEFAULT '', initial_git_head TEXT NOT NULL DEFAULT '',"
+                + "final_git_head TEXT NOT NULL DEFAULT '', report_warnings INTEGER NOT NULL DEFAULT 0, report_errors INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS validation_sessions_active_idx ON validation_sessions(state, updated_at_ms DESC)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS validation_phases ("
+                + "session_id TEXT NOT NULL, phase_key TEXT NOT NULL, name TEXT NOT NULL, label TEXT NOT NULL, phase_index INTEGER NOT NULL, phase_total INTEGER NOT NULL,"
+                + "status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_verdict TEXT NOT NULL DEFAULT '', current_attempt_id TEXT NOT NULL DEFAULT '',"
+                + "failure_summary TEXT NOT NULL DEFAULT '', log_path TEXT NOT NULL DEFAULT '', invalidated_reason TEXT NOT NULL DEFAULT '', dependencies_json TEXT NOT NULL DEFAULT '[]',"
+                + "input_domains_json TEXT NOT NULL DEFAULT '[]', duration_ms INTEGER NOT NULL DEFAULT 0, progress INTEGER NOT NULL DEFAULT 0,"
+                + "progress_detail TEXT NOT NULL DEFAULT '', progress_completed INTEGER NOT NULL DEFAULT -1, progress_total_value INTEGER NOT NULL DEFAULT -1,"
+                + "progress_unit TEXT NOT NULL DEFAULT '', progress_updated_at TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', command_json TEXT NOT NULL DEFAULT '[]',"
+                + "signal INTEGER NOT NULL DEFAULT 0, issues_json TEXT NOT NULL DEFAULT '[]', classification_evidence_json TEXT NOT NULL DEFAULT '[]',"
+                + "supervisor_events_json TEXT NOT NULL DEFAULT '[]', input_snapshot_before_json TEXT NOT NULL DEFAULT '{}', input_snapshot_after_json TEXT NOT NULL DEFAULT '{}',"
+                + "required INTEGER NOT NULL DEFAULT 1, supports_progress INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(session_id, phase_key),"
+                + "FOREIGN KEY(session_id) REFERENCES validation_sessions(session_id) ON DELETE CASCADE)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS validation_phases_order_idx ON validation_phases(session_id, phase_index)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS validation_attempts ("
+                + "session_id TEXT NOT NULL, phase_key TEXT NOT NULL, attempt_id TEXT NOT NULL, verdict TEXT NOT NULL DEFAULT '', failure_kind TEXT NOT NULL DEFAULT '',"
+                + "category TEXT NOT NULL DEFAULT '', return_code INTEGER NOT NULL DEFAULT -1, duration_ms INTEGER NOT NULL DEFAULT 0, output_tail TEXT NOT NULL DEFAULT '',"
+                + "log_path TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL DEFAULT '', finished_at TEXT NOT NULL DEFAULT '', recommended_profile TEXT NOT NULL DEFAULT '',"
+                + "session_revision INTEGER NOT NULL DEFAULT 0, signal INTEGER NOT NULL DEFAULT 0, argv_json TEXT NOT NULL DEFAULT '[]', issues_json TEXT NOT NULL DEFAULT '[]',"
+                + "input_snapshot_before_json TEXT NOT NULL DEFAULT '{}', input_snapshot_after_json TEXT NOT NULL DEFAULT '{}', classification_evidence_json TEXT NOT NULL DEFAULT '[]',"
+                + "supervisor_events_json TEXT NOT NULL DEFAULT '[]', resource_profile TEXT NOT NULL DEFAULT '', retryable INTEGER NOT NULL DEFAULT 0,"
+                + "automatic_retry INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(session_id, phase_key, attempt_id),"
+                + "FOREIGN KEY(session_id, phase_key) REFERENCES validation_phases(session_id, phase_key) ON DELETE CASCADE)");
     }
 
     synchronized void upsertRun(RunRecord run) {

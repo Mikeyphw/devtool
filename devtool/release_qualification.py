@@ -131,6 +131,7 @@ def qt_available() -> bool:
 
 def _run(gate: str, command: Sequence[str], root: Path, logs: Path, *, required: bool,
          timeout: int = 1800, environment: Mapping[str, str] | None = None) -> GateResult:
+    import signal
     import time
 
     logs.mkdir(parents=True, exist_ok=True)
@@ -139,23 +140,34 @@ def _run(gate: str, command: Sequence[str], root: Path, logs: Path, *, required:
     env = os.environ.copy()
     if environment:
         env.update(environment)
-    try:
-        completed = subprocess.run(
+    status = "failed"
+    detail = "gate did not run"
+    print(f"[release] starting {gate}", flush=True)
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        process = subprocess.Popen(
             list(command), cwd=root, env=env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            timeout=timeout, check=False,
+            stdout=log_handle, stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
-        output = completed.stdout or ""
-        log_path.write_text(output, encoding="utf-8")
-        status = "passed" if completed.returncode == 0 else "failed"
-        detail = output.strip().splitlines()[-1] if output.strip() else f"exit code {completed.returncode}"
-    except subprocess.TimeoutExpired as error:
-        output = (error.stdout or "") + (error.stderr or "")
-        if isinstance(output, bytes):
-            output = output.decode(errors="replace")
-        log_path.write_text(str(output), encoding="utf-8")
-        status = "failed"
-        detail = f"timed out after {timeout} seconds"
+        try:
+            returncode = process.wait(timeout=timeout)
+            status = "passed" if returncode == 0 else "failed"
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=5)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+            status = "failed"
+            detail = f"timed out after {timeout} seconds"
+    output = log_path.read_text(encoding="utf-8", errors="replace")
+    if not detail.startswith("timed out"):
+        detail = output.strip().splitlines()[-1] if output.strip() else ("passed" if status == "passed" else "command failed")
+    print(f"[release] {gate}: {status} ({round(time.monotonic() - started, 3)}s)", flush=True)
     return GateResult(
         gate=gate,
         status=status,
@@ -203,7 +215,33 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
         detail="versions are consistent" if not errors else "; ".join(errors),
     ))
     report.results.append(_run("python-compile", [sys.executable, "-m", "compileall", "-q", "devtool", "tools"], root, logs, required=True))
-    report.results.append(_run("python-tests", [sys.executable, "-m", "pytest", "-q"], root, logs, required=True))
+    for group in (3, 1, 2, 4):
+        report.results.append(_run(
+            f"python-tests-{group}",
+            [sys.executable, "tools/run-pytest-split.py", "--groups", "4", "--group", str(group), "--group-timeout", "180", "--retries", "1"],
+            root, logs, required=True, timeout=420,
+        ))
+    report.results.append(_run(
+        "validation-release",
+        [sys.executable, "-m", "pytest", "-q",
+         "tests/test_validation_reports_phase32.py",
+         "tests/test_phase33_validation_release_seal.py",
+         "tests/test_validation_sessions.py",
+         "tests/test_validation_phase25_27.py",
+         "tests/test_validation_control_api.py",
+         "tests/test_validation_phase28.py",
+         "tests/test_phase31_1_validation_completion.py"],
+        root, logs, required=True,
+    ))
+    report.results.append(_run(
+        "android-validation-source",
+        [sys.executable, "-m", "pytest", "-q",
+         "tests/test_android_validation_workbench_phase29_31.py",
+         "tests/test_phase31_1_validation_completion.py",
+         "tests/test_android_notification_mock.py",
+         "tests/test_android_app_source.py"],
+        root, logs, required=True,
+    ))
     shell_command = ["bash", "-n", *[str(path.relative_to(root)) for path in shell_entry_points(root)]]
     report.results.append(_run("shell-syntax", shell_command, root, logs, required=True))
 

@@ -71,6 +71,12 @@ class CompletionAndManpageTests(unittest.TestCase):
             "--no-restore",
             "--delete-artifact-on-failure",
             "android-hud-bridge",
+            ".SH RESUMABLE VALIDATION",
+            "validation-reset",
+            "validation-accept-plan-change",
+            "--max-infrastructure-retries",
+            "--max-resource-retries",
+            "--no-auto-retry",
         )
         for token in required:
             with self.subTest(token=token):

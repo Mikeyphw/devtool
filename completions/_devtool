@@ -118,10 +118,26 @@ _devtool_commands() {
     'rv:alias for resume-validation'
     'validation-status:show the active validation session'
     'vs:alias for validation-status'
+    'validation-plan:show the durable validation phase plan'
+    'vplan:alias for validation-plan'
+    'validation-pause:pause after the current phase'
+    'vpause:alias for validation-pause'
+    'validation-stop:stop the current phase and keep it retryable'
+    'vstop:alias for validation-stop'
+    'validation-events:read durable validation events'
+    'vevents:alias for validation-events'
+    'validation-report:show the durable validation report'
+    'vreport:alias for validation-report'
     'validation-finalize:finalize a completed validation session'
     'vf:alias for validation-finalize'
     'validation-abort:abort and optionally roll back a validation session'
     'va:alias for validation-abort'
+    'validation-recover:recover an interrupted phase or resume a rollback'
+    'vrec:alias for validation-recover'
+    'validation-reset:reset a phase and its dependent validation verdicts'
+    'vreset:alias for validation-reset'
+    'validation-accept-plan-change:accept an incompatible validation plan change with an audit reason'
+    'vapc:alias for validation-accept-plan-change'
     'wine-validate:run validation with Wine environment settings'
     'wv:alias for wine-validate'
     'run:run the selected project'
@@ -230,11 +246,11 @@ _devtool_validation_args() {
     '--restart-session[replace an existing non-transactional session]' \
     '--retry-failed[retry the cached failed phase and dependents]' \
     '--next[explicitly run the next pending phase; continue does this by default]' \
-    '--phase[run a named phase plus pending prerequisites]:phase:(static preflight dependencies compile resources unit-test package lint instrumentation finalize)' \
+    '*--phase[run a named phase plus pending prerequisites; repeat for selected scope]:phase:(static preflight dependencies compile resources unit-test package lint instrumentation finalize)' \
     '--phase-only[run exactly one pending phase]:phase:(static preflight dependencies compile resources unit-test package lint instrumentation finalize)' \
     '--through[run pending phases through this phase]:phase:(static preflight dependencies compile resources unit-test package lint instrumentation finalize)' \
     '--complete[run all remaining phases]' \
-    '--from-phase[start this invocation at a named phase]:phase:(static preflight dependencies compile resources unit-test package lint instrumentation finalize)' \
+    '(--from-phase --from)'{--from-phase,--from}'[start this invocation at a named phase]:phase:(static preflight dependencies compile resources unit-test package lint instrumentation finalize)' \
     '--pause-after[pause after a named phase]:phase:(static preflight dependencies compile resources unit-test package lint instrumentation finalize)' \
     '--max-phases[maximum phases for this invocation]:count:' \
     '--max-runtime[pause at a phase boundary after this duration]:duration:' \
@@ -242,14 +258,31 @@ _devtool_validation_args() {
     '--stop-below-battery[pause below this battery percentage]:percent:' \
     '--require-charging[pause unless the Android device is charging]' \
     '--stop-above-temperature[pause above this device temperature]:celsius:' \
+    '--stop-below-disk-mb[pause when repository storage falls below this threshold]:mebibytes:' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phase invocations]' \
     '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
     '--validation-profile[alias for --resource-profile]:profile:(automatic android-low-power standard)' \
+    '--max-infrastructure-retries[automatic environment retries per phase]:count:' \
+    '--max-resource-retries[automatic resource retries per phase]:count:' \
+    '--no-auto-retry[disable automatic environment and resource retries]' \
+    '--all[reset all validation phase verdicts]' \
+    '--reason[audit reason for accepting plan drift]:reason:' \
     '--rollback-on-failure[roll back an attached apply transaction on phase failure]' \
+    '--failure-action[action after sequential validation failure]:action:(pause rollback keep prompt)' \
     '--session[specific validation session ID]:session:' \
+    '--scope[stable run scope]:scope:(next through selected remaining)' \
+    '--if-revision[require this session revision]:revision:' \
+    '--after-phase[pause after the active phase finishes]' \
+    '--cancel[cancel a pending pause-after-phase request]' \
+    '--rollback[explicitly roll back when aborting]' \
+    '--events[include durable events in status JSON]' \
+    '--after-event[return events after this event ID]:event-id:' \
+    '(--event-limit --limit)'{--event-limit,--limit}'[maximum event records]:count:' \
+    '--json[emit the stable validation control envelope]' \
+    '--machine[machine response formatting]:format:(pretty compact)' \
     '--keep-changes[keep repository changes when aborting]' \
-    '1:validation action or artifact scope:(start next resume continue status checkpoint finalize abort overlay overlays)' \
+    '1:validation action or artifact scope:(start next run resume continue retry status checkpoint plan events pause stop finalize abort recover reset accept-plan-change overlay overlays)' \
     '2:artifact:_devtool_artifact_path'
 }
 
@@ -302,11 +335,16 @@ _devtool_apply_args() {
     '--stop-below-battery[pause below this battery percentage]:percent:' \
     '--require-charging[pause unless charging]' \
     '--stop-above-temperature[pause above this temperature]:celsius:' \
+    '--stop-below-disk-mb[pause when repository storage falls below this threshold]:mebibytes:' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phases]' \
     '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
     '--validation-profile[alias for --resource-profile]:profile:(automatic android-low-power standard)' \
+    '--max-infrastructure-retries[automatic environment retries per phase]:count:' \
+    '--max-resource-retries[automatic resource retries per phase]:count:' \
+    '--no-auto-retry[disable automatic environment and resource retries]' \
     '--rollback-on-failure[roll back on validation phase failure]' \
+    '--failure-action[action after sequential validation failure]:action:(pause rollback keep prompt)' \
     '--session[specific validation session ID]:session:' \
     '--commit[commit after successful apply and validation]:message:' \
     '--no-commit[disable a commit requested by the artifact manifest]' \
@@ -371,11 +409,32 @@ _devtool() {
         validate|v|start-validation|sv|resume-validation|rv)
           _devtool_validation_args
           ;;
-        validation-status|vs|validation-finalize|vf)
-          _arguments '--session[specific validation session ID]:session:'
+        validation-status|vs)
+          _arguments '--session[specific validation session ID]:session:' '--events[include durable events]' '--after-event[event cursor]:event-id:' '--event-limit[maximum events]:count:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
+          ;;
+        validation-plan|vplan)
+          _arguments '--session[specific validation session ID]:session:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
+          ;;
+        validation-events|vevents)
+          _arguments '--session[specific validation session ID]:session:' '--after-event[event cursor]:event-id:' '--limit[maximum events]:count:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
+          ;;
+        validation-report|vreport)
+          _arguments '--session[specific validation session ID]:session:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
+          ;;
+        validation-pause|vpause|validation-stop|vstop)
+          _arguments '--session[specific validation session ID]:session:' '--if-revision[require this revision]:revision:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
+          ;;
+        validation-finalize|vf|validation-recover|vrec)
+          _arguments '--session[specific validation session ID]:session:' '--if-revision[require this revision]:revision:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
+          ;;
+        validation-reset|vreset)
+          _arguments '--session[specific validation session ID]:session:' '--phase[reset this phase and dependents]:phase:' '(--from-phase --from)'{--from-phase,--from}'[reset from this phase]:phase:' '--all[reset all validation verdicts]' '--if-revision[require this revision]:revision:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
+          ;;
+        validation-accept-plan-change|vapc)
+          _arguments '--session[specific validation session ID]:session:' '--reason[audit reason for acceptance]:reason:' '--if-revision[require this revision]:revision:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
           ;;
         validation-abort|va)
-          _arguments '--session[specific validation session ID]:session:' '--keep-changes[keep repository changes instead of rolling back]'
+          _arguments '--session[specific validation session ID]:session:' '--keep-changes[keep repository changes instead of rolling back]' '--rollback[explicitly roll back]' '--if-revision[require this revision]:revision:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
           ;;
         validate-all|wine-validate|wv)
           _arguments \

@@ -195,6 +195,63 @@ def _path_kind(path: Path) -> str:
     return "missing"
 
 
+def _hash_path(path: Path) -> str:
+    """Hash files, symlinks, and directory trees for rollback verification."""
+
+    digest = hashlib.sha256()
+    if path.is_symlink():
+        digest.update(b"symlink\0")
+        digest.update(os.readlink(path).encode("utf-8", errors="surrogateescape"))
+        return digest.hexdigest()
+    if path.is_file():
+        digest.update(b"file\0")
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    if path.is_dir():
+        digest.update(b"dir\0")
+        for child in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()):
+            rel = child.relative_to(path).as_posix()
+            digest.update(rel.encode("utf-8", errors="surrogateescape"))
+            digest.update(b"\0")
+            digest.update(_hash_path(child).encode("ascii"))
+            digest.update(b"\0")
+        return digest.hexdigest()
+    digest.update(b"missing\0")
+    return digest.hexdigest()
+
+
+def _copy_path(source: Path, destination: Path) -> None:
+    _delete_path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_symlink():
+        destination.symlink_to(os.readlink(source), target_is_directory=source.is_dir())
+    elif source.is_dir():
+        shutil.copytree(source, destination, symlinks=True, copy_function=shutil.copy2)
+    elif source.is_file():
+        shutil.copy2(source, destination, follow_symlinks=False)
+    else:
+        raise RuntimeError(f"Rollback backup entry is missing: {source}")
+
+
+def _history_dir(repo_root: Path) -> Path:
+    return transaction_root(repo_root) / "history"
+
+
+def _archive_transaction_summary(path: Path, tx: dict[str, Any]) -> None:
+    repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
+    history = _history_dir(repo_root)
+    history.mkdir(parents=True, exist_ok=True)
+    payload = json.loads(json.dumps(tx))
+    payload.pop("backup_dir", None)
+    for item in payload.get("affected_paths", []) or []:
+        if isinstance(item, dict):
+            item.pop("staged_path", None)
+            item.pop("displaced_path", None)
+    _atomic_write_json(history / f"{tx.get('transaction_id') or path.parent.name}.json", payload)
+
+
 def affected_paths_from_preview(preview: dict[str, Any]) -> list[str]:
     paths: list[str] = []
     seen: set[str] = set()
@@ -256,13 +313,20 @@ def create_apply_transaction(
             "path": str(rel),
             "existed": existed,
             "kind": kind,
+            "restore_state": "pending",
+            "backup_sha256": "",
+            "restored_sha256": "",
+            "verified": False,
+            "staged_path": "",
+            "displaced_path": "",
+            "error": "",
         }
         if existed:
             existing.append(str(rel))
         entries.append(entry)
 
     tx = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "active",
         "transaction_id": transaction_id,
         "path": str(_transaction_file(tx_dir)),
@@ -286,6 +350,11 @@ def create_apply_transaction(
     tx["backup_method"] = "none"
     if existing:
         tx["backup_method"] = _backup_existing_paths(repo_root, backup_dir, existing, tx_dir)
+        for entry in entries:
+            if not bool(entry.get("existed")):
+                continue
+            backup_path = backup_dir / _safe_rel(str(entry.get("path") or ""))
+            entry["backup_sha256"] = _hash_path(backup_path)
     tx["status"] = "backup-ready"
     tx["updated_at"] = _utc_now()
     _atomic_write_json(_transaction_file(tx_dir), tx)
@@ -361,7 +430,37 @@ def mark_transaction_completed(transaction_path: str | Path | None) -> None:
     _atomic_write_json(path, tx)
     repo_root = Path(str(tx.get("repo_root") or "."))
     _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
+    _archive_transaction_summary(path, tx)
     # Successful applies no longer leave backup payloads in the repository or XDG tree.
+    _cleanup_transaction_dir(path)
+
+
+def abandon_transaction(
+    transaction_path: str | Path | None,
+    *,
+    reason: str = "validation session discarded while retaining applied changes",
+) -> None:
+    """Close a transaction while deliberately keeping the applied working tree."""
+
+    if not transaction_path:
+        return
+    path = Path(transaction_path)
+    if not path.exists():
+        return
+    tx = _read_json(path)
+    tx.update({
+        "status": "abandoned-kept-changes",
+        "abandon_reason": reason,
+        "abandoned_at": _utc_now(),
+        "updated_at": _utc_now(),
+        "pid": 0,
+        "process_start": "",
+        "run_id": "",
+    })
+    _atomic_write_json(path, tx)
+    repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
+    _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
+    _archive_transaction_summary(path, tx)
     _cleanup_transaction_dir(path)
 
 def _delete_path(path: Path) -> None:
@@ -371,94 +470,251 @@ def _delete_path(path: Path) -> None:
         path.unlink(missing_ok=True)
 
 
-def rollback_transaction(transaction_path: str | Path, *, reason: str = "rollback requested") -> OperationResult:
+def rollback_transaction(
+    transaction_path: str | Path,
+    *,
+    reason: str = "rollback requested",
+    progress_callback=None,
+) -> OperationResult:
+    """Resume a journaled, verified rollback.
+
+    Each affected path is staged beside its destination, verified, then swapped
+    into place. The transaction JSON is checkpointed after every transition so
+    another invocation can continue after process death or storage interruption.
+    """
+
     start = time.perf_counter()
     path = Path(transaction_path)
     if path.name == "active.json" or path.parent.name == "active":
         active = _read_json(path)
         path = Path(str(active.get("path") or ""))
-    argv = ["rsync", "rollback", str(path)]
+    argv = ["transaction", "rollback", str(path)]
+    tx: dict[str, Any] = {}
+
+    def persist() -> None:
+        tx["updated_at"] = _utc_now()
+        _atomic_write_json(path, tx)
+        _write_transaction_active_marker(path, tx)
+
+    def emit_progress(state: str, *, current_path: str = "", completed: int = 0, total: int = 0, error: str = "") -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback({
+                "state": state,
+                "current_path": current_path,
+                "completed_paths": completed,
+                "total_paths": total,
+                "error": error,
+            })
+        except Exception:
+            pass
+
     try:
         tx = _read_json(path)
         repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
         backup_dir = Path(str(tx.get("backup_dir") or path.parent / "backup")).resolve()
-        entries = list(tx.get("affected_paths") or [])
+        entries = [item for item in tx.get("affected_paths", []) or [] if isinstance(item, dict)]
+        tx["schema_version"] = 2
+        tx["status"] = "rollback-requested"
+        tx["rollback_reason"] = reason
+        tx["rollback_started_at"] = str(tx.get("rollback_started_at") or _utc_now())
+        tx["pid"] = os.getpid()
+        tx["process_start"] = _process_start_token(os.getpid())
+        tx["run_id"] = os.environ.get("DEVTOOL_RUN_ID", "")
+        persist()
+        emit_progress("rollback-requested", total=len(entries))
+
         if not entries:
-            # Older/interrupted apply transactions may have been created before
-            # any affected path snapshot was recorded.  There is nothing safe or
-            # useful to restore, but leaving active.json in place blocks every
-            # future apply command.  Treat this as a successful stale-transaction
-            # cleanup: mark it cleared, remove active.json if it points here, and
-            # remove the empty transaction directory.
-            tx["status"] = "cleared-empty"
-            tx["rollback_reason"] = reason
-            tx["rolled_back_at"] = _utc_now()
-            tx["updated_at"] = _utc_now()
+            tx.update({
+                "status": "rolled-back",
+                "rolled_back_at": _utc_now(),
+                "pid": 0,
+                "process_start": "",
+                "run_id": "",
+            })
             _atomic_write_json(path, tx)
             _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
+            _archive_transaction_summary(path, tx)
             output = (
                 "Cleared stale devtool apply transaction.\n"
                 f"reason: {reason}\n"
                 f"transaction: {_relative_to_repo(repo_root, path)}\n"
                 "restored: 0\n"
                 "removed_added_paths: 0\n"
-                "note: transaction had no affected paths recorded, so there was nothing to restore."
+                "note: transaction had no affected paths recorded."
             )
             _cleanup_transaction_dir(path)
             return OperationResult("apply-rollback", argv, 0, time.perf_counter() - start, output, [], failure_kind="rollback")
 
+        transaction_id = str(tx.get("transaction_id") or path.parent.name)
+        token = transaction_id.replace("-", "")[-12:] or uuid.uuid4().hex[:12]
         restored: list[str] = []
         removed: list[str] = []
-        existing: list[str] = []
-        for item in entries:
-            if not isinstance(item, dict):
-                continue
-            rel = _safe_rel(str(item.get("path") or ""))
+        tx["status"] = "rollback-staging"
+        persist()
+        emit_progress("rollback-staging", total=len(entries))
+
+        for entry_index, entry in enumerate(entries, start=1):
+            rel = _safe_rel(str(entry.get("path") or ""))
             target = repo_root / rel
-            if bool(item.get("existed")):
-                existing.append(str(rel))
-                _delete_path(target)
-                restored.append(str(rel))
+            source = backup_dir / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            stage = Path(str(entry.get("staged_path") or "")) if entry.get("staged_path") else target.with_name(f".{target.name}.devtool-rollback-stage-{token}")
+            displaced = Path(str(entry.get("displaced_path") or "")) if entry.get("displaced_path") else target.with_name(f".{target.name}.devtool-rollback-old-{token}")
+            entry["staged_path"] = str(stage)
+            entry["displaced_path"] = str(displaced)
+            entry["error"] = ""
+            state = str(entry.get("restore_state") or "pending")
+
+            if bool(entry.get("existed")):
+                expected = str(entry.get("backup_sha256") or "")
+                if not expected:
+                    expected = _hash_path(source)
+                    entry["backup_sha256"] = expected
+                    persist()
+
+                if state in {"pending", "staging", "rollback-failed"}:
+                    entry["restore_state"] = "staging"
+                    persist()
+                    _delete_path(stage)
+                    _copy_path(source, stage)
+                    actual_stage = _hash_path(stage)
+                    if actual_stage != expected:
+                        raise RuntimeError(
+                            f"Rollback staging verification failed for {rel}: expected {expected}, got {actual_stage}"
+                        )
+                    entry["restore_state"] = "staged"
+                    state = "staged"
+                    persist()
+
+                if state == "staged":
+                    tx["status"] = "rollback-restoring"
+                    persist()
+                    emit_progress("rollback-restoring", current_path=str(rel), completed=entry_index - 1, total=len(entries))
+                    if displaced.exists() or displaced.is_symlink():
+                        # A previous process may already have moved the target.
+                        if target.exists() or target.is_symlink():
+                            raise RuntimeError(f"Ambiguous rollback state for {rel}: target and displaced copy both exist")
+                    elif target.exists() or target.is_symlink():
+                        os.replace(target, displaced)
+                    entry["restore_state"] = "target-displaced"
+                    state = "target-displaced"
+                    persist()
+
+                if state == "target-displaced":
+                    if target.exists() or target.is_symlink():
+                        if stage.exists() or stage.is_symlink():
+                            raise RuntimeError(f"Ambiguous rollback state for {rel}: target and staged copy both exist")
+                    else:
+                        if not (stage.exists() or stage.is_symlink()):
+                            raise RuntimeError(f"Rollback staged copy disappeared for {rel}")
+                        os.replace(stage, target)
+                    entry["restore_state"] = "restored"
+                    state = "restored"
+                    persist()
+
+                if state in {"restored", "verified"}:
+                    actual = _hash_path(target)
+                    entry["restored_sha256"] = actual
+                    if actual != expected:
+                        raise RuntimeError(
+                            f"Rollback verification failed for {rel}: expected {expected}, got {actual}"
+                        )
+                    entry["verified"] = True
+                    entry["restore_state"] = "verified"
+                    persist()
+                    _delete_path(displaced)
+                    _delete_path(stage)
+                    restored.append(str(rel))
+                    emit_progress("rollback-progress", current_path=str(rel), completed=entry_index, total=len(entries))
             else:
-                _delete_path(target)
-                removed.append(str(rel))
+                if state in {"pending", "staging", "staged", "rollback-failed"}:
+                    if displaced.exists() or displaced.is_symlink():
+                        if target.exists() or target.is_symlink():
+                            raise RuntimeError(f"Ambiguous removal state for {rel}: target and quarantine both exist")
+                    elif target.exists() or target.is_symlink():
+                        os.replace(target, displaced)
+                    entry["restore_state"] = "removed"
+                    state = "removed"
+                    persist()
+                if state in {"removed", "verified"}:
+                    if target.exists() or target.is_symlink():
+                        raise RuntimeError(f"Rollback removal verification failed for {rel}")
+                    entry["restored_sha256"] = _hash_path(target)
+                    entry["verified"] = True
+                    entry["restore_state"] = "verified"
+                    persist()
+                    _delete_path(displaced)
+                    _delete_path(stage)
+                    removed.append(str(rel))
+                    emit_progress("rollback-progress", current_path=str(rel), completed=entry_index, total=len(entries))
 
-        rsync_output = ""
-        if existing:
-            list_file = path.parent / "restore-files.list"
-            list_file.write_bytes(b"".join(item.encode("utf-8") + b"\0" for item in existing))
-            rsync_output = _run_rsync([_rsync(), "-a", "--relative", "--files-from", str(list_file), "--from0", str(backup_dir) + "/", str(repo_root) + "/"], cwd=repo_root)
+        tx.update({
+            "status": "rollback-verifying",
+            "pid": os.getpid(),
+            "process_start": _process_start_token(os.getpid()),
+        })
+        persist()
+        emit_progress("rollback-verifying", completed=len(entries), total=len(entries))
+        unverified = [str(item.get("path") or "") for item in entries if not bool(item.get("verified"))]
+        if unverified:
+            raise RuntimeError("Rollback journal contains unverified paths: " + ", ".join(unverified[:20]))
 
-        tx["status"] = "rolled-back"
-        tx["rollback_reason"] = reason
-        tx["rolled_back_at"] = _utc_now()
-        tx["updated_at"] = _utc_now()
+        tx.update({
+            "status": "rolled-back",
+            "rolled_back_at": _utc_now(),
+            "pid": 0,
+            "process_start": "",
+            "run_id": "",
+        })
         _atomic_write_json(path, tx)
         _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
+        _archive_transaction_summary(path, tx)
+        emit_progress("rolled-back", completed=len(entries), total=len(entries))
         output = (
             "Rolled back devtool apply transaction.\n"
             f"reason: {reason}\n"
             f"transaction: {_relative_to_repo(repo_root, path)}\n"
             f"restored: {len(restored)}\n"
-            f"removed_added_paths: {len(removed)}"
+            f"removed_added_paths: {len(removed)}\n"
+            f"verified_paths: {len(entries)}\n"
+            "backup_cleanup: removed"
         )
         if restored:
-            output += "\nrestored_paths:\n" + "\n".join(f"  {p}" for p in restored[:80])
-            if len(restored) > 80:
-                output += f"\n  ... {len(restored) - 80} more"
+            output += "\nrestored_paths:\n" + "\n".join(f"  {item}" for item in restored[:80])
         if removed:
-            output += "\nremoved_paths:\n" + "\n".join(f"  {p}" for p in removed[:80])
-            if len(removed) > 80:
-                output += f"\n  ... {len(removed) - 80} more"
-        if rsync_output.strip():
-            output += "\nrsync:\n" + rsync_output.strip()
-        output += "\nbackup_cleanup: removed"
+            output += "\nremoved_paths:\n" + "\n".join(f"  {item}" for item in removed[:80])
         _cleanup_transaction_dir(path)
         return OperationResult("apply-rollback", argv, 0, time.perf_counter() - start, output, [], failure_kind="rollback")
     except BaseException as exc:
-        output = f"Rollback failed.\ntransaction: {path}\nreason: {reason}\nerror_type: {type(exc).__name__}\nerror: {exc}"
+        if tx:
+            try:
+                tx.update({
+                    "status": "rollback-failed",
+                    "rollback_error": f"{type(exc).__name__}: {exc}",
+                    "rollback_failed_at": _utc_now(),
+                    "pid": 0,
+                    "process_start": "",
+                    "run_id": "",
+                })
+                for item in tx.get("affected_paths", []) or []:
+                    if isinstance(item, dict) and str(item.get("restore_state") or "") not in {"verified"}:
+                        item.setdefault("error", "")
+                _atomic_write_json(path, tx)
+                _write_transaction_active_marker(path, tx)
+            except Exception:
+                pass
+        emit_progress("rollback-failed", total=len(tx.get("affected_paths", []) or []) if tx else 0, error=f"{type(exc).__name__}: {exc}")
+        output = (
+            "Rollback failed and remains resumable.\n"
+            f"transaction: {path}\n"
+            f"reason: {reason}\n"
+            f"error_type: {type(exc).__name__}\n"
+            f"error: {exc}\n"
+            "Run the rollback/recovery command again after correcting the reported problem."
+        )
         return OperationResult("apply-rollback", argv, 1, time.perf_counter() - start, output, [], failure_kind="rollback_failure")
-
 
 def read_transaction(transaction_path: str | Path) -> dict[str, Any]:
     """Read a transaction JSON path or active marker."""
@@ -478,6 +734,14 @@ def transaction_pending_validation(transaction_path: str | Path | None) -> bool:
             "applied-validation-deferred",
             "validation-running",
             "partially-validated",
+            "validation-blocked",
+            "validated",
+            "validated-uncommitted",
+            "rollback-requested",
+            "rollback-staging",
+            "rollback-restoring",
+            "rollback-verifying",
+            "rollback-failed",
         }
     except Exception:
         return False
@@ -520,6 +784,61 @@ def mark_transaction_validation_running(
         "pid": os.getpid(),
         "process_start": _process_start_token(os.getpid()),
         "run_id": os.environ.get("DEVTOOL_RUN_ID", ""),
+        "updated_at": _utc_now(),
+    })
+    _atomic_write_json(path, tx)
+    _write_transaction_active_marker(path, tx)
+
+
+def mark_transaction_validation_blocked(
+    transaction_path: str | Path | None,
+    *,
+    session_id: str,
+    failed_phase: str,
+    verdict: str = "code-failed",
+) -> None:
+    if not transaction_path:
+        return
+    path = Path(transaction_path)
+    if not path.exists():
+        return
+    tx = _read_json(path)
+    tx.update({
+        "status": "validation-blocked",
+        "validation_session_id": session_id,
+        "current_validation_phase": "",
+        "failed_validation_phase": failed_phase,
+        "validation_verdict": verdict,
+        "pid": 0,
+        "process_start": "",
+        "run_id": "",
+        "updated_at": _utc_now(),
+    })
+    _atomic_write_json(path, tx)
+    _write_transaction_active_marker(path, tx)
+
+
+def mark_transaction_validated(
+    transaction_path: str | Path | None,
+    *,
+    session_id: str,
+    commit_pending: bool = False,
+) -> None:
+    if not transaction_path:
+        return
+    path = Path(transaction_path)
+    if not path.exists():
+        return
+    tx = _read_json(path)
+    tx.update({
+        "status": "validated-uncommitted" if commit_pending else "validated",
+        "validation_session_id": session_id,
+        "current_validation_phase": "",
+        "next_validation_phase": "",
+        "validated_at": _utc_now(),
+        "pid": 0,
+        "process_start": "",
+        "run_id": "",
         "updated_at": _utc_now(),
     })
     _atomic_write_json(path, tx)

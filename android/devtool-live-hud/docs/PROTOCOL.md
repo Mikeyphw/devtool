@@ -88,3 +88,26 @@ exitCode
 err
 errmsg
 ```
+
+## Validation control bridge
+
+The Validation Workbench invokes Devtool's API-v1 JSON commands through the same execution owner that created the session. Root-owned sessions use the root bridge; Termux-owned sessions use `RUN_COMMAND` utility execution.
+
+Every mutation carries:
+
+- `session_id`
+- `if_revision`
+- active `attempt_id` when the notification action targets a running attempt
+- repository identity cached by the app
+
+The app persists full status snapshots in `validation_sessions`, `validation_phases`, and `validation_attempts`. Mutation acknowledgements may be sparse; the app retains the previous complete phase snapshot and immediately requests authoritative status.
+
+Supported Workbench controls include scoped run, pause after phase, cancel pending pause, stop now, resume, retry, safe-profile retry, phase/reset-from/reset-all, finalize, recover, keep changes, and explicit rollback.
+
+### Phase 31.1 identity, ordering, and evidence rules
+
+Read-only status and plan calls may repair metadata for a migrated cache entry. Every mutation must match the session's structured executor identity and repository identity. Chroot sessions retain the chroot name, Linux user, working directory, and root-bridge transport; they are never silently rerouted through native Termux.
+
+The SQLite store rejects lower revisions and also rejects older authoritative timestamps at the same revision. Phase and attempt rows are upserted by stable keys; completed attempt evidence is never deleted merely because a sparse response omitted it. Status polling includes durable events, so numeric phase progress and rollback journal progress can update without advancing the control revision.
+
+The Workbench evidence activity renders cached commands, log paths, diagnostics, classifier evidence, supervisor events, input snapshots, output tails, and attempt history. It never reads arbitrary root/chroot files directly; copy actions preserve the authoritative path for use in the owning environment.

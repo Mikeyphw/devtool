@@ -136,5 +136,5 @@ def test_phase4_branch_and_stash_parsers_consume_real_git_nul_output(tmp_path: P
 
 def test_phase4_version_contract() -> None:
     build = (APP / "app" / "build.gradle").read_text(encoding="utf-8")
-    assert "versionCode 27" in build
-    assert "versionName '1.14.0'" in build
+    assert "versionCode 30" in build
+    assert "versionName '1.16.0'" in build

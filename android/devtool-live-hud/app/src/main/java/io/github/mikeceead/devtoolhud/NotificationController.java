@@ -82,7 +82,7 @@ final class NotificationController {
                 .setColor(statusColor(update))
                 .setColorized(false)
                 .setGroup(GROUP_KEY)
-                .setContentIntent(openRunIntent(update.runId))
+                .setContentIntent(update.validationSession() ? openValidationIntent(update.validationSessionId()) : openRunIntent(update.runId))
                 .setCustomContentView(compact)
                 .setCustomBigContentView(expanded)
                 .setCustomHeadsUpContentView(compact)
@@ -287,6 +287,11 @@ final class NotificationController {
 
     private List<ActionSpec> actionsFor(HudUpdate update) {
         List<ActionSpec> result = new ArrayList<>(3);
+        if (update.validationSession()) {
+            ValidationSessionRecord session = ValidationNotificationContext.lookup(update.validationSessionId());
+            if (session == null) session = ValidationStore.find(context, update.validationSessionId());
+            if (session != null) return validationActions(session);
+        }
         String mode = update.notificationMode();
         if (mode.equals("running") || (mode.equals("warning") && !update.isTerminal())) {
             result.add(new ActionSpec("Open log", openLogIntent(update.runId), false));
@@ -320,18 +325,97 @@ final class NotificationController {
         return result;
     }
 
+    private List<ActionSpec> validationActions(ValidationSessionRecord session) {
+        List<ActionSpec> result = new ArrayList<>(3);
+        if (session.recoveryRequired()) {
+            result.add(new ActionSpec("Recover", validationActionIntent(session, ActionReceiver.ACTION_VALIDATION_RECOVER), false));
+            result.add(new ActionSpec("Open", openValidationIntent(session.sessionId), false));
+            result.add(new ActionSpec("Copy status", validationCopyIntent(session), false));
+        } else if (session.effectiveState.equals("pausing")) {
+            result.add(new ActionSpec("Open", openValidationIntent(session.sessionId), false));
+            result.add(new ActionSpec("Keep running", validationActionIntent(session, ActionReceiver.ACTION_VALIDATION_CANCEL_PAUSE), false));
+            result.add(new ActionSpec("Stop now", validationActionIntent(session, ActionReceiver.ACTION_VALIDATION_STOP), true));
+        } else if (session.running()) {
+            result.add(new ActionSpec("Open", openValidationIntent(session.sessionId), false));
+            result.add(new ActionSpec("Pause after phase", validationActionIntent(session, ActionReceiver.ACTION_VALIDATION_PAUSE), false));
+            result.add(new ActionSpec("Stop now", validationActionIntent(session, ActionReceiver.ACTION_VALIDATION_STOP), true));
+        } else if (session.blocked()) {
+            result.add(new ActionSpec("Review", openValidationIntent(session.sessionId), false));
+            result.add(new ActionSpec("Retry phase", validationActionIntent(session, ActionReceiver.ACTION_VALIDATION_RETRY), false));
+            result.add(new ActionSpec("Copy failure", validationCopyIntent(session), false));
+        } else if (session.paused() && !session.recommendedRetryProfile.isEmpty()) {
+            result.add(new ActionSpec("Retry safely", validationActionIntent(session, ActionReceiver.ACTION_VALIDATION_RETRY_SAFE), false));
+            result.add(new ActionSpec("Open", openValidationIntent(session.sessionId), false));
+            result.add(new ActionSpec("Copy status", validationCopyIntent(session), false));
+        } else if (session.paused()) {
+            result.add(new ActionSpec("Resume", validationActionIntent(session, ActionReceiver.ACTION_VALIDATION_RESUME), false));
+            result.add(new ActionSpec("Change scope", openValidationIntent(session.sessionId), false));
+            result.add(new ActionSpec("Open", openValidationIntent(session.sessionId), false));
+        } else if (session.state.equals("validated-uncommitted")) {
+            result.add(new ActionSpec("Fix commit", openValidationIntent(session.sessionId), false));
+            result.add(new ActionSpec("Copy error", validationCopyIntent(session), false));
+            result.add(new ActionSpec("Open", openValidationIntent(session.sessionId), false));
+        } else {
+            result.add(new ActionSpec("Open report", openValidationIntent(session.sessionId), false));
+            result.add(new ActionSpec("Copy summary", validationCopyIntent(session), false));
+            result.add(new ActionSpec("Dismiss", dismissIntent("validation:" + session.sessionId), false));
+        }
+        return result;
+    }
+
+    private PendingIntent openValidationIntent(String sessionId) {
+        Intent intent = new Intent(context, MainActivity.class)
+                .putExtra("open_page", 1)
+                .putExtra("run_section", "validation")
+                .putExtra(ValidationStore.EXTRA_SESSION_ID, sessionId)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        return PendingIntent.getActivity(context, sessionId.hashCode() ^ 0x39a1, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    private PendingIntent validationActionIntent(ValidationSessionRecord session, String action) {
+        ValidationPhaseRecord active = session.activePhase();
+        Intent intent = new Intent(context, ActionReceiver.class)
+                .setAction(action)
+                .putExtra(ValidationStore.EXTRA_SESSION_ID, session.sessionId)
+                .putExtra("expected_revision", session.revision)
+                .putExtra("expected_attempt_id", active == null ? "" : active.currentAttemptId)
+                .putExtra("repository_id", session.repositoryId);
+        return PendingIntent.getBroadcast(context, (session.sessionId + action).hashCode(), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    private PendingIntent validationCopyIntent(ValidationSessionRecord session) {
+        String summary = session.title() + " validation\nState: " + session.state + "\nProgress: "
+                + session.completedPhases + "/" + session.phaseTotal + " phases\n"
+                + (!session.lastError.isEmpty() ? session.lastError : session.lastMessage);
+        Intent intent = new Intent(context, ActionReceiver.class)
+                .setAction(ActionReceiver.ACTION_COPY_SUMMARY)
+                .putExtra("run_id", "validation:" + session.sessionId)
+                .putExtra("summary", summary)
+                .putExtra("toast", session.blocked() ? "Failure copied" : "Validation status copied");
+        return PendingIntent.getBroadcast(context, session.sessionId.hashCode() ^ 0x4b3d, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
     private void refreshGroupSummary() {
         List<RunRecord> active = RunStore.activeAll(context);
-        if (active.size() < 2) {
+        ValidationSessionRecord validation = ValidationStore.active(context);
+        boolean liveValidation = validation != null && !validation.terminal() && !validation.validated();
+        int activeCount = active.size() + (liveValidation ? 1 : 0);
+        if (activeCount < 2) {
             manager.cancel(SUMMARY_NOTIFICATION_ID);
             return;
         }
 
         Notification.InboxStyle style = new Notification.InboxStyle()
-                .setBigContentTitle(active.size() + " active Devtool runs")
-                .setSummaryText("Tap to open run history");
+                .setBigContentTitle(activeCount + " active Devtool runs")
+                .setSummaryText(liveValidation ? "Validation and command activity" : "Tap to open run history");
         int errors = 0;
         int warnings = 0;
+        if (liveValidation) {
+            style.addLine("Validation · " + validation.completedPhases + "/" + validation.phaseTotal + " · " + validation.title());
+        }
         for (int i = 0; i < Math.min(active.size(), 6); i++) {
             RunRecord record = active.get(i);
             String scope = record.target == null || record.target.trim().isEmpty() ? record.repo : record.target;
@@ -343,7 +427,7 @@ final class NotificationController {
         String health = errors > 0 ? errors + " errors" : warnings > 0 ? warnings + " warnings" : "No reported errors";
         Notification summary = new Notification.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_devtool_notification)
-                .setContentTitle(active.size() + " active Devtool runs")
+                .setContentTitle(activeCount + " active Devtool runs")
                 .setContentText(health)
                 .setCategory(Notification.CATEGORY_PROGRESS)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)

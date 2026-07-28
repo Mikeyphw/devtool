@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import io
+import hashlib
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,8 +18,15 @@ from devtool.android_build import (
     default_tasks,
     discover_sdk_root,
     discover_sdk_root_with_source,
+    download,
+    default_build_tools_version,
+    ensure_arm64_build_tools_compatible,
     find_java_home,
     inspect_project,
+    ensure_android_sdk,
+    managed_sdk_root_for_host,
+    native_tool_matches_host,
+    run_sdkmanager_with_progress,
     main as android_build_main,
     run as android_build_run,
     normalize_gradle_arguments,
@@ -123,8 +133,8 @@ class AndroidProjectInspectionTests(unittest.TestCase):
             root = Path(tmp)
             bad_sdk = root / "bad-sdk"
             good_sdk = root / "good-sdk"
-            bad_tool = bad_sdk / "build-tools" / "36.0.0" / "aapt2"
-            good_tool = good_sdk / "build-tools" / "36.0.0" / "aapt2"
+            bad_tool = bad_sdk / "build-tools" / "36.0.0" / "zipalign"
+            good_tool = good_sdk / "build-tools" / "36.0.0" / "zipalign"
             bad_tool.parent.mkdir(parents=True)
             good_tool.parent.mkdir(parents=True)
             # ELF64 x86_64 e_machine = 62.
@@ -133,12 +143,42 @@ class AndroidProjectInspectionTests(unittest.TestCase):
             good_tool.write_bytes(b"\x7fELF" + bytes([2, 1, 1]) + bytes(11) + (183).to_bytes(2, "little") + bytes(64))
             (root / "local.properties").write_text(f"sdk.dir={bad_sdk}\n", encoding="utf-8")
 
-            with patch("devtool.android_build.normalized_machine", return_value="arm64"), patch.dict(
-                os.environ, {"ANDROID_HOME": str(good_sdk)}, clear=False
-            ):
+            def writable(path: Path) -> bool:
+                return path.resolve() != bad_sdk.resolve()
+
+            with patch("devtool.android_build.normalized_machine", return_value="arm64"), patch(
+                "devtool.android_build.sdk_root_is_writable_for_install",
+                side_effect=writable,
+            ), patch.dict(os.environ, {"ANDROID_HOME": str(good_sdk)}, clear=False):
                 discovered = discover_sdk_root_with_source(None, root)
 
         self.assertEqual(discovered, (good_sdk.resolve(), "ANDROID_HOME"))
+
+    def test_writable_incompatible_sdk_is_selected_for_automatic_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sdk_root = root / "sdk"
+            tool = sdk_root / "build-tools" / "36.0.0" / "aidl"
+            tool.parent.mkdir(parents=True)
+            tool.write_bytes(
+                b"\x7fELF"
+                + bytes([2, 1, 1])
+                + bytes(11)
+                + (62).to_bytes(2, "little")
+                + bytes(64)
+            )
+            (root / "local.properties").write_text(
+                f"sdk.dir={sdk_root}\n",
+                encoding="utf-8",
+            )
+
+            with patch("devtool.android_build.normalized_machine", return_value="arm64"), patch(
+                "devtool.android_build.sdk_root_is_writable_for_install",
+                return_value=True,
+            ):
+                discovered = discover_sdk_root_with_source(None, root)
+
+        self.assertEqual(discovered, (sdk_root.resolve(), "local.properties sdk.dir"))
 
     def test_local_properties_sdk_root_is_preferred_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -152,6 +192,255 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         self.assertEqual(discovered, sdk_root.resolve())
         self.assertEqual(discovered_with_source, (sdk_root.resolve(), "local.properties sdk.dir"))
+
+    def test_download_reports_percent_bytes_and_speed(self) -> None:
+        class FakeResponse(io.BytesIO):
+            def __init__(self, payload: bytes) -> None:
+                super().__init__(payload)
+                self.headers = {"Content-Length": str(len(payload))}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                self.close()
+                return False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp) / "archive.zip"
+            payload = b"x" * (512 * 1024)
+            output = io.StringIO()
+            with patch("devtool.android_build.urllib.request.urlopen", return_value=FakeResponse(payload)), redirect_stdout(output):
+                selected = download(
+                    "https://example.invalid/archive.zip",
+                    destination,
+                    offline=False,
+                )
+            downloaded = destination.read_bytes()
+
+        rendered = output.getvalue()
+        self.assertEqual(selected, destination)
+        self.assertEqual(downloaded, payload)
+        self.assertIn("Download progress:", rendered)
+        self.assertIn("100%", rendered)
+        self.assertIn("512.0 KiB / 512.0 KiB", rendered)
+        self.assertIn("/s", rendered)
+
+    def test_sdkmanager_carriage_return_progress_is_flushed_as_lines(self) -> None:
+        script = (
+            "import sys; "
+            "sys.stdout.write('[== 5% Downloading package]\\r'); sys.stdout.flush(); "
+            "sys.stdout.write('[========== 55% Installing package]\\r'); sys.stdout.flush(); "
+            "sys.stdout.write('[================ 100% Done]\\r'); sys.stdout.flush()"
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = run_sdkmanager_with_progress(
+                [sys.executable, "-c", script],
+                env=os.environ,
+                input_text=None,
+                dry_run=False,
+            )
+
+        rendered = output.getvalue()
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("SDK installation progress:   5%", rendered)
+        self.assertIn("SDK installation progress:  55%", rendered)
+        self.assertIn("SDK installation progress: 100%", rendered)
+
+    def test_managed_sdk_uses_architecture_cache_when_default_is_incompatible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_root = Path(tmp)
+            default_sdk = cache_root / "android-sdk"
+            default_sdk.mkdir()
+
+            with patch("devtool.android_build.sdk_host_compatible", return_value=False), patch(
+                "devtool.android_build.normalized_machine", return_value="arm64"
+            ):
+                selected = managed_sdk_root_for_host(cache_root)
+
+        self.assertEqual(selected, (cache_root / "android-sdk-arm64").resolve())
+
+    def test_compile_sdk_36_defaults_to_build_tools_36(self) -> None:
+        project = ProjectInfo(
+            root=Path("/tmp/project"),
+            name="Demo",
+            android=True,
+            android_application=True,
+            compile_sdk=36,
+            build_tools=None,
+            agp_major=9,
+            native_build=False,
+            ndk_version=None,
+            cmake_version=None,
+        )
+
+        self.assertEqual(default_build_tools_version(project), "36.0.0")
+
+    def test_commit451_tools_replace_incompatible_sdk_binaries(self) -> None:
+        x86_header = (
+            b"\x7fELF"
+            + bytes([2, 1, 1])
+            + bytes(11)
+            + (62).to_bytes(2, "little")
+            + bytes(64)
+        )
+        arm_header = (
+            b"\x7fELF"
+            + bytes([2, 1, 1])
+            + bytes(11)
+            + (183).to_bytes(2, "little")
+            + bytes(64)
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sdk_root = root / "sdk"
+            cache_root = root / "cache"
+            build_tools = sdk_root / "build-tools" / "36.0.0"
+            build_tools.mkdir(parents=True)
+            payloads = {
+                name: arm_header + name.encode("ascii")
+                for name in ("aidl", "zipalign", "split-select")
+            }
+            for name in payloads:
+                target = build_tools / name
+                target.write_bytes(x86_header + name.encode("ascii"))
+                target.chmod(0o755)
+
+            manifest = "\n".join(
+                f"{hashlib.sha256(payload).hexdigest()}  {name}"
+                for name, payload in payloads.items()
+            ) + "\n"
+
+            def fake_download(url: str, destination: Path, **kwargs) -> Path:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if url.endswith("/SHA256SUMS"):
+                    destination.write_text(manifest, encoding="utf-8")
+                else:
+                    name = url.rsplit("/", 1)[-1]
+                    destination.write_bytes(payloads[name])
+                return destination
+
+            output = io.StringIO()
+            with patch("devtool.android_build.normalized_machine", return_value="arm64"), patch(
+                "devtool.android_build.download",
+                side_effect=fake_download,
+            ), redirect_stdout(output):
+                ensure_arm64_build_tools_compatible(
+                    sdk_root,
+                    "36.0.0",
+                    cache_root,
+                    provider="auto",
+                    offline=False,
+                    force=False,
+                    dry_run=False,
+                )
+
+            for name in payloads:
+                self.assertTrue(native_tool_matches_host(build_tools / name, "arm64"))
+                self.assertTrue((build_tools / f"{name}.google-x86_64").is_file())
+            self.assertIn("Repairing Android Build Tools 36.0.0 for ARM64", output.getvalue())
+
+    def test_arm_build_tools_provider_can_be_disabled(self) -> None:
+        args = parse_args(["--arm-build-tools-provider", "none"])
+
+        self.assertEqual(args.arm_build_tools_provider, "none")
+
+    def test_android_sdk_readiness_runs_arm64_native_tool_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            sdk_root = root / "sdk"
+            (sdk_root / "platforms" / "android-36").mkdir(parents=True)
+            (sdk_root / "platforms" / "android-36" / "android.jar").write_bytes(b"jar")
+            (sdk_root / "build-tools" / "36.0.0").mkdir(parents=True)
+            project = ProjectInfo(
+                root=project_root,
+                name="Demo",
+                android=True,
+                android_application=True,
+                compile_sdk=36,
+                build_tools="36.0.0",
+                agp_major=9,
+                native_build=False,
+                ndk_version=None,
+                cmake_version=None,
+            )
+
+            with patch(
+                "devtool.android_build.ensure_arm64_build_tools_compatible"
+            ) as repair:
+                ensure_android_sdk(
+                    project,
+                    sdk_root,
+                    root / "cache",
+                    force_setup=False,
+                    platform_override="auto",
+                    build_tools_override="auto",
+                    ndk_override="none",
+                    cmake_override="none",
+                    skip_install=False,
+                    offline=False,
+                    env={"PATH": "/usr/bin"},
+                    dry_run=False,
+                    arm_build_tools_provider="auto",
+                )
+
+        repair.assert_called_once()
+        self.assertEqual(repair.call_args.kwargs["provider"], "auto")
+
+    def test_read_only_implicit_sdk_falls_back_to_managed_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            system_sdk = root / "system-sdk"
+            system_sdk.mkdir()
+            cache_root = root / "cache"
+            cache_root.mkdir()
+            env = {"PATH": "/usr/bin", "ANDROID_HOME": str(system_sdk)}
+            project = ProjectInfo(
+                root=project_root,
+                name="Demo",
+                android=True,
+                android_application=True,
+                compile_sdk=36,
+                build_tools=None,
+                agp_major=9,
+                native_build=False,
+                ndk_version=None,
+                cmake_version=None,
+            )
+
+            def writable(path: Path) -> bool:
+                return path.resolve() != system_sdk.resolve()
+
+            with patch("devtool.android_build.sdk_root_is_writable_for_install", side_effect=writable), patch(
+                "devtool.android_build.download"
+            ):
+                selected, *_ = ensure_android_sdk(
+                    project,
+                    system_sdk,
+                    cache_root,
+                    force_setup=False,
+                    platform_override="auto",
+                    build_tools_override="auto",
+                    ndk_override="none",
+                    cmake_override="none",
+                    skip_install=False,
+                    offline=False,
+                    env=env,
+                    dry_run=True,
+                    allow_managed_fallback=True,
+                )
+
+        expected = (cache_root / "android-sdk").resolve()
+        self.assertEqual(selected, expected)
+        self.assertEqual(env["ANDROID_HOME"], str(expected))
+        self.assertEqual(env["ANDROID_SDK_ROOT"], str(expected))
+        self.assertTrue(env["PATH"].startswith(str(expected / "cmdline-tools" / "latest" / "bin")))
 
     def test_android_auto_sdk_option_is_threaded_into_builder_and_reporting(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

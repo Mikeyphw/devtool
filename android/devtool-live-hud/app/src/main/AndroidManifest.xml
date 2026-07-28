@@ -44,6 +44,11 @@
         </activity>
 
         <activity
+            android:name=".ValidationEvidenceActivity"
+            android:exported="false"
+            android:label="Validation Evidence" />
+
+        <activity
             android:name=".RepositoryDetailActivity"
             android:exported="false"
             android:label="Repository" />

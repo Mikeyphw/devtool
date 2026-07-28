@@ -54,6 +54,7 @@ final class AppSettings {
     private static final String KEY_RETENTION_EVENT_DAYS = "retention_event_days";
     private static final String KEY_LAST_RETENTION_AT = "last_retention_at";
     private static final String KEY_SUPPORT_INCLUDE_COMMANDS = "support_include_commands";
+    private static final String KEY_RUN_SECTION = "run_section";
 
     private AppSettings() {}
 
@@ -143,6 +144,14 @@ final class AppSettings {
                 .putInt(KEY_RETENTION_OPERATION_DAYS, operationDays)
                 .putInt(KEY_RETENTION_EVENT_DAYS, eventDays)
                 .apply();
+    }
+
+    static String runSection(Context context) {
+        return prefs(context).getString(KEY_RUN_SECTION, "command");
+    }
+
+    static void setRunSection(Context context, String value) {
+        prefs(context).edit().putString(KEY_RUN_SECTION, "validation".equals(value) ? "validation" : "command").apply();
     }
 
     static boolean includeSupportCommands(Context context) {

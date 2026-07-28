@@ -172,6 +172,61 @@ final class HudUpdate {
                 sample.durationMs, true);
     }
 
+    static HudUpdate validation(ValidationSessionRecord session) {
+        ValidationPhaseRecord focus = session.activePhase();
+        if (focus == null) focus = session.failedPhase();
+        if (focus == null) focus = session.nextPhase();
+        String phase = focus == null ? (session.validated() ? "Validated" : "Validation") : focus.label;
+        String detail;
+        if (session.blocked()) detail = focus == null ? "Validation is blocked" : firstUseful(focus.failureSummary, session.lastError, session.lastMessage, "Review the failed phase");
+        else if (session.effectiveState.equals("pausing")) detail = "Finishing the current phase before pausing";
+        else if (session.effectiveState.equals("stopping")) detail = "Stopping the active phase safely";
+        else if (session.paused()) detail = firstUseful(session.pausedReason, session.lastMessage, "", "Ready to continue");
+        else if (session.state.equals("validated-uncommitted")) detail = "Validation passed; Git commit still needs attention";
+        else if (session.validated()) detail = "All required validation phases passed";
+        else detail = firstUseful(session.lastMessage, "", "", "Validation is running");
+        String status = session.blocked() ? "failed" : session.validated() ? "ok"
+                : session.paused() ? "waiting" : "running";
+        int passed = 0;
+        int skipped = 0;
+        org.json.JSONArray steps = new org.json.JSONArray();
+        for (ValidationPhaseRecord item : session.phases) {
+            if (item.status.equals("passed") || item.status.equals("not-applicable")) passed++;
+            if (item.status.equals("skipped")) skipped++;
+            org.json.JSONObject step = new org.json.JSONObject();
+            try {
+                step.put("key", item.key);
+                step.put("label", item.label);
+                step.put("status", item.passed() ? (item.status.equals("skipped") ? "skipped" : "ok")
+                        : item.failed() ? "failed" : item.running() ? "running" : "pending");
+                step.put("progress", item.passed() ? 100 : item.progress);
+                steps.put(step);
+            } catch (org.json.JSONException ignored) {}
+        }
+        int current = focus == null ? -1 : focus.index;
+        int total = session.phaseTotal > 0 ? session.phaseTotal : session.phases.size();
+        String summary = session.title() + " validation\n"
+                + session.completedPhases + " of " + total + " phases complete\n"
+                + detail + "\nChanges " + (session.recoveryAvailable ? "and rollback point retained" : "retained");
+        return new HudUpdate("validation:" + session.sessionId, session.revision, session.updatedAtMs,
+                status, session.title() + " validation", session.artifact, phase, detail,
+                session.projectRoot, session.projectType, session.executionEnvironment, session.target,
+                session.scopeMode, 0, 0, "", current, total, "", summary,
+                session.overallProgress(), focus == null ? session.overallProgress() : itemProgress(focus),
+                current, total, "phases", focus != null && focus.running() && !focus.supportsProgress,
+                passed, session.blocked() ? 1 : 0, skipped, passed + skipped + (session.blocked() ? 1 : 0), 0,
+                session.state.equals("validated-uncommitted") ? 1 : 0, session.blocked() ? 1 : 0,
+                steps.toString(), session.createdAtMs, Math.max(0L, session.updatedAtMs - session.createdAtMs), false);
+    }
+
+    private static int itemProgress(ValidationPhaseRecord phase) {
+        if (phase.passed()) return 100;
+        return Math.max(0, Math.min(100, phase.progress));
+    }
+
+    boolean validationSession() { return runId.startsWith("validation:"); }
+    String validationSessionId() { return validationSession() ? runId.substring("validation:".length()) : ""; }
+
     static HudUpdate commandStarted(String runId, String command, String workdir, boolean overlay) {
         return new HudUpdate(runId, 0L, System.currentTimeMillis(),
                 "waiting", "Starting Devtool", "", "Preparing",
@@ -455,6 +510,16 @@ final class HudUpdate {
 
 
     String notificationMode() {
+        if (validationSession()) {
+            ValidationSessionRecord session = ValidationNotificationContext.lookup(validationSessionId());
+            if (session != null) {
+                if (session.blocked()) return "failed";
+                if (session.state.equals("validated-uncommitted")) return "warning";
+                if (session.validated()) return "success";
+                if (session.paused()) return "stopped";
+                return "running";
+            }
+        }
         if (rollbackState()) {
             if (failedState()) return "failed";
             if (succeeded()) return "recovered";
@@ -468,6 +533,18 @@ final class HudUpdate {
     }
 
     String notificationStateLabel() {
+        if (validationSession()) {
+            ValidationSessionRecord session = ValidationNotificationContext.lookup(validationSessionId());
+            if (session != null) {
+                if (session.effectiveState.equals("pausing")) return "PAUSING";
+                if (session.effectiveState.equals("stopping")) return "STOPPING";
+                if (session.blocked()) return "BLOCKED";
+                if (session.state.equals("validated-uncommitted")) return "ACTION REQUIRED";
+                if (session.validated()) return "VALIDATED";
+                if (session.paused()) return "PAUSED";
+                return "LIVE VALIDATION";
+            }
+        }
         String mode = notificationMode();
         if (mode.equals("success")) return "COMPLETE";
         if (mode.equals("warning")) return isTerminal() ? "COMPLETE" : "LIVE";
@@ -480,6 +557,7 @@ final class HudUpdate {
     }
 
     String notificationTaskTitle() {
+        if (validationSession()) return task;
         if (rollbackState()) {
             if (succeeded()) return "Repository restored";
             if (failedState()) return "Rollback failed";
@@ -522,6 +600,17 @@ final class HudUpdate {
     }
 
     String notificationStatusLead() {
+        if (validationSession()) {
+            ValidationSessionRecord session = ValidationNotificationContext.lookup(validationSessionId());
+            if (session != null) {
+                if (session.blocked()) return "Blocked";
+                if (session.state.equals("validated-uncommitted")) return "Commit pending";
+                if (session.validated()) return "Validated";
+                if (session.effectiveState.equals("pausing")) return "Pausing";
+                if (session.effectiveState.equals("stopping")) return "Stopping";
+                if (session.paused()) return "Paused";
+            }
+        }
         String mode = notificationMode();
         if (mode.equals("failed") && rollbackState()) return "Critical";
         if (mode.equals("failed")) return "Failure";
