@@ -57,6 +57,7 @@ final class RunStore {
     static synchronized void update(Context context, HudUpdate update) {
         migrateLegacy(context);
         RunRecord record = find(context, update.runId);
+        if (record != null && record.terminal() && !update.isTerminal()) return;
         if (record == null) record = new RunRecord();
         String previousPhase = record.phase;
         int previousProgress = record.progress;
@@ -119,6 +120,15 @@ final class RunStore {
         upsert(context, record);
     }
 
+    static synchronized void interrupted(Context context, String runId, String detail) {
+        RunRecord record = find(context, runId);
+        if (record == null || record.terminal()) return;
+        markInterrupted(context, record, System.currentTimeMillis(), detail);
+        upsert(context, record);
+        new NotificationController(context).cancel(runId);
+        OverlayHudService.cancel(runId);
+    }
+
     static synchronized void appendDiagnostic(Context context, String runId, String message) {
         RunRecord record = find(context, runId);
         if (record == null) return;
@@ -175,6 +185,7 @@ final class RunStore {
 
     static synchronized List<RunRecord> all(Context context) {
         migrateLegacy(context);
+        reconcileStale(context);
         return DevtoolDatabase.get(context).allRuns();
     }
 
@@ -208,7 +219,27 @@ final class RunStore {
 
     static synchronized List<RunRecord> forRepository(Context context, RepositoryRecord repository) {
         migrateLegacy(context);
+        reconcileStale(context);
         return DevtoolDatabase.get(context).runsForRepository(repository);
+    }
+
+    static synchronized int reconcileStale(Context context) {
+        migrateLegacy(context);
+        long now = System.currentTimeMillis();
+        long cutoff = now - ACTIVE_STALE_MS;
+        int changed = 0;
+        NotificationController notifications = null;
+        for (RunRecord record : DevtoolDatabase.get(context).allRuns()) {
+            if (record.terminal() || record.updatedAtMs >= cutoff) continue;
+            markInterrupted(context, record, now, "No live update was received before the stale-run timeout.");
+            DevtoolDatabase.get(context).upsertRun(record);
+            if (notifications == null) notifications = new NotificationController(context);
+            notifications.cancel(record.runId);
+            OverlayHudService.cancel(record.runId);
+            changed++;
+        }
+        if (changed > 0) notifyChanged(context, "");
+        return changed;
     }
 
     static synchronized void setPinned(Context context, String runId, boolean pinned) {
@@ -273,6 +304,20 @@ final class RunStore {
         String clean = clean(status).toLowerCase(java.util.Locale.ROOT);
         return clean.equals("ok") || clean.equals("failed") || clean.equals("cancelled")
                 || clean.equals("interrupted") || clean.equals("skipped");
+    }
+
+    private static void markInterrupted(Context context, RunRecord record, long now, String detail) {
+        record.status = "interrupted";
+        record.phase = "Interrupted";
+        record.title = "Devtool run interrupted";
+        record.detail = clean(detail).isEmpty() ? "The app stopped tracking this run because it is no longer live." : detail;
+        record.indeterminate = false;
+        record.updatedAtMs = now;
+        record.durationMs = Math.max(0L, now - record.startedAtMs);
+        appendLine(record, "Run marked interrupted: " + record.detail);
+        addEntry(context, record, "warning", "execution", "android_app", "event",
+                "Run marked interrupted", record.detail);
+        linkRepository(context, record, true);
     }
 
     private static String eventType(RunRecord record) {

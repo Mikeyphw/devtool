@@ -162,7 +162,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         new NotificationController(this);
         RepositoryWorkspaceStore.initialize(this);
-        RunStore.all(this); // Complete the one-time history migration before retention evaluates rows.
+        RunStore.reconcileStale(this); // Complete migration and stale-run cleanup before retention evaluates rows.
         RetentionManager.maybeRun(this);
         historyQuery = AppSettings.logQuery(this);
         historyStatus = AppSettings.logStatus(this);
@@ -228,6 +228,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        RunStore.reconcileStale(this);
         if (ui != null && (currentPage == 0 || currentPage == 3 || currentPage == 4 || (currentPage == 1 && runValidationSection))) rebuildUi();
         else if (statusView != null) refreshStatus();
     }
@@ -1259,6 +1260,12 @@ public final class MainActivity extends Activity {
             RunStore.setPinned(this, record.runId, !record.pinned);
             rebuildUi();
         });
+        Button interrupt = ui.secondaryButton("Mark interrupted", v -> {
+            RunStore.interrupted(this, record.runId, "Stopped tracking by user request.");
+            Toast.makeText(this, "Run marked interrupted", Toast.LENGTH_SHORT).show();
+            rebuildUi();
+        });
+        interrupt.setEnabled(!record.terminal());
         Button delete = ui.secondaryButton("Delete", v -> new AlertDialog.Builder(this)
                 .setTitle("Delete this indexed run?")
                 .setMessage((record.pinned ? "This run is pinned. " : "")
@@ -1267,11 +1274,12 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("Delete", (dialog, which) -> { RunStore.remove(this, record.runId); rebuildUi(); })
                 .show());
         if (ui.verticalActions()) {
-            actions.addView(details); actions.addView(rerun); actions.addView(repository); actions.addView(pin); actions.addView(delete);
+            actions.addView(details); actions.addView(rerun); actions.addView(repository); actions.addView(interrupt); actions.addView(pin); actions.addView(delete);
         } else {
             actions.addView(details, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
             actions.addView(rerun, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
             actions.addView(repository, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(interrupt, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
             actions.addView(pin, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
             actions.addView(delete, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         }
@@ -1558,13 +1566,27 @@ public final class MainActivity extends Activity {
             }
             if (!record.terminal() && record.runId.startsWith("root-")) {
                 card.addView(ui.secondaryButton("Cancel root run", v -> {
-                    RootBridgeManager.cancel(this, record.runId);
-                    Toast.makeText(this, "Cancellation requested", Toast.LENGTH_SHORT).show();
+                    if (RootBridgeManager.cancel(this, record.runId)) {
+                        RunStore.cancelled(this, record.runId);
+                        new NotificationController(this).cancel(record.runId);
+                        OverlayHudService.cancel(record.runId);
+                        Toast.makeText(this, "Cancellation requested", Toast.LENGTH_SHORT).show();
+                        rebuildUi();
+                    } else {
+                        Toast.makeText(this, "This run cannot be cancelled remotely", Toast.LENGTH_LONG).show();
+                    }
                 }));
             }
             if (record.runId.startsWith("termux-")) {
                 card.addView(ui.secondaryButton("Open Termux", v -> {
                     if (!TermuxCommandRunner.openTermux(this)) Toast.makeText(this, "Termux could not be opened", Toast.LENGTH_LONG).show();
+                }));
+            }
+            if (!record.terminal()) {
+                card.addView(ui.secondaryButton("Mark interrupted", v -> {
+                    RunStore.interrupted(this, record.runId, "Stopped tracking by user request.");
+                    Toast.makeText(this, "Run marked interrupted", Toast.LENGTH_SHORT).show();
+                    rebuildUi();
                 }));
             }
             if (!record.launchLog.isEmpty()) {

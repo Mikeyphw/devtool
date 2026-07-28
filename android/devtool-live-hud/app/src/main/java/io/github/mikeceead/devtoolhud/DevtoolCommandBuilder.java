@@ -85,9 +85,8 @@ final class DevtoolCommandBuilder {
             if (config.validate) parts.add("--validate");
             if (config.commit) {
                 String message = clean(config.commitMessage, "");
-                if (message.isEmpty()) throw new IllegalArgumentException("Commit message is required");
                 parts.add("--commit");
-                parts.add(shellLiteral(message));
+                if (!message.isEmpty()) parts.add(shellLiteral(message));
             }
         } else if (operation.equals("commit")) {
             String message = clean(config.commitMessage, "");

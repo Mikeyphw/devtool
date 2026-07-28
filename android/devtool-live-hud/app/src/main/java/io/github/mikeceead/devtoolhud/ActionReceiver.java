@@ -100,8 +100,9 @@ public final class ActionReceiver extends BroadcastReceiver {
                 Toast.makeText(context, "Cancellation requested", Toast.LENGTH_SHORT).show();
             } else if (runId != null && runId.startsWith("termux-")) {
                 boolean opened = TermuxCommandRunner.openTermux(context);
+                RunStore.interrupted(context, runId, "Stopped tracking from the notification. Termux may still need manual cleanup.");
                 Toast.makeText(context,
-                        opened ? "Opened Termux — stop the active command there" : "This Termux run cannot be stopped remotely",
+                        opened ? "Stopped tracking and opened Termux" : "Stopped tracking; Termux could not be opened",
                         Toast.LENGTH_LONG).show();
             } else {
                 Toast.makeText(context, "This run cannot be cancelled remotely", Toast.LENGTH_LONG).show();

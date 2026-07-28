@@ -60,3 +60,30 @@ def test_exported_bridge_and_tasker_receivers_are_token_and_action_hardened():
     assert "TaskerAuthorization.matches(context" in tasker
     assert "intent.setExtrasClassLoader(TaskerPluginReceiver.class.getClassLoader())" in tasker
     assert "Tasker action bundle could not be read" in tasker
+
+
+def test_android_run_store_reconciles_stale_running_records():
+    store = read("RunStore.java")
+    activity = read("MainActivity.java")
+    action = read("ActionReceiver.java")
+    assert "ACTIVE_STALE_MS = 12L * 60L * 60L * 1000L" in store
+    assert "static synchronized int reconcileStale(Context context)" in store
+    assert 'record.status = "interrupted"' in store
+    assert "No live update was received before the stale-run timeout." in store
+    assert "record.terminal() && !update.isTerminal()" in store
+    assert "notifications.cancel(record.runId)" in store
+    assert "OverlayHudService.cancel(record.runId)" in store
+    assert "RunStore.reconcileStale(this)" in activity
+    assert "Mark interrupted" in activity
+    assert "RunStore.interrupted(this, record.runId" in activity
+    assert "RunStore.interrupted(context, runId" in action
+
+
+def test_android_overlay_commit_allows_artifact_manifest_message():
+    builder = read("DevtoolCommandBuilder.java")
+    assert 'parts.add("--commit")' in builder
+    assert 'if (!message.isEmpty()) parts.add(shellLiteral(message));' in builder
+    overlay_block = builder[builder.index('if (operation.equals("apply-overlay")'):builder.index('} else if (operation.equals("commit"))')]
+    assert "Commit message is required" not in overlay_block
+    commit_block = builder[builder.index('} else if (operation.equals("commit"))'):]
+    assert "Commit message is required" in commit_block

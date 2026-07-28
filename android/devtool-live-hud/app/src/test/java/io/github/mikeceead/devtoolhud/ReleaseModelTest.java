@@ -32,6 +32,47 @@ public final class ReleaseModelTest {
     }
 
     @Test
+    public void overlayCommitCanUseArtifactManifestMessage() {
+        DevtoolRunConfig config = new DevtoolRunConfig();
+        config.operation = "apply-overlay";
+        config.artifact = "$HOME/Downloads/demo.zip";
+        config.commit = true;
+        config.commitMessage = "";
+        String command = DevtoolCommandBuilder.build(config);
+        assertTrue(command.contains("apply-overlay $HOME/Downloads/demo.zip --validate --commit"));
+        assertTrue(command.endsWith("--commit"));
+    }
+
+    @Test
+    public void bareOverlayCommitRoundTripsThroughImporter() {
+        DevtoolCommandImporter.ImportResult result = DevtoolCommandImporter.parse(
+                "devtool -r $HOME/Code/demo apply-overlay $HOME/Downloads/demo.zip --validate --commit");
+        assertEquals("apply-overlay", result.config.operation);
+        assertTrue(result.config.commit);
+        assertEquals("", result.config.commitMessage);
+        assertEquals("$HOME/Downloads/demo.zip", result.config.artifact);
+    }
+
+    @Test
+    public void overlayCommitStillAcceptsExplicitMessage() {
+        DevtoolRunConfig config = new DevtoolRunConfig();
+        config.operation = "apply-overlays";
+        config.artifact = "$HOME/Downloads/bundle.zip";
+        config.commit = true;
+        config.commitMessage = "Apply bundle";
+        String command = DevtoolCommandBuilder.build(config);
+        assertTrue(command.contains("apply-overlays $HOME/Downloads/bundle.zip --validate --commit 'Apply bundle'"));
+    }
+
+    @Test
+    public void explicitCommitOperationStillRequiresMessage() {
+        DevtoolRunConfig config = new DevtoolRunConfig();
+        config.operation = "commit";
+        config.commitMessage = "";
+        assertThrows(IllegalArgumentException.class, () -> DevtoolCommandBuilder.build(config));
+    }
+
+    @Test
     public void copiedCommandRoundTripsThroughImporter() {
         DevtoolRunConfig config = new DevtoolRunConfig();
         config.operation = "status";

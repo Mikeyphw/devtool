@@ -32,6 +32,16 @@ class QtControlCenterTests(unittest.TestCase):
         args = build_parser().parse_args(["control-center"])
         self.assertEqual(args.command, "control-center")
 
+    def test_stale_file_backed_runs_are_marked_interrupted(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
+        store = (root / "src" / "HudStateStore.cpp").read_text(encoding="utf-8")
+        card = (root / "qml" / "components" / "RunCard.qml").read_text(encoding="utf-8")
+        self.assertIn("markStaleRunInterrupted", store)
+        self.assertIn('state["status"] = QStringLiteral("interrupted")', store)
+        self.assertIn('state["stale"] = true', store)
+        self.assertIn("12LL * 60LL * 60LL * 1000LL", store)
+        self.assertIn("!run.stale && (run.status === \"running\" || run.status === \"waiting\")", card)
+
     def test_phase_one_sources_are_packaged(self) -> None:
         root = Path(__file__).resolve().parents[1] / "desktop" / "devtool-control-center"
         required = [

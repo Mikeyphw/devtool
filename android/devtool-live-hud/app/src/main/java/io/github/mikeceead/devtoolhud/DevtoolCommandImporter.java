@@ -239,8 +239,11 @@ final class DevtoolCommandImporter {
             }
             if (token.equals("--commit") && (config.operation.equals("apply-overlay") || config.operation.equals("apply-overlays"))) {
                 config.commit = true;
-                config.commitMessage = requireValue(tokens, ++index, token);
                 index++;
+                if (index < tokens.size() && !tokens.get(index).startsWith("-")) {
+                    config.commitMessage = tokens.get(index);
+                    index++;
+                }
                 continue;
             }
             if ((token.equals("-m") || token.equals("--message")) && config.operation.equals("commit")) {

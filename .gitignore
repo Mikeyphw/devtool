@@ -23,8 +23,10 @@ devtool-artifact.json
 **/.gradle/
 **/build/
 local.properties
+**/android-live-hud.token
 *.apk
 *.aab
+!android/devtool-live-hud/devtool-live-hud-debug.apk
 
 # Desktop packaging output
 desktop/devtool-control-center/dist/

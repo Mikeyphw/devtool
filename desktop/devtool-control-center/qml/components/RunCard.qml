@@ -64,7 +64,7 @@ Rectangle {
                 Label { Layout.fillWidth: true; text: run.message || "Waiting for progress"; color: theme.text; wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight; font.pointSize: theme.bodyPointSize }
                 Label { text: run.updated_at || run.started_at || ""; color: theme.subtleText; font.pointSize: theme.captionPointSize }
             }
-            AppButton { visible: run.status === "running" || run.status === "waiting"; text: "Cancel"; variant: "danger"; compact: true; onClicked: appController.cancelRun(run.run_id) }
+            AppButton { visible: !run.stale && (run.status === "running" || run.status === "waiting"); text: "Cancel"; variant: "danger"; compact: true; onClicked: appController.cancelRun(run.run_id) }
             AppButton { text: "Copy"; variant: "ghost"; compact: true; onClicked: appController.copyText(hudStore.focusedSummary(run)) }
             AppButton { text: "Log"; variant: "ghost"; compact: true; enabled: !!run.log_path || !!((run.files || {}).state); onClicked: appController.openPath(run.log_path || ((run.files || {}).state || "")) }
         }

@@ -81,6 +81,25 @@ static bool terminalStatus(const QString &status) {
     return status == "ok" || status == "failed" || status == "cancelled" || status == "interrupted" || status == "skipped";
 }
 
+static qint64 stateUpdatedMs(const QJsonObject &state) {
+    const QString updated = state.value("updated_at").toString().trimmed();
+    QDateTime parsed = QDateTime::fromString(updated, Qt::ISODateWithMs);
+    if (!parsed.isValid()) parsed = QDateTime::fromString(updated, Qt::ISODate);
+    return parsed.isValid() ? parsed.toMSecsSinceEpoch() : 0;
+}
+
+static QJsonObject markStaleRunInterrupted(QJsonObject state) {
+    const QString status = state.value("status").toString();
+    if (terminalStatus(status)) return state;
+    constexpr qint64 kActiveStaleMs = 12LL * 60LL * 60LL * 1000LL;
+    const qint64 updated = stateUpdatedMs(state);
+    if (updated <= 0 || QDateTime::currentMSecsSinceEpoch() - updated < kActiveStaleMs) return state;
+    state["status"] = QStringLiteral("interrupted");
+    state["message"] = QStringLiteral("No live update was received before the stale-run timeout.");
+    state["stale"] = true;
+    return state;
+}
+
 static double phaseProgressScore(const QJsonObject &phase) {
     const auto percent = phase.value("percent");
     if (percent.isDouble()) return qBound(0.0, percent.toDouble(-1.0), 100.0);
@@ -460,7 +479,7 @@ QJsonObject HudStateStore::normalize(QJsonObject state) const {
 }
 void HudStateStore::applyObjects(const QList<QJsonObject> &source) {
     QList<QJsonObject> objects; QSet<QString> seen;
-    for(auto object:source){if(object.isEmpty())continue;object=normalize(object);const QString id=object.value("run_id").toString();if(id.isEmpty()||seen.contains(id))continue;seen.insert(id);objects<<object;}
+    for(auto object:source){if(object.isEmpty())continue;object=normalize(markStaleRunInterrupted(object));const QString id=object.value("run_id").toString();if(id.isEmpty()||seen.contains(id))continue;seen.insert(id);objects<<object;}
     std::sort(objects.begin(),objects.end(),[](const QJsonObject&a,const QJsonObject&b){return a.value("updated_at").toString()>b.value("updated_at").toString();});
     QVariantList list;for(const auto&o:objects)list<<o.toVariantMap();
     QJsonObject primary;
