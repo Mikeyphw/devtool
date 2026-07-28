@@ -16,6 +16,8 @@ import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextUtils;
@@ -45,11 +47,15 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATIONS = 41;
     private static final int REQUEST_TERMUX = 42;
     private static final int REQUEST_ROOT_MODULE_EXPORT = 43;
+    private static final int HISTORY_PAGE_SIZE = 100;
+    private static final long LOG_FILTER_DEBOUNCE_MS = 250L;
     private static final String[] PAGES = {"Overview", "Run", "Logs", "Repos", "Settings"};
 
     private UiKit ui;
@@ -128,6 +134,11 @@ public final class MainActivity extends Activity {
     private String repositoryFilter = "all";
     private String repositoryError = "";
     private String logIndexError = "";
+    private int historyVisibleLimit = HISTORY_PAGE_SIZE;
+    private int historyLoadGeneration;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService historyExecutor = Executors.newSingleThreadExecutor();
+    private Runnable pendingHistoryRefresh;
 
     private final BroadcastReceiver runUpdates = new BroadcastReceiver() {
         @Override
@@ -199,11 +210,19 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         captureRunDraft();
+        if (pendingHistoryRefresh != null) mainHandler.removeCallbacks(pendingHistoryRefresh);
         if (receiverRegistered) {
             unregisterReceiver(runUpdates);
             receiverRegistered = false;
         }
         super.onStop();
+    }
+
+    @Override
+    protected void onDestroy() {
+        historyLoadGeneration++;
+        historyExecutor.shutdownNow();
+        super.onDestroy();
     }
 
     @Override
@@ -630,7 +649,7 @@ public final class MainActivity extends Activity {
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         content.addView(list);
-        Runnable refresh = () -> populateHistoryList(list, RunStore.all(this), ValidationStore.all(this), search.getText().toString(),
+        Runnable refresh = () -> scheduleHistoryListRefresh(list, search.getText().toString(),
                 String.valueOf(status.getSelectedItem()), String.valueOf(project.getSelectedItem()),
                 String.valueOf(severity.getSelectedItem()), historyRepositoryId);
         search.addTextChangedListener(new TextWatcher() {
@@ -638,23 +657,25 @@ public final class MainActivity extends Activity {
             public void onTextChanged(CharSequence value, int start, int before, int count) {
                 historyQuery = value.toString();
                 saveLogView();
+                historyVisibleLimit = HISTORY_PAGE_SIZE;
                 refresh.run();
             }
             public void afterTextChanged(Editable value) {}
         });
         status.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> {
-            historyStatus = String.valueOf(status.getSelectedItem()); saveLogView(); refresh.run();
+            historyStatus = String.valueOf(status.getSelectedItem()); saveLogView(); historyVisibleLimit = HISTORY_PAGE_SIZE; refresh.run();
         }));
         project.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> {
-            historyProject = String.valueOf(project.getSelectedItem()); saveLogView(); refresh.run();
+            historyProject = String.valueOf(project.getSelectedItem()); saveLogView(); historyVisibleLimit = HISTORY_PAGE_SIZE; refresh.run();
         }));
         severity.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> {
-            historySeverity = String.valueOf(severity.getSelectedItem()); saveLogView(); refresh.run();
+            historySeverity = String.valueOf(severity.getSelectedItem()); saveLogView(); historyVisibleLimit = HISTORY_PAGE_SIZE; refresh.run();
         }));
         repository.setOnItemSelectedListener(new SimpleItemSelectedListener(() -> {
             int selected = repository.getSelectedItemPosition();
             historyRepositoryId = selected >= 0 && selected < repositoryIds.size() ? repositoryIds.get(selected) : "";
             saveLogView();
+            historyVisibleLimit = HISTORY_PAGE_SIZE;
             refresh.run();
         }));
         refresh.run();
@@ -1050,20 +1071,48 @@ public final class MainActivity extends Activity {
         try{DevtoolRunConfig config=readRunConfig().copy();config.operation="test";config.listTests=true;config.testSelectors="";config.testTags="";config.testExcludeTags="";config.testPath="";config.testClass="";config.testMethod="";String command=DevtoolCommandBuilder.build(config);runRaw(command,resolvedWorkdir(config),config.overlay,config.useRootBridge);Toast.makeText(this,"Test discovery started. Return to Tests after it finishes.",Toast.LENGTH_LONG).show();}catch(RuntimeException error){Toast.makeText(this,"Could not start discovery: "+error.getMessage(),Toast.LENGTH_LONG).show();}
     }
 
+    private void scheduleHistoryListRefresh(LinearLayout parent, String query, String status, String project,
+                                            String severity, String repositoryId) {
+        if (pendingHistoryRefresh != null) mainHandler.removeCallbacks(pendingHistoryRefresh);
+        parent.removeAllViews();
+        LinearLayout loading = ui.surface();
+        loading.addView(ui.text("Loading logs…", UiTypography.Role.CARD_TITLE, ui.palette.text));
+        loading.addView(ui.text("Search and filters run in the background for large indexed histories.",
+                UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        parent.addView(loading);
+        int generation = ++historyLoadGeneration;
+        int visibleLimit = historyVisibleLimit;
+        pendingHistoryRefresh = () -> historyExecutor.execute(() -> {
+            Context app = getApplicationContext();
+            List<RunRecord> records = RunStore.all(app);
+            List<ValidationSessionRecord> validations = ValidationStore.all(app);
+            String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+            String wantedSeverity = severity == null ? "all" : severity.trim().toLowerCase(Locale.ROOT);
+            Set<String> structuredMatches = needle.isEmpty()
+                    ? java.util.Collections.emptySet() : DevtoolDatabase.get(app).matchingRunIds(needle);
+            Set<String> severityMatches = wantedSeverity.equals("all")
+                    ? java.util.Collections.emptySet() : DevtoolDatabase.get(app).runIdsWithSeverity(wantedSeverity);
+            mainHandler.post(() -> {
+                if (generation != historyLoadGeneration || isFinishing()) return;
+                populateHistoryList(parent, records, validations, query, status, project, severity,
+                        repositoryId, structuredMatches, severityMatches, visibleLimit);
+            });
+        });
+        mainHandler.postDelayed(pendingHistoryRefresh, LOG_FILTER_DEBOUNCE_MS);
+    }
+
     private void populateHistoryList(LinearLayout parent, List<RunRecord> records, List<ValidationSessionRecord> validations, String query,
                                      String status, String project, String severity,
-                                     String repositoryId) {
+                                     String repositoryId, Set<String> structuredMatches,
+                                     Set<String> severityMatches, int visibleLimit) {
         parent.removeAllViews();
         String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         String wantedStatus = status == null ? "all" : status.trim().toLowerCase(Locale.ROOT);
         String wantedProject = project == null ? "all" : project.trim().toLowerCase(Locale.ROOT);
         String wantedSeverity = severity == null ? "all" : severity.trim().toLowerCase(Locale.ROOT);
         String wantedRepository = repositoryId == null ? "" : repositoryId.trim();
-        Set<String> structuredMatches = needle.isEmpty()
-                ? java.util.Collections.emptySet() : DevtoolDatabase.get(this).matchingRunIds(needle);
-        Set<String> severityMatches = wantedSeverity.equals("all")
-                ? java.util.Collections.emptySet() : DevtoolDatabase.get(this).runIdsWithSeverity(wantedSeverity);
         int shown = 0;
+        int matched = 0;
         for (RunRecord record : records) {
             if (!wantedRepository.isEmpty() && !wantedRepository.equals(record.repositoryId)) continue;
             if (!wantedStatus.equals("all") && !record.status.equalsIgnoreCase(wantedStatus)) continue;
@@ -1073,8 +1122,11 @@ public final class MainActivity extends Activity {
                     record.summary, record.detail, record.error, record.stderr, record.stdout,
                     record.artifact, record.commitHash, record.phase).toLowerCase(Locale.ROOT);
             if (!needle.isEmpty() && !hay.contains(needle) && !structuredMatches.contains(record.runId)) continue;
-            parent.addView(compactHistoryCard(record));
-            shown++;
+            matched++;
+            if (shown < visibleLimit) {
+                parent.addView(compactHistoryCard(record));
+                shown++;
+            }
         }
         for (ValidationSessionRecord validation : validations) {
             String validationStatus = validationHistoryStatus(validation);
@@ -1088,8 +1140,11 @@ public final class MainActivity extends Activity {
                     validation.finalVerdict, validation.state, validation.lastError, validation.pausedReason,
                     validation.artifact, validation.commitHash, validation.reportPath).toLowerCase(Locale.ROOT);
             if (!needle.isEmpty() && !hay.contains(needle)) continue;
-            parent.addView(validationHistoryCard(validation));
-            shown++;
+            matched++;
+            if (shown < visibleLimit) {
+                parent.addView(validationHistoryCard(validation));
+                shown++;
+            }
         }
         if (shown == 0) {
             LinearLayout empty = ui.surface();
@@ -1097,6 +1152,13 @@ public final class MainActivity extends Activity {
                     UiTypography.Role.CARD_TITLE, ui.palette.text));
             if (records.isEmpty()) empty.addView(ui.button("Create a run", ui.palette.cyan, v -> switchPage(1)));
             parent.addView(empty);
+        } else if (matched > shown) {
+            parent.addView(ui.secondaryButton("Load more runs", v -> {
+                historyVisibleLimit += HISTORY_PAGE_SIZE;
+                scheduleHistoryListRefresh(parent, query, status, project, severity, repositoryId);
+            }));
+            parent.addView(ui.text("Showing " + shown + " of " + matched + " matching records.",
+                    UiTypography.Role.CAPTION, ui.palette.muted));
         }
     }
 

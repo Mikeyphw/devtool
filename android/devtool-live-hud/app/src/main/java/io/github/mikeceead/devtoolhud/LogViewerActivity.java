@@ -10,6 +10,8 @@ import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
@@ -18,21 +20,34 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.text.DateFormat;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class LogViewerActivity extends Activity {
     static final String EXTRA_RUN_ID = "run_id";
+    private static final int LOG_PAGE_SIZE = 100;
+    private static final int RAW_LINE_LIMIT = 600;
+    private static final int RAW_TEXT_LIMIT = 1_500_000;
+    private static final long UPDATE_DEBOUNCE_MS = 250L;
     private UiKit ui;
     private String runId = "";
     private int tab;
     private boolean registered;
+    private int timelineLimit = LOG_PAGE_SIZE;
+    private int problemsLimit = LOG_PAGE_SIZE;
+    private int loadGeneration;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService logExecutor = Executors.newSingleThreadExecutor();
+    private final Runnable debouncedRebuild = this::rebuild;
 
     private final BroadcastReceiver updates = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             String changed = intent.getStringExtra("run_id");
-            if (changed == null || changed.isEmpty() || changed.equals(runId)) rebuild();
+            if (changed == null || changed.isEmpty() || changed.equals(runId)) scheduleRebuild();
         }
     };
 
@@ -57,7 +72,19 @@ public final class LogViewerActivity extends Activity {
             unregisterReceiver(updates);
             registered = false;
         }
+        mainHandler.removeCallbacks(debouncedRebuild);
         super.onStop();
+    }
+
+    @Override protected void onDestroy() {
+        loadGeneration++;
+        logExecutor.shutdownNow();
+        super.onDestroy();
+    }
+
+    private void scheduleRebuild() {
+        mainHandler.removeCallbacks(debouncedRebuild);
+        mainHandler.postDelayed(debouncedRebuild, UPDATE_DEBOUNCE_MS);
     }
 
     private void rebuild() {
@@ -115,6 +142,8 @@ public final class LogViewerActivity extends Activity {
             final int selected = i;
             Button button = ui.navButton(R.drawable.ic_nav_history, labels[i], tab == i, v -> {
                 tab = selected;
+                if (tab == 0) timelineLimit = LOG_PAGE_SIZE;
+                if (tab == 1) problemsLimit = LOG_PAGE_SIZE;
                 rebuild();
             });
             if (ui.twoPaneLayout()) {
@@ -158,7 +187,28 @@ public final class LogViewerActivity extends Activity {
     }
 
     private void timeline(LinearLayout content, RunRecord run, boolean problems) {
-        List<DevtoolDatabase.LogLine> lines = DevtoolDatabase.get(this).logLines(run.runId, problems);
+        int visibleLimit = problems ? problemsLimit : timelineLimit;
+        LinearLayout loading = ui.surface();
+        loading.addView(ui.text("Loading log entries...", UiTypography.Role.CARD_TITLE, ui.palette.text));
+        loading.addView(ui.text("The app stays responsive while indexed log rows are read.",
+                UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        content.addView(loading);
+        int generation = ++loadGeneration;
+        logExecutor.execute(() -> {
+            List<DevtoolDatabase.LogLine> lines = DevtoolDatabase.get(this)
+                    .logLines(run.runId, problems, visibleLimit + 1, 0);
+            mainHandler.post(() -> {
+                if (generation != loadGeneration || isFinishing()) return;
+                content.removeAllViews();
+                renderTimeline(content, run, problems, lines, visibleLimit);
+            });
+        });
+    }
+
+    private void renderTimeline(LinearLayout content, RunRecord run, boolean problems,
+                                List<DevtoolDatabase.LogLine> loaded, int visibleLimit) {
+        boolean hasMore = loaded.size() > visibleLimit;
+        List<DevtoolDatabase.LogLine> lines = hasMore ? loaded.subList(0, visibleLimit) : loaded;
         if (lines.isEmpty()) {
             LinearLayout empty = ui.surface();
             empty.addView(ui.text(problems ? "No problems recorded" : "No structured events recorded",
@@ -196,18 +246,43 @@ public final class LogViewerActivity extends Activity {
             }
             content.addView(card);
         }
+        if (hasMore) {
+            content.addView(ui.secondaryButton("Load more log entries", v -> {
+                if (problems) problemsLimit += LOG_PAGE_SIZE;
+                else timelineLimit += LOG_PAGE_SIZE;
+                rebuild();
+            }));
+        }
     }
 
     private void raw(LinearLayout content, RunRecord run) {
+        LinearLayout loading = ui.surface();
+        loading.addView(ui.text("Loading raw output...", UiTypography.Role.CARD_TITLE, ui.palette.text));
+        loading.addView(ui.text("Only the newest bounded indexed output is loaded into this view.",
+                UiTypography.Role.BODY_SMALL, ui.palette.muted));
+        content.addView(loading);
+        int generation = ++loadGeneration;
+        logExecutor.execute(() -> {
+            List<DevtoolDatabase.LogLine> lines = DevtoolDatabase.get(this).rawLogLines(run.runId, RAW_LINE_LIMIT, 0);
+            mainHandler.post(() -> {
+                if (generation != loadGeneration || isFinishing()) return;
+                content.removeAllViews();
+                renderRaw(content, run, lines);
+            });
+        });
+    }
+
+    private void renderRaw(LinearLayout content, RunRecord run, List<DevtoolDatabase.LogLine> lines) {
         LinearLayout card = ui.surface();
         StringBuilder indexed = new StringBuilder();
-        for (DevtoolDatabase.LogLine line : DevtoolDatabase.get(this).logLines(run.runId, false)) {
+        Collections.reverse(lines);
+        for (DevtoolDatabase.LogLine line : lines) {
             String value = line.raw.isEmpty() ? line.message : line.raw;
             if (value.isEmpty()) continue;
             if (indexed.length() > 0) indexed.append('\n');
             indexed.append(value);
-            if (indexed.length() > 1_500_000) {
-                indexed.delete(0, indexed.length() - 1_500_000);
+            if (indexed.length() > RAW_TEXT_LIMIT) {
+                indexed.delete(0, indexed.length() - RAW_TEXT_LIMIT);
                 indexed.insert(0, "… older indexed output omitted from this view …\n");
                 break;
             }

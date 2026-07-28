@@ -372,11 +372,16 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
     }
 
     synchronized List<LogLine> logLines(String runId, boolean problemsOnly) {
+        return logLines(runId, problemsOnly, 0, 0);
+    }
+
+    synchronized List<LogLine> logLines(String runId, boolean problemsOnly, int limit, int offset) {
         List<LogLine> result = new ArrayList<>();
         String selection = problemsOnly ? "run_id=? AND severity IN ('warning','error','fatal')" : "run_id=?";
+        String limitClause = limit > 0 ? Math.max(1, limit) + " OFFSET " + Math.max(0, offset) : null;
         try (Cursor cursor = getReadableDatabase().query("log_entries",
                 new String[]{"timestamp_ms", "severity", "category", "source", "phase", "stream", "message", "raw_text", "file_path", "line_number", "tool", "diagnostic_code"},
-                selection, new String[]{runId}, null, null, "timestamp_ms, entry_id")) {
+                selection, new String[]{runId}, null, null, "timestamp_ms, entry_id", limitClause)) {
             while (cursor.moveToNext()) {
                 LogLine line = new LogLine();
                 line.timestampMs = cursor.getLong(0);
@@ -391,6 +396,22 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
                 line.lineNumber = cursor.getInt(9);
                 line.tool = cursor.getString(10);
                 line.diagnosticCode = cursor.getString(11);
+                result.add(line);
+            }
+        }
+        return result;
+    }
+
+    synchronized List<LogLine> rawLogLines(String runId, int limit, int offset) {
+        List<LogLine> result = new ArrayList<>();
+        String limitClause = Math.max(1, limit) + " OFFSET " + Math.max(0, offset);
+        try (Cursor cursor = getReadableDatabase().query("log_entries",
+                new String[]{"message", "raw_text"}, "run_id=?", new String[]{runId},
+                null, null, "timestamp_ms DESC, entry_id DESC", limitClause)) {
+            while (cursor.moveToNext()) {
+                LogLine line = new LogLine();
+                line.message = cursor.getString(0);
+                line.raw = cursor.getString(1);
                 result.add(line);
             }
         }

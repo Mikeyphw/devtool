@@ -605,13 +605,24 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return ""
     text = output.lower()
     name = command_name.lower()
-    if "sdk" in text and (
-        "not found" in text
-        or "not installed" in text
-        or "could not execute" in text
-        or "failed to find package" in text
+    compile_signal = (
+        "compile" in name
+        or "compile" in text
+        or " compilation failed" in text
+        or "compilation error" in text
+        or "compiledebugkotlin" in text
+        or "compiledebugjava" in text
+        or "argument type mismatch" in text
+        or "unresolved reference" in text
+    )
+    explicit_sdk_failure = (
+        "failed to find package" in text
         or "package installation failed" in text
-    ):
+        or "sdk package" in text and ("not found" in text or "not installed" in text)
+        or "android sdk" in text and ("not found" in text or "not installed" in text)
+        or "sdkmanager" in text and ("not found" in text or "could not execute" in text)
+    )
+    if explicit_sdk_failure and not compile_signal:
         return "missing_sdk"
     if "nuget" in text or "unable to load the service index" in text or "failed to restore" in text:
         return "nuget_failure"
@@ -621,7 +632,7 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return "arm_mismatch"
     if "restore" in name:
         return "restore_failure"
-    if "build" in name or "compile" in text or " compilation failed" in text:
+    if "build" in name or compile_signal:
         return "compile_failure"
     if "test" in name or "failed!" in text or "failed " in text:
         return "test_failure"

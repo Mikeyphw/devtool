@@ -3962,6 +3962,8 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
     artifact = getattr(args, "artifact", "")
     if not artifact:
         return
+    if not _repo_local_artifact_history_enabled(config.repo_root):
+        return
     apply_result = next(
         (
             result for result in results
@@ -4017,6 +4019,31 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
     except Exception as exc:
         args._devtool_history_error = f"{type(exc).__name__}: {exc}"
         console.print(f"[yellow]Could not write artifact history: {exc}[/yellow]")
+
+
+def _repo_local_artifact_history_enabled(repo_root: Path) -> bool:
+    """Return True when this repository has opted into committed artifact history."""
+    if (repo_root / ".devtool" / "artifacts.json").exists() or (repo_root / ".devtool" / "artifacts.d").exists():
+        return True
+    if not (repo_root / ".git").exists():
+        return True
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", ".devtool/artifacts.json"],
+        cwd=repo_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if tracked.returncode == 0:
+        return True
+    tracked_dir = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", ".devtool/artifacts.d"],
+        cwd=repo_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return tracked_dir.returncode == 0
 
 
 def _print_history(config: ProjectConfig, *, limit: int) -> None:

@@ -87,6 +87,24 @@ def test_phase6_pin_controls_and_retention_settings_are_exposed():
     assert "setPinned(Context context, String runId, boolean pinned)" in run_store
 
 
+def test_phase6_logs_are_bounded_async_and_debounced():
+    main = read("MainActivity.java")
+    viewer = read("LogViewerActivity.java")
+    database = read("DevtoolDatabase.java")
+    assert "HISTORY_PAGE_SIZE = 100" in main
+    assert "LOG_FILTER_DEBOUNCE_MS" in main
+    assert "historyExecutor.execute" in main
+    assert "historyLoadGeneration" in main
+    assert '"Load more runs"' in main
+    assert "LOG_PAGE_SIZE = 100" in viewer
+    assert "UPDATE_DEBOUNCE_MS" in viewer
+    assert "logExecutor.execute" in viewer
+    assert "loadGeneration" in viewer
+    assert '"Load more log entries"' in viewer
+    assert "logLines(String runId, boolean problemsOnly, int limit, int offset)" in database
+    assert "rawLogLines(String runId, int limit, int offset)" in database
+
+
 def test_phase6_release_metadata():
     build = (ROOT / "android/devtool-live-hud/app/build.gradle").read_text()
     versions = json.loads((ROOT / "release/versions.json").read_text())

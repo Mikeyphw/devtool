@@ -75,6 +75,44 @@ class ImplicitOverlayBundleTests(unittest.TestCase):
             self.assertFalse((repo / first.name).exists())
             self.assertFalse((repo / second.name).exists())
 
+    def test_apply_overlay_skips_repo_local_devtool_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            artifact = root / "overlay.zip"
+            with zipfile.ZipFile(artifact, "w") as zf:
+                zf.writestr("payload.txt", "applied")
+                zf.writestr(".devtool/reports/leftover.json", "{}")
+                zf.writestr(".devtool/tmp/extract.lock", "")
+
+            rc = main(["--repo", str(repo), "--yes", "apply-overlay", "--keep-artifact", str(artifact)])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual((repo / "payload.txt").read_text(encoding="utf-8"), "applied")
+            self.assertFalse((repo / ".devtool").exists())
+
+    def test_apply_overlay_bundle_skips_nested_repo_local_devtool_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            nested = root / "nested.zip"
+            with zipfile.ZipFile(nested, "w") as zf:
+                zf.writestr("payload.txt", "applied")
+                zf.writestr(".devtool/reports/leftover.json", "{}")
+            wrapper = root / "bundle.zip"
+            with zipfile.ZipFile(wrapper, "w") as zf:
+                zf.writestr(nested.name, nested.read_bytes())
+
+            rc = main(["--repo", str(repo), "--yes", "apply-overlay", "--keep-artifact", str(wrapper)])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual((repo / "payload.txt").read_text(encoding="utf-8"), "applied")
+            self.assertFalse((repo / ".devtool").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

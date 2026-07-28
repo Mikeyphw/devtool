@@ -234,7 +234,10 @@ def artifact_cleanup_paths(artifact: str | Path) -> list[Path]:
 def is_artifact_metadata_member(name: str) -> bool:
     """Return True for archive-side devtool metadata that must not be copied into repos."""
     path = Path(name)
-    return path.name in ARTIFACT_METADATA_NAMES or bool(path.parts and path.parts[0] == ARTIFACT_METADATA_DIRECTORY)
+    return (
+        path.name in ARTIFACT_METADATA_NAMES
+        or bool(path.parts and path.parts[0] in {ARTIFACT_METADATA_DIRECTORY, ".devtool"})
+    )
 
 
 @dataclass(slots=True)

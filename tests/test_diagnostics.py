@@ -17,6 +17,19 @@ class DiagnosticTests(unittest.TestCase):
 
         self.assertEqual(classify_failure("build", output, 2), "missing_sdk")
 
+    def test_classify_kotlin_compile_error_before_generic_sdk_text(self) -> None:
+        output = (
+            "Project: /home/mike/Code/xdm/app/XDM.Android\n"
+            "compileSdk: 36\n"
+            "> Task :scheduler:compileDebugKotlin FAILED\n"
+            "e: file:///repo/scheduler/src/main/kotlin/TransferExecutionRuntime.kt:375:34 "
+            "Argument type mismatch: actual type is 'String?', but 'String' was expected.\n"
+            "SDK path not found in optional local metadata\n"
+            "> Compilation error. See log for more details\n"
+        )
+
+        self.assertEqual(classify_failure("android-validation-build", output, 2), "compile_failure")
+
     def test_parse_dotnet_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
