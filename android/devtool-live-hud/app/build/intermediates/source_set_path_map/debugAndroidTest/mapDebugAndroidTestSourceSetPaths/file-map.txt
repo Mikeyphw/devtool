@@ -1,0 +1,7 @@
+io.github.mikeceead.devtoolhud.test.app-core-1.6.1-0 /home/mike/.gradle/caches/8.13/transforms/47cbb260c08ea84a4fc32c39d648fae0/transformed/core-1.6.1/res
+io.github.mikeceead.devtoolhud.test.app-tracing-1.1.0-1 /home/mike/.gradle/caches/8.13/transforms/719a262627126633f80cde0871812f0c/transformed/tracing-1.1.0/res
+io.github.mikeceead.devtoolhud.test.app-androidTest-2 /home/mike/Code/devtool/android/devtool-live-hud/app/build/generated/res/resValues/androidTest/debug
+io.github.mikeceead.devtoolhud.test.app-updated_navigation_xml-3 /home/mike/Code/devtool/android/devtool-live-hud/app/build/generated/updated_navigation_xml/debugAndroidTest
+io.github.mikeceead.devtoolhud.test.app-mergeDebugAndroidTestResources-4 /home/mike/Code/devtool/android/devtool-live-hud/app/build/intermediates/incremental/debugAndroidTest/mergeDebugAndroidTestResources/merged.dir
+io.github.mikeceead.devtoolhud.test.app-mergeDebugAndroidTestResources-5 /home/mike/Code/devtool/android/devtool-live-hud/app/build/intermediates/incremental/debugAndroidTest/mergeDebugAndroidTestResources/stripped.dir
+io.github.mikeceead.devtoolhud.test.app-debugAndroidTest-6 /home/mike/Code/devtool/android/devtool-live-hud/app/build/intermediates/merged_res/debugAndroidTest/mergeDebugAndroidTestResources

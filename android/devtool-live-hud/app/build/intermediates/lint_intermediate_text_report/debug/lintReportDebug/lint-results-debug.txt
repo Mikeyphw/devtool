@@ -1,0 +1,396 @@
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/BridgeUpdateGate.java:19: Warning: Implicitly using the default locale is a common source of bugs: Use toLowerCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+        String status = clean(intent.getStringExtra("status"), "running").toLowerCase();
+                                                                          ~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/DevtoolRunConfig.java:44: Warning: Implicitly using the default locale is a common source of bugs: Use toLowerCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+        String environment = clean(executionEnvironment, "auto").toLowerCase();
+                                                                 ~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/DevtoolRunConfig.java:45: Warning: Implicitly using the default locale is a common source of bugs: Use toLowerCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+        String type = clean(projectType, "auto").toLowerCase();
+                                                 ~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/DevtoolRunConfig.java:46: Warning: Implicitly using the default locale is a common source of bugs: Use toLowerCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+        String op = clean(operation, "status").toLowerCase();
+                                               ~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java:1208: Warning: Implicitly using the default locale is a common source of bugs: Use toUpperCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+        TextView badge = ui.text(record.status.toUpperCase(), UiTypography.Role.CAPTION, statusColor(record.status));
+                                               ~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootBridgeManager.java:119: Warning: Implicitly using the default locale is a common source of bugs: Use toLowerCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+            } else if (result.exitCode == 126 || result.output.toLowerCase().contains("permission denied")
+                                                               ~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootBridgeManager.java:120: Warning: Implicitly using the default locale is a common source of bugs: Use toLowerCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+                    || result.output.toLowerCase().contains("cannot run program \"su\"")
+                                     ~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootBridgeManager.java:121: Warning: Implicitly using the default locale is a common source of bugs: Use toLowerCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+                    || result.output.toLowerCase().contains("not allowed")) {
+                                     ~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootBridgeManager.java:126: Warning: Implicitly using the default locale is a common source of bugs: Use toLowerCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+                String lower = result.output.toLowerCase();
+                                             ~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootBridgeManager.java:145: Warning: Implicitly using the default locale is a common source of bugs: Use toLowerCase(Locale) instead. For strings meant to be internal use Locale.ROOT, otherwise Locale.getDefault(). [DefaultLocale]
+                setState(app, result.output.toLowerCase().contains("permission denied") ? "denied" : "error",
+                                            ~~~~~~~~~~~
+
+   Explanation for issues of type "DefaultLocale":
+   Calling String#toLowerCase() or #toUpperCase() without specifying an
+   explicit locale is a common source of bugs. The reason for that is that
+   those methods will use the current locale on the user's device, and even
+   though the code appears to work correctly when you are developing the app,
+   it will fail in some locales. For example, in the Turkish locale, the
+   uppercase replacement for i is not I.
+
+   If you want the methods to just perform ASCII replacement, for example to
+   convert an enum name, call String#toUpperCase(Locale.ROOT) instead. If you
+   really want to use the current locale, call
+   String#toUpperCase(Locale.getDefault()) instead.
+
+   https://developer.android.com/reference/java/util/Locale.html#default_locale
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryLocation.java:10: Warning: Do not hardcode "/data/"; use Context.getFilesDir().getPath() instead [SdCardPath]
+    static final String TERMUX_HOME = "/data/data/com.termux/files/home";
+                                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootCommandBroker.java:20: Warning: Do not hardcode "/data/"; use Context.getFilesDir().getPath() instead [SdCardPath]
+    private static final String TERMUX_PREFIX = "/data/data/com.termux/files/usr";
+                                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootCommandBroker.java:21: Warning: Do not hardcode "/data/"; use Context.getFilesDir().getPath() instead [SdCardPath]
+    private static final String TERMUX_HOME = "/data/data/com.termux/files/home";
+                                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootLogIndexer.java:82: Warning: Do not hardcode "/sdcard/"; use Environment.getExternalStorageDirectory().getPath() instead [SdCardPath]
+                    new String[]{"/sdcard/Tasker/devtool"}, false));
+                                 ~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootLogIndexer.java:89: Warning: Do not hardcode "/data/"; use Context.getFilesDir().getPath() instead [SdCardPath]
+                    new String[]{"/data/adb/devtool", "/data/local/tmp/devtool", "/data/data/io.github.mikeceead.devtoolhud/files"}, false));
+                                                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RootLogIndexer.java:92: Warning: Do not hardcode "/sdcard/"; use Environment.getExternalStorageDirectory().getPath() instead [SdCardPath]
+                    new String[]{"/sdcard/.logs/devtool"}, true));
+                                 ~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/TermuxCommandRunner.java:26: Warning: Do not hardcode "/data/"; use Context.getFilesDir().getPath() instead [SdCardPath]
+    private static final String TERMUX_PREFIX = "/data/data/com.termux/files/usr";
+                                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/TermuxPaths.java:5: Warning: Do not hardcode "/data/"; use Context.getFilesDir().getPath() instead [SdCardPath]
+    static final String HOME = "/data/data/com.termux/files/home";
+                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "SdCardPath":
+   Your code should not reference the /sdcard path directly; instead use
+   Environment.getExternalStorageDirectory().getPath().
+
+   Similarly, do not reference the /data/data/ path directly; it can vary in
+   multi-user scenarios. Instead, use Context.getFilesDir().getPath().
+
+   https://developer.android.com/training/data-storage#filesExternal
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/AppPalette.java:60: Warning: Use of this function is discouraged because resource reflection makes it harder to perform build optimizations and compile-time verification of code. It is much more efficient to retrieve resources by identifier (e.g. R.foo.bar) than by name (e.g. getIdentifier("bar", "foo", null)). [DiscouragedApi]
+        int id = context.getResources().getIdentifier(name, "color", "android");
+                                        ~~~~~~~~~~~~~
+
+   Explanation for issues of type "DiscouragedApi":
+   Discouraged APIs are allowed and are not deprecated, but they may be unfit
+   for common use (e.g. due to slow performance or subtle behavior).
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:93: Warning: Exported receiver does not require permission [ExportedReceiver]
+        <receiver
+         ~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:103: Warning: Exported receiver does not require permission [ExportedReceiver]
+        <receiver
+         ~~~~~~~~
+
+   Explanation for issues of type "ExportedReceiver":
+   Exported receivers (receivers which either set exported=true or contain an
+   intent-filter and do not specify exported=false) should define a permission
+   that an entity must have in order to launch the receiver or bind to it.
+   Without this, any application can use this receiver.
+
+   https://goo.gle/ExportedReceiver
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:17: Warning: The attribute android:allowBackup is deprecated from Android 12 and higher and may be removed in future versions. Consider adding the attribute android:dataExtractionRules specifying an @xml resource which configures cloud backups and device transfers on Android 12 and higher. [DataExtractionRules]
+        android:allowBackup="false"
+                             ~~~~~
+
+   Explanation for issues of type "DataExtractionRules":
+   Before Android 12, the attributes android:allowBackup and
+   android:fullBackupContent were used to configure all forms of backup,
+   including cloud backups, device-to-device transfers and adb backup.
+
+   In Android 12 and higher, these attributes have been deprecated and will
+   only apply to cloud backups. You should instead use the attribute
+   android:dataExtractionRules, specifying an @xml resource that configures
+   which files to back up, for cloud backups and for device-to-device
+   transfers, separately. If your minSdkVersion supports older versions,
+   you'll still want to specify an android:fullBackupContent resource if the
+   default behavior is not right for your app.
+
+   https://developer.android.com/about/versions/12/backup-restore#xml-changes
+   https://goo.gle/DataExtractionRules
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java:1716: Warning: Unnecessary; SDK_INT is always >= 26 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= 23 && !TermuxCommandRunner.hasPermission(this)) {
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java:68: Warning: Unnecessary; SDK_INT is never < 26 [ObsoleteSdkInt]
+        return Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(context);
+               ~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java:87: Warning: Unnecessary; SDK_INT is always >= 26 [ObsoleteSdkInt]
+                if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent);
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java:384: Warning: Unnecessary; SDK_INT is always >= 26 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= 21) {
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java:419: Warning: Unnecessary; SDK_INT is always >= 26 [ObsoleteSdkInt]
+            if (Build.VERSION.SDK_INT >= 21) {
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryNotificationController.java:21: Warning: Unnecessary; SDK_INT is always >= 26 [ObsoleteSdkInt]
+        if (manager != null && Build.VERSION.SDK_INT >= 26) {
+                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryNotificationController.java:43: Warning: Unnecessary; SDK_INT is always >= 26 [ObsoleteSdkInt]
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/TaskerProtocol.java:95: Warning: Unnecessary; SDK_INT is always >= 26 [ObsoleteSdkInt]
+                if (foreground && Build.VERSION.SDK_INT >= 26) context.startForegroundService(completion);
+                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/TermuxCommandRunner.java:46: Warning: Unnecessary; SDK_INT is never < 26 [ObsoleteSdkInt]
+        return Build.VERSION.SDK_INT < 23
+               ~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/mipmap-anydpi-v26: Warning: This folder configuration (v26) is unnecessary; minSdkVersion is 26. Merge all the resources in this folder into mipmap-anydpi. [ObsoleteSdkInt]
+
+   Explanation for issues of type "ObsoleteSdkInt":
+   This check flags version checks that are not necessary, because the
+   minSdkVersion (or surrounding known API level) is already at least as high
+   as the version checked for.
+
+   Similarly, it also looks for resources in -vNN folders, such as values-v14
+   where the version qualifier is less than or equal to the minSdkVersion,
+   where the contents should be merged into the best folder.
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java:46: Warning: Do not place Android context classes in static fields (static reference to OverlayHudService which has field overlayRoot pointing to LinearLayout); this is a memory leak [StaticFieldLeak]
+    private static volatile OverlayHudService instance;
+            ~~~~~~
+
+   Explanation for issues of type "StaticFieldLeak":
+   A static field will leak contexts.
+
+   Non-static inner classes have an implicit reference to their outer class.
+   If that outer class is for example a Fragment or Activity, then this
+   reference means that the long-running handler/loader/task will hold a
+   reference to the activity which prevents it from getting garbage
+   collected.
+
+   Similarly, direct field references to activities and fragments from these
+   longer running instances can cause leaks.
+
+   ViewModel classes should never point to Views or non-application Contexts.
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml:46: Warning: Set android:baselineAligned="false" on this element for better performance [DisableBaselineAlignment]
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="7dp">
+         ~~~~~~~~~~~~
+
+   Explanation for issues of type "DisableBaselineAlignment":
+   When a LinearLayout is used to distribute the space proportionally between
+   nested layouts, the baseline alignment property should be turned off to
+   make the layout computation faster.
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/colors.xml:5: Warning: The resource R.color.devtool_surface appears to be unused [UnusedResources]
+    <color name="devtool_surface">#121923</color>
+           ~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/colors.xml:6: Warning: The resource R.color.devtool_text appears to be unused [UnusedResources]
+    <color name="devtool_text">#EEF4FF</color>
+           ~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/colors.xml:7: Warning: The resource R.color.devtool_muted appears to be unused [UnusedResources]
+    <color name="devtool_muted">#8EA0B4</color>
+           ~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/colors.xml:9: Warning: The resource R.color.devtool_cyan appears to be unused [UnusedResources]
+    <color name="devtool_cyan">#68D8FF</color>
+           ~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/colors.xml:10: Warning: The resource R.color.devtool_yellow appears to be unused [UnusedResources]
+    <color name="devtool_yellow">#FFD166</color>
+           ~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/colors.xml:11: Warning: The resource R.color.devtool_red appears to be unused [UnusedResources]
+    <color name="devtool_red">#FF6978</color>
+           ~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/drawable/ic_permissions.xml:2: Warning: The resource R.drawable.ic_permissions appears to be unused [UnusedResources]
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+^
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/drawable/ic_start.xml:1: Warning: The resource R.drawable.ic_start appears to be unused [UnusedResources]
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+^
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/drawable/ic_status.xml:2: Warning: The resource R.drawable.ic_status appears to be unused [UnusedResources]
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+^
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/drawable/ic_tracker.xml:1: Warning: The resource R.drawable.ic_tracker appears to be unused [UnusedResources]
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+^
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/styles.xml:14: Warning: The resource R.style.TextAppearance_Devtool_PageTitle appears to be unused [UnusedResources]
+    <style name="TextAppearance.Devtool.PageTitle" parent="android:style/TextAppearance.Material.Headline">
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/styles.xml:17: Warning: The resource R.style.TextAppearance_Devtool_CardTitle appears to be unused [UnusedResources]
+    <style name="TextAppearance.Devtool.CardTitle" parent="android:style/TextAppearance.Material.Title">
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/styles.xml:20: Warning: The resource R.style.TextAppearance_Devtool_Body appears to be unused [UnusedResources]
+    <style name="TextAppearance.Devtool.Body" parent="android:style/TextAppearance.Material.Body1">
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/styles.xml:23: Warning: The resource R.style.TextAppearance_Devtool_BodySmall appears to be unused [UnusedResources]
+    <style name="TextAppearance.Devtool.BodySmall" parent="android:style/TextAppearance.Material.Body1">
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/styles.xml:26: Warning: The resource R.style.TextAppearance_Devtool_Label appears to be unused [UnusedResources]
+    <style name="TextAppearance.Devtool.Label" parent="android:style/TextAppearance.Material.Caption">
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values/styles.xml:29: Warning: The resource R.style.TextAppearance_Devtool_Caption appears to be unused [UnusedResources]
+    <style name="TextAppearance.Devtool.Caption" parent="android:style/TextAppearance.Material.Caption">
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "UnusedResources":
+   Unused resources make applications larger and slow down builds.
+
+
+   The unused resource check can ignore tests. If you want to include
+   resources that are only referenced from tests, consider packaging them in a
+   test source set instead.
+
+   You can include test sources in the unused resource check by setting the
+   system property lint.unused-resources.include-tests =true, and to exclude
+   them (usually for performance reasons), use
+   lint.unused-resources.exclude-tests =true.
+   ,
+
+   Available options:
+
+   **skip-libraries** (default is true):
+   Whether the unused resource check should skip reporting unused resources in libraries.
+
+   Many libraries will declare resources that are part of the library surface; other modules depending on the library will also reference the resources. To avoid reporting all these resources as unused (in the context of a library), the unused resource check normally skips reporting unused resources in libraries. Instead, run the unused resource check on the consuming app module (along with `checkDependencies=true`).
+
+   However, there are cases where you want to check that all the resources declared in a library are used; in that case, you can disable the skip option.
+
+   To configure this option, use a `lint.xml` file with an <option> like this:
+
+   ```xml
+   <lint>
+       <issue id="UnusedResources">
+           <option name="skip-libraries" value="true" />
+       </issue>
+   </lint>
+   ```
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml:2: Warning: The application adaptive icon is missing a monochrome tag [MonochromeLauncherIcon]
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+^
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml:2: Warning: The application adaptive roundIcon is missing a monochrome tag [MonochromeLauncherIcon]
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+^
+
+   Explanation for issues of type "MonochromeLauncherIcon":
+   If android:roundIcon and android:icon are both in your manifest, you must
+   either remove the reference to android:roundIcon if it is not needed; or,
+   supply the monochrome icon in the drawable defined by the android:roundIcon
+   and android:icon attribute.
+
+   For example, if android:roundIcon and android:icon are both in the
+   manifest, a launcher might choose to use android:roundIcon over
+   android:icon to display the adaptive app icon. Therefore, your themed
+   application iconwill not show if your monochrome attribute is not also
+   specified in android:roundIcon.
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java:266: Warning: Custom view `LinearLayout` has setOnTouchListener called on it but does not override performClick [ClickableViewAccessibility]
+        header.setOnTouchListener(this::dragOverlay);
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "ClickableViewAccessibility":
+   If a View that overrides onTouchEvent or uses an OnTouchListener does not
+   also implement performClick and call it when clicks are detected, the View
+   may not handle accessibility actions properly. Logic handling the click
+   actions should ideally be placed in View#performClick as some accessibility
+   services invoke performClick when a click action should occur.
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java:1498: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+            commandPreview.setText("Configuration issue: " + error.getMessage());
+                                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java:1498: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+            commandPreview.setText("Configuration issue: " + error.getMessage());
+                                   ~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java:1585: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+                "Notifications  " + yesNo(notifications) +
+                ^
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java:1585: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+                "Notifications  " + yesNo(notifications) +
+                ~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java:329: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+            headerCount.setText("Ready");
+                                ~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java:126: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+        state.setText("Reading " + location.displayEnvironment() + " · " + location.path);
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java:126: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        state.setText("Reading " + location.displayEnvironment() + " · " + location.path);
+                      ~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java:138: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+            state.setText("No child directories found, or root access was denied.");
+                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java:141: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+        state.setText(directories.size() + " directories");
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java:141: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        state.setText(directories.size() + " directories");
+                                           ~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiKit.java:146: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+        button.setText(title + "\n" + detail);
+                       ~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "SetTextI18n":
+   When calling TextView#setText
+   * Never call Number#toString() to format numbers; it will not handle
+   fraction separators and locale-specific digits properly. Consider using
+   String#format with proper format specifications (%d or %f) instead.
+   * Do not pass a string literal (e.g. "Hello") to display text. Hardcoded
+   text can not be properly translated to other languages. Consider using
+   Android resource strings instead.
+   * Do not build messages by concatenating text chunks. Such messages can not
+   be properly translated.
+
+   https://developer.android.com/guide/topics/resources/localization.html
+
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml:11: Warning: Hardcoded string "Devtool", should use @string resource [HardcodedText]
+                <TextView style="@style/TextAppearance.Devtool.Notification.Detail" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Devtool" android:textColor="@color/notification_text" android:fontFamily="sans-serif-medium" />
+                                                                                                                                                             ~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml:13: Warning: Hardcoded string "LIVE", should use @string resource [HardcodedText]
+                <TextView android:id="@+id/notification_state_label" style="@style/TextAppearance.Devtool.Notification.Badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="LIVE" android:letterSpacing="0.04" />
+                                                                                                                                                                                                                                        ~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_compact.xml:15: Warning: Hardcoded string "Applying overlay bundle", should use @string resource [HardcodedText]
+            <TextView android:id="@+id/notification_task_title" style="@style/TextAppearance.Devtool.Notification.Title" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="2" android:ellipsize="end" android:text="Applying overlay bundle" />
+                                                                                                                                                                                                                                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml:8: Warning: Hardcoded string "Devtool", should use @string resource [HardcodedText]
+                    <TextView style="@style/TextAppearance.Devtool.Notification.Detail" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Devtool" android:textColor="@color/notification_text" android:fontFamily="sans-serif-medium" />
+                                                                                                                                                                 ~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml:10: Warning: Hardcoded string "LIVE", should use @string resource [HardcodedText]
+                    <TextView android:id="@+id/notification_state_label" style="@style/TextAppearance.Devtool.Notification.Badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="LIVE" android:letterSpacing="0.04" />
+                                                                                                                                                                                                                                            ~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml:48: Warning: Hardcoded string "Tests", should use @string resource [HardcodedText]
+            <TextView style="@style/TextAppearance.Devtool.Notification.Badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Tests" android:textColor="@color/notification_soft" />
+                                                                                                                                                        ~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml:52: Warning: Hardcoded string "Warnings", should use @string resource [HardcodedText]
+            <TextView style="@style/TextAppearance.Devtool.Notification.Badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Warnings" android:textColor="@color/notification_soft" />
+                                                                                                                                                        ~~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml:56: Warning: Hardcoded string "Errors", should use @string resource [HardcodedText]
+            <TextView style="@style/TextAppearance.Devtool.Notification.Badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Errors" android:textColor="@color/notification_soft" />
+                                                                                                                                                        ~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded.xml:60: Warning: Hardcoded string "Elapsed", should use @string resource [HardcodedText]
+            <TextView style="@style/TextAppearance.Devtool.Notification.Badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Elapsed" android:textColor="@color/notification_soft" />
+                                                                                                                                                        ~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml:8: Warning: Hardcoded string "Devtool", should use @string resource [HardcodedText]
+                    <TextView style="@style/TextAppearance.Devtool.Notification.Detail" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Devtool" android:textColor="@color/notification_text" android:fontFamily="sans-serif-medium" />
+                                                                                                                                                                 ~~~~~~~~~~~~~~~~~~~~~~
+/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/layout/notification_devtool_expanded_large_text.xml:10: Warning: Hardcoded string "LIVE", should use @string resource [HardcodedText]
+                    <TextView android:id="@+id/notification_state_label" style="@style/TextAppearance.Devtool.Notification.Badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="LIVE" android:letterSpacing="0.04" />
+                                                                                                                                                                                                                                            ~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "HardcodedText":
+   Hardcoding text attributes directly in layout files is bad for several
+   reasons:
+
+   * When creating configuration variations (for example for landscape or
+   portrait) you have to repeat the actual text (and keep it up to date when
+   making changes)
+
+   * The application cannot be translated to other languages by just adding
+   new translations for existing string resources.
+
+   There are quickfixes to automatically extract this hardcoded string into a
+   resource lookup.
+
+0 errors, 75 warnings

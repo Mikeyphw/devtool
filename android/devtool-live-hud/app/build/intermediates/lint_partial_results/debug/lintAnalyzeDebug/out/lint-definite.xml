@@ -1,0 +1,841 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.13.2" type="incidents">
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toLowerCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/BridgeUpdateGate.java"
+            line="19"
+            column="75"
+            startOffset="865"
+            endLine="19"
+            endColumn="86"
+            endOffset="876"/>
+    </incident>
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toLowerCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/DevtoolRunConfig.java"
+            line="44"
+            column="66"
+            startOffset="1499"
+            endLine="44"
+            endColumn="77"
+            endOffset="1510"/>
+    </incident>
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toLowerCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/DevtoolRunConfig.java"
+            line="45"
+            column="50"
+            startOffset="1563"
+            endLine="45"
+            endColumn="61"
+            endOffset="1574"/>
+    </incident>
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toLowerCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/DevtoolRunConfig.java"
+            line="46"
+            column="48"
+            startOffset="1625"
+            endLine="46"
+            endColumn="59"
+            endOffset="1636"/>
+    </incident>
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toUpperCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+            line="1208"
+            column="48"
+            startOffset="74688"
+            endLine="1208"
+            endColumn="59"
+            endOffset="74699"/>
+    </incident>
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toLowerCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootBridgeManager.java"
+            line="119"
+            column="64"
+            startOffset="6010"
+            endLine="119"
+            endColumn="75"
+            endOffset="6021"/>
+    </incident>
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toLowerCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootBridgeManager.java"
+            line="120"
+            column="38"
+            startOffset="6091"
+            endLine="120"
+            endColumn="49"
+            endOffset="6102"/>
+    </incident>
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toLowerCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootBridgeManager.java"
+            line="121"
+            column="38"
+            startOffset="6180"
+            endLine="121"
+            endColumn="49"
+            endOffset="6191"/>
+    </incident>
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toLowerCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootBridgeManager.java"
+            line="126"
+            column="46"
+            startOffset="6534"
+            endLine="126"
+            endColumn="57"
+            endOffset="6545"/>
+    </incident>
+
+    <incident
+        id="DefaultLocale"
+        severity="warning"
+        message="Implicitly using the default locale is a common source of bugs: Use `toLowerCase(Locale)` instead. For strings meant to be internal use `Locale.ROOT`, otherwise `Locale.getDefault()`.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootBridgeManager.java"
+            line="145"
+            column="45"
+            startOffset="7461"
+            endLine="145"
+            endColumn="56"
+            endOffset="7472"/>
+    </incident>
+
+    <incident
+        id="SdCardPath"
+        severity="warning"
+        message="Do not hardcode &quot;`/data/`&quot;; use `Context.getFilesDir().getPath()` instead">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryLocation.java"
+            line="10"
+            column="39"
+            startOffset="267"
+            endLine="10"
+            endColumn="73"
+            endOffset="301"/>
+    </incident>
+
+    <incident
+        id="SdCardPath"
+        severity="warning"
+        message="Do not hardcode &quot;`/data/`&quot;; use `Context.getFilesDir().getPath()` instead">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootCommandBroker.java"
+            line="20"
+            column="49"
+            startOffset="692"
+            endLine="20"
+            endColumn="82"
+            endOffset="725"/>
+    </incident>
+
+    <incident
+        id="SdCardPath"
+        severity="warning"
+        message="Do not hardcode &quot;`/data/`&quot;; use `Context.getFilesDir().getPath()` instead">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootCommandBroker.java"
+            line="21"
+            column="47"
+            startOffset="773"
+            endLine="21"
+            endColumn="81"
+            endOffset="807"/>
+    </incident>
+
+    <incident
+        id="SdCardPath"
+        severity="warning"
+        message="Do not hardcode &quot;/sdcard/&quot;; use `Environment.getExternalStorageDirectory().getPath()` instead">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootLogIndexer.java"
+            line="82"
+            column="34"
+            startOffset="3567"
+            endLine="82"
+            endColumn="58"
+            endOffset="3591"/>
+    </incident>
+
+    <incident
+        id="SdCardPath"
+        severity="warning"
+        message="Do not hardcode &quot;`/data/`&quot;; use `Context.getFilesDir().getPath()` instead">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootLogIndexer.java"
+            line="89"
+            column="82"
+            startOffset="4173"
+            endLine="89"
+            endColumn="131"
+            endOffset="4222"/>
+    </incident>
+
+    <incident
+        id="SdCardPath"
+        severity="warning"
+        message="Do not hardcode &quot;/sdcard/&quot;; use `Environment.getExternalStorageDirectory().getPath()` instead">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RootLogIndexer.java"
+            line="92"
+            column="34"
+            startOffset="4494"
+            endLine="92"
+            endColumn="57"
+            endOffset="4517"/>
+    </incident>
+
+    <incident
+        id="SdCardPath"
+        severity="warning"
+        message="Do not hardcode &quot;`/data/`&quot;; use `Context.getFilesDir().getPath()` instead">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/TermuxCommandRunner.java"
+            line="26"
+            column="49"
+            startOffset="1300"
+            endLine="26"
+            endColumn="82"
+            endOffset="1333"/>
+    </incident>
+
+    <incident
+        id="SdCardPath"
+        severity="warning"
+        message="Do not hardcode &quot;`/data/`&quot;; use `Context.getFilesDir().getPath()` instead">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/TermuxPaths.java"
+            line="5"
+            column="32"
+            startOffset="191"
+            endLine="5"
+            endColumn="66"
+            endOffset="225"/>
+    </incident>
+
+    <incident
+        id="DiscouragedApi"
+        severity="warning"
+        message="Use of this function is discouraged because resource reflection makes it harder to perform build optimizations and compile-time verification of code. It is much more efficient to retrieve resources by identifier (e.g. `R.foo.bar`) than by name (e.g. `getIdentifier(&quot;bar&quot;, &quot;foo&quot;, null)`).">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/AppPalette.java"
+            line="60"
+            column="41"
+            startOffset="2492"
+            endLine="60"
+            endColumn="54"
+            endOffset="2505"/>
+    </incident>
+
+    <incident
+        id="ExportedReceiver"
+        severity="warning"
+        message="Exported receiver does not require permission">
+        <fix-attribute
+            description="Set permission"
+            namespace="http://schemas.android.com/apk/res/android"
+            attribute="permission"
+            value="TODO"
+            point="4"
+            mark="0"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*manifest*0}"
+            line="93"
+            column="10"
+            startOffset="3641"
+            endLine="93"
+            endColumn="18"
+            endOffset="3649"/>
+    </incident>
+
+    <incident
+        id="ExportedReceiver"
+        severity="warning"
+        message="Exported receiver does not require permission">
+        <fix-attribute
+            description="Set permission"
+            namespace="http://schemas.android.com/apk/res/android"
+            attribute="permission"
+            value="TODO"
+            point="4"
+            mark="0"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*manifest*0}"
+            line="103"
+            column="10"
+            startOffset="4008"
+            endLine="103"
+            endColumn="18"
+            endOffset="4016"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is always >= 26">
+        <fix-data conditional="true"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+            line="1716"
+            column="13"
+            startOffset="101668"
+            endLine="1716"
+            endColumn="40"
+            endOffset="101695"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is never &lt; 26">
+        <fix-data conditional="false"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/OverlayHudService.java"
+            line="68"
+            column="16"
+            startOffset="2533"
+            endLine="68"
+            endColumn="42"
+            endOffset="2559"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is always >= 26">
+        <fix-data conditional="true"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/OverlayHudService.java"
+            line="87"
+            column="21"
+            startOffset="3286"
+            endLine="87"
+            endColumn="48"
+            endOffset="3313"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is always >= 26">
+        <fix-data conditional="true"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/OverlayHudService.java"
+            line="384"
+            column="13"
+            startOffset="16076"
+            endLine="384"
+            endColumn="40"
+            endOffset="16103"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is always >= 26">
+        <fix-data conditional="true"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/OverlayHudService.java"
+            line="419"
+            column="17"
+            startOffset="18298"
+            endLine="419"
+            endColumn="44"
+            endOffset="18325"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is always >= 26">
+        <fix-data conditional="true"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryNotificationController.java"
+            line="21"
+            column="32"
+            startOffset="773"
+            endLine="21"
+            endColumn="59"
+            endOffset="800"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is always >= 26">
+        <fix-data conditional="true"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryNotificationController.java"
+            line="43"
+            column="40"
+            startOffset="2396"
+            endLine="43"
+            endColumn="67"
+            endOffset="2423"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is always >= 26">
+        <fix-data conditional="true"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/TaskerProtocol.java"
+            line="95"
+            column="35"
+            startOffset="5415"
+            endLine="95"
+            endColumn="62"
+            endOffset="5442"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is never &lt; 26">
+        <fix-data conditional="false"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/TermuxCommandRunner.java"
+            line="46"
+            column="16"
+            startOffset="1955"
+            endLine="46"
+            endColumn="42"
+            endOffset="1981"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="This folder configuration (`v26`) is unnecessary; `minSdkVersion` is 26. Merge all the resources in this folder into `mipmap-anydpi`.">
+        <fix-data file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/mipmap-anydpi-v26" folderName="mipmap-anydpi" requiresApi="26"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/mipmap-anydpi-v26"/>
+    </incident>
+
+    <incident
+        id="StaticFieldLeak"
+        severity="warning"
+        message="Do not place Android context classes in static fields (static reference to `OverlayHudService` which has field `overlayRoot` pointing to `LinearLayout`); this is a memory leak">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/OverlayHudService.java"
+            line="46"
+            column="13"
+            startOffset="1631"
+            endLine="46"
+            endColumn="19"
+            endOffset="1637"/>
+    </incident>
+
+    <incident
+        id="DisableBaselineAlignment"
+        severity="warning"
+        message="Set `android:baselineAligned=&quot;false&quot;` on this element for better performance">
+        <fix-attribute
+            description="Set baselineAligned=&quot;false&quot;"
+            robot="true"
+            independent="true"
+            namespace="http://schemas.android.com/apk/res/android"
+            attribute="baselineAligned"
+            value="false"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_expanded.xml"
+            line="46"
+            column="10"
+            startOffset="9939"
+            endLine="46"
+            endColumn="22"
+            endOffset="9951"/>
+    </incident>
+
+    <incident
+        id="MonochromeLauncherIcon"
+        severity="warning"
+        message="The application adaptive icon is missing a monochrome tag">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/mipmap-anydpi-v26/ic_launcher.xml"
+            line="2"
+            column="1"
+            startOffset="39"
+            endLine="5"
+            endColumn="17"
+            endOffset="265"/>
+    </incident>
+
+    <incident
+        id="MonochromeLauncherIcon"
+        severity="warning"
+        message="The application adaptive roundIcon is missing a monochrome tag">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/mipmap-anydpi-v26/ic_launcher_round.xml"
+            line="2"
+            column="1"
+            startOffset="39"
+            endLine="5"
+            endColumn="17"
+            endOffset="265"/>
+    </incident>
+
+    <incident
+        id="ClickableViewAccessibility"
+        severity="warning"
+        message="Custom view ``LinearLayout`` has `setOnTouchListener` called on it but does not override `performClick`">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/OverlayHudService.java"
+            line="266"
+            column="9"
+            startOffset="10138"
+            endLine="266"
+            endColumn="53"
+            endOffset="10182"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+            line="1498"
+            column="36"
+            startOffset="91869"
+            endLine="1498"
+            endColumn="80"
+            endOffset="91913"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="String literal in `setText` can not be translated. Use Android resources instead.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+            line="1498"
+            column="36"
+            startOffset="91869"
+            endLine="1498"
+            endColumn="59"
+            endOffset="91892"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+            line="1585"
+            column="17"
+            startOffset="95831"
+            endLine="1592"
+            endColumn="80"
+            endOffset="96452"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="String literal in `setText` can not be translated. Use Android resources instead.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+            line="1585"
+            column="17"
+            startOffset="95831"
+            endLine="1585"
+            endColumn="34"
+            endOffset="95848"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="String literal in `setText` can not be translated. Use Android resources instead.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/OverlayHudService.java"
+            line="329"
+            column="33"
+            startOffset="12887"
+            endLine="329"
+            endColumn="40"
+            endOffset="12894"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java"
+            line="126"
+            column="23"
+            startOffset="5626"
+            endLine="126"
+            endColumn="89"
+            endOffset="5692"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="String literal in `setText` can not be translated. Use Android resources instead.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java"
+            line="126"
+            column="23"
+            startOffset="5626"
+            endLine="126"
+            endColumn="33"
+            endOffset="5636"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="String literal in `setText` can not be translated. Use Android resources instead.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java"
+            line="138"
+            column="27"
+            startOffset="6174"
+            endLine="138"
+            endColumn="83"
+            endOffset="6230"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java"
+            line="141"
+            column="23"
+            startOffset="6285"
+            endLine="141"
+            endColumn="58"
+            endOffset="6320"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="String literal in `setText` can not be translated. Use Android resources instead.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java"
+            line="141"
+            column="44"
+            startOffset="6306"
+            endLine="141"
+            endColumn="58"
+            endOffset="6320"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders.">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/UiKit.java"
+            line="146"
+            column="24"
+            startOffset="6597"
+            endLine="146"
+            endColumn="45"
+            endOffset="6618"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;Devtool&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_compact.xml"
+            line="11"
+            column="158"
+            startOffset="1429"
+            endLine="11"
+            endColumn="180"
+            endOffset="1451"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;LIVE&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_compact.xml"
+            line="13"
+            column="233"
+            startOffset="2060"
+            endLine="13"
+            endColumn="252"
+            endOffset="2079"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;Applying overlay bundle&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_compact.xml"
+            line="15"
+            column="240"
+            startOffset="2379"
+            endLine="15"
+            endColumn="278"
+            endOffset="2417"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;Devtool&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_expanded.xml"
+            line="8"
+            column="162"
+            startOffset="1546"
+            endLine="8"
+            endColumn="184"
+            endOffset="1568"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;LIVE&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_expanded.xml"
+            line="10"
+            column="237"
+            startOffset="2185"
+            endLine="10"
+            endColumn="256"
+            endOffset="2204"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;Tests&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_expanded.xml"
+            line="48"
+            column="153"
+            startOffset="10605"
+            endLine="48"
+            endColumn="173"
+            endOffset="10625"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;Warnings&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_expanded.xml"
+            line="52"
+            column="153"
+            startOffset="11494"
+            endLine="52"
+            endColumn="176"
+            endOffset="11517"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;Errors&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_expanded.xml"
+            line="56"
+            column="153"
+            startOffset="12389"
+            endLine="56"
+            endColumn="174"
+            endOffset="12410"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;Elapsed&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_expanded.xml"
+            line="60"
+            column="153"
+            startOffset="13280"
+            endLine="60"
+            endColumn="175"
+            endOffset="13302"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;Devtool&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_expanded_large_text.xml"
+            line="8"
+            column="162"
+            startOffset="1547"
+            endLine="8"
+            endColumn="184"
+            endOffset="1569"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;LIVE&quot;, should use `@string` resource">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/layout/notification_devtool_expanded_large_text.xml"
+            line="10"
+            column="237"
+            startOffset="2186"
+            endLine="10"
+            endColumn="256"
+            endOffset="2205"/>
+    </incident>
+
+</incidents>
