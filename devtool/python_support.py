@@ -846,7 +846,19 @@ def build_sync_command(
             command.extend(["--extra", extra])
         if not install_project:
             command.append("--no-install-project")
-        return [command]
+        commands.append(command)
+        uv_pip = ["uv", "pip", "install"]
+        if plan.environment_root:
+            uv_pip.extend(["--python", str(_venv_python(Path(plan.environment_root)))])
+        if offline:
+            uv_pip.append("--offline")
+        if constraints:
+            uv_pip.extend(["-c", constraints])
+        if info.framework == "pytest" and not _declares_requirement(info.root, "pytest"):
+            commands.append([*uv_pip, "pytest"])
+        if info.framework == "pytest" and _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root):
+            commands.append([*uv_pip, "pytest-asyncio"])
+        return commands
     if info.manager == "poetry":
         command = ["poetry", "install", "--sync"]
         if groups:
@@ -884,8 +896,18 @@ def build_sync_command(
     # a host-side Path.exists() check cannot tell whether the guest venv exists.
     # Always emit an idempotent venv bootstrap for chroot plans so the check runs
     # in the same environment as the later pip/test commands.
-    if _is_chroot_execution_environment(plan.execution_environment) or not venv_python.is_file():
-        commands.append([plan.bootstrap_python or plan.python, "-m", "venv", str(venv_root)])
+    if (
+        _is_chroot_execution_environment(plan.execution_environment)
+        or not venv_python.is_file()
+        or not _can_import_with_python(str(venv_python), "pip")
+    ):
+        commands.append([
+            plan.bootstrap_python or plan.python,
+            "-m",
+            "devtool.python_support",
+            "ensure-venv",
+            str(venv_root),
+        ])
     pip_base = [str(venv_python), "-m", "pip", "install"]
     if offline:
         pip_base.append("--no-index")
@@ -1272,6 +1294,30 @@ def package_records(dist: Path) -> list[dict[str, Any]]:
 
 def _venv_python(root: Path) -> Path:
     return root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def ensure_venv_environment(env_root: Path) -> int:
+    env_root = env_root.expanduser()
+    venv_python = _venv_python(env_root)
+    if not venv_python.is_file():
+        venv.EnvBuilder(with_pip=True, clear=True).create(env_root)
+    proc = _run_capture([str(venv_python), "-m", "pip", "--version"], timeout=120)
+    if proc.returncode == 0:
+        print(f"Python venv ready: {env_root}")
+        return 0
+    bootstrap = [str(venv_python), "-m", "ensurepip", "--upgrade"]
+    proc = _run_capture(bootstrap, cwd=env_root, timeout=300)
+    if proc.returncode == 0:
+        proc = _run_capture([str(venv_python), "-m", "pip", "--version"], timeout=120)
+        if proc.returncode == 0:
+            print(f"Python venv ready: {env_root}")
+            return 0
+    detail = proc.stdout.strip()
+    raise PythonProjectError(
+        f"Python venv at {env_root} does not provide pip. "
+        "Install the python venv/ensurepip package for the selected interpreter "
+        f"or configure [python].python to an interpreter with ensurepip. {detail}"
+    )
 
 
 def _run_capture(argv: Sequence[str], *, cwd: Path | None = None, env: Mapping[str, str] | None = None, timeout: int = 600) -> subprocess.CompletedProcess[str]:
@@ -2206,6 +2252,9 @@ def main(raw_args: Sequence[str] | None = None) -> int:
     hatch.add_argument("--framework", default="auto")
     hatch.add_argument("--extra", action="append", default=[])
 
+    ensure_venv = sub.add_parser("ensure-venv")
+    ensure_venv.add_argument("environment", type=Path)
+
     validator = sub.add_parser("run-validator")
     validator.add_argument("root", type=Path)
     validator.add_argument("script", type=Path)
@@ -2294,6 +2343,8 @@ def main(raw_args: Sequence[str] | None = None) -> int:
             return _write_snapshot(args)
         if args.command == "ensure-hatch-env":
             return ensure_hatch_environment(args.root, framework=args.framework, extras=args.extra)
+        if args.command == "ensure-venv":
+            return ensure_venv_environment(args.environment)
         if args.command == "run-validator":
             return run_validator(args)
         if args.command == "run-tool":

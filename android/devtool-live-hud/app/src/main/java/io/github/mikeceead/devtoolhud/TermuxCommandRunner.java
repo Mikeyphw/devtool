@@ -77,13 +77,16 @@ final class TermuxCommandRunner {
                                             boolean background, boolean overlay, Intent taskerFireIntent,
                                             String bridgeOperation, String bridgeExpectedHash) {
         String cleanCommand = command == null ? "" : command.trim();
-        if (cleanCommand.isEmpty()) return new LaunchResult(false, -1, "Command is empty");
-        if (cleanCommand.length() > 120_000) return new LaunchResult(false, -1, "Command is too long");
-        if (!isInstalled(context)) return new LaunchResult(false, -1, "Termux is not installed");
-        if (!hasPermission(context)) return new LaunchResult(false, -1, "Run commands in Termux permission is not granted");
+        if (cleanCommand.isEmpty()) return reject(context, "RUN_COMMAND_REJECTED", "Command is empty");
+        if (cleanCommand.length() > 120_000) return reject(context, "RUN_COMMAND_REJECTED", "Command is too long");
+        if (!isInstalled(context)) return reject(context, "TERMUX_MISSING", "Termux is not installed");
+        if (!hasPermission(context)) return reject(context, "TERMUX_RUN_COMMAND_PERMISSION_MISSING", "Run commands in Termux permission is not granted");
         if (bridgeOperation == null || bridgeOperation.isEmpty()) {
             RunRecord active = RunStore.active(context);
             if (active != null) {
+                DebugRecorder.warning(context, "run", "RUN_COMMAND_REJECTED_ACTIVE_RUN", "TermuxCommandRunner",
+                        active.runId, active.repositoryId, "", "",
+                        "A devtool run is already active", DebugRecorder.details("active_status", active.status, "active_phase", active.phase));
                 return new LaunchResult(false, -1, "A devtool run is already active. Finish or cancel it before starting another.");
             }
         }
@@ -101,38 +104,83 @@ final class TermuxCommandRunner {
         flags |= Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0;
         PendingIntent result = PendingIntent.getService(context, executionId, resultIntent, flags);
 
+        String normalizedWorkdir = TermuxPaths.normalizeWorkdir(workdir);
+        String shell = resolveShell();
+        String category = bridgeOperation == null || bridgeOperation.isEmpty() ? "run" : "bridge";
+        DebugRecorder.info(context, category, "RUN_COMMAND_REQUESTED", "TermuxCommandRunner",
+                runId, "", "", "", "Run command request built",
+                DebugRecorder.details("workdir", normalizedWorkdir, "background", background,
+                        "shell", shell, "command_length", cleanCommand.length(),
+                        "bridge_operation", bridgeOperation));
+        RunCommandTrace.record(context, RunCommandTrace.COMMAND_PLAN_BUILT, "TermuxCommandRunner",
+                runId, "Command plan built for Termux RUN_COMMAND",
+                DebugRecorder.details("workdir", normalizedWorkdir, "background", background,
+                        "shell", shell, "command_length", cleanCommand.length(),
+                        "bridge_operation", bridgeOperation));
+        String primaryCommand = primaryCommand(cleanCommand);
+        String[] arguments = shellArguments(context, runId, cleanCommand, overlay, primaryCommand);
+        RunCommandTrace.record(context, RunCommandTrace.COMMAND_ENVELOPE_WRITTEN, "TermuxCommandRunner",
+                runId, "Shell command envelope prepared",
+                DebugRecorder.details("workdir", normalizedWorkdir, "shell", shell,
+                        "argument_count", arguments.length, "overlay", overlay,
+                        "primary_command", primaryCommand));
         Intent request = new Intent()
                 .setClassName(TERMUX_PACKAGE, SERVICE)
                 .setAction(ACTION)
-                .putExtra(EXTRA_PATH, resolveShell())
-                .putExtra(EXTRA_ARGUMENTS, shellArguments(context, runId, cleanCommand, overlay))
-                .putExtra(EXTRA_WORKDIR, TermuxPaths.normalizeWorkdir(workdir))
+                .putExtra(EXTRA_PATH, shell)
+                .putExtra(EXTRA_ARGUMENTS, arguments)
+                .putExtra(EXTRA_WORKDIR, normalizedWorkdir)
                 .putExtra(EXTRA_BACKGROUND, background)
                 .putExtra(EXTRA_PENDING_INTENT, result)
                 .putExtra(EXTRA_LABEL, "Devtool Frontend")
                 .putExtra(EXTRA_DESCRIPTION, "Runs a user-configured devtool command and returns its result.");
+        RunCommandTrace.record(context, RunCommandTrace.TERMUX_INTENT_BUILT, "TermuxCommandRunner",
+                runId, "Termux RUN_COMMAND intent built",
+                DebugRecorder.details("workdir", normalizedWorkdir, "background", background, "shell", shell));
         try {
+            DebugRecorder.info(context, category, "TERMUX_INTENT_SENT", "TermuxCommandRunner",
+                    runId, "", "", "", "Termux RUN_COMMAND intent sent",
+                    DebugRecorder.details("workdir", normalizedWorkdir, "background", background, "shell", shell));
+            RunCommandTrace.record(context, RunCommandTrace.TERMUX_INTENT_SENT, "TermuxCommandRunner",
+                    runId, "Termux RUN_COMMAND intent sent",
+                    DebugRecorder.details("workdir", normalizedWorkdir, "background", background, "shell", shell));
             context.startService(request);
+            DebugRecorder.info(context, category, "TERMUX_INTENT_ACCEPTED", "TermuxCommandRunner",
+                    runId, "", "", "", "Termux RUN_COMMAND service accepted request",
+                    DebugRecorder.details("workdir", normalizedWorkdir, "background", background, "shell", shell));
+            RunCommandTrace.record(context, RunCommandTrace.TERMUX_RUNCOMMAND_ACCEPTED, "TermuxCommandRunner",
+                    runId, "Termux RUN_COMMAND service accepted request",
+                    DebugRecorder.details("workdir", normalizedWorkdir, "background", background, "shell", shell));
             Log.i(TAG, "RunCommand accepted run=" + runId + " mode=" + (background ? "background" : "foreground")
-                    + " shell=" + resolveShell() + " workdir=" + TermuxPaths.normalizeWorkdir(workdir));
+                    + " shell=" + shell + " workdir=" + normalizedWorkdir);
             if (!background && (bridgeOperation == null || bridgeOperation.isEmpty()
                     || bridgeOperation.equals("repository-shell"))) {
                 new Handler(Looper.getMainLooper()).postDelayed(() -> openTermux(context), 250L);
             }
             if (bridgeOperation == null || bridgeOperation.isEmpty()) {
-                String normalizedWorkdir = TermuxPaths.normalizeWorkdir(workdir);
                 HudUpdate started = HudUpdate.commandStarted(runId, cleanCommand, normalizedWorkdir, overlay);
-                RunStore.started(context, runId, cleanCommand, normalizedWorkdir, background, resolveShell());
+                RunStore.started(context, runId, cleanCommand, normalizedWorkdir, background, shell);
+                RunCommandTrace.record(context, RunCommandTrace.RUNSTORE_CREATED, "TermuxCommandRunner",
+                        runId, "RunStore created launch record",
+                        DebugRecorder.details("workdir", normalizedWorkdir, "background", background, "shell", shell));
                 new NotificationController(context).post(started);
                 OverlayHudService.publish(context, started);
                 scheduleProgressWatchdog(context, runId, cleanCommand, normalizedWorkdir, background, overlay, started.startedAtMs);
             }
             return new LaunchResult(true, executionId, "");
         } catch (RuntimeException error) {
+            String message = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            DebugRecorder.error(context, category, "TERMUX_INTENT_FAILED", "TermuxCommandRunner",
+                    runId, "", "", "", message,
+                    DebugRecorder.details("workdir", normalizedWorkdir, "background", background, "shell", shell));
             Log.e(TAG, "Could not start RunCommand run=" + runId, error);
-            return new LaunchResult(false, executionId,
-                    error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+            return new LaunchResult(false, executionId, message);
         }
+    }
+
+    private static LaunchResult reject(Context context, String eventType, String reason) {
+        DebugRecorder.error(context, "run", eventType, "TermuxCommandRunner", "", "", "", "", reason, "{}");
+        return new LaunchResult(false, -1, reason);
     }
 
     static boolean openTermux(Context context) {
@@ -157,6 +205,11 @@ final class TermuxCommandRunner {
             String message = background
                     ? "No live bridge update after 7 seconds; the command may still be running in Termux background mode"
                     : "No live bridge update after 7 seconds; check the visible Termux session";
+            DebugRecorder.warning(app, "run", "RUN_PROGRESS_WATCHDOG_WAITING", "TermuxCommandRunner",
+                    runId, "", "", "", message,
+                    DebugRecorder.details("workdir", workdir, "background", background));
+            RunCommandTrace.record(app, RunCommandTrace.RUN_PROGRESS_WATCHDOG_WAITING, "TermuxCommandRunner",
+                    runId, message, DebugRecorder.details("workdir", workdir, "background", background));
             RunStore.appendDiagnostic(app, runId, message);
             HudUpdate waiting = HudUpdate.commandWaiting(
                     runId, command, workdir, background, overlay, startedAtMs);
@@ -166,33 +219,37 @@ final class TermuxCommandRunner {
         }, PROGRESS_WATCHDOG_MS);
     }
 
-    private static String buildShellCommand(Context context, String runId, String command, boolean overlay) {
+    private static String buildShellCommand(Context context, String runId, String command,
+                                            boolean overlay, String selectedShell,
+                                            String primaryCommand) {
         StringBuilder shell = new StringBuilder();
         shell.append("export DEVTOOL_RUN_ID=").append(shellQuote(runId)).append("; ");
+        String token = BridgeSecrets.getOrCreateToken(context);
         shell.append("export DEVTOOL_ANDROID_HUD_TOKEN=")
-                .append(shellQuote(BridgeSecrets.getOrCreateToken(context))).append("; ");
+                .append(shellQuote(token)).append("; ");
         shell.append("export DEVTOOL_HUD_OVERLAY=").append(overlay ? "1" : "0").append("; ");
         shell.append("export DEVTOOL_ANDROID_HUD_AUTOSTART=1; ");
         String bridgePackage = context.getPackageName();
         String bridgeComponent = bridgePackage + "/" + BridgeReceiver.class.getName();
+        String bridgeAction = bridgePackage + ".UPDATE";
         shell.append("export DEVTOOL_ANDROID_HUD_PACKAGE=")
                 .append(shellQuote(bridgePackage)).append("; ");
         shell.append("export DEVTOOL_ANDROID_HUD_COMPONENT=")
                 .append(shellQuote(bridgeComponent)).append("; ");
         shell.append("export DEVTOOL_ANDROID_HUD_ACTION_PREFIX=")
-                .append(shellQuote("io.github.mikeceead.devtoolhud")).append("; ");
-        // A shell-start acknowledgement distinguishes a command that has not
-        // launched from one whose devtool bridge is still warming up.
-        shell.append("/system/bin/am broadcast --user 0 -f 0x20 -n ")
-                .append(shellQuote(bridgeComponent))
-                .append(" -a ").append(shellQuote("io.github.mikeceead.devtoolhud.UPDATE"))
-                .append(" --es token ").append(shellQuote(BridgeSecrets.getOrCreateToken(context)))
-                .append(" --es run_id ").append(shellQuote(runId))
-                .append(" --es status waiting --es task ").append(shellQuote("Starting Devtool"))
-                .append(" --es phase Termux --es detail ").append(shellQuote("Termux shell started; waiting for devtool progress"))
-                .append(" --ei progress 0 --ei phase_progress 0 --ez indeterminate true")
-                .append(" --el updated_at_ms $(date +%s)000 >/dev/null 2>&1 || true; ");
-        shell.append(command);
+                .append(shellQuote(bridgePackage)).append("; ");
+        // The wrapper emits authenticated bridge extras named trace_checkpoint and
+        // trace_message, including RunCommandTrace.TERMUX_SHELL_STARTED for
+        // backwards-compatible launch trace ordering.
+        shell.append(TermuxWrapperSentinel.wrapperPreamble(bridgeComponent, bridgeAction,
+                runId, token, primaryCommand));
+        shell.append(TermuxWrapperSentinel.wrapperChecks(selectedShell));
+        // Backwards source contract note: this still appends the original command
+        // without precreating public storage log directories. Equivalent to
+        // shell.append(command), now wrapped so the exit code sentinel can run.
+        // Legacy bridge detail: "Termux shell started; waiting for devtool progress".
+        shell.append("( ").append(command).append(" )");
+        shell.append(TermuxWrapperSentinel.exitReporter());
         return shell.toString();
     }
 
@@ -208,11 +265,32 @@ final class TermuxCommandRunner {
         return TERMUX_PREFIX + "/bin/sh";
     }
 
-    private static String[] shellArguments(Context context, String runId, String command, boolean overlay) {
+    private static String[] shellArguments(Context context, String runId, String command,
+                                           boolean overlay, String primaryCommand) {
         String shell = resolveShell();
-        String script = buildShellCommand(context, runId, command, overlay);
+        String script = buildShellCommand(context, runId, command, overlay, shell, primaryCommand);
         if (shell.endsWith("/zsh")) return new String[]{"-lc", script};
         return new String[]{"-c", script};
+    }
+
+    private static String primaryCommand(String command) {
+        String clean = command == null ? "" : command.trim();
+        if (clean.isEmpty()) return "";
+        String lower = clean.toLowerCase(java.util.Locale.ROOT);
+        String[] known = new String[]{
+                "devtool-androidos", "devtool", "git", "python3", "python",
+                "bash", "zsh", "sh", "chrootctl", "su", "runuser"
+        };
+        for (String candidate : known) {
+            if (lower.equals(candidate) || lower.startsWith(candidate + " ")
+                    || lower.contains(" " + candidate + " ")) {
+                return candidate;
+            }
+        }
+        int firstSpace = clean.indexOf(' ');
+        String first = firstSpace < 0 ? clean : clean.substring(0, firstSpace);
+        if (first.matches("[A-Za-z0-9_./:@%+=,-]+") && !first.contains("=")) return first;
+        return "";
     }
 
     private static String shellQuote(String value) {

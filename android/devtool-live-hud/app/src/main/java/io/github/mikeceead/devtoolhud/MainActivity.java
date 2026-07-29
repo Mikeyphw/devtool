@@ -197,6 +197,7 @@ public final class MainActivity extends Activity {
         if (!receiverRegistered) {
             IntentFilter filter = new IntentFilter(RunStore.ACTION_UPDATED);
             filter.addAction(BridgeTokenManager.ACTION_UPDATED);
+        filter.addAction(BridgeRoundtripProbe.ACTION_UPDATED);
             filter.addAction(RootBridgeManager.ACTION_UPDATED);
             filter.addAction(RepositoryStore.ACTION_UPDATED);
             filter.addAction(RootLogIndexer.ACTION_UPDATED);
@@ -852,6 +853,11 @@ public final class MainActivity extends Activity {
         content.addView(ui.quickTile(R.drawable.ic_hud, "Test floating HUD", "Show a sample overlay card", ui.palette.cyan, v -> testOverlay()));
         content.addView(ui.quickTile(R.drawable.ic_terminal, "Open Termux", "Bring the current Termux session to the foreground", ui.palette.cyan,
                 v -> { if (!TermuxCommandRunner.openTermux(this)) Toast.makeText(this, "Termux could not be opened", Toast.LENGTH_LONG).show(); }));
+        int bridgeProbeColor = BridgeRoundtripProbe.state(this).equals("passed") ? ui.palette.green
+                : (BridgeRoundtripProbe.state(this).equals("failed") ? ui.palette.red : ui.palette.cyan);
+        content.addView(ui.quickTile(R.drawable.ic_link, "Bridge roundtrip probe",
+                BridgeRoundtripProbe.label(this) + " · " + BridgeRoundtripProbe.detail(this),
+                bridgeProbeColor, v -> bridgeRoundtripAction()));
         buildSupportBundleSettings(content);
 
         content.addView(ui.sectionTitle("Command runner"));
@@ -1454,6 +1460,18 @@ public final class MainActivity extends Activity {
         return "Not installed";
     }
 
+    private void bridgeRoundtripAction() {
+        String state = BridgeRoundtripProbe.state(this);
+        if (state.equals("permission-needed")) {
+            requestTermuxPermission();
+            return;
+        }
+        TermuxCommandRunner.LaunchResult result = BridgeRoundtripProbe.start(this);
+        Toast.makeText(this, result.started ? "Bridge roundtrip probe started" : result.error,
+                result.started ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+        rebuildUi();
+    }
+
     private void bridgeTokenAction() {
         String state = BridgeTokenManager.state(this);
         if (state.equals("permission-needed")) {
@@ -1656,6 +1674,11 @@ public final class MainActivity extends Activity {
     }
 
     private void runRaw(String command, String workdir, boolean overlay, boolean useRootBridge) {
+        RunCommandTrace.record(this, RunCommandTrace.UI_RUN_REQUESTED, "MainActivity", "",
+                "Run button dispatched command",
+                DebugRecorder.details("workdir", workdir, "overlay", overlay,
+                        "use_root_bridge", useRootBridge, "background", AppSettings.runInBackground(this),
+                        "command_length", command == null ? 0 : command.length()));
         TermuxCommandRunner.LaunchResult result = useRootBridge
                 ? RootBridgeManager.run(this, command, workdir, overlay)
                 : TermuxCommandRunner.run(this, command, workdir, AppSettings.runInBackground(this), overlay, null);

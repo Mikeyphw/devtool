@@ -1,37 +1,38 @@
 {
-  "name": "devtool_validation_reporting_release_seal_phases_32_33",
+  "name": "devtool_android_repository_path_resolver_repair_ui_phase_40",
   "release": "1.1.0",
   "devtool_version": "1.1.0",
   "desktop_version": "0.4.0",
-  "android_version": "1.16.0",
-  "android_version_code": 30,
+  "android_version": "1.17.0",
+  "android_version_code": 31,
   "artifact_type": "overlay",
-  "slice": "32-33",
+  "slice": "40",
   "features": [
-    "schema-v5 durable validation reports with original and final Git heads",
-    "write-once content-hashed final report snapshots and compact status summaries",
-    "finalization integrity gates for required phases checkpoints fingerprints and transaction health",
-    "report-linked artifact history and Android validation history cards",
-    "16-scenario failure and interruption qualification matrix",
-    "deterministic four-group complete Python regression runner",
-    "process-group supervised release gates with per-gate logs and machine report",
-    "Android schema-9 report persistence and app version 1.16.0 code 30"
+    "RepositoryPathResolver detects path namespace mismatches before Git runs",
+    "Safe repair metadata model for reclassifying Termux/chroot/root repositories",
+    "RepositoryStore.applyPathRepair rekeys repository records through existing database linkage",
+    "Repository detail Overview and Metadata show a Repository Path Resolver repair card",
+    "Repair confirmation states metadata-only behavior and avoids destructive Git/filesystem actions",
+    "Support bundle includes per-repository path_resolution evidence",
+    "Debug classifier recognizes path repair and namespace mismatch issue keys"
   ],
   "key_files": [
-    "devtool/validation_reports.py",
-    "devtool/validation_sessions.py",
-    "devtool/cli.py",
-    "devtool/release_qualification.py",
-    "tools/validate-validation-release.py",
-    "tools/run-pytest-split.py",
-    "docs/validation-release-scenarios.json",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java",
-    "PHASE_32_33_VALIDATION_REPORTING_RELEASE_SEAL.md"
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPathResolution.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPathResolver.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryStore.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryDetailActivity.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/SupportBundle.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/DebugIssueClassifier.java",
+    "tests/test_android_debug_phase40.py",
+    "PHASE_40_REPOSITORY_PATH_RESOLVER_REPAIR_UI.md"
   ],
   "validation": {
-    "tests_passed": 897,
+    "tests_passed": 104,
     "tests_failed": 0,
-    "subtests_passed": 42,
-    "notes": "The complete Python inventory passed in four deterministic groups. Dedicated validation-report, 16-scenario, Android source, shell syntax, and deterministic source-archive gates passed. Android Gradle compilation remains unavailable because this container has no Android SDK or cached Gradle distribution."
+    "commands": [
+      "python3 -m pytest tests/test_android_debug_phase40.py tests/test_android_debug_phase39.py tests/test_android_debug_phase38.py tests/test_android_debug_phase37.py tests/test_android_debug_phase36.py tests/test_android_debug_phase35.py tests/test_android_debug_phase34.py tests/test_android_app_source.py tests/test_android_repositories_phase7.py tests/test_android_repositories_phase6.py tests/test_android_repositories_phase5.py tests/test_android_repositories_phase4.py tests/test_android_repositories_phase3.py tests/test_android_validation_workbench_phase29_31.py tests/test_phase33_validation_release_seal.py",
+      "javac smoke compile for RepositoryPathResolution/RepositoryPathResolver with lightweight stubs"
+    ],
+    "notes": "Phase-relevant Python/source-contract suite passed. A pure Java smoke compile passed for the new resolver/model classes with lightweight stubs. Android Gradle compilation was not run in this container. No Android version bump was included because release-contract tests pin 1.17.0/versionCode 31 after Phase 34."
   }
 }

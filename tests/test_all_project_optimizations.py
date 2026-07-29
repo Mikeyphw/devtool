@@ -265,6 +265,36 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
                 specs = build_specs(config, "restore")
         self.assertTrue(any(spec.argv[-1] == "pytest" and spec.argv[-4:-1] == ["-m", "pip", "install"] for spec in specs))
 
+    def test_python_uv_restore_installs_pytest_when_not_declared(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_demo.py").write_text("def test_demo(): pass\n", encoding="utf-8")
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(repo_root=root, project_root=str(root), kind="python", runner_options={"python": {"manager": "auto"}})
+                specs = build_specs(config, "restore")
+        self.assertTrue(
+            any(
+                spec.name == "restore:test-tools"
+                and spec.argv[:5] == ["uv", "pip", "install", "--python", str(Path(spec.argv[4]))]
+                and spec.argv[-1] == "pytest"
+                for spec in specs
+            )
+        )
+
+    def test_python_uv_dependency_check_uses_uv_pip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(repo_root=root, project_root=str(root), kind="python", runner_options={"python": {"manager": "auto"}})
+                specs = build_validation_specs(config, skip_test=True, skip_build=True)
+        check = next(spec for spec in specs if spec.name == "dependency-check")
+        self.assertEqual(check.argv[:4], ["uv", "pip", "check", "--python"])
+
     def test_python_venv_restore_installs_pytest_asyncio_for_asyncio_tests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
             root = Path(tmp)
@@ -313,6 +343,38 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
         self.assertLess(names.index("python-environment"), names.index("test"))
         bootstrap = next(spec for spec in specs if spec.name == "venv")
         self.assertTrue(bootstrap.metadata["implicit_environment_bootstrap"])
+        self.assertEqual(bootstrap.argv[1:4], ["-m", "devtool.python_support", "ensure-venv"])
+
+    def test_python_venv_restore_uses_pip_checked_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(repo_root=root, project_root=str(root), kind="python", runner_options={"python": {"manager": "venv"}})
+                specs = build_specs(config, "restore")
+        bootstrap = specs[0]
+        self.assertEqual(bootstrap.name, "venv")
+        self.assertEqual(bootstrap.argv[1:4], ["-m", "devtool.python_support", "ensure-venv"])
+
+    def test_python_venv_restore_repairs_existing_environment_without_pip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = root / ".devtool" / "venvs" / "python"
+            python = env / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            python.chmod(0o755)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "venv", "environment": str(env)}},
+            )
+            specs = build_specs(config, "restore")
+        bootstrap = specs[0]
+        self.assertEqual(bootstrap.name, "venv")
+        self.assertEqual(bootstrap.argv[1:4], ["-m", "devtool.python_support", "ensure-venv"])
 
     def test_python_skip_restore_refreshes_missing_asyncio_validator_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

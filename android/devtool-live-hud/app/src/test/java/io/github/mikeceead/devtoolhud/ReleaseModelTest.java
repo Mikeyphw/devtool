@@ -97,4 +97,14 @@ public final class ReleaseModelTest {
         assertEquals(RunIdentity.notificationId("run-a"), RunIdentity.notificationId("run-a"));
         assertNotEquals(RunIdentity.notificationId("run-a"), RunIdentity.notificationId("run-b"));
     }
+    @Test
+    public void debugIssueClassifierRecognizesRepoExecutorFailures() {
+        assertEquals("repo_runuser_failed", DebugIssueClassifier.classifyMessage("runuser: user mike does not exist"));
+        assertEquals("path_missing", DebugIssueClassifier.classifyMessage("Repository directory does not exist"));
+        String first = DebugIssueClassifier.fingerprint("repo", "REPO_OPERATION_FAILED", "runuser failed", "{}");
+        String second = DebugIssueClassifier.fingerprint("repo", "REPO_OPERATION_FAILED", "runuser failed", "{}");
+        assertEquals(first, second);
+        assertTrue(first.startsWith("dbg-"));
+    }
+
 }

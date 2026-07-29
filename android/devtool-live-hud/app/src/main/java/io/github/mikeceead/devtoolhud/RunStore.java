@@ -52,6 +52,10 @@ final class RunStore {
         upsert(context, record);
         addEntry(context, record, "info", "execution", "android_app", "event",
                 "Run requested", record.launchLog);
+        DebugRecorder.info(context, "run", "RUNSTORE_STARTED", "RunStore",
+                record.runId, record.repositoryId, "", "", "Run requested",
+                DebugRecorder.details("workdir", record.workdir, "launch_mode", record.launchMode,
+                        "shell", shell, "command_length", command == null ? 0 : command.length()));
     }
 
     static synchronized void update(Context context, HudUpdate update) {
@@ -62,6 +66,7 @@ final class RunStore {
         String previousPhase = record.phase;
         int previousProgress = record.progress;
         String previousStatus = record.status;
+        long previousLastProgressAtMs = record.lastProgressAtMs;
         record.runId = update.runId;
         record.title = update.title();
         record.status = update.status;
@@ -101,6 +106,18 @@ final class RunStore {
             addEntry(context, record, severityFor(record), "execution", "devtool", "event",
                     update.detail.isEmpty() ? message : update.detail, message);
         }
+        if (previousLastProgressAtMs <= 0L && record.lastProgressAtMs > 0L) {
+            appendTraceCheckpoint(context, record, RunCommandTrace.FIRST_PROGRESS_EVENT_RECEIVED,
+                    "First authenticated bridge progress received",
+                    DebugRecorder.details("sequence", update.sequence, "status", update.status,
+                            "phase", update.phase, "progress", record.progress));
+        }
+        if (!previousStatus.equals("running") && update.status.equals("running")) {
+            appendTraceCheckpoint(context, record, RunCommandTrace.RUN_ACTIVE,
+                    "Run entered active execution state",
+                    DebugRecorder.details("sequence", update.sequence, "phase", update.phase,
+                            "progress", record.progress));
+        }
         upsert(context, record);
     }
 
@@ -116,6 +133,8 @@ final class RunStore {
         appendLine(record, "Run cancellation received");
         addEntry(context, record, "warning", "execution", "android_app", "event",
                 "Run cancelled", "Run cancellation received");
+        DebugRecorder.warning(context, "run", "RUN_CANCELLED", "RunStore",
+                record.runId, record.repositoryId, "", "", "Run cancellation received", "{}");
         linkRepository(context, record, true);
         upsert(context, record);
     }
@@ -136,6 +155,8 @@ final class RunStore {
         record.updatedAtMs = System.currentTimeMillis();
         String severity = classifySeverity(message);
         addEntry(context, record, severity, "diagnostic", "android_app", "event", message, message);
+        DebugRecorder.record(context, severity, "diagnostic", "RUN_DIAGNOSTIC_RECORDED", "RunStore",
+                record.runId, record.repositoryId, "", "", message, DebugRecorder.details("phase", record.phase));
         upsert(context, record);
     }
 
@@ -170,6 +191,8 @@ final class RunStore {
         record.durationMs = Math.max(0L, record.updatedAtMs - record.startedAtMs);
         String result = "Termux result received: exit=" + exitCode
                 + (clean(error).isEmpty() ? "" : " error=" + clean(error));
+        appendTraceCheckpoint(context, record, RunCommandTrace.TERMUX_RESULT_RECEIVED, result,
+                DebugRecorder.details("exit_code", exitCode, "had_rich_completion", hadRichCompletion));
         appendLine(record, result);
         if (!record.stdout.isEmpty()) addEntry(context, record, "info", "output", "termux", "stdout",
                 firstUseful(record.stdout), record.stdout);
@@ -178,6 +201,12 @@ final class RunStore {
         if (!record.error.isEmpty()) addEntry(context, record, "error", "diagnostic", "android_app", "event",
                 firstUseful(record.error), record.error);
         addEntry(context, record, ok ? "success" : "error", "execution", "termux", "event", result, result);
+        appendTraceCheckpoint(context, record, ok ? RunCommandTrace.RUN_COMPLETED : RunCommandTrace.RUN_FAILED,
+                ok ? "Run completed successfully" : "Run finished with failure",
+                DebugRecorder.details("exit_code", exitCode, "had_rich_completion", hadRichCompletion));
+        DebugRecorder.record(context, ok ? "success" : "error", "run", "RUN_FINISHED", "RunStore",
+                record.runId, record.repositoryId, "", "", result,
+                DebugRecorder.details("exit_code", exitCode, "had_rich_completion", hadRichCompletion));
         linkRepository(context, record, !hadRichCompletion);
         upsert(context, record);
         return hadRichCompletion;
@@ -209,6 +238,17 @@ final class RunStore {
             if (!record.terminal() && now - record.updatedAtMs < ACTIVE_STALE_MS) result.add(record);
         }
         return result;
+    }
+
+    static synchronized boolean traceCheckpoint(Context context, String runId, String checkpoint,
+                                                String message, String detailJson) {
+        if (runId == null || runId.trim().isEmpty()) return false;
+        migrateLegacy(context);
+        RunRecord record = DevtoolDatabase.get(context).findRun(runId);
+        if (record == null) return false;
+        appendTraceCheckpoint(context, record, checkpoint, message, detailJson);
+        upsert(context, record);
+        return true;
     }
 
     static synchronized RunRecord find(Context context, String runId) {
@@ -317,7 +357,23 @@ final class RunStore {
         appendLine(record, "Run marked interrupted: " + record.detail);
         addEntry(context, record, "warning", "execution", "android_app", "event",
                 "Run marked interrupted", record.detail);
+        DebugRecorder.warning(context, "run", "RUN_INTERRUPTED", "RunStore",
+                record.runId, record.repositoryId, "", "", record.detail,
+                DebugRecorder.details("phase", record.phase));
         linkRepository(context, record, true);
+    }
+
+    private static void appendTraceCheckpoint(Context context, RunRecord record, String checkpoint,
+                                              String message, String detailJson) {
+        String cleanCheckpoint = RunCommandTrace.normalizeCheckpoint(checkpoint);
+        String cleanMessage = clean(message).isEmpty() ? RunCommandTrace.label(cleanCheckpoint) : message;
+        appendLine(record, "trace " + cleanCheckpoint + ": " + cleanMessage);
+        addEntry(context, record, "info", "trace", "android_app", "event",
+                cleanCheckpoint + " · " + cleanMessage,
+                RunCommandTrace.enrich(cleanCheckpoint, detailJson));
+        DebugRecorder.info(context, "run_trace", cleanCheckpoint, "RunStore",
+                record.runId, record.repositoryId, "", "", cleanMessage,
+                RunCommandTrace.enrich(cleanCheckpoint, detailJson));
     }
 
     private static String eventType(RunRecord record) {

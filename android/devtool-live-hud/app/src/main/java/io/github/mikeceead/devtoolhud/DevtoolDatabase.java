@@ -14,7 +14,7 @@ import java.util.Set;
 
 final class DevtoolDatabase extends SQLiteOpenHelper {
     private static final String NAME = "devtool_android.db";
-    private static final int VERSION = 9;
+    private static final int VERSION = 10;
 
     static int schemaVersion() { return VERSION; }
     private static volatile DevtoolDatabase instance;
@@ -103,6 +103,7 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
                 + "parser_type TEXT NOT NULL DEFAULT 'text', partial_line TEXT NOT NULL DEFAULT '', last_scan_at INTEGER NOT NULL DEFAULT 0,"
                 + "PRIMARY KEY(source_id, path))");
 
+        createDebugTables(db);
         createValidationTables(db);
     }
 
@@ -195,11 +196,28 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
             addColumn(db, "validation_sessions", "report_warnings INTEGER NOT NULL DEFAULT 0");
             addColumn(db, "validation_sessions", "report_errors INTEGER NOT NULL DEFAULT 0");
         }
+        if (oldVersion < 10) {
+            createDebugTables(db);
+        }
     }
 
     private static void addColumn(SQLiteDatabase db, String table, String declaration) {
         try { db.execSQL("ALTER TABLE " + table + " ADD COLUMN " + declaration); }
         catch (android.database.SQLException ignored) {}
+    }
+
+    private static void createDebugTables(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS debug_events ("
+                + "event_id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp_ms INTEGER NOT NULL,"
+                + "severity TEXT NOT NULL, category TEXT NOT NULL, event_type TEXT NOT NULL, surface TEXT NOT NULL,"
+                + "run_id TEXT NOT NULL DEFAULT '', repository_id TEXT NOT NULL DEFAULT '', operation_id TEXT NOT NULL DEFAULT '',"
+                + "validation_session_id TEXT NOT NULL DEFAULT '', message TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}',"
+                + "fingerprint TEXT NOT NULL, redaction_state TEXT NOT NULL DEFAULT 'redacted')");
+        db.execSQL("CREATE INDEX IF NOT EXISTS debug_events_time_idx ON debug_events(timestamp_ms DESC, event_id DESC)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS debug_events_category_idx ON debug_events(category, timestamp_ms DESC)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS debug_events_run_idx ON debug_events(run_id, timestamp_ms DESC)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS debug_events_repository_idx ON debug_events(repository_id, timestamp_ms DESC)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS debug_events_fingerprint_idx ON debug_events(fingerprint, timestamp_ms DESC)");
     }
 
     private static void createValidationTables(SQLiteDatabase db) {
@@ -317,6 +335,7 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
             db.delete("log_entries_fts", "run_id=?", new String[]{runId});
             db.delete("log_entries", "run_id=?", new String[]{runId});
             db.delete("repository_events", "run_id=?", new String[]{runId});
+            db.delete("debug_events", "run_id=?", new String[]{runId});
             boolean removed = db.delete("runs", "run_id=?", new String[]{runId}) > 0;
             db.setTransactionSuccessful();
             return removed;
@@ -332,6 +351,7 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
             db.delete("log_entries_fts", null, null);
             db.delete("log_entries", null, null);
             db.delete("repository_events", "run_id<>''", null);
+            db.delete("debug_events", "run_id<>''", null);
             db.delete("runs", null, null);
             db.setTransactionSuccessful();
         } finally {
@@ -632,6 +652,7 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
                 db.delete("log_entries_fts", "run_id=?", new String[]{runId});
                 db.delete("log_entries", "run_id=?", new String[]{runId});
                 db.delete("repository_events", "run_id=?", new String[]{runId});
+                db.delete("debug_events", "run_id=?", new String[]{runId});
                 report.runsRemoved += db.delete("runs", "run_id=?", new String[]{runId});
             }
             report.operationsRemoved = db.delete("repository_operations",
@@ -639,6 +660,7 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
                     new String[]{String.valueOf(operationCutoff)});
             report.eventsRemoved = db.delete("repository_events", "created_at<?",
                     new String[]{String.valueOf(eventCutoff)});
+            db.delete("debug_events", "timestamp_ms<?", new String[]{String.valueOf(eventCutoff)});
             db.delete("log_entries_fts", "run_id NOT IN (SELECT run_id FROM runs)", null);
             report.logEntriesRemoved += db.delete("log_entries",
                     "run_id NOT IN (SELECT run_id FROM runs)", null);
@@ -668,6 +690,7 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
         stats.logEntries = count(db, "log_entries", null, null);
         stats.repositories = count(db, "repositories", null, null);
         stats.operations = count(db, "repository_operations", null, null);
+        stats.debugEvents = count(db, "debug_events", null, null);
         stats.databaseBytes = databaseBytes(db);
         return stats;
     }
@@ -685,6 +708,75 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
         File shm = new File(db.getPath() + "-shm");
         return (file.isFile() ? file.length() : 0L) + (wal.isFile() ? wal.length() : 0L)
                 + (shm.isFile() ? shm.length() : 0L);
+    }
+
+    synchronized long addDebugEvent(DebugEventRecord event) {
+        ContentValues values = new ContentValues();
+        values.put("timestamp_ms", event.timestampMs);
+        values.put("severity", event.severity);
+        values.put("category", event.category);
+        values.put("event_type", event.eventType);
+        values.put("surface", event.surface);
+        values.put("run_id", event.runId);
+        values.put("repository_id", event.repositoryId);
+        values.put("operation_id", event.operationId);
+        values.put("validation_session_id", event.validationSessionId);
+        values.put("message", event.message);
+        values.put("detail_json", event.detailJson);
+        values.put("fingerprint", event.fingerprint);
+        values.put("redaction_state", event.redactionState);
+        return getWritableDatabase().insert("debug_events", null, values);
+    }
+
+    synchronized List<DebugEventRecord> recentDebugEvents(int requestedLimit) {
+        List<DebugEventRecord> values = new ArrayList<>();
+        int limit = Math.max(1, Math.min(500, requestedLimit));
+        try (Cursor cursor = getReadableDatabase().query("debug_events", null, null, null,
+                null, null, "timestamp_ms DESC, event_id DESC", String.valueOf(limit))) {
+            while (cursor.moveToNext()) values.add(readDebugEvent(cursor));
+        }
+        return values;
+    }
+
+    synchronized List<DebugEventRecord> debugEventsForRun(String runId, int requestedLimit) {
+        List<DebugEventRecord> values = new ArrayList<>();
+        int limit = Math.max(1, Math.min(500, requestedLimit));
+        try (Cursor cursor = getReadableDatabase().query("debug_events", null, "run_id=?",
+                new String[]{runId == null ? "" : runId}, null, null,
+                "timestamp_ms DESC, event_id DESC", String.valueOf(limit))) {
+            while (cursor.moveToNext()) values.add(readDebugEvent(cursor));
+        }
+        return values;
+    }
+
+    synchronized List<DebugEventRecord> debugEventsForRepository(String repositoryId, int requestedLimit) {
+        List<DebugEventRecord> values = new ArrayList<>();
+        int limit = Math.max(1, Math.min(500, requestedLimit));
+        try (Cursor cursor = getReadableDatabase().query("debug_events", null, "repository_id=?",
+                new String[]{repositoryId == null ? "" : repositoryId}, null, null,
+                "timestamp_ms DESC, event_id DESC", String.valueOf(limit))) {
+            while (cursor.moveToNext()) values.add(readDebugEvent(cursor));
+        }
+        return values;
+    }
+
+    private static DebugEventRecord readDebugEvent(Cursor cursor) {
+        DebugEventRecord event = new DebugEventRecord();
+        event.eventId = number(cursor, "event_id");
+        event.timestampMs = number(cursor, "timestamp_ms");
+        event.severity = string(cursor, "severity");
+        event.category = string(cursor, "category");
+        event.eventType = string(cursor, "event_type");
+        event.surface = string(cursor, "surface");
+        event.runId = string(cursor, "run_id");
+        event.repositoryId = string(cursor, "repository_id");
+        event.operationId = string(cursor, "operation_id");
+        event.validationSessionId = string(cursor, "validation_session_id");
+        event.message = string(cursor, "message");
+        event.detailJson = string(cursor, "detail_json");
+        event.fingerprint = string(cursor, "fingerprint");
+        event.redactionState = string(cursor, "redaction_state");
+        return event;
     }
 
     synchronized void resetActiveRunCounts() {
@@ -921,6 +1013,7 @@ final class DevtoolDatabase extends SQLiteOpenHelper {
         int logEntries;
         int repositories;
         int operations;
+        int debugEvents;
         long databaseBytes;
     }
 

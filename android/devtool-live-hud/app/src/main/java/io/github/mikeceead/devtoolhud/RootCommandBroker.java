@@ -524,13 +524,60 @@ final class RootCommandBroker {
     CommandResult execute(RepositoryLocation location, String payload, long timeoutSeconds) {
         String marked = operationId.isEmpty() ? payload
                 : "export DEVTOOL_ANDROID_OPERATION_ID=" + shellQuote(operationId) + "; " + payload;
+        DebugRecorder.info(context, "repo", "REPO_EXECUTOR_SELECTED", "RootCommandBroker",
+                "", location.id(), operationId, "", "Repository executor selected",
+                DebugRecorder.details("environment", location.environment, "chroot", location.chrootName,
+                        "linux_user", location.linuxUser, "path", commandPath(location),
+                        "timeout_seconds", timeoutSeconds));
         if (location.environment.equals("chroot")) {
-            return executeRoot(chrootShell(location, marked), timeoutSeconds);
+            DebugRecorder.info(context, "repo", "CHROOT_EXECUTOR_SELECTED", "RootCommandBroker",
+                    "", location.id(), operationId, "", "Chroot executor selected",
+                    DebugRecorder.details("chroot", location.chrootName, "linux_user", location.linuxUser,
+                            "path", commandPath(location)));
+            RootExecutionPlan plan = selectChrootExecutionPlan(location);
+            DebugRecorder.info(context, "repo", "ROOT_EXECUTION_PLAN_SELECTED", "RootCommandBroker",
+                    "", location.id(), operationId, "", "Root/chroot execution plan selected",
+                    DebugRecorder.details("environment", plan.environment, "chroot", plan.chrootName,
+                            "linux_user", plan.linuxUser, "selected_shell", plan.selectedShell,
+                            "user_switch_method", plan.userSwitchMethod, "issue_key", plan.issueKey,
+                            "direct_root_fallback", plan.directRootFallback,
+                            "rejected_shell_candidates", plan.rejectedShellCandidates,
+                            "rejected_user_switch_candidates", plan.rejectedUserSwitchCandidates));
+            return executeRoot(chrootShell(location, marked, plan), timeoutSeconds);
         }
         if (location.environment.equals("native-termux")) {
+            RootExecutionPlan plan = RootExecutionPlan.termux();
+            DebugRecorder.info(context, "repo", "TERMUX_EXECUTOR_SELECTED", "RootCommandBroker",
+                    "", location.id(), operationId, "", "Termux executor selected",
+                    DebugRecorder.details("path", commandPath(location), "selected_shell", plan.selectedShell,
+                            "user_switch_method", plan.userSwitchMethod));
             return executeRoot(termuxShell(marked), timeoutSeconds);
         }
+        RootExecutionPlan plan = RootExecutionPlan.root();
+        DebugRecorder.info(context, "repo", "ROOT_EXECUTION_PLAN_SELECTED", "RootCommandBroker",
+                "", location.id(), operationId, "", "Root execution plan selected",
+                DebugRecorder.details("environment", plan.environment, "selected_shell", plan.selectedShell,
+                        "user_switch_method", plan.userSwitchMethod));
         return executeRoot(marked, timeoutSeconds);
+    }
+
+    CommandResult repositoryDoctor(RepositoryLocation location, String payload, long timeoutSeconds) {
+        DebugRecorder.info(context, "repo", "REPO_DOCTOR_EXECUTOR_SELECTED", "RootCommandBroker",
+                "", location.id(), operationId, "", "Repository doctor executor selected",
+                DebugRecorder.details("environment", location.environment, "chroot", location.chrootName,
+                        "linux_user", location.linuxUser, "path", commandPath(location),
+                        "timeout_seconds", timeoutSeconds));
+        if (location.environment.equals("chroot")) {
+            DebugRecorder.info(context, "repo", "REPO_DOCTOR_CHROOT_ROOT_PROBE_SELECTED", "RootCommandBroker",
+                    "", location.id(), operationId, "", "Repository doctor will inspect chroot before user switching",
+                    DebugRecorder.details("chroot", location.chrootName, "linux_user", location.linuxUser,
+                            "path", commandPath(location)));
+            return executeRoot(chrootDoctorShell(location, payload), timeoutSeconds);
+        }
+        if (location.environment.equals("native-termux")) {
+            return executeRoot(termuxShell(payload), timeoutSeconds);
+        }
+        return executeRoot(payload, timeoutSeconds);
     }
 
     private String termuxShell(String payload) {
@@ -543,22 +590,81 @@ final class RootCommandBroker {
                 + "else su \"$uid\" -c \"$shell -c " + escapeForDoubleQuotes(quotedPayload) + "\"; fi";
     }
 
-    private String chrootShell(RepositoryLocation location, String payload) {
+    private RootExecutionPlan selectChrootExecutionPlan(RepositoryLocation location) {
+        CommandResult result = executeRoot(chrootPlannerProbe(location), 8L, null);
+        RootExecutionPlan plan = RootExecutionPlan.fromProbe(location, result.text(), result.exitCode, result.timedOut);
+        if (!plan.usable) {
+            DebugRecorder.warning(context, "repo", "ROOT_EXECUTION_PLAN_PROBE_FAILED", "RootCommandBroker",
+                    "", location.id(), operationId, "", "Root/chroot execution planner could not prove a clean plan",
+                    DebugRecorder.details("environment", "chroot", "chroot", location.chrootName,
+                            "linux_user", location.linuxUser, "exit_code", result.exitCode,
+                            "timed_out", result.timedOut, "output_preview", compact(result.text(), "")));
+        } else if (plan.directRootFallback || plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_SU)) {
+            DebugRecorder.warning(context, "repo", "ROOT_EXECUTION_PLAN_FALLBACK_SELECTED", "RootCommandBroker",
+                    "", location.id(), operationId, "", "Root/chroot execution planner selected a fallback",
+                    DebugRecorder.details("environment", "chroot", "chroot", location.chrootName,
+                            "linux_user", location.linuxUser, "selected_shell", plan.selectedShell,
+                            "user_switch_method", plan.userSwitchMethod,
+                            "rejected_user_switch_candidates", plan.rejectedUserSwitchCandidates));
+        }
+        return plan;
+    }
+
+    private String chrootPlannerProbe(RepositoryLocation location) {
         String user = RepositoryLocation.clean(location.linuxUser);
-        String inside = payload;
-        if (!user.isEmpty() && !user.equals("root")) {
-            String quoted = shellQuote(payload);
-            inside = "if command -v runuser >/dev/null 2>&1; then runuser -u " + shellQuote(user)
-                    + " -- zsh -lc " + quoted + "; "
-                    + "elif command -v su >/dev/null 2>&1; then su - " + shellQuote(user)
-                    + " -s /bin/zsh -c " + quoted + "; else zsh -lc " + quoted + "; fi";
+        String inside = "kv(){ printf '" + RootExecutionPlan.markerPrefix() + "%s=%s\\n' \"$1\" \"$2\"; }; "
+                + "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; "
+                + "kv planner_started 1; rejected_shells=''; selected_shell=''; selected_shell_name=''; "
+                + "for candidate in zsh bash sh; do if command -v \"$candidate\" >/dev/null 2>&1; then path=$(command -v \"$candidate\" 2>/dev/null | head -n 1); "
+                + "[ -z \"$selected_shell\" ] && selected_shell=\"$path\" && selected_shell_name=\"$candidate\"; kv ${candidate}_available 1; "
+                + "else kv ${candidate}_available 0; rejected_shells=\"${rejected_shells}${rejected_shells:+,}${candidate}:missing\"; fi; done; "
+                + "[ -n \"$selected_shell\" ] || { selected_shell=/bin/sh; selected_shell_name=sh; rejected_shells=\"${rejected_shells}${rejected_shells:+,}fallback:/bin/sh\"; }; "
+                + "kv selected_shell \"$selected_shell\"; kv selected_shell_name \"$selected_shell_name\"; kv rejected_shell_candidates \"$rejected_shells\"; "
+                + "linux_user=" + shellQuote(user) + "; kv linux_user \"$linux_user\"; rejected_switches=''; "
+                + "if [ -z \"$linux_user\" ] || [ \"$linux_user\" = root ]; then kv user_exists 1; kv runuser_available 0; kv runuser_works 0; kv su_available 0; kv su_works 0; kv user_switch_method root; "
+                + "else id \"$linux_user\" >/dev/null 2>&1 && kv user_exists 1 || kv user_exists 0; "
+                + "if command -v runuser >/dev/null 2>&1; then kv runuser_available 1; if runuser -u \"$linux_user\" -- \"$selected_shell\" -c ':' >/dev/null 2>&1; then kv runuser_works 1; kv user_switch_method runuser; kv rejected_user_switch_candidates \"$rejected_switches\"; exit 0; else kv runuser_works 0; rejected_switches=\"runuser:failed\"; fi; else kv runuser_available 0; rejected_switches=\"runuser:missing\"; fi; "
+                + "if command -v su >/dev/null 2>&1; then kv su_available 1; if su - \"$linux_user\" -s \"$selected_shell\" -c ':' >/dev/null 2>&1; then kv su_works 1; kv user_switch_method su; kv rejected_user_switch_candidates \"$rejected_switches\"; exit 0; else kv su_works 0; rejected_switches=\"${rejected_switches}${rejected_switches:+,}su:failed\"; fi; else kv su_available 0; rejected_switches=\"${rejected_switches}${rejected_switches:+,}su:missing\"; fi; "
+                + "kv user_switch_method direct-root; kv rejected_user_switch_candidates \"$rejected_switches\"; fi";
+        return "export HOME=" + shellQuote(TERMUX_HOME) + " PREFIX=" + shellQuote(TERMUX_PREFIX)
+                + " PATH=" + shellQuote(TERMUX_HOME + "/.local/bin:" + TERMUX_PREFIX + "/bin:/system/bin:/system/xbin") + "; "
+                + "ctl=$(command -v chrootctl 2>/dev/null || true); "
+                + "[ -n \"$ctl\" ] || { echo 'chrootctl unavailable'; exit 69; }; "
+                + "\"$ctl\" --name " + shellQuote(location.chrootName)
+                + " exec -- /bin/sh -c " + shellQuote(inside);
+    }
+
+    private String chrootShell(RepositoryLocation location, String payload, RootExecutionPlan plan) {
+        String user = RepositoryLocation.clean(location.linuxUser);
+        String shell = RepositoryLocation.clean(plan.selectedShell).isEmpty() ? "/bin/sh" : plan.selectedShell;
+        String quotedPayload = shellQuote(payload);
+        String inside;
+        if (!user.isEmpty() && !user.equals("root") && plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_RUNUSER)) {
+            inside = "runuser -u " + shellQuote(user) + " -- " + shellQuote(shell) + " -c " + quotedPayload;
+        } else if (!user.isEmpty() && !user.equals("root") && plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_SU)) {
+            inside = "su - " + shellQuote(user) + " -s " + shellQuote(shell) + " -c " + quotedPayload;
+        } else if (plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_DIRECT_ROOT)
+                || plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_ROOT)) {
+            inside = shellQuote(shell) + " -c " + quotedPayload;
+        } else {
+            inside = shellQuote(shell) + " -c " + quotedPayload;
         }
         return "export HOME=" + shellQuote(TERMUX_HOME) + " PREFIX=" + shellQuote(TERMUX_PREFIX)
                 + " PATH=" + shellQuote(TERMUX_HOME + "/.local/bin:" + TERMUX_PREFIX + "/bin:/system/bin:/system/xbin") + "; "
                 + "ctl=$(command -v chrootctl 2>/dev/null || true); "
                 + "[ -n \"$ctl\" ] || { echo 'chrootctl unavailable'; exit 69; }; "
                 + "\"$ctl\" --name " + shellQuote(location.chrootName)
-                + " exec -- zsh -lc " + shellQuote(inside);
+                + " exec -- " + shellQuote(shell) + " -c " + shellQuote(inside);
+    }
+
+    private String chrootDoctorShell(RepositoryLocation location, String payload) {
+        String inside = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; " + payload;
+        return "export HOME=" + shellQuote(TERMUX_HOME) + " PREFIX=" + shellQuote(TERMUX_PREFIX)
+                + " PATH=" + shellQuote(TERMUX_HOME + "/.local/bin:" + TERMUX_PREFIX + "/bin:/system/bin:/system/xbin") + "; "
+                + "ctl=$(command -v chrootctl 2>/dev/null || true); "
+                + "[ -n \"$ctl\" ] || { echo 'chrootctl unavailable'; exit 69; }; "
+                + "\"$ctl\" --name " + shellQuote(location.chrootName)
+                + " exec -- /bin/sh -c " + shellQuote(inside);
     }
 
     private RepositoryInspection parseInspection(CommandResult result) {
@@ -635,14 +741,27 @@ final class RootCommandBroker {
                 process.destroy();
                 if (!process.waitFor(1L, TimeUnit.SECONDS)) process.destroyForcibly();
                 if (reader != null) reader.join(1000L);
+                DebugRecorder.warning(context, "root", cancelled ? "ROOT_EXECUTION_CANCELLED" : "ROOT_EXECUTION_TIMEOUT",
+                        "RootCommandBroker", "", "", operationId, "",
+                        cancelled ? "Root command cancelled" : "Root command timed out",
+                        DebugRecorder.details("timeout_seconds", timeoutSeconds, "output_bytes", output.size()));
                 return new CommandResult(cancelled ? 130 : 124, output.toByteArray(), !cancelled,
                         truncated.get(), cancelled);
             }
             if (reader != null) reader.join(1500L);
-            return new CommandResult(process.exitValue(), output.toByteArray(), false, truncated.get(), false);
+            int exit = process.exitValue();
+            if (exit != 0) {
+                DebugRecorder.error(context, "root", "ROOT_EXECUTION_FAILED", "RootCommandBroker",
+                        "", "", operationId, "", "Root command exited non-zero",
+                        DebugRecorder.details("exit_code", exit, "output_preview", compact(new String(output.toByteArray(), StandardCharsets.UTF_8), "")));
+            }
+            return new CommandResult(exit, output.toByteArray(), false, truncated.get(), false);
         } catch (Exception error) {
+            String message = String.valueOf(error.getMessage());
+            DebugRecorder.error(context, "root", "ROOT_EXECUTION_FAILED", "RootCommandBroker",
+                    "", "", operationId, "", message, DebugRecorder.details("exception", error.getClass().getSimpleName()));
             return new CommandResult(127,
-                    String.valueOf(error.getMessage()).getBytes(StandardCharsets.UTF_8), false, false);
+                    message.getBytes(StandardCharsets.UTF_8), false, false);
         } finally {
             if (process != null) process.destroy();
         }

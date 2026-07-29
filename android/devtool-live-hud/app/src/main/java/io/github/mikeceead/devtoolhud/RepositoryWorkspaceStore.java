@@ -50,6 +50,9 @@ final class RepositoryWorkspaceStore {
                 database.upsertRepositoryOperation(operation);
                 database.addRepositoryEvent(operation.repositoryId, operation.runId,
                         "GIT_" + operation.type + "_ORPHANED", operation.summary, now);
+                DebugRecorder.warning(app, "repo", "REPO_OPERATION_ORPHANED", "RepositoryWorkspaceStore",
+                        operation.runId, operation.repositoryId, operation.operationId, "", operation.summary,
+                        DebugRecorder.details("operation", operation.type));
                 updateSyntheticRun(app, repository, operation, "waiting", operation.summary,
                         "Recovered a live root operation after Android process restart", "warning");
             } else {
@@ -61,6 +64,9 @@ final class RepositoryWorkspaceStore {
                 database.upsertRepositoryOperation(operation);
                 database.addRepositoryEvent(operation.repositoryId, operation.runId,
                         "GIT_" + operation.type + "_INTERRUPTED", operation.summary, now);
+                DebugRecorder.warning(app, "repo", "REPO_OPERATION_INTERRUPTED", "RepositoryWorkspaceStore",
+                        operation.runId, operation.repositoryId, operation.operationId, "", operation.summary,
+                        DebugRecorder.details("operation", operation.type));
                 finishSyntheticRun(app, operation, repository, "interrupted", operation.summary, "");
             }
         }
@@ -136,6 +142,9 @@ final class RepositoryWorkspaceStore {
             RepositoryOperationRecord orphaned = database.repositoryOperation(wanted);
             if (orphaned == null || !orphaned.state.equals("orphaned") || !orphaned.cancellable) return false;
             RepositoryRecord repository = database.repository(orphaned.repositoryId);
+            DebugRecorder.warning(app, "repo", "REPO_ORPHAN_CANCEL_REQUESTED", "RepositoryWorkspaceStore",
+                    orphaned.runId, orphaned.repositoryId, orphaned.operationId, "", "Cancelling orphaned repository operation",
+                    DebugRecorder.details("operation", orphaned.type));
             boolean terminated = new RootCommandBroker(app).terminateOperationProcess(orphaned.operationId);
             long now = System.currentTimeMillis();
             orphaned.state = terminated ? "cancelled" : "interrupted";
@@ -205,6 +214,9 @@ final class RepositoryWorkspaceStore {
             current.message = "";
             SNAPSHOTS.put(id, current);
         }
+        DebugRecorder.info(app, "repo", "REPO_REFRESH_REQUESTED", "RepositoryWorkspaceStore",
+                "", repository.repositoryId, "", "", "Repository refresh requested",
+                DebugRecorder.details("environment", repository.environment, "path", repository.canonicalPath));
         broadcast(app, id, "");
         EXECUTOR.execute(() -> {
             try {
@@ -219,6 +231,8 @@ final class RepositoryWorkspaceStore {
                     failed.message = compact(error.getMessage(), "Unable to refresh repository");
                     SNAPSHOTS.put(id, failed);
                 }
+                DebugRecorder.error(app, "repo", "REPO_REFRESH_FAILED", "RepositoryWorkspaceStore",
+                        "", id, "", "", failed.message, DebugRecorder.details("error", error.getMessage()));
                 broadcast(app, id, failed.message);
             }
         });
@@ -310,6 +324,10 @@ final class RepositoryWorkspaceStore {
         database.upsertRepositoryOperation(record);
         database.addRepositoryEvent(record.repositoryId, record.runId,
                 "GIT_" + record.type + "_QUEUED", record.summary, now);
+        DebugRecorder.info(app, "repo", "REPO_OPERATION_QUEUED", "RepositoryWorkspaceStore",
+                record.runId, record.repositoryId, record.operationId, "", record.summary,
+                DebugRecorder.details("operation", record.type, "target", record.target,
+                        "environment", repository.environment, "path", repository.canonicalPath));
         createSyntheticRun(app, repository, record, request);
         broadcast(app, repository.repositoryId, position > 1
                 ? request.operation.queuedLabel + " · queue position " + position : request.operation.queuedLabel);
@@ -344,6 +362,10 @@ final class RepositoryWorkspaceStore {
         database.upsertRepositoryOperation(operation);
         database.addRepositoryEvent(operation.repositoryId, operation.runId,
                 "GIT_" + operation.type + "_STARTED", operation.summary, started);
+        DebugRecorder.info(app, "repo", "REPO_OPERATION_STARTED", "RepositoryWorkspaceStore",
+                operation.runId, operation.repositoryId, operation.operationId, "", operation.summary,
+                DebugRecorder.details("operation", operation.type, "environment", queued.repository.environment,
+                        "path", queued.repository.canonicalPath));
         updateSyntheticRun(app, queued.repository, operation, "waiting", operation.summary,
                 "Git operation started", "info");
         broadcast(app, operation.repositoryId, operation.summary);
@@ -380,6 +402,11 @@ final class RepositoryWorkspaceStore {
                         + compact(error.getMessage(), "Unexpected repository error");
         }
 
+        DebugRecorder.record(app, state.equals("ok") ? "success" : state.equals("cancelled") ? "warning" : "error",
+                "repo", state.equals("ok") ? "REPO_OPERATION_SUCCEEDED" : state.equals("cancelled") ? "REPO_OPERATION_CANCELLED" : "REPO_OPERATION_FAILED",
+                "RepositoryWorkspaceStore", operation.runId, operation.repositoryId, operation.operationId, "", message,
+                DebugRecorder.details("operation", operation.type, "exit_code", result.exitCode,
+                        "timed_out", result.timedOut, "cancelled", result.cancelled));
         operation.state = state;
         operation.finishedAt = System.currentTimeMillis();
         operation.exitCode = result.exitCode;
@@ -430,6 +457,9 @@ final class RepositoryWorkspaceStore {
         database.upsertRepositoryOperation(operation);
         database.addRepositoryEvent(operation.repositoryId, operation.runId,
                 "GIT_" + operation.type + "_CANCELLED", reason, now);
+        DebugRecorder.warning(app, "repo", "REPO_OPERATION_CANCELLED", "RepositoryWorkspaceStore",
+                operation.runId, operation.repositoryId, operation.operationId, "", reason,
+                DebugRecorder.details("operation", operation.type));
         finishSyntheticRun(app, operation, queued.repository, "cancelled", reason, "");
         broadcast(app, operation.repositoryId, reason);
         new RepositoryNotificationController(app).show(queued.repository, operation);

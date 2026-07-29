@@ -30,7 +30,14 @@ public final class TermuxResultService extends IntentService {
         String bridgeExpectedHash = intent.getStringExtra(EXTRA_BRIDGE_EXPECTED_HASH);
         if (result == null) {
             String error = "Termux returned no result bundle";
+            DebugRecorder.error(this, "termux", "TERMUX_RESULT_MISSING", "TermuxResultService",
+                    runId, "", "", "", error,
+                    DebugRecorder.details("execution_id", executionId, "bridge_operation", bridgeOperation));
             boolean overlay = intent.getBooleanExtra(EXTRA_OVERLAY, false);
+            if (BridgeRoundtripProbe.OPERATION.equals(bridgeOperation)) {
+                BridgeRoundtripProbe.handleResult(this, runId, executionId, -1, "", "", error);
+                return;
+            }
             if (bridgeOperation != null && bridgeOperation.startsWith("validation-")) {
                 ValidationController.handleResult(this, bridgeOperation, -1, "", "", error, "native-termux");
                 return;
@@ -63,6 +70,14 @@ public final class TermuxResultService extends IntentService {
                 (errorMessage == null || errorMessage.trim().isEmpty()
                         ? "Termux internal error " + internalError : errorMessage);
         boolean overlay = intent.getBooleanExtra(EXTRA_OVERLAY, false);
+        if (BridgeRoundtripProbe.OPERATION.equals(bridgeOperation)) {
+            RunCommandTrace.record(this, RunCommandTrace.BRIDGE_ROUNDTRIP_RESULT_RECEIVED, "TermuxResultService",
+                    runId, "Bridge roundtrip pending result received",
+                    DebugRecorder.details("execution_id", executionId, "exit_code", exitCode,
+                            "stdout_chars", stdout.length(), "stderr_chars", stderr.length(), "error", error));
+            BridgeRoundtripProbe.handleResult(this, runId, executionId, exitCode, stdout, stderr, error);
+            return;
+        }
         if (bridgeOperation != null && bridgeOperation.startsWith("validation-")) {
             ValidationController.handleResult(this, bridgeOperation, exitCode, stdout, stderr, error, "native-termux");
             return;
@@ -70,6 +85,12 @@ public final class TermuxResultService extends IntentService {
         if (bridgeOperation != null && bridgeOperation.startsWith("repository-")) {
             String utilityError = exitCode == 0 && error.isEmpty() ? ""
                     : (error.isEmpty() ? (stderr.isEmpty() ? stdout : stderr) : error);
+            if (!utilityError.isEmpty()) {
+                DebugRecorder.error(this, "repo", "REPOSITORY_UTILITY_FAILED", "TermuxResultService",
+                        runId, "", "", "", utilityError,
+                        DebugRecorder.details("execution_id", executionId, "exit_code", exitCode,
+                                "bridge_operation", bridgeOperation));
+            }
             sendBroadcast(new Intent(RepositoryStore.ACTION_UPDATED).setPackage(getPackageName())
                     .putExtra(RepositoryStore.EXTRA_ERROR, utilityError));
             return;
@@ -79,6 +100,11 @@ public final class TermuxResultService extends IntentService {
                     exitCode, stdout, stderr, error);
             return;
         }
+        DebugRecorder.record(this, exitCode == 0 && error.isEmpty() ? "success" : "error", "termux",
+                "TERMUX_RESULT_DELIVERED", "TermuxResultService", runId, "", "", "",
+                "RunCommand result delivered",
+                DebugRecorder.details("execution_id", executionId, "exit_code", exitCode,
+                        "stdout_chars", stdout.length(), "stderr_chars", stderr.length(), "error", error));
         Log.i(TAG, "Execution " + executionId + " run=" + runId + " finished with exit code " + exitCode);
         RunStore.appendDiagnostic(this, runId, "RunCommand result delivered: exit=" + exitCode
                 + " stdout=" + stdout.length() + " chars stderr=" + stderr.length() + " chars");

@@ -20,7 +20,7 @@ def test_phase29_has_durable_validation_schema_and_api_v1_parser() -> None:
     controller = read("ValidationController.java")
     for table in ("validation_sessions", "validation_phases", "validation_attempts"):
         assert f'CREATE TABLE IF NOT EXISTS {table}' in database
-    assert "private static final int VERSION = 9" in database
+    assert "private static final int VERSION = 10" in database
     assert 'envelope.optInt("api_version", -1) != 1' in parser
     assert 'envelope.optLong("revision", 0L)' in parser
     assert 'item.optJSONArray("attempt_history")' in parser
@@ -118,5 +118,5 @@ def test_phase31_contract_documents_validation_notification_modes() -> None:
 
 def test_android_version_is_bumped_for_validation_workbench_release() -> None:
     gradle = (APP / "app" / "build.gradle").read_text(encoding="utf-8")
-    assert "versionCode 30" in gradle
-    assert "versionName '1.16.0'" in gradle
+    assert "versionCode 31" in gradle
+    assert "versionName '1.17.0'" in gradle

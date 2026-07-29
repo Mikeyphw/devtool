@@ -21,6 +21,7 @@ from devtool.python_support import (
     default_python_environment_root,
     discover_python_roots,
     ensure_hatch_environment,
+    ensure_venv_environment,
     inspect_python_project,
     python_cache_env,
     run_tool,
@@ -95,6 +96,19 @@ class PythonSupportTests(unittest.TestCase):
         test_spec = next(spec for spec in specs if spec.name == "test")
         self.assertEqual(test_spec.metadata["report_parser"], "pytest-junit")
         self.assertEqual(specs[-1].metadata["report_parser"], "python-package")
+
+    def test_ensure_venv_reports_missing_pip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "venv"
+            python = env / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text("#!/bin/sh\n", encoding="utf-8")
+            python.chmod(0o755)
+            failed = mock.Mock(returncode=1, stdout="No module named ensurepip")
+            with mock.patch("devtool.python_support._run_capture", return_value=failed):
+                with self.assertRaises(PythonProjectError) as raised:
+                    ensure_venv_environment(env)
+        self.assertIn("does not provide pip", str(raised.exception))
 
     def test_python_explicit_build_command_publishes_live_progress_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

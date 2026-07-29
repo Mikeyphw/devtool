@@ -75,7 +75,12 @@ final class ValidationController {
         if (session == null) return failed("No validation session is available");
         if (!action.equals("status") && !action.equals("plan")) {
             String identityError = validateIdentity(context, session);
-            if (!identityError.isEmpty()) return failed(identityError);
+            if (!identityError.isEmpty()) {
+                DebugRecorder.warning(context, "validation", "VALIDATION_IDENTITY_REJECTED", "ValidationController",
+                        "", session.repositoryId, "", session.sessionId, identityError,
+                        DebugRecorder.details("action", action, "executor_kind", session.executorKind));
+                return failed(identityError);
+            }
         }
         return execute(context, session, repo(session), session.sessionId, action, command, prefersRoot(session));
     }
@@ -85,14 +90,27 @@ final class ValidationController {
                                                              String command, boolean preferRoot) {
         markPending(context, sessionId, action);
         String operation = "validation-" + action + "|" + (sessionId == null ? "" : sessionId);
+        DebugRecorder.info(context, "validation", "VALIDATION_ACTION_REQUESTED", "ValidationController",
+                "", session == null ? "" : session.repositoryId, "", sessionId == null ? "" : sessionId,
+                "Validation action requested", DebugRecorder.details("action", action, "prefer_root", preferRoot));
         if (session != null && session.cleanExecutorKind().equals("chroot")) {
-            if (session.executorName.isEmpty()) return failed("Validation session is missing its chroot identity");
+            if (session.executorName.isEmpty()) {
+                DebugRecorder.warning(context, "validation", "VALIDATION_CHROOT_IDENTITY_MISSING", "ValidationController",
+                        "", session.repositoryId, "", session.sessionId, "Validation session is missing its chroot identity",
+                        DebugRecorder.details("action", action));
+                return failed("Validation session is missing its chroot identity");
+            }
             String wrapped = "sudo chrootctl --name " + shell(session.executorName)
                     + " exec -- zsh -ilc " + shell(command);
             return TermuxCommandRunner.runUtilityCommand(context, wrapped, "~/", true, operation);
         }
         if (preferRoot || (session != null && session.cleanExecutorKind().equals("root"))) {
-            if (!RootBridgeManager.isReady(context)) return failed("The validation session requires the connected root bridge");
+            if (!RootBridgeManager.isReady(context)) {
+                DebugRecorder.warning(context, "validation", "VALIDATION_ROOT_BRIDGE_UNAVAILABLE", "ValidationController",
+                        "", session == null ? "" : session.repositoryId, "", sessionId == null ? "" : sessionId,
+                        "The validation session requires the connected root bridge", DebugRecorder.details("action", action));
+                return failed("The validation session requires the connected root bridge");
+            }
             return RootBridgeManager.runValidationControl(context, command, repo, operation);
         }
         return TermuxCommandRunner.runUtilityCommand(context, command, repo, true, operation);
@@ -111,6 +129,10 @@ final class ValidationController {
                 String resolvedSessionId = incoming.sessionId.isEmpty() ? sessionHint : incoming.sessionId;
                 ValidationSessionRecord existing = ValidationStore.find(context, resolvedSessionId);
                 if (existing != null && incoming.revision < existing.revision) {
+                    DebugRecorder.info(context, "validation", "VALIDATION_STALE_RESPONSE_IGNORED", "ValidationController",
+                            "", existing.repositoryId, "", existing.sessionId,
+                            "Ignored stale validation response",
+                            DebugRecorder.details("incoming_revision", incoming.revision, "current_revision", existing.revision));
                     new ValidationNotificationController(context).post(existing);
                     return;
                 }
@@ -121,8 +143,11 @@ final class ValidationController {
                 if (!parsed.accepted && !parsed.message.isEmpty()) incoming.lastError = parsed.message;
                 if (existing != null && !existing.repositoryId.isEmpty() && !incoming.repositoryId.isEmpty()
                         && !existing.repositoryId.equals(incoming.repositoryId)) {
-                    ValidationStore.reportError(context, existing.sessionId,
-                            "Rejected validation response for a different repository identity");
+                    String mismatch = "Rejected validation response for a different repository identity";
+                    DebugRecorder.warning(context, "validation", "VALIDATION_REPOSITORY_IDENTITY_MISMATCH", "ValidationController",
+                            "", existing.repositoryId, "", existing.sessionId, mismatch,
+                            DebugRecorder.details("incoming_repository_id", incoming.repositoryId));
+                    ValidationStore.reportError(context, existing.sessionId, mismatch);
                     return;
                 }
                 if (!ValidationStore.save(context, incoming)) {
@@ -141,6 +166,9 @@ final class ValidationController {
             }
         }
         if (failure.isEmpty()) failure = first(stderr, stdout, "Validation command exited " + exitCode);
+        DebugRecorder.error(context, "validation", "VALIDATION_COMMAND_FAILED", "ValidationController",
+                "", "", "", sessionHint, failure,
+                DebugRecorder.details("operation", operation, "exit_code", exitCode, "environment", environment));
         ValidationStore.reportError(context, sessionHint, failure);
         ValidationSessionRecord existing = ValidationStore.find(context, sessionHint);
         if (existing != null) {
@@ -220,6 +248,9 @@ final class ValidationController {
         session.lastMessage = "Requesting " + action.replace('-', ' ');
         session.updatedAtMs = System.currentTimeMillis();
         ValidationStore.save(context, session);
+        DebugRecorder.info(context, "validation", "VALIDATION_ACTION_PENDING", "ValidationController",
+                "", session.repositoryId, "", session.sessionId, session.lastMessage,
+                DebugRecorder.details("action", action, "effective_state", session.effectiveState));
         new ValidationNotificationController(context).post(session);
     }
 

@@ -34,6 +34,7 @@ final class SupportBundle {
             root.put("app", app(app));
             root.put("device", device());
             root.put("root_bridge", rootBridge(app, token));
+            root.put("bridge_roundtrip", bridgeRoundtrip(app));
             root.put("settings", settings(app));
             root.put("database", database(app));
             root.put("active_run", run(RunStore.active(app), token, AppSettings.includeSupportCommands(app)));
@@ -89,6 +90,11 @@ final class SupportBundle {
         return value;
     }
 
+    private static JSONObject bridgeRoundtrip(Context context) throws JSONException {
+        JSONObject value = new JSONObject(BridgeRoundtripProbe.supportSummary(context));
+        return value;
+    }
+
     private static JSONObject settings(Context context) throws JSONException {
         JSONObject value = new JSONObject();
         DevtoolRunConfig config = AppSettings.runConfig(context);
@@ -119,6 +125,7 @@ final class SupportBundle {
         value.put("log_entries", stats.logEntries);
         value.put("repositories", stats.repositories);
         value.put("git_operations", stats.operations);
+        value.put("debug_events", stats.debugEvents);
         value.put("database_bytes", stats.databaseBytes);
         value.put("root_log_indexer_busy", RootLogIndexer.busy());
         value.put("repository_refresh_busy", RepositoryStore.busy());
@@ -195,6 +202,8 @@ final class SupportBundle {
             value.put("saved", repository.saved);
             value.put("project_type", repository.projectType);
             value.put("last_error", truncate(redact(repository.lastError, token)));
+            value.put("repository_doctor", RepositoryDoctor.supportSummary(context, repository));
+            value.put("path_resolution", RepositoryPathResolver.supportSummary(repository));
             value.put("operations", operations(context, repository.repositoryId, token));
             values.put(value);
         }

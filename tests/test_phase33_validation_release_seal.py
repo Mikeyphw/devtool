@@ -11,13 +11,13 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_android_schema9_report_parser_and_distinct_history_cards() -> None:
+def test_android_schema10_report_parser_and_distinct_history_cards() -> None:
     database = read(JAVA / "DevtoolDatabase.java")
     parser = read(JAVA / "ValidationBridgeParser.java")
     store = read(JAVA / "ValidationStore.java")
     main = read(JAVA / "MainActivity.java")
     evidence = read(JAVA / "ValidationEvidenceActivity.java")
-    assert "private static final int VERSION = 9" in database
+    assert "private static final int VERSION = 10" in database
     for column in ("report_path", "final_verdict", "commit_status", "initial_git_head", "report_warnings", "report_errors"):
         assert column in database
         assert column in store
@@ -32,11 +32,11 @@ def test_android_schema9_report_parser_and_distinct_history_cards() -> None:
 def test_android_phase32_release_version_is_consistent() -> None:
     gradle = read(ROOT / "android" / "devtool-live-hud" / "app" / "build.gradle")
     versions = json.loads(read(ROOT / "release" / "versions.json"))
-    assert "versionCode 30" in gradle
-    assert "versionName '1.16.0'" in gradle
+    assert "versionCode 31" in gradle
+    assert "versionName '1.17.0'" in gradle
     assert versions["android"] == {
-        "version_name": "1.16.0",
-        "version_code": 30,
+        "version_name": "1.17.0",
+        "version_code": 31,
         "application_id": "io.github.mikeceead.devtoolhud",
     }
 

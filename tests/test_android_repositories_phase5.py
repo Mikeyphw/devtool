@@ -19,7 +19,7 @@ def read(name: str) -> str:
 def test_phase5_persists_and_recovers_repository_operations() -> None:
     database = read("DevtoolDatabase.java")
     workspace = read("RepositoryWorkspaceStore.java")
-    assert "private static final int VERSION = 9" in database
+    assert "private static final int VERSION = 10" in database
     assert "CREATE TABLE repository_operations" in database
     for method in (
         "upsertRepositoryOperation", "repositoryOperationForRun", "repositoryOperations",
@@ -118,5 +118,5 @@ def test_git_sync_commit_parser_handles_nul_records(tmp_path: Path) -> None:
 
 def test_phase5_version_contract() -> None:
     build = (APP / "app" / "build.gradle").read_text(encoding="utf-8")
-    assert "versionCode 30" in build
-    assert "versionName '1.16.0'" in build
+    assert "versionCode 31" in build
+    assert "versionName '1.17.0'" in build

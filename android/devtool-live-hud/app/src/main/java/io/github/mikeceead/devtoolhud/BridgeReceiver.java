@@ -14,37 +14,57 @@ public final class BridgeReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null) return;
+        String action = intent.getAction() == null ? "" : intent.getAction();
+        String runId = intent.getStringExtra("run_id");
         if (!BridgeSecrets.accepts(context, intent.getStringExtra("token"))) {
+            DebugRecorder.warning(context, "bridge", "BRIDGE_TOKEN_REJECTED", "BridgeReceiver",
+                    runId, "", "", "", "Rejected update with an invalid bridge token",
+                    DebugRecorder.details("action", action));
             Log.w(TAG, "Rejected update with an invalid bridge token");
             return;
         }
 
-        String action = intent.getAction() == null ? "" : intent.getAction();
         if (!isExpectedBridgeAction(context, action)) {
+            DebugRecorder.warning(context, "bridge", "BRIDGE_ACTION_REJECTED", "BridgeReceiver",
+                    runId, "", "", "", "Rejected bridge update with unexpected action",
+                    DebugRecorder.details("action", action));
             Log.w(TAG, "Rejected bridge update with unexpected action " + action);
             return;
         }
-        String runId = intent.getStringExtra("run_id");
         if (action.endsWith("TOAST")) {
             showToast(context, intent.getStringExtra("toast"));
             return;
         }
         if (runId == null || runId.trim().isEmpty()) {
+            DebugRecorder.warning(context, "bridge", "BRIDGE_RUN_ID_MISSING", "BridgeReceiver",
+                    "", "", "", "", "Rejected bridge update without a run id",
+                    DebugRecorder.details("action", action));
             Log.w(TAG, "Rejected bridge update without a run id");
             return;
         }
         if (!action.endsWith("CANCEL") && !BridgeUpdateGate.accept(context, intent)) {
+            DebugRecorder.info(context, "bridge", "BRIDGE_UPDATE_STALE", "BridgeReceiver",
+                    runId, "", "", "", "Ignored stale or out-of-order update",
+                    DebugRecorder.details("action", action, "sequence", intent.getLongExtra("sequence", 0L)));
             Log.d(TAG, "Ignored stale or out-of-order update for run " + runId);
             return;
         }
         NotificationController controller = new NotificationController(context);
         if (action.endsWith("CANCEL")) {
+            DebugRecorder.warning(context, "bridge", "BRIDGE_CANCEL_ACCEPTED", "BridgeReceiver",
+                    runId, "", "", "", "Bridge cancellation accepted", DebugRecorder.details("action", action));
             RunStore.cancelled(context, runId);
             controller.cancel(runId);
             OverlayHudService.cancel(runId);
             return;
         }
 
+        String traceCheckpoint = RunCommandTrace.fromBridgeIntent(intent);
+        if (!traceCheckpoint.isEmpty() && !"RUN_TRACE_CHECKPOINT".equals(traceCheckpoint)) {
+            RunCommandTrace.record(context, traceCheckpoint, "BridgeReceiver", runId,
+                    RunCommandTrace.bridgeMessage(intent),
+                    DebugRecorder.details("action", action, "sequence", intent.getLongExtra("sequence", 0L)));
+        }
         HudUpdate update = HudUpdate.fromIntent(intent);
         RunStore.update(context, update);
         controller.post(update);

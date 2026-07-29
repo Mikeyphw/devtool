@@ -83,6 +83,7 @@ public final class RepositoryDetailActivity extends Activity {
             IntentFilter filter = new IntentFilter(RepositoryStore.ACTION_UPDATED);
             filter.addAction(RunStore.ACTION_UPDATED);
             filter.addAction(RepositoryWorkspaceStore.ACTION_UPDATED);
+            filter.addAction(RepositoryDoctor.ACTION_UPDATED);
             if (Build.VERSION.SDK_INT >= 33) registerReceiver(updates, filter, Context.RECEIVER_NOT_EXPORTED);
             else registerReceiver(updates, filter);
             registered = true;
@@ -255,6 +256,9 @@ public final class RepositoryDetailActivity extends Activity {
                 UiTypography.Role.BODY_SMALL, ui.palette.red));
         content.addView(state);
 
+        content.addView(repositoryDoctorCard(repository));
+        content.addView(repositoryPathResolutionCard(repository));
+
         addField(content, "Remote", repository.remote);
         addField(content, "Upstream", repository.upstream);
         addField(content, "Git root", repository.gitRoot);
@@ -264,6 +268,7 @@ public final class RepositoryDetailActivity extends Activity {
         tools.addView(ui.button("Open shell here", ui.palette.cyan, v -> openShell(repository)));
         tools.addView(ui.secondaryButton("Browse files as root", v -> browse(repository)));
         tools.addView(ui.secondaryButton("Copy path", v -> copy("Repository path", repository.canonicalPath)));
+        tools.addView(ui.secondaryButton("Run Doctor", v -> runDoctor(repository)));
         tools.addView(ui.secondaryButton("View this repository in Logs", v -> openRepositoryLogs(repository)));
         if (!repository.remote.isEmpty() && remoteUrl(repository.remote) != null) {
             tools.addView(ui.secondaryButton("Open remote", v -> startActivity(
@@ -778,7 +783,124 @@ public final class RepositoryDetailActivity extends Activity {
                 RepositoryWorkspaceStore.operations(this, repository.repositoryId).stream()
                         .filter(RepositoryOperationRecord::active).count()));
         addField(content, "Remote transport", snapshot.remoteDiagnostics.transport);
+        content.addView(repositoryDoctorCard(repository));
+        content.addView(repositoryPathResolutionCard(repository));
     }
+
+    private View repositoryDoctorCard(RepositoryRecord repository) {
+        RepositoryDoctorResult result = RepositoryDoctor.latest(this, repository);
+        LinearLayout card = ui.surface();
+        int color = result.status.equals("pass") ? ui.palette.green
+                : result.status.equals("fail") ? ui.palette.red
+                : result.status.equals("warn") ? ui.palette.yellow : ui.palette.cyan;
+        card.addView(ui.text("Repo Manager Doctor", UiTypography.Role.LABEL, ui.palette.muted));
+        card.addView(ui.text(result.title, UiTypography.Role.CARD_TITLE, color));
+        card.addView(ui.text(result.summary, UiTypography.Role.BODY_SMALL, ui.palette.text));
+        card.addView(ui.text(result.recommendation, UiTypography.Role.CAPTION, ui.palette.muted));
+        card.addView(ui.text(join(" · ", result.issueKey, result.environment, result.chrootName,
+                        result.linuxUser, result.checkedAtMs == 0 ? "not run"
+                                : DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                                .format(new Date(result.checkedAtMs))),
+                UiTypography.Role.CAPTION, ui.palette.muted));
+        TextView path = ui.text(result.commandPath, UiTypography.Role.CAPTION, ui.palette.muted);
+        path.setTypeface(Typeface.MONOSPACE);
+        path.setTextIsSelectable(true);
+        card.addView(path);
+        card.addView(ui.text("checks: path=" + yesNo(result.pathExists)
+                        + " · gitRoot=" + yesNo(result.gitDirExists)
+                        + " · git=" + yesNo(result.gitAvailable)
+                        + " · git -C=" + yesNo(result.gitCommandWorks)
+                        + " · runuser=" + yesNo(result.runuserWorks)
+                        + " · su=" + yesNo(result.suWorks),
+                UiTypography.Role.CAPTION, ui.palette.muted));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(ui.verticalActions() ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        Button run = ui.button("Run Doctor", ui.palette.cyan, v -> runDoctor(repository));
+        Button copy = ui.secondaryButton("Copy diagnosis", v -> copy("Repository diagnosis", result.plainText()));
+        if (ui.verticalActions()) {
+            actions.addView(run);
+            actions.addView(copy);
+        } else {
+            actions.addView(run, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(copy, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        card.addView(actions);
+        return card;
+    }
+
+
+    private View repositoryPathResolutionCard(RepositoryRecord repository) {
+        RepositoryPathResolution resolution = RepositoryPathResolver.analyze(repository);
+        LinearLayout card = ui.surface();
+        int color = resolution.status.equals("pass") ? ui.palette.green
+                : resolution.status.equals("fail") ? ui.palette.red : ui.palette.yellow;
+        card.addView(ui.text("Repository path resolver", UiTypography.Role.LABEL, ui.palette.muted));
+        card.addView(ui.text(resolution.title, UiTypography.Role.CARD_TITLE, color));
+        card.addView(ui.text(resolution.summary, UiTypography.Role.BODY_SMALL, ui.palette.text));
+        card.addView(ui.text(resolution.recommendation, UiTypography.Role.CAPTION, ui.palette.muted));
+        card.addView(ui.text("issue=" + resolution.issueKey + " · detected="
+                        + resolution.detectedPathFamily + " · expected=" + resolution.expectedPathFamily,
+                UiTypography.Role.CAPTION, ui.palette.muted));
+        TextView path = ui.text(resolution.canonicalPath, UiTypography.Role.CAPTION, ui.palette.muted);
+        path.setTypeface(Typeface.MONOSPACE);
+        path.setTextIsSelectable(true);
+        card.addView(path);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(ui.verticalActions() ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        Button copy = ui.secondaryButton("Copy resolution", v -> copy("Repository path resolution", resolution.plainText()));
+        if (resolution.hasRepairActions()) {
+            RepositoryPathResolution.RepairAction primary = resolution.primaryAction();
+            Button repair = ui.button(primary.label, ui.palette.cyan, v -> confirmPathRepair(repository, primary));
+            if (ui.verticalActions()) {
+                actions.addView(repair);
+                actions.addView(copy);
+            } else {
+                actions.addView(repair, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                actions.addView(copy, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            }
+            card.addView(actions);
+            for (int i = 1; i < resolution.actions.size(); i++) {
+                RepositoryPathResolution.RepairAction action = resolution.actions.get(i);
+                card.addView(ui.secondaryButton(action.label, v -> confirmPathRepair(repository, action)));
+            }
+        } else {
+            actions.addView(copy);
+            card.addView(actions);
+        }
+        return card;
+    }
+
+    private void runDoctor(RepositoryRecord repository) {
+        RepositoryDoctor.runAsync(this, repository);
+        Toast.makeText(this, "Repository doctor started", Toast.LENGTH_SHORT).show();
+    }
+
+
+    private void confirmPathRepair(RepositoryRecord repository, RepositoryPathResolution.RepairAction action) {
+        new AlertDialog.Builder(this)
+                .setTitle(action.label + "?")
+                .setMessage(action.description + "\n\nThis changes only Android repository metadata. It does not delete files, modify Git history, reset the worktree or run Git.\n\nNew environment: "
+                        + action.environment + (action.chrootName.isEmpty() ? "" : " / " + action.chrootName)
+                        + "\nLinux user: " + action.linuxUser
+                        + "\nPath: " + action.path)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Apply repair", (dialog, which) -> applyPathRepair(repository, action))
+                .show();
+    }
+
+    private void applyPathRepair(RepositoryRecord repository, RepositoryPathResolution.RepairAction action) {
+        RepositoryRecord repaired = RepositoryStore.applyPathRepair(this, repository.repositoryId, action);
+        if (repaired == null) {
+            Toast.makeText(this, "Repository repair could not be applied", Toast.LENGTH_LONG).show();
+            return;
+        }
+        repositoryId = repaired.repositoryId;
+        Toast.makeText(this, "Repository metadata repaired", Toast.LENGTH_SHORT).show();
+        rebuild();
+        refreshWorkspace(true);
+    }
+
+    private static String yesNo(boolean value) { return value ? "yes" : "no"; }
 
     private void scheduleQueueTicker() {
         queueTickerHandler.removeCallbacks(queueTicker);

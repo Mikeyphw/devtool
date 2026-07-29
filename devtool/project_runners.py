@@ -1568,6 +1568,8 @@ class PythonRunner(ProjectRunner):
     def _restore_phase_name(self, command: list[str]) -> str:
         if len(command) >= 3 and command[1:3] == ["-m", "venv"]:
             return "venv"
+        if len(command) >= 4 and command[1:3] == ["-m", "devtool.python_support"] and command[3] == "ensure-venv":
+            return "venv"
         if "-r" in command:
             return "restore:requirements"
         if "--no-build-isolation" in command and "-e" in command:
@@ -1580,7 +1582,21 @@ class PythonRunner(ProjectRunner):
                 install_index = index
                 break
         packages = command[install_index + 1:] if install_index >= 0 else command
-        packages = [item for item in packages if not str(item).startswith("-")]
+        option_values = {"-c", "--constraint", "--python", "--project", "--index-url", "--extra-index-url"}
+        filtered: list[str] = []
+        skip_next = False
+        for item in packages:
+            if skip_next:
+                skip_next = False
+                continue
+            text = str(item)
+            if text in option_values:
+                skip_next = True
+                continue
+            if text.startswith("-"):
+                continue
+            filtered.append(text)
+        packages = filtered
         normalized = {str(item).split("[", 1)[0].split("==", 1)[0].split(">=", 1)[0].split("<=", 1)[0].lower() for item in packages}
         if normalized and normalized <= {"pytest", "pytest-asyncio"}:
             return "restore:test-tools"
@@ -1761,6 +1777,23 @@ class PythonRunner(ProjectRunner):
         if int(service.get("port") or 0) > 0:
             argv.extend(["--port", str(int(service["port"]))])
         return CommandSpec("python-service-lifecycle", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="service-lifecycle"))
+
+    def _dependency_check_spec(self, config: ProjectConfig) -> CommandSpec:
+        info = self._info(config)
+        plan = self._plan(config)
+        if info.manager == "uv" and plan.environment_root:
+            environment = Path(plan.environment_root)
+            python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            argv = ["uv", "pip", "check", "--python", str(python)]
+        else:
+            argv = self._module(config, "pip", "check")
+        return CommandSpec(
+            "dependency-check",
+            argv,
+            env=self._env(config),
+            cwd=str(self._root(config)),
+            metadata=_tool_metadata(self.kind, self._root(config), validation_component="dependency-integrity"),
+        )
 
     def _database_specs(self, config: ProjectConfig) -> list[CommandSpec]:
         database = self._options(config).get("database", {})
@@ -1963,7 +1996,7 @@ class PythonRunner(ProjectRunner):
         sbom = self._sbom_spec(config)
         if sbom is not None:
             specs.append(sbom)
-        specs.append(CommandSpec("dependency-check", self._module(config, "pip", "check"), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="dependency-integrity")))
+        specs.append(self._dependency_check_spec(config))
         specs.extend(self._import_isolation_specs(config))
         specs.extend(self._cli_contract_specs(config))
         if not skip_build and scope.run_build:

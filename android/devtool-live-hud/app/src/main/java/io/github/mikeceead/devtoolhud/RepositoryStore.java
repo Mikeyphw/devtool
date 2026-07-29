@@ -117,6 +117,43 @@ final class RepositoryStore {
         broadcast(context, "");
     }
 
+
+    static RepositoryRecord applyPathRepair(Context context, String id,
+                                            RepositoryPathResolution.RepairAction action) {
+        if (context == null || action == null || id == null || id.trim().isEmpty()) return null;
+        Context app = context.getApplicationContext();
+        DevtoolDatabase database = DevtoolDatabase.get(app);
+        RepositoryRecord record = find(app, id);
+        if (record == null) return null;
+        RepositoryRecord repaired = copy(record);
+        RepositoryLocation location = action.location();
+        String oldId = repaired.repositoryId;
+        repaired.repositoryId = location.id();
+        repaired.environment = location.environment;
+        repaired.chrootName = location.chrootName;
+        repaired.linuxUser = location.linuxUser;
+        repaired.configuredPath = location.path;
+        repaired.canonicalPath = location.path;
+        repaired.hostPath = location.hostPath;
+        repaired.gitRoot = action.kind.equals(RepositoryPathResolution.RepairAction.KIND_USE_DISCOVERED_GIT_ROOT)
+                ? location.path : remapGitRoot(record, location);
+        repaired.status = "checking";
+        repaired.lastError = "";
+        repaired.saved = true;
+        repaired.lastUsedAt = System.currentTimeMillis();
+        database.rekeyRepository(oldId, repaired);
+        database.addRepositoryEvent(repaired.repositoryId, "", "REPO_PATH_REPAIR_APPLIED",
+                action.label + " · " + location.environment + " · " + location.path);
+        DebugRecorder.record(app, "info", "repo", "REPO_PATH_REPAIR_APPLIED", "RepositoryStore",
+                "", repaired.repositoryId, "", "", "Repository metadata repair applied",
+                DebugRecorder.details("old_repository_id", oldId, "repair_kind", action.kind,
+                        "environment", repaired.environment, "chroot", repaired.chrootName,
+                        "linux_user", repaired.linuxUser, "path", repaired.canonicalPath,
+                        "host_path", repaired.hostPath));
+        broadcast(app, "Repository metadata repaired");
+        return database.repository(repaired.repositoryId);
+    }
+
     static void remove(Context context, String id) {
         RepositoryRecord record = find(context, id);
         if (record == null) return;
@@ -212,6 +249,42 @@ final class RepositoryStore {
     private static void broadcast(Context context, String error) {
         context.sendBroadcast(new Intent(ACTION_UPDATED).setPackage(context.getPackageName())
                 .putExtra(EXTRA_ERROR, error == null ? "" : error));
+    }
+
+
+    private static RepositoryRecord copy(RepositoryRecord source) {
+        RepositoryRecord value = new RepositoryRecord();
+        value.repositoryId = source.repositoryId;
+        value.displayName = source.displayName;
+        value.environment = source.environment;
+        value.chrootName = source.chrootName;
+        value.linuxUser = source.linuxUser;
+        value.configuredPath = source.configuredPath;
+        value.canonicalPath = source.canonicalPath;
+        value.hostPath = source.hostPath;
+        value.gitRoot = source.gitRoot;
+        value.branch = source.branch;
+        value.upstream = source.upstream;
+        value.remote = source.remote;
+        value.status = source.status;
+        value.projectType = source.projectType;
+        value.lastError = source.lastError;
+        value.dirty = source.dirty;
+        value.saved = source.saved;
+        value.aheadCount = source.aheadCount;
+        value.behindCount = source.behindCount;
+        value.activeRunCount = source.activeRunCount;
+        value.lastUsedAt = source.lastUsedAt;
+        value.lastScannedAt = source.lastScannedAt;
+        return value;
+    }
+
+    private static String remapGitRoot(RepositoryRecord record, RepositoryLocation location) {
+        String gitRoot = clean(record.gitRoot);
+        if (gitRoot.isEmpty()) return "";
+        if (gitRoot.equals(record.canonicalPath)) return location.path;
+        if (record.environment.equals(location.environment)) return gitRoot;
+        return "";
     }
 
     private static String baseName(String path) {

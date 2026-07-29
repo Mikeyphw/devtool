@@ -163,14 +163,16 @@ final class RootBridgeManager {
     static TermuxCommandRunner.LaunchResult run(Context context, String command, String workdir,
                                                  boolean overlay, Intent taskerFireIntent) {
         String cleanCommand = command == null ? "" : command.trim();
-        if (cleanCommand.isEmpty()) return new TermuxCommandRunner.LaunchResult(false, -1, "Command is empty");
-        if (!isReady(context)) return new TermuxCommandRunner.LaunchResult(false, -1, "Optional root bridge is not connected");
+        if (cleanCommand.isEmpty()) return rejectRun(context, "ROOT_RUN_REJECTED", "Command is empty");
+        if (!isReady(context)) return rejectRun(context, "ROOT_BRIDGE_NOT_CONNECTED", "Optional root bridge is not connected");
         if (!isAllowedDevtoolCommand(cleanCommand)) {
-            return new TermuxCommandRunner.LaunchResult(false, -1,
-                    "Root bridge only accepts generated devtool or devtool-androidos commands");
+            return rejectRun(context, "ROOT_COMMAND_REJECTED", "Root bridge only accepts generated devtool or devtool-androidos commands");
         }
         RunRecord active = RunStore.active(context);
         if (active != null) {
+            DebugRecorder.warning(context, "root_bridge", "ROOT_RUN_REJECTED_ACTIVE_RUN", "RootBridgeManager",
+                    active.runId, active.repositoryId, "", "", "A devtool run is already active",
+                    DebugRecorder.details("active_status", active.status, "active_phase", active.phase));
             return new TermuxCommandRunner.LaunchResult(false, -1,
                     "A devtool run is already active. Finish or cancel it before starting another.");
         }
@@ -185,12 +187,25 @@ final class RootBridgeManager {
                 + (overlay ? "1" : "0") + " " + shellQuote(workdir64) + " " + shellQuote(command64));
 
         Context app = context.getApplicationContext();
+        RunCommandTrace.record(app, RunCommandTrace.COMMAND_PLAN_BUILT, "RootBridgeManager",
+                runId, "Command plan built for root bridge",
+                DebugRecorder.details("workdir", cleanWorkdir, "overlay", overlay,
+                        "command_length", cleanCommand.length()));
+        RunCommandTrace.record(app, RunCommandTrace.COMMAND_ENVELOPE_WRITTEN, "RootBridgeManager",
+                runId, "Root bridge command envelope prepared",
+                DebugRecorder.details("workdir", cleanWorkdir, "overlay", overlay));
         HudUpdate started = HudUpdate.commandStarted(runId, cleanCommand, cleanWorkdir, overlay);
         RunStore.started(app, runId, cleanCommand, cleanWorkdir);
+        RunCommandTrace.record(app, RunCommandTrace.RUNSTORE_CREATED, "RootBridgeManager",
+                runId, "RunStore created root bridge launch record",
+                DebugRecorder.details("workdir", cleanWorkdir, "overlay", overlay));
         new NotificationController(app).post(started);
         OverlayHudService.publish(app, started);
 
         Intent taskerIntent = taskerFireIntent == null ? null : new Intent(taskerFireIntent);
+        RunCommandTrace.record(app, RunCommandTrace.ROOT_BRIDGE_DISPATCHED, "RootBridgeManager",
+                runId, "Root bridge execution dispatched",
+                DebugRecorder.details("execution_id", executionId, "overlay", overlay));
         EXECUTOR.execute(() -> executeRun(app, runId, executionId, shell, overlay, taskerIntent));
         return new TermuxCommandRunner.LaunchResult(true, executionId, "");
     }
@@ -198,10 +213,10 @@ final class RootBridgeManager {
     static TermuxCommandRunner.LaunchResult runValidationControl(Context context, String command,
                                                                   String workdir, String operation) {
         String cleanCommand = command == null ? "" : command.trim();
-        if (cleanCommand.isEmpty()) return new TermuxCommandRunner.LaunchResult(false, -1, "Command is empty");
-        if (!isReady(context)) return new TermuxCommandRunner.LaunchResult(false, -1, "Optional root bridge is not connected");
+        if (cleanCommand.isEmpty()) return rejectRun(context, "ROOT_VALIDATION_REJECTED", "Command is empty");
+        if (!isReady(context)) return rejectRun(context, "ROOT_BRIDGE_NOT_CONNECTED", "Optional root bridge is not connected");
         if (!isAllowedDevtoolCommand(cleanCommand)) {
-            return new TermuxCommandRunner.LaunchResult(false, -1, "Root validation control only accepts generated devtool commands");
+            return rejectRun(context, "ROOT_VALIDATION_REJECTED", "Root validation control only accepts generated devtool commands");
         }
         int executionId = nextExecutionId();
         Context app = context.getApplicationContext();
@@ -235,6 +250,8 @@ final class RootBridgeManager {
         String error = "";
         try {
             Process process = new ProcessBuilder("su", "-c", shell).redirectErrorStream(true).start();
+            RunCommandTrace.record(context, RunCommandTrace.ROOT_BRIDGE_PROCESS_STARTED, "RootBridgeManager",
+                    runId, "Root bridge process started", DebugRecorder.details("execution_id", executionId));
             activeProcess = process;
             activeRunId = runId;
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
@@ -366,7 +383,17 @@ final class RootBridgeManager {
         if (detail != null) editor.putString(KEY_DETAIL, detail);
         if (version != null && !version.isEmpty()) editor.putString(KEY_VERSION, version);
         editor.apply();
+        DebugRecorder.record(context, state.equals("ready") ? "success"
+                        : state.equals("checking") || state.equals("unknown") ? "info" : "warning",
+                "root_bridge", "ROOT_BRIDGE_STATE_CHANGED", "RootBridgeManager", "", "", "", "",
+                detail == null || detail.trim().isEmpty() ? "Root bridge state changed: " + state : detail,
+                DebugRecorder.details("state", state, "version", version));
         context.sendBroadcast(new Intent(ACTION_UPDATED).setPackage(context.getPackageName()));
+    }
+
+    private static TermuxCommandRunner.LaunchResult rejectRun(Context context, String eventType, String reason) {
+        DebugRecorder.warning(context, "root_bridge", eventType, "RootBridgeManager", "", "", "", "", reason, "{}");
+        return new TermuxCommandRunner.LaunchResult(false, -1, reason);
     }
 
     private static SharedPreferences prefs(Context context) {

@@ -108,5 +108,5 @@ def test_porcelain_v2_parser_handles_spaces_renames_conflicts_and_empty_subjects
 
 def test_phase3_version_contract() -> None:
     build = (APP / "app" / "build.gradle").read_text(encoding="utf-8")
-    assert "versionCode 30" in build
-    assert "versionName '1.16.0'" in build
+    assert "versionCode 31" in build
+    assert "versionName '1.17.0'" in build
