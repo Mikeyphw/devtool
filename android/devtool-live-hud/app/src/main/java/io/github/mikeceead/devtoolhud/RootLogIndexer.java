@@ -1,5 +1,6 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 
@@ -21,6 +22,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Root-backed incremental indexer for authoritative Devtool logs and HUD event streams. */
+@SuppressLint("SdCardPath")
 final class RootLogIndexer {
     static final String ACTION_UPDATED = "io.github.mikeceead.devtoolhud.LOG_INDEX_UPDATED";
     static final String EXTRA_ERROR = "error";

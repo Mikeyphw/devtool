@@ -1,5 +1,6 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 
 import java.io.ByteArrayOutputStream;
@@ -12,6 +13,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+@SuppressLint("SdCardPath")
 final class RootCommandBroker {
     private static final int MAX_OUTPUT = 2 * 1024 * 1024;
     private static final long TIMEOUT_SECONDS = 35L;

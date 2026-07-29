@@ -143,7 +143,7 @@ final class UiKit {
 
     Button quickTile(int iconRes, String title, String detail, int accent, View.OnClickListener listener) {
         Button button = new Button(context);
-        button.setText(title + "\n" + detail);
+        button.setText(context.getString(R.string.two_line_title_detail, title, detail));
         UiTypography.apply(button, UiTypography.Role.BODY);
         button.setTextColor(palette.text);
         button.setAllCaps(false);

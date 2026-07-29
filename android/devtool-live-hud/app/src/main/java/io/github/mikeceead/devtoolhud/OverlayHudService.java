@@ -71,7 +71,7 @@ public final class OverlayHudService extends Service {
     private int dragStartY;
 
     static boolean hasPermission(Context context) {
-        return Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(context);
+        return Settings.canDrawOverlays(context);
     }
 
     static boolean isEnabled(Context context) {
@@ -90,8 +90,7 @@ public final class OverlayHudService extends Service {
         if (enabled) {
             if (!hasPermission(context)) return;
             try {
-                if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent);
-                else context.startService(intent);
+                context.startForegroundService(intent);
             } catch (RuntimeException ignored) {
                 // Android may reject a background foreground-service start. The
                 // setup activity can always start it while visible.
@@ -260,7 +259,7 @@ public final class OverlayHudService extends Service {
         overlayRoot.setContentDescription("Devtool floating progress HUD");
         overlayRoot.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
 
-        LinearLayout header = new LinearLayout(this);
+        LinearLayout header = new DraggableHudHeader(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
@@ -391,7 +390,7 @@ public final class OverlayHudService extends Service {
         if (cardsContainer == null) return;
         cardsContainer.removeAllViews();
         if (currentRuns.isEmpty()) {
-            headerCount.setText("Ready");
+            headerCount.setText(getString(R.string.overlay_hud_ready));
             TextView waiting = label("Waiting for a devtool run", UiTypography.Role.BODY_SMALL, palette.muted);
             waiting.setPadding(0, dp(10), 0, 0);
             cardsContainer.addView(waiting);
@@ -458,10 +457,8 @@ public final class OverlayHudService extends Service {
         overallProgress.setIndeterminate(update.indeterminate && update.activeStep() == null && !update.isTerminal());
         overallProgress.setProgress(update.isTerminal() ? 100 : update.displayProgress(), false);
         overallProgress.setContentDescription(update.title() + ", " + update.displayProgress() + " percent, " + update.status);
-        if (Build.VERSION.SDK_INT >= 21) {
-            overallProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
-            overallProgress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(accent));
-        }
+        overallProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
+        overallProgress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(accent));
         card.addView(overallProgress, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(8)));
 
@@ -498,10 +495,8 @@ public final class OverlayHudService extends Service {
             stepProgress.setIndeterminate(step.running() && step.progress <= 0);
             stepProgress.setProgress((step.succeeded() || step.failed() || step.skipped()) ? 100 : step.progress, false);
             stepProgress.setContentDescription(step.label + ", " + step.status + ", " + step.progress + " percent");
-            if (Build.VERSION.SDK_INT >= 21) {
-                stepProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
-                stepProgress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
-            }
+            stepProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
+            stepProgress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(stepColor(step)));
             segment.addView(stepProgress, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, dp(7)));
             row.addView(segment, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
@@ -629,4 +624,16 @@ public final class OverlayHudService extends Service {
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
+    private static final class DraggableHudHeader extends LinearLayout {
+        DraggableHudHeader(Context context) {
+            super(context);
+        }
+
+        @Override
+        public boolean performClick() {
+            super.performClick();
+            return true;
+        }
+    }
+
 }

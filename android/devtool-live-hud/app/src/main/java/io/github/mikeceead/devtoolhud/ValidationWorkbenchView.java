@@ -216,7 +216,7 @@ final class ValidationWorkbenchView {
         if (phase.running() && !phase.progressDetail.isEmpty()) detail += " · " + phase.progressDetail;
         if (phase.durationMs > 0) detail += " · " + formatDuration(phase.durationMs);
         if (phase.attempts > 0) detail += " · attempt " + phase.attempts;
-        row.setText(marker + "  " + phase.label + "\n" + detail);
+        row.setText(activity.getString(R.string.validation_phase_row_format, marker, phase.label, detail));
         row.setAllCaps(false);
         row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         row.setTextColor(phaseColor(phase));
@@ -286,8 +286,10 @@ final class ValidationWorkbenchView {
                 boolean selected = scope.selectedPhases.contains(phase.key);
                 check.setChecked(selected || automatic);
                 check.setEnabled(!phase.passed() && !automatic);
-                String suffix = automatic ? " · required dependency" : phase.required ? "" : " · optional";
-                check.setText(phase.label + suffix);
+                String label = automatic
+                        ? activity.getString(R.string.validation_phase_required_dependency, phase.label)
+                        : (phase.required ? phase.label : activity.getString(R.string.validation_phase_optional, phase.label));
+                check.setText(label);
                 check.setContentDescription(phase.label + (automatic ? ", required dependency" : ", selectable phase"));
             }
         } finally {

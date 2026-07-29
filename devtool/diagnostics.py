@@ -36,6 +36,17 @@ _GRADLE_MEMORY_GUARD = re.compile(
     r"Emergency memory guard stopped Gradle after (?P<reason>[^:]+):\s*(?P<detail>.+)$",
     re.IGNORECASE,
 )
+_GRADLE_DAEMON_DISAPPEARED = re.compile(
+    r"(Gradle build daemon disappeared unexpectedly|"
+    r"daemon disappeared unexpectedly|"
+    r"daemon has disappeared|"
+    r"daemon process has disappeared|"
+    r"daemon process was terminated|"
+    r"daemon was killed|"
+    r"daemon has been killed|"
+    r"daemon unexpectedly stopped)",
+    re.IGNORECASE,
+)
 _GRADLE_FAILED_TASK = re.compile(
     r"^>\s*Task\s+(?P<task>\S+)\s+FAILED$",
     re.IGNORECASE,
@@ -222,6 +233,20 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 (
                     "Gradle was stopped by devtool memory guard after "
                     f"{match.group('reason').strip()}: {match.group('detail').strip()}"
+                ),
+            ))
+            index += 1
+            continue
+
+        if _GRADLE_DAEMON_DISAPPEARED.search(stripped):
+            issues.append(Issue(
+                "error",
+                command_name,
+                "-",
+                "GRADLE_DAEMON_DISAPPEARED",
+                (
+                    "Gradle daemon disappeared or was killed before the build completed. "
+                    "This is an infrastructure/resource interruption, not a source compile error."
                 ),
             ))
             index += 1
@@ -630,6 +655,17 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return "wine_issue"
     if "exec format error" in text or "wrong architecture" in text or "bad cpu type" in text or "arm64" in text and "x64" in text:
         return "arm_mismatch"
+    if (
+        "gradle build daemon disappeared unexpectedly" in text
+        or "daemon disappeared unexpectedly" in text
+        or "daemon has disappeared" in text
+        or "daemon process has disappeared" in text
+        or "daemon process was terminated" in text
+        or "daemon was killed" in text
+        or "daemon has been killed" in text
+        or "daemon unexpectedly stopped" in text
+    ):
+        return "resource_interrupted"
     if "restore" in name:
         return "restore_failure"
     if "build" in name or compile_signal:

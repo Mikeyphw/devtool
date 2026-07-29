@@ -22,6 +22,10 @@ public final class ActionReceiver extends BroadcastReceiver {
     static final String ACTION_VALIDATION_RETRY = "io.github.mikeceead.devtoolhud.VALIDATION_RETRY";
     static final String ACTION_VALIDATION_RETRY_SAFE = "io.github.mikeceead.devtoolhud.VALIDATION_RETRY_SAFE";
     static final String ACTION_VALIDATION_RECOVER = "io.github.mikeceead.devtoolhud.VALIDATION_RECOVER";
+    static final String ACTION_RUN_BRIDGE_PROBE = "io.github.mikeceead.devtoolhud.RUN_BRIDGE_PROBE";
+    static final String ACTION_COPY_DEBUG_REPORT = "io.github.mikeceead.devtoolhud.COPY_DEBUG_REPORT";
+    static final String ACTION_COPY_DEBUG_HEALTH = "io.github.mikeceead.devtoolhud.COPY_DEBUG_HEALTH";
+    static final String ACTION_COPY_SUPPORT_BUNDLE = "io.github.mikeceead.devtoolhud.COPY_SUPPORT_BUNDLE";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -63,6 +67,26 @@ public final class ActionReceiver extends BroadcastReceiver {
             ValidationController.showLaunchResult(context, result, "Validation action requested");
             return;
         }
+        if (ACTION_RUN_BRIDGE_PROBE.equals(action)) {
+            TermuxCommandRunner.LaunchResult result = BridgeRoundtripProbe.start(context);
+            Toast.makeText(context, result.started ? "Bridge roundtrip probe started" : result.error,
+                    result.started ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (ACTION_COPY_DEBUG_REPORT.equals(action)) {
+            String summary = intent.getStringExtra("summary");
+            copyToClipboard(context, "Devtool debug report", summary,
+                    summary == null || summary.trim().isEmpty() ? "No debug report is available" : "Debug report copied");
+            return;
+        }
+        if (ACTION_COPY_DEBUG_HEALTH.equals(action)) {
+            copyToClipboard(context, "Devtool debug health", DebugWorkbenchHealth.plainText(context), "Debug health copied");
+            return;
+        }
+        if (ACTION_COPY_SUPPORT_BUNDLE.equals(action)) {
+            copyToClipboard(context, "Devtool support bundle", SupportBundle.build(context), "Support bundle copied");
+            return;
+        }
         if (ACTION_DISMISS.equals(action)) {
             String runId = intent.getStringExtra("run_id");
             new NotificationController(context).cancel(runId);
@@ -79,16 +103,9 @@ public final class ActionReceiver extends BroadcastReceiver {
                 Toast.makeText(context, "No summary is available yet", Toast.LENGTH_SHORT).show();
                 return;
             }
-            try {
-                ClipboardManager clipboard = context.getSystemService(ClipboardManager.class);
-                if (clipboard == null) throw new IllegalStateException("clipboard unavailable");
-                clipboard.setPrimaryClip(ClipData.newPlainText("Devtool summary", summary));
-                String toast = intent.getStringExtra("toast");
-                Toast.makeText(context, toast == null || toast.trim().isEmpty() ? "Summary copied" : toast,
-                        Toast.LENGTH_SHORT).show();
-            } catch (RuntimeException error) {
-                Toast.makeText(context, "Could not copy the summary", Toast.LENGTH_LONG).show();
-            }
+            String toast = intent.getStringExtra("toast");
+            copyToClipboard(context, "Devtool summary", summary,
+                    toast == null || toast.trim().isEmpty() ? "Summary copied" : toast);
             return;
         }
         if (ACTION_CANCEL_RUN.equals(action)) {
@@ -137,6 +154,21 @@ public final class ActionReceiver extends BroadcastReceiver {
             OverlayHudService.setEnabled(context, false);
         }
     }
+    private static void copyToClipboard(Context context, String label, String value, String toast) {
+        if (value == null || value.trim().isEmpty()) {
+            Toast.makeText(context, toast == null || toast.trim().isEmpty() ? "Nothing to copy" : toast, Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            ClipboardManager clipboard = context.getSystemService(ClipboardManager.class);
+            if (clipboard == null) throw new IllegalStateException("clipboard unavailable");
+            clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
+            Toast.makeText(context, toast == null || toast.trim().isEmpty() ? "Copied" : toast, Toast.LENGTH_SHORT).show();
+        } catch (RuntimeException error) {
+            Toast.makeText(context, "Could not copy text", Toast.LENGTH_LONG).show();
+        }
+    }
+
     private static void openValidation(Context context, String sessionId) {
         Intent open = new Intent(context, MainActivity.class)
                 .putExtra("open_page", 1)

@@ -1,34 +1,49 @@
 {
-  "name": "devtool_android_repo_queue_orphan_recovery_phase_42",
-  "release": "1.1.0",
-  "devtool_version": "1.1.0",
+  "name": "devtool_android_hud_lint_finish_phase_47c5_c7",
+  "release": "1.1.1",
+  "devtool_version": "1.1.1",
   "desktop_version": "0.4.0",
   "android_version": "1.17.0",
   "android_version_code": 31,
   "artifact_type": "overlay",
-  "slice": "42",
+  "target": "android_hud",
+  "slice": "47C-5/47C-6/47C-7",
   "features": [
-    "RepoQueueRecovery assesses queued, running, stale and orphaned Git operation state",
-    "RepositoryWorkspaceStore exposes safe terminate-orphan, mark-interrupted, retry and queue-health actions",
-    "Repository Detail surfaces queue recovery cards, confirmations and retry actions",
-    "Support bundle includes per-repository repo_queue_health diagnostics",
-    "Debug classifier recognizes queue recovery, orphan, mark-interrupted and retry events"
+    "Complete legacy backup rules alongside Android 12+ data extraction rules",
+    "Add monochrome adaptive launcher icon support",
+    "Fix overlay drag accessibility by using a header view that overrides performClick",
+    "Move remaining lint-reported setText concatenation call sites to string resources/plurals",
+    "Remove unused colors, text appearance styles, and dead drawables"
   ],
   "key_files": [
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepoQueueRecovery.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryWorkspaceStore.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryDetailActivity.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/SupportBundle.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/DebugIssueClassifier.java",
-    "tests/test_android_debug_phase42.py",
-    "PHASE_42_REPO_QUEUE_ORPHAN_RECOVERY.md"
+    "android/devtool-live-hud/app/src/main/AndroidManifest.xml",
+    "android/devtool-live-hud/app/src/main/res/xml/backup_rules.xml",
+    "android/devtool-live-hud/app/src/main/res/drawable/ic_launcher_monochrome.xml",
+    "android/devtool-live-hud/app/src/main/res/mipmap/ic_launcher.xml",
+    "android/devtool-live-hud/app/src/main/res/mipmap/ic_launcher_round.xml",
+    "android/devtool-live-hud/app/src/main/res/values/strings.xml",
+    "android/devtool-live-hud/app/src/main/res/values/colors.xml",
+    "android/devtool-live-hud/app/src/main/res/values/styles.xml",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/AppPalette.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiKit.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/ValidationWorkbenchView.java",
+    ".devtool-delete",
+    "tests/test_android_app_source.py",
+    "tests/test_android_debug_phase47c5_c7_lint_cleanup.py",
+    "PHASE_47C5_C7_ANDROID_HUD_LINT_FINISH.md",
+    "CHANGELOG.md",
+    "PATCH_SUMMARY.md"
   ],
   "validation": {
-    "tests_passed": 114,
+    "tests_passed": 35,
     "tests_failed": 0,
+    "tests_skipped": 0,
     "commands": [
-      "python3 -m pytest tests/test_android_debug_phase42.py tests/test_android_debug_phase41.py tests/test_android_debug_phase40.py tests/test_android_debug_phase39.py tests/test_android_debug_phase38.py tests/test_android_debug_phase37.py tests/test_android_debug_phase36.py tests/test_android_debug_phase35.py tests/test_android_debug_phase34.py tests/test_android_app_source.py tests/test_android_repositories_phase7.py tests/test_android_repositories_phase6.py tests/test_android_repositories_phase5.py tests/test_android_repositories_phase4.py tests/test_android_repositories_phase3.py tests/test_android_validation_workbench_phase29_31.py tests/test_phase33_validation_release_seal.py -q"
+      "python3 -m pytest tests/test_android_app_source.py tests/test_android_debug_phase47c5_c7_lint_cleanup.py -q"
     ],
-    "notes": "Phase-relevant Python/source-contract suite passed. Android Gradle compilation was not run in this container. The patch is metadata/process-control only for recovery and does not inject recovery text into Git stdout/stderr."
+    "notes": "Source-contract validation only. Apply with --host --target android_hud and :app:testDebugUnitTest for Android validation. No repo manager, bridge auth, root/chroot, Git, or debug recorder behavior changes."
   }
 }

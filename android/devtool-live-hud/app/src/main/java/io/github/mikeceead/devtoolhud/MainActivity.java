@@ -435,6 +435,7 @@ public final class MainActivity extends Activity {
         content.addView(ui.quickTile(R.drawable.ic_workflow, "Build workflow", "Apply overlays, test, package or commit", ui.palette.yellow, v -> switchPage(1)));
         content.addView(ui.quickTile(R.drawable.ic_nav_history, "Logs", "Review output, problems and metadata", ui.palette.muted, v -> switchPage(2)));
         content.addView(ui.quickTile(R.drawable.ic_repository, "Repos", "Inspect Termux and chroot repositories", ui.palette.green, v -> switchPage(3)));
+        content.addView(ui.quickTile(R.drawable.ic_tracker, "Debug Workbench", "Open run trace, bridge and repo diagnostics", ui.palette.yellow, v -> openDebugWorkbench()));
 
         addCoreTiles(content, false);
         content.addView(ui.sectionTitle("Advanced setup"));
@@ -858,6 +859,9 @@ public final class MainActivity extends Activity {
         content.addView(ui.quickTile(R.drawable.ic_link, "Bridge roundtrip probe",
                 BridgeRoundtripProbe.label(this) + " · " + BridgeRoundtripProbe.detail(this),
                 bridgeProbeColor, v -> bridgeRoundtripAction()));
+        content.addView(ui.quickTile(R.drawable.ic_tracker, "Debug Workbench",
+                "Health, run trace, bridge probe, repo doctor, queue recovery and recent events",
+                ui.palette.yellow, v -> openDebugWorkbench()));
         buildSupportBundleSettings(content);
 
         content.addView(ui.sectionTitle("Command runner"));
@@ -1460,6 +1464,10 @@ public final class MainActivity extends Activity {
         return "Not installed";
     }
 
+    private void openDebugWorkbench() {
+        startActivity(new Intent(this, DebugWorkbenchActivity.class));
+    }
+
     private void bridgeRoundtripAction() {
         String state = BridgeRoundtripProbe.state(this);
         if (state.equals("permission-needed")) {
@@ -1806,7 +1814,7 @@ public final class MainActivity extends Activity {
             commandPreview.setText(DevtoolCommandBuilder.build(config));
             commandPreview.setTextColor(ui.palette.text);
         } catch (IllegalArgumentException error) {
-            commandPreview.setText("Configuration issue: " + error.getMessage());
+            commandPreview.setText(getString(R.string.configuration_issue_format, error.getMessage()));
             commandPreview.setTextColor(ui.palette.red);
         }
     }
@@ -1893,15 +1901,19 @@ public final class MainActivity extends Activity {
         String promoted = Build.VERSION.SDK_INT >= 36
                 ? (canPostPromotedNotifications(manager) ? "enabled" : "not enabled")
                 : "Android 16+";
-        statusView.setText(
-                "Notifications  " + yesNo(notifications) +
-                "\nPromoted updates  " + promoted +
-                "\nOverlay permission  " + yesNo(OverlayHudService.hasPermission(this)) +
-                "\nFloating HUD  " + (OverlayHudService.isRunning() ? "running" :
-                        (OverlayHudService.isEnabled(this) ? "enabled" : "disabled")) +
-                "\nTermux installed  " + yesNo(TermuxCommandRunner.isInstalled(this)) +
-                "\nTermux command permission  " + yesNo(TermuxCommandRunner.hasPermission(this)) +
-                "\nOptional root bridge  " + RootBridgeManager.stateLabel(this));
+        String floatingHud = OverlayHudService.isRunning()
+                ? getString(R.string.floating_hud_running)
+                : (OverlayHudService.isEnabled(this)
+                ? getString(R.string.floating_hud_enabled)
+                : getString(R.string.floating_hud_disabled));
+        statusView.setText(getString(R.string.runner_status_format,
+                yesNo(notifications),
+                promoted,
+                yesNo(OverlayHudService.hasPermission(this)),
+                floatingHud,
+                yesNo(TermuxCommandRunner.isInstalled(this)),
+                yesNo(TermuxCommandRunner.hasPermission(this)),
+                RootBridgeManager.stateLabel(this)));
         if (tokenView != null) tokenView.setText(BridgeSecrets.getOrCreateToken(this));
     }
 
@@ -2045,7 +2057,7 @@ public final class MainActivity extends Activity {
     }
 
     private void requestTermuxPermission() {
-        if (Build.VERSION.SDK_INT >= 23 && !TermuxCommandRunner.hasPermission(this)) {
+        if (!TermuxCommandRunner.hasPermission(this)) {
             requestPermissions(new String[]{TermuxCommandRunner.RUN_COMMAND_PERMISSION}, REQUEST_TERMUX);
         } else openOwnAppDetails();
     }

@@ -227,8 +227,7 @@ final class RepositoryDoctorResult {
                 + "Summary: " + summary + "\n"
                 + "Recommendation: " + recommendation + "\n"
                 + "Executor plan: shell=" + selectedShell + ", user_switch=" + userSwitchMethod
-                + (directRootFallback ? " (direct root fallback)" : "") + "
-"
+                + (directRootFallback ? " (direct root fallback)" : "") + "\n"
                 + "Checks: path=" + yesNo(pathExists) + ", git_root=" + yesNo(gitDirExists)
                 + ", git=" + yesNo(gitAvailable) + ", git_c=" + yesNo(gitCommandWorks)
                 + ", runuser=" + yesNo(runuserWorks) + ", su=" + yesNo(suWorks);

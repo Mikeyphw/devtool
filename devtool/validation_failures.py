@@ -39,10 +39,16 @@ _RESOURCE_MARKERS = (
     "devtool validation supervisor stopped process: resource:",
     "devtool stopped validation after hard emergency floor",
     "devtool stopped validation after corroborated sustained memory pressure",
-)
-_ENVIRONMENT_MARKERS = (
     "gradle build daemon disappeared unexpectedly",
     "daemon disappeared unexpectedly",
+    "daemon has disappeared",
+    "daemon process has disappeared",
+    "daemon process was terminated",
+    "daemon was killed",
+    "daemon has been killed",
+    "daemon unexpectedly stopped",
+)
+_ENVIRONMENT_MARKERS = (
     "chroot bridge disconnected",
     "connection to the build service was lost",
     "connection reset by peer",

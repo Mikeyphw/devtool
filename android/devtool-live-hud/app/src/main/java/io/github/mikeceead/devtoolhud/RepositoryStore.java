@@ -143,7 +143,8 @@ final class RepositoryStore {
         repaired.lastUsedAt = System.currentTimeMillis();
         database.rekeyRepository(oldId, repaired);
         database.addRepositoryEvent(repaired.repositoryId, "", "REPO_PATH_REPAIR_APPLIED",
-                action.label + " · " + location.environment + " · " + location.path);
+                action.label + " · " + location.environment + " · " + location.path,
+                System.currentTimeMillis());
         DebugRecorder.record(app, "info", "repo", "REPO_PATH_REPAIR_APPLIED", "RepositoryStore",
                 "", repaired.repositoryId, "", "", "Repository metadata repair applied",
                 DebugRecorder.details("old_repository_id", oldId, "repair_kind", action.kind,

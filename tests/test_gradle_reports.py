@@ -142,6 +142,23 @@ class GradleReportTests(unittest.TestCase):
         self.assertEqual(results[0].issues[0].code, "GRADLE_MEMORY_GUARD")
         self.assertEqual(results[0].failure_kind, "resource_interrupted")
 
+    def test_run_specs_classifies_gradle_daemon_disappearance_as_resource_interruption(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "daemon_disappeared.py"
+            script.write_text(
+                "print('Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)')\n"
+                "raise SystemExit(1)\n",
+                encoding="utf-8",
+            )
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+            spec = CommandSpec("android-validation-build", ["python3", str(script)], cwd=str(root))
+            results, _ = run_specs(config, [spec], verbose=False, shutdown_dotnet=False)
+
+        self.assertEqual(results[0].returncode, 1)
+        self.assertEqual(results[0].issues[0].code, "GRADLE_DAEMON_DISAPPEARED")
+        self.assertEqual(results[0].failure_kind, "resource_interrupted")
+
     def test_run_specs_keeps_successful_android_lint_report_errors_nonfatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

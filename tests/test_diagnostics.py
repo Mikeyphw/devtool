@@ -123,6 +123,22 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(issues[0].code, "GRADLE_MEMORY_GUARD")
         self.assertIn("165 MiB available", issues[0].message)
 
+    def test_parse_gradle_daemon_disappeared_as_fatal_resource_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = (
+                "The message received from the daemon indicates that the daemon has disappeared.\n"
+                "Build request sent: Build{id=abc, currentDir=/repo}\n"
+                "Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)\n"
+            )
+            issues = parse_issues(root, "build", output)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].severity, "error")
+        self.assertEqual(issues[0].code, "GRADLE_DAEMON_DISAPPEARED")
+        self.assertIn("infrastructure/resource interruption", issues[0].message)
+        self.assertEqual(classify_failure("android-validation-build", output, 1), "resource_interrupted")
+
     def test_parse_gradle_toolchain_and_aar_metadata_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

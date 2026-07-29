@@ -85,13 +85,15 @@ def test_android_ui_uses_gtk_palette_monet_setting_and_desktop_icon() -> None:
     source_dir = APP / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud"
     palette = (source_dir / "AppPalette.java").read_text(encoding="utf-8")
     settings = (source_dir / "AppSettings.java").read_text(encoding="utf-8")
-    icon = (APP / "app" / "src" / "main" / "res" / "drawable" / "ic_launcher_legacy.xml").read_text(encoding="utf-8")
+    icon = (APP / "app" / "src" / "main" / "res" / "drawable" / "ic_devtool_foreground.xml").read_text(encoding="utf-8")
     for color in ("94, 228, 155", "104, 216, 255", "255, 209, 102", "11, 15, 20"):
         assert color in palette
     assert "system_accent1_200" in palette
     assert 'KEY_MONET = "monet"' in settings
-    for color in ("#111827", "#5EE49B", "#68D8FF", "#FFD166"):
+    for color in ("#5EE49B", "#68D8FF", "#FFD166"):
         assert color in icon
+    monochrome = (APP / "app" / "src" / "main" / "res" / "drawable" / "ic_launcher_monochrome.xml").read_text(encoding="utf-8")
+    assert "#FFFFFFFF" in monochrome
 
 
 def test_overlay_receiver_does_not_restart_foreground_service_in_background() -> None:

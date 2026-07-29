@@ -1,5 +1,7 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -7,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 
+@SuppressLint("SdCardPath")
 final class RootExecutionPlan {
     static final String METHOD_ROOT = "root";
     static final String METHOD_DIRECT_ROOT = "direct-root";

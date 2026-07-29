@@ -1,5 +1,6 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
@@ -11,6 +12,7 @@ import android.util.Log;
 
 import java.security.SecureRandom;
 
+@SuppressLint("SdCardPath")
 final class TermuxCommandRunner {
     static final String TERMUX_PACKAGE = "com.termux";
     static final String RUN_COMMAND_PERMISSION = "com.termux.permission.RUN_COMMAND";
@@ -43,8 +45,7 @@ final class TermuxCommandRunner {
     private TermuxCommandRunner() {}
 
     static boolean hasPermission(Context context) {
-        return Build.VERSION.SDK_INT < 23
-                || context.checkSelfPermission(RUN_COMMAND_PERMISSION) == PackageManager.PERMISSION_GRANTED;
+        return context.checkSelfPermission(RUN_COMMAND_PERMISSION) == PackageManager.PERMISSION_GRANTED;
     }
 
     static boolean isInstalled(Context context) {

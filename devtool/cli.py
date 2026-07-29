@@ -779,7 +779,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         (r"Requested command was not executed.*re-run|previous devtool apply appears to have been interrupted|Cleared stale devtool apply transaction|Interrupted by user|Interrupted during (?:artifact|overlay)|Child process was terminated", "run was interrupted or guarded by recovery"),
     )
     for pattern, reason in suppression_patterns:
-        if not payload_ok and _re.search(pattern, raw_output, _re.IGNORECASE | _re.DOTALL):
+        if not args.copy and not payload_ok and _re.search(pattern, raw_output, _re.IGNORECASE | _re.DOTALL):
             console.print(f"[yellow]Clipboard copy skipped because the {reason}.[/yellow]")
             return None
 
@@ -1742,6 +1742,89 @@ def _resolve_prompted_failure_action(args: argparse.Namespace, action: str, *, p
         return "keep"
     console.print("[yellow]Validation paused; changes and rollback point were retained.[/yellow]")
     return "pause"
+
+
+def _resolve_prompted_validation_retry(
+    args: argparse.Namespace,
+    *,
+    phase_label: str,
+    verdict: str,
+    recommended_profile: str = "",
+    memory_guard_invoked: bool = False,
+) -> bool:
+    """Ask once whether a retryable validation interruption should run again now."""
+
+    if not _validation_console_enabled(args) or bool(getattr(args, "yes", False)):
+        return False
+    if not getattr(sys.stdin, "isatty", lambda: False)():
+        return False
+    if verdict not in {"resource-failed", "environment-failed", "timed-out"}:
+        return False
+    console.print(f"[bold yellow]{phase_label} stopped with {verdict.replace('-', ' ')}.[/bold yellow]")
+    if memory_guard_invoked:
+        return Confirm.ask(
+            f"Retry {phase_label} now with memory guard disabled?",
+            default=True,
+            console=console,
+        )
+    suffix = (
+        f" using {recommended_profile}"
+        if recommended_profile and recommended_profile != "automatic"
+        else ""
+    )
+    return Confirm.ask(f"Retry {phase_label} now{suffix}?", default=True, console=console)
+
+
+def _attempt_invoked_memory_guard(attempt: object | None) -> bool:
+    if attempt is None:
+        return False
+    failure_kind = str(getattr(attempt, "failure_kind", "") or "").strip().lower().replace("_", "-")
+    if failure_kind in {"memory-guard", "resource-interrupted"}:
+        text = str(getattr(attempt, "output_tail", "") or "").lower()
+        evidence = "\n".join(str(item) for item in getattr(attempt, "classification_evidence", []) or []).lower()
+        if "memory guard" in text or "memory guard" in evidence:
+            return True
+    issues = getattr(attempt, "issues", []) or []
+    for issue in issues:
+        if isinstance(issue, dict) and str(issue.get("code") or "").upper() == "GRADLE_MEMORY_GUARD":
+            return True
+    text = str(getattr(attempt, "output_tail", "") or "").lower()
+    return "memory guard" in text or "devtool stopped validation after hard emergency floor" in text
+
+
+def _argv_with_memory_guard_disabled(argv: list[str]) -> list[str]:
+    updated: list[str] = []
+    skip_next = False
+    for value in argv:
+        text = str(value)
+        if skip_next:
+            updated.append("0")
+            skip_next = False
+            continue
+        if text == "--memory-guard-mb":
+            updated.append(text)
+            skip_next = True
+            continue
+        if text.startswith("--memory-guard-mb="):
+            updated.append("--memory-guard-mb=0")
+            continue
+        updated.append(text)
+    return updated
+
+
+def _spec_with_memory_guard_disabled(spec: CommandSpec) -> CommandSpec:
+    metadata = dict(spec.metadata)
+    metadata["validation_memory_guard_mb"] = 0
+    metadata["memory_guard_mb"] = 0
+    metadata["validation_memory_guard_disabled_retry"] = True
+    progress_argv = metadata.get("progress_argv")
+    if isinstance(progress_argv, list):
+        metadata["progress_argv"] = _argv_with_memory_guard_disabled([str(item) for item in progress_argv])
+    return replace(
+        spec,
+        argv=_argv_with_memory_guard_disabled([str(item) for item in spec.argv]),
+        metadata=metadata,
+    )
 
 
 def _normalize_command_aliases(args: argparse.Namespace) -> None:
@@ -3173,6 +3256,8 @@ def _run_validation_session(
         active_spec = base_spec
         active_config = config
         automatic_retry = False
+        prompted_retry_used = False
+        prompted_retry_attempt = False
         retry_profile = ""
         while True:
             phase = mark_phase_running(session, key)
@@ -3276,6 +3361,12 @@ def _run_validation_session(
                 if automatic_retry:
                     attempt_metadata["validation_automatic_retry"] = True
                     attempt_metadata["validation_retry_profile"] = retry_profile
+                if prompted_retry_attempt:
+                    attempt_metadata["validation_prompted_retry"] = True
+                    if retry_profile:
+                        attempt_metadata["validation_retry_profile"] = retry_profile
+                    if bool(active_spec.metadata.get("validation_memory_guard_disabled_retry")):
+                        attempt_metadata["validation_memory_guard_disabled_retry"] = True
                 attempt_spec = replace(active_spec, metadata=attempt_metadata)
                 phase_results, phase_raw = _run_specs_for_args(
                     active_config,
@@ -3355,13 +3446,37 @@ def _run_validation_session(
             if recorded_phase.status in {"passed", "not-applicable"}:
                 break
 
+            latest_attempt = recorded_phase.attempt_history[-1] if recorded_phase.attempt_history else None
+            recommended = str(getattr(latest_attempt, "recommended_profile", "") or "")
+            memory_guard_invoked = _attempt_invoked_memory_guard(latest_attempt)
+            if recorded_phase.status == "interrupted" and memory_guard_invoked and not prompted_retry_used:
+                if _resolve_prompted_validation_retry(
+                    args,
+                    phase_label=recorded_phase.label,
+                    verdict=str(recorded_phase.last_verdict or ""),
+                    recommended_profile=recommended,
+                    memory_guard_invoked=True,
+                ):
+                    active_spec = _spec_with_memory_guard_disabled(base_spec)
+                    active_config = config
+                    automatic_retry = False
+                    prompted_retry_used = True
+                    prompted_retry_attempt = True
+                    retry_profile = "memory-guard-disabled"
+                    raw_sections.append(
+                        f"Prompted validation retry for {recorded_phase.label} with memory guard disabled"
+                    )
+                    continue
             retry_number, retry_limit = _automatic_retry_number(recorded_phase)
-            if recorded_phase.status == "interrupted" and retry_limit > 0 and retry_number <= retry_limit:
+            if (
+                recorded_phase.status == "interrupted"
+                and not memory_guard_invoked
+                and retry_limit > 0
+                and retry_number <= retry_limit
+            ):
                 retry_profile = ""
                 active_spec = base_spec
                 active_config = config
-                latest_attempt = recorded_phase.attempt_history[-1] if recorded_phase.attempt_history else None
-                recommended = str(getattr(latest_attempt, "recommended_profile", "") or "")
                 if recommended == "android-low-power":
                     active_config, retry_mapping = _safe_retry_plan()
                     active_spec = retry_mapping.get(key, base_spec)
@@ -3369,6 +3484,34 @@ def _run_validation_session(
                 automatic_retry = True
                 raw_sections.append(
                     f"Automatic validation retry {retry_number} of {retry_limit} for {recorded_phase.label}"
+                    + (f" using {retry_profile}" if retry_profile else "")
+                )
+                continue
+
+            if (
+                recorded_phase.status == "interrupted"
+                and not prompted_retry_used
+                and not memory_guard_invoked
+                and _resolve_prompted_validation_retry(
+                    args,
+                    phase_label=recorded_phase.label,
+                    verdict=str(recorded_phase.last_verdict or ""),
+                    recommended_profile=recommended,
+                    memory_guard_invoked=False,
+                )
+            ):
+                active_spec = base_spec
+                active_config = config
+                retry_profile = ""
+                if recommended == "android-low-power":
+                    active_config, retry_mapping = _safe_retry_plan()
+                    active_spec = retry_mapping.get(key, base_spec)
+                    retry_profile = recommended
+                automatic_retry = False
+                prompted_retry_used = True
+                prompted_retry_attempt = True
+                raw_sections.append(
+                    f"Prompted validation retry for {recorded_phase.label}"
                     + (f" using {retry_profile}" if retry_profile else "")
                 )
                 continue

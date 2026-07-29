@@ -18,7 +18,7 @@ final class RepositoryNotificationController {
     RepositoryNotificationController(Context context) {
         this.context = context.getApplicationContext();
         this.manager = this.context.getSystemService(NotificationManager.class);
-        if (manager != null && Build.VERSION.SDK_INT >= 26) {
+        if (manager != null) {
             NotificationChannel channel = new NotificationChannel(CHANNEL, "Repository operations",
                     NotificationManager.IMPORTANCE_DEFAULT);
             channel.setDescription("Completion and failure results for Git operations started from Devtool.");
@@ -40,8 +40,7 @@ final class RepositoryNotificationController {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pending = PendingIntent.getActivity(context, operation.operationId.hashCode(), open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(context, CHANNEL) : new Notification.Builder(context);
+        Notification.Builder builder = new Notification.Builder(context, CHANNEL);
         builder.setSmallIcon(R.drawable.ic_repository)
                 .setContentTitle(title + " · " + operation.type.replace('_', ' ').toLowerCase(java.util.Locale.ROOT))
                 .setContentText(operation.summary.isEmpty() ? "Git operation " + state : operation.summary)

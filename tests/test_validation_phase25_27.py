@@ -169,6 +169,7 @@ def test_phase_success_is_discarded_when_inputs_change_during_attempt(tmp_path: 
     [
         (OperationResult("test", ["gradle"], 1, 1.0, "There were failing tests", [], failure_kind="test_failure"), "test-failed", False),
         (OperationResult("compile", ["gradle"], 137, 1.0, "Killed by earlyoom under memory pressure", []), "resource-failed", True),
+        (OperationResult("compile", ["gradle"], 1, 1.0, "Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)", []), "resource-failed", True),
         (OperationResult("compile", ["gradle"], 137, 1.0, "process disappeared", []), "environment-failed", True),
         (OperationResult("compile", ["gradle"], 130, 1.0, "Interrupted by user", []), "interrupted", True),
         (OperationResult("compile", ["gradle"], 127, 1.0, "sdkmanager: command not found", []), "toolchain-missing", False),
@@ -225,9 +226,9 @@ def test_cli_automatically_retries_resource_failure_with_safe_profile(tmp_path: 
                 list(current.argv),
                 75,
                 0.1,
-                "Devtool stopped validation after corroborated sustained memory pressure",
+                "Killed by earlyoom under memory pressure",
                 [],
-                failure_kind="memory_guard",
+                failure_kind="memory-pressure",
                 metadata=dict(current.metadata),
             )
         else:
@@ -275,6 +276,193 @@ def test_cli_no_auto_retry_leaves_resource_interruption_retryable(tmp_path: Path
     session = load_active_session(tmp_path, required=True)
     assert session.phases[0].status == "interrupted"
     assert len(session.phases[0].attempt_history) == 1
+
+
+def test_cli_prompts_to_retry_resource_interruption_when_interactive(tmp_path: Path) -> None:
+    make_project(tmp_path)
+    (tmp_path / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+    calls = 0
+
+    def fake_run(_config, specs, _args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        current = specs[0]
+        if calls == 1:
+            result = OperationResult(
+                current.name,
+                list(current.argv),
+                75,
+                0.1,
+                "Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)",
+                [],
+                failure_kind="resource_interrupted",
+                metadata=dict(current.metadata),
+            )
+        else:
+            result = OperationResult(
+                current.name,
+                list(current.argv),
+                0,
+                0.1,
+                "ok",
+                [],
+                metadata=dict(current.metadata),
+            )
+        return [result], result.output
+
+    with (
+        patch("sys.stdin.isatty", return_value=True),
+        patch("devtool.cli.Confirm.ask", return_value=True) as confirm,
+        patch("devtool.cli.render_summary"),
+        patch("devtool.cli._run_specs_for_args", side_effect=fake_run),
+    ):
+        rc = main([
+            "--repo", str(tmp_path), "--no-clipboard", "validate", "start", "--next", "--no-auto-retry",
+        ])
+
+    assert rc == 0
+    assert calls == 2
+    confirm.assert_called_once()
+    session = load_active_session(tmp_path, required=True)
+    first = session.phases[0]
+    assert first.status == "passed"
+    assert len(first.attempt_history) == 2
+    assert first.attempt_history[0].verdict == "resource-failed"
+    assert not first.attempt_history[1].automatic_retry
+    assert first.attempt_history[1].resource_profile == "android-low-power"
+
+
+def test_cli_prompts_to_retry_memory_guard_with_guard_disabled(tmp_path: Path) -> None:
+    make_project(tmp_path)
+    (tmp_path / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+    calls = 0
+    seen_metadata: list[dict] = []
+    seen_argv: list[list[str]] = []
+
+    def fake_run(_config, specs, _args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        current = specs[0]
+        seen_metadata.append(dict(current.metadata))
+        seen_argv.append(list(current.argv))
+        if calls == 1:
+            result = OperationResult(
+                current.name,
+                list(current.argv),
+                75,
+                0.1,
+                "warning: Emergency memory guard stopped Gradle after hard emergency floor: 165 MiB available",
+                [],
+                failure_kind="memory_guard",
+                metadata=dict(current.metadata),
+            )
+        else:
+            result = OperationResult(
+                current.name,
+                list(current.argv),
+                0,
+                0.1,
+                "ok",
+                [],
+                metadata=dict(current.metadata),
+            )
+        return [result], result.output
+
+    with (
+        patch("sys.stdin.isatty", return_value=True),
+        patch("devtool.cli.Confirm.ask", return_value=True) as confirm,
+        patch("devtool.cli.render_summary"),
+        patch("devtool.cli._run_specs_for_args", side_effect=fake_run),
+    ):
+        rc = main(["--repo", str(tmp_path), "--no-clipboard", "validate", "start", "--next"])
+
+    assert rc == 0
+    assert calls == 2
+    assert "memory guard disabled" in str(confirm.call_args.args[0]).lower()
+    assert seen_metadata[1]["validation_memory_guard_mb"] == 0
+    assert seen_metadata[1]["memory_guard_mb"] == 0
+    assert seen_metadata[1]["validation_memory_guard_disabled_retry"] is True
+    if "--memory-guard-mb" in seen_argv[1]:
+        assert seen_argv[1][seen_argv[1].index("--memory-guard-mb") + 1] == "0"
+    session = load_active_session(tmp_path, required=True)
+    first = session.phases[0]
+    assert first.status == "passed"
+    assert len(first.attempt_history) == 2
+    assert first.attempt_history[0].verdict == "resource-failed"
+    assert first.attempt_history[1].resource_profile == "memory-guard-disabled"
+
+
+def test_cli_memory_guard_retry_prompt_decline_keeps_phase_retryable(tmp_path: Path) -> None:
+    make_project(tmp_path)
+    (tmp_path / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+    calls = 0
+
+    def fake_run(_config, specs, _args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        current = specs[0]
+        result = OperationResult(
+            current.name,
+            list(current.argv),
+            75,
+            0.1,
+            "warning: Emergency memory guard stopped Gradle after hard emergency floor: 165 MiB available",
+            [],
+            failure_kind="memory_guard",
+            metadata=dict(current.metadata),
+        )
+        return [result], result.output
+
+    with (
+        patch("sys.stdin.isatty", return_value=True),
+        patch("devtool.cli.Confirm.ask", return_value=False) as confirm,
+        patch("devtool.cli.render_summary"),
+        patch("devtool.cli._run_specs_for_args", side_effect=fake_run),
+    ):
+        rc = main(["--repo", str(tmp_path), "--no-clipboard", "validate", "start", "--next"])
+
+    assert rc == 0
+    assert calls == 1
+    confirm.assert_called_once()
+    session = load_active_session(tmp_path, required=True)
+    assert session.phases[0].status == "interrupted"
+    assert len(session.phases[0].attempt_history) == 1
+
+
+def test_cli_memory_guard_retry_prompt_skips_non_interactive_mode(tmp_path: Path) -> None:
+    make_project(tmp_path)
+    (tmp_path / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+    calls = 0
+
+    def fake_run(_config, specs, _args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        current = specs[0]
+        result = OperationResult(
+            current.name,
+            list(current.argv),
+            75,
+            0.1,
+            "warning: Emergency memory guard stopped Gradle after hard emergency floor: 165 MiB available",
+            [],
+            failure_kind="memory_guard",
+            metadata=dict(current.metadata),
+        )
+        return [result], result.output
+
+    with (
+        patch("sys.stdin.isatty", return_value=False),
+        patch("devtool.cli.Confirm.ask") as confirm,
+        patch("devtool.cli.render_summary"),
+        patch("devtool.cli._run_specs_for_args", side_effect=fake_run),
+    ):
+        rc = main(["--repo", str(tmp_path), "--no-clipboard", "validate", "start", "--next"])
+
+    assert rc == 0
+    assert calls == 1
+    confirm.assert_not_called()
+    session = load_active_session(tmp_path, required=True)
+    assert session.phases[0].status == "interrupted"
 
 
 

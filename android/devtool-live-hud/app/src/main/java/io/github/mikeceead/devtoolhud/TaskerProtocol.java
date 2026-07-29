@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 
@@ -92,7 +91,7 @@ final class TaskerProtocol {
             boolean foreground = completion.getBooleanExtra(EXTRA_CALL_SERVICE_FOREGROUND, false);
             if (servicePackage != null && serviceClass != null) {
                 completion.setComponent(new ComponentName(servicePackage, serviceClass));
-                if (foreground && Build.VERSION.SDK_INT >= 26) context.startForegroundService(completion);
+                if (foreground) context.startForegroundService(completion);
                 else context.startService(completion);
             } else {
                 context.sendBroadcast(completion);

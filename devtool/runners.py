@@ -1641,7 +1641,11 @@ def run_specs(
             result_metadata["resource_guard_triggered"] = kind == "resource"
             result_metadata["timed_out"] = kind == "timeout"
         failure_kind = classify_failure(spec.name, output, returncode)
-        if any(issue.severity == "error" and issue.code == "GRADLE_MEMORY_GUARD" for issue in issues):
+        if any(
+            issue.severity == "error"
+            and issue.code in {"GRADLE_MEMORY_GUARD", "GRADLE_DAEMON_DISAPPEARED"}
+            for issue in issues
+        ):
             failure_kind = "resource_interrupted"
         elif any(
             issue.severity == "error"

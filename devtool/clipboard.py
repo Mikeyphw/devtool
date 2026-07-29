@@ -13,6 +13,8 @@ from .console_utils import is_termux_environment
 CLIPBOARD_STARTUP_GRACE_SECONDS = 0.15
 TERMUX_CLIPBOARD_TIMEOUT_SECONDS = 8.0
 DESKTOP_CLIPBOARD_VERIFY_TIMEOUT_SECONDS = 2.0
+DESKTOP_CLIPBOARD_VERIFY_RETRY_SECONDS = 0.75
+DESKTOP_CLIPBOARD_VERIFY_RETRY_INTERVAL_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -156,12 +158,20 @@ def _read_desktop_clipboard(backend: str) -> ClipboardResult | str:
 def _verify_desktop_clipboard_write(text: str, backend: str) -> ClipboardResult:
     if backend not in {"xclip", "xsel"}:
         return ClipboardResult(True, backend=backend)
-    readback = _read_desktop_clipboard(backend)
-    if isinstance(readback, ClipboardResult):
-        return readback
-    if readback != text:
-        return ClipboardResult(False, backend=backend, reason=f"{backend} clipboard readback did not match the copied summary.")
-    return ClipboardResult(True, backend=backend)
+
+    deadline = time.monotonic() + DESKTOP_CLIPBOARD_VERIFY_RETRY_SECONDS
+    last_readback: ClipboardResult | str = ""
+    while True:
+        last_readback = _read_desktop_clipboard(backend)
+        if isinstance(last_readback, ClipboardResult):
+            return last_readback
+        if last_readback == text:
+            return ClipboardResult(True, backend=backend)
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(DESKTOP_CLIPBOARD_VERIFY_RETRY_INTERVAL_SECONDS)
+
+    return ClipboardResult(False, backend=backend, reason=f"{backend} clipboard readback did not match the copied summary.")
 
 
 def _run_clipboard_command(command: list[str], text: str, backend: str) -> ClipboardResult:

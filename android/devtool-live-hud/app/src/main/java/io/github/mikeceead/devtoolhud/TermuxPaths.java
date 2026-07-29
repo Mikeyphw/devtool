@@ -1,6 +1,9 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
+
 /** Path normalization for Termux RUN_COMMAND, which requires an absolute work directory. */
+@SuppressLint("SdCardPath")
 final class TermuxPaths {
     static final String HOME = "/data/data/com.termux/files/home";
 

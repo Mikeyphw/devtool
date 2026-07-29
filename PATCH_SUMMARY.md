@@ -1,16 +1,10 @@
-# Patch summary: Phase 42 Repo Queue + Orphan Recovery
+# Patch Summary
 
-This patch adds a safe repository operation recovery layer to the Android app.
+Phase 47C-5/47C-6/47C-7 finishes the Android HUD lint cleanup sweep for backup rules, launcher/accessibility, SetTextI18n, and unused resources/styles.
 
-## Highlights
+Validation performed:
 
-- Adds `RepoQueueRecovery` for queue-health assessment and support-bundle summaries.
-- Adds explicit `terminateOrphan`, `markInterrupted`, `retry`, and `queueHealth` entry points in `RepositoryWorkspaceStore`.
-- Adds Repository Detail cards for queue health, orphan termination confirmation, mark-interrupted confirmation, and retry actions.
-- Adds support bundle `repo_queue_health` diagnostics per repository.
-- Adds debug classifier keys for queue health, orphan termination, mark-interrupted, and retry events.
-- Adds Phase 42 source contracts.
-
-## Safety
-
-Recovery actions are metadata/process-control only. They do not run Git reset, Git clean, delete files, or print recovery breadcrumbs into Git stdout/stderr. Retry actions queue a new Git operation and refuse missing-payload commit/stash retries.
+```text
+python3 -m pytest tests/test_android_app_source.py tests/test_android_debug_phase47c5_c7_lint_cleanup.py -q
+35 passed, 0 failed, 0 skipped
+```

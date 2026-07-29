@@ -4,4 +4,28 @@
     <string name="tasker_action_name">Run devtool in Termux</string>
     <string name="channel_live_name">Devtool live runs</string>
     <string name="channel_live_description">Live restore, build, test, validation and commit progress from devtool</string>
+    <string name="notification_app_label">Devtool</string>
+    <string name="notification_state_live">LIVE</string>
+    <string name="notification_default_task_title">Applying overlay bundle</string>
+    <string name="notification_metric_tests">Tests</string>
+    <string name="notification_metric_warnings">Warnings</string>
+    <string name="notification_metric_errors">Errors</string>
+    <string name="notification_metric_elapsed">Elapsed</string>
+
+    <string name="configuration_issue_format">Configuration issue: %1$s</string>
+    <string name="runner_status_format">Notifications  %1$s\nPromoted updates  %2$s\nOverlay permission  %3$s\nFloating HUD  %4$s\nTermux installed  %5$s\nTermux command permission  %6$s\nOptional root bridge  %7$s</string>
+    <string name="floating_hud_running">running</string>
+    <string name="floating_hud_enabled">enabled</string>
+    <string name="floating_hud_disabled">disabled</string>
+    <string name="overlay_hud_ready">Ready</string>
+    <string name="repository_picker_reading_format">Reading %1$s · %2$s</string>
+    <string name="repository_picker_no_children">No child directories found, or root access was denied.</string>
+    <plurals name="repository_picker_directory_count">
+        <item quantity="one">%d directory</item>
+        <item quantity="other">%d directories</item>
+    </plurals>
+    <string name="two_line_title_detail">%1$s\n%2$s</string>
+    <string name="validation_phase_row_format">%1$s  %2$s\n%3$s</string>
+    <string name="validation_phase_required_dependency">%1$s · required dependency</string>
+    <string name="validation_phase_optional">%1$s · optional</string>
 </resources>

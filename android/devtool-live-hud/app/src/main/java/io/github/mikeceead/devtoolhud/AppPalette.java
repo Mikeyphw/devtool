@@ -1,5 +1,6 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Color;
 import android.os.Build;
@@ -56,6 +57,7 @@ final class AppPalette {
                 Color.rgb(255, 176, 92));
     }
 
+    @SuppressLint("DiscouragedApi")
     private static int systemColor(Context context, String name, int fallback) {
         int id = context.getResources().getIdentifier(name, "color", "android");
         if (id == 0) return fallback;

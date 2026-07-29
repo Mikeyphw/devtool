@@ -61,7 +61,8 @@ final class DebugRecorder {
                 event.message, event.detailJson);
         event.redactionState = "redacted";
         try {
-            DevtoolDatabase.get(context.getApplicationContext()).addDebugEvent(event);
+            event.eventId = DevtoolDatabase.get(context.getApplicationContext()).addDebugEvent(event);
+            DebugNotificationController.maybePost(context.getApplicationContext(), event);
             context.getApplicationContext().sendBroadcast(new Intent(ACTION_UPDATED)
                     .setPackage(context.getPackageName())
                     .putExtra("fingerprint", event.fingerprint)

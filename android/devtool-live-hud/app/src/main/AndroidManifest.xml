@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -15,6 +16,8 @@
 
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -42,6 +45,11 @@
                 <data android:scheme="devtool" android:host="logs" android:pathPrefix="/run/" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".DebugWorkbenchActivity"
+            android:exported="false"
+            android:label="Debug Workbench" />
 
         <activity
             android:name=".ValidationEvidenceActivity"
@@ -95,20 +103,24 @@
             android:enabled="true"
             android:exported="false" />
 
+        <!-- Exported for Tasker Locale FIRE_SETTING broadcasts; runtime config authorization is enforced in TaskerPluginReceiver. -->
         <receiver
             android:name=".TaskerPluginReceiver"
             android:enabled="true"
             android:exported="true"
-            android:label="@string/tasker_action_name">
+            android:label="@string/tasker_action_name"
+            tools:ignore="ExportedReceiver">
             <intent-filter>
                 <action android:name="com.twofortyfouram.locale.intent.action.FIRE_SETTING" />
             </intent-filter>
         </receiver>
 
+        <!-- Exported for Termux/root bridge callbacks; BridgeReceiver rejects invalid tokens and unexpected actions. -->
         <receiver
             android:name=".BridgeReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
             <intent-filter>
                 <action android:name="io.github.mikeceead.devtoolhud.UPDATE" />
                 <action android:name="io.github.mikeceead.devtoolhud.COMPLETE" />

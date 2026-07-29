@@ -163,6 +163,7 @@ class ClipboardTests(unittest.TestCase):
         with (
             patch("devtool.clipboard.subprocess.Popen", return_value=FakeProcess()),
             patch("devtool.clipboard.time.sleep", return_value=None),
+            patch("devtool.clipboard.DESKTOP_CLIPBOARD_VERIFY_RETRY_SECONDS", 0.0),
             patch("devtool.clipboard._read_desktop_clipboard", return_value="old hud summary"),
         ):
             from devtool.clipboard import _run_clipboard_command
@@ -172,6 +173,32 @@ class ClipboardTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.backend, "xclip")
         self.assertIn("readback did not match", result.reason or "")
+
+    def test_run_clipboard_command_retries_stale_xclip_readback(self) -> None:
+        class FakeStdin:
+            def write(self, text: str) -> int:
+                return len(text)
+
+            def close(self) -> None:
+                pass
+
+        class FakeProcess:
+            stdin = FakeStdin()
+
+            def poll(self):
+                return None
+
+        with (
+            patch("devtool.clipboard.subprocess.Popen", return_value=FakeProcess()),
+            patch("devtool.clipboard.time.sleep", return_value=None),
+            patch("devtool.clipboard._read_desktop_clipboard", side_effect=["old hud summary", "failure summary"]),
+        ):
+            from devtool.clipboard import _run_clipboard_command
+
+            result = _run_clipboard_command(["xclip", "-selection", "clipboard"], "failure summary", "xclip")
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.backend, "xclip")
 
     def test_run_clipboard_command_reports_xclip_readback_failure(self) -> None:
         class FakeStdin:

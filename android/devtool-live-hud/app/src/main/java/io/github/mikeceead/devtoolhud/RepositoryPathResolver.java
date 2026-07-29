@@ -1,8 +1,11 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.annotation.SuppressLint;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 
+@SuppressLint("SdCardPath")
 final class RepositoryPathResolver {
     static final String FAMILY_TERMUX = "termux";
     static final String FAMILY_CHROOT = "chroot";
@@ -11,6 +14,10 @@ final class RepositoryPathResolver {
     static final String FAMILY_UNKNOWN = "unknown";
 
     private RepositoryPathResolver() {}
+
+    static RepositoryPathResolution resolve(RepositoryRecord repository) {
+        return analyze(repository);
+    }
 
     static RepositoryPathResolution analyze(RepositoryRecord repository) {
         RepositoryPathResolution resolution = new RepositoryPathResolution();

@@ -123,7 +123,7 @@ public final class RepositoryPickerActivity extends Activity {
 
     private void refreshDirectories() {
         RepositoryLocation location = location();
-        state.setText("Reading " + location.displayEnvironment() + " · " + location.path);
+        state.setText(getString(R.string.repository_picker_reading_format, location.displayEnvironment(), location.path));
         directoryList.removeAllViews();
         EXECUTOR.execute(() -> {
             List<String> directories = new RepositoryScanner(this).directories(location);
@@ -135,10 +135,10 @@ public final class RepositoryPickerActivity extends Activity {
         if (isFinishing()) return;
         directoryList.removeAllViews();
         if (directories.isEmpty()) {
-            state.setText("No child directories found, or root access was denied.");
+            state.setText(getString(R.string.repository_picker_no_children));
             return;
         }
-        state.setText(directories.size() + " directories");
+        state.setText(getResources().getQuantityString(R.plurals.repository_picker_directory_count, directories.size(), directories.size()));
         for (String directory : directories) {
             String shown = location.environment.equals("native-termux")
                     ? RepositoryLocation.termux(directory).path : directory;

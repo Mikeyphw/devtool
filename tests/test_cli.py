@@ -1211,6 +1211,29 @@ artifact-cleanup: ok exit=0 time=0.10s
         self.assertIn("Successful run summary copied to clipboard", rendered)
         self.assertNotIn("Clipboard copy skipped", rendered)
 
+    def test_explicit_copy_allows_failure_after_recovery_guard(self) -> None:
+        args = SimpleNamespace(
+            no_clipboard=False,
+            copy=True,
+            copy_via="auto",
+            command="apply-overlay",
+        )
+        raw_output = (
+            "previous devtool apply appears to have been interrupted\n"
+            "Gradle task failed: :app:compileDebugJavaWithJavac"
+        )
+        json_text = json.dumps({"ok": False, "warnings": 0, "errors": 1, "failed": 1, "skipped": 0})
+
+        with (
+            patch("devtool.cli.copy_text", return_value=__import__("devtool.clipboard").clipboard.ClipboardResult(True, backend="xclip")),
+            patch("devtool.cli.console.print") as mock_print,
+        ):
+            _maybe_copy(raw_output, "summary", json_text, args)
+
+        rendered = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+        self.assertIn("Failure summary copied to clipboard", rendered)
+        self.assertNotIn("Clipboard copy skipped", rendered)
+
     def test_commit_does_not_prompt_for_interactive_copy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
