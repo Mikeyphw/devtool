@@ -204,6 +204,7 @@ final class SupportBundle {
             value.put("last_error", truncate(redact(repository.lastError, token)));
             value.put("repository_doctor", RepositoryDoctor.supportSummary(context, repository));
             value.put("path_resolution", RepositoryPathResolver.supportSummary(repository));
+            value.put("repo_queue_health", RepoQueueRecovery.supportSummary(context, repository));
             value.put("operations", operations(context, repository.repositoryId, token));
             values.put(value);
         }
@@ -228,6 +229,7 @@ final class SupportBundle {
             value.put("finished_at", operation.finishedAt);
             value.put("exit_code", operation.exitCode);
             value.put("cancellable", operation.cancellable);
+            value.put("git_operation_trace", GitOperationTrace.supportSummary(context, operation, token));
             values.put(value);
         }
         return values;

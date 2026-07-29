@@ -167,6 +167,77 @@ final class RepositoryWorkspaceStore {
         return true;
     }
 
+
+    static boolean terminateOrphan(Context context, String repositoryId, String operationId) {
+        Context app = context.getApplicationContext();
+        RepositoryOperationRecord operation = DevtoolDatabase.get(app).repositoryOperation(clean(operationId));
+        if (!RepoQueueRecovery.canTerminateOrphan(operation)) return false;
+        DebugRecorder.warning(app, "repo", "REPO_ORPHAN_TERMINATE_REQUESTED", "RepositoryWorkspaceStore",
+                operation.runId, operation.repositoryId, operation.operationId, "", "Terminate orphaned Git operation requested",
+                DebugRecorder.details("operation", operation.type, "state", operation.state));
+        return cancel(app, repositoryId, operationId);
+    }
+
+    static boolean markInterrupted(Context context, String repositoryId, String operationId) {
+        Context app = context.getApplicationContext();
+        String id = clean(repositoryId);
+        String wanted = clean(operationId);
+        RepositoryOperationRecord operation = DevtoolDatabase.get(app).repositoryOperation(wanted);
+        if (!RepoQueueRecovery.canMarkInterrupted(operation)) return false;
+        if (activeInMemory(id, wanted)) return false;
+        RepositoryRecord repository = DevtoolDatabase.get(app).repository(operation.repositoryId);
+        long now = System.currentTimeMillis();
+        String previousState = operation.state;
+        operation.state = "interrupted";
+        operation.finishedAt = now;
+        operation.exitCode = 130;
+        operation.cancellable = false;
+        operation.summary = "Marked interrupted after queue/orphan recovery review";
+        DevtoolDatabase database = DevtoolDatabase.get(app);
+        database.upsertRepositoryOperation(operation);
+        database.addRepositoryEvent(operation.repositoryId, operation.runId,
+                "GIT_" + operation.type + "_MARKED_INTERRUPTED", operation.summary, now);
+        DebugRecorder.warning(app, "repo", "REPO_OPERATION_MARK_INTERRUPTED", "RepositoryWorkspaceStore",
+                operation.runId, operation.repositoryId, operation.operationId, "", operation.summary,
+                DebugRecorder.details("operation", operation.type, "previous_state", previousState,
+                        "recovery_action", "mark_interrupted"));
+        finishSyntheticRun(app, operation, repository, "interrupted", operation.summary, "");
+        synchronized (LOCK) { ACTIVE.remove(operation.repositoryId); }
+        broadcast(app, operation.repositoryId, operation.summary);
+        if (repository != null) new RepositoryNotificationController(app).show(repository, operation);
+        return true;
+    }
+
+    static boolean retry(Context context, String repositoryId, String operationId, boolean afterPathRepair) {
+        Context app = context.getApplicationContext();
+        RepositoryOperationRecord operation = DevtoolDatabase.get(app).repositoryOperation(clean(operationId));
+        if (!RepoQueueRecovery.canRetry(operation)) {
+            if (operation != null) DebugRecorder.warning(app, "repo", "REPO_OPERATION_RETRY_UNAVAILABLE",
+                    "RepositoryWorkspaceStore", operation.runId, operation.repositoryId, operation.operationId, "",
+                    "Git operation retry is unavailable because the original payload is incomplete or still active",
+                    DebugRecorder.details("operation", operation.type, "state", operation.state,
+                            "target_present", !operation.target.isEmpty()));
+            return false;
+        }
+        RepositoryRecord repository = DevtoolDatabase.get(app).repository(operation.repositoryId);
+        if (repository == null) return false;
+        Request request = requestFromRecord(operation);
+        if (request == null) return false;
+        DebugRecorder.info(app, "repo", afterPathRepair ? "REPO_OPERATION_RETRY_AFTER_PATH_REPAIR_REQUESTED"
+                        : "REPO_OPERATION_RETRY_SAME_PLAN_REQUESTED", "RepositoryWorkspaceStore",
+                operation.runId, operation.repositoryId, operation.operationId, "",
+                afterPathRepair ? "Retry requested after repository path repair" : "Retry requested with current repository execution plan",
+                DebugRecorder.details("operation", operation.type, "target", operation.target,
+                        "after_path_repair", afterPathRepair));
+        enqueue(app, repository, request);
+        return true;
+    }
+
+    static RepoQueueRecovery.QueueHealth queueHealth(Context context, RepositoryRecord repository) {
+        RepoQueueRecovery.recordProbe(context, repository);
+        return RepoQueueRecovery.assess(context, repository);
+    }
+
     static boolean moveQueued(Context context, String repositoryId, String operationId, int direction) {
         if (direction != -1 && direction != 1) return false;
         Context app = context.getApplicationContext();
@@ -328,6 +399,7 @@ final class RepositoryWorkspaceStore {
                 record.runId, record.repositoryId, record.operationId, "", record.summary,
                 DebugRecorder.details("operation", record.type, "target", record.target,
                         "environment", repository.environment, "path", repository.canonicalPath));
+        GitOperationTrace.queued(app, repository, record, request.commandDescription());
         createSyntheticRun(app, repository, record, request);
         broadcast(app, repository.repositoryId, position > 1
                 ? request.operation.queuedLabel + " · queue position " + position : request.operation.queuedLabel);
@@ -366,6 +438,7 @@ final class RepositoryWorkspaceStore {
                 operation.runId, operation.repositoryId, operation.operationId, "", operation.summary,
                 DebugRecorder.details("operation", operation.type, "environment", queued.repository.environment,
                         "path", queued.repository.canonicalPath));
+        GitOperationTrace.started(app, queued.repository, operation, queued.request.commandDescription());
         updateSyntheticRun(app, queued.repository, operation, "waiting", operation.summary,
                 "Git operation started", "info");
         broadcast(app, operation.repositoryId, operation.summary);
@@ -376,6 +449,7 @@ final class RepositoryWorkspaceStore {
         try {
             RootCommandBroker broker = new RootCommandBroker(app, token, operation.operationId);
             result = perform(broker, queued.repository, queued.request);
+            GitOperationTrace.outputReceived(app, queued.repository, operation, result);
             String target = queued.request.target();
             if (result.cancelled) {
                 state = "cancelled";
@@ -407,6 +481,7 @@ final class RepositoryWorkspaceStore {
                 "RepositoryWorkspaceStore", operation.runId, operation.repositoryId, operation.operationId, "", message,
                 DebugRecorder.details("operation", operation.type, "exit_code", result.exitCode,
                         "timed_out", result.timedOut, "cancelled", result.cancelled));
+        GitOperationTrace.finished(app, queued.repository, operation, state, result, message);
         operation.state = state;
         operation.finishedAt = System.currentTimeMillis();
         operation.exitCode = result.exitCode;
@@ -463,6 +538,47 @@ final class RepositoryWorkspaceStore {
         finishSyntheticRun(app, operation, queued.repository, "cancelled", reason, "");
         broadcast(app, operation.repositoryId, reason);
         new RepositoryNotificationController(app).show(queued.repository, operation);
+    }
+
+
+    private static boolean activeInMemory(String repositoryId, String operationId) {
+        synchronized (LOCK) {
+            ActiveOperation active = ACTIVE.get(clean(repositoryId));
+            return active != null && active.queued.record.operationId.equals(clean(operationId));
+        }
+    }
+
+    private static Request requestFromRecord(RepositoryOperationRecord operation) {
+        if (operation == null) return null;
+        Operation type;
+        try {
+            type = Operation.valueOf(clean(operation.type).toUpperCase(java.util.Locale.ROOT));
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+        switch (type) {
+            case STAGE:
+            case UNSTAGE:
+            case DISCARD_WORKTREE:
+                return operation.target.isEmpty() ? null : Request.paths(type, Collections.singletonList(operation.target));
+            case STAGE_ALL:
+            case UNSTAGE_ALL:
+            case FETCH:
+            case PULL_FF:
+            case PUSH:
+            case HARD_RESET:
+                return Request.simple(type);
+            case CHECKOUT:
+                return operation.target.isEmpty() ? null : Request.branch(type, operation.target, false);
+            case CREATE_BRANCH:
+            case POP_STASH:
+                return operation.target.isEmpty() ? null : Request.value(type, operation.target);
+            case COMMIT:
+            case STASH:
+                return null;
+            default:
+                return null;
+        }
     }
 
     private static RootCommandBroker.CommandResult perform(RootCommandBroker broker,

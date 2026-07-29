@@ -542,6 +542,7 @@ public final class RepositoryDetailActivity extends Activity {
 
     private void sync(LinearLayout content, RepositoryRecord repository) {
         RepositoryWorkspaceStore.Snapshot snapshot = RepositoryWorkspaceStore.snapshot(repository.repositoryId);
+        content.addView(queueRecoveryCard(repository));
 
         content.addView(ui.sectionTitle("Operation queue"));
         List<RepositoryOperationRecord> operations = RepositoryWorkspaceStore.operations(this, repository.repositoryId);
@@ -608,6 +609,16 @@ public final class RepositoryDetailActivity extends Activity {
                     operation.state.equals("running") ? "Cancel running operation"
                             : operation.state.equals("orphaned") ? "Terminate orphaned operation" : "Remove from queue",
                     v -> RepositoryWorkspaceStore.cancel(this, repository.repositoryId, operation.operationId)));
+            if (RepoQueueRecovery.canTerminateOrphan(operation)) {
+                card.addView(ui.secondaryButton("Terminate orphan with confirmation",
+                        v -> confirmTerminateOrphan(repository, operation)));
+            }
+            if (RepoQueueRecovery.canMarkInterrupted(operation)) {
+                card.addView(ui.secondaryButton("Mark interrupted", v -> confirmMarkInterrupted(repository, operation)));
+            }
+            card.addView(ui.text(RepoQueueRecovery.recoveryHint(operation), UiTypography.Role.CAPTION, ui.palette.muted));
+            card.addView(ui.secondaryButton("Copy Git trace", v -> copy("Git trace",
+                    GitOperationTrace.plainText(this, operation, ""))));
             card.addView(ui.secondaryButton("Open structured log", v -> openLog(operation.runId)));
             content.addView(card);
         }
@@ -678,6 +689,13 @@ public final class RepositoryDetailActivity extends Activity {
             heading.addView(ui.text(operation.state.toUpperCase(Locale.ROOT), UiTypography.Role.CAPTION, color));
             card.addView(heading);
             card.addView(ui.text(operation.summary, UiTypography.Role.BODY_SMALL, ui.palette.muted));
+            card.addView(ui.text(RepoQueueRecovery.recoveryHint(operation), UiTypography.Role.CAPTION, ui.palette.muted));
+            if (RepoQueueRecovery.canRetry(operation)) {
+                card.addView(ui.secondaryButton("Retry with same execution plan", v -> confirmRetryOperation(repository, operation, false)));
+                card.addView(ui.secondaryButton("Retry after path repair", v -> confirmRetryOperation(repository, operation, true)));
+            }
+            card.addView(ui.secondaryButton("Copy Git trace", v -> copy("Git trace",
+                    GitOperationTrace.plainText(this, operation, ""))));
             card.addView(ui.secondaryButton("Open structured log", v -> openLog(operation.runId)));
             content.addView(card);
             if (++shown >= 20) break;
@@ -783,8 +801,44 @@ public final class RepositoryDetailActivity extends Activity {
                 RepositoryWorkspaceStore.operations(this, repository.repositoryId).stream()
                         .filter(RepositoryOperationRecord::active).count()));
         addField(content, "Remote transport", snapshot.remoteDiagnostics.transport);
+        content.addView(queueRecoveryCard(repository));
         content.addView(repositoryDoctorCard(repository));
         content.addView(repositoryPathResolutionCard(repository));
+    }
+
+
+    private View queueRecoveryCard(RepositoryRecord repository) {
+        RepoQueueRecovery.QueueHealth health = RepoQueueRecovery.assess(this, repository);
+        LinearLayout card = ui.surface();
+        int color = health.status.equals("fail") ? ui.palette.red
+                : health.status.equals("warn") ? ui.palette.yellow : ui.palette.green;
+        card.addView(ui.text("Repo queue recovery", UiTypography.Role.LABEL, ui.palette.muted));
+        card.addView(ui.text(health.summary, UiTypography.Role.CARD_TITLE, color));
+        card.addView(ui.text(health.recommendation, UiTypography.Role.BODY_SMALL, ui.palette.text));
+        card.addView(ui.text("queued=" + health.queued + " · running=" + health.running
+                        + " · orphaned=" + health.orphaned + " · stale queued=" + health.staleQueued
+                        + " · stale running=" + health.staleRunning,
+                UiTypography.Role.CAPTION, ui.palette.muted));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(ui.verticalActions() ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        Button probe = ui.secondaryButton("Check queue health", v -> {
+            RepositoryWorkspaceStore.queueHealth(this, repository);
+            Toast.makeText(this, "Queue health recorded", Toast.LENGTH_SHORT).show();
+            rebuild();
+        });
+        Button copy = ui.secondaryButton("Copy queue report", v -> copy("Queue report",
+                RepoQueueRecovery.plainText(this, repository)));
+        if (ui.verticalActions()) {
+            actions.addView(probe);
+            actions.addView(copy);
+        } else {
+            actions.addView(probe, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            actions.addView(copy, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        card.addView(actions);
+        card.addView(ui.text("Recovery actions are metadata/process-control only. They do not run Git reset, Git clean, or delete files.",
+                UiTypography.Role.CAPTION, ui.palette.muted));
+        return card;
     }
 
     private View repositoryDoctorCard(RepositoryRecord repository) {
@@ -875,6 +929,47 @@ public final class RepositoryDetailActivity extends Activity {
         Toast.makeText(this, "Repository doctor started", Toast.LENGTH_SHORT).show();
     }
 
+
+
+    private void confirmTerminateOrphan(RepositoryRecord repository, RepositoryOperationRecord operation) {
+        new AlertDialog.Builder(this)
+                .setTitle("Terminate orphaned operation?")
+                .setMessage("This sends TERM/KILL only to a detached process tagged with this Git operation id. It does not run Git, reset files, or delete the worktree.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Terminate orphan", (dialog, which) -> {
+                    boolean ok = RepositoryWorkspaceStore.terminateOrphan(this, repository.repositoryId, operation.operationId);
+                    Toast.makeText(this, ok ? "Orphan recovery requested" : "Unable to terminate orphan", Toast.LENGTH_SHORT).show();
+                    rebuild();
+                })
+                .show();
+    }
+
+    private void confirmMarkInterrupted(RepositoryRecord repository, RepositoryOperationRecord operation) {
+        new AlertDialog.Builder(this)
+                .setTitle("Mark operation interrupted?")
+                .setMessage("This only updates Android operation metadata after review. It does not kill a process, run Git, reset files, or delete anything.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Mark interrupted", (dialog, which) -> {
+                    boolean ok = RepositoryWorkspaceStore.markInterrupted(this, repository.repositoryId, operation.operationId);
+                    Toast.makeText(this, ok ? "Operation marked interrupted" : "Unable to mark interrupted", Toast.LENGTH_SHORT).show();
+                    rebuild();
+                })
+                .show();
+    }
+
+    private void confirmRetryOperation(RepositoryRecord repository, RepositoryOperationRecord operation,
+                                       boolean afterPathRepair) {
+        new AlertDialog.Builder(this)
+                .setTitle(afterPathRepair ? "Retry after path repair?" : "Retry operation?")
+                .setMessage("This queues a new Git operation using the current repository metadata and executor planner. Review the trace first for destructive operations such as hard reset.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton(afterPathRepair ? "Retry after repair" : "Retry", (dialog, which) -> {
+                    boolean ok = RepositoryWorkspaceStore.retry(this, repository.repositoryId, operation.operationId, afterPathRepair);
+                    Toast.makeText(this, ok ? "Retry queued" : "Retry unavailable", Toast.LENGTH_SHORT).show();
+                    rebuild();
+                })
+                .show();
+    }
 
     private void confirmPathRepair(RepositoryRecord repository, RepositoryPathResolution.RepairAction action) {
         new AlertDialog.Builder(this)

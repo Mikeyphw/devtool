@@ -8,6 +8,29 @@ final class DebugIssueClassifier {
 
     static String classifyMessage(String message) {
         String lower = clean(message).toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("git_operation_queued")) return "git_operation_queued";
+        if (lower.contains("git_operation_started")) return "git_operation_started";
+        if (lower.contains("repo_execution_plan_built")) return "repo_execution_plan_built";
+        if (lower.contains("repo_path_confirmed")) return "repo_path_confirmed";
+        if (lower.contains("git_binary_confirmed")) return "git_binary_confirmed";
+        if (lower.contains("git_command_started")) return "git_command_started";
+        if (lower.contains("git_output_received")) return "git_output_received";
+        if (lower.contains("git_operation_finished")) return "git_operation_finished";
+        if (lower.contains("git_operation_failed")) return "git_operation_failed";
+        if (lower.contains("repo_path_confirmation_failed")) return "repo_path_confirmation_failed";
+        if (lower.contains("git_binary_confirmation_failed")) return "git_binary_confirmation_failed";
+        if (lower.contains("repo_git_root_confirmation_failed")) return "repo_git_root_confirmation_failed";
+        if (lower.contains("git trace preflight") && lower.contains("before git started")) return "git_operation_preflight_failed";
+        if (lower.contains("repo_queue_health_failed")) return "repo_queue_health_failed";
+        if (lower.contains("repo_queue_health_warn")) return "repo_queue_health_warn";
+        if (lower.contains("repo_operation_mark_interrupted")) return "repo_operation_mark_interrupted";
+        if (lower.contains("repo_orphan_terminate_requested")) return "repo_orphan_terminate_requested";
+        if (lower.contains("repo_operation_retry_same_plan_requested")) return "repo_operation_retry_same_plan_requested";
+        if (lower.contains("repo_operation_retry_after_path_repair_requested")) return "repo_operation_retry_after_path_repair_requested";
+        if (lower.contains("repo_operation_retry_unavailable")) return "repo_operation_retry_unavailable";
+        if (lower.contains("orphaned git operation") || lower.contains("orphaned repository operation")) return "repo_operation_orphaned";
+        if (lower.contains("marked interrupted")) return "repo_operation_mark_interrupted";
+        if (lower.contains("retry requested after repository path repair")) return "repo_operation_retry_after_path_repair_requested";
         if (lower.contains("repo_path_repair_applied")) return "repo_path_repair_applied";
         if (lower.contains("repo_termux_path_saved_as_chroot")) return "repo_termux_path_saved_as_chroot";
         if (lower.contains("repo_chroot_path_saved_as_termux_or_root")) return "repo_chroot_path_saved_as_termux_or_root";

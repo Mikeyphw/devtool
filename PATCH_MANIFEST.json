@@ -1,38 +1,34 @@
 {
-  "name": "devtool_android_repository_path_resolver_repair_ui_phase_40",
+  "name": "devtool_android_repo_queue_orphan_recovery_phase_42",
   "release": "1.1.0",
   "devtool_version": "1.1.0",
   "desktop_version": "0.4.0",
   "android_version": "1.17.0",
   "android_version_code": 31,
   "artifact_type": "overlay",
-  "slice": "40",
+  "slice": "42",
   "features": [
-    "RepositoryPathResolver detects path namespace mismatches before Git runs",
-    "Safe repair metadata model for reclassifying Termux/chroot/root repositories",
-    "RepositoryStore.applyPathRepair rekeys repository records through existing database linkage",
-    "Repository detail Overview and Metadata show a Repository Path Resolver repair card",
-    "Repair confirmation states metadata-only behavior and avoids destructive Git/filesystem actions",
-    "Support bundle includes per-repository path_resolution evidence",
-    "Debug classifier recognizes path repair and namespace mismatch issue keys"
+    "RepoQueueRecovery assesses queued, running, stale and orphaned Git operation state",
+    "RepositoryWorkspaceStore exposes safe terminate-orphan, mark-interrupted, retry and queue-health actions",
+    "Repository Detail surfaces queue recovery cards, confirmations and retry actions",
+    "Support bundle includes per-repository repo_queue_health diagnostics",
+    "Debug classifier recognizes queue recovery, orphan, mark-interrupted and retry events"
   ],
   "key_files": [
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPathResolution.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPathResolver.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryStore.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepoQueueRecovery.java",
+    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryWorkspaceStore.java",
     "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryDetailActivity.java",
     "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/SupportBundle.java",
     "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/DebugIssueClassifier.java",
-    "tests/test_android_debug_phase40.py",
-    "PHASE_40_REPOSITORY_PATH_RESOLVER_REPAIR_UI.md"
+    "tests/test_android_debug_phase42.py",
+    "PHASE_42_REPO_QUEUE_ORPHAN_RECOVERY.md"
   ],
   "validation": {
-    "tests_passed": 104,
+    "tests_passed": 114,
     "tests_failed": 0,
     "commands": [
-      "python3 -m pytest tests/test_android_debug_phase40.py tests/test_android_debug_phase39.py tests/test_android_debug_phase38.py tests/test_android_debug_phase37.py tests/test_android_debug_phase36.py tests/test_android_debug_phase35.py tests/test_android_debug_phase34.py tests/test_android_app_source.py tests/test_android_repositories_phase7.py tests/test_android_repositories_phase6.py tests/test_android_repositories_phase5.py tests/test_android_repositories_phase4.py tests/test_android_repositories_phase3.py tests/test_android_validation_workbench_phase29_31.py tests/test_phase33_validation_release_seal.py",
-      "javac smoke compile for RepositoryPathResolution/RepositoryPathResolver with lightweight stubs"
+      "python3 -m pytest tests/test_android_debug_phase42.py tests/test_android_debug_phase41.py tests/test_android_debug_phase40.py tests/test_android_debug_phase39.py tests/test_android_debug_phase38.py tests/test_android_debug_phase37.py tests/test_android_debug_phase36.py tests/test_android_debug_phase35.py tests/test_android_debug_phase34.py tests/test_android_app_source.py tests/test_android_repositories_phase7.py tests/test_android_repositories_phase6.py tests/test_android_repositories_phase5.py tests/test_android_repositories_phase4.py tests/test_android_repositories_phase3.py tests/test_android_validation_workbench_phase29_31.py tests/test_phase33_validation_release_seal.py -q"
     ],
-    "notes": "Phase-relevant Python/source-contract suite passed. A pure Java smoke compile passed for the new resolver/model classes with lightweight stubs. Android Gradle compilation was not run in this container. No Android version bump was included because release-contract tests pin 1.17.0/versionCode 31 after Phase 34."
+    "notes": "Phase-relevant Python/source-contract suite passed. Android Gradle compilation was not run in this container. The patch is metadata/process-control only for recovery and does not inject recovery text into Git stdout/stderr."
   }
 }

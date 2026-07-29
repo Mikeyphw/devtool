@@ -543,6 +543,18 @@ final class RootCommandBroker {
                             "direct_root_fallback", plan.directRootFallback,
                             "rejected_shell_candidates", plan.rejectedShellCandidates,
                             "rejected_user_switch_candidates", plan.rejectedUserSwitchCandidates));
+            if (!operationId.isEmpty()) {
+                GitOperationTrace.executionPlanBuilt(context, location, operationId, plan);
+                CommandResult preflight = executeRoot(chrootShell(location,
+                        GitOperationTrace.preflightPayload(commandPath(location)), plan), preflightTimeout(timeoutSeconds));
+                if (GitOperationTrace.preflightFailed(preflight)) {
+                    GitOperationTrace.executorPreflightFailed(context, location, operationId, preflight);
+                    return preflight;
+                }
+                GitOperationTrace.pathConfirmed(context, location, operationId);
+                GitOperationTrace.gitBinaryConfirmed(context, location, operationId);
+                GitOperationTrace.commandStarted(context, location, operationId);
+            }
             return executeRoot(chrootShell(location, marked, plan), timeoutSeconds);
         }
         if (location.environment.equals("native-termux")) {
@@ -551,6 +563,18 @@ final class RootCommandBroker {
                     "", location.id(), operationId, "", "Termux executor selected",
                     DebugRecorder.details("path", commandPath(location), "selected_shell", plan.selectedShell,
                             "user_switch_method", plan.userSwitchMethod));
+            if (!operationId.isEmpty()) {
+                GitOperationTrace.executionPlanBuilt(context, location, operationId, plan);
+                CommandResult preflight = executeRoot(termuxShell(
+                        GitOperationTrace.preflightPayload(commandPath(location))), preflightTimeout(timeoutSeconds));
+                if (GitOperationTrace.preflightFailed(preflight)) {
+                    GitOperationTrace.executorPreflightFailed(context, location, operationId, preflight);
+                    return preflight;
+                }
+                GitOperationTrace.pathConfirmed(context, location, operationId);
+                GitOperationTrace.gitBinaryConfirmed(context, location, operationId);
+                GitOperationTrace.commandStarted(context, location, operationId);
+            }
             return executeRoot(termuxShell(marked), timeoutSeconds);
         }
         RootExecutionPlan plan = RootExecutionPlan.root();
@@ -558,7 +582,23 @@ final class RootCommandBroker {
                 "", location.id(), operationId, "", "Root execution plan selected",
                 DebugRecorder.details("environment", plan.environment, "selected_shell", plan.selectedShell,
                         "user_switch_method", plan.userSwitchMethod));
+        if (!operationId.isEmpty()) {
+            GitOperationTrace.executionPlanBuilt(context, location, operationId, plan);
+            CommandResult preflight = executeRoot(GitOperationTrace.preflightPayload(commandPath(location)),
+                    preflightTimeout(timeoutSeconds));
+            if (GitOperationTrace.preflightFailed(preflight)) {
+                GitOperationTrace.executorPreflightFailed(context, location, operationId, preflight);
+                return preflight;
+            }
+            GitOperationTrace.pathConfirmed(context, location, operationId);
+            GitOperationTrace.gitBinaryConfirmed(context, location, operationId);
+            GitOperationTrace.commandStarted(context, location, operationId);
+        }
         return executeRoot(marked, timeoutSeconds);
+    }
+
+    private static long preflightTimeout(long timeoutSeconds) {
+        return Math.max(5L, Math.min(12L, timeoutSeconds));
     }
 
     CommandResult repositoryDoctor(RepositoryLocation location, String payload, long timeoutSeconds) {

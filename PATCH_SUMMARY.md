@@ -1,10 +1,16 @@
-# Patch Summary
+# Patch summary: Phase 42 Repo Queue + Orphan Recovery
 
-## Phase 7: Android support bundles and field diagnostics
+This patch adds a safe repository operation recovery layer to the Android app.
 
-- Adds a Settings diagnostics card to copy/share a redacted support bundle.
-- Adds opt-in command inclusion with redaction and disabled-by-default privacy behavior.
-- Captures app, device, root bridge, settings, database, run, repository and operation health.
-- Keeps raw stdout, stderr and launch-log bodies out of support output.
-- Bumps Android frontend to 1.14.0 / versionCode 27.
+## Highlights
 
+- Adds `RepoQueueRecovery` for queue-health assessment and support-bundle summaries.
+- Adds explicit `terminateOrphan`, `markInterrupted`, `retry`, and `queueHealth` entry points in `RepositoryWorkspaceStore`.
+- Adds Repository Detail cards for queue health, orphan termination confirmation, mark-interrupted confirmation, and retry actions.
+- Adds support bundle `repo_queue_health` diagnostics per repository.
+- Adds debug classifier keys for queue health, orphan termination, mark-interrupted, and retry events.
+- Adds Phase 42 source contracts.
+
+## Safety
+
+Recovery actions are metadata/process-control only. They do not run Git reset, Git clean, delete files, or print recovery breadcrumbs into Git stdout/stderr. Retry actions queue a new Git operation and refuse missing-payload commit/stash retries.
