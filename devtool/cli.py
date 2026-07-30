@@ -2208,15 +2208,18 @@ def _matrix_items(args: argparse.Namespace) -> list[str]:
 
 def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
     requested = str(getattr(args, "execution_environment", EXECUTION_AUTO) or EXECUTION_AUTO)
+    configured_environment = str(config.execution_environment or EXECUTION_AUTO)
+    current_environment = detect_current_environment()
+    explicit_chroot = bool(str(getattr(args, "chroot", "") or "").strip())
     auto_promoted_to_chroot = False
     if bool(getattr(args, "instrumented", False)):
-        requested = detect_current_environment()
+        requested = current_environment
     if bool(getattr(args, "host", False)):
-        requested = detect_current_environment()
-    elif str(getattr(args, "chroot", "") or "").strip():
+        requested = current_environment
+    elif explicit_chroot:
         requested = EXECUTION_CHROOT
-    elif requested == EXECUTION_AUTO and str(config.execution_environment or EXECUTION_AUTO) == EXECUTION_AUTO:
-        if detect_current_environment() == EXECUTION_NATIVE_TERMUX:
+    elif requested == EXECUTION_AUTO and configured_environment == EXECUTION_AUTO:
+        if current_environment == EXECUTION_NATIVE_TERMUX:
             from .android_integration import should_prefer_android_chroot
             if should_prefer_android_chroot(config):
                 requested = EXECUTION_CHROOT
@@ -2228,19 +2231,44 @@ def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
         or config.chroot_name
         or "androidos"
     ).strip()
+    policy_requested_chroot = (
+        not explicit_chroot
+        and current_environment not in {EXECUTION_NATIVE_TERMUX, EXECUTION_CHROOT}
+        and (
+            requested == EXECUTION_CHROOT
+            or (requested == EXECUTION_AUTO and configured_environment == EXECUTION_CHROOT)
+        )
+    )
+    if policy_requested_chroot:
+        fallback = resolve_execution_plan(
+            requested=current_environment,
+            configured=current_environment,
+            chroot_name=chroot_name,
+            device_serial=config.device_serial,
+            path_map=getattr(args, "_devtool_chroot_path_map", None),
+        )
+        return replace(
+            fallback,
+            requested=EXECUTION_CHROOT if requested == EXECUTION_CHROOT else EXECUTION_AUTO,
+            reason=(
+                "configured chroot ignored because the current environment is "
+                f"{current_environment}; chroot execution is available only from native Termux"
+            ),
+        )
+
     plan = resolve_execution_plan(
         requested=requested,
-        configured=config.execution_environment,
+        configured=configured_environment,
         chroot_name=chroot_name,
         device_serial=config.device_serial,
         path_map=getattr(args, "_devtool_chroot_path_map", None),
     )
 
     # Auto mode is a preference, not a trap. If the repository is outside all
-    # configured Termux→chroot mappings, keep execution native rather than
+    # configured Termux-to-chroot mappings, keep execution native rather than
     # selecting chroot and failing later with host-only paths. Explicit
-    # ``--chroot`` or configured ``execution_environment = "chroot"`` remains
-    # strict and is rejected by the normal preflight when it cannot be mapped.
+    # ``--chroot`` remains strict and is rejected by the normal preflight when
+    # it cannot be mapped or is requested outside native Termux.
     if auto_promoted_to_chroot and plan.uses_chroot:
         path_check = next(
             (item for item in preflight_execution(config.repo_root, plan).checks if item.name == "path-map"),

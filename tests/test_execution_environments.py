@@ -137,7 +137,7 @@ class CliExecutionIntegrationTests(unittest.TestCase):
         defaults.update(values)
         return argparse.Namespace(**defaults)
 
-    def test_configured_environment_is_used_when_cli_is_auto(self) -> None:
+    def test_configured_chroot_falls_back_to_desktop_outside_termux(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = ProjectConfig(
                 repo_root=Path(tmp),
@@ -147,9 +147,58 @@ class CliExecutionIntegrationTests(unittest.TestCase):
             )
             with patch.dict("os.environ", {"HOME": "/home/mike"}, clear=True):
                 plan = _execution_plan_for_args(config, self._args())
-        self.assertEqual(plan.effective, CHROOT)
-        self.assertEqual(plan.chroot_name, "ubuntu")
+        self.assertEqual(plan.requested, AUTO)
+        self.assertEqual(plan.effective, DESKTOP_LINUX)
+        self.assertEqual(plan.chroot_name, "")
+        self.assertIn("configured chroot ignored", plan.reason)
 
+    def test_artifact_chroot_default_falls_back_to_desktop_outside_termux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="android",
+                execution_environment="auto",
+                chroot_name="androidos",
+            )
+            args = self._args(execution_environment="chroot")
+            with patch.dict("os.environ", {"HOME": "/home/mike"}, clear=True):
+                plan = _execution_plan_for_args(config, args)
+        self.assertEqual(plan.requested, CHROOT)
+        self.assertEqual(plan.effective, DESKTOP_LINUX)
+        self.assertIn("configured chroot ignored", plan.reason)
+
+    def test_explicit_chroot_stays_strict_outside_termux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="python",
+                execution_environment="auto",
+                chroot_name="androidos",
+            )
+            with patch.dict("os.environ", {"HOME": "/home/mike"}, clear=True):
+                plan = _execution_plan_for_args(config, self._args(chroot="androidos"))
+                preflight = preflight_execution(config.repo_root, plan)
+        self.assertEqual(plan.effective, CHROOT)
+        self.assertTrue(any(item.name == "chroot-host" and item.status == "incompatible" for item in preflight.checks))
+
+    def test_configured_chroot_stays_chroot_on_termux_with_mapped_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ProjectConfig(
+                repo_root=Path(tmp),
+                kind="android",
+                execution_environment="chroot",
+                chroot_name="androidos",
+            )
+            env = {
+                "HOME": tmp,
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+                "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike",
+            }
+            with patch.dict("os.environ", env, clear=True):
+                plan = _execution_plan_for_args(config, self._args())
+        self.assertEqual(plan.effective, CHROOT)
+        self.assertEqual(plan.chroot_name, "androidos")
 
     def test_termux_auto_chroot_falls_back_when_repository_is_unmapped(self) -> None:
         config = ProjectConfig(
@@ -191,7 +240,7 @@ class CliExecutionIntegrationTests(unittest.TestCase):
         self.assertEqual(plan.effective, CHROOT)
         self.assertTrue(any(item.name == "path-map" and item.status == "incompatible" for item in preflight.checks))
 
-    def test_desktop_chroot_request_fails_before_command_wrapping(self) -> None:
+    def test_desktop_configured_chroot_runs_without_command_wrapping(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = ProjectConfig(
                 repo_root=Path(tmp),
@@ -202,8 +251,9 @@ class CliExecutionIntegrationTests(unittest.TestCase):
             spec = CommandSpec("test", ["python", "-m", "pytest"])
             with patch.dict("os.environ", {"HOME": "/home/mike"}, clear=True), \
                     patch("devtool.execution_environments.shutil.which", return_value="/usr/bin/chrootctl"):
-                with self.assertRaisesRegex(SystemExit, "only from native Termux"):
-                    _prepare_specs_for_execution(config, [spec], self._args())
+                prepared = _prepare_specs_for_execution(config, [spec], self._args())
+
+        self.assertEqual(prepared[0].argv, ["python", "-m", "pytest"])
 
     def test_inside_chroot_rejects_termux_interpreter_from_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

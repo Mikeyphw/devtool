@@ -240,6 +240,24 @@ def is_artifact_metadata_member(name: str) -> bool:
     )
 
 
+def is_ignored_artifact_payload_member(name: str) -> bool:
+    """Return True for generated cache payloads that overlays should ignore."""
+    path = Path(name)
+    parts = path.parts
+    if not parts:
+        return False
+    return (
+        ".pytest_cache" in parts
+        or "__pycache__" in parts
+        or path.suffix.lower() in {".pyc", ".pyo"}
+    )
+
+
+def is_skipped_artifact_payload_member(name: str) -> bool:
+    """Return True for archive members excluded from overlay payload handling."""
+    return is_artifact_metadata_member(name) or is_ignored_artifact_payload_member(name)
+
+
 @dataclass(slots=True)
 class ArchiveMember:
     name: str
@@ -653,7 +671,7 @@ def _implicit_overlay_bundle_manifest(artifact: str | Path) -> dict[str, Any]:
     try:
         members = [
             member for member in list_archive_members(artifact, include_data=False)
-            if not member.is_dir and not is_artifact_metadata_member(member.name)
+            if not member.is_dir and not is_skipped_artifact_payload_member(member.name)
         ]
     except Exception:
         return {}
@@ -880,7 +898,7 @@ def overlay_bundle_conflicts(bundle: str | Path) -> dict[str, list[str]]:
             if entry.target:
                 name = f"{name} [{entry.target}]"
             for member in members:
-                if member.is_dir or is_artifact_metadata_member(member.name):
+                if member.is_dir or is_skipped_artifact_payload_member(member.name):
                     continue
                 writers.setdefault(member.name, []).append(name)
     return {path: names for path, names in writers.items() if len(names) > 1}
@@ -1289,7 +1307,7 @@ def _validate_inventory(
         messages.append(f"Unsupported inventory format: {format_version}.")
         return False
 
-    member_map = {member.name: member for member in members if not member.is_dir and not is_artifact_metadata_member(member.name)}
+    member_map = {member.name: member for member in members if not member.is_dir and not is_skipped_artifact_payload_member(member.name)}
     declared_payload: set[str] = set()
     seen: set[str] = set()
     apply = manifest.get("apply") if isinstance(manifest.get("apply"), dict) else {}
@@ -1311,6 +1329,10 @@ def _validate_inventory(
         if is_artifact_metadata_member(path):
             ok = False
             messages.append(f"Inventory entry cannot target reserved artifact metadata: {path}")
+            continue
+        if is_ignored_artifact_payload_member(path):
+            ok = False
+            messages.append(f"Inventory entry cannot target ignored generated cache payload: {path}")
             continue
         if path in seen:
             ok = False
@@ -1576,7 +1598,7 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
         return preview_overlay_bundle(repo_root, artifact)
     members = list_archive_members(artifact, include_data=True)
     file_members = [m for m in members if not m.is_dir]
-    incoming_files = {Path(m.name): m for m in file_members if not is_artifact_metadata_member(m.name)}
+    incoming_files = {Path(m.name): m for m in file_members if not is_skipped_artifact_payload_member(m.name)}
     changes: list[dict[str, str]] = []
 
     if snapshot:
@@ -1639,7 +1661,7 @@ def diff_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = Fal
         return diff_overlay_bundle(repo_root, artifact, context=context, max_lines=max_lines)
     members = list_archive_members(artifact, include_data=True)
     file_members = [m for m in members if not m.is_dir]
-    incoming_files = {Path(m.name): m for m in file_members if not is_artifact_metadata_member(m.name)}
+    incoming_files = {Path(m.name): m for m in file_members if not is_skipped_artifact_payload_member(m.name)}
     hunks: list[str] = []
     truncated = False
 

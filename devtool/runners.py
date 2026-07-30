@@ -19,7 +19,7 @@ from typing import Callable, Sequence
 
 from .artifacts import (
     archive_suffix,
-    is_artifact_metadata_member,
+    is_skipped_artifact_payload_member,
     is_overlay_bundle,
     materialize_overlay_bundle_entries,
     open_tar_archive,
@@ -1842,7 +1842,7 @@ def apply_overlay_bundle(
             if applied:
                 output += "\nApplied overlays:\n" + "\n".join(applied)
             if skipped_metadata:
-                output += f"\nSkipped {skipped_metadata} devtool metadata file(s)."
+                output += f"\nSkipped {skipped_metadata} metadata/cache file(s)."
             if deleted_paths:
                 output += f"\nDeleted {len(deleted_paths)} path(s) from nested .devtool-delete file(s)."
             if registrations:
@@ -1939,7 +1939,7 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         output = f"Applied {'snapshot' if snapshot else 'overlay'} from {artifact_path}"
         output += f"\nTransaction backup: {transaction.get('transaction_id')}"
         if skipped_metadata:
-            output += f"\nSkipped {skipped_metadata} devtool metadata file(s)."
+            output += f"\nSkipped {skipped_metadata} metadata/cache file(s)."
         if deleted_paths:
             output += f"\nDeleted {len(deleted_paths)} path(s) from .devtool-delete."
         if registration:
@@ -2003,7 +2003,7 @@ def _safe_extract_zip(archive: zipfile.ZipFile, target: Path) -> int:
         mode = (member.external_attr >> 16) & 0o170000
         if mode == 0o120000:
             raise RuntimeError(f"Unsafe zip symlink member: {member.filename}")
-        if is_artifact_metadata_member(member.filename):
+        if is_skipped_artifact_payload_member(member.filename):
             skipped_metadata += 1
             continue
         member_path = _safe_destination_path(target, Path(member.filename))
@@ -2020,7 +2020,7 @@ def _safe_extract_tar(archive: tarfile.TarFile, target: Path) -> int:
     target = target.resolve()
     skipped_metadata = 0
     for member in archive.getmembers():
-        if is_artifact_metadata_member(member.name):
+        if is_skipped_artifact_payload_member(member.name):
             skipped_metadata += 1
             continue
         if member.islnk() or member.issym() or member.isdev():

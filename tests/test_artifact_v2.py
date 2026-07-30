@@ -205,6 +205,78 @@ class ArtifactV2Tests(unittest.TestCase):
             self.assertFalse(validation.ok)
             self.assertTrue(any("SHA-256 mismatch" in message for message in validation.messages))
 
+    def test_inventory_ignores_generated_python_cache_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            payload = b"ok\n"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "inventory": {
+                    "format": 1,
+                    "entries": [
+                        {"path": "file.txt", "action": "add", "sha256": sha(payload), "size": len(payload)}
+                    ],
+                },
+            }
+            archive = root / "overlay.zip"
+            write_archive_entries(
+                archive,
+                {
+                    ".devtool-artifact.json": json.dumps(manifest).encode(),
+                    "file.txt": payload,
+                    ".pytest_cache/.gitignore": b"# pytest cache\n",
+                    ".pytest_cache/CACHEDIR.TAG": b"Signature: 8a477f597d28d172789f06886806bc55\n",
+                    ".pytest_cache/v/cache/nodeids": b"[]",
+                    "tests/__pycache__/test_ui.cpython-313-pytest-9.0.2.pyc": b"\0pyc",
+                    "module.pyc": b"\0pyc",
+                    "module.pyo": b"\0pyo",
+                },
+            )
+
+            validation = validate_artifact(repo, archive)
+            self.assertTrue(validation.ok, validation.messages)
+            rc = main(["-r", str(repo), "--yes", "apply-overlay", str(archive), "--keep-artifact"])
+            self.assertEqual(rc, 0)
+            self.assertEqual((repo / "file.txt").read_bytes(), payload)
+            self.assertFalse((repo / ".pytest_cache").exists())
+            self.assertFalse((repo / "tests" / "__pycache__").exists())
+            self.assertFalse((repo / "module.pyc").exists())
+            self.assertFalse((repo / "module.pyo").exists())
+
+    def test_inventory_still_rejects_real_undeclared_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            payload = b"ok\n"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "inventory": {
+                    "format": 1,
+                    "entries": [
+                        {"path": "file.txt", "action": "add", "sha256": sha(payload), "size": len(payload)}
+                    ],
+                },
+            }
+            archive = root / "overlay.zip"
+            write_archive_entries(
+                archive,
+                {
+                    ".devtool-artifact.json": json.dumps(manifest).encode(),
+                    "file.txt": payload,
+                    "tests/untracked_fixture.txt": b"extra\n",
+                },
+            )
+
+            validation = validate_artifact(repo, archive)
+            self.assertFalse(validation.ok)
+            self.assertTrue(any("Archive payload is missing from inventory" in message for message in validation.messages))
+
     def test_validation_expected_accepts_common_outcome_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

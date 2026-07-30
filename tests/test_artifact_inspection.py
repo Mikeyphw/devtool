@@ -70,6 +70,20 @@ class ArtifactInspectionTests(unittest.TestCase):
         self.assertEqual(args.command, "inspect-artifact")
         self.assertTrue(args.diff)
 
+    def test_inspection_ignores_generated_python_cache_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "cache.zip"
+            with zipfile.ZipFile(artifact, "w") as zf:
+                zf.writestr(".devtool-artifact.json", json.dumps({"type": "overlay"}))
+                zf.writestr("src/new.txt", "hello\n")
+                zf.writestr(".pytest_cache/v/cache/nodeids", "[]")
+                zf.writestr("tests/__pycache__/test_app.cpython-313.pyc", b"\0pyc")
+
+            payload = inspect_artifact(artifact)
+            paths = {entry["path"] for entry in payload["inventory"]}
+            self.assertEqual(paths, {"src/new.txt"})
+
     def test_cli_prints_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             artifact = self._overlay(Path(tmp))

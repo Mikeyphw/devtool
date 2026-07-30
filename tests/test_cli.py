@@ -1631,6 +1631,8 @@ artifact-cleanup: ok exit=0 time=0.10s
                 zf.writestr(".devtool-artifact.json", json.dumps({"type": "overlay"}))
                 zf.writestr(".devtool-delete", "remove-me.txt\n")
                 zf.writestr("keep.txt", "ok")
+                zf.writestr(".pytest_cache/v/cache/nodeids", "[]")
+                zf.writestr("tests/__pycache__/test_app.cpython-313.pyc", b"\0pyc")
 
             preview = preview_artifact(root, artifact)
 
@@ -1640,6 +1642,8 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertIn(("delete", "remove-me.txt"), changes)
             self.assertNotIn(("add", ".devtool-artifact.json"), changes)
             self.assertNotIn(("add", ".devtool-delete"), changes)
+            self.assertNotIn(("add", ".pytest_cache/v/cache/nodeids"), changes)
+            self.assertNotIn(("add", "tests/__pycache__/test_app.cpython-313.pyc"), changes)
 
 
     def test_diff_artifact_shows_repo_relative_unified_diff(self) -> None:
@@ -1652,6 +1656,8 @@ artifact-cleanup: ok exit=0 time=0.10s
             with ZipFile(artifact, "w") as zf:
                 zf.writestr("src/App.cs", "new\n")
                 zf.writestr("src/New.cs", "added\n")
+                zf.writestr(".pytest_cache/README.md", "cache")
+                zf.writestr("src/__pycache__/App.cpython-313.pyc", b"\0pyc")
 
             text = diff_artifact(root, artifact)
 
@@ -1661,6 +1667,8 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertIn("+new", text)
             self.assertIn("--- /dev/null", text)
             self.assertIn("+++ b/src/New.cs", text)
+            self.assertNotIn(".pytest_cache", text)
+            self.assertNotIn("__pycache__", text)
 
     def test_apply_overlay_diff_is_preview_only_and_does_not_apply(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
