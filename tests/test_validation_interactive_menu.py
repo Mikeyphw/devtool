@@ -9,7 +9,15 @@ from rich.console import Console
 from devtool import cli
 from devtool.interactive.fzf import Choice, TerminalUI
 from devtool.interactive.validation_catalog import ValidationCatalog, dependency_closure
-from devtool.interactive.validation_menu import _main_choices, _main_header
+from devtool.interactive.validation_menu import (
+    _change_summary,
+    _filter_recipes,
+    _main_choices,
+    _main_header,
+    _phase_block_reason,
+    _phase_scope_preview,
+    _recipe_label,
+)
 from devtool.interactive.validation_recipes import ValidationRecipe, expand_recipe, load_recipes, save_recipe
 from devtool.interactive.validation_wizard import ValidationDraft
 from devtool.models import ProjectConfig
@@ -232,6 +240,32 @@ def test_narrow_fallback_prints_description_on_separate_line(monkeypatch) -> Non
     assert "      A long description" in output
 
 
+def test_fallback_accepts_review_shortcut_aliases(monkeypatch) -> None:
+    ui = TerminalUI(console=Console(file=io.StringIO(), force_terminal=False, width=80), force_fallback=True)
+    monkeypatch.setattr("devtool.interactive.fzf.Prompt.ask", lambda *_args, **_kwargs: "d")
+
+    selected = ui.choose([
+        Choice("run", "Run"),
+        Choice("dry", "Dry-run"),
+        Choice("copy", "Copy command"),
+    ], prompt="review")
+
+    assert selected is not None
+    assert selected.key == "dry"
+    assert selected.action == "ctrl-d"
+
+
+def test_fallback_refresh_alias_maps_to_ctrl_r(monkeypatch) -> None:
+    ui = TerminalUI(console=Console(file=io.StringIO(), force_terminal=False, width=80), force_fallback=True)
+    monkeypatch.setattr("devtool.interactive.fzf.Prompt.ask", lambda *_args, **_kwargs: "r")
+
+    selected = ui.choose([Choice("refresh", "Refresh status and plan")], prompt="validation")
+
+    assert selected is not None
+    assert selected.key == "refresh"
+    assert selected.action == "ctrl-r"
+
+
 def test_narrow_validation_header_uses_repo_name(monkeypatch, tmp_path: Path) -> None:
     import devtool.interactive.validation_menu as validation_menu
 
@@ -247,6 +281,49 @@ def test_narrow_validation_header_uses_repo_name(monkeypatch, tmp_path: Path) ->
     assert str(root) not in header
     assert "repo-name" in header
     assert "session none" in header
+
+
+def test_artifact_draft_rejects_missing_paths(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.zip"
+    draft = ValidationDraft(method="artifact-overlay", artifact=str(missing))
+
+    assert f"Artifact path does not exist: {missing}" in draft.validate()
+
+
+def test_phase_preview_reports_status_groups_and_block_reason() -> None:
+    phases = [
+        {"key": "a", "name": "restore", "status": "passed", "depends_on": []},
+        {"key": "b", "name": "compile", "status": "pending", "depends_on": ["a"]},
+        {"key": "c", "name": "lint", "status": "blocked", "depends_on": ["b"]},
+        {"key": "d", "name": "package", "status": "invalidated", "depends_on": ["c"]},
+    ]
+
+    closure, already = dependency_closure(phases, ["package"])
+    preview = _phase_scope_preview("Selected phase closure", ["package"], closure, already, phases)
+
+    assert "Already satisfied: restore" in preview
+    assert "Blocked or retryable: lint" in preview
+    assert "Invalidated: package" in preview
+    assert _phase_block_reason(phases[2], phases) == "Waiting for prerequisite b (pending)"
+
+
+def test_review_markdown_can_include_what_will_change() -> None:
+    draft = ValidationDraft(method="matrix", matrix_items=["app", "hud"], matrix_mode="target")
+    review = draft.review_markdown(extra_sections=[("What Will Change", _change_summary(draft))])
+
+    assert "## What Will Change" in review
+    assert "target" in review
+    assert "2 item" in review
+
+
+def test_recipe_filter_and_label_include_origin() -> None:
+    recipes = [
+        ValidationRecipe("smart", "Smart validation", "Normal", ("validate",), builtin=True),
+        ValidationRecipe("repo-fast", "Repo fast", "Target app", ("validate", "--target", "app"), scope="repository"),
+    ]
+
+    assert [_recipe_label(item) for item in recipes] == ["Smart validation [built-in]", "Repo fast [repository]"]
+    assert [item.name for item in _filter_recipes(recipes, "target app")] == ["repo-fast"]
 
 
 def test_noninteractive_vm_alias_prints_recipe_command(tmp_path: Path, capsys) -> None:

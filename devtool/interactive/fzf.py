@@ -232,6 +232,7 @@ class TerminalUI:
     ) -> Selection | None:
         if header:
             self.console.print(f"[bold]{self._display_text(header)}[/bold]")
+        aliases = self._fallback_aliases(choices)
         for index, item in enumerate(choices, start=1):
             label = self._display_text(item.label)
             description = self._display_text(item.description)
@@ -241,10 +242,17 @@ class TerminalUI:
             else:
                 suffix = f" [dim]{description}[/dim]" if description else ""
                 self.console.print(f"  [cyan]{index:>2}[/cyan]  {label}{suffix}")
+        if aliases:
+            hints = ", ".join(f"{key}={value[0]}" for key, value in aliases.items())
+            self.console.print(f"  [dim]{hints}[/dim]")
         self.console.print("  [cyan] 0[/cyan]  Back")
         raw = Prompt.ask(prompt, default="0").strip()
         if not raw or raw == "0":
             return None
+        alias = aliases.get(raw.lower())
+        if alias is not None:
+            key, action = alias
+            return Selection((key,), action=action)
         selected: list[str] = []
         tokens = [token.strip() for token in raw.replace(" ", ",").split(",") if token.strip()]
         if not multi and len(tokens) > 1:
@@ -255,6 +263,23 @@ class TerminalUI:
             except (ValueError, IndexError):
                 self.console.print(f"[yellow]Ignoring invalid selection: {token}[/yellow]")
         return Selection(tuple(dict.fromkeys(selected))) if selected else None
+
+    @staticmethod
+    def _fallback_aliases(choices: Sequence[Choice]) -> dict[str, tuple[str, str]]:
+        by_key = {item.key: item for item in choices}
+        specs = {
+            "d": ("dry", "ctrl-d"),
+            "c": ("copy", "ctrl-y"),
+            "e": ("edit", "ctrl-e"),
+            "s": ("save", "ctrl-s"),
+            "l": ("logs", "ctrl-l"),
+            "r": ("refresh", "ctrl-r"),
+        }
+        return {
+            alias: (key, action)
+            for alias, (key, action) in specs.items()
+            if key in by_key and not by_key[key].disabled
+        }
 
     def ask(self, label: str, *, default: str = "", password: bool = False) -> str:
         return Prompt.ask(label, default=default or None, password=password).strip()

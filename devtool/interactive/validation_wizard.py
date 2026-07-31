@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import argparse
+from pathlib import Path
 import shlex
 from typing import Any, Iterable
 
@@ -478,6 +479,9 @@ class ValidationDraft:
             errors.append("Stable --json output is available only for resumable validation and validation-control actions.")
         if self.method == "apply" and self.apply_mode == "deferred" and (self.phases or self.through or self.phase_only):
             errors.append("Deferred apply creates the session first; phase selection happens when continuing it.")
+        for path in self._artifact_paths():
+            if not self._artifact_path_exists(path):
+                errors.append(f"Artifact path does not exist: {path}")
         return errors
 
     def warnings(self) -> list[str]:
@@ -495,6 +499,23 @@ class ValidationDraft:
         if self.resource_profile == "android-low-power":
             warnings.append("Android low-power mode uses one worker, two CPUs, no daemon, low priority, and no Gradle parallelism unless explicitly overridden.")
         return warnings
+
+    def _artifact_paths(self) -> list[str]:
+        if self.method == "artifact-overlay":
+            return [self.artifact] if self.artifact else []
+        if self.method in {"artifact-bundle", "apply"}:
+            return list(self.artifacts or ([self.artifact] if self.artifact else []))
+        return []
+
+    def _artifact_path_exists(self, value: str) -> bool:
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return path.exists()
+        if path.exists():
+            return True
+        if self.repo:
+            return (Path(self.repo).expanduser() / path).exists()
+        return False
 
     def summary_rows(self) -> list[tuple[str, Any]]:
         scope = self.validation_scope or ("exact " + self.phase_only if self.phase_only else "-")
@@ -518,12 +539,16 @@ class ValidationDraft:
             ("Guards", guard_label(self)),
         ]
 
-    def review_markdown(self, *, executable: str = "devtool") -> str:
+    def review_markdown(self, *, executable: str = "devtool", extra_sections: Iterable[tuple[str, str]] = ()) -> str:
         command = shell_join_multiline(self.full_argv(executable=executable))
         warnings = self.warnings()
         warning_text = "\n".join(f"- {item}" for item in warnings) if warnings else "- None"
         errors = self.validate()
         error_text = "\n".join(f"- {item}" for item in errors) if errors else "- None"
+        sections = "".join(
+            f"\n\n## {title}\n\n{text.strip() or '- None'}"
+            for title, text in extra_sections
+        )
         return (
             "# Validation Review\n\n"
             + markdown_table(self.summary_rows())
@@ -533,6 +558,7 @@ class ValidationDraft:
             + warning_text
             + "\n\n## Blocking problems\n\n"
             + error_text
+            + sections
         )
 
     def replace_from_command(self, command: str) -> None:

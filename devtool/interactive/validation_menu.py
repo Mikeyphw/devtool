@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
-import os
+import json
 from pathlib import Path
 import shlex
 import subprocess
@@ -533,8 +533,12 @@ def _configure_phase_scope(ui: TerminalUI, draft: ValidationDraft, catalog: Vali
     elif mode == "remaining":
         draft.validation_scope = "remaining"
     elif mode == "through":
-        selected = ui.choose(_phase_choices(phase_items), prompt="through", header="Stop after which phase?")
+        selected = ui.choose(_phase_choices(phase_items, dependency_preview=True, catalog=catalog), prompt="through", header="Stop after which phase?")
         if selected is None:
+            return False
+        closure, already = dependency_closure(phase_items, [selected.key])
+        ui.page(_phase_scope_preview("Through phase", [selected.key], closure, already, phase_items))
+        if not ui.confirm("Use this checkpoint and dependency closure?", default=True):
             return False
         draft.validation_scope = "through"
         draft.through = selected.key
@@ -544,10 +548,7 @@ def _configure_phase_scope(ui: TerminalUI, draft: ValidationDraft, catalog: Vali
             return False
         selected_names = list(selected.keys)
         closure, already = dependency_closure(phase_items, selected_names)
-        preview = "# Selected phase closure\n\n- Selected: " + ", ".join(selected_names)
-        preview += "\n- Devtool will run: " + (" → ".join(closure) or "none")
-        preview += "\n- Already satisfied: " + (", ".join(already) or "none")
-        ui.page(preview)
+        ui.page(_phase_scope_preview("Selected phase closure", selected_names, closure, already, phase_items))
         if not ui.confirm("Use this combined dependency closure?", default=True):
             return False
         draft.validation_scope = "selected"
@@ -556,10 +557,19 @@ def _configure_phase_scope(ui: TerminalUI, draft: ValidationDraft, catalog: Vali
         exact_choices = []
         for item in phase_items:
             ready = _phase_prerequisites_satisfied(item, phase_items)
-            exact_choices.append(Choice(str(item.get("name")), str(item.get("label") or item.get("name")), "Prerequisites satisfied" if ready else "Prerequisites are not yet satisfied", disabled=not ready))
+            exact_choices.append(Choice(
+                str(item.get("name")),
+                str(item.get("label") or item.get("name")),
+                "Prerequisites satisfied" if ready else _phase_block_reason(item, phase_items),
+                _phase_preview(item, phase_items, catalog=catalog),
+            ))
         selected = ui.choose(exact_choices, prompt="exact-phase", header="Run exactly one pending phase")
         if selected is None:
             return False
+        item = next((value for value in phase_items if str(value.get("name")) == selected.key), {})
+        if not _phase_prerequisites_satisfied(item, phase_items):
+            ui.page(f"# Exact phase unavailable\n\n{_phase_block_reason(item, phase_items)}")
+            return _configure_phase_scope(ui, draft, catalog, forced="exact")
         draft.phase_only = selected.key
     elif mode == "advanced":
         selected = ui.choose([
@@ -835,11 +845,26 @@ def _configure_artifact(ui: TerminalUI, draft: ValidationDraft, *, forced: str =
             return False
         mode = selected.key
     draft.method = mode
+    recent = _recent_artifacts(Path(draft.repo or "."))
     if mode == "artifact-overlay":
-        draft.artifact = ui.ask("Overlay archive path", default=draft.artifact)
+        selected = ui.choose([
+            *[Choice(str(path), str(path), "Recently modified artifact") for path in recent],
+            Choice("__manual__", "Enter path manually", draft.artifact or "No current path"),
+        ], prompt="artifact-path", header="Choose an overlay archive") if recent else None
+        if selected and selected.key != "__manual__":
+            draft.artifact = selected.key
+        else:
+            draft.artifact = ui.ask("Overlay archive path", default=draft.artifact)
         draft.artifacts = []
     else:
-        draft.artifacts = _ask_csv(ui, "Bundle or overlay archive paths", draft.artifacts or ([draft.artifact] if draft.artifact else []))
+        if recent:
+            selected = ui.choose([Choice(str(path), str(path), "Recently modified artifact") for path in recent], prompt="artifacts", header="Select artifact paths or Back for manual entry", multi=True)
+            if selected:
+                draft.artifacts = list(selected.keys)
+            else:
+                draft.artifacts = _ask_csv(ui, "Bundle or overlay archive paths", draft.artifacts or ([draft.artifact] if draft.artifact else []))
+        else:
+            draft.artifacts = _ask_csv(ui, "Bundle or overlay archive paths", draft.artifacts or ([draft.artifact] if draft.artifact else []))
         draft.artifact = ""
         draft.fail_on_conflict = ui.confirm("Fail when nested overlays write the same file?", default=draft.fail_on_conflict)
     draft.ignore_checksum = ui.confirm("Ignore SHA-256 checksum validation?", default=draft.ignore_checksum)
@@ -905,15 +930,18 @@ def _configure_abort(ui: TerminalUI, draft: ValidationDraft) -> bool:
 def _review(ui: TerminalUI, config: ProjectConfig, draft: ValidationDraft) -> int:
     while True:
         errors = draft.validate()
+        first_error = errors[0] if errors else ""
+        review = draft.review_markdown(extra_sections=[("What Will Change", _change_summary(draft))])
         choices = [
-            Choice("run", "Run", "Execute the generated command.", draft.review_markdown(), disabled=bool(errors)),
-            Choice("dry", "Dry-run", "Execute with the global --dry-run flag.", draft.review_markdown(), disabled=bool(errors)),
-            Choice("copy", "Copy command", "Copy the exact shell command to the clipboard.", draft.review_markdown()),
-            Choice("edit", "Edit command arguments", "Open the command portion in $VISUAL/$EDITOR.", draft.review_markdown()),
-            Choice("save", "Save as recipe", "Write a global or repository validation recipe.", draft.review_markdown()),
-            Choice("view", "Open full review", "Render the command, warnings, and blocking problems with bat.", draft.review_markdown()),
-            Choice("logs", "Open latest log", "Open the latest Devtool log with bat when available.", draft.review_markdown()),
+            Choice("run", "Run", f"Blocked: {first_error}" if first_error else "Execute the generated command.", review, disabled=bool(errors)),
+            Choice("dry", "Dry-run", f"Blocked: {first_error}" if first_error else "Execute with the global --dry-run flag.", review, disabled=bool(errors)),
+            Choice("copy", "Copy command", "Copy the exact shell command to the clipboard.", review),
+            Choice("edit", "Edit command arguments", "Open the command portion in $VISUAL/$EDITOR.", review),
+            Choice("save", "Save as recipe", "Write a global or repository validation recipe.", review),
+            Choice("view", "Open full review", "Render the command, warnings, and blocking problems with bat.", review),
+            Choice("logs", "Open latest log", "Open the latest Devtool log with bat when available.", review),
             Choice("back", "Back", "Return without executing."),
+            Choice("copy-json", "Copy argv JSON", "Copy the generated argv vector as JSON.", review),
         ]
         selected = ui.choose(
             choices,
@@ -931,12 +959,20 @@ def _review(ui: TerminalUI, config: ProjectConfig, draft: ValidationDraft) -> in
             "ctrl-l": "logs",
         }.get(selected.action, selected.key)
         if action == "view":
-            ui.page(draft.review_markdown())
+            ui.page(review)
             continue
         if action == "logs":
             log_view = copy.deepcopy(draft)
             log_view.raw_override = ["logs", "open", "latest", "--pager", "bat"]
             _run_viewer(config, log_view)
+            continue
+        if action == "copy-json":
+            payload = json.dumps(draft.full_argv(), indent=2)
+            result = copy_text(payload)
+            if result.success:
+                console.print(f"[green]Argv JSON copied via {result.backend}.[/green]")
+            else:
+                console.print(f"[yellow]Could not copy argv JSON: {result.reason}[/yellow]")
             continue
         if action == "copy":
             command = shell_join(draft.full_argv())
@@ -979,22 +1015,43 @@ def _run_viewer(config: ProjectConfig, draft: ValidationDraft) -> int:
 
 
 def _recipes_menu(ui: TerminalUI, config: ProjectConfig, base: ValidationDraft, catalog: ValidationCatalog) -> int:
+    query = ""
     while True:
         recipes = load_recipes(config.repo_root)
+        visible = _filter_recipes(recipes, query)
         choices = [
-            Choice(item.name, item.label, f"{item.scope}: {item.description}", _recipe_preview(item))
-            for item in recipes
+            Choice(item.name, _recipe_label(item), f"{item.scope}: {item.description}", _recipe_preview(item))
+            for item in visible
         ]
         choices.extend([
+            Choice("__filter__", "Filter recipes", query or "No filter"),
+            Choice("__duplicate__", "Duplicate a recipe", "Copy a built-in, global, or repository recipe under a new name."),
+            Choice("__rename__", "Rename a custom recipe", "Move a global or repository recipe to a new name."),
             Choice("__delete__", "Delete a custom recipe", "Built-in recipes cannot be removed."),
             Choice("__back__", "Back", "Return to validation menu."),
         ])
-        selected = ui.choose(choices, prompt="recipe", header="Choose a validation recipe")
+        selected = ui.choose(choices, prompt="recipe", header="Choose a validation recipe", initial_query=query)
         if selected is None or selected.key == "__back__":
             return 0
+        if selected.key == "__filter__":
+            query = ui.ask("Recipe filter: name, label, method, scope, or target", default=query)
+            continue
+        if selected.key == "__duplicate__":
+            target = ui.choose([Choice(item.name, _recipe_label(item), item.description) for item in recipes], prompt="duplicate-recipe")
+            if target:
+                recipe = next(item for item in recipes if item.name == target.key)
+                _copy_recipe_dialog(ui, config, recipe, rename=False)
+            continue
+        if selected.key == "__rename__":
+            custom = [item for item in recipes if not item.builtin]
+            target = ui.choose([Choice(item.name, _recipe_label(item), item.scope) for item in custom], prompt="rename-recipe")
+            if target:
+                recipe = next(item for item in custom if item.name == target.key)
+                _copy_recipe_dialog(ui, config, recipe, rename=True)
+            continue
         if selected.key == "__delete__":
             custom = [item for item in recipes if not item.builtin]
-            target = ui.choose([Choice(item.name, item.label, item.scope) for item in custom], prompt="delete-recipe")
+            target = ui.choose([Choice(item.name, _recipe_label(item), item.scope) for item in custom], prompt="delete-recipe")
             if target and ui.confirm(f"Delete recipe {target.key!r}?", default=False):
                 delete_recipe(config.repo_root, target.key)
             continue
@@ -1061,6 +1118,31 @@ def _save_recipe_dialog(ui: TerminalUI, config: ProjectConfig, draft: Validation
     console.print(f"[green]Saved validation recipe[/green] {path}")
 
 
+def _copy_recipe_dialog(ui: TerminalUI, config: ProjectConfig, recipe: ValidationRecipe, *, rename: bool) -> None:
+    label = ui.ask("Recipe label", default=recipe.label)
+    name = ui.ask("Recipe name", default=recipe.name)
+    description = ui.ask("Description", default=recipe.description)
+    scope = ui.choose([
+        Choice("repository", "Repository recipe", str(config.repo_root / ".devtool" / "validation-recipes.toml")),
+        Choice("global", "Global recipe", str(Path.home() / ".config" / "devtool" / "validation-recipes.toml")),
+    ], prompt="recipe-scope")
+    if scope is None:
+        return
+    if rename:
+        delete_recipe(config.repo_root, recipe.name)
+    path = save_recipe(
+        config.repo_root,
+        name=name,
+        label=label,
+        description=description,
+        argv=recipe.argv,
+        prefix_argv=recipe.prefix_argv,
+        repository=scope.key == "repository",
+    )
+    verb = "Renamed" if rename else "Duplicated"
+    console.print(f"[green]{verb} validation recipe[/green] {path}")
+
+
 def _control_draft(base: ValidationDraft, catalog: ValidationCatalog, action: str) -> ValidationDraft:
     draft = copy.deepcopy(base)
     draft.method = "control"
@@ -1111,6 +1193,40 @@ def _preview_safe_retry(catalog: ValidationCatalog, profile: str) -> str:
         details.append("- Android low-power constraints are removed in favor of standard project policy.")
     return "\n".join(details)
 
+
+def _phase_scope_preview(title: str, selected: list[str], closure: list[str], already: list[str], phases: list[dict]) -> str:
+    status = {str(item.get("name") or item.get("key")): str(item.get("status") or "pending") for item in phases}
+    runnable = [name for name in closure if name not in already]
+    blocked = [name for name in closure if status.get(name) in {"blocked", "failed", "interrupted"}]
+    invalidated = [name for name in closure if status.get(name) == "invalidated"]
+    return "\n".join([
+        f"# {title}",
+        "",
+        "- Selected: " + (", ".join(selected) or "none"),
+        "- Pending run: " + (" -> ".join(runnable) or "none"),
+        "- Already satisfied: " + (", ".join(already) or "none"),
+        "- Blocked or retryable: " + (", ".join(blocked) or "none"),
+        "- Invalidated: " + (", ".join(invalidated) or "none"),
+    ])
+
+
+def _phase_preview(item: dict, phases: list[dict], *, catalog: ValidationCatalog | None = None) -> str:
+    name = str(item.get("name") or item.get("key") or "phase")
+    label = str(item.get("label") or name)
+    status = str(item.get("status") or "pending")
+    dependencies = [str(value) for value in item.get("depends_on", []) or []]
+    preview = f"# {label}\n\n- Name: `{name}`\n- Status: **{status}**\n- Dependencies: {', '.join(dependencies) or 'none'}"
+    reason = _phase_block_reason(item, phases)
+    if reason != "Prerequisites satisfied":
+        preview += f"\n- Exact phase availability: {reason}"
+    if catalog is not None:
+        closure, already = dependency_closure(catalog.phases, [name])
+        preview += "\n- Dependency closure: " + (" -> ".join(closure) or "none")
+        if already:
+            preview += "\n- Already satisfied: " + ", ".join(already)
+    return preview
+
+
 def _phase_choices(phases: list[dict], *, dependency_preview: bool = False, catalog: ValidationCatalog | None = None) -> list[Choice]:
     output: list[Choice] = []
     for item in phases:
@@ -1118,23 +1234,86 @@ def _phase_choices(phases: list[dict], *, dependency_preview: bool = False, cata
         label = str(item.get("label") or name)
         status = str(item.get("status") or "pending")
         description = f"{status} · attempts {item.get('attempts', 0)}"
-        preview = f"# {label}\n\n- Name: `{name}`\n- Status: **{status}**\n- Dependencies: {', '.join(str(value) for value in item.get('depends_on', []) or []) or 'none'}"
-        if dependency_preview and catalog is not None:
-            closure, already = dependency_closure(catalog.phases, [name])
-            preview += "\n- Dependency closure: " + " → ".join(closure)
-            if already:
-                preview += "\n- Already satisfied: " + ", ".join(already)
+        preview = _phase_preview(item, phases, catalog=catalog if dependency_preview else None)
         output.append(Choice(name, label, description, preview))
     return output
 
 
 def _phase_prerequisites_satisfied(item: dict, phases: list[dict]) -> bool:
+    return _phase_block_reason(item, phases) == "Prerequisites satisfied"
+
+
+def _phase_block_reason(item: dict, phases: list[dict]) -> str:
     by_key = {str(value.get("key")): value for value in phases}
     for dependency in item.get("depends_on", []) or []:
-        status = str(by_key.get(str(dependency), {}).get("status") or "pending")
+        dependency_key = str(dependency)
+        status = str(by_key.get(dependency_key, {}).get("status") or "pending")
         if status not in {"passed", "skipped", "not-applicable"}:
-            return False
-    return str(item.get("status") or "pending") in {"pending", "failed", "blocked", "interrupted"}
+            return f"Waiting for prerequisite {dependency_key} ({status})"
+    status = str(item.get("status") or "pending")
+    if status not in {"pending", "failed", "blocked", "interrupted"}:
+        return f"Phase status is {status}"
+    return "Prerequisites satisfied"
+
+
+def _recent_artifacts(repo_root: Path) -> list[Path]:
+    root = repo_root.expanduser()
+    if not root.is_absolute():
+        root = Path.cwd() / root
+    candidates: list[Path] = []
+    for directory in (root, root / "dist", root / "build", root / ".devtool-artifact"):
+        if not directory.is_dir():
+            continue
+        for pattern in ("*.zip", "*.tar", "*.tar.gz", "*.tgz"):
+            candidates.extend(directory.glob(pattern))
+    return sorted(
+        dict.fromkeys(path for path in candidates if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )[:12]
+
+
+def _filter_recipes(recipes: list[ValidationRecipe], query: str) -> list[ValidationRecipe]:
+    terms = [term.strip().lower() for term in query.split() if term.strip()]
+    if not terms:
+        return recipes
+    output = []
+    for recipe in recipes:
+        haystack = " ".join([
+            recipe.name,
+            recipe.label,
+            recipe.description,
+            recipe.scope,
+            " ".join(recipe.argv),
+            " ".join(recipe.prefix_argv),
+        ]).lower()
+        if all(term in haystack for term in terms):
+            output.append(recipe)
+    return output
+
+
+def _recipe_label(recipe: ValidationRecipe) -> str:
+    origin = "built-in" if recipe.builtin else recipe.scope
+    return f"{recipe.label} [{origin}]"
+
+
+def _change_summary(draft: ValidationDraft) -> str:
+    if draft.method == "control":
+        return f"- Sends validation control action `{draft.action}` to session `{draft.session_id or 'active'}`."
+    if draft.method == "apply":
+        values = draft.artifacts or ([draft.artifact] if draft.artifact else [])
+        return f"- Applies {len(values)} artifact(s) with `{draft.apply_mode}` validation policy."
+    if draft.method.startswith("artifact-"):
+        values = draft.artifacts or ([draft.artifact] if draft.artifact else [])
+        return f"- Validates {len(values)} artifact path(s) without applying repository changes."
+    if draft.is_sequential:
+        scope = draft.validation_scope or draft.phase_only or draft.through or "next"
+        return f"- Advances durable validation using `{scope}` scope and revision `{draft.revision}`."
+    if draft.method == "watch":
+        return f"- Starts watch validation every {draft.watch_interval:g} seconds until interrupted."
+    if draft.method == "matrix":
+        return f"- Runs `{draft.matrix_mode}` matrix across {len(draft.matrix_items)} item(s)."
+    return "- Runs one validation command against the selected repository context."
 
 
 def _clear_phase_scope(draft: ValidationDraft) -> None:
