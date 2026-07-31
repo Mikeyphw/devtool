@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.13.2" type="partial_results">
+    <map id="NotificationPermission">
+        <entry
+            name="source"
+            boolean="true"/>
+    </map>
+    <map id="UnsafeImplicitIntentLaunch">
+            <map id="actionsRegisteredNonExported">
+                <entry
+                    name="io.github.mikeceead.devtoolhud.BRIDGE_ROUNDTRIP_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.BRIDGE_TOKEN_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.DEBUG_EVENTS_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.LOG_INDEX_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.REPOSITORIES_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.REPOSITORY_DOCTOR_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.REPOSITORY_WORKSPACE_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.ROOT_BRIDGE_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.RUN_STORE_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.VALIDATION_UPDATED (used to send a broadcast)"
+                    boolean="true"/>
+            </map>
+            <map id="actionsSent">
+                    <map id="android.intent.action.VIEW (used to start an activity)">
+                        <location id="0"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/GitCommitActivity.java"
+                            line="65"
+                            column="21"
+                            startOffset="2676"
+                            endLine="65"
+                            endColumn="93"
+                            endOffset="2748"/>
+                        <location id="1"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryDetailActivity.java"
+                            line="275"
+                            column="21"
+                            startOffset="13831"
+                            endLine="275"
+                            endColumn="81"
+                            endOffset="13891"/>
+                        <location id="2"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryDetailActivity.java"
+                            line="444"
+                            column="40"
+                            startOffset="24259"
+                            endLine="444"
+                            endColumn="78"
+                            endOffset="24297"/>
+                    </map>
+                    <map id="android.settings.APPLICATION_DETAILS_SETTINGS (used to start an activity)">
+                        <location id="0"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/DebugWorkbenchActivity.java"
+                            line="392"
+                            column="25"
+                            startOffset="20256"
+                            endLine="392"
+                            endColumn="81"
+                            endOffset="20312"/>
+                        <location id="1"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+                            line="2110"
+                            column="23"
+                            startOffset="126571"
+                            endLine="2111"
+                            endColumn="58"
+                            endOffset="126685"/>
+                    </map>
+                    <map id="android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS (used to start an activity)">
+                        <location id="0"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+                            line="2100"
+                            column="25"
+                            startOffset="126224"
+                            endLine="2100"
+                            endColumn="91"
+                            endOffset="126290"/>
+                    </map>
+                    <map id="android.settings.APP_NOTIFICATION_SETTINGS (used to start an activity)">
+                        <location id="0"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+                            line="2095"
+                            column="23"
+                            startOffset="126023"
+                            endLine="2095"
+                            endColumn="76"
+                            endOffset="126076"/>
+                    </map>
+                    <map id="android.settings.action.MANAGE_OVERLAY_PERMISSION (used to start an activity)">
+                        <location id="0"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/MainActivity.java"
+                            line="2090"
+                            column="23"
+                            startOffset="125834"
+                            endLine="2091"
+                            endColumn="58"
+                            endOffset="125945"/>
+                    </map>
+            </map>
+    </map>
+    <map id="UnsafeIntentLaunch">
+            <map id="incidents">
+                    <map id="0">
+                        <entry
+                            name="incidentClass"
+                            string="io.github.mikeceead.devtoolhud.TaskerProtocol"/>
+                        <location id="location"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/TaskerProtocol.java"
+                            line="86"
+                            column="33"
+                            startOffset="4729"
+                            endLine="86"
+                            endColumn="83"
+                            endOffset="4779"/>
+                        <location id="secondaryLocation"
+                            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/TaskerProtocol.java"
+                            line="97"
+                            column="17"
+                            startOffset="5524"
+                            endLine="97"
+                            endColumn="50"
+                            endOffset="5557"
+                            message="The unsafe intent is launched here."/>
+                    </map>
+            </map>
+            <map id="unprotected">
+                <entry
+                    name="io.github.mikeceead.devtoolhud.BridgeReceiver"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.LogViewerActivity"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.MainActivity"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.TaskerPluginActivity"
+                    boolean="true"/>
+                <entry
+                    name="io.github.mikeceead.devtoolhud.TaskerPluginReceiver"
+                    boolean="true"/>
+            </map>
+    </map>
+    <map id="UnusedResources">
+        <entry
+            name="model"
+            string="color[notification_error(U),notification_recovered(U),notification_rollback(U),notification_running(U),notification_soft(U),notification_success(U),notification_warning(U),notification_card(U),notification_card_raised(U),notification_text(U),notification_muted(U),notification_line(U),launcher_background(U),devtool_background(U),devtool_green(U)],drawable[ic_devtool_foreground(U),ic_devtool_notification(U),ic_done(U),ic_hud(U),ic_launcher_monochrome(U),ic_link(U),ic_nav_history(U),ic_nav_overview(U),ic_nav_run(U),ic_nav_settings(U),ic_notification_state_dot(U),ic_notification_status(U),ic_phase_active(U),ic_phase_done(U),ic_phase_failed(U),ic_phase_pending(U),ic_promoted(U),ic_repository(U),ic_root(U),ic_status(U),ic_terminal(U),ic_tracker(U),ic_validate(U),ic_workflow(U),notification_action(U),notification_badge_failed(U),notification_badge_recovered(U),notification_badge_rollback(U),notification_badge_running(U),notification_badge_stopped(U),notification_badge_success(U),notification_badge_warning(U),notification_card_failed(U),notification_card_recovered(U),notification_card_rollback(U),notification_card_running(U),notification_card_stopped(U),notification_card_success(U),notification_card_warning(U),notification_chip(U),notification_mark_active(U),notification_mark_done(U),notification_mark_failed(U),notification_mark_pending(U),notification_metric(U),notification_workspace(U)],id[notification_root(U),notification_app_icon(U),notification_state_dot(U),notification_state_label(U),notification_task_title(U),notification_compact_status(U),notification_progress_label(U),notification_progress(U),notification_status_lead(U),notification_status_detail(U),notification_artifact(U),notification_workspace_name(U),notification_workspace_index(U),notification_phase_row_1(U),notification_phase_mark_1(U),notification_phase_name_1(U),notification_phase_detail_1(U),notification_phase_row_2(U),notification_phase_mark_2(U),notification_phase_name_2(U),notification_phase_detail_2(U),notification_phase_row_3(U),notification_phase_mark_3(U),notification_phase_name_3(U),notification_phase_detail_3(U),notification_workspace_card(U),notification_workspace_mark(U),notification_workspace_current(U),notification_workspace_meta(U),notification_workspace_progress(U),notification_workspace_remaining(U),notification_metric_tests(U),notification_metric_warnings(U),notification_metric_errors(U),notification_metric_elapsed(U),notification_action_1(U),notification_action_2(U),notification_action_3(U),notification_metrics_summary(U)],layout[notification_devtool_compact(U),notification_devtool_expanded(U),notification_devtool_expanded_large_text(U)],mipmap[ic_launcher(U),ic_launcher_round(U)],plurals[repository_picker_directory_count(U)],raw[devtool_root_bridge_module(U)],string[app_name(U),tasker_action_name(U),notification_app_label(U),notification_state_live(U),notification_default_task_title(U),notification_metric_tests(U),notification_metric_warnings(U),notification_metric_errors(U),notification_metric_elapsed(U),channel_live_name(U),channel_live_description(U),configuration_issue_format(U),runner_status_format(U),floating_hud_running(U),floating_hud_enabled(U),floating_hud_disabled(U),overlay_hud_ready(U),repository_picker_reading_format(U),repository_picker_no_children(U),two_line_title_detail(U),validation_phase_row_format(U),validation_phase_required_dependency(U),validation_phase_optional(U)],style[Theme_DevtoolHud(U),TextAppearance_Devtool_Notification_Detail(U),TextAppearance_Devtool_Notification_State(U),TextAppearance_Devtool_Notification_Title(U),TextAppearance_Devtool_Notification_Workspace(U),TextAppearance_Devtool_Notification_Badge(U),TextAppearance_Devtool_Notification_Action(U)],xml[data_extraction_rules(U),backup_rules(U)];28^0,29^1,2a^2,2b^3,2c^4,2d^5,2e^6,2f^7^0,30^7^1,31^7^2,32^7^3,33^7^4,34^7^5,35^7^6,3b^8,3c^8,64^32^2b^10^3^6d^9^83^19^36^6e^84^6f^85^86,65^32^2b^10^3^6d^9^83^19^36^6e^84^85^86^a^87^3a^1e^4^3c^37^1b^3b^70^71^72^73^b^27^88,66^32^2b^10^3^6d^9^83^19^36^6e^84^85^86^a^87^3a^1e^4^3c^37^1b^3b^73^b^27^88,67^c^f^13,68^c^f^13,82^d^e,83^a,84^3,85^9,86^9,87^3,88^3;;;"/>
+    </map>
+
+</incidents>

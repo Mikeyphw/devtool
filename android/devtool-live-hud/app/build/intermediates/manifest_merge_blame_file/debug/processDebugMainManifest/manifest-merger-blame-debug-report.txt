@@ -1,0 +1,265 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="io.github.mikeceead.devtoolhud.debug"
+4    android:versionCode="31"
+5    android:versionName="1.17.0-debug" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="26"
+9        android:targetSdkVersion="36" />
+10
+11    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+11-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:4:5-77
+11-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:4:22-74
+12    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+12-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:5:5-86
+12-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:5:22-83
+13    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+13-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:6:5-78
+13-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:6:22-75
+14    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+14-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:7:5-77
+14-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:7:22-74
+15    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+15-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:8:5-89
+15-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:8:22-86
+16    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+16-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:9:5-73
+16-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:9:22-70
+17
+18    <queries>
+18-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:11:5-15:15
+19        <package android:name="com.termux" />
+19-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:12:9-46
+19-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:12:18-43
+20        <package android:name="net.dinglisch.android.taskerm" />
+20-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:13:9-65
+20-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:13:18-62
+21        <package android:name="net.dinglisch.android.tasker" />
+21-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:14:9-64
+21-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:14:18-61
+22    </queries>
+23
+24    <application
+24-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:17:5-136:19
+25        android:allowBackup="false"
+25-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:18:9-36
+26        android:dataExtractionRules="@xml/data_extraction_rules"
+26-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:19:9-65
+27        android:debuggable="true"
+28        android:extractNativeLibs="false"
+29        android:fullBackupContent="@xml/backup_rules"
+29-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:20:9-54
+30        android:icon="@mipmap/ic_launcher"
+30-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:21:9-43
+31        android:label="@string/app_name"
+31-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:22:9-41
+32        android:roundIcon="@mipmap/ic_launcher_round"
+32-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:23:9-54
+33        android:supportsRtl="true"
+33-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:24:9-35
+34        android:theme="@style/Theme.DevtoolHud" >
+34-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:25:9-48
+35        <activity
+35-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:27:9-35:20
+36            android:name="io.github.mikeceead.devtoolhud.MainActivity"
+36-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:28:13-41
+37            android:exported="true"
+37-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:29:13-36
+38            android:launchMode="singleTop" >
+38-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:30:13-43
+39            <intent-filter>
+39-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:31:13-34:29
+40                <action android:name="android.intent.action.MAIN" />
+40-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:32:17-69
+40-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:32:25-66
+41
+42                <category android:name="android.intent.category.LAUNCHER" />
+42-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:33:17-77
+42-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:33:27-74
+43            </intent-filter>
+44        </activity>
+45        <activity
+45-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:37:9-47:20
+46            android:name="io.github.mikeceead.devtoolhud.LogViewerActivity"
+46-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:38:13-46
+47            android:exported="true"
+47-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:39:13-36
+48            android:label="Devtool Log" >
+48-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:40:13-40
+49            <intent-filter>
+49-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:41:13-46:29
+50                <action android:name="android.intent.action.VIEW" />
+50-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:42:17-69
+50-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:42:25-66
+51
+52                <category android:name="android.intent.category.DEFAULT" />
+52-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:43:17-76
+52-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:43:27-73
+53                <category android:name="android.intent.category.BROWSABLE" />
+53-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:44:17-78
+53-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:44:27-75
+54
+55                <data
+55-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:45:17-97
+56                    android:host="logs"
+56-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:45:48-67
+57                    android:pathPrefix="/run/"
+57-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:45:68-94
+58                    android:scheme="devtool" />
+58-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:45:23-47
+59            </intent-filter>
+60        </activity>
+61        <activity
+61-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:49:9-52:47
+62            android:name="io.github.mikeceead.devtoolhud.DebugWorkbenchActivity"
+62-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:50:13-51
+63            android:exported="false"
+63-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:51:13-37
+64            android:label="Debug Workbench" />
+64-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:52:13-44
+65        <activity
+65-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:54:9-57:51
+66            android:name="io.github.mikeceead.devtoolhud.ValidationEvidenceActivity"
+66-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:55:13-55
+67            android:exported="false"
+67-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:56:13-37
+68            android:label="Validation Evidence" />
+68-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:57:13-48
+69        <activity
+69-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:59:9-62:42
+70            android:name="io.github.mikeceead.devtoolhud.RepositoryDetailActivity"
+70-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:60:13-53
+71            android:exported="false"
+71-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:61:13-37
+72            android:label="Repository" />
+72-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:62:13-39
+73        <activity
+73-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:64:9-67:49
+74            android:name="io.github.mikeceead.devtoolhud.RepositoryPickerActivity"
+74-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:65:13-53
+75            android:exported="false"
+75-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:66:13-37
+76            android:label="Choose Repository" />
+76-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:67:13-46
+77        <activity
+77-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:69:9-72:40
+78            android:name="io.github.mikeceead.devtoolhud.GitDiffActivity"
+78-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:70:13-44
+79            android:exported="false"
+79-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:71:13-37
+80            android:label="Git Diff" />
+80-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:72:13-37
+81        <activity
+81-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:74:9-77:46
+82            android:name="io.github.mikeceead.devtoolhud.GitCommitActivity"
+82-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:75:13-46
+83            android:exported="false"
+83-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:76:13-37
+84            android:label="Commit Details" />
+84-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:77:13-43
+85        <activity
+85-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:79:9-88:20
+86            android:name="io.github.mikeceead.devtoolhud.TaskerPluginActivity"
+86-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:80:13-49
+87            android:exported="true"
+87-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:81:13-36
+88            android:label="@string/tasker_action_name"
+88-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:82:13-55
+89            android:theme="@style/Theme.DevtoolHud" >
+89-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:83:13-52
+90            <intent-filter>
+90-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:84:13-87:29
+91                <action android:name="com.twofortyfouram.locale.intent.action.EDIT_SETTING" />
+91-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:85:17-95
+91-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:85:25-92
+92
+93                <category android:name="android.intent.category.DEFAULT" />
+93-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:43:17-76
+93-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:43:27-73
+94            </intent-filter>
+95        </activity>
+96
+97        <service
+97-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:90:9-99:19
+98            android:name="io.github.mikeceead.devtoolhud.OverlayHudService"
+98-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:91:13-46
+99            android:enabled="true"
+99-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:92:13-35
+100            android:exported="false"
+100-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:93:13-37
+101            android:foregroundServiceType="specialUse"
+101-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:94:13-55
+102            android:stopWithTask="false" >
+102-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:95:13-41
+103            <property
+103-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:96:13-98:111
+104                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+104-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:97:17-76
+105                android:value="User-enabled developer build, test, validation and commit progress overlay." />
+105-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:98:17-108
+106        </service>
+107        <service
+107-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:101:9-104:40
+108            android:name="io.github.mikeceead.devtoolhud.TermuxResultService"
+108-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:102:13-48
+109            android:enabled="true"
+109-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:103:13-35
+110            android:exported="false" />
+110-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:104:13-37
+111
+112        <!-- Exported for Tasker Locale FIRE_SETTING broadcasts; runtime config authorization is enforced in TaskerPluginReceiver. -->
+113        <receiver
+113-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:107:9-116:20
+114            android:name="io.github.mikeceead.devtoolhud.TaskerPluginReceiver"
+114-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:108:13-49
+115            android:enabled="true"
+115-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:109:13-35
+116            android:exported="true"
+116-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:110:13-36
+117            android:label="@string/tasker_action_name" >
+117-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:111:13-55
+118            <intent-filter>
+118-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:113:13-115:29
+119                <action android:name="com.twofortyfouram.locale.intent.action.FIRE_SETTING" />
+119-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:114:17-95
+119-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:114:25-92
+120            </intent-filter>
+121        </receiver>
+122
+123        <!-- Exported for Termux/root bridge callbacks; BridgeReceiver rejects invalid tokens and unexpected actions. -->
+124        <receiver
+124-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:119:9-130:20
+125            android:name="io.github.mikeceead.devtoolhud.BridgeReceiver"
+125-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:120:13-43
+126            android:enabled="true"
+126-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:121:13-35
+127            android:exported="true" >
+127-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:122:13-36
+128            <intent-filter>
+128-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:124:13-129:29
+129                <action android:name="io.github.mikeceead.devtoolhud.UPDATE" />
+129-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:125:17-80
+129-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:125:25-77
+130                <action android:name="io.github.mikeceead.devtoolhud.COMPLETE" />
+130-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:126:17-82
+130-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:126:25-79
+131                <action android:name="io.github.mikeceead.devtoolhud.FAIL" />
+131-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:127:17-78
+131-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:127:25-75
+132                <action android:name="io.github.mikeceead.devtoolhud.CANCEL" />
+132-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:128:17-80
+132-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:128:25-77
+133            </intent-filter>
+134        </receiver>
+135        <receiver
+135-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:132:9-135:40
+136            android:name="io.github.mikeceead.devtoolhud.ActionReceiver"
+136-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:133:13-43
+137            android:enabled="true"
+137-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:134:13-35
+138            android:exported="false" />
+138-->/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/AndroidManifest.xml:135:13-37
+139    </application>
+140
+141</manifest>

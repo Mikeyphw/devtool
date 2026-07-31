@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "type": "snapshot",
+  "name": "devtool 1.1.0 RC3 typography remediation repository",
+  "description": "Complete Devtool repository with responsive semantic typography, accessible Android notification layouts, scalable desktop type, and vector iconography across all frontends.",
+  "version": "1.1.0",
+  "desktop_version": "0.4.0",
+  "android_version": "1.7.2",
+  "android_version_code": 20,
+  "repository": {
+    "name": "devtool"
+  },
+  "apply": {
+    "atomic": true,
+    "conflict_policy": "overwrite",
+    "path_policy": "repository-relative",
+    "requires_clean_worktree": false,
+    "commit": {
+      "enabled": false,
+      "strategy": "single",
+      "message": ""
+    }
+  },
+  "validation": {
+    "required": true,
+    "restore": false,
+    "build": false,
+    "test": true,
+    "rollback_on_failure": true
+  },
+  "highlights": [
+    "Semantic Android typography roles with role-specific line heights",
+    "Readable notification sizing contrast and large-font reflow layout",
+    "Desktop typography scaling from 100% through 200%",
+    "Platform UI and fixed-width font integration",
+    "Vector navigation status phase and action iconography",
+    "Sentence-case hierarchy with reduced tracking",
+    "Typography contrast scaling and icon regression protection",
+    "Android frontend 1.7.2"
+  ]
+}

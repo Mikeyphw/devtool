@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.13.2" type="conditional_incidents">
+
+    <incident
+        id="NotificationPermission"
+        severity="error"
+        message="When targeting Android 13 or higher, posting a permission requires holding the `POST_NOTIFICATIONS` permission">
+        <fix-data missing="android.permission.POST_NOTIFICATIONS"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/DebugNotificationController.java"
+            line="68"
+            column="9"
+            startOffset="3490"
+            endLine="68"
+            endColumn="63"
+            endOffset="3544"/>
+    </incident>
+
+    <incident
+        id="NotificationPermission"
+        severity="error"
+        message="When targeting Android 13 or higher, posting a permission requires holding the `POST_NOTIFICATIONS` permission">
+        <fix-data missing="android.permission.POST_NOTIFICATIONS"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/DebugNotificationController.java"
+            line="101"
+            column="9"
+            startOffset="5534"
+            endLine="101"
+            endColumn="74"
+            endOffset="5599"/>
+    </incident>
+
+    <incident
+        id="NotificationPermission"
+        severity="error"
+        message="When targeting Android 13 or higher, posting a permission requires holding the `POST_NOTIFICATIONS` permission">
+        <fix-data missing="android.permission.POST_NOTIFICATIONS"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/DebugNotificationController.java"
+            line="184"
+            column="9"
+            startOffset="10455"
+            endLine="184"
+            endColumn="65"
+            endOffset="10511"/>
+    </incident>
+
+    <incident
+        id="NotificationPermission"
+        severity="error"
+        message="When targeting Android 13 or higher, posting a permission requires holding the `POST_NOTIFICATIONS` permission">
+        <fix-data missing="android.permission.POST_NOTIFICATIONS"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/NotificationController.java"
+            line="102"
+            column="9"
+            startOffset="4689"
+            endLine="102"
+            endColumn="70"
+            endOffset="4750"/>
+    </incident>
+
+    <incident
+        id="NotificationPermission"
+        severity="error"
+        message="When targeting Android 13 or higher, posting a permission requires holding the `POST_NOTIFICATIONS` permission">
+        <fix-data missing="android.permission.POST_NOTIFICATIONS"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/NotificationController.java"
+            line="442"
+            column="9"
+            startOffset="26073"
+            endLine="442"
+            endColumn="57"
+            endOffset="26121"/>
+    </incident>
+
+    <incident
+        id="NotificationPermission"
+        severity="error"
+        message="When targeting Android 13 or higher, posting a permission requires holding the `POST_NOTIFICATIONS` permission">
+        <fix-data missing="android.permission.POST_NOTIFICATIONS"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*0}/io/github/mikeceead/devtoolhud/RepositoryNotificationController.java"
+            line="52"
+            column="9"
+            startOffset="2964"
+            endLine="52"
+            endColumn="87"
+            endOffset="3042"/>
+    </incident>
+
+</incidents>

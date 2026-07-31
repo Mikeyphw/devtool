@@ -1,0 +1,20 @@
+{
+    "logs": [
+        {
+            "outputFile": "io.github.mikeceead.devtoolhud.app-mergeDebugResources-2:/values-v27/values-v27.xml",
+            "map": [
+                {
+                    "source": "/home/mike/Code/devtool/android/devtool-live-hud/app/src/main/res/values-v27/styles.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endLines": "12",
+                        "endColumns": "12",
+                        "endOffsets": "757"
+                    }
+                }
+            ]
+        }
+    ]
+}

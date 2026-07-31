@@ -1,0 +1,3 @@
+io.github.mikeceead.devtoolhud.test
+style WhiteBackgroundDialogTheme
+style WhiteBackgroundTheme
