@@ -1,0 +1,11 @@
+Package: devtool-control-center
+Version: 0.5.0
+Section: devel
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.11), python3-gi, python3-rich, gir1.2-gtk-4.0, gir1.2-adw-1, libgtk-4-1, libadwaita-1-0
+Suggests: libnotify-bin, python3-pip, pipx
+Maintainer: Mike Silva <mike.ceead@gmail.com>
+Description: Native GTK4 control center and compact HUD for devtool
+ Run workflows, monitor live segmented progress, review history, inspect diagnostics,
+ and use a compact GTK4 desktop HUD without the legacy Qt/QML runtime.

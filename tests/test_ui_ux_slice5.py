@@ -11,7 +11,9 @@ import pytest
 
 from devtool.release_qualification import (
     android_sdk_available,
+    gtk4_available,
     load_versions,
+    desktop_available,
     qt_available,
     shell_entry_points,
     validate_version_consistency,
@@ -19,7 +21,7 @@ from devtool.release_qualification import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DESKTOP = ROOT / "desktop" / "devtool-control-center"
+DESKTOP = ROOT / "desktop" / "gtk-control-center"
 ANDROID = ROOT / "android" / "devtool-live-hud"
 JAVA = ANDROID / "app" / "src" / "main" / "java" / "io" / "github" / "mikeceead" / "devtoolhud"
 
@@ -33,16 +35,17 @@ def test_slice5_versions_are_canonical_and_consistent() -> None:
     assert versions["schema_version"] == 1
     assert versions["release"] == "1.1.0-rc.3"
     assert versions["devtool"] == "1.1.0"
-    assert versions["desktop"] == "0.4.0"
+    assert versions["desktop"] == "0.5.0"
     assert versions["android"]["application_id"] == "io.github.mikeceead.devtoolhud"
     assert versions["android"]["version_code"] >= 1
     assert versions["android"]["version_name"].count(".") >= 1
     assert versions["minimums"] == {
         "python": "3.11",
-        "qt": "5.15",
         "android_min_sdk": 26,
         "android_target_sdk": 36,
         "java": 17,
+        "gtk": "4.0",
+        "libadwaita": "1",
     }
     assert validate_version_consistency(ROOT) == []
 
@@ -52,7 +55,7 @@ def test_release_qualification_matrix_covers_every_native_and_package_gate() -> 
     gates = {gate["id"]: gate for gate in matrix["gates"]}
     expected_gates = {
         "versions", "python-compile", "python-tests", "shell-syntax", "ui-ux-contract",
-        "qt-configure", "qt-build", "qt-smoke",
+        "desktop-gtk-smoke", "desktop-gtk-package",
         "android-lint", "android-unit", "android-release", "android-instrumentation",
         "source-archive",
     }
@@ -60,7 +63,7 @@ def test_release_qualification_matrix_covers_every_native_and_package_gate() -> 
     assert gates["versions"]["required"]
     assert gates["source-archive"]["required"]
     assert gates["ui-ux-contract"]["required"]
-    assert not gates["qt-build"]["required"]
+    assert not gates["desktop-gtk-package"]["required"]
     assert not gates["android-release"]["required"]
 
 
@@ -68,40 +71,45 @@ def test_release_qualifier_has_explicit_toolchain_skip_and_require_semantics() -
     source = read(ROOT / "devtool" / "release_qualification.py")
     for token in (
         "require_qt", "require_android", "run_device_tests",
-        "Qt 5 development files were not detected",
+        "GTK4/libadwaita Python bindings were not detected",
+        "desktop-gtk-package",
         "Android SDK platform 36 and build-tools 36.0.0 were not detected",
         "release signing environment is incomplete",
     ):
         assert token in source
     assert all(path.is_file() for path in shell_entry_points(ROOT))
-    assert isinstance(qt_available(), bool)
+    assert isinstance(gtk4_available(), bool)
+    assert isinstance(desktop_available(), bool)
+    assert isinstance(qt_available(), bool)  # compatibility API alias, no Qt probing
     assert not android_sdk_available({})
 
 
-def test_qt_release_build_has_version_and_offscreen_qml_smoke_tests() -> None:
-    cmake = read(DESKTOP / "CMakeLists.txt")
-    main = read(DESKTOP / "src" / "main.cpp")
-    hud = read(DESKTOP / "src" / "HudMain.cpp")
-    smoke = read(DESKTOP / "tests" / "run-headless-smoke.sh")
-    for token in (
-        "DEVTOOL_ENABLE_TESTS", "control-center-version", "control-center-hud-version",
-        "control-center-qml-smoke", "control-center-hud-qml-smoke", "DEVTOOL_CC_VERSION",
-    ):
-        assert token in cmake
-    assert 'hasArgument(argc, argv, "--version")' in main
-    assert 'hasArgument(argc, argv, "--version")' in hud
-    assert '"--exit-when-idle"' in hud
-    for token in ("QT_QPA_PLATFORM", "offscreen", "QT_QUICK_BACKEND", "QSG_RHI_BACKEND", "timeout 15"):
-        assert token in smoke
+def test_gtk_release_build_is_python_based_and_legacy_qt_tree_is_removed() -> None:
+    build = read(DESKTOP / "build.sh")
+    package = read(DESKTOP / "package-deb.sh")
+    control = read(DESKTOP / "packaging" / "debian" / "control")
+    assert "compileall" in build
+    assert "no native build step is required" in build
+    assert "usr/lib/python3/dist-packages/devtool" in package
+    assert "devtool.desktop.control_center_cli" in package
+    assert "devtool.desktop.gtk_hud_cli" in package
+    assert "gir1.2-gtk-4.0" in control
+    assert "gir1.2-adw-1" in control
+    assert "libqt5" not in control.lower()
+    assert not (ROOT / "desktop" / "devtool-control-center").exists()
 
 
 def test_desktop_package_is_reproducible_checksummed_and_self_verifying() -> None:
-    package = read(DESKTOP / "package-deb.sh")
+    package = read(ROOT / "desktop" / "gtk-control-center" / "package-deb.sh")
+    control = read(ROOT / "desktop" / "gtk-control-center" / "packaging" / "debian" / "control")
     for token in (
         "SOURCE_DATE_EPOCH", "touch -h -d", "--uniform-compression", "-Zxz",
-        'sha256sum "$deb_path"', "--verify", "dpkg-deb --contents", "Package verification passed",
+        'sha256sum "$deb_path"', "--verify", "dpkg-deb --contents", "GTK package verification passed",
+        "devtool-control-center-hud", "gir1.2-gtk-4.0", "gir1.2-adw-1",
     ):
-        assert token in package
+        assert token in package or token in control
+    assert "qml-module" not in control
+    assert "libqt5" not in control
 
 
 def test_android_release_fails_closed_and_has_local_and_device_tests() -> None:
@@ -155,9 +163,18 @@ def test_android_release_models_compile_and_execute_without_android_framework(tm
             }
         }
     """), encoding="utf-8")
+    annotation = tmp_path / "android" / "annotation"
+    annotation.mkdir(parents=True)
+    (annotation / "SuppressLint.java").write_text(
+        'package android.annotation; public @interface SuppressLint { String[] value(); }\n',
+        encoding="utf-8",
+    )
     classes = tmp_path / "classes"
     classes.mkdir()
-    subprocess.run(["javac", "-d", str(classes), *map(str, package.glob("*.java"))], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["javac", "-d", str(classes), str(annotation / "SuppressLint.java"), *map(str, package.glob("*.java"))],
+        check=True, capture_output=True, text=True,
+    )
     completed = subprocess.run(
         ["java", "-cp", str(classes), "io.github.mikeceead.devtoolhud.ReleaseHarness"],
         check=True, capture_output=True, text=True,
@@ -167,12 +184,12 @@ def test_android_release_models_compile_and_execute_without_android_framework(tm
     ]
 
 
-def test_ci_matrix_builds_qt_signed_android_emulator_and_source_release() -> None:
+def test_ci_matrix_builds_gtk_desktop_signed_android_emulator_and_source_release() -> None:
     workflow = read(ROOT / ".github" / "workflows" / "release-qualification.yml")
-    for job in ("core:", "qt:", "android:", "android-device:", "source-release:"):
+    for job in ("core:", "gtk-desktop:", "android:", "android-device:", "source-release:"):
         assert job in workflow
     for token in (
-        "ctest --test-dir", "package-deb.sh --skip-build --verify",
+        "desktop/gtk-control-center/package-deb.sh --verify", "devtool control-center --backend gtk4 --once",
         "lintRelease testReleaseUnitTest verifyReleaseApk",
         "connectedDebugAndroidTest", "android-emulator-runner",
         "build-release.py --out-dir dist/release --verify-reproducible",

@@ -1,6 +1,6 @@
 # UI regression protection
 
-Slice 4 adds one repeatable regression contract for the terminal, Qt Control
+Slice 4 adds one repeatable regression contract for the terminal, GTK4 Control
 Center/HUD, and Android frontend.
 
 ## Golden snapshots
@@ -13,7 +13,7 @@ Center/HUD, and Android frontend.
 
 The SVG snapshots intentionally avoid platform fonts and native widget raster
 output. They remain byte-stable in headless CI while still producing images
-that can be opened and visually diffed. Native Qt/Android screenshot jobs can
+that can be opened and visually diffed. Native GTK4/Android screenshot jobs can
 use the same scenario IDs as their fixture names.
 
 Update snapshots only after reviewing the resulting diff:
@@ -42,7 +42,7 @@ these required state families:
 
 ## Terminology consistency
 
-The Slice 4 tests compare the shared contract with Python, QML, and Java source.
+The Slice 4 tests compare the shared contract with Python and Java source.
 They prevent old .NET-only or GTK-era labels from returning and require the same
 runner labels in the desktop HUD and Android presentation layer.
 
@@ -63,7 +63,7 @@ filtering, repeated case conversion, or giant concatenated buffers.
 
 ## Native screenshot matrix
 
-Where Qt 5 and the Android SDK/emulator are available, capture the same scenario
+Where GTK4 and the Android SDK/emulator are available, capture the same scenario
 IDs at:
 
 - Desktop: 640×720, 900×720, and 1440×900; 100% and 200% scaling.
@@ -79,7 +79,7 @@ mandatory on every platform.
 
 The final roadmap gate is `tests/test_ui_contract_finalization.py`. It ties together the accepted contracts from the HUD parity/autosize, typography/navigation, Overview/Run-flow, detailed HUD, and notification accessibility overlays.
 
-This test is intentionally source-contract based so it can run on Termux/chroot systems without a Qt display server or Android emulator. Native screenshot captures remain supplemental, but the final contract must verify the following on every platform:
+This test is intentionally source-contract based so it can run on Termux/chroot systems without a desktop display server or Android emulator. Native screenshot captures remain supplemental, but the final contract must verify the following on every platform:
 
 - Desktop HUD content-aware auto-size remains present and HUD detail is not removed.
 - Android floating HUD persists and clamps its position.

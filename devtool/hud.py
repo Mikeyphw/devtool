@@ -2095,499 +2095,6 @@ StartupWMClass={DESKTOP_HUD_WM_CLASS}
 
 
 
-def _control_center_binary() -> str | None:
-    configured = os.environ.get("DEVTOOL_CONTROL_CENTER", "").strip()
-    candidates: list[str] = []
-    if configured:
-        candidates.append(configured)
-    located = shutil.which("devtool-control-center")
-    if located:
-        candidates.append(located)
-    source_root = Path(__file__).resolve().parent.parent
-    candidates.extend(
-        str(path)
-        for path in (
-            source_root / "desktop" / "devtool-control-center" / "build" / "devtool-control-center",
-            Path.home() / ".local" / "bin" / "devtool-control-center",
-            Path("/usr/local/bin/devtool-control-center"),
-            Path("/usr/bin/devtool-control-center"),
-        )
-    )
-    for candidate in candidates:
-        path = Path(candidate).expanduser()
-        if path.is_file() and os.access(path, os.X_OK):
-            return str(path)
-    return None
-
-
-def _control_center_hud_binary() -> str | None:
-    candidates: list[str] = []
-    configured = os.environ.get("DEVTOOL_CONTROL_CENTER_HUD", "").strip()
-    if configured:
-        candidates.append(configured)
-    located = shutil.which("devtool-control-center-hud")
-    if located:
-        candidates.append(located)
-    source_root = Path(__file__).resolve().parent.parent
-    candidates.extend(
-        str(path)
-        for path in (
-            source_root / "desktop" / "devtool-control-center" / "build" / "devtool-control-center-hud",
-            Path.home() / ".local" / "bin" / "devtool-control-center-hud",
-            Path("/usr/local/bin/devtool-control-center-hud"),
-            Path("/usr/bin/devtool-control-center-hud"),
-        )
-    )
-    for candidate in candidates:
-        path = Path(candidate).expanduser()
-        if path.is_file() and os.access(path, os.X_OK):
-            return str(path)
-    return None
-
-
-class QtCompactHud:
-    """Native Qt 5 compact HUD used by the desktop-window backend."""
-
-    @classmethod
-    def available(cls) -> bool:
-        return _control_center_hud_binary() is not None
-
-    def run(
-        self,
-        *,
-        directory: Path,
-        interval_s: float,
-        once: bool = False,
-        follow_active: bool = False,
-    ) -> int:
-        del interval_s, follow_active
-        binary = _control_center_hud_binary()
-        if not binary:
-            raise RuntimeError(
-                "The Qt 5 desktop HUD requires devtool-control-center-hud. "
-                "Install the Control Center HUD package or set DEVTOOL_CONTROL_CENTER_HUD."
-            )
-        env = os.environ.copy()
-        # A stale Qt style override can abort startup before the window is shown.
-        if env.get("QT_STYLE_OVERRIDE", "").strip().lower() == "kvantum":
-            env.pop("QT_STYLE_OVERRIDE", None)
-        env["DEVTOOL_TASKER_DIR"] = str(directory.expanduser())
-        argv = [binary]
-        if once:
-            argv.append("--exit-when-idle")
-        return subprocess.run(argv, env=env, check=False).returncode
-
-
-class GtkDesktopHud:
-    """Compact GTK floating desktop HUD for GNOME/Unix desktops."""
-
-    def __init__(self, *, recent_events: int = DEFAULT_RECENT_EVENTS) -> None:
-        self.recent_events = recent_events
-
-    @staticmethod
-    def _require_gtk3() -> Any:
-        import gi  # type: ignore[import-not-found]
-
-        # Pin every GTK namespace before importing from gi.repository.
-        # On GNOME systems with GTK 4 installed, importing Gdk without this
-        # can load Gdk 4 first; Gtk 3 then crashes with:
-        # "Requiring namespace 'Gdk' version '3.0', but '4.0' is already loaded".
-        gi.require_version("Gtk", "3.0")
-        gi.require_version("Gdk", "3.0")
-        gi.require_version("Pango", "1.0")
-        from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # type: ignore[import-not-found]
-
-        return Gdk, Gio, GLib, Gtk, Pango
-
-    @staticmethod
-    def available() -> bool:
-        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-            return False
-        if importlib.util.find_spec("gi") is None:
-            return False
-        try:
-            GtkDesktopHud._require_gtk3()
-        except Exception:
-            return False
-        return True
-
-    def run(self, *, directory: Path, interval_s: float, once: bool = False, follow_active: bool = False) -> int:
-        if once:
-            snapshot = snapshot_from_runtime_directory(directory, follow_active=follow_active, recent_events=self.recent_events)
-            print(json.dumps({"state": snapshot["state"], "events": snapshot["events"], "phase_highlights": last_phase_highlights(snapshot["events"])}, ensure_ascii=False, indent=2))
-            return 0
-        try:
-            Gdk, Gio, GLib, Gtk, Pango = self._require_gtk3()
-        except Exception as exc:
-            raise RuntimeError("GTK HUD requires PyGObject/GTK 3. On Ubuntu: sudo apt install python3-gi gir1.2-gtk-3.0") from exc
-
-        icon_path = _install_desktop_hud_identity()
-        with contextlib.suppress(Exception):
-            GLib.set_application_name("Devtool HUD")
-        with contextlib.suppress(Exception):
-            GLib.set_prgname(DESKTOP_HUD_WM_CLASS)
-        with contextlib.suppress(Exception):
-            Gdk.set_program_class(DESKTOP_HUD_WM_CLASS)
-        with contextlib.suppress(Exception):
-            Gtk.Window.set_default_icon_name(DESKTOP_HUD_ICON_NAME)
-
-        start_expanded = desktop_hud_starts_expanded()
-        compact_width, compact_height = DEFAULT_DESKTOP_HUD_COMPACT_SIZE
-        expanded_width, expanded_height = DEFAULT_DESKTOP_HUD_EXPANDED_SIZE
-
-        window = Gtk.Window(title="Devtool HUD")
-        window.set_name(DESKTOP_HUD_WM_CLASS)
-        window.set_default_size(
-            expanded_width if start_expanded else compact_width,
-            expanded_height if start_expanded else compact_height,
-        )
-        window.set_keep_above(True)
-        window.set_resizable(True)
-        with contextlib.suppress(Exception):
-            window.set_wmclass(DESKTOP_HUD_WM_CLASS, DESKTOP_HUD_WM_CLASS)
-        with contextlib.suppress(Exception):
-            window.set_role(DESKTOP_HUD_WM_CLASS)
-        with contextlib.suppress(Exception):
-            window.set_icon_name(DESKTOP_HUD_ICON_NAME)
-        if icon_path is not None:
-            with contextlib.suppress(Exception):
-                window.set_icon_from_file(str(icon_path))
-        window.connect("destroy", Gtk.main_quit)
-
-        def _move_window_top_right() -> bool:
-            """Place the desktop HUD near the top-right of the active monitor."""
-            try:
-                margin = int(os.environ.get("DEVTOOL_DESKTOP_HUD_MARGIN", "24"))
-            except ValueError:
-                margin = 24
-            with contextlib.suppress(Exception):
-                screen = window.get_screen()
-                gdk_window = window.get_window()
-                if gdk_window is not None:
-                    monitor = screen.get_monitor_at_window(gdk_window)
-                else:
-                    monitor = screen.get_primary_monitor()
-                geometry = screen.get_monitor_workarea(monitor)
-                width, _height = window.get_size()
-                x = geometry.x + geometry.width - width - margin
-                y = geometry.y + margin
-                window.move(max(geometry.x, x), max(geometry.y, y))
-            return False
-
-        window.connect("realize", lambda *_args: GLib.idle_add(_move_window_top_right))
-
-        css = b"""
-        .hud-root { background: #0b0f14; color: #eef4ff; }
-        .hud-card { background: #121923; border-radius: 18px; padding: 14px; }
-        .hud-header { color: #8ea0b4; font-size: 11px; letter-spacing: 0.08em; font-weight: 800; }
-        .hud-badge { color: #10151d; background: #ffd166; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 900; }
-        .hud-title { color: #f8fbff; font-size: 21px; font-weight: 900; }
-        .hud-context { color: #cfe0f5; font-size: 14px; font-weight: 700; }
-        .hud-muted { color: #91a3b8; font-size: 12px; }
-        .hud-step-label { color: #91a3b8; font-size: 10px; font-weight: 800; }
-        .hud-step-label-running { color: #ffd166; }
-        .hud-step-label-ok { color: #5ee49b; }
-        .hud-step-label-failed { color: #ff6978; }
-        .hud-step-label-skipped { color: #66778a; }
-        .hud-metric { color: #f6f8fb; font-size: 17px; font-weight: 900; }
-        .hud-metric-label { color: #8ea0b4; font-size: 10px; letter-spacing: 0.05em; font-weight: 800; }
-        .hud-event { color: #d6e2f0; font-size: 13px; font-weight: 600; }
-        .hud-error-banner { color: #ffffff; background: #3b1219; border-radius: 14px; padding: 10px; font-size: 14px; font-weight: 900; }
-        .hud-warning-banner { color: #fff4c2; background: #30240c; border-radius: 14px; padding: 10px; font-size: 13px; font-weight: 800; }
-        .hud-debug { color: #8ea0b4; font-family: monospace; font-size: 11px; }
-        .hud-ok { color: #5ee49b; }
-        .hud-failed { color: #ff6978; font-weight: 900; }
-        .hud-running { color: #ffd166; font-weight: 800; }
-        .hud-neutral { color: #91a3b8; }
-        progressbar.hud-step-progress trough { min-height: 9px; border-radius: 999px; background: #071018; }
-        progressbar.hud-step-progress progress { min-height: 9px; border-radius: 999px; background: #415064; }
-        progressbar.hud-step-ok progress { background: #5ee49b; }
-        progressbar.hud-step-failed progress { background: #ff6978; }
-        progressbar.hud-step-running progress { background: #ffd166; }
-        progressbar.hud-step-skipped progress { background: #263342; }
-        progressbar.hud-step-pending progress { background: #263342; }
-        button { border-radius: 10px; padding: 5px 9px; background: #1b2634; color: #e8eef6; }
-        expander { color: #91a3b8; }
-        """
-        provider = Gtk.CssProvider(); provider.load_from_data(css)
-        screen = Gdk.Screen.get_default()
-        if screen is not None:
-            Gtk.StyleContext.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-        def _label(text: str = "", css_class: str = "", *, xalign: float = 0.0, wrap: bool = False, selectable: bool = False) -> Any:
-            label = Gtk.Label(label=text)
-            label.set_xalign(xalign)
-            label.set_yalign(0)
-            label.set_line_wrap(wrap)
-            label.set_selectable(selectable)
-            if css_class:
-                label.get_style_context().add_class(css_class)
-            return label
-
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        outer.get_style_context().add_class("hud-root")
-        outer.set_margin_top(10); outer.set_margin_bottom(10); outer.set_margin_start(10); outer.set_margin_end(10)
-        window.add(outer)
-
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
-        card.get_style_context().add_class("hud-card")
-        outer.pack_start(card, True, True, 0)
-
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); card.pack_start(header, False, False, 0)
-        header_label = _label("DEVTOOL", "hud-header"); header.pack_start(header_label, True, True, 0)
-        expand_button = Gtk.Button(label="Collapse" if start_expanded else "Expand")
-        status_badge = _label("WAITING", "hud-badge", xalign=1.0)
-        header.pack_end(status_badge, False, False, 0)
-        header.pack_end(expand_button, False, False, 0)
-
-        title = _label("Waiting for progress", "hud-title", wrap=True); card.pack_start(title, False, False, 0)
-        context_label = _label("Waiting for target", "hud-context"); context_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE); card.pack_start(context_label, False, False, 0)
-        detail = _label("No devtool task has reported progress yet.", "hud-muted", wrap=True); card.pack_start(detail, False, False, 0)
-
-        pipeline_heading = _label("OPERATIONS", "hud-header"); card.pack_start(pipeline_heading, False, False, 0)
-        step_pipeline = Gtk.FlowBox()
-        step_pipeline.set_selection_mode(Gtk.SelectionMode.NONE)
-        step_pipeline.set_homogeneous(True)
-        step_pipeline.set_min_children_per_line(1)
-        step_pipeline.set_max_children_per_line(4)
-        step_pipeline.set_column_spacing(6)
-        step_pipeline.set_row_spacing(5)
-        card.pack_start(step_pipeline, False, False, 0)
-
-        metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12); card.pack_start(metrics, False, False, 0)
-        error_metric = _label("0\nERRORS", "hud-metric", wrap=True)
-        warning_metric = _label("0\nWARNINGS", "hud-metric", wrap=True)
-        progress_metric = _label("WAITING\nSTATUS", "hud-metric", wrap=True)
-        for metric in (error_metric, warning_metric, progress_metric):
-            metric.set_justify(Gtk.Justification.CENTER)
-            metrics.pack_start(metric, True, True, 0)
-
-        error_label = _label("", "hud-error-banner", wrap=True); error_label.set_no_show_all(True); card.pack_start(error_label, False, False, 0)
-        warning_label = _label("", "hud-warning-banner", wrap=True); warning_label.set_no_show_all(True); card.pack_start(warning_label, False, False, 0)
-
-        expanded_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
-        expanded_section.set_no_show_all(not start_expanded)
-        card.pack_start(expanded_section, True, True, 0)
-
-        recent_heading = _label("RECENT", "hud-header"); expanded_section.pack_start(recent_heading, False, False, 0)
-        events_scroller = Gtk.ScrolledWindow(); events_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); events_scroller.set_min_content_height(118)
-        events_label = _label("No events yet", "hud-event", wrap=True, selectable=True); events_scroller.add(events_label); expanded_section.pack_start(events_scroller, True, True, 0)
-
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6); card.pack_start(actions, False, False, 0)
-        copy_button = Gtk.Button(label="Copy summary"); log_button = Gtk.Button(label="Open log"); close_button = Gtk.Button(label="Close")
-        actions.pack_start(copy_button, False, False, 0); actions.pack_start(log_button, False, False, 0); actions.pack_end(close_button, False, False, 0)
-        debug = Gtk.Expander(label="Details"); debug.set_expanded(False)
-        debug_label = _label("", "hud-debug", wrap=True, selectable=True); debug.add(debug_label); expanded_section.pack_start(debug, False, False, 0)
-        last_summary = {"text": "Devtool HUD: waiting", "log_path": ""}
-        expanded_state = {"value": start_expanded}
-
-        def _copy_summary(_button: Any) -> None:
-            clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD); clipboard.set_text(str(last_summary.get("text") or ""), -1); clipboard.store()
-        def _open_log(_button: Any) -> None:
-            log_path = str(last_summary.get("log_path") or "")
-            if log_path:
-                with contextlib.suppress(Exception):
-                    subprocess.Popen(["xdg-open", log_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        def _set_expanded(expanded: bool) -> None:
-            expanded_state["value"] = bool(expanded)
-            if expanded:
-                expanded_section.set_no_show_all(False)
-                expanded_section.show_all()
-                expand_button.set_label("Collapse")
-                window.resize(expanded_width, expanded_height)
-            else:
-                expanded_section.hide()
-                expanded_section.set_no_show_all(True)
-                expand_button.set_label("Expand")
-                window.resize(compact_width, compact_height)
-            GLib.idle_add(_move_window_top_right)
-
-        def _toggle_expanded(_button: Any) -> None:
-            _set_expanded(not bool(expanded_state["value"]))
-
-        copy_button.connect("clicked", _copy_summary); log_button.connect("clicked", _open_log); close_button.connect("clicked", lambda _button: Gtk.main_quit())
-        expand_button.connect("clicked", _toggle_expanded)
-
-        def _set_status_classes(widget: Any, status: str) -> None:
-            ctx = widget.get_style_context()
-            for cls in ("hud-ok", "hud-failed", "hud-running", "hud-neutral"):
-                ctx.remove_class(cls)
-            if status == "failed":
-                ctx.add_class("hud-failed")
-            elif status == "ok":
-                ctx.add_class("hud-ok")
-            elif status == "running":
-                ctx.add_class("hud-running")
-            else:
-                ctx.add_class("hud-neutral")
-
-        def _render_operation_steps(steps: list[HudOperationStep]) -> None:
-            for child in step_pipeline.get_children():
-                step_pipeline.remove(child)
-            for step in steps:
-                column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
-                label = _label(step.label.upper(), "hud-step-label", xalign=0.5)
-                label.set_ellipsize(Pango.EllipsizeMode.END)
-                label_ctx = label.get_style_context()
-                label_ctx.add_class(f"hud-step-label-{step.status if step.status in {'running', 'ok', 'failed', 'skipped'} else 'skipped'}")
-                bar = Gtk.ProgressBar()
-                bar.get_style_context().add_class("hud-step-progress")
-                bar.get_style_context().add_class(f"hud-step-{step.status}")
-                if step.status == "running" and step.progress <= 0:
-                    bar.pulse()
-                else:
-                    fraction = 1.0 if step.status in {"ok", "failed", "skipped"} else max(0.0, min(1.0, step.progress / 100.0))
-                    bar.set_fraction(fraction)
-                column.pack_start(label, False, False, 0)
-                column.pack_start(bar, False, False, 0)
-                column.set_size_request(104, -1)
-                step_pipeline.insert(column, -1)
-            step_pipeline.show_all()
-
-
-        def refresh() -> bool:
-            current_dir = resolve_hud_directory(directory, follow_active=follow_active)
-            snapshot = snapshot_from_directory(current_dir, recent_events=max(self.recent_events, 14))
-            state = state_from_directory(current_dir)
-            raw_events = _last_jsonl_events(current_dir / "events.jsonl", 2000)
-            events = events_for_state(raw_events, state)
-            recent_events = events[-max(self.recent_events, 14):]
-            highlights = last_phase_highlights(events)
-            steps = operation_steps(state, events)
-            operation = compact_operation_title(state)
-            errors = recent_error_lines(events, limit=2)
-            if state.status == "failed" and not errors:
-                errors = [compact_detail_text(state)]
-            warnings = []
-            for event in events:
-                if event_is_warning(event):
-                    line = friendly_event_line(event)
-                    if line and line not in warnings:
-                        warnings.append(line)
-            warnings = warnings[-2:]
-            summary = hud_event_summary(events)
-            completion = completion_from_state(state)
-            error_count, warning_count = live_issue_counts(events, state)
-
-            title.set_text(operation)
-            context_label.set_text(state_context_label(state))
-            detail.set_text(compact_detail_text(state))
-            window.set_title(state_window_title(state))
-            status_badge.set_text(human_status(state.status).upper())
-            _set_status_classes(status_badge, state.status)
-            _render_operation_steps(steps)
-
-            recent_heading.set_text("RESULT" if state.status in {"ok", "failed"} else "RECENT")
-
-            active_step = next((step for step in steps if step.status == "running"), None)
-            completed_steps = sum(1 for step in steps if step.status in {"ok", "failed", "skipped"})
-            total_steps = len(steps)
-
-
-            error_metric.set_text(f"{error_count}\nERRORS")
-            warning_metric.set_text(f"{warning_count}\nWARNINGS")
-            if state.status == "failed":
-                progress_metric.set_text("FAILED\nSTATUS")
-            elif state.status == "ok":
-                progress_metric.set_text(f"{completed_steps}/{total_steps}\nSTEPS" if total_steps else "DONE\nSTATUS")
-            elif active_step is not None:
-                progress_metric.set_text(f"{active_step.label.upper()}\nACTIVE")
-            elif total_steps:
-                progress_metric.set_text(f"{completed_steps}/{total_steps}\nSTEPS")
-            else:
-                progress_metric.set_text(f"{human_status(state.status).upper()}\nSTATUS")
-            _set_status_classes(error_metric, "failed" if error_count else "ok")
-            _set_status_classes(warning_metric, "running" if warning_count else "ok")
-            _set_status_classes(progress_metric, state.status)
-
-            if errors:
-                error_label.set_text("❌ " + "\n❌ ".join(errors))
-                error_label.show()
-            else:
-                error_label.hide()
-            if warnings:
-                warning_label.set_text("⚠ " + "\n⚠ ".join(warnings))
-                warning_label.show()
-            else:
-                warning_label.hide()
-
-            shown = concise_event_pairs(recent_events, limit=5)
-            formatted_lines = [f"{event_icon(event)} {line}" for event, line in shown]
-            events_label.set_text("\n".join(formatted_lines) or "No events yet")
-
-            phase_lines = []
-            for key in ("restore", "build", "test"):
-                if key in highlights:
-                    phase_lines.append(f"{human_phase_name(key)}: {highlights[key]}")
-            meta_lines = []
-            if state.phase_name:
-                meta_lines.append(f"Phase: {human_phase_name(state.phase_name)}")
-            elif state.command:
-                meta_lines.append(f"Command: {human_phase_name(state.command)}")
-            if state.repo_name:
-                meta_lines.append(f"Repo: {state.repo_name}")
-            if state.target:
-                meta_lines.append(f"Target: {state.target}")
-            if follow_active:
-                meta_lines.append("Following active HUD")
-
-            log_path = latest_log_path(events)
-            log_button.set_sensitive(bool(log_path) and shutil.which("xdg-open") is not None)
-            summary_lines = [
-                operation,
-                state_context_label(state),
-                compact_detail_text(state),
-                state_metric_text(state, events),
-                " → ".join(f"{step.label}: {step.status}" for step in steps),
-                *(errors or []),
-                *(warnings or []),
-                *phase_lines,
-                *[line for _event, line in shown],
-            ]
-            final_copy = completion_copy_text(state)
-            last_summary["text"] = final_copy or "\n".join(line for line in summary_lines if line)
-            last_summary["log_path"] = log_path or ""
-            debug_label.set_text("\n".join([f"active_dir={current_dir}", f"state={current_dir / 'state.json'}", f"events={current_dir / 'events.jsonl'}", f"seq={state.seq if state.seq is not None else '-'} status={state.status} event={state.event_type}", *meta_lines, f"log={log_path or '-'}"]))
-            return True
-        GLib.timeout_add(max(100, int(interval_s * 1000)), refresh)
-        refresh()
-        window.show_all()
-        if not start_expanded:
-            _set_expanded(False)
-        Gtk.main()
-        return 0
-
-
-DASHBOARD_HTML = r"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>devtool HUD v5</title>
-<style>
-:root{color-scheme:dark;--bg:#0b0f14;--card:#121923;--muted:#8ea0b4;--text:#e8eef6;--line:#243244;--ok:#5ee49b;--bad:#ff6978;--warn:#ffd166}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:16px}.wrap{max-width:980px;margin:0 auto;display:grid;gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 16px 40px rgba(0,0,0,.25)}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}.title{font-size:22px;font-weight:800}.pill{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 9px}.bar{height:18px;background:#071018;border:1px solid var(--line);border-radius:999px;overflow:hidden}.fill{height:100%;width:0;background:linear-gradient(90deg,var(--ok),#68d8ff);transition:width .18s ease}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.kv{background:#0c131c;border:1px solid var(--line);border-radius:14px;padding:10px}.k{color:var(--muted);font-size:12px}.v{font-weight:700;overflow-wrap:anywhere}.events{display:grid;gap:8px;max-height:50vh;overflow:auto}.event{border:1px solid var(--line);border-radius:14px;padding:10px;background:#0c131c}.event .meta{color:var(--muted);font-size:12px;margin-bottom:4px}pre{white-space:pre-wrap;word-break:break-word;margin:0;color:#cfe3ff}.bad{color:var(--bad)}.ok{color:var(--ok)}@media(max-width:720px){body{padding:10px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.title{font-size:18px}}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <section class="card top"><div><div class="title" id="title">devtool HUD</div><div id="text" class="pill">waiting</div></div><div class="pill" id="connected">connecting</div></section>
-  <section class="card"><div class="bar"><div class="fill" id="fill"></div></div><p><b id="pct">0%</b> <span id="count" class="pill">-/-</span></p></section>
-  <section class="grid"><div class="kv"><div class="k">State</div><div class="v" id="status">idle</div></div><div class="kv"><div class="k">Update</div><div class="v" id="event">idle</div></div><div class="kv"><div class="k">Phase</div><div class="v" id="phase">-</div></div><div class="kv"><div class="k">Project</div><div class="v" id="repo">-</div></div></section>
-  <section class="card"><h3>Recent events</h3><div id="events" class="events"></div></section>
-</div>
-<script>
-const $=id=>document.getElementById(id);
-function esc(s){return String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function eventMsg(e){const p=e.progress||{}; return e.message || p.detail || e.text || '';}
-function render(data){const s=data.state||{}; const pct=s.percent ?? 0; $('title').textContent=s.display_title||s.title||'devtool HUD'; $('text').textContent=s.display_text||s.text||'waiting'; $('fill').style.width=Math.max(0,Math.min(100,pct))+'%'; $('pct').textContent=pct+'%'; $('count').textContent=(s.current ?? '-')+'/'+(s.total ?? '-'); $('status').textContent=s.human_status||s.status||'Waiting'; $('event').textContent=s.human_event_type||s.event_type||'Update'; $('phase').textContent=s.human_phase_name||s.phase_name||'-'; $('repo').textContent=s.repo_name||'-'; const events=(data.events||[]).slice().reverse(); $('events').innerHTML=events.map(e=>`<div class="event"><div class="meta">${esc(e.event_type||e.type||'event')} ${esc(e.current??((e.progress||{}).completed)??'')}/${esc(e.total??((e.progress||{}).total)??'')}</div><pre>${esc(eventMsg(e))}</pre></div>`).join('')||'<div class="pill">No events yet</div>';}
-async function poll(){try{const r=await fetch('/api/state',{cache:'no-store'}); render(await r.json()); $('connected').textContent='connected'; $('connected').className='pill ok';}catch(e){$('connected').textContent='offline'; $('connected').className='pill bad';}}
-if (!!window.EventSource){const es=new EventSource('/stream'); es.onmessage=ev=>{render(JSON.parse(ev.data)); $('connected').textContent='live'; $('connected').className='pill ok';}; es.onerror=()=>{ $('connected').textContent='reconnecting'; $('connected').className='pill';};} else {setInterval(poll,500);} poll();
-</script>
-</body>
-</html>
-"""
-
 
 class WebDashboardHud:
     def __init__(self, *, host: str = DEFAULT_HUD_HOST, port: int = DEFAULT_HUD_PORT, recent_events: int = DEFAULT_RECENT_EVENTS, interval_s: float = DEFAULT_HUD_POLL_INTERVAL, follow_active: bool = False) -> None:
@@ -2725,30 +2232,51 @@ class StudioHud:
                 live.update(terminal.render(state, events))
                 time.sleep(interval_s)
 
+def legacy_desktop_mode_message(requested: str) -> str:
+    requested = (requested or "").strip() or "desktop"
+    if requested in {"qt", "qt5", "qt6", "qt-window", "qt-control-center"}:
+        return (
+            f"Legacy Qt desktop mode {requested!r} was removed in the GTK4 desktop seal. "
+            "Use 'desktop-window' for the GTK4 HUD or 'control-center' for the GTK4 Control Center."
+        )
+    return (
+        f"Legacy desktop mode {requested!r} is no longer a separate backend. "
+        "Use 'desktop-window' for the GTK4 HUD."
+    )
+
 
 def choose_hud_mode(requested: str) -> str:
     requested = (requested or "auto").strip().lower()
+    legacy_qt_modes = {"qt", "qt5", "qt6", "qt-window", "qt-control-center"}
+    legacy_gtk_modes = {"gtk-window", "gtk3", "x11-gtk"}
     aliases = {
         "v3": "terminal", "console": "terminal",
         "v4": "web", "server": "web", "http": "web", "dashboard": "web",
         "v5": "studio", "all": "studio",
         "v6": "desktop", "unix": "desktop", "gnome": "desktop",
-        "desktop-gtk": "gtk-window", "gtk": "gtk-window", "gtk3": "gtk-window",
-        "notify-send": "desktop-notify", "libnotify": "desktop-notify",
+        "desktop-gtk": "desktop-window", "gtk": "desktop-window", "gtk4": "desktop-window",
+        "gtk4-window": "desktop-window", "notify-send": "desktop-notify", "libnotify": "desktop-notify",
         "termux-gui": "android-bridge", "termuxgui": "android-bridge",
         "android": "android-bridge", "android-gui": "android-bridge",
         "android-overlay": "android-bridge",
-        "qt": "control-center", "qt5": "control-center", "qt6": "control-center",
-        "qt-control-center": "control-center", "control-centre": "control-center",
+        "control-centre": "control-center",
         "android-chroot": "android-bridge", "termux-bridge": "android-bridge",
         "termux-chroot": "android-bridge", "android-hud-bridge": "android-bridge",
     }
+    if requested in legacy_qt_modes:
+        return "legacy-qt-removed"
+    if requested in legacy_gtk_modes:
+        return "desktop-window"
     requested = aliases.get(requested, requested)
     if requested == "desktop":
         if _is_termux_android() or _is_termux_chroot_bridge():
             return "android-bridge"
-        if QtCompactHud.available():
-            return "desktop-window"
+        try:
+            from .desktop.gtk_hud import Gtk4CompactHud
+            if Gtk4CompactHud.available():
+                return "desktop-window"
+        except Exception:
+            pass
         if DesktopNotificationHud.available():
             return "desktop-notify"
         return "terminal"
@@ -2759,8 +2287,12 @@ def choose_hud_mode(requested: str) -> str:
     if _is_termux_android() or _is_termux_chroot_bridge():
         return "android-bridge"
     if os.name == "posix" and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-        if QtCompactHud.available():
-            return "desktop-window"
+        try:
+            from .desktop.gtk_hud import Gtk4CompactHud
+            if Gtk4CompactHud.available():
+                return "desktop-window"
+        except Exception:
+            pass
         if DesktopNotificationHud.available():
             return "desktop-notify"
     return "terminal"
@@ -2770,9 +2302,9 @@ def build_hud_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-dir", dest="tasker_dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool live HUD state")
     parser.add_argument(
         "--mode",
-        choices=["auto", "android-bridge", "android-gui", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "gtk-window", "desktop-notify", "control-center", "qt", "qt6", "qt-control-center", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
+        choices=["auto", "android-bridge", "android-gui", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "gtk4-window", "gtk-window", "desktop-notify", "control-center", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"],
         default="auto",
-        help="HUD renderer: Android app bridge, terminal/v3, web/v4, studio/v5, or Unix desktop/v6",
+        help="HUD renderer: Android app bridge, terminal/v3, web/v4, studio/v5, or GTK4 desktop/v6",
     )
     parser.add_argument("--host", default=DEFAULT_HUD_HOST, help="Host/IP for HUD web/studio modes")
     parser.add_argument("--port", type=int, default=DEFAULT_HUD_PORT, help="Port for HUD web/studio modes")
@@ -2809,10 +2341,22 @@ def run_hud(args: argparse.Namespace) -> int:
         return WebDashboardHud(host=str(args.host), port=int(args.port), recent_events=recent_events, interval_s=interval_s, follow_active=follow_active).run(directory=directory, once=bool(args.once))
     if mode == "studio":
         return StudioHud(host=str(args.host), port=int(args.port), recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
+    if mode == "legacy-qt-removed":
+        print(legacy_desktop_mode_message(str(getattr(args, "mode", "qt-window") or "qt-window")), file=sys.stderr)
+        return 2
+    if str(getattr(args, "mode", "") or "").strip().lower() in {"gtk-window", "gtk3", "x11-gtk"}:
+        print("devtool: --mode gtk-window now maps to the GTK4 desktop HUD; use --mode desktop-window.", file=sys.stderr)
     if mode == "desktop-window":
-        return QtCompactHud().run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
-    if mode == "gtk-window":
-        return GtkDesktopHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
+        from .desktop.gtk_hud import Gtk4CompactHud
+
+        if bool(args.once) or Gtk4CompactHud.available():
+            return Gtk4CompactHud(recent_events=recent_events).run(
+                directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active
+            )
+        raise RuntimeError(
+            "Desktop HUD requires the GTK4/libadwaita backend. "
+            "Install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1."
+        )
     if mode == "desktop-notify":
         return DesktopNotificationHud(notification_id=str(args.notify_id)).run(directory=directory, interval_s=interval_s, once=bool(args.once), follow_active=follow_active)
     return TerminalHud(recent_events=recent_events).run(directory=directory, interval_s=interval_s, once=bool(args.once))

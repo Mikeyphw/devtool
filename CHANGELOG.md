@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0-rc.3 desktop GTK4 packaging flip
+
+- Promoted GTK4 Control Center packaging and removed brittle historical PHASE_* Markdown release-test requirements.
+
+
+## Desktop GTK4 migration phase 1-2
+
+- Extracted reusable desktop command, HUD snapshot, IPC, history, repository, and artifact models under `devtool.desktop`.
+- Wired the legacy Qt Run page advanced fields so environment assignments, extra global args, extra operation args, and the `--yes` checkbox affect generated commands.
+- Added a GTK4/libadwaita compact HUD and made `desktop-window` prefer it, with `qt-window` retained as the explicit legacy Qt fallback and `gtk-window` kept as a deprecated GTK3 compatibility path.
+- Added `devtool-gtk-hud` as a direct executable for the GTK4 HUD and preserved `--once` JSON snapshots without requiring a display.
+
+
 ## Interactive validation cockpit promise-completion fixes
 
 - Added revision guards to every active-session continuation, retry, exact-phase, through-phase, and selected-phase command.
@@ -37,3 +50,7 @@
 - Fixed overlay drag header accessibility performClick contract.
 - Moved remaining lint-reported setText concatenations into string resources/plurals.
 - Removed dead color/style/drawable resources.
+
+## UI contract archival cleanup
+
+- Finalized the UI/UX contract gate without requiring historical PHASE_* Markdown files.

@@ -773,7 +773,7 @@ def _configure_output(ui: TerminalUI, draft: ValidationDraft) -> bool:
                 Choice("auto", "Automatic HUD", "Publish progress and use the selected backend."),
                 Choice("off", "Disable HUD", "Do not publish live HUD state."),
                 Choice("desktop", "Desktop", "Use the desktop backend."),
-                Choice("desktop-window", "Desktop window", "Use the Qt desktop HUD window."),
+                Choice("desktop-window", "Desktop window", "Use the GTK4 desktop HUD window."),
                 Choice("android-bridge", "Android bridge", "Publish to the Termux/Android app bridge."),
                 Choice("terminal", "Terminal", "Use terminal HUD rendering."),
             ], prompt="hud")

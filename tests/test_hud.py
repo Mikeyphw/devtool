@@ -71,23 +71,6 @@ class HudTests(unittest.TestCase):
         self.assertEqual(state.total, 10)
         self.assertEqual(state.percent, 70)
 
-    def test_qt_compact_hud_strips_inherited_kvantum_style(self) -> None:
-        from devtool.hud import QtCompactHud
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            with patch.dict("os.environ", {"QT_STYLE_OVERRIDE": "kvantum"}, clear=False), \
-                 patch("devtool.hud._control_center_hud_binary", return_value="/usr/bin/devtool-control-center-hud"), \
-                 patch("devtool.hud.subprocess.run") as run:
-                run.return_value.returncode = 0
-                rc = QtCompactHud().run(directory=root, interval_s=0.1, once=True)
-
-        self.assertEqual(rc, 0)
-        env = run.call_args.kwargs["env"]
-        self.assertNotIn("QT_STYLE_OVERRIDE", env)
-        self.assertEqual(env["DEVTOOL_TASKER_DIR"], str(root))
-        self.assertEqual(run.call_args.args[0], ["/usr/bin/devtool-control-center-hud", "--exit-when-idle"])
-
     def test_recent_error_lines_highlight_failures_without_zero_failed_noise(self) -> None:
         from devtool.hud import recent_error_lines
         events = [
@@ -141,23 +124,6 @@ class HudTests(unittest.TestCase):
         self.assertEqual(recent_error_lines([event]), ["Tests failing: 10 passed, 2 failed, 1 skipped"])
         self.assertEqual(friendly_event_line(event), "Tests failing: 10 passed, 2 failed, 1 skipped")
         self.assertEqual(event_icon(event), "❌")
-
-    def test_gtk_dashboard_hud_source_uses_compact_sections(self) -> None:
-        import inspect
-        import devtool.hud as hud_module
-
-        source = inspect.getsource(hud_module.GtkDesktopHud.run)
-        self.assertIn("DEVTOOL", source)
-        self.assertIn("_render_operation_steps", source)
-        self.assertIn("hud-step-progress", source)
-        self.assertNotIn("Validate → Apply → Test → Commit", source)
-        self.assertIn("ERRORS", source)
-        self.assertIn("WARNINGS", source)
-        self.assertIn("RECENT", source)
-        self.assertIn("state_context_label", source)
-        self.assertIn("card.pack_start(actions", source)
-        self.assertNotIn("expanded_section.pack_start(actions", source)
-
 
     def test_operation_steps_show_apply_pipeline_and_live_phase(self) -> None:
         state = HudState(status="running", command="apply-overlay", phase_name="build", current=3, total=10)
@@ -398,14 +364,16 @@ class HudV345Tests(unittest.TestCase):
 
     def test_choose_desktop_aliases(self) -> None:
         from devtool.hud import choose_hud_mode
-        with patch("devtool.hud.QtCompactHud.available", return_value=False), patch("devtool.hud.GtkDesktopHud.available", return_value=False), patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
+        with patch("devtool.desktop.gtk_hud.Gtk4CompactHud.available", return_value=False), \
+             patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
             self.assertEqual(choose_hud_mode("desktop"), "desktop-notify")
-        with patch("devtool.hud.QtCompactHud.available", return_value=True), patch("devtool.hud.GtkDesktopHud.available", return_value=True), patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
+        with patch("devtool.desktop.gtk_hud.Gtk4CompactHud.available", return_value=True), \
+             patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
             self.assertEqual(choose_hud_mode("v6"), "desktop-window")
-        with patch("devtool.hud.QtCompactHud.available", return_value=False), patch("devtool.hud.GtkDesktopHud.available", return_value=True), patch("devtool.hud.DesktopNotificationHud.available", return_value=True):
-            self.assertEqual(choose_hud_mode("desktop"), "desktop-notify")
         self.assertEqual(choose_hud_mode("desktop-window"), "desktop-window")
-        self.assertEqual(choose_hud_mode("gtk"), "gtk-window")
+        self.assertEqual(choose_hud_mode("gtk"), "desktop-window")
+        self.assertEqual(choose_hud_mode("gtk-window"), "desktop-window")
+        self.assertEqual(choose_hud_mode("qt-window"), "legacy-qt-removed")
 
     def test_desktop_notification_argv_contains_progress_hint(self) -> None:
         from devtool.hud import DesktopNotificationHud
@@ -439,8 +407,7 @@ class HudV345Tests(unittest.TestCase):
         self.assertEqual(choose_hud_mode("termux-gui"), "android-bridge")
         self.assertEqual(choose_hud_mode("android-overlay"), "android-bridge")
         self.assertEqual(choose_hud_mode("android-gui"), "android-bridge")
-        with patch("devtool.hud._is_termux_android", return_value=True), \
-             patch("devtool.hud.GtkDesktopHud.available", return_value=True):
+        with patch("devtool.hud._is_termux_android", return_value=True):
             self.assertEqual(choose_hud_mode("desktop"), "android-bridge")
             self.assertEqual(choose_hud_mode("desktop-window"), "android-bridge")
             self.assertEqual(choose_hud_mode("desktop-notify"), "android-bridge")
@@ -450,13 +417,6 @@ class HudV345Tests(unittest.TestCase):
         import devtool.hud as hud_module
         self.assertFalse(hasattr(hud_module, "TermuxGuiHud"))
 
-    def test_gtk_desktop_hud_pins_gdk3_before_import(self) -> None:
-        import inspect
-        import devtool.hud as hud_module
-
-        source = inspect.getsource(hud_module.GtkDesktopHud._require_gtk3)
-        self.assertLess(source.index('gi.require_version("Gdk", "3.0")'), source.index("from gi.repository import Gdk"))
-        self.assertLess(source.index('gi.require_version("Gtk", "3.0")'), source.index("from gi.repository import Gdk"))
 
 
 if __name__ == "__main__":
@@ -468,8 +428,7 @@ class AndroidBridgeHudTests(unittest.TestCase):
         self.assertEqual(choose_hud_mode("android-chroot"), "android-bridge")
         self.assertEqual(choose_hud_mode("termux-bridge"), "android-bridge")
         with patch("devtool.hud._is_termux_android", return_value=False), \
-             patch("devtool.hud._is_termux_chroot_bridge", return_value=True), \
-             patch("devtool.hud.GtkDesktopHud.available", return_value=True):
+             patch("devtool.hud._is_termux_chroot_bridge", return_value=True):
             self.assertEqual(choose_hud_mode("desktop"), "android-bridge")
             self.assertEqual(choose_hud_mode("auto"), "android-bridge")
         self.assertEqual(choose_hud_mode("desktop-window"), "desktop-window")

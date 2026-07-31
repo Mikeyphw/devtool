@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Devtool Control Center
+GenericName=Developer Workflow Control Center
+Comment=Monitor devtool workflows, history, diagnostics, repositories, and targets
+TryExec=/usr/bin/devtool-control-center
+Exec=/usr/bin/devtool-control-center
+Icon=io.github.mikeceead.DevtoolControlCenter
+Terminal=false
+DBusActivatable=false
+Categories=Development;Utility;
+Keywords=devtool;build;test;overlay;developer;GTK4;
+StartupNotify=true
+StartupWMClass=io.github.mikeceead.DevtoolControlCenter
+X-GNOME-UsesNotifications=true

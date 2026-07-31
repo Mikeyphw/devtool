@@ -106,7 +106,7 @@ def test_android_build_exports_stable_trackable_apk() -> None:
 
 
 def test_desktop_package_install_deletes_deb_only_after_success() -> None:
-    script = ROOT / "desktop" / "devtool-control-center" / "package-deb.sh"
+    script = ROOT / "desktop" / "gtk-control-center" / "package-deb.sh"
     subprocess.run(["bash", "-n", str(script)], check=True)
     source = script.read_text(encoding="utf-8")
     install_pos = source.index('"${install_cmd[@]}"')

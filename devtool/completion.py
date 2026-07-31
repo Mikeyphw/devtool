@@ -192,7 +192,7 @@ _devtool_commands() {
     'hud:run a live HUD renderer'
     'android-hud-bridge:bridge Termux or chroot progress to Android'
     'termux-hud-bridge:alias for android-hud-bridge'
-    'control-center:launch the Qt 6 Control Center'
+    'control-center:launch the desktop Control Center'
     'gui:alias for control-center'
     'ipc-server:run the Control Center IPC broker'
   )
@@ -421,7 +421,7 @@ _devtool() {
     '--stdout-payload[select stdout content]:payload:(auto summary raw)' \
     '(--auto-hud --hud-auto --no-hud)'{--auto-hud,--hud-auto}'[auto-start or reuse the selected HUD]' \
     '(--auto-hud --hud-auto --no-hud)--no-hud[do not publish live HUD progress]' \
-    '--hud-mode[HUD backend]:mode:(desktop android-bridge desktop-window gtk-window web studio terminal)' \
+    '--hud-mode[HUD backend]:mode:(desktop android-bridge desktop-window gtk4-window web studio terminal)' \
     '(--hud-overlay --hud-no-overlay)--hud-overlay[also show the run in the Android floating overlay]' \
     '(--hud-overlay --hud-no-overlay)--hud-no-overlay[keep the run in the app without opening the overlay]' \
     '(--host --chroot --execution-environment)--host[force the current host environment]' \
@@ -653,7 +653,7 @@ _devtool() {
         hud)
           _arguments \
             '--state-dir[HUD state directory]:directory:_files -/' \
-            '--mode[HUD renderer]:mode:(auto android-gui android-bridge termux-gui terminal web studio desktop desktop-window gtk-window desktop-notify v3 v4 v5 v6 console dashboard all unix gnome)' \
+            '--mode[HUD renderer]:mode:(auto android-gui android-bridge termux-gui terminal web studio desktop desktop-window gtk4-window desktop-notify v3 v4 v5 v6 console dashboard all unix gnome)' \
             '--host[host or IP for web/studio modes]:host:' \
             '--port[port for web/studio modes]:port:' \
             '--poll-interval[seconds between refreshes]:seconds:' \
@@ -681,7 +681,17 @@ _devtool() {
           _arguments '--last[rollback the last recorded commit]' '1:commit:'
           ;;
         control-center|gui)
-          _arguments '--binary[override the Control Center executable]:file:_files'
+          _arguments \
+            '--backend[Control Center backend]:backend:(auto gtk4)' \
+            '--target[named target/profile from .devtool.toml]:target:' \
+            '--variant[build/test variant within the selected target]:variant:' \
+            '--state-dir[directory containing live HUD state]:directory:_files -/' \
+            '--follow-active[follow the global active HUD directory]' \
+            '--history-limit[artifact history rows to load]:count:' \
+            '--recent-events[recent HUD events to load]:count:' \
+            '--poll-interval[seconds between GTK refreshes]:seconds:' \
+            '--page[initial GTK4 shell page]:page:(overview runs history diagnostics repositories targets run settings)' \
+            '--once[print a GTK4 Control Center JSON snapshot and exit]'
           ;;
         ipc-server)
           _arguments \

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mikeceead.DevtoolControlCenter</id>
+  <name>Devtool Control Center</name>
+  <summary>Monitor devtool workflows from a native GTK4 desktop shell</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Devtool Control Center provides a native GTK4 read-only shell for active runs, artifact history, diagnostics, repository state, targets, and desktop settings.</p>
+  </description>
+  <launchable type="desktop-id">io.github.mikeceead.DevtoolControlCenter.desktop</launchable>
+</component>

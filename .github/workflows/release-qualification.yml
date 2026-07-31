@@ -1,0 +1,48 @@
+name: Release qualification
+
+on:
+  workflow_dispatch:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m compileall -q devtool tools
+      - run: python3 tools/run-pytest-split.py --groups 4 --group 1
+
+  gtk-desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y python3-gi python3-rich gir1.2-gtk-4.0 gir1.2-adw-1 libgtk-4-1 libadwaita-1-0 dpkg-dev
+      - run: python3 -m devtool control-center --backend gtk4 --once
+      - run: desktop/gtk-control-center/package-deb.sh --verify
+      - run: mkdir -p dist/release && cp desktop/gtk-control-center/dist/devtool-control-center_*_all.deb dist/release/desktop-first.deb
+      - run: rm -rf desktop/gtk-control-center/dist && desktop/gtk-control-center/package-deb.sh --verify
+      - run: cp desktop/gtk-control-center/dist/devtool-control-center_*_all.deb dist/release/desktop-second.deb
+      - run: tools/verify-identical.py dist/release/desktop-first.deb dist/release/desktop-second.deb
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd android/devtool-live-hud && ./gradlew lintRelease testReleaseUnitTest verifyReleaseApk
+      - run: cp android/devtool-live-hud/app/build/outputs/apk/release/app-release.apk app-release-first.apk
+
+  android-device:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          script: cd android/devtool-live-hud && ./gradlew connectedDebugAndroidTest
+
+  source-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/build-release.py --out-dir dist/release --verify-reproducible
+      - run: tools/verify-identical.py dist/release/SHA256SUMS dist/release/SHA256SUMS
+      - run: test -d tests/snapshots/ui

@@ -72,14 +72,12 @@ def _extract(pattern: str, text: str, label: str) -> str:
 def version_inventory(root: Path) -> dict[str, str | int]:
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     init = (root / "devtool" / "__init__.py").read_text(encoding="utf-8")
-    cmake = (root / "desktop" / "devtool-control-center" / "CMakeLists.txt").read_text(encoding="utf-8")
+    gtk_control = (root / "desktop" / "gtk-control-center" / "packaging" / "debian" / "control").read_text(encoding="utf-8")
     gradle = (root / "android" / "devtool-live-hud" / "app" / "build.gradle").read_text(encoding="utf-8")
-    control = (root / "desktop" / "devtool-control-center" / "packaging" / "debian" / "control").read_text(encoding="utf-8")
     return {
         "pyproject": _extract(r'^version\s*=\s*"([^"]+)"', pyproject, "pyproject version"),
         "python": _extract(r'__version__\s*=\s*"([^"]+)"', init, "Python version"),
-        "desktop_cmake": _extract(r'project\(DevtoolControlCenter VERSION ([^ )]+)', cmake, "desktop CMake version"),
-        "desktop_debian": _extract(r'^Version:\s*([^\s]+)', control, "Debian version"),
+        "desktop_debian": _extract(r'^Version:\s*([^\s]+)', gtk_control, "GTK4 Debian version"),
         "android_name": _extract(r"versionName\s+'([^']+)'", gradle, "Android version name"),
         "android_code": int(_extract(r'versionCode\s+(\d+)', gradle, "Android version code")),
     }
@@ -91,7 +89,6 @@ def validate_version_consistency(root: Path) -> list[str]:
     expected = {
         "pyproject": versions["devtool"],
         "python": versions["devtool"],
-        "desktop_cmake": versions["desktop"],
         "desktop_debian": versions["desktop"],
         "android_name": versions["android"]["version_name"],
         "android_code": versions["android"]["version_code"],
@@ -117,16 +114,27 @@ def android_sdk_available(environment: Mapping[str, str] | None = None) -> bool:
     return (root / "platforms" / "android-36").is_dir() and (root / "build-tools" / "36.0.0").is_dir()
 
 
-def qt_available() -> bool:
-    if any(shutil.which(command) for command in ("qtpaths", "qmake", "qml", "qmlscene")):
-        return True
-    candidates = (
-        Path("/usr/lib/x86_64-linux-gnu/cmake/Qt5/Qt5Config.cmake"),
-        Path("/usr/lib/aarch64-linux-gnu/cmake/Qt5/Qt5Config.cmake"),
-        Path("/usr/local/lib/cmake/Qt5/Qt5Config.cmake"),
-        Path.home() / ".local/lib/cmake/Qt5/Qt5Config.cmake",
+def gtk4_available() -> bool:
+    probe = (
+        "import gi; "
+        "gi.require_version('Gtk', '4.0'); "
+        "gi.require_version('Adw', '1'); "
+        "from gi.repository import Gtk, Adw"
     )
-    return any(path.is_file() for path in candidates)
+    try:
+        subprocess.run([sys.executable, "-c", probe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+def desktop_available() -> bool:
+    return gtk4_available()
+
+
+def qt_available() -> bool:
+    # Backward-compatible API alias. It no longer probes Qt; desktop is GTK4-only.
+    return desktop_available()
 
 
 def _run(gate: str, command: Sequence[str], root: Path, logs: Path, *, required: bool,
@@ -189,9 +197,8 @@ def shell_entry_points(root: Path) -> list[Path]:
         root / "build-root-bridge-module.sh", root / "build-apk",
         root / "android" / "devtool-live-hud" / "build.sh",
         root / "android" / "devtool-live-hud" / "gradlew",
-        root / "desktop" / "devtool-control-center" / "build.sh",
-        root / "desktop" / "devtool-control-center" / "package-deb.sh",
-        root / "desktop" / "devtool-control-center" / "tests" / "run-headless-smoke.sh",
+        root / "desktop" / "gtk-control-center" / "build.sh",
+        root / "desktop" / "gtk-control-center" / "package-deb.sh",
         root / "tools" / "make-release-candidate.sh",
     ]
     return [path for path in paths if path.is_file()]
@@ -245,27 +252,25 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
     shell_command = ["bash", "-n", *[str(path.relative_to(root)) for path in shell_entry_points(root)]]
     report.results.append(_run("shell-syntax", shell_command, root, logs, required=True))
 
-    qt_build = root / "dist" / "qt-release-build"
-    if include_qt and qt_available():
-        report.results.append(_run(
-            "qt-configure",
-            ["cmake", "-S", "desktop/devtool-control-center", "-B", str(qt_build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DDEVTOOL_ENABLE_TESTS=ON"],
-            root, logs, required=require_qt,
-        ))
-        if report.results[-1].status == "passed":
-            report.results.append(_run("qt-build", ["cmake", "--build", str(qt_build), "--parallel"], root, logs, required=require_qt))
-            if report.results[-1].status == "passed":
-                report.results.append(_run("qt-smoke", ["ctest", "--test-dir", str(qt_build), "--output-on-failure"], root, logs, required=require_qt))
-            else:
-                report.results.append(_skip("qt-smoke", "Qt build failed", required=require_qt))
+    gtk_package = root / "desktop" / "gtk-control-center" / "package-deb.sh"
+    if include_qt:
+        if gtk4_available():
+            report.results.append(_run(
+                "desktop-gtk-smoke",
+                [sys.executable, "-m", "devtool", "control-center", "--backend", "gtk4", "--once"],
+                root, logs, required=require_qt, timeout=60,
+            ))
         else:
-            report.results.extend([
-                _skip("qt-build", "Qt configuration failed", required=require_qt),
-                _skip("qt-smoke", "Qt configuration failed", required=require_qt),
-            ])
-    elif include_qt:
-        detail = "Qt 5 development files were not detected"
-        report.results.extend([_skip("qt-configure", detail, required=require_qt), _skip("qt-build", detail, required=require_qt), _skip("qt-smoke", detail, required=require_qt)])
+            report.results.append(_skip(
+                "desktop-gtk-smoke",
+                "GTK4/libadwaita Python bindings were not detected",
+                required=require_qt,
+            ))
+        report.results.append(_run(
+            "desktop-gtk-package",
+            ["bash", str(gtk_package.relative_to(root)), "--verify"],
+            root, logs, required=require_qt, timeout=180,
+        ))
 
     android_root = root / "android" / "devtool-live-hud"
     if include_android and android_sdk_available():

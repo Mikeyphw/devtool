@@ -354,10 +354,9 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
 
     chosen_mode = _resolve_mode_for_detached_child(requested_mode)
     registry_mode = chosen_mode
-    # The native Qt Control Center is already running and watches the same
-    # state directory. Publish the active pointer, but do not spawn a second
-    # renderer process.
-    if chosen_mode in {"control-center", "qt-control-center", "qt"}:
+    # The GTK4 Control Center watches the same state directory. Publish
+    # the active pointer, but do not spawn a second renderer process.
+    if chosen_mode == "control-center":
         ready = ensure_ipc_server(state_dir=directory)
         _append_hud_log("control-center mode: IPC broker ready." if ready else "control-center mode: IPC broker unavailable; file fallback remains active.")
         return True
@@ -386,8 +385,7 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
     if chosen_mode in {"terminal", "console", "v3"}:
         _append_hud_log(
             "not starting auto-HUD because the requested/resolved mode is terminal, "
-            "which would be invisible when detached. Install devtool-control-center or libnotify-bin, then retry desktop/desktop-window/desktop-notify. "
-            "The legacy GTK HUD remains available as --hud-mode gtk-window."
+            "which would be invisible when detached. Install devtool-control-center or libnotify-bin, then retry desktop/desktop-window/desktop-notify."
         )
         return False
 

@@ -18,6 +18,10 @@ dependencies = [
 devtool = "devtool.cli:main"
 devtool-termux-chroot = "devtool.termux_chroot_runner:main"
 devtool-androidos = "devtool.termux_chroot_runner:main"
+devtool-gtk-hud = "devtool.desktop.gtk_hud_cli:main"
+devtool-control-center-hud = "devtool.desktop.gtk_hud_cli:main"
+devtool-control-center = "devtool.desktop.control_center_cli:main"
+devtool-gtk-control-center = "devtool.desktop.control_center_cli:main"
 build-apk = "devtool.android_build:standalone_main"
 
 [tool.setuptools]

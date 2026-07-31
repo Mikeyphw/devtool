@@ -147,10 +147,10 @@ Android Logs displays validation sessions as distinct validation history cards w
 ## Devtool 1.1.0: native release qualification
 
 Slice 5 adds executable release gates for every distributable. The canonical
-version contract lives in `release/versions.json`; drift between Python, Qt,
+version contract lives in `release/versions.json`; drift between Python, GTK desktop,
 Android, Debian, and manual-page metadata fails qualification.
 
-The Qt 5 Control Center now has CTest version and offscreen QML launch tests,
+The GTK4 Control Center now has headless smoke and package verification tests,
 and its Debian package is timestamp-normalized, checksummed, and payload-
 verified. Android release builds require an explicit keystore, run local JVM
 and connected smoke tests, and are verified with `apksigner`. Deterministic
@@ -158,7 +158,7 @@ source archives can be rebuilt and compared byte for byte.
 
 Run the portable gate with `python3 tools/release-qualify.py --core-only`, or
 use `tools/make-release-candidate.sh` on a machine with the native toolchains.
-The GitHub Actions matrix independently validates Python 3.11–3.13, Qt 5,
+The GitHub Actions matrix independently validates Python 3.11–3.13, GTK4 desktop packaging,
 Android lint/unit/release, emulator instrumentation, and final packaging.
 
 See [`docs/RELEASE_QUALIFICATION.md`](docs/RELEASE_QUALIFICATION.md),
@@ -323,7 +323,7 @@ The foreground-service notification required by Android while the floating overl
 
 ## Artifact inspection API
 
-Devtool 0.4.1 exposes a machine-readable inspector used by the Qt Control Center:
+Devtool exposes a machine-readable inspector used by the GTK4 Control Center:
 
 ```bash
 devtool -r /path/to/repo inspect-artifact overlay-or-bundle.zip --diff
@@ -407,7 +407,7 @@ devtool --auto-hud --hud-mode desktop-window ...
 
 The desktop HUD binds to the current run before rendering, filters events by run ID, suppresses duplicate generic errors, and reports a successful rollback as recovery rather than as the cause of failure.
 
-The GTK desktop window starts in a compact, pipeline-focused mode. It shows separate live operation segments for extract, restore, build, test, artifact validation, commit, and rollback as applicable. Restore/build/test segments advance from parsed command output while the command is still running. Multi-workspace artifacts keep independent target-scoped segments such as `Build · s3atelier` and `Build · s3pi-base`, wrapped into rows of four. Live **ERRORS** and **WARNINGS** totals come directly from the active parser and remain visible beside the current operation, along with Copy summary/Open log/Close actions. Select **Expand** to reveal recent events and diagnostic details; the choice is preserved for the lifetime of that HUD window. Set `DEVTOOL_DESKTOP_HUD_START_EXPANDED=1` to launch expanded.
+The GTK4 desktop window starts in a compact, pipeline-focused mode. It shows separate live operation segments for extract, restore, build, test, artifact validation, commit, and rollback as applicable. Restore/build/test segments advance from parsed command output while the command is still running. Multi-workspace artifacts keep independent target-scoped segments such as `Build · s3atelier` and `Build · s3pi-base`, wrapped into rows of four. Live **ERRORS** and **WARNINGS** totals come directly from the active parser and remain visible beside the current operation, along with Copy summary/Open log/Close actions. Select **Expand** to reveal recent events and diagnostic details; the choice is preserved for the lifetime of that HUD window. Set `DEVTOOL_DESKTOP_HUD_START_EXPANDED=1` to launch expanded.
 
 Set `DEVTOOL_NO_HUD=1` to hard-disable all HUD publication and rendering. This environment override wins over `--auto-hud`, `--hud-mode`, `--hud-overlay`, and direct `devtool hud` invocations, making it suitable for CI, headless shells, and commands that must never open or update a HUD.
 
@@ -425,7 +425,7 @@ unless the earlier build is known to cover the same target. Set
 `[dotnet].coalesce_validation = false` or `[dotnet].explicit_restore = true` for
 workflows that require separate phases, such as authenticated-feed CI jobs.
 
-The Qt Control Center build keeps its Ninja directory under the XDG cache, skips
+The GTK4 Control Center is Python-based and avoids native desktop build caches; package verification skips
 an unnecessary warm CMake configure pass, uses `ccache` when available, and
 compiles the common HUD/history/IPC implementation only once for both binaries.
 
@@ -547,17 +547,18 @@ Replace older commands as follows:
 ```
 
 
-## Qt 5 Control Center
+## Desktop Control Center and GTK4 HUD
 
-The native Linux frontend lives in `desktop/devtool-control-center`. It provides Overview, Run, History, Settings, tray integration, and a detachable compact HUD.
+The native Linux frontend lives in `desktop/gtk-control-center`. It provides Overview, Run, History, Diagnostics, Repository, Targets, Settings, and a detachable GTK4 compact HUD.
 
 ```bash
-cd desktop/devtool-control-center
+cd desktop/gtk-control-center
 ./build.sh
-./build/devtool-control-center
+devtool control-center --backend gtk4
+devtool hud --mode desktop-window --follow-active
 ```
 
-Runs started by the app use `--hud-mode control-center`, which keeps live state publishing enabled without opening the legacy GTK HUD. Launch an installed build with `devtool control-center`.
+Runs started by the app use `--hud-mode control-center`, which keeps live state publishing enabled without opening an extra compact HUD. `devtool hud --mode desktop-window` uses the GTK4 compact HUD. Launch an installed Control Center with `devtool control-center`.
 
 ## Control Center native IPC
 
@@ -576,14 +577,14 @@ The broker supports multiple repositories, producers, and Control Center clients
 
 ## Devtool Control Center native operation
 
-The Qt application uses the native IPC broker for normal live operation, reconnect snapshots, concurrent repositories, and per-run cancellation. File-state monitoring remains available when the broker is unavailable.
+The GTK4 application uses the native IPC broker for normal live operation, reconnect snapshots, concurrent repositories, and per-run cancellation. File-state monitoring remains available when the broker is unavailable.
 
 
-### Qt Control Center packaging safety
+### GTK4 Control Center packaging safety
 
-The Qt Control Center 0.3.2 builds outside the source tree by default and uses a clean dedicated build for Debian packages. The build launcher also normalizes source timestamps that are ahead of the local clock, preventing Ninja from endlessly printing `Re-running CMake...` after an archive extraction or source update.
+The GTK4 Control Center package stages Python modules, launchers, freedesktop metadata, AppStream metadata, and icons through `desktop/gtk-control-center/package-deb.sh --verify`.
 
-## Qt Control Center clipboard monitor
+## GTK4 Control Center clipboard monitor
 
 The Linux Control Center can install an optional per-user clipboard monitoring service from **Settings → Clipboard monitoring**. It recognizes local devtool artifact archives and copied `devtool` commands, ignores unrelated clipboard data, and never runs detected content automatically. The service can be enabled, disabled, reinstalled, or removed from the UI.
 
@@ -595,7 +596,7 @@ Project command planning is now runner-based. See [`docs/PROJECT_RUNNERS.md`](do
 
 ## Native frontend workflow Slice 2
 
-The Qt Control Center and Android frontend now use the same four-stage Run flow:
+The GTK4 Control Center and Android frontend now use the same four-stage Run flow:
 **Project → Operation → Tests → Review**. Navigation and execution actions stay
 fixed at the bottom of the screen, so large test catalogs and advanced options
 do not push the Run button off-screen.
@@ -614,7 +615,7 @@ state-changing operations require confirmation.
 
 ## Native frontend accessibility and responsiveness — Slice 3
 
-The Qt Control Center now exposes semantic accessible roles/names, visible focus
+The GTK4 Control Center exposes semantic accessible roles/names, visible focus
 states, tooltips, full keyboard navigation, narrow page layouts, and a
 screen-bound compact HUD with safer opacity. The Android frontend now enforces
 48 dp targets, connects labels to fields, supplies TalkBack descriptions, and
@@ -624,7 +625,7 @@ verification matrix.
 
 ## UI regression protection — Slice 4
 
-The terminal, Qt Control Center/HUD, and Android frontend now share a regression
+The terminal, desktop Control Center/HUD, and Android frontend now share a regression
 contract for runner/status terminology, concurrent-run states, rollback states,
 and large-data performance budgets. Golden Rich terminal snapshots and portable
 SVG visual-state snapshots are stored under `tests/snapshots/ui/`; update them
@@ -642,3 +643,6 @@ Devtool run logs are retained under the XDG state directory and rotated automati
 The Android companion keeps a separate private structured app log. Its Logs page can browse either stream, search and filter entries, open bounded Devtool log tails through Termux RunCommand, copy/share visible output, rotate retained Devtool logs, or clear each stream independently.
 
 Sealed final reports use a content hash and a write-once `.final.json` path; later report requests cannot overwrite the final evidence.
+
+
+See `docs/DESKTOP_GTK_MIGRATION.md` for the Phase 1/2 desktop GTK4 migration notes.

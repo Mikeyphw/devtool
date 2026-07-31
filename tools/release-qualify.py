@@ -15,7 +15,8 @@ def main() -> int:
     parser.add_argument("--root", type=Path)
     parser.add_argument("--output", type=Path, default=Path("dist/release-qualification.json"))
     parser.add_argument("--core-only", action="store_true")
-    parser.add_argument("--require-qt", action="store_true")
+    parser.add_argument("--require-qt", action="store_true", help="Deprecated compatibility alias for --require-desktop")
+    parser.add_argument("--require-desktop", action="store_true", help="Require GTK4 desktop smoke/package gates")
     parser.add_argument("--require-android", action="store_true")
     parser.add_argument("--device-tests", action="store_true")
     args = parser.parse_args()
@@ -26,7 +27,7 @@ def main() -> int:
         root,
         include_qt=not args.core_only,
         include_android=not args.core_only,
-        require_qt=args.require_qt,
+        require_qt=args.require_qt or args.require_desktop,
         require_android=args.require_android,
         run_device_tests=args.device_tests,
     )

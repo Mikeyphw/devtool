@@ -337,7 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
     hud = parser.add_argument_group("HUD and app bridge")
     hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the selected HUD while progress is emitted (default)")
     hud.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not publish live HUD progress for this command")
-    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-bridge, desktop-window (Qt 5), gtk-window (legacy), web, studio, or terminal")
+    hud.add_argument("--hud-mode", default="desktop", help="HUD backend: desktop, android-bridge, desktop-window (GTK4), web, studio, or terminal")
     hud_presentation = hud.add_mutually_exclusive_group()
     hud_presentation.add_argument("--hud-overlay", action="store_true", help="On Android, also show the run in the user-enabled floating overlay HUD")
     hud_presentation.add_argument("--hud-no-overlay", action="store_true", help="On Android, keep the update in the app without opening the floating overlay")
@@ -592,7 +592,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     hud_cmd = subparsers.add_parser("hud")
     hud_cmd.add_argument("--state-dir", dest="tasker_dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool live HUD state")
-    hud_cmd.add_argument("--mode", choices=["auto", "android-gui", "android-bridge", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "gtk-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: Android app bridge, terminal, web, studio, or Unix desktop")
+    hud_cmd.add_argument("--mode", choices=["auto", "android-gui", "android-bridge", "termux-gui", "terminal", "web", "studio", "desktop", "desktop-window", "gtk4-window", "gtk-window", "desktop-notify", "v3", "v4", "v5", "v6", "console", "dashboard", "all", "unix", "gnome"], default="auto", help="Run HUD renderer: Android app bridge, terminal, web, studio, or GTK4 desktop")
     hud_cmd.add_argument("--host", default="127.0.0.1", help="Host/IP for HUD web/studio modes")
     hud_cmd.add_argument("--port", type=int, default=8765, help="Port for HUD web/studio modes")
     hud_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
@@ -687,8 +687,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("targets", aliases=["tg"])
 
-    control_center = subparsers.add_parser("control-center", aliases=["gui"], help="Launch the Qt 5 Devtool Control Center")
-    control_center.add_argument("--binary", default="", help="Override the devtool-control-center executable")
+    control_center = subparsers.add_parser("control-center", aliases=["gui"], help="Launch the Devtool desktop Control Center")
+    control_center.add_argument("--backend", choices=["auto", "gtk4"], default="auto", help="Control Center backend; GTK4 is the only desktop backend")
+    control_center.add_argument("--target", default=argparse.SUPPRESS, help="Named target/profile from .devtool.toml (also accepted globally before the command)")
+    control_center.add_argument("--variant", default=argparse.SUPPRESS, help="Build/test variant within the selected target (also accepted globally before the command)")
+    control_center.add_argument("--state-dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool live HUD state")
+    control_center.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory")
+    control_center.add_argument("--history-limit", type=int, default=25, help="Artifact history rows to load in the GTK4 shell")
+    control_center.add_argument("--recent-events", type=int, default=8, help="Recent HUD events to load in the GTK4 shell")
+    control_center.add_argument("--poll-interval", type=float, default=1.0, help="Seconds between GTK4 shell refreshes")
+    control_center.add_argument("--page", choices=["overview", "runs", "history", "diagnostics", "repositories", "targets", "run", "settings"], default="overview", help="Initial GTK4 shell page")
+    control_center.add_argument("--once", action="store_true", help="Print a read-only GTK4 Control Center JSON snapshot and exit")
 
     ipc_server = subparsers.add_parser("ipc-server", help="Run or start the local Control Center IPC broker")
     ipc_server.add_argument("--socket", default="", help="Override the Unix socket path")
@@ -1431,8 +1440,10 @@ def _normalize_live_progress_args(args: argparse.Namespace) -> None:
     # standalone notification flags are intentionally not exposed by the CLI.
     args.tasker_progress = command in PROGRESS_CAPABLE_COMMANDS
     args.notify_progress = False
-    args.tasker_dir = DEFAULT_TASKER_DIR
-    args.notify_id = DEFAULT_NOTIFICATION_ID
+    if not hasattr(args, "tasker_dir"):
+        args.tasker_dir = DEFAULT_TASKER_DIR
+    if not hasattr(args, "notify_id"):
+        args.notify_id = DEFAULT_NOTIFICATION_ID
     if hud_disabled_by_environment():
         # Hard environment override: command flags cannot re-enable any HUD
         # state publication, renderer, bridge, notification, or overlay.
@@ -6711,16 +6722,32 @@ def main(argv: list[str] | None = None) -> int:
         return run_ipc_server(args)
 
     if args.command in {"control-center", "gui"}:
-        binary = str(getattr(args, "binary", "") or os.environ.get("DEVTOOL_CONTROL_CENTER", "") or "devtool-control-center")
-        candidate = shutil.which(binary)
-        if candidate is None:
-            repo_candidate = Path(__file__).resolve().parent.parent / "desktop" / "devtool-control-center" / "build" / "devtool-control-center"
-            candidate = str(repo_candidate) if repo_candidate.is_file() else None
-        if candidate is None:
-            console.print("[red]Devtool Control Center is not installed.[/red]")
-            console.print("Build desktop/devtool-control-center and install devtool-control-center on PATH.")
+        from .desktop.gtk_control_center import Gtk4ControlCenter
+
+        config = _load_command_config(args)
+        center = Gtk4ControlCenter(
+            history_limit=int(getattr(args, "history_limit", 25)),
+            recent_events=int(getattr(args, "recent_events", 8)),
+        )
+        backend = str(getattr(args, "backend", "auto") or "auto")
+        if backend not in {"auto", "gtk4"}:
+            console.print("[red]Legacy Qt Control Center backend was removed; use --backend gtk4.[/red]")
             return 2
-        return subprocess.call([candidate])
+        if bool(getattr(args, "once", False)) or backend == "gtk4" or Gtk4ControlCenter.available():
+            return center.run(
+                repository=config.repo_root,
+                config_path=str(config.config_path or "") or None,
+                target=str(getattr(args, "target", "") or ""),
+                variant=str(getattr(args, "variant", "") or ""),
+                state_dir=Path(getattr(args, "state_dir", DEFAULT_TASKER_DIR)).expanduser(),
+                follow_active=bool(getattr(args, "follow_active", False)),
+                once=bool(getattr(args, "once", False)),
+                page=str(getattr(args, "page", "overview") or "overview"),
+                interval_s=float(getattr(args, "poll_interval", 1.0)),
+            )
+        console.print("[red]Devtool GTK4 Control Center is not available.[/red]")
+        console.print("Install GTK4 dependencies: python3-gi gir1.2-gtk-4.0 gir1.2-adw-1.")
+        return 2
 
     if args.command == "hud":
         from .hud import run_hud

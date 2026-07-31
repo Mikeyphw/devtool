@@ -1,7 +1,7 @@
 # Typography system
 
 Devtool uses semantic type roles rather than page-local numeric font sizes. The
-roles are shared conceptually across Android, the Qt Control Center, and the HUD.
+roles are shared conceptually across Android, the GTK4 Control Center, and the HUD.
 
 ## Android roles
 
@@ -24,7 +24,7 @@ Text rows use `wrap_content` and minimum heights instead of fixed heights.
 
 ## Desktop roles
 
-The QML theme derives its base from `Qt.application.font.pointSize` and clamps
+The GTK4 desktop theme derives its base from system font settings and clamps
 the user scale between 100% and 200%. The Settings page exposes 100%, 125%,
 150%, and 200% presets. System general and fixed-width fonts are preferred; UI
 semantics do not depend on Nerd Font glyphs.

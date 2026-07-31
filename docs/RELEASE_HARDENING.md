@@ -30,17 +30,17 @@ The repository release gate includes:
 - shell syntax checks for installers and build entry points;
 - Java compilation of command-model/importer classes that do not require the
   Android framework;
-- source-contract checks for Android and Qt frontend wiring;
+- source-contract checks for Android and GTK4 frontend wiring;
 - archive integrity validation for the distributed repository ZIP.
 
-A real Android SDK build, physical-device instrumentation run, and Qt link build
+A real Android SDK build, physical-device instrumentation run, and GTK4 package build
 still require their respective external toolchains and are reported explicitly
 when unavailable.
 
 ## Native release qualification
 
-Slice 5 promotes native toolchains to first-class CI gates. Qt builds compile,
-link, and launch both QML applications offscreen. Android release tasks require
+Slice 5 promotes native toolchains to first-class CI gates. GTK4 package gates verify,
+link, and run GTK4 desktop smoke checks. Android release tasks require
 explicit signing, run lint and JVM tests, and verify the resulting APK signature.
 Connected instrumentation provides install/launch coverage. Debian and source
 archives use `SOURCE_DATE_EPOCH`, checksums, and reproducibility checks. See

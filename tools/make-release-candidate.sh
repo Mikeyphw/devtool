@@ -41,7 +41,7 @@ done
 mkdir -p "$out_dir"
 qualify=(python3 "$root/tools/release-qualify.py" --root "$root" --output "$out_dir/qualification.json")
 $core_only && qualify+=(--core-only)
-$require_native && qualify+=(--require-qt --require-android)
+$require_native && qualify+=(--require-desktop --require-android)
 "${qualify[@]}"
 
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1784030400} \
@@ -49,7 +49,7 @@ SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1784030400} \
 
 if $build_desktop; then
   SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1784030400} OUT_DIR="$out_dir" \
-    "$root/desktop/devtool-control-center/package-deb.sh" --verify
+    "$root/desktop/gtk-control-center/package-deb.sh" --verify
 fi
 
 if $build_android; then

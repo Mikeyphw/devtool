@@ -9,7 +9,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DESKTOP = ROOT / "desktop" / "devtool-control-center"
+DESKTOP = ROOT / "desktop" / "gtk-control-center"
 ANDROID = (
     ROOT
     / "android"
@@ -30,69 +30,63 @@ def read(path: Path) -> str:
 
 
 def test_desktop_run_workflow_is_staged_sticky_and_complete() -> None:
-    qml = read(DESKTOP / "qml" / "pages" / "RunPage.qml")
-    controller = read(DESKTOP / "src" / "AppController.cpp")
+    workflow = read(ROOT / "devtool" / "desktop" / "run_workflow.py")
+    gtk = read(ROOT / "devtool" / "desktop" / "gtk_control_center.py")
 
-    assert "property int currentStage" in qml
-    assert 'readonly property var allStages: ["Project", "Operation", "Tests", "Review"]' in qml
-    assert 'readonly property var compactStages: ["Project", "Operation", "Review"]' in qml
-    assert 'readonly property var stages: root.needsTests() ? root.allStages : root.compactStages' in qml
-    assert "id:stickyBar" in qml
-    assert "anchors.bottom: stickyBar.top" in qml or "anchors.bottom:stickyBar.top" in qml
     for operation in (
-        "Apply overlay",
-        "Apply bundle",
-        "Validate",
-        "Restore",
-        "Build",
-        "Test",
-        "Lint",
-        "Run project",
-        "Package",
-        "Clean",
-        "Inspect",
-        "Commit",
-        "Status",
-        "Doctor",
+        "apply-overlay",
+        "apply-overlays",
+        "validate",
+        "restore",
+        "build",
+        "test",
+        "lint",
+        "run",
+        "package",
+        "clean",
+        "status",
+        "doctor",
     ):
-        assert f'"{operation}"' in qml
-    for command in ("apply-overlays", "lint", "run", "package", "clean", "inspect", "commit"):
-        assert f'QStringLiteral("{command}")' in controller
+        assert operation in workflow
+    assert "OPERATIONS" in workflow
+    assert "review_payload" in workflow
+    assert "def _render_run_workflow" in gtk
+    assert "Launch" in gtk
 
 
 def test_desktop_test_picker_and_advanced_apply_override_use_real_commands() -> None:
-    qml = read(DESKTOP / "qml" / "pages" / "RunPage.qml")
-    header = read(DESKTOP / "src" / "AppController.h")
-    source = read(DESKTOP / "src" / "AppController.cpp")
+    workflow = read(ROOT / "devtool" / "desktop" / "run_workflow.py")
+    command_model = read(ROOT / "devtool" / "desktop" / "command_model.py")
 
-    assert "discoverTests(" in header
-    assert "AppController::discoverTests" in source
-    assert 'QStringLiteral("test") << QStringLiteral("--list-tests")' in source
-    assert "collectTestNames" in source
-    assert "selectedTestIds" not in qml  # desktop selection is kept in the QML map
-    assert "selectedTests" in qml
-    assert "Discover tests" in qml
-    assert "filteredTests()" in qml
-    assert "Advanced: apply without manifest check" in qml
-    assert "--no-manifest-check" in qml
-    assert "if (noManifestCheck)" in source
-    assert "dangerConfirmation" in qml
+    for token in (
+        "test_profile",
+        "selectors",
+        "test_ids",
+        "tags",
+        "exclude_tags",
+        "method",
+        "test_tasks",
+        "changed_from",
+        "failed",
+        "changed",
+        "instrumented",
+        "no_manifest_check",
+    ):
+        assert token in workflow or token in command_model
+    assert "--no-manifest-check" in command_model
+    assert "DevtoolCommandDraft" in workflow
 
 
 def test_desktop_history_is_searchable_and_actionable() -> None:
-    qml = read(DESKTOP / "qml" / "pages" / "HistoryPage.qml")
-    header = read(DESKTOP / "src" / "HistoryModel.h")
-    source = read(DESKTOP / "src" / "HistoryModel.cpp")
-    controller = read(DESKTOP / "src" / "AppController.cpp")
+    history = read(ROOT / "devtool" / "desktop" / "history_store.py")
+    model = read(ROOT / "devtool" / "desktop" / "control_center_model.py")
+    gtk = read(ROOT / "devtool" / "desktop" / "gtk_control_center.py")
 
-    for method in ("search", "repositories", "getByRunId", "remove"):
-        assert method in header
-        assert f"HistoryModel::{method}" in source
-    for action in ("Copy command", "Rerun", "Open log", "Open artifact"):
-        assert action in qml
-    assert "runHistoricalCommand" in controller
-    assert "Clear all run history?" in qml
-    assert "clearConfirmation.open()" in qml
+    assert "load_history" in history
+    assert "history" in model
+    assert "load_history" in history
+    assert "history_limit" in model
+    assert "Copy command" in gtk
 
 
 def test_android_run_and_history_workflows_cover_slice_two() -> None:

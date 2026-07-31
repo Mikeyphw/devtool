@@ -29,25 +29,19 @@
       "id": "ui-ux-contract",
       "group": "ui",
       "required": true,
-      "description": "Final UI/UX source contract protects HUD detail, notification parity/accessibility, navigation copy, and responsive Run/Overview polish"
+      "description": "GTK4 desktop shell/HUD source contracts, run workflow contracts, and desktop packaging integration remain coherent"
     },
     {
-      "id": "qt-configure",
-      "group": "qt",
+      "id": "desktop-gtk-smoke",
+      "group": "desktop",
       "required": false,
-      "description": "Qt 5 project configures with CMake"
+      "description": "GTK4 Control Center starts and emits a once snapshot when GTK4/libadwaita bindings are installed"
     },
     {
-      "id": "qt-build",
-      "group": "qt",
+      "id": "desktop-gtk-package",
+      "group": "desktop",
       "required": false,
-      "description": "Both native Qt executables compile and link"
-    },
-    {
-      "id": "qt-smoke",
-      "group": "qt",
-      "required": false,
-      "description": "CTest launches both QML applications offscreen"
+      "description": "GTK4 Control Center Debian integration package stages launchers, desktop metadata, icons, and GTK dependencies without Qt runtime baggage"
     },
     {
       "id": "android-lint",

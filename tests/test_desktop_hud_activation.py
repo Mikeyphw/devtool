@@ -2,28 +2,24 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DESKTOP = ROOT / "desktop" / "devtool-control-center"
+GTK_HUD = ROOT / "devtool" / "desktop" / "gtk_hud.py"
 
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_hud_activation_requires_acknowledgement_and_surfaces_failures() -> None:
-    hud = read(DESKTOP / "src" / "HudMain.cpp")
-    controller = read(DESKTOP / "src" / "AppController.cpp")
-    main = read(DESKTOP / "src" / "main.cpp")
-    assert 'waitForReadyRead(1000)' in hud
-    assert 'socket->write("shown")' in hud
-    assert 'activateHudWindow(window, true)' in hud
-    assert 'Devtool HUD: window shown at' in hud
-    assert 'QStandardPaths::findExecutable(QStringLiteral("devtool-control-center-hud"))' in controller
-    assert 'Devtool HUD executable was not found' in controller
-    assert 'Devtool HUD failed to start' in controller
-    assert 'Devtool HUD executable was not found' in main
+def test_gtk4_hud_activation_uses_single_runtime_state_channel() -> None:
+    source = read(GTK_HUD)
+    assert "Gtk4CompactHud" in source
+    assert "load_hud_snapshot" in source
+    assert "follow_active" in source
+    assert "renderer" in source
+    assert "gtk4-window" in source
 
 
-def test_hud_uses_reliably_mapped_top_level_window() -> None:
-    qml = read(DESKTOP / "qml" / "CompactHud.qml")
-    assert 'flags: Qt.Window | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint' in qml
-    assert 'flags: Qt.Tool |' not in qml
+def test_legacy_qt_hud_activation_source_is_removed() -> None:
+    assert not (ROOT / "desktop" / "devtool-control-center").exists()
+    hud_source = read(ROOT / "devtool" / "hud.py")
+    assert "devtool-control-center-hud" not in hud_source
+    assert "QtCompactHud" not in hud_source

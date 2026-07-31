@@ -19,32 +19,42 @@ Run every gate that is available on the current host:
 python3 tools/release-qualify.py
 ```
 
-Use `--require-qt` or `--require-android` on a release machine. Those switches
-turn an unavailable native toolchain into a failure instead of a documented
-skip. Add `--device-tests` when an emulator or physical device is connected.
-The machine-readable report is written to `dist/release-qualification.json`.
+Use `--require-qt` or `--require-android` on a release machine. `--require-qt`
+is retained as the compatibility name for the desktop GTK4/libadwaita gate in
+this release; it turns missing GTK4 bindings or package verification failures
+into release failures instead of documented skips. Add `--device-tests` when an
+emulator or physical device is connected. The machine-readable report is written
+to `dist/release-qualification.json`.
 
-## Qt gate
+## GTK4 desktop gate
 
-The Qt project exposes CTest smoke tests for both executables. They verify the
-compiled version and launch the complete QML engines with an isolated runtime,
-offscreen platform, and software renderer:
-
-```bash
-cmake -S desktop/devtool-control-center -B build/qt -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DDEVTOOL_ENABLE_TESTS=ON
-cmake --build build/qt --parallel
-ctest --test-dir build/qt --output-on-failure
-```
-
-The Debian package builder normalizes staged timestamps using
-`SOURCE_DATE_EPOCH`, produces a checksum, and can validate package metadata and
-required payloads:
+The desktop package now stages the GTK4/libadwaita Control Center and compact
+HUD as the canonical desktop executables:
 
 ```bash
-BUILD_DIR="$PWD/build/qt" \
-desktop/devtool-control-center/package-deb.sh --skip-build --verify
+devtool control-center --backend gtk4 --once
+devtool-control-center --once
+devtool-control-center-hud --once
 ```
+
+The Debian package builder no longer runs a native desktop build. It stages the Python
+`devtool.desktop` modules, GTK4 launchers, desktop metadata, metainfo, and icons,
+then verifies that the resulting package has GTK4/libadwaita dependencies and no
+removed desktop runtime baggage:
+
+```bash
+desktop/gtk-control-center/package-deb.sh --verify
+```
+
+Ubuntu/Debian runtime dependencies:
+
+```bash
+sudo apt install python3 python3-gi python3-rich \
+  gir1.2-gtk-4.0 gir1.2-adw-1 libgtk-4-1 libadwaita-1-0
+```
+
+The legacy Qt/QML source has been removed; release gates guard the GTK4-only desktop path,
+but release packaging and default launchers now point at GTK4.
 
 ## Android gate
 
@@ -81,7 +91,7 @@ prefix. It writes `release-artifacts.json` and `SHA256SUMS` next to the archive.
 `.github/workflows/release-qualification.yml` runs:
 
 - Python 3.11, 3.12, and 3.13 portable gates;
-- Qt 5 compile/link, CTest offscreen launch, and Debian packaging;
+- GTK4 once-smoke and Debian packaging without removed desktop runtime dependencies;
 - Android lint, JVM tests, ephemeral-key signed release, and signature checks;
 - Android emulator instrumentation;
 - deterministic source release generation after all preceding jobs pass.

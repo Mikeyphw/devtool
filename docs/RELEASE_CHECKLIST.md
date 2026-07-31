@@ -3,7 +3,7 @@
 ## Automated blockers
 
 - [ ] `python3 tools/release-qualify.py --require-qt --require-android --device-tests` passes.
-- [ ] Qt executables report version 0.4.0 and both offscreen QML smoke tests pass.
+- [ ] GTK4 Control Center and HUD smoke/package gates pass.
 - [ ] Debian package metadata and checksum verification pass.
 - [ ] Android lint and local JVM tests pass.
 - [ ] Release APK is signed by the intended certificate and `apksigner verify` passes.

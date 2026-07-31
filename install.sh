@@ -50,11 +50,12 @@ Options:
   --dry-run                     Print actions without changing the system.
   -h, --help                    Show this help.
 
-Desktop app installation rebuilds only when its source fingerprint changes or
-its binary is missing. Android app installation builds through Devtool's
-android_hud chroot target, stages the APK below $TMPDIR, and installs it with
-su -c 'pm install -r <apk>'. The optional KernelSU module is staged below
-$TMPDIR and installed with su -c 'ksud install <zip>'.
+Desktop app installation now packages the GTK4 Control Center desktop integration.
+It rebuilds only when the GTK4 desktop source fingerprint changes or its launcher is
+missing. Android app installation builds through Devtool's android_hud chroot
+target, stages the APK below $TMPDIR, and installs it with su -c 'pm install -r
+<apk>'. The optional KernelSU module is staged below $TMPDIR and installed with
+su -c 'ksud install <zip>'.
 USAGE
 }
 
@@ -453,18 +454,14 @@ desktop_binary() {
 
 desktop_source_fingerprint() {
   fingerprint_paths \
-    "$ROOT/desktop/devtool-control-center/CMakeLists.txt" \
-    "$ROOT/desktop/devtool-control-center/build.sh" \
-    "$ROOT/desktop/devtool-control-center/package-deb.sh" \
-    "$ROOT/desktop/devtool-control-center/src" \
-    "$ROOT/desktop/devtool-control-center/qml" \
-    "$ROOT/desktop/devtool-control-center/resources" \
-    "$ROOT/desktop/devtool-control-center/packaging"
+    "$ROOT/devtool/desktop" \
+    "$ROOT/desktop/gtk-control-center" \
+    "$ROOT/pyproject.toml"
 }
 
 desktop_source_version() {
   sed -n 's/^version=${VERSION:-\([^}]*\)}$/\1/p' \
-    "$ROOT/desktop/devtool-control-center/package-deb.sh" | head -n 1
+    "$ROOT/desktop/gtk-control-center/package-deb.sh" | head -n 1
 }
 
 desktop_installed_version() {
@@ -490,11 +487,11 @@ install_desktop_app() {
   if desktop_needs_build; then
     local fingerprint
     fingerprint=$(desktop_source_fingerprint)
-    printf 'Desktop source fingerprint changed or the app is missing; rebuilding and installing.\n'
-    run "$ROOT/desktop/devtool-control-center/package-deb.sh" --install --delete-after-install
+    printf 'GTK4 desktop source fingerprint changed or the launcher is missing; packaging and installing.\n'
+    run "$ROOT/desktop/gtk-control-center/package-deb.sh" --install --delete-after-install
     write_stamp "$INSTALLER_STATE_DIR/desktop-app.source.sha256" "$fingerprint"
   else
-    printf 'Build/install not needed: installed Control Center matches the current source fingerprint.\n'
+    printf 'Build/install not needed: installed GTK4 Control Center integration matches the current source fingerprint.\n'
   fi
 }
 
