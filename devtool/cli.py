@@ -2840,6 +2840,20 @@ def _with_artifact_validation_phase(
     return [static, *specs]
 
 
+def _rehydrate_apply_validation_context(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    context: dict[str, object],
+) -> None:
+    manifest = context.get("manifest") if isinstance(context.get("manifest"), dict) else {}
+    preview = context.get("preview") if isinstance(context.get("preview"), dict) else {}
+    if not manifest and not preview:
+        return
+    if preview:
+        args._devtool_artifact_preview = dict(preview)
+    _apply_artifact_validation_defaults(config, args, dict(manifest or {}))
+
+
 def _load_or_create_validation_session(
     config: ProjectConfig,
     args: argparse.Namespace,
@@ -2868,6 +2882,8 @@ def _load_or_create_validation_session(
 
     _enable_resumable_validation(config, args)
     effective_context = dict(apply_context or (active.apply_context if active is not None else {}) or {})
+    if active is not None and not start_new:
+        _rehydrate_apply_validation_context(config, args, effective_context)
     script_only = bool(effective_context.get("artifact_script_in_plan", False)) and all(
         bool(getattr(args, name, False)) for name in ("skip_restore", "skip_build", "skip_test")
     )
@@ -3241,6 +3257,8 @@ def _run_validation_session(
         start_new = mode == "start" or bool(getattr(args, "restart_session", False)) or active is None
         _enable_resumable_validation(config, args)
         effective_context = dict(apply_context or (active.apply_context if active is not None else {}) or {})
+        if active is not None and not start_new:
+            _rehydrate_apply_validation_context(config, args, effective_context)
         script_only = bool(effective_context.get("artifact_script_in_plan", False)) and all(
             bool(getattr(args, name, False)) for name in ("skip_restore", "skip_build", "skip_test")
         )
@@ -3263,7 +3281,41 @@ def _run_validation_session(
         else:
             if active is None:
                 raise ValidationSessionError("No active validation session exists to preview.")
-            session = active
+            session = copy.deepcopy(active)
+            original_repo_root = session.repo_root
+            with tempfile.TemporaryDirectory() as dry_run_state:
+                session.repo_root = str(Path(dry_run_state).resolve())
+                try:
+                    sync_validation_plan(session, preview_specs)
+                except ValidationSessionError as exc:
+                    lines = [
+                        "VALIDATION PREVIEW",
+                        f"Session: {active.session_id}",
+                        f"Failure action: {active.failure_action}",
+                        "Session state was not changed.",
+                        "Plan drift:",
+                        f"  {exc}",
+                    ]
+                    preview = OperationResult(
+                        "validation-preview",
+                        ["devtool", "validate", "--dry-run"],
+                        0,
+                        0.0,
+                        "\n".join(lines),
+                        [],
+                        skipped=True,
+                        metadata={
+                            "validation_preview": True,
+                            "validation_session_id": active.session_id,
+                            "selected_phase_keys": [],
+                            "state_changed": False,
+                            "plan_drift_status": session.plan_drift_status,
+                            "plan_drift_details": list(session.plan_drift_details),
+                        },
+                    )
+                    return [preview], preview.output, active
+                finally:
+                    session.repo_root = original_repo_root
 
         through = str(getattr(args, "through", "") or getattr(args, "pause_after", "") or "").strip()
         phase_values = _validation_phase_values(args)
@@ -3286,8 +3338,10 @@ def _run_validation_session(
             f"Session: {session.session_id if not start_new else '(new session not created)'}",
             f"Failure action: {session.failure_action}",
             "Session state was not changed.",
-            "Would run:",
         ]
+        if session.plan_drift_status:
+            lines.append(f"Plan drift: {session.plan_drift_status}")
+        lines.append("Would run:")
         lines.extend(
             f"  {item.index}/{item.total} {item.label}"
             for item in selected
@@ -4145,6 +4199,7 @@ def _handle_validation_accept_plan_change(
             setattr(args, name, session.options[name])
     _enable_resumable_validation(config, args)
     context = dict(session.apply_context or {})
+    _rehydrate_apply_validation_context(config, args, context)
     script_only = bool(context.get("artifact_script_in_plan", False)) and all(
         bool(getattr(args, name, False)) for name in ("skip_restore", "skip_build", "skip_test")
     )

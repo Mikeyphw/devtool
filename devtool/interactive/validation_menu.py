@@ -9,9 +9,8 @@ import subprocess
 import sys
 from typing import Iterable
 
-from rich.console import Console
-
 from ..clipboard import copy_text
+from ..console_utils import create_console, is_narrow_console
 from ..models import ProjectConfig
 from .fzf import Choice, TerminalUI
 from .rendering import shell_join
@@ -20,7 +19,7 @@ from .validation_recipes import ValidationRecipe, delete_recipe, expand_recipe, 
 from .validation_wizard import ValidationDraft
 
 
-console = Console()
+console = create_console()
 
 
 def run_validation_menu(config: ProjectConfig, args: argparse.Namespace) -> int:
@@ -111,6 +110,13 @@ def _main_header(catalog: ValidationCatalog) -> str:
     environment = config.execution_environment or "auto"
     if config.chroot_name and environment == "chroot":
         environment = f"chroot:{config.chroot_name}"
+    if is_narrow_console(console) or console.width <= 72:
+        repo = Path(config.repo_root).name or str(config.repo_root)
+        target = config.selected_target or "default"
+        return (
+            f"{repo} · {target} · {config.kind} · {environment} · "
+            f"session {state}{phase_summary}"
+        )
     return (
         f"repo {config.repo_root} · target {config.selected_target or 'default'} · "
         f"{config.kind} · {environment} · session {state}{phase_summary}"

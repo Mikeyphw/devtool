@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import io
 from pathlib import Path
 
+from rich.console import Console
+
 from devtool import cli
+from devtool.interactive.fzf import Choice, TerminalUI
 from devtool.interactive.validation_catalog import ValidationCatalog, dependency_closure
-from devtool.interactive.validation_menu import _main_choices
+from devtool.interactive.validation_menu import _main_choices, _main_header
 from devtool.interactive.validation_recipes import ValidationRecipe, expand_recipe, load_recipes, save_recipe
 from devtool.interactive.validation_wizard import ValidationDraft
 from devtool.models import ProjectConfig
@@ -191,6 +195,58 @@ def test_state_aware_choices_include_safe_retry_plan_acceptance_and_logs(tmp_pat
     )
     keys = {item.key for item in _main_choices(catalog)}
     assert {"retry", "safe-retry", "recover", "accept-plan-change", "logs"} <= keys
+
+
+def test_termux_fzf_uses_bottom_preview_and_ascii_markers(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TERMUX_VERSION", "0.119")
+    monkeypatch.setenv("COLUMNS", "64")
+    ui = TerminalUI(console=Console(file=io.StringIO(), force_terminal=True, width=64))
+    ui.fzf = "/usr/bin/fzf"
+    monkeypatch.setattr(TerminalUI, "interactive", property(lambda _self: True))
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(argv, **_kwargs):
+        captured["argv"] = list(argv)
+        return argparse.Namespace(returncode=130, stdout="")
+
+    monkeypatch.setattr("devtool.interactive.fzf.subprocess.run", fake_run)
+
+    ui.choose([Choice("go", "▶ Continue", "Run remaining → done")], prompt="validation", header="repo · target")
+
+    assert "--height=100%" in captured["argv"]
+    assert "--preview-window=down,45%,border-top,wrap" in captured["argv"]
+    assert "--pointer=>" in captured["argv"]
+    assert "--marker=*" in captured["argv"]
+    assert "--header=repo - target" in captured["argv"]
+
+
+def test_narrow_fallback_prints_description_on_separate_line(monkeypatch) -> None:
+    stream = io.StringIO()
+    ui = TerminalUI(console=Console(file=stream, force_terminal=False, width=56), force_fallback=True)
+    monkeypatch.setattr("devtool.interactive.fzf.Prompt.ask", lambda *_args, **_kwargs: "0")
+
+    ui.choose([Choice("go", "Run", "A long description that should not share the numbered row")], prompt="validation", header="Header")
+
+    output = stream.getvalue()
+    assert "  1  Run\n" in output
+    assert "      A long description" in output
+
+
+def test_narrow_validation_header_uses_repo_name(monkeypatch, tmp_path: Path) -> None:
+    import devtool.interactive.validation_menu as validation_menu
+
+    monkeypatch.setenv("TERMUX_VERSION", "0.119")
+    stream = io.StringIO()
+    monkeypatch.setattr(validation_menu, "console", Console(file=stream, force_terminal=True, width=64))
+    root = tmp_path / "very" / "deep" / "repo-name"
+    config = ProjectConfig(repo_root=root, kind="android", selected_target="app")
+    catalog = ValidationCatalog(config=config)
+
+    header = _main_header(catalog)
+
+    assert str(root) not in header
+    assert "repo-name" in header
+    assert "session none" in header
 
 
 def test_noninteractive_vm_alias_prints_recipe_command(tmp_path: Path, capsys) -> None:

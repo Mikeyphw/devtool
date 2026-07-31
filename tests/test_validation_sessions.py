@@ -469,6 +469,147 @@ class ResumableValidationTests(unittest.TestCase):
                 self.assertEqual([spec.metadata["validation_phase_name"] for spec in specs], phases)
                 self.assertTrue(all(spec.metadata["validation_change_scope"] == scope for spec in specs))
 
+    def test_deferred_android_resume_rehydrates_preview_changed_paths_before_plan_sync(self) -> None:
+        import os
+
+        def fake_run(_config, specs, _args, **_kwargs):
+            results = [
+                OperationResult(spec.name, list(spec.argv), 0, 0.01, "ok", [], metadata=dict(spec.metadata))
+                for spec in specs
+            ]
+            return results, "\n".join(result.name for result in results)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            preview = {"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]}
+            scoped_config = validation_config(root, ["app/src/main/kotlin/Main.kt"])
+            specs = AndroidGradleRunner().build_validation_specs(scoped_config)
+            self.assertEqual(
+                [str(spec.metadata.get("validation_phase_name") or "") for spec in specs],
+                ["compile", "unit-test", "package", "lint", "finalize"],
+            )
+            create_session(
+                scoped_config,
+                specs,
+                apply_context={
+                    "validation_mode": "deferred",
+                    "manifest": {},
+                    "preview": preview,
+                    "minimum_phase": "finalize",
+                },
+            )
+
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), \
+                    patch("devtool.cli.render_summary"), \
+                    patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                rc = main(["--repo", str(root), "--no-clipboard", "validate", "continue"])
+
+            self.assertEqual(rc, 0)
+            resumed = load_active_session(root, required=True)
+            self.assertNotEqual(resumed.plan_drift_status, "acceptance-required")
+            self.assertEqual([phase.name for phase in resumed.phases], ["compile", "unit-test", "package", "lint", "finalize"])
+
+    def test_sequential_android_resume_rehydrates_preview_changed_paths_before_plan_sync(self) -> None:
+        def fake_run(_config, specs, _args, **_kwargs):
+            results = [
+                OperationResult(spec.name, list(spec.argv), 0, 0.01, "ok", [], metadata=dict(spec.metadata))
+                for spec in specs
+            ]
+            return results, "\n".join(result.name for result in results)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            preview = {"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]}
+            scoped_config = validation_config(root, ["app/src/main/kotlin/Main.kt"])
+            specs = AndroidGradleRunner().build_validation_specs(scoped_config)
+            create_session(
+                scoped_config,
+                specs,
+                apply_context={
+                    "validation_mode": "sequential",
+                    "manifest": {},
+                    "preview": preview,
+                    "minimum_phase": "finalize",
+                },
+            )
+
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), \
+                    patch("devtool.cli.render_summary"), \
+                    patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                rc = main(["--repo", str(root), "--no-clipboard", "validate", "continue"])
+
+            self.assertEqual(rc, 0)
+            resumed = load_active_session(root, required=True)
+            self.assertEqual([phase.name for phase in resumed.phases], ["compile", "unit-test", "package", "lint", "finalize"])
+
+    def test_accept_plan_change_rehydrates_preview_changed_paths_before_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            preview = {"changes": [{"kind": "modify", "path": "app/src/main/kotlin/Main.kt"}]}
+            scoped_config = validation_config(root, ["app/src/main/kotlin/Main.kt"])
+            specs = AndroidGradleRunner().build_validation_specs(scoped_config)
+            create_session(
+                scoped_config,
+                specs,
+                apply_context={
+                    "validation_mode": "deferred",
+                    "manifest": {},
+                    "preview": preview,
+                    "minimum_phase": "finalize",
+                },
+            )
+
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
+                rc = main([
+                    "--repo", str(root), "--no-clipboard",
+                    "validation-accept-plan-change", "--reason", "reviewed",
+                ])
+
+            self.assertEqual(rc, 0)
+            session = load_active_session(root, required=True)
+            self.assertEqual([phase.name for phase in session.phases], ["compile", "unit-test", "package", "lint", "finalize"])
+
+    def test_dry_run_resume_reports_plan_drift_without_mutating_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            config = validation_config(root)
+            scoped_config = validation_config(root, ["app/src/main/kotlin/Main.kt"])
+            specs = AndroidGradleRunner().build_validation_specs(scoped_config)
+            session = create_session(config, specs)
+            parser = build_parser()
+            args = parser.parse_args(["--dry-run", "validate", "continue"])
+
+            results, raw_output, returned = _run_validation_session(
+                config,
+                args,
+                parser,
+                log_path=None,
+                tasker_progress=None,
+                continue_on_error=False,
+            )
+
+            self.assertEqual(results[0].returncode, 0)
+            self.assertIn("Plan drift: safe-change", raw_output)
+            self.assertEqual(returned.session_id, session.session_id)
+            saved = load_active_session(root, required=True)
+            self.assertEqual(saved.session_id, session.session_id)
+            self.assertEqual(saved.plan_drift_status, "")
+            self.assertEqual([phase.name for phase in saved.phases], ["compile", "unit-test", "package", "lint", "finalize"])
+
     def test_session_persists_checkpoints_and_invalidates_from_changed_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

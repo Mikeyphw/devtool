@@ -12,6 +12,8 @@ from typing import Iterable, Sequence
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
+from ..console_utils import create_console, is_narrow_console, is_termux_environment
+
 
 @dataclass(frozen=True, slots=True)
 class Choice:
@@ -43,11 +45,12 @@ class TerminalUI:
     REVIEW_EXPECT = ("ctrl-d", "ctrl-y", "ctrl-e", "ctrl-s", "ctrl-l")
 
     def __init__(self, *, console: Console | None = None, force_fallback: bool = False) -> None:
-        self.console = console or Console()
+        self.console = console or create_console()
         self.force_fallback = force_fallback
         self.fzf = shutil.which("fzf")
         self.bat = shutil.which("bat") or shutil.which("batcat")
         self.last_action = "enter"
+        self.termux = is_termux_environment()
 
     @property
     def interactive(self) -> bool:
@@ -56,6 +59,51 @@ class TerminalUI:
     @property
     def use_fzf(self) -> bool:
         return bool(self.fzf and self.interactive and not self.force_fallback)
+
+    @property
+    def compact(self) -> bool:
+        return bool(is_narrow_console(self.console) or self.console.width <= 72)
+
+    @staticmethod
+    def _ascii_text(value: str) -> str:
+        replacements = {
+            "▶": ">",
+            "◆": "*",
+            "◇": "-",
+            "≫": ">>",
+            "↻": "R",
+            "⟳": "R",
+            "♻": "R",
+            "Ⅱ": "||",
+            "■": "x",
+            "●": "*",
+            "✓": "+",
+            "☷": "#",
+            "⊞": "+",
+            "▣": "#",
+            "⬢": "*",
+            "⚙": "*",
+            "★": "*",
+            "⚕": "+",
+            "→": "->",
+            "·": "-",
+        }
+        text = value
+        for source, target in replacements.items():
+            text = text.replace(source, target)
+        return text
+
+    def _display_text(self, value: str) -> str:
+        if self.termux and self.compact:
+            return self._ascii_text(value)
+        return value
+
+    def _preview_window(self) -> str:
+        if self.termux and self.compact:
+            return "down,45%,border-top,wrap"
+        if self.compact:
+            return "down,40%,border-top,wrap"
+        return "right,58%,border-left,wrap"
 
     def choose(
         self,
@@ -96,32 +144,34 @@ class TerminalUI:
             rows: list[str] = []
             for index, item in enumerate(choices):
                 token = f"{index:04d}"
-                detail = item.description.replace("\n", " ").strip()
-                rows.append(f"{token}\t{item.label}\t{detail}")
-                preview = item.preview.strip() or self._default_preview(item)
+                detail = self._display_text(item.description.replace("\n", " ").strip())
+                rows.append(f"{token}\t{self._display_text(item.label)}\t{detail}")
+                preview = self._display_text(item.preview.strip() or self._default_preview(item))
                 (preview_dir / f"{token}.md").write_text(preview + "\n", encoding="utf-8")
 
             viewer = self._preview_command(preview_dir)
+            pointer = ">" if self.termux and self.compact else "▶"
+            marker = "*" if self.termux and self.compact else "◆"
             argv = [
                 str(self.fzf),
                 "--ansi",
                 "--layout=reverse",
                 "--border=rounded",
                 "--info=inline",
-                "--height=95%",
+                "--height=100%" if self.termux and self.compact else "--height=95%",
                 "--delimiter=\t",
                 "--with-nth=2,3",
                 f"--prompt={prompt}> ",
-                "--preview-window=right,58%,border-left,wrap",
+                f"--preview-window={self._preview_window()}",
                 "--bind=ctrl-p:toggle-preview",
-                "--pointer=▶",
-                "--marker=◆",
+                f"--pointer={pointer}",
+                f"--marker={marker}",
                 "--color=header:bold",
                 "--preview",
                 viewer,
             ]
             if header:
-                argv.append(f"--header={header}")
+                argv.append(f"--header={self._display_text(header)}")
             if multi:
                 argv.append("--multi")
             accepted_actions = tuple(dict.fromkeys([*expect, "alt-left"]))
@@ -181,10 +231,16 @@ class TerminalUI:
         multi: bool,
     ) -> Selection | None:
         if header:
-            self.console.print(f"[bold]{header}[/bold]")
+            self.console.print(f"[bold]{self._display_text(header)}[/bold]")
         for index, item in enumerate(choices, start=1):
-            suffix = f" [dim]{item.description}[/dim]" if item.description else ""
-            self.console.print(f"  [cyan]{index:>2}[/cyan]  {item.label}{suffix}")
+            label = self._display_text(item.label)
+            description = self._display_text(item.description)
+            if self.compact and description:
+                self.console.print(f"  [cyan]{index:>2}[/cyan]  {label}")
+                self.console.print(f"      [dim]{description}[/dim]")
+            else:
+                suffix = f" [dim]{description}[/dim]" if description else ""
+                self.console.print(f"  [cyan]{index:>2}[/cyan]  {label}{suffix}")
         self.console.print("  [cyan] 0[/cyan]  Back")
         raw = Prompt.ask(prompt, default="0").strip()
         if not raw or raw == "0":
