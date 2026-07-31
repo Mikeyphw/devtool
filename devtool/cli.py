@@ -1679,10 +1679,13 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
         # An overlay may introduce both the named target and .devtool.toml. Allow
         # extraction to proceed with a repository-only config, then reload after
         # apply once the artifact-created configuration exists. Explicit CLI target
-        # mistakes remain fatal.
+        # mistakes remain fatal unless the requested target is the artifact's own
+        # declared target.
+        manifest_target = artifact_target(manifest)
+        target_is_artifact_declared = bool(target_name and manifest_target and target_name == manifest_target)
         if (
             args.command in APPLY_COMMANDS
-            and not getattr(args, "_devtool_cli_target_explicit", False)
+            and (not getattr(args, "_devtool_cli_target_explicit", False) or target_is_artifact_declared)
             and "Unknown target" in str(exc)
         ):
             return load_project_config(

@@ -103,6 +103,55 @@ class ArtifactV2Tests(unittest.TestCase):
             self.assertEqual(config.selected_target, "new_app")
             self.assertEqual(config.build_target, str((repo / solution_path).resolve()))
 
+    def test_explicit_apply_target_may_be_introduced_by_overlay_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            before_config = "[project]\nkind = \"python\"\n"
+            after_config = (
+                before_config
+                + "\n[targets.new_app]\n"
+                + "type = \"android\"\n"
+                + "root = \"android\"\n"
+            )
+            (repo / ".devtool.toml").write_text(before_config, encoding="utf-8")
+            payload = b"ok\n"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "inventory": {
+                    "format": 1,
+                    "entries": [
+                        {
+                            "path": ".devtool.toml",
+                            "action": "modify",
+                            "source_sha256": sha(before_config.encode()),
+                            "sha256": sha(after_config.encode()),
+                            "size": len(after_config.encode()),
+                        },
+                        {"path": "android/README.md", "action": "add", "sha256": sha(payload), "size": len(payload)},
+                    ],
+                },
+                "validation": {"mode": "normal", "target": "new_app", "required": False},
+            }
+            archive = root / "android-overlay.zip"
+            write_archive_entries(
+                archive,
+                {
+                    ".devtool-artifact.json": json.dumps(manifest).encode(),
+                    ".devtool.toml": after_config.encode(),
+                    "android/README.md": payload,
+                },
+            )
+
+            rc = main(["-r", str(repo), "--yes", "--target", "new_app", "apply-overlay", str(archive), "--keep-artifact"])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual((repo / ".devtool.toml").read_text(encoding="utf-8"), after_config)
+            self.assertEqual(load_project_config(str(repo), None, target_name="new_app").selected_target, "new_app")
+
     def test_bundle_auto_registers_every_overlay_created_solution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

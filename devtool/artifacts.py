@@ -343,7 +343,8 @@ def _manifest_repository(manifest: dict[str, Any]) -> dict[str, Any]:
 
 def artifact_target(manifest: dict[str, Any]) -> str:
     """Return the preferred validation target from a v2 or legacy manifest."""
-    return str(manifest.get("target") or manifest.get("validate_target") or "").strip()
+    validation = manifest.get("validation") if isinstance(manifest.get("validation"), dict) else {}
+    return str(manifest.get("target") or manifest.get("validate_target") or validation.get("target") or "").strip()
 
 
 def artifact_solution(manifest: dict[str, Any]) -> str:
@@ -474,9 +475,9 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
                 )
     if "mode" in raw:
         mode = str(raw.get("mode") or "").strip().lower()
-        if mode not in {"required", "optional", "disabled"}:
+        if mode not in {"required", "optional", "normal", "disabled"}:
             ok = False
-            messages.append("validation.mode must be one of: required, optional, disabled.")
+            messages.append("validation.mode must be one of: required, optional, normal, disabled.")
     if "allow_deferred" in raw and not isinstance(raw.get("allow_deferred"), bool):
         ok = False
         messages.append("validation.allow_deferred must be a boolean.")
