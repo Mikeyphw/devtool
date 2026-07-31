@@ -1,0 +1,54 @@
+# Python caches and packaging output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+
+# Local devtool runtime state
+.devtool/
+devtool-artifact.json
+
+# Android and Gradle generated files
+.gradle/
+**/.gradle/
+**/build/
+local.properties
+**/android-live-hud.token
+*.apk
+*.aab
+!android/devtool-live-hud/devtool-live-hud-debug.apk
+
+# Desktop packaging output
+desktop/devtool-control-center/dist/
+
+# Generated archives and package artifacts
+*.zip
+!android/devtool-live-hud/app/src/main/res/raw/devtool_root_bridge_module.zip
+*.deb
+*.rpm
+*.tar
+*.tar.gz
+*.tgz
+*.sha256
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Ad hoc backups
+*.bak
