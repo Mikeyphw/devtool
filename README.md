@@ -3,6 +3,65 @@
 Devtool applies project overlays, validates builds and tests, records transactions, produces handoff summaries, and can publish one live run to the desktop HUD or the Android Devtool Frontend.
 
 
+## Interactive validation cockpit
+
+Open the validation-only terminal UI with either command:
+
+```bash
+devtool -r /path/to/repo menu validation
+devtool -r /path/to/repo vm
+```
+
+The cockpit uses `fzf` for state-aware selection and `bat` for command, plan,
+event, and dependency previews. A numbered terminal fallback remains available
+with `--no-fzf`. It reads the same revisioned status and plan APIs used by the
+Android Validation Workbench, then compiles choices into canonical Devtool
+arguments. It never creates a second validation executor.
+
+The landing screen adapts to the active session and offers next-phase,
+through-checkpoint, selected-phase, complete, retry, safe retry, pause, stop,
+recover, reset-from-phase, accept-plan-change, finalize, report, refresh, and
+abort actions. Every run or mutation compiled from an active session carries its
+current revision guard. The
+full wizard covers one-shot, collect-all, durable sequential, watch, matrix,
+Wine, overlay/bundle integrity, and apply-time validation. Pipeline skips, test
+selectors, Gradle tasks, resource profiles, one-run resource overrides, device
+guards, failure policy, HUD/output controls, dry-run, copy, editable command
+review, stable pretty/compact JSON, and reusable global or repository recipes
+that preserve explicit invocation context are all supported.
+
+```bash
+# Jump directly into the guided wizard.
+devtool -r /path/to/repo validation-menu --wizard
+
+# Print a recipe command without opening the UI.
+devtool -r /path/to/repo vm --recipe android-battery-safe --print-command
+
+# Discover the complete Gradle task catalog while opening the cockpit.
+devtool -r /path/to/repo vm --runtime-tasks
+
+# Expand the built-in target-matrix recipe noninteractively.
+devtool -r /path/to/repo vm --recipe target-matrix \
+  --matrix-values app,android_hud --print-command
+```
+
+Custom resource controls are ephemeral and override the selected resource
+profile for only that invocation:
+
+```bash
+devtool -r /path/to/repo validate continue \
+  --max-workers 1 --cpu-limit 2 \
+  --gradle-heap-mb 1536 --memory-guard-mb 640 \
+  --low-priority --no-parallel --build-cache --no-daemon
+```
+
+Saved recipes live in
+`~/.config/devtool/validation-recipes.toml` and
+`REPOSITORY/.devtool/validation-recipes.toml`. See
+[`docs/VALIDATION_MENU.md`](docs/VALIDATION_MENU.md) for the complete interaction
+model and key bindings.
+
+
 ## Deferred validation reliability
 
 Deferred and sequential validation use revisioned schema-v4 sessions with a

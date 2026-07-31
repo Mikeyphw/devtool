@@ -1,49 +1,43 @@
 {
-  "name": "devtool_android_hud_lint_finish_phase_47c5_c7",
-  "release": "1.1.1",
-  "devtool_version": "1.1.1",
-  "desktop_version": "0.4.0",
-  "android_version": "1.17.0",
-  "android_version_code": 31,
-  "artifact_type": "overlay",
-  "target": "android_hud",
-  "slice": "47C-5/47C-6/47C-7",
+  "name": "devtool_validation_menu_wizard_full_snapshot",
+  "release": "1.1.0-validation-menu",
+  "devtool_version": "1.1.0",
+  "artifact_type": "snapshot",
+  "target": "root",
+  "slice": "interactive-validation-cockpit",
   "features": [
-    "Complete legacy backup rules alongside Android 12+ data extraction rules",
-    "Add monochrome adaptive launcher icon support",
-    "Fix overlay drag accessibility by using a header view that overrides performClick",
-    "Move remaining lint-reported setText concatenation call sites to string resources/plurals",
-    "Remove unused colors, text appearance styles, and dead drawables"
+    "State-aware fzf and bat validation cockpit with numbered fallback",
+    "Guided wizard for every validation method and validation-focused flag group",
+    "Revision-guarded durable-session controls and dependency-aware phase selection",
+    "Complete structured test selection and Gradle task discovery",
+    "Ephemeral custom validation resource overrides with durable-session persistence",
+    "Runtime guards, failure policy, command review, live logs, and TOML recipes",
+    "Zsh completion, manual, README, implementation guide, and regression tests"
   ],
   "key_files": [
-    "android/devtool-live-hud/app/src/main/AndroidManifest.xml",
-    "android/devtool-live-hud/app/src/main/res/xml/backup_rules.xml",
-    "android/devtool-live-hud/app/src/main/res/drawable/ic_launcher_monochrome.xml",
-    "android/devtool-live-hud/app/src/main/res/mipmap/ic_launcher.xml",
-    "android/devtool-live-hud/app/src/main/res/mipmap/ic_launcher_round.xml",
-    "android/devtool-live-hud/app/src/main/res/values/strings.xml",
-    "android/devtool-live-hud/app/src/main/res/values/colors.xml",
-    "android/devtool-live-hud/app/src/main/res/values/styles.xml",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/AppPalette.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/MainActivity.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/OverlayHudService.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/RepositoryPickerActivity.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/UiKit.java",
-    "android/devtool-live-hud/app/src/main/java/io/github/mikeceead/devtoolhud/ValidationWorkbenchView.java",
-    ".devtool-delete",
-    "tests/test_android_app_source.py",
-    "tests/test_android_debug_phase47c5_c7_lint_cleanup.py",
-    "PHASE_47C5_C7_ANDROID_HUD_LINT_FINISH.md",
-    "CHANGELOG.md",
-    "PATCH_SUMMARY.md"
+    "devtool/cli.py",
+    "devtool/completion.py",
+    "devtool/interactive/fzf.py",
+    "devtool/interactive/rendering.py",
+    "devtool/interactive/validation_catalog.py",
+    "devtool/interactive/validation_menu.py",
+    "devtool/interactive/validation_recipes.py",
+    "devtool/interactive/validation_wizard.py",
+    "completions/_devtool",
+    "tests/test_validation_interactive_menu.py",
+    "docs/VALIDATION_MENU.md",
+    "PHASE_48_VALIDATION_MENU_WIZARD.md",
+    "README.md",
+    "share/man/man1/devtool.1",
+    "CHANGELOG.md"
   ],
   "validation": {
-    "tests_passed": 35,
+    "tests_passed": 167,
+    "subtests_passed": 30,
     "tests_failed": 0,
-    "tests_skipped": 0,
     "commands": [
-      "python3 -m pytest tests/test_android_app_source.py tests/test_android_debug_phase47c5_c7_lint_cleanup.py -q"
+      "PYTHONPATH=. python -m pytest -q tests/test_validation_interactive_menu.py tests/test_completion_and_manpage.py tests/test_validation_sessions.py tests/test_validation_control_api.py tests/test_cli.py"
     ],
-    "notes": "Source-contract validation only. Apply with --host --target android_hud and :app:testDebugUnitTest for Android validation. No repo manager, bridge auth, root/chroot, Git, or debug recorder behavior changes."
+    "notes": "The broader inherited snapshot suite contains unrelated pre-existing failures that reproduce against the untouched input archive."
   }
 }

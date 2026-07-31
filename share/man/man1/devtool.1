@@ -70,6 +70,25 @@ Run the runner-specific validation pipeline. Also accepts the optional artifact 
 and
 .B overlays.
 .TP
+.B validation-menu " | " vm
+Open the validation-only interactive cockpit. The equivalent nested command is
+.BR "menu validation" .
+Use
+.B --wizard
+to enter the guided flow directly,
+.B --no-fzf
+to force the numbered fallback,
+.B --runtime-tasks
+to query the complete Gradle task catalog,
+.BI "--recipe " NAME
+to open a built-in or saved recipe,
+.BI "--artifact " PATH
+or
+.BI "--matrix-values " VALUES
+to expand recipe placeholders, and
+.B --print-command
+to emit the compiled canonical command without running it.
+.TP
 .B start-validation " | " sv
 Create a persistent sequential validation session.
 .TP
@@ -461,6 +480,39 @@ For .NET tests, use already-built output.
 .PP
 Reports keep separate discovered, selected, executed, passed, failed, skipped, and excluded
 counts. Notifications show the selected total rather than the complete catalog total.
+.SH INTERACTIVE VALIDATION COCKPIT
+Run
+.B devtool menu validation
+or
+.B devtool vm
+to open the validation-only terminal interface. The cockpit uses fzf when
+available and bat for rich previews, with a numbered terminal fallback when
+fzf is unavailable or
+.B --no-fzf
+is supplied.
+.PP
+The interface reads the stable revisioned validation status and plan APIs. It
+compiles selections into the normal Devtool CLI and executes that argv directly;
+it does not implement a separate runner. Session mutations and continuation commands include the current revision,
+preventing a stale menu or notification from changing or advancing a newer
+state. Ctrl-R and the numbered Refresh action reload the resolved repository
+context, session revision, plan, events, and task catalog.
+.PP
+The state-aware landing screen exposes next, through, selected, remaining,
+retry, safe retry, pause, stop, recover, reset, plan acceptance, finalization,
+reporting, and explicit keep-or-rollback abort actions. The guided wizard covers
+one-shot, collect-all, durable sequential, watch, matrix, Wine, artifact
+integrity, bundle integrity, and apply-time validation. The final review can run,
+dry-run, copy, edit, or save the generated command as a global or repository
+recipe.
+.PP
+Common keys are Enter to select, Tab for multi-selection, Ctrl-R to refresh,
+Ctrl-P to toggle previews, Ctrl-D for dry-run, Ctrl-Y to copy, Ctrl-E to edit,
+Ctrl-S to save a recipe, Ctrl-L to open the latest log, and Escape to return.
+Saved recipes preserve explicit global invocation context and are read from
+.I ~/.config/devtool/validation-recipes.toml
+and
+.IR REPOSITORY/.devtool/validation-recipes.toml .
 .SH VALIDATION
 .TP
 .B --skip-restore
@@ -486,6 +538,43 @@ Validate comma-separated runtime IDs, target names, or variants.
 .TP
 .BR --matrix-mode " rid|target|variant"
 Interpret matrix values as runtime IDs, named targets, or build/test variants.
+.TP
+.BR --max-workers " COUNT"
+Override the validation worker count for this invocation.
+.TP
+.BR --cpu-limit " COUNT"
+Override the validation CPU budget for this invocation.
+.TP
+.BR --gradle-heap-mb " MIB"
+Override the Gradle validation heap for this invocation.
+.TP
+.BR --memory-guard-mb " MIB"
+Override the free-memory guard for this invocation. Zero disables the guard.
+.TP
+.BR --low-priority " | " --normal-priority
+Select low or normal scheduler priority for validation child processes.
+.TP
+.BR --parallel " | " --no-parallel
+Enable or disable Gradle parallel execution for validation.
+.TP
+.BR --build-cache " | " --no-build-cache
+Enable or disable the Gradle build cache for validation.
+.TP
+.BR --daemon " | " --no-daemon
+Allow or disable Gradle daemons for validation.
+.PP
+Use
+.B --resource-profile
+for validation resources and
+.B --test-profile
+for test selection. The validation
+.B --profile
+alias is deprecated and emits a warning.
+.PP
+These one-run overrides are applied after
+.B --resource-profile
+and therefore take precedence without modifying
+.IR .devtool.toml .
 .SS Durable Android/Gradle validation
 .TP
 .BR --phase " PHASE"

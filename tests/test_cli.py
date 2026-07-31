@@ -17,7 +17,7 @@ from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.apply_notifications import build_apply_notification
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _apply_artifact_validation_defaults, _apply_runner_cli_options, _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _record_apply_history, _run_sequential_overlays, _validation_expectation_result, _validation_specs_for_args, build_parser, main, split_runner_passthrough_args
+from devtool.cli import _apply_artifact_validation_defaults, _apply_runner_cli_options, _artifact_commit_paths, _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _record_apply_history, _run_sequential_overlays, _validation_expectation_result, _validation_specs_for_args, build_parser, main, split_runner_passthrough_args
 from devtool.config import ProjectConfig, load_project_config
 from devtool.log_commands import choose_active_log, parse_log_filename
 from devtool.logstore import write_log
@@ -1855,6 +1855,56 @@ artifact-cleanup: ok exit=0 time=0.10s
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["handoff commit"])
+
+    def test_artifact_commit_paths_skip_missing_untracked_history_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "payload.txt").write_text("payload\n", encoding="utf-8")
+            args = SimpleNamespace(
+                _devtool_artifact_preview={"changes": [{"kind": "add", "path": "payload.txt"}]},
+                _devtool_artifact_manifest={},
+            )
+
+            paths = _artifact_commit_paths(args, repo)
+
+            self.assertEqual(paths, ["payload.txt"])
+            self.assertNotIn(".devtool/artifacts.json", paths)
+            self.assertNotIn(".devtool/artifacts.d", paths)
+
+    def test_artifact_commit_paths_include_existing_unignored_history_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            registry = repo / ".devtool" / "artifacts.json"
+            registry.parent.mkdir(parents=True)
+            registry.write_text('{"schema_version": 2, "artifacts": []}\n', encoding="utf-8")
+            args = SimpleNamespace(_devtool_artifact_preview={"changes": []}, _devtool_artifact_manifest={})
+
+            paths = _artifact_commit_paths(args, repo)
+
+            self.assertEqual(paths, [".devtool/artifacts.json"])
+
+    def test_artifact_commit_paths_include_deleted_tracked_history_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "devtool@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Devtool Tests"], cwd=repo, check=True)
+            registry = repo / ".devtool" / "artifacts.json"
+            registry.parent.mkdir(parents=True)
+            registry.write_text('{"schema_version": 2, "artifacts": []}\n', encoding="utf-8")
+            subprocess.run(["git", "add", ".devtool/artifacts.json"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "Track history"], cwd=repo, check=True)
+            registry.unlink()
+            args = SimpleNamespace(_devtool_artifact_preview={"changes": []}, _devtool_artifact_manifest={})
+
+            paths = _artifact_commit_paths(args, repo)
+
+            self.assertEqual(paths, [".devtool/artifacts.json"])
 
     def test_auto_commit_reconciles_complete_artifact_history_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -260,6 +260,7 @@ def _add_apply_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--validate-only", action="store_true", help="Skip apply and only run validation")
     _add_validation_skip_flags(cmd)
     _add_resumable_validation_flags(cmd)
+    _add_validation_resource_override_flags(cmd)
 
 
 def _add_apply_policy_flags(cmd: argparse.ArgumentParser) -> None:
@@ -422,6 +423,7 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--matrix-mode", choices=["rid", "target", "variant"], default="rid")
             cmd.add_argument("--test-profile", default="", help="Saved test profile used by validation")
             _add_validation_test_selection_flags(cmd)
+            _add_validation_resource_override_flags(cmd)
             if name == "validate":
                 _add_resumable_validation_flags(cmd)
 
@@ -437,6 +439,28 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--matrix", default="", help="Comma-separated runtime IDs, targets, or variants")
         cmd.add_argument("--matrix-mode", choices=["rid", "target", "variant"], default="rid")
         _add_resumable_validation_flags(cmd)
+        _add_validation_resource_override_flags(cmd)
+
+    validation_menu = subparsers.add_parser("validation-menu", aliases=["vm"], help="Open the interactive validation menu and wizard")
+    validation_menu.add_argument("--no-fzf", action="store_true", help="Use the numbered terminal fallback even when fzf is installed")
+    validation_menu.add_argument("--runtime-tasks", action="store_true", help="Query Gradle for the full task catalog when the menu opens")
+    validation_menu.add_argument("--wizard", action="store_true", help="Start directly in the guided validation wizard")
+    validation_menu.add_argument("--recipe", default="", help="Open a built-in or saved validation recipe directly")
+    validation_menu.add_argument("--artifact", default="", help="Artifact path used to expand a recipe placeholder")
+    validation_menu.add_argument("--matrix-values", default="", help="Comma-separated matrix values used to expand a recipe placeholder")
+    validation_menu.add_argument("--print-command", action="store_true", help="Print the generated command instead of opening the review screen")
+
+    menu_cmd = subparsers.add_parser("menu", help="Open an interactive Devtool menu")
+    menu_sub = menu_cmd.add_subparsers(dest="menu_command", required=True)
+    menu_validation = menu_sub.add_parser("validation", aliases=["validate", "v"], help="Open the validation menu and wizard")
+    menu_validation.set_defaults(normalized_command="validation-menu")
+    menu_validation.add_argument("--no-fzf", action="store_true", help="Use the numbered terminal fallback even when fzf is installed")
+    menu_validation.add_argument("--runtime-tasks", action="store_true", help="Query Gradle for the full task catalog when the menu opens")
+    menu_validation.add_argument("--wizard", action="store_true", help="Start directly in the guided validation wizard")
+    menu_validation.add_argument("--recipe", default="", help="Open a built-in or saved validation recipe directly")
+    menu_validation.add_argument("--artifact", default="", help="Artifact path used to expand a recipe placeholder")
+    menu_validation.add_argument("--matrix-values", default="", help="Comma-separated matrix values used to expand a recipe placeholder")
+    menu_validation.add_argument("--print-command", action="store_true", help="Print the generated command instead of opening the review screen")
 
     ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
     ai_prompt.add_argument("--repo-name", required=True, help="Human-friendly repo name for the generated prompt")
@@ -709,7 +733,7 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     daemon = cmd.add_mutually_exclusive_group()
     daemon.add_argument("--stop-gradle-after-phase", action="store_true", help="Stop Gradle daemons after each completed phase")
     daemon.add_argument("--keep-gradle-daemon", action="store_true", help="Keep Gradle daemons available between phase invocations")
-    cmd.add_argument("--resource-profile", "--validation-profile", "--profile", dest="validation_resource_profile", choices=["automatic", "android-low-power", "standard"], default="automatic", help="Validation resource profile; android-low-power uses one worker, two CPUs, no daemon, and low priority")
+    cmd.add_argument("--resource-profile", "--validation-profile", "--profile", dest="validation_resource_profile", choices=["automatic", "android-low-power", "standard"], default="automatic", help="Validation resource profile; --profile is a deprecated compatibility alias")
     cmd.add_argument("--max-infrastructure-retries", type=int, default=1, metavar="COUNT", help="Automatically retry environment/tooling interruptions this many times per phase")
     cmd.add_argument("--max-resource-retries", type=int, default=1, metavar="COUNT", help="Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available")
     cmd.add_argument("--no-auto-retry", action="store_true", help="Disable automatic infrastructure and resource retries for this session")
@@ -733,6 +757,31 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--after-event", default="", help="Return events after this event ID")
     cmd.add_argument("--event-limit", "--limit", dest="event_limit", type=int, default=100, help="Maximum event records to return")
     _add_validation_api_output_flags(cmd)
+
+
+def _add_validation_resource_override_flags(cmd: argparse.ArgumentParser) -> None:
+    """Add one-invocation validation resource overrides.
+
+    These flags intentionally override only the in-memory ProjectConfig used by
+    the current command. They do not rewrite .devtool.toml or global config.
+    """
+
+    cmd.add_argument("--max-workers", type=int, default=None, metavar="COUNT", help="Override validation worker count for this invocation")
+    cmd.add_argument("--cpu-limit", type=int, default=None, metavar="COUNT", help="Override validation CPU limit for this invocation")
+    cmd.add_argument("--gradle-heap-mb", type=int, default=None, metavar="MIB", help="Override the Gradle validation heap for this invocation")
+    cmd.add_argument("--memory-guard-mb", type=int, default=None, metavar="MIB", help="Override the validation free-memory guard; 0 disables it")
+    priority = cmd.add_mutually_exclusive_group()
+    priority.add_argument("--low-priority", dest="validation_low_priority", action="store_true", default=None, help="Run validation commands at low scheduler priority")
+    priority.add_argument("--normal-priority", dest="validation_low_priority", action="store_false", help="Do not lower validation process priority")
+    parallel = cmd.add_mutually_exclusive_group()
+    parallel.add_argument("--parallel", dest="validation_parallel", action="store_true", default=None, help="Enable Gradle parallel execution for validation")
+    parallel.add_argument("--no-parallel", dest="validation_parallel", action="store_false", help="Disable Gradle parallel execution for validation")
+    cache = cmd.add_mutually_exclusive_group()
+    cache.add_argument("--build-cache", dest="validation_build_cache", action="store_true", default=None, help="Enable the Gradle build cache for validation")
+    cache.add_argument("--no-build-cache", dest="validation_build_cache", action="store_false", help="Disable the Gradle build cache for validation")
+    daemon = cmd.add_mutually_exclusive_group()
+    daemon.add_argument("--daemon", dest="validation_daemon", action="store_true", default=None, help="Allow the Gradle daemon during validation")
+    daemon.add_argument("--no-daemon", dest="validation_daemon", action="store_false", help="Disable the Gradle daemon during validation")
 
 
 def _add_validation_test_selection_flags(cmd: argparse.ArgumentParser) -> None:
@@ -1828,12 +1877,19 @@ def _spec_with_memory_guard_disabled(spec: CommandSpec) -> CommandSpec:
 
 
 def _normalize_command_aliases(args: argparse.Namespace) -> None:
-    if getattr(args, "command", "") == "apply":
-        args.command = str(getattr(args, "normalized_command", "") or "apply-overlay")
+    if getattr(args, "command", "") in {"apply", "menu"}:
+        args.command = str(getattr(args, "normalized_command", "") or ("apply-overlay" if getattr(args, "command", "") == "apply" else "validation-menu"))
+    elif getattr(args, "command", "") == "vm":
+        args.command = "validation-menu"
     command = str(getattr(args, "command", "") or "")
     if command in {"validate", "v"}:
         action = str(getattr(args, "validate_scope", "") or "").strip().lower()
-        if action in {"start", "next", "run", "resume", "continue", "retry", "status", "checkpoint", "plan", "events", "report", "pause", "stop", "finalize", "abort", "recover", "reset", "accept-plan-change"}:
+        if action in {"wizard", "menu"}:
+            args.command = "validation-menu"
+            args.wizard = action == "wizard"
+            args.validate_scope = ""
+            command = str(args.command)
+        elif action in {"start", "next", "run", "resume", "continue", "retry", "status", "checkpoint", "plan", "events", "report", "pause", "stop", "finalize", "abort", "recover", "reset", "accept-plan-change"}:
             args.validate_scope = ""
             if action == "start":
                 args._devtool_validation_mode = "start"
@@ -2072,7 +2128,55 @@ def _cli_string_list(value: object) -> list[str]:
     return [text] if text else []
 
 
+
+def _apply_validation_resource_overrides(config: ProjectConfig, args: argparse.Namespace) -> None:
+    if str(getattr(args, "command", "") or "") not in {
+        "validate", "v", "validate-all", "wine-validate", "wv", *APPLY_COMMANDS
+    }:
+        return
+    validation = config.runner_options.setdefault("validation", {})
+    if not isinstance(validation, dict):
+        validation = {}
+        config.runner_options["validation"] = validation
+    gradle = config.runner_options.setdefault("gradle", {})
+    if not isinstance(gradle, dict):
+        gradle = {}
+        config.runner_options["gradle"] = gradle
+
+    numeric = {
+        "max_workers": ("max_workers", 1, False),
+        "cpu_limit": ("cpu_limit", 1, False),
+        "gradle_heap_mb": ("gradle_heap_mb", 128, False),
+        "memory_guard_mb": ("memory_guard_mb", 0, True),
+    }
+    for attr, (key, minimum, allow_zero) in numeric.items():
+        value = getattr(args, attr, None)
+        if value is None:
+            continue
+        parsed = int(value)
+        if parsed < minimum or (parsed == 0 and not allow_zero):
+            raise SystemExit(f"--{attr.replace('_', '-')} must be at least {minimum}.")
+        validation[key] = parsed
+
+    low_priority = getattr(args, "validation_low_priority", None)
+    if low_priority is not None:
+        validation["low_priority"] = bool(low_priority)
+    parallel = getattr(args, "validation_parallel", None)
+    if parallel is not None:
+        validation["parallel"] = bool(parallel)
+        gradle["parallel"] = bool(parallel)
+    build_cache = getattr(args, "validation_build_cache", None)
+    if build_cache is not None:
+        gradle["build_cache"] = bool(build_cache)
+    daemon = getattr(args, "validation_daemon", None)
+    if daemon is not None:
+        validation["no_daemon"] = not bool(daemon)
+        gradle["no_daemon"] = not bool(daemon)
+
+
 def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -> None:
+    _apply_validation_resource_profile(config, args)
+    _apply_validation_resource_overrides(config, args)
     if args.command in {"build", "b"} and config.kind in {"android", "gradle"}:
         artifacts = config.runner_options.setdefault("artifacts", {})
         if not isinstance(artifacts, dict):
@@ -2619,6 +2723,7 @@ def _apply_validation_resource_profile(config: ProjectConfig, args: argparse.Nam
 
 def _enable_resumable_validation(config: ProjectConfig, args: argparse.Namespace) -> None:
     _apply_validation_resource_profile(config, args)
+    _apply_validation_resource_overrides(config, args)
     if config.kind not in {"android", "gradle"}:
         raise ValidationSessionError(
             "Persistent sequential validation is currently supported for Android/Gradle targets."
@@ -2657,6 +2762,14 @@ def _validation_session_options(args: argparse.Namespace) -> dict[str, object]:
         "stop_gradle_after_phase": bool(getattr(args, "stop_gradle_after_phase", False)),
         "keep_gradle_daemon": bool(getattr(args, "keep_gradle_daemon", False)),
         "validation_resource_profile": str(getattr(args, "validation_resource_profile", "automatic") or "automatic"),
+        "max_workers": getattr(args, "max_workers", None),
+        "cpu_limit": getattr(args, "cpu_limit", None),
+        "gradle_heap_mb": getattr(args, "gradle_heap_mb", None),
+        "memory_guard_mb": getattr(args, "memory_guard_mb", None),
+        "validation_low_priority": getattr(args, "validation_low_priority", None),
+        "validation_parallel": getattr(args, "validation_parallel", None),
+        "validation_build_cache": getattr(args, "validation_build_cache", None),
+        "validation_daemon": getattr(args, "validation_daemon", None),
         "max_infrastructure_retries": 0 if bool(getattr(args, "no_auto_retry", False)) else max(0, int(getattr(args, "max_infrastructure_retries", 1) or 0)),
         "max_resource_retries": 0 if bool(getattr(args, "no_auto_retry", False)) else max(0, int(getattr(args, "max_resource_retries", 1) or 0)),
         "no_auto_retry": bool(getattr(args, "no_auto_retry", False)),
@@ -2749,7 +2862,7 @@ def _load_or_create_validation_session(
     if not start_new and active is not None:
         # A resumed plan must retain its original skip/daemon choices. Runtime,
         # battery, temperature and phase selection are intentionally per-run.
-        for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "max_infrastructure_retries", "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action"):
+        for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "max_workers", "cpu_limit", "gradle_heap_mb", "memory_guard_mb", "validation_low_priority", "validation_parallel", "validation_build_cache", "validation_daemon", "max_infrastructure_retries", "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action"):
             if name in active.options:
                 setattr(args, name, active.options[name])
 
@@ -4023,7 +4136,9 @@ def _handle_validation_accept_plan_change(
         raise ValidationControlError("invalid_request", "Accepting a validation plan change requires --reason.")
     for name in (
         "skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase",
-        "keep_gradle_daemon", "validation_resource_profile", "max_infrastructure_retries",
+        "keep_gradle_daemon", "validation_resource_profile", "max_workers", "cpu_limit",
+        "gradle_heap_mb", "memory_guard_mb", "validation_low_priority", "validation_parallel",
+        "validation_build_cache", "validation_daemon", "max_infrastructure_retries",
         "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action",
     ):
         if name in session.options:
@@ -4297,19 +4412,36 @@ def _artifact_commit_paths(args: argparse.Namespace, repo_root: Path | None = No
                             add_path(value)
 
     def add_history_path(value: str) -> None:
-        # Most repositories intentionally ignore devtool's runtime state. Do not
-        # force that state into an artifact commit merely because path-scoped Git
-        # staging uses -f for declared payload files. Tracked or non-ignored
-        # history registries are still reconciled exactly as before.
+        # Artifact history is optional repository metadata. Only pass a history
+        # path to path-scoped Git staging when it currently exists or Git already
+        # tracks it (including a tracked path that was deleted). Otherwise
+        # ``git add -- <missing-path>`` fails with pathspec rc=128 after every
+        # validation phase has already passed.
+        #
+        # Most repositories intentionally ignore Devtool runtime state. Ignored
+        # and untracked history remains local, while tracked history continues to
+        # be reconciled, including deletions.
         if repo_root is not None:
-            check = subprocess.run(
+            candidate = repo_root / value
+            tracked = subprocess.run(
+                ["git", "ls-files", "--error-unmatch", "--", value],
+                cwd=repo_root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            ).returncode == 0
+            exists = candidate.exists() or candidate.is_symlink()
+            if not exists and not tracked:
+                return
+
+            ignored = subprocess.run(
                 ["git", "check-ignore", "-q", "--", value],
                 cwd=repo_root,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
-            )
-            if check.returncode == 0:
+            ).returncode == 0
+            if ignored and not tracked:
                 return
         add_path(value)
 
@@ -6152,6 +6284,8 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
     native app HUD bridge, clipboard, and command summary on Android.  The old whole-
     devtool delegation remains available with DEVTOOL_AUTO_CHROOT_MODE=full.
     """
+    if str(getattr(args, "command", "") or "") == "validation-menu":
+        return None
     if bool(getattr(args, "no_auto_chroot", False)) or inside_chroot():
         return None
     # Auto/full chroot routing is an Android Termux feature. Never inspect or
@@ -6340,13 +6474,26 @@ def _write_performance_report(
     return path
 
 
+
+def _warn_deprecated_validation_profile_alias(args: argparse.Namespace, raw_argv: list[str]) -> None:
+    if not hasattr(args, "validation_resource_profile"):
+        return
+    if not any(token == "--profile" or token.startswith("--profile=") for token in raw_argv):
+        return
+    create_console(stderr=True).print(
+        "[yellow]Warning:[/yellow] validation [bold]--profile[/bold] is deprecated; "
+        "use [bold]--resource-profile[/bold]. Test profiles use [bold]--test-profile[/bold]."
+    )
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     parse_argv, passthrough_args = split_runner_passthrough_args(raw_argv)
     parser = build_parser()
     args = parser.parse_args(parse_argv)
     args._devtool_passthrough_args = passthrough_args
+    args._devtool_hud_explicit = any(token in {"--auto-hud", "--hud-auto", "--no-hud"} for token in parse_argv)
     _normalize_command_aliases(args)
+    _warn_deprecated_validation_profile_alias(args, parse_argv)
     _apply_global_cli_defaults(args, parse_argv)
     _normalize_live_progress_args(args)
     args._devtool_cli_target_explicit = bool(str(getattr(args, "target", "") or "").strip())
@@ -6464,6 +6611,11 @@ def main(argv: list[str] | None = None) -> int:
     if _is_artifact_validation_args(args):
         config = _load_command_config(args)
         return _run_artifact_validation_command(config, args, as_json=False)
+
+    if args.command == "validation-menu":
+        config = _load_command_config(args)
+        from .interactive.validation_menu import run_validation_menu
+        return run_validation_menu(config, args)
 
     if args.command == "config":
         return _config_command(args)

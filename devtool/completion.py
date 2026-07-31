@@ -114,6 +114,9 @@ _devtool_commands() {
     'validate:run runner-specific validation'
     'v:alias for validate'
     'validate-all:run runner-specific validation and collect all independent failures'
+    'validation-menu:open the interactive validation cockpit'
+    'vm:alias for validation-menu'
+    'menu:open an interactive Devtool menu'
     'start-validation:start a persistent sequential validation session'
     'sv:alias for start-validation'
     'resume-validation:resume a persistent sequential validation session'
@@ -217,6 +220,17 @@ _devtool_test_args() {
     '--instrumented[run Android instrumentation tests on a device]'
 }
 
+_devtool_validation_menu_args() {
+  _arguments \
+    '--no-fzf[use the numbered terminal fallback]' \
+    '--runtime-tasks[query Gradle for the complete runtime task catalog]' \
+    '--wizard[start directly in the guided validation wizard]' \
+    '--recipe[open a built-in or saved validation recipe]:recipe:' \
+    '--artifact[artifact used to expand recipe placeholders]:artifact:_devtool_artifact_path' \
+    '--matrix-values[comma-separated values used to expand matrix recipes]:values:' \
+    '--print-command[print the generated command without opening the review screen]'
+}
+
 _devtool_validation_args() {
   _arguments \
     '--skip-restore[skip dependency restore]' \
@@ -265,6 +279,18 @@ _devtool_validation_args() {
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phase invocations]' \
     '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
     '--validation-profile[alias for --resource-profile]:profile:(automatic android-low-power standard)' \
+    '--max-workers[override validation worker count for this invocation]:count:' \
+    '--cpu-limit[override validation CPU limit for this invocation]:count:' \
+    '--gradle-heap-mb[override the Gradle validation heap]:mebibytes:' \
+    '--memory-guard-mb[override the free-memory guard]:mebibytes:' \
+    '(--low-priority --normal-priority)--low-priority[run validation commands at low scheduler priority]' \
+    '(--low-priority --normal-priority)--normal-priority[run validation commands at normal scheduler priority]' \
+    '(--parallel --no-parallel)--parallel[enable Gradle parallel validation]' \
+    '(--parallel --no-parallel)--no-parallel[disable Gradle parallel validation]' \
+    '(--build-cache --no-build-cache)--build-cache[enable the Gradle build cache]' \
+    '(--build-cache --no-build-cache)--no-build-cache[disable the Gradle build cache]' \
+    '(--daemon --no-daemon)--daemon[allow the Gradle daemon during validation]' \
+    '(--daemon --no-daemon)--no-daemon[disable the Gradle daemon during validation]' \
     '--max-infrastructure-retries[automatic environment retries per phase]:count:' \
     '--max-resource-retries[automatic resource retries per phase]:count:' \
     '--no-auto-retry[disable automatic environment and resource retries]' \
@@ -342,6 +368,18 @@ _devtool_apply_args() {
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phases]' \
     '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
     '--validation-profile[alias for --resource-profile]:profile:(automatic android-low-power standard)' \
+    '--max-workers[override validation worker count for this invocation]:count:' \
+    '--cpu-limit[override validation CPU limit for this invocation]:count:' \
+    '--gradle-heap-mb[override the Gradle validation heap]:mebibytes:' \
+    '--memory-guard-mb[override the free-memory guard]:mebibytes:' \
+    '(--low-priority --normal-priority)--low-priority[run validation commands at low scheduler priority]' \
+    '(--low-priority --normal-priority)--normal-priority[run validation commands at normal scheduler priority]' \
+    '(--parallel --no-parallel)--parallel[enable Gradle parallel validation]' \
+    '(--parallel --no-parallel)--no-parallel[disable Gradle parallel validation]' \
+    '(--build-cache --no-build-cache)--build-cache[enable the Gradle build cache]' \
+    '(--build-cache --no-build-cache)--no-build-cache[disable the Gradle build cache]' \
+    '(--daemon --no-daemon)--daemon[allow the Gradle daemon during validation]' \
+    '(--daemon --no-daemon)--no-daemon[disable the Gradle daemon during validation]' \
     '--max-infrastructure-retries[automatic environment retries per phase]:count:' \
     '--max-resource-retries[automatic resource retries per phase]:count:' \
     '--no-auto-retry[disable automatic environment and resource retries]' \
@@ -411,6 +449,16 @@ _devtool() {
         validate|v|start-validation|sv|resume-validation|rv)
           _devtool_validation_args
           ;;
+        validation-menu|vm)
+          _devtool_validation_menu_args
+          ;;
+        menu)
+          if (( ${#line} < 2 )); then
+            _values 'menu' validation
+          else
+            _devtool_validation_menu_args
+          fi
+          ;;
         validation-status|vs)
           _arguments '--session[specific validation session ID]:session:' '--events[include durable events]' '--after-event[event cursor]:event-id:' '--event-limit[maximum events]:count:' '--json[emit stable JSON]' '--machine[format]:format:(pretty compact)'
           ;;
@@ -461,7 +509,19 @@ _devtool() {
             '--watch[rerun validation when files change]' \
             '--watch-interval[seconds between watch polls]:seconds:' \
             '--matrix[comma-separated runtime IDs, target names, or variants]:matrix:' \
-            '--matrix-mode[matrix interpretation]:mode:(rid target variant)'
+            '--matrix-mode[matrix interpretation]:mode:(rid target variant)' \
+            '--max-workers[override validation worker count for this invocation]:count:' \
+            '--cpu-limit[override validation CPU limit for this invocation]:count:' \
+            '--gradle-heap-mb[override the Gradle validation heap]:mebibytes:' \
+            '--memory-guard-mb[override the free-memory guard]:mebibytes:' \
+            '(--low-priority --normal-priority)--low-priority[run validation commands at low scheduler priority]' \
+            '(--low-priority --normal-priority)--normal-priority[run validation commands at normal scheduler priority]' \
+            '(--parallel --no-parallel)--parallel[enable Gradle parallel validation]' \
+            '(--parallel --no-parallel)--no-parallel[disable Gradle parallel validation]' \
+            '(--build-cache --no-build-cache)--build-cache[enable the Gradle build cache]' \
+            '(--build-cache --no-build-cache)--no-build-cache[disable the Gradle build cache]' \
+            '(--daemon --no-daemon)--daemon[allow the Gradle daemon during validation]' \
+            '(--daemon --no-daemon)--no-daemon[disable the Gradle daemon during validation]'
           ;;
         doctor|dr)
           _arguments '--fix[create safe devtool state and cache directories]'
