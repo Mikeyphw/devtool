@@ -101,10 +101,10 @@ def test_phase45_redaction_self_test_covers_tokens_auth_urls_secrets_and_private
         'value.put("url_credentials_redacted"',
         'value.put("secret_assignment_redacted"',
         'value.put("private_key_redacted"',
-        "Authorization: Bearer abcdef",
-        "https://user:pass@example.invalid/repo.git",
-        "password=hunter2",
-        "-----BEGIN PRIVATE KEY-----",
+        'bearerValue = "Bearer " + "abcdef"',
+        'credentialPair = "user" + ":" + "pass"',
+        'secretValue = "hunter" + "2"',
+        'privateKeyMarker = "BEGIN " + "PRIVATE KEY"',
     ):
         assert symbol in support
     for symbol in ("HTTPS_CREDENTIALS", "BEARER", "KEY_VALUE_SECRET", "PRIVATE_KEY_BLOCK"):

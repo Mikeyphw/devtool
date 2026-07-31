@@ -63,7 +63,7 @@ class PythonChrootEnvironmentConsistencyTests(unittest.TestCase):
             plan = resolve_environment(info, environment=str(root / ".devtool" / "venv"), execution_environment="chroot")
             commands = build_sync_command(info, plan, install_project=True)
         joined = [" ".join(command) for command in commands]
-        self.assertTrue(any("-m venv" in item for item in joined))
+        self.assertTrue(any("-m devtool.python_support ensure-venv" in item for item in joined))
         self.assertTrue(any("setuptools>=68" in item and "wheel" in item for item in joined))
         self.assertTrue(any("--no-build-isolation" in item and " -e ." in item for item in joined))
 
@@ -93,7 +93,7 @@ class PythonChrootVenvBootstrapRegressionTests(unittest.TestCase):
             info = inspect_python_project(root, "venv", "pytest")
             plan = resolve_environment(info, environment=str(env_root), execution_environment="chroot")
             commands = build_sync_command(info, plan, install_project=True)
-        self.assertEqual(commands[0][1:3], ["-m", "venv"])
+        self.assertEqual(commands[0][1:4], ["-m", "devtool.python_support", "ensure-venv"])
         self.assertEqual(commands[0][-1], str(env_root))
         self.assertTrue(any(command[-1] == "pytest" for command in commands))
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import copy
 from dataclasses import asdict, replace
 import json
@@ -35,6 +36,7 @@ from .artifacts import (
     diff_artifact,
     format_preview,
     is_overlay_bundle,
+    list_archive_members,
     materialize_overlay_bundle_entries,
     overlay_bundle_targets,
     latest_commit_hash,
@@ -5704,6 +5706,12 @@ def _run_sequential_overlays(
         )
         raw_sections = [commit_raw]
 
+        if transaction_path and not any(result.returncode != 0 for result in all_results):
+            verification = _verify_applied_artifact_effects(config, args)
+            if verification is not None:
+                all_results.append(verification)
+                raw_sections.append("$ " + " ".join(verification.argv) + "\n" + verification.output)
+
         if transaction_path:
             if any(result.returncode != 0 for result in all_results):
                 if rollback_enabled and not any(result.name == "apply-rollback" for result in all_results):
@@ -5727,11 +5735,16 @@ def _run_sequential_overlays(
             _record_apply_history(config, args, all_results)
             args._devtool_history_recorded = True
 
-        if not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
+        delete_on_failure = bool(getattr(args, "delete_artifact_on_failure", False))
+        if (
+            not getattr(args, "dry_run", False)
+            and not getattr(args, "keep_artifact", False)
+            and (not any(result.returncode != 0 for result in all_results) or delete_on_failure)
+        ):
             cleanup = _delete_original_artifact_after_apply(
                 all_results,
                 artifact=getattr(args, "artifact", ""),
-                delete_on_failure=bool(getattr(args, "delete_artifact_on_failure", False)),
+                delete_on_failure=delete_on_failure,
             )
             if cleanup is not None:
                 all_results.append(cleanup)
@@ -5750,6 +5763,105 @@ def _apply_transaction_path(results: list[OperationResult]) -> str:
         if path:
             return str(path)
     return ""
+
+
+def _safe_preview_path(raw: object) -> Path:
+    rel = Path(str(raw or "").strip())
+    if not str(rel) or rel.is_absolute() or ".." in rel.parts:
+        raise ValueError(f"Unsafe preview path: {raw}")
+    return rel
+
+
+def _artifact_payload_hashes(artifact: object, *, snapshot: bool) -> dict[str, str]:
+    artifacts = _artifact_arg_list(artifact)
+    if len(artifacts) != 1:
+        return {}
+    try:
+        artifact_path = resolve_artifact_path(artifacts[0])
+        if not snapshot and is_overlay_bundle(artifact_path):
+            return {}
+        hashes: dict[str, str] = {}
+        for member in list_archive_members(artifact_path, include_data=True):
+            if member.is_dir or member.data is None:
+                continue
+            rel = _safe_preview_path(member.name)
+            hashes[str(rel).replace("\\", "/")] = hashlib.sha256(member.data).hexdigest()
+        return hashes
+    except Exception:
+        return {}
+
+
+def _verify_applied_artifact_effects(config: ProjectConfig, args: argparse.Namespace) -> OperationResult | None:
+    if (
+        getattr(args, "dry_run", False)
+        or getattr(args, "preview", False)
+        or (getattr(args, "diff", False) and not getattr(args, "interactive", False))
+        or getattr(args, "validate_only", False)
+    ):
+        return None
+    if getattr(args, "command", "") not in APPLY_COMMANDS:
+        return None
+
+    preview = dict(getattr(args, "_devtool_artifact_preview", {}) or {})
+    changes = [item for item in preview.get("changes", []) if isinstance(item, dict)]
+    if not changes:
+        return OperationResult("apply-verification", ["devtool", "verify-apply"], 0, 0.0, "Applied artifact verification passed.", [])
+
+    start = time.perf_counter()
+    artifact_type = str(getattr(args, "_devtool_artifact_type", "") or "").strip()
+    snapshot = artifact_type == "snapshot" or "snapshot" in str(getattr(args, "command", ""))
+    payload_hashes = _artifact_payload_hashes(getattr(args, "artifact", ""), snapshot=snapshot)
+    problems: list[str] = []
+    checked = 0
+
+    for change in changes:
+        kind = str(change.get("kind") or "").strip()
+        if kind == "unchanged":
+            continue
+        try:
+            rel = _safe_preview_path(change.get("path"))
+        except ValueError as exc:
+            problems.append(str(exc))
+            continue
+        display = str(rel).replace("\\", "/")
+        target = config.repo_root / rel
+        checked += 1
+        if kind == "delete":
+            if target.exists() or target.is_symlink():
+                problems.append(f"{display}: expected deleted but still exists")
+            continue
+        if kind in {"add", "modify", "replace-dir"}:
+            if not (target.exists() or target.is_symlink()):
+                problems.append(f"{display}: expected applied but is missing")
+                continue
+            expected_hash = payload_hashes.get(display)
+            if expected_hash and target.is_file() and sha256_file(target) != expected_hash:
+                problems.append(f"{display}: content does not match artifact payload")
+            continue
+        problems.append(f"{display}: unsupported preview change kind {kind!r}")
+
+    if problems:
+        output = "Applied artifact verification failed:\n" + "\n".join(f"- {item}" for item in problems[:20])
+        if len(problems) > 20:
+            output += f"\n- ... {len(problems) - 20} more issue(s)"
+        return OperationResult(
+            "apply-verification",
+            ["devtool", "verify-apply"],
+            1,
+            time.perf_counter() - start,
+            output,
+            [Issue("error", "apply-verification", "", "ApplyVerificationError", item) for item in problems],
+            failure_kind="apply_verification_failure",
+        )
+
+    return OperationResult(
+        "apply-verification",
+        ["devtool", "verify-apply"],
+        0,
+        time.perf_counter() - start,
+        f"Applied artifact verification passed ({checked} path{'s' if checked != 1 else ''} checked).",
+        [],
+    )
 
 
 def _apply_artifact_paths(results: list[OperationResult]) -> list[str]:
@@ -7172,6 +7284,11 @@ def main(argv: list[str] | None = None) -> int:
                     results.append(rollback_result)
                     raw_output += "\n\n" + rollback_raw
                 results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
+                if transaction_path and not any(result.returncode != 0 for result in results):
+                    verification = _verify_applied_artifact_effects(config, args)
+                    if verification is not None:
+                        results.append(verification)
+                        raw_output += "\n\n$ " + " ".join(verification.argv) + "\n" + verification.output
                 if transaction_path:
                     if any(result.returncode != 0 for result in results):
                         if rollback_enabled and not any(result.name == "apply-rollback" for result in results):
@@ -7190,11 +7307,16 @@ def main(argv: list[str] | None = None) -> int:
                             raw_output += "\n\n" + rollback_raw
                     else:
                         mark_transaction_completed(transaction_path)
-                if not getattr(args, "dry_run", False) and not getattr(args, "keep_artifact", False):
+                delete_on_failure = bool(getattr(args, "delete_artifact_on_failure", False))
+                if (
+                    not getattr(args, "dry_run", False)
+                    and not getattr(args, "keep_artifact", False)
+                    and (not any(result.returncode != 0 for result in results) or delete_on_failure)
+                ):
                     cleanup_result = _delete_original_artifact_after_apply(
                         results,
                         artifact=getattr(args, "artifact", ""),
-                        delete_on_failure=bool(getattr(args, "delete_artifact_on_failure", False)),
+                        delete_on_failure=delete_on_failure,
                     )
                     if cleanup_result is not None:
                         results.append(cleanup_result)

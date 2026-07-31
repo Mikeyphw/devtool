@@ -89,7 +89,7 @@ class PythonSupportTests(unittest.TestCase):
         self.assertEqual(
             names,
             [
-                "restore", "python-environment", "python-source-audit", "test",
+                "restore", "restore:test-tools", "python-environment", "python-source-audit", "test",
                 "lint:ruff", "dependency-check", "prepare-dist", "build", "package-check",
             ],
         )

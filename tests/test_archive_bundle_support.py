@@ -21,6 +21,7 @@ from devtool.artifacts import (
 from devtool.cli import build_parser, main, _normalize_command_aliases, _run_sequential_overlays
 from devtool.runners import apply_overlay_bundle
 from devtool.models import CommandSpec, OperationResult, ProjectConfig
+from devtool.transactions import find_active_transaction
 
 
 class ArchiveBundleSupportTests(unittest.TestCase):
@@ -128,6 +129,37 @@ class ArchiveBundleSupportTests(unittest.TestCase):
             second = self._zip_overlay(root / "002.zip", "b.txt", "two")
             rc = main(["-r", str(repo), "--yes", "apply-overlays", str(first), str(second), "--keep-artifact"])
             self.assertEqual(rc, 0)
+            self.assertEqual((repo / "a.txt").read_text(encoding="utf-8"), "one")
+            self.assertEqual((repo / "b.txt").read_text(encoding="utf-8"), "two")
+
+    def test_apply_overlays_no_validate_verifies_and_closes_transaction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            first = self._zip_overlay(root / "001.zip", "a.txt", "one")
+            second = self._zip_overlay(root / "002.zip", "b.txt", "two")
+
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / "xdg")}, clear=False):
+                rc = main([
+                    "-r", str(repo),
+                    "--yes",
+                    "--no-clipboard",
+                    "apply-overlays",
+                    "--no-validate",
+                    "--keep-artifact",
+                    str(first),
+                    str(second),
+                ])
+                self.assertEqual(rc, 0)
+                self.assertEqual((repo / "a.txt").read_text(encoding="utf-8"), "one")
+                self.assertEqual((repo / "b.txt").read_text(encoding="utf-8"), "two")
+                self.assertIsNone(find_active_transaction(repo))
+
+                status_rc = main(["-r", str(repo), "--yes", "--no-clipboard", "status"])
+
+            self.assertEqual(status_rc, 0)
             self.assertEqual((repo / "a.txt").read_text(encoding="utf-8"), "one")
             self.assertEqual((repo / "b.txt").read_text(encoding="utf-8"), "two")
 

@@ -1372,7 +1372,8 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
                 build_command="./gradlew assembleDebug",
                 test_command="./gradlew testDebugUnitTest",
             )
-            validation = build_validation_specs(config)
+            with patch.dict(os.environ, {}, clear=True):
+                validation = build_validation_specs(config)
 
         self.assertEqual([spec.name for spec in validation], ["restore", "build", "test", "lint"])
         self.assertEqual(

@@ -899,7 +899,7 @@ def build_sync_command(
     if (
         _is_chroot_execution_environment(plan.execution_environment)
         or not venv_python.is_file()
-        or not _can_import_with_python(str(venv_python), "pip")
+        or (os.access(venv_python, os.X_OK) and not _can_import_with_python(str(venv_python), "pip"))
     ):
         commands.append([
             plan.bootstrap_python or plan.python,
@@ -1651,12 +1651,15 @@ def _declares_pytest_async_plugin(root: Path) -> bool:
 
 
 def _can_import_with_python(python: str, module: str) -> bool:
-    proc = subprocess.run(
-        [python, "-c", f"import {module}"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [python, "-c", f"import {module}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
     return proc.returncode == 0
 
 

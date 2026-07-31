@@ -127,7 +127,15 @@ class ResourcePolicyTests(unittest.TestCase):
             execution_environment="chroot",
             runner_options={"validation": {"memory_guard_mb": 0}},
         )
-        policy = resolve_android_validation_policy(config)
+        with patch.dict(os.environ, {}, clear=True):
+            policy = resolve_android_validation_policy(config)
+        self.assertTrue(policy.enabled)
+        self.assertEqual(policy.memory_guard_mb, 0)
+
+    def test_android_validation_memory_guard_env_zero_disables_guard(self) -> None:
+        config = ProjectConfig(repo_root=Path("/repo"), kind="android", execution_environment="chroot")
+        with patch.dict(os.environ, {"DEVTOOL_VALIDATION_MEMORY_GUARD_MB": "0"}, clear=True):
+            policy = resolve_android_validation_policy(config)
         self.assertTrue(policy.enabled)
         self.assertEqual(policy.memory_guard_mb, 0)
 

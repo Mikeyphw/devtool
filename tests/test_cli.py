@@ -24,6 +24,7 @@ from devtool.logstore import write_log
 from devtool.xdg import cache_dir, data_dir, state_dir
 from devtool.models import CommandSpec, Issue, OperationResult
 from devtool.summary import build_json_summary
+from devtool.transactions import find_active_transaction
 
 
 def _sample_ai_prompt_options(output_format: str = "markdown") -> AiPromptOptions:
@@ -1368,6 +1369,88 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertFalse((root / ".devtool-artifact.json").exists())
             self.assertEqual((root / "new.txt").read_text(encoding="utf-8"), "new")
 
+    def test_apply_overlay_no_validate_verifies_and_closes_transaction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            (root / ".git").mkdir()
+            artifact = Path(tmp) / "artifact.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr(
+                    ".devtool-artifact.json",
+                    json.dumps({"type": "overlay", "validation": {"required": True}}),
+                )
+                zf.writestr("new.txt", "new")
+
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):
+                rc = main([
+                    "--repo", str(root),
+                    "--yes",
+                    "--no-clipboard",
+                    "apply-overlay",
+                    "--no-validate",
+                    "--keep-artifact",
+                    str(artifact),
+                ])
+                self.assertEqual(rc, 0)
+                self.assertEqual((root / "new.txt").read_text(encoding="utf-8"), "new")
+                self.assertIsNone(find_active_transaction(root))
+
+                status_rc = main(["--repo", str(root), "--yes", "--no-clipboard", "status"])
+
+            self.assertEqual(status_rc, 0)
+            self.assertEqual((root / "new.txt").read_text(encoding="utf-8"), "new")
+
+    def test_apply_overlay_verification_failure_preserves_artifact_and_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            artifact = Path(tmp) / "artifact.zip"
+            artifact.write_bytes(b"placeholder")
+            config = ProjectConfig(repo_root=root, kind="unknown", runner_options={})
+            rollback = OperationResult("apply-rollback", ["rsync", "rollback"], 0, 0.1, "rolled back", [])
+
+            def fake_apply(_config, _args, _name, _artifact, **_kwargs):
+                _args._devtool_artifact_preview = {"changes": [{"kind": "add", "path": "missing.txt"}]}
+                _args._devtool_artifact_type = "overlay"
+                return [
+                    OperationResult(
+                        "apply-overlay",
+                        ["apply-overlay", str(artifact)],
+                        0,
+                        0.1,
+                        "applied",
+                        [],
+                        metadata={"transaction_path": str(root / "tx.json"), "artifact_path": str(artifact), "delete_artifact_on_success": True},
+                    )
+                ], "apply raw"
+
+            with (
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False),
+                patch("devtool.cli._load_command_config", return_value=config),
+                patch("devtool.cli._apply_artifact_manifest_defaults"),
+                patch("devtool.cli.find_active_transaction", return_value=None),
+                patch("devtool.cli.read_artifact_manifest", return_value={}),
+                patch("devtool.cli._run_apply", side_effect=fake_apply),
+                patch("devtool.cli._run_transaction_rollback", return_value=(rollback, "rollback raw")) as mock_rollback,
+                patch("devtool.cli._delete_original_artifact_after_apply") as mock_cleanup,
+                patch("devtool.cli._emit_summary", return_value=(
+                    {"warnings": 0, "errors": 1, "failed": 1, "skipped": 0},
+                    "",
+                    "{}",
+                    "{}",
+                )),
+                patch("devtool.cli._finish_live_progress"),
+                patch("devtool.cli.notify_apply_finished"),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--no-clipboard", "apply-overlay", "--no-validate", str(artifact)])
+
+            self.assertEqual(rc, 1)
+            mock_rollback.assert_called_once()
+            mock_cleanup.assert_not_called()
+            self.assertTrue(artifact.exists())
+
     def test_apply_overlay_preserves_original_artifact_when_validation_rolls_back_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1520,7 +1603,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertEqual(rc, 0)
             self.assertEqual(calls, ["rollback", "apply"])
             self.assertEqual(rollback_kwargs[-1]["failure_kind"], "stale_apply_rolled_back")
-            self.assertEqual(summary_calls[-1], ["apply-rollback", "apply-overlay"])
+            self.assertEqual(summary_calls[-1], ["apply-rollback", "apply-overlay", "apply-verification"])
 
     def test_apply_history_uses_actual_apply_result_after_stale_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
