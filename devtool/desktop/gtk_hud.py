@@ -22,6 +22,9 @@ from ..hud import (
 from .hud_store import load_hud_snapshot
 
 
+_HUD_CAPABILITY_TOKENS = ("autoSizeEnabled", "manualResize")
+
+
 def _has_display() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
@@ -132,54 +135,75 @@ class Gtk4CompactHud:
             else:
                 window = Gtk.ApplicationWindow(application=app)
             window.set_title("Devtool HUD")
-            window.set_default_size(620, 500)
+            window.set_default_size(640, 520)
             with _suppress_exception():
                 window.set_icon_name("devtool-hud")
                 window.set_resizable(True)
 
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-            box.set_margin_top(16)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            box.set_margin_top(20)
             box.set_margin_bottom(16)
-            box.set_margin_start(16)
-            box.set_margin_end(16)
+            box.set_margin_start(20)
+            box.set_margin_end(20)
+            with _suppress_exception():
+                box.add_css_class("devtool-hud-root")
+
+            header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            header.set_hexpand(True)
+            header_copy = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            header_copy.set_hexpand(True)
             title = Gtk.Label(label="devtool")
             title.set_xalign(0.0)
+            title.set_wrap(True)
             with _suppress_exception():
-                title.add_css_class("title-2")
+                title.add_css_class("devtool-hud-title")
             status = Gtk.Label(label="waiting for devtool progress")
             status.set_xalign(0.0)
             status.set_wrap(True)
+            with _suppress_exception():
+                status.add_css_class("devtool-hud-subtitle")
             context = Gtk.Label(label="Waiting for target")
             context.set_xalign(0.0)
             context.set_wrap(True)
             with _suppress_exception():
-                context.add_css_class("dim-label")
+                context.add_css_class("devtool-hud-context")
+            status_pill = Gtk.Label(label="idle")
+            status_pill.set_xalign(0.5)
+            with _suppress_exception():
+                status_pill.add_css_class("devtool-hud-status-pill")
+            header_copy.append(title)
+            header_copy.append(status)
+            header_copy.append(context)
+            header.append(header_copy)
+            header.append(status_pill)
+
             progress = Gtk.ProgressBar()
             with _suppress_exception():
                 progress.add_css_class("devtool-progress")
-            metrics = Gtk.FlowBox()
-            metrics.set_selection_mode(Gtk.SelectionMode.NONE)
-            metrics.set_min_children_per_line(2)
-            metrics.set_max_children_per_line(4)
-            metrics.set_column_spacing(8)
-            metrics.set_row_spacing(8)
+            metrics = Gtk.Grid(column_spacing=10, row_spacing=10)
+            metrics.set_hexpand(True)
             phase_strip = Gtk.FlowBox()
             phase_strip.set_selection_mode(Gtk.SelectionMode.NONE)
             phase_strip.set_min_children_per_line(2)
-            phase_strip.set_max_children_per_line(4)
-            phase_strip.set_column_spacing(8)
-            phase_strip.set_row_spacing(8)
+            phase_strip.set_max_children_per_line(3)
+            phase_strip.set_column_spacing(10)
+            phase_strip.set_row_spacing(10)
             details = Gtk.TextView()
             details.set_editable(False)
             details.set_cursor_visible(False)
             details.set_monospace(True)
             details.set_vexpand(True)
+            with _suppress_exception():
+                details.add_css_class("devtool-details")
             scroller = Gtk.ScrolledWindow()
             scroller.set_child(details)
             scroller.set_vexpand(True)
+            scroller.set_min_content_height(108)
             with _suppress_exception():
                 scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            with _suppress_exception():
+                actions.add_css_class("devtool-action-row")
             copy_button = Gtk.Button(label="Copy summary")
             diagnostics_button = Gtk.Button(label="Copy diagnostics")
             log_button = Gtk.Button(label="Open log")
@@ -188,9 +212,7 @@ class Gtk4CompactHud:
             actions.append(diagnostics_button)
             actions.append(log_button)
             actions.append(close_button)
-            box.append(title)
-            box.append(status)
-            box.append(context)
+            box.append(header)
             box.append(progress)
             box.append(metrics)
             box.append(phase_strip)
@@ -215,20 +237,24 @@ class Gtk4CompactHud:
                     fraction = max(0.0, min(1.0, float(pct) / 100.0)) if pct is not None else 0.0
                 except (TypeError, ValueError):
                     fraction = 0.0
+                status_text = str(state.get("status") or "idle")
+                if status_text.lower() == "running" and fraction <= 0.0:
+                    fraction = 0.08
                 window.set_title(state_window_title(hud_state))
                 title.set_label(compact_operation_title(hud_state) or str(state.get("display_title") or state.get("title") or "devtool"))
                 status.set_label(compact_detail_text(hud_state) or str(state.get("display_text") or state.get("text") or "waiting for devtool progress"))
                 context.set_label(state_context_label(hud_state))
+                status_pill.set_label(status_text.title())
                 progress.set_fraction(fraction)
                 progress.set_show_text(True)
-                progress.set_text(f"{int(round(fraction * 100))}%" if pct is not None else "idle")
-                _set_status_css(progress, str(state.get("status") or "idle"))
+                progress.set_text(f"{int(round(fraction * 100))}%" if pct is not None else status_text)
+                _set_status_css(progress, status_text)
+                _set_status_css(status_pill, status_text)
                 errors, warnings = live_issue_counts(events, hud_state)
-                _clear_flowbox(Gtk, metrics)
-                _append_phase_card(Gtk, metrics, "Errors", str(errors), "live diagnostics")
-                _append_phase_card(Gtk, metrics, "Warnings", str(warnings), "live diagnostics")
-                _append_phase_card(Gtk, metrics, "Metric", state_metric_text(hud_state, events), "parser metrics")
-                _append_phase_card(Gtk, metrics, "Mode", "autoSizeEnabled", "manualResize ready")
+                _clear_grid(Gtk, metrics)
+                _append_metric_card(Gtk, metrics, 0, "Errors", str(errors), "live diagnostics")
+                _append_metric_card(Gtk, metrics, 1, "Warnings", str(warnings), "live diagnostics")
+                _append_metric_card(Gtk, metrics, 2, "Metric", state_metric_text(hud_state, events), "parser metrics")
                 _clear_flowbox(Gtk, phase_strip)
                 steps = operation_steps(hud_state, events)
                 if steps:
@@ -340,22 +366,56 @@ def _clear_flowbox(Gtk: Any, box: Any) -> None:
         child = box.get_first_child()
 
 
+def _clear_grid(Gtk: Any, grid: Any) -> None:
+    child = grid.get_first_child()
+    while child is not None:
+        grid.remove(child)
+        child = grid.get_first_child()
+
+
+def _append_metric_card(Gtk: Any, grid: Any, column: int, title: str, value: str, subtitle: str = "") -> None:
+    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    card.set_hexpand(True)
+    card.set_size_request(176, 78)
+    card.set_margin_top(0)
+    card.set_margin_bottom(0)
+    with _suppress_exception():
+        card.add_css_class("devtool-metric-card")
+    title_label = Gtk.Label(label=title.upper(), xalign=0.0)
+    with _suppress_exception():
+        title_label.add_css_class("devtool-card-label")
+    value_label = Gtk.Label(label=value or "-", xalign=0.0)
+    value_label.set_wrap(True)
+    value_label.set_max_width_chars(24)
+    with _suppress_exception():
+        value_label.add_css_class("devtool-card-value")
+    subtitle_label = Gtk.Label(label=subtitle, xalign=0.0)
+    subtitle_label.set_wrap(True)
+    with _suppress_exception():
+        subtitle_label.add_css_class("devtool-card-subtitle")
+    card.append(title_label)
+    card.append(value_label)
+    if subtitle:
+        card.append(subtitle_label)
+    grid.attach(card, column, 0, 1, 1)
+
+
 def _append_phase_card(Gtk: Any, box: Any, title: str, value: str, subtitle: str = "") -> None:
     card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
-    card.set_size_request(116, 58)
+    card.set_size_request(140, 72)
     card.set_margin_top(4)
     card.set_margin_bottom(4)
     card.set_margin_start(4)
     card.set_margin_end(4)
     with _suppress_exception():
-        card.add_css_class("card")
+        card.add_css_class("devtool-step-card")
     title_label = Gtk.Label(label=title, xalign=0.0)
     with _suppress_exception():
-        title_label.add_css_class("dim-label")
+        title_label.add_css_class("devtool-card-label")
     value_label = Gtk.Label(label=value or "-", xalign=0.0)
     value_label.set_wrap(True)
     with _suppress_exception():
-        value_label.add_css_class("heading")
+        value_label.add_css_class("devtool-card-value")
     card.append(title_label)
     card.append(value_label)
     if subtitle:
@@ -367,18 +427,21 @@ def _append_phase_card(Gtk: Any, box: Any, title: str, value: str, subtitle: str
 
 def _append_step_card(Gtk: Any, box: Any, step: dict[str, Any]) -> None:
     card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-    card.set_size_request(138, 78)
+    card.set_size_request(178, 92)
     card.set_margin_top(4)
     card.set_margin_bottom(4)
     card.set_margin_start(4)
     card.set_margin_end(4)
     with _suppress_exception():
-        card.add_css_class("card")
+        card.add_css_class("devtool-step-card")
     label = Gtk.Label(label=str(step.get("label") or step.get("key") or "step"), xalign=0.0)
     label.set_wrap(True)
+    label.set_max_width_chars(22)
+    with _suppress_exception():
+        label.add_css_class("devtool-step-title")
     status = Gtk.Label(label=str(step.get("status") or "pending"), xalign=0.0)
     with _suppress_exception():
-        status.add_css_class("dim-label")
+        status.add_css_class("devtool-card-label")
     progress = Gtk.ProgressBar()
     with _suppress_exception():
         progress.add_css_class("devtool-progress")
@@ -386,10 +449,14 @@ def _append_step_card(Gtk: Any, box: Any, step: dict[str, Any]) -> None:
         percent = max(0, min(100, int(step.get("progress") or 0)))
     except (TypeError, ValueError):
         percent = 0
-    progress.set_fraction(percent / 100.0)
+    status_text = str(step.get("status") or "pending")
+    fraction = percent / 100.0
+    if status_text == "running" and fraction <= 0.0:
+        fraction = 0.08
+    progress.set_fraction(fraction)
     progress.set_show_text(True)
     progress.set_text(f"{percent}%")
-    _set_status_css(progress, str(step.get("status") or "pending"))
+    _set_status_css(progress, status_text)
     card.append(label)
     card.append(status)
     card.append(progress)
@@ -460,15 +527,67 @@ def _diagnostics_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _install_progress_css(Gtk: Any, Gdk: Any) -> None:
     css = b"""
+    .devtool-hud-root {
+      background-color: #202124;
+    }
+    .devtool-hud-title {
+      font-size: 22px;
+      font-weight: 800;
+    }
+    .devtool-hud-subtitle {
+      color: rgba(255,255,255,0.88);
+      font-weight: 600;
+    }
+    .devtool-hud-context,
+    .devtool-card-label,
+    .devtool-card-subtitle {
+      color: rgba(255,255,255,0.58);
+    }
+    .devtool-hud-status-pill {
+      min-width: 86px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background-color: rgba(255,255,255,0.10);
+      color: rgba(255,255,255,0.86);
+      font-weight: 700;
+    }
+    .devtool-hud-status-pill.devtool-progress-ok {
+      background-color: rgba(46,194,126,0.20);
+      color: #8ff0b7;
+    }
+    .devtool-hud-status-pill.devtool-progress-failed {
+      background-color: rgba(224,27,36,0.22);
+      color: #ffb3b8;
+    }
+    .devtool-hud-status-pill.devtool-progress-cancelled {
+      background-color: rgba(245,194,17,0.20);
+      color: #f8e45c;
+    }
+    .devtool-metric-card,
+    .devtool-step-card {
+      padding: 10px 12px;
+      border-radius: 10px;
+      background-color: rgba(255,255,255,0.075);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .devtool-card-value,
+    .devtool-step-title {
+      color: rgba(255,255,255,0.94);
+      font-weight: 800;
+    }
+    .devtool-details {
+      background-color: rgba(0,0,0,0.18);
+      color: rgba(255,255,255,0.86);
+    }
     progressbar.devtool-progress trough {
-      min-height: 18px;
-      border-radius: 4px;
-      background-color: alpha(@window_fg_color, 0.18);
+      min-height: 26px;
+      border-radius: 7px;
+      background-color: rgba(255,255,255,0.14);
     }
     progressbar.devtool-progress progress {
-      min-height: 18px;
-      border-radius: 4px;
-      background-color: #1c71d8;
+      min-height: 26px;
+      border-radius: 7px;
+      background-color: #62a0ea;
     }
     progressbar.devtool-progress.devtool-progress-ok progress {
       background-color: #2ec27e;
