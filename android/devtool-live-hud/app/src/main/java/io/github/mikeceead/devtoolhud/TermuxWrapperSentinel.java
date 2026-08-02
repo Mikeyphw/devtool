@@ -41,7 +41,8 @@ final class TermuxWrapperSentinel {
         shell.append("[ -z \"$__devtool_wrapper_message\" ] && __devtool_wrapper_message=\"$__devtool_wrapper_checkpoint\"; ");
         shell.append("/system/bin/am broadcast --user 0 -f 0x20 -n \"$__devtool_wrapper_component\" ");
         shell.append("-a \"$__devtool_wrapper_action\" ");
-        shell.append("--es token \"$__devtool_wrapper_token\" ");
+        shell.append("--es token \"$__devtool_wrapper_token\" --ei protocol_version ")
+                .append(BridgeProtocol.VERSION).append(" ");
         shell.append("--es run_id \"$__devtool_wrapper_run_id\" ");
         shell.append("--es status waiting --es task 'Starting Devtool' --es phase 'Termux wrapper' ");
         shell.append("--es detail \"$__devtool_wrapper_message\" ");

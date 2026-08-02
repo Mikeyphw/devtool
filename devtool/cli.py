@@ -808,7 +808,7 @@ def _add_validation_test_selection_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--class", "--tests", dest="test_classes", action="append", default=[], help="Select a test class during validation; repeatable")
     cmd.add_argument("--method", dest="test_methods", action="append", default=[], help="Select a test method during validation; repeatable")
     cmd.add_argument("--filter", dest="test_filter", default="", help="Framework-native test filter used during validation")
-    cmd.add_argument("--task", "--test-task", dest="test_task", action="append", default=[], help="Native test task/script/target override used during validation; repeatable where supported")
+    cmd.add_argument("--task", "--test-task", dest="test_task", action="append", default=[], help="Exclusive native validation task list; when supplied, no built-in validation phases are added; repeatable (Android/Gradle)")
     cmd.add_argument("--failed", action="store_true", help="Rerun tests that failed in the previous structured run during validation")
     cmd.add_argument("--changed", action="store_true", help="Select tests related to changed files during validation")
     cmd.add_argument("--changed-from", default="HEAD", help="Git base for --changed during validation")
@@ -2067,12 +2067,17 @@ def _artifact_validation_path(args: argparse.Namespace) -> str:
 
 
 def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    exclusive_tasks = _exclusive_validation_task_values(args)
+    if exclusive_tasks and bool(getattr(args, "static_validate", False)):
+        parser.error("--task defines an executable native-task plan and cannot be combined with --static-validate.")
     if args.command in {"validate", "v"}:
         scope = str(getattr(args, "validate_scope", "") or "")
         if scope and scope not in {"overlay", "overlays"}:
             parser.error("validate positional form is only supported as: validate overlay <archive> or validate overlays <bundle>")
         if scope in {"overlay", "overlays"} and not getattr(args, "validate_artifact", ""):
             parser.error(f"validate {scope} requires an artifact archive")
+        if scope in {"overlay", "overlays"} and exclusive_tasks:
+            parser.error("--task applies to project validation, not validate overlay/overlays artifact inspection.")
         api_action = str(getattr(args, "_devtool_validation_api_action", "") or "")
         run_scope = str(getattr(args, "validation_run_scope", "") or "")
         phases = _validation_phase_values(args)
@@ -2103,6 +2108,8 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--rollback-on-failure cannot be combined with --no-rollback-on-failure.")
     if (args.skip_restore or args.skip_build or args.skip_test) and not (args.validate or args.validate_only or deferred):
         parser.error("--skip-restore, --skip-build, and --skip-test require --validate, --validate-only, or --defer-validate.")
+    if exclusive_tasks and not (args.validate or args.validate_only or deferred):
+        parser.error("--task on apply requires --validate, --validate-only, or --defer-validate.")
     if args.validate_only and args.validate:
         parser.error("--validate and --validate-only cannot be combined.")
     if args.validate_only and args.commit:
@@ -2339,9 +2346,120 @@ def _config_for_validation_planning(config: ProjectConfig, args: argparse.Namesp
     return replace(config, execution_environment=effective, chroot_name=chroot_name)
 
 
+def _exclusive_validation_task_values(args: argparse.Namespace) -> list[str]:
+    """Return the stable, de-duplicated task list explicitly selected by CLI/session."""
+
+    return list(dict.fromkeys(_cli_string_list(getattr(args, "test_task", None))))
+
+
+def _exclusive_android_validation_specs(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> list[CommandSpec] | None:
+    """Build a validation plan containing only explicitly requested Gradle tasks.
+
+    ``--task`` is intentionally stronger than the test-selection flags. Once it
+    is present, Devtool must not append preflight, dependency, compile, package,
+    lint, finalize, or other configured validation phases. Gradle may still run
+    dependencies of the requested tasks, which is native Gradle behavior.
+    """
+
+    tasks = _exclusive_validation_task_values(args)
+    if not tasks:
+        return None
+    if config.kind not in {"android", "gradle"}:
+        parser.error(
+            "Validation --task is an exclusive Android/Gradle task selector. "
+            f"Project type {config.kind!r} does not provide native Gradle tasks."
+        )
+    skip_flags = [
+        flag
+        for flag, enabled in (
+            ("--skip-restore", bool(getattr(args, "skip_restore", False))),
+            ("--skip-build", bool(getattr(args, "skip_build", False))),
+            ("--skip-test", bool(getattr(args, "skip_test", False))),
+        )
+        if enabled
+    ]
+    if skip_flags:
+        parser.error(
+            "--task already defines the complete validation plan and cannot be combined with "
+            + ", ".join(skip_flags)
+            + "."
+        )
+    if bool(getattr(args, "instrumented", False)):
+        parser.error("--task cannot be combined with --instrumented; select the instrumentation Gradle task explicitly instead.")
+
+    from .android_integration import android_builder_arguments_for_tasks, plan_android_command
+    from .build_optimization import optimized_validation_env, resolve_android_validation_phase_policy
+    from .test_selection import apply_test_selection
+
+    plan = plan_android_command(config, "test")
+    policy = resolve_android_validation_phase_policy(config, "explicit-tasks")
+    lowered = [task.lower() for task in tasks]
+    contains_tests = any("test" in task or "androidtest" in task for task in lowered)
+    contains_lint = any("lint" in task for task in lowered)
+    report_parsers: list[str] = []
+    if contains_tests:
+        report_parsers.append("gradle-junit")
+    if contains_lint:
+        report_parsers.append("android-lint")
+
+    spec = CommandSpec(
+        f"{config.kind}-validation-explicit-tasks",
+        [
+            *plan.argv_prefix,
+            *android_builder_arguments_for_tasks(
+                config,
+                tasks,
+                scan_artifacts=False,
+                validation=True,
+                validation_phase="explicit-tasks",
+            ),
+        ],
+        env=optimized_validation_env(config, config.kind),
+        cwd=str(plan.project_root),
+        metadata={
+            "runner": config.kind,
+            "project_type": config.kind,
+            "gradle_tasks": list(tasks),
+            "explicit_validation_tasks": list(tasks),
+            "android_builder": str(plan.builder),
+            "project_root": str(plan.project_root),
+            "collect_artifacts": False,
+            "verify_artifacts": False,
+            "progress_parser": "gradle",
+            "report_parser": report_parsers[0] if report_parsers else "",
+            "report_parsers": report_parsers,
+            "contains_tests": contains_tests,
+            "validation_components": ["explicit-tasks"],
+            "validation_phase_name": "tasks",
+            "validation_resumable": True,
+            "validation_pipeline": True,
+            "validation_phase_index": 1,
+            "validation_phase_total": 1,
+            "validation_scope": "explicit-tasks",
+            "validation_resource_profile": "android-explicit-tasks",
+            "validation_max_workers": policy.max_workers,
+            "validation_cpu_limit": policy.cpu_limit,
+            "validation_gradle_heap_mb": policy.gradle_heap_mb,
+            "validation_memory_guard_mb": policy.memory_guard_mb,
+            "validation_low_priority": policy.low_priority,
+            "validation_change_scope": "explicit",
+        },
+    )
+    if contains_tests:
+        spec = apply_test_selection(config, spec)
+    return [spec]
+
+
 def _validation_specs(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
     _apply_runner_cli_options(config, args)
     planning_config = _config_for_validation_planning(config, args)
+    explicit_specs = _exclusive_android_validation_specs(planning_config, args, parser)
+    if explicit_specs is not None:
+        return explicit_specs
     skip_restore, skip_build, skip_test = _validation_skip_values(args)
     if skip_restore and skip_build and skip_test:
         parser.error("Validation would run no commands. Clear at least one skip flag.")
@@ -2802,6 +2920,7 @@ def _validation_session_options(args: argparse.Namespace) -> dict[str, object]:
         "skip_restore": bool(getattr(args, "skip_restore", False)),
         "skip_build": bool(getattr(args, "skip_build", False)),
         "skip_test": bool(getattr(args, "skip_test", False)),
+        "test_task": _exclusive_validation_task_values(args),
         "max_runtime": str(getattr(args, "max_runtime", "") or ""),
         "stop_below_battery": int(getattr(args, "stop_below_battery", 0) or 0),
         "require_charging": bool(getattr(args, "require_charging", False)),
@@ -2832,6 +2951,7 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
     artifact_values = _artifact_arg_list(getattr(args, "artifact", ""))
     validation_policy = artifact_validation_policy(manifest)
     raw_validation = manifest.get("validation") if isinstance(manifest.get("validation"), dict) else {}
+    exclusive_tasks = _exclusive_validation_task_values(args)
     context: dict[str, object] = {
         "command": str(getattr(args, "command", "") or "apply-overlay"),
         "artifacts": artifact_values,
@@ -2850,9 +2970,10 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "rollback_on_failure": _rollback_on_failure_enabled(args, validation_policy),
         "legacy_rollback_on_failure_explicit": "rollback_on_failure" in raw_validation,
         "validation_mode": "deferred" if bool(getattr(args, "defer_validate", False)) else "sequential",
-        "minimum_phase": str(validation_policy.get("minimum_phase") or "finalize"),
+        "minimum_phase": "finalize" if exclusive_tasks else str(validation_policy.get("minimum_phase") or "finalize"),
         "resource_profile": str(getattr(args, "validation_resource_profile", "automatic") or "automatic"),
-        "artifact_script_in_plan": bool(validation_policy.get("script")) and not bool(getattr(args, "no_artifact_script", False)),
+        "exclusive_validation_tasks": list(exclusive_tasks),
+        "artifact_script_in_plan": bool(validation_policy.get("script")) and not bool(getattr(args, "no_artifact_script", False)) and not exclusive_tasks,
         "target": str(getattr(args, "target", "") or artifact_target(manifest)),
         "solution": str(getattr(args, "solution", "") or artifact_solution(manifest)),
         "transaction_path": transaction_path,
@@ -2951,8 +3072,17 @@ def _load_or_create_validation_session(
                 f"Current phase: {live_phase.label}, phase {live_phase.index} of {live_phase.total}; "
                 f"owner PID: {live_phase.owner_pid}."
             )
-        # A resumed plan must retain its original skip/daemon choices. Runtime,
-        # battery, temperature and phase selection are intentionally per-run.
+        # A resumed plan must retain its original task list and skip/daemon
+        # choices. Runtime, battery, temperature and phase selection are per-run.
+        stored_tasks = list(dict.fromkeys(_cli_string_list(active.options.get("test_task", []))))
+        requested_tasks = _exclusive_validation_task_values(args)
+        if requested_tasks and requested_tasks != stored_tasks:
+            raise ValidationSessionError(
+                "Validation session task list differs from the requested --task values. "
+                "Resume without --task, use the original task list, or start a new session explicitly."
+            )
+        if stored_tasks:
+            args.test_task = list(stored_tasks)
         for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "max_workers", "cpu_limit", "gradle_heap_mb", "memory_guard_mb", "validation_low_priority", "validation_parallel", "validation_build_cache", "validation_daemon", "max_infrastructure_retries", "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action"):
             if name in active.options:
                 setattr(args, name, active.options[name])
@@ -3135,7 +3265,8 @@ def _finalize_validation_session(
             artifact_path = resolve_artifact_path(artifact_values[0])
         except Exception:
             artifact_path = None
-    if artifact_path is not None and not bool(context.get("artifact_script_in_plan", False)) and not any(result.returncode != 0 for result in results):
+    exclusive_tasks = [str(item) for item in context.get("exclusive_validation_tasks") or [] if str(item)]
+    if artifact_path is not None and not exclusive_tasks and not bool(context.get("artifact_script_in_plan", False)) and not any(result.returncode != 0 for result in results):
         script_result, script_raw = _artifact_script_result(
             config,
             final_args,
@@ -3151,6 +3282,7 @@ def _finalize_validation_session(
             raw_output += ("\n\n" if raw_output else "") + script_raw
     elif (
         artifact_validation_policy(manifest).get("script")
+        and not exclusive_tasks
         and not bool(context.get("artifact_script_in_plan", False))
         and artifact_path is None
     ):
@@ -3359,6 +3491,16 @@ def _run_validation_session(
                     f"Validation session {active.session_id} is already running phase "
                     f"{live_phase.index} of {live_phase.total} ({live_phase.label}), owner PID {live_phase.owner_pid}."
                 )
+        if active is not None and not start_new:
+            stored_tasks = list(dict.fromkeys(_cli_string_list(active.options.get("test_task", []))))
+            requested_tasks = _exclusive_validation_task_values(args)
+            if requested_tasks and requested_tasks != stored_tasks:
+                raise ValidationSessionError(
+                    "Validation session task list differs from the requested --task values. "
+                    "Resume without --task, use the original task list, or start a new session explicitly."
+                )
+            if stored_tasks:
+                args.test_task = list(stored_tasks)
         _enable_resumable_validation(config, args)
         effective_context = dict(apply_context or (active.apply_context if active is not None else {}) or {})
         if active is not None and not start_new:
@@ -4292,6 +4434,9 @@ def _handle_validation_accept_plan_change(
     reason = str(getattr(args, "reason", "") or "").strip()
     if not reason:
         raise ValidationControlError("invalid_request", "Accepting a validation plan change requires --reason.")
+    stored_tasks = list(dict.fromkeys(_cli_string_list(session.options.get("test_task", []))))
+    if stored_tasks:
+        args.test_task = stored_tasks
     for name in (
         "skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase",
         "keep_gradle_daemon", "validation_resource_profile", "max_workers", "cpu_limit",
@@ -5541,9 +5686,14 @@ def _run_sequential_overlays(
                 restore_enabled = entry_policy.get("restore", bundle_policy.get("restore", True))
                 build_enabled = entry_policy.get("build", bundle_policy.get("build", True))
                 test_enabled = entry_policy.get("test", bundle_policy.get("test", True))
-                entry_args.skip_restore = bool(getattr(args, "skip_restore", False) or not restore_enabled)
-                entry_args.skip_build = bool(getattr(args, "skip_build", False) or not build_enabled)
-                entry_args.skip_test = bool(getattr(args, "skip_test", False) or not test_enabled)
+                if _exclusive_validation_task_values(entry_args):
+                    entry_args.skip_restore = False
+                    entry_args.skip_build = False
+                    entry_args.skip_test = False
+                else:
+                    entry_args.skip_restore = bool(getattr(args, "skip_restore", False) or not restore_enabled)
+                    entry_args.skip_build = bool(getattr(args, "skip_build", False) or not build_enabled)
+                    entry_args.skip_test = bool(getattr(args, "skip_test", False) or not test_enabled)
 
                 group_results: list[OperationResult] = []
                 if not (entry_args.skip_restore and entry_args.skip_build and entry_args.skip_test):
@@ -5591,7 +5741,7 @@ def _run_sequential_overlays(
                             if not any(result.returncode != 0 for result in validation_results):
                                 validation_cache.add(validation_key)
 
-                if not any(result.returncode != 0 for result in group_results):
+                if not any(result.returncode != 0 for result in group_results) and not _exclusive_validation_task_values(entry_args):
                     overridden = superseded_paths.get(int(entry["index"]), set())
                     has_script = bool(entry_policy.get("script"))
                     if has_script and overridden:
@@ -5737,7 +5887,7 @@ def _run_sequential_overlays(
                     if any(result.returncode != 0 for result in final_results) and not continue_on_error:
                         break
 
-            if source_bundle is not None and not any(result.returncode != 0 for result in all_results):
+            if source_bundle is not None and not _exclusive_validation_task_values(args) and not any(result.returncode != 0 for result in all_results):
                 script_result, script_raw = _artifact_script_result(
                     config,
                     args,
@@ -7320,7 +7470,7 @@ def main(argv: list[str] | None = None) -> int:
                     results.extend(validation_results)
                     if validation_raw:
                         raw_output += "\n\n" + validation_raw
-                    if not any(result.returncode != 0 for result in results):
+                    if not _exclusive_validation_task_values(args) and not any(result.returncode != 0 for result in results):
                         artifact_path = resolve_artifact_path(args.artifact)
                         manifest = read_artifact_manifest(artifact_path)
                         script_result, script_raw = _artifact_script_result(

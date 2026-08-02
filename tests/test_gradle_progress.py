@@ -82,6 +82,82 @@ class GradleProgressTests(unittest.TestCase):
         self.assertTrue(snapshots[-1]["force"])
         self.assertEqual(tracker.fallback_lines, 0)
 
+
+    def test_plain_gradle_success_infers_final_total_and_dependency_breakdown(self) -> None:
+        tracker = GradleProgressTracker(
+            ["./gradlew", ":app:compileDebugKotlin"],
+            "/repo",
+            "android-validation-explicit-tasks",
+            Console(force_terminal=False),
+            requested_tasks=(":app:compileDebugKotlin",),
+        )
+        tasks = [
+            ":app:preBuild",
+            ":app:checkKotlinGradlePluginConfigurationErrors",
+            ":app:generateDebugResources",
+            ":app:packageDebugResources",
+            ":app:parseDebugLocalResources",
+            ":app:generateDebugRFile",
+            ":app:javaPreCompileDebug",
+            ":app:mergeDebugShaders",
+            ":app:compileDebugShaders",
+            ":app:generateDebugAssets",
+            ":app:mergeDebugAssets",
+            ":app:kspDebugKotlin",
+            ":app:compileDebugKotlin",
+        ]
+        for task in tasks:
+            tracker.update_from_line(f"> Task {task}")
+
+        self.assertEqual(tracker.completed, 13)
+        self.assertIsNone(tracker.total)
+        tracker.finish(0)
+
+        current = tracker.snapshot()
+        self.assertEqual(current["completed"], 13)
+        self.assertEqual(current["total"], 13)
+        self.assertEqual(current["requested_task_count"], 1)
+        self.assertEqual(current["dependency_task_count"], 12)
+        state = tracker._progress_state()
+        self.assertEqual(state.extra_full, "1 requested + 12 deps")
+        self.assertNotIn("discover", state.extra_full)
+
+    def test_plain_gradle_duplicate_task_lines_do_not_inflate_count(self) -> None:
+        tracker = self.make_tracker()
+        tracker.update_from_line("> Task :app:compileDebugKotlin")
+        tracker.update_from_line("> Task :app:compileDebugKotlin UP-TO-DATE")
+        self.assertEqual(tracker.completed, 1)
+        self.assertEqual(tracker.snapshot()["observed_tasks"], [":app:compileDebugKotlin"])
+
+    def test_plain_gradle_actionable_summary_resolves_graph_total(self) -> None:
+        tracker = GradleProgressTracker(
+            ["./gradlew", ":app:compileDebugKotlin"],
+            "/repo",
+            "android-validation-explicit-tasks",
+            Console(force_terminal=False),
+            requested_tasks=(":app:compileDebugKotlin",),
+        )
+        tracker.update_from_line("> Task :app:kspDebugKotlin")
+        tracker.update_from_line("> Task :app:compileDebugKotlin")
+        tracker.update_from_line("13 actionable tasks: 8 executed, 5 up-to-date")
+        self.assertEqual(tracker.total, 13)
+        self.assertEqual(tracker.completed, 13)
+        self.assertEqual(tracker.requested_task_count, 1)
+        self.assertEqual(tracker.dependency_task_count, 12)
+
+    def test_failed_plain_gradle_run_does_not_invent_a_complete_graph(self) -> None:
+        tracker = GradleProgressTracker(
+            ["./gradlew", ":app:compileDebugKotlin"],
+            "/repo",
+            "android-validation-explicit-tasks",
+            Console(force_terminal=False),
+            requested_tasks=(":app:compileDebugKotlin",),
+        )
+        tracker.update_from_line("> Task :app:kspDebugKotlin FAILED")
+        tracker.finish(1)
+        self.assertIsNone(tracker.total)
+        self.assertNotIn("discovering", tracker._progress_state().extra_full)
+
     def test_terminal_task_count_column_always_includes_total_or_discovery_marker(self) -> None:
         from rich.progress import Progress
 

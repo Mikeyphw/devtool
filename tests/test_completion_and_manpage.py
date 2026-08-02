@@ -52,6 +52,32 @@ class CompletionAndManpageTests(unittest.TestCase):
         ]
         self.assertEqual(missing, [])
 
+    def test_completion_documents_exclusive_validation_task_semantics(self) -> None:
+        wording = (
+            "exclusive Android/Gradle validation task; repeat to run only those tasks"
+        )
+        self.assertGreaterEqual(ZSH_COMPLETION.count(wording), 3)
+        self.assertIn(
+            "(--task --test-task)'{--task,--test-task}'",
+            ZSH_COMPLETION,
+        )
+
+    def test_manpage_documents_exclusive_validation_task_semantics(self) -> None:
+        man = MAN_PATH.read_text(encoding="utf-8")
+        required = (
+            "only the named Gradle task or tasks are placed in\n"
+            "the validation pipeline",
+            "replace the\n"
+            "entire built-in Android/Gradle validation pipeline with this task",
+            "suppresses all other\n"
+            "validation phases, including embedded artifact validation scripts",
+            "Artifact manifest,\n"
+            "checksum, inventory, and transactional apply safety checks still run",
+        )
+        for token in required:
+            with self.subTest(token=token):
+                self.assertIn(token, man)
+
     def test_manpage_tracks_current_release_and_multi_runner_features(self) -> None:
         man = MAN_PATH.read_text(encoding="utf-8")
         required = (

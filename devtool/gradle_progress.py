@@ -7,14 +7,17 @@ import json
 import os
 from pathlib import Path
 import re
-from typing import Any, Callable
+import time
+from typing import Any, Callable, Sequence
 
 from rich.console import Console, Group
 from rich.errors import LiveError
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, ProgressColumn, SpinnerColumn, Task, TaskID, TextColumn, TimeElapsedColumn
+from rich.progress import ProgressColumn, Task
 from rich.text import Text
+
+from .rich_progress import ThreeLineProgressBody, ThreeLineProgressState
 
 _EVENT_PREFIX = "DEVTOOL_EVENT "
 _EVENT_KINDS = {
@@ -24,6 +27,7 @@ _EVENT_KINDS = {
 _COUNTER_FIELDS = {"sequence", "current", "completed", "total", "passed", "failed", "skipped", "testsTotal", "durationMs"}
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\a]*(?:\a|\x1b\\)")
 _TASK_LINE_RE = re.compile(r"^>\s*Task\s+(?P<task>\S+)(?:\s+(?P<outcome>[A-Z][A-Z_-]+))?")
+_ACTIONABLE_TASKS_RE = re.compile(r"^(?P<total>\d+)\s+actionable\s+tasks?(?:\s*:.*)?$", re.IGNORECASE)
 _HEADING_RE = re.compile(r"^==>\s*(?P<heading>.+)")
 _LIFECYCLE_PREFIXES = (
     "Calculating task graph",
@@ -55,9 +59,9 @@ class GradleProgressTracker:
     display_target: str = ""
     target_phase_index: int | None = None
     target_phase_total: int | None = None
-    progress: Progress | None = field(init=False, default=None)
+    requested_tasks: Sequence[str] = field(default_factory=tuple)
+    progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
     live: Live | None = field(init=False, default=None)
-    task_id: TaskID | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
     detail: str = field(init=False, default="Preparing Gradle task graph")
@@ -78,25 +82,24 @@ class GradleProgressTracker:
     rejected_events: int = field(init=False, default=0)
     structured_events_seen: bool = field(init=False, default=False)
     fallback_lines: int = field(init=False, default=0)
+    graph_tasks: tuple[str, ...] = field(init=False, default=())
+    observed_tasks: set[str] = field(init=False, default_factory=set)
+    requested_task_count: int = field(init=False, default=0)
+    dependency_task_count: int = field(init=False, default=0)
+    _started_at: float = field(init=False, default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
         self.expected_run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+        self.requested_tasks = tuple(dict.fromkeys(str(task).strip() for task in self.requested_tasks if str(task).strip()))
 
     def __enter__(self) -> "GradleProgressTracker":
         if not self.enabled:
             return self
-        self.progress = Progress(
-            SpinnerColumn(style="cyan"),
-            TextColumn("[bold]{task.description}"),
-            BarColumn(bar_width=None, complete_style="cyan", finished_style="green"),
-            GradleTaskCountColumn(),
-            TimeElapsedColumn(),
-            console=self.console,
-            expand=True,
-            transient=False,
-        )
-        self.task_id = self.progress.add_task(self._description(), total=None)
+        self._started_at = time.monotonic()
+        if self.requested_tasks:
+            self.console.print(self._requested_tasks_renderable())
+        self.progress_body = ThreeLineProgressBody(self._progress_state)
         self.live = Live(
             self._renderable(),
             console=self.console,
@@ -108,8 +111,7 @@ class GradleProgressTracker:
             self.live.start()
         except LiveError:
             self.live = None
-            self.progress = None
-            self.task_id = None
+            self.progress_body = None
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
@@ -168,7 +170,11 @@ class GradleProgressTracker:
 
         kind = str(event.get("kind") or "")
         if kind == "task-graph":
-            self.total = int(event.get("total") or 0) or None
+            raw_tasks = event.get("tasks")
+            if isinstance(raw_tasks, list):
+                self.graph_tasks = tuple(dict.fromkeys(str(task).strip() for task in raw_tasks if str(task).strip()))
+            self.total = int(event.get("total") or len(self.graph_tasks) or 0) or None
+            self._update_requested_dependency_counts()
             self.detail = f"Gradle task graph ready: {self.total or 0} tasks"
         elif kind == "task-start":
             self.current_task = str(event.get("task") or "")
@@ -227,8 +233,11 @@ class GradleProgressTracker:
             task = match.group("task") or ""
             outcome = (match.group("outcome") or "").lower().replace("_", "-")
             self.current_task = task
-            if self.total is None:
-                self.completed = (self.completed or 0) + 1
+            first_observation = bool(task) and task not in self.observed_tasks
+            if task:
+                self.observed_tasks.add(task)
+            if self.total is None and first_observation:
+                self.completed = len(self.observed_tasks)
             detail = task or "Gradle task"
             if outcome:
                 detail += f": {outcome}"
@@ -241,6 +250,16 @@ class GradleProgressTracker:
             self.detail = detail
             self.fallback_lines += 1
             self._publish()
+            return
+
+        summary = _ACTIONABLE_TASKS_RE.match(text)
+        if summary:
+            self.total = max(0, int(summary.group("total") or 0))
+            self.completed = self.total
+            self._update_requested_dependency_counts()
+            self.detail = text
+            self.fallback_lines += 1
+            self._publish(force=True)
             return
 
         heading = _HEADING_RE.match(text)
@@ -266,8 +285,13 @@ class GradleProgressTracker:
 
     def finish(self, returncode: int) -> None:
         self.returncode = returncode
+        if self.total is None and returncode == 0:
+            inferred_total = max(int(self.completed or 0), len(self.observed_tasks))
+            if inferred_total > 0:
+                self.total = inferred_total
         if returncode == 0 and self.total is not None:
             self.completed = self.total
+        self._update_requested_dependency_counts()
         if returncode == 0:
             status = "Gradle completed"
         elif self.failed_task:
@@ -306,15 +330,15 @@ class GradleProgressTracker:
             "event_sequence": self.last_sequence,
             "rejected_events": self.rejected_events,
             "run_id": self.expected_run_id,
+            "requested_tasks": list(self.requested_tasks),
+            "requested_task_count": self.requested_task_count,
+            "dependency_task_count": self.dependency_task_count,
+            "structured_events_seen": self.structured_events_seen,
+            "fallback_lines": self.fallback_lines,
+            "observed_tasks": sorted(self.observed_tasks),
         }
 
     def _publish(self, *, force: bool = False) -> None:
-        if self.progress is not None and self.task_id is not None:
-            self.progress.update(
-                self.task_id,
-                completed=float(self.completed or 0),
-                total=float(self.total) if self.total is not None else None,
-            )
         if self.live is not None:
             self.live.update(self._renderable())
         if self.update_callback is not None:
@@ -322,10 +346,80 @@ class GradleProgressTracker:
             snapshot["force"] = force
             self.update_callback(snapshot)
 
-    def _description(self) -> str:
-        if self.phase_index is not None and self.phase_total:
-            return f"{self.command_name} {self.phase_index}/{self.phase_total} · Gradle"
-        return f"Gradle {self.command_name}"
+    @staticmethod
+    def _canonical_task(task: str) -> str:
+        value = str(task or "").strip()
+        if not value:
+            return ""
+        return ":" + value.strip(":")
+
+    def _task_is_requested(self, task: str) -> bool:
+        current = self._canonical_task(task)
+        current_leaf = current.rsplit(":", 1)[-1]
+        for requested in self.requested_tasks:
+            canonical = self._canonical_task(requested)
+            if canonical == current:
+                return True
+            requested_body = canonical.strip(":")
+            if ":" not in requested_body and requested_body == current_leaf:
+                return True
+        return False
+
+    def _update_requested_dependency_counts(self) -> None:
+        if not self.requested_tasks or self.total is None:
+            self.requested_task_count = 0
+            self.dependency_task_count = 0
+            return
+        if self.graph_tasks:
+            requested = sum(1 for task in self.graph_tasks if self._task_is_requested(task))
+        else:
+            requested = min(len(self.requested_tasks), self.total)
+        self.requested_task_count = requested
+        self.dependency_task_count = max(0, self.total - requested)
+
+    def _current_task_role(self) -> tuple[str, str]:
+        if not self.current_task or not self.requested_tasks:
+            return "", ""
+        if self._task_is_requested(self.current_task):
+            return "[requested]", "[requested]"
+        return "[dependency]", "[dep]"
+
+    def _progress_state(self) -> ThreeLineProgressState:
+        extra_full = extra_compact = extra_tiny = ""
+        if self.requested_tasks:
+            if self.total is None and self.returncode is None:
+                extra_full = "discovering dependencies"
+                extra_compact = "finding deps"
+                extra_tiny = "deps…"
+            elif self.total is None:
+                extra_full = f"{len(self.requested_tasks)} requested • graph total unavailable"
+                extra_compact = f"{len(self.requested_tasks)} req • total unknown"
+                extra_tiny = f"{len(self.requested_tasks)}r"
+            else:
+                extra_full = f"{self.requested_task_count} requested + {self.dependency_task_count} deps"
+                extra_compact = f"{self.requested_task_count} req + {self.dependency_task_count} deps"
+                extra_tiny = f"{self.requested_task_count}r+{self.dependency_task_count}d"
+        prefix_full, prefix_compact = self._current_task_role()
+        detail = self.current_task or self.detail or "Preparing Gradle task graph"
+        return ThreeLineProgressState(
+            completed=int(self.completed or 0),
+            total=self.total,
+            unit_label="tasks",
+            unit_short="tasks",
+            detail=detail,
+            detail_prefix_full=prefix_full,
+            detail_prefix_compact=prefix_compact,
+            extra_full=extra_full,
+            extra_compact=extra_compact,
+            extra_tiny=extra_tiny,
+            started_at=self._started_at,
+            returncode=self.returncode,
+        )
+
+    def _requested_tasks_renderable(self) -> Group:
+        lines: list[Text] = [Text("Requested tasks:", style="bold")]
+        lines.extend(Text(f"  {task}", style="cyan") for task in self.requested_tasks)
+        return Group(*lines)
 
     def _renderable(self) -> Panel:
         target = self.display_target or Path(self.cwd).name or "Gradle project"
@@ -340,6 +434,5 @@ class GradleProgressTracker:
         title.append("Gradle ", style="bold")
         title.append("• ", style="dim")
         title.append(str(target), style="bold white")
-        detail = Text("  " + self.detail, style="dim", overflow="fold")
-        body = Group(self.progress, detail) if self.progress is not None else detail
+        body = self.progress_body or ThreeLineProgressBody(self._progress_state)
         return Panel(body, title=title, border_style=border, padding=(0, 1))

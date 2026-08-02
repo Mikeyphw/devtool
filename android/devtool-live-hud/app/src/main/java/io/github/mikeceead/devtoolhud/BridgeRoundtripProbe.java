@@ -203,7 +203,8 @@ final class BridgeRoundtripProbe {
         shell.append("printf '%s\\n' ").append(marker).append("; ");
         shell.append("/system/bin/am broadcast --user 0 -f 0x20 -n \"$__devtool_roundtrip_component\" ");
         shell.append("-a \"$__devtool_roundtrip_package.UPDATE\" ");
-        shell.append("--es token \"$__devtool_roundtrip_token\" ");
+        shell.append("--es token \"$__devtool_roundtrip_token\" --ei protocol_version ")
+                .append(BridgeProtocol.VERSION).append(" ");
         shell.append("--es run_id \"$DEVTOOL_RUN_ID\" ");
         shell.append("--es status running --es task 'Bridge roundtrip probe' --es phase 'Roundtrip callback' ");
         shell.append("--es detail 'Probe command callback reached Android' ");

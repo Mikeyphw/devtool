@@ -418,12 +418,20 @@ before execution.
 .SH TEST SELECTION
 The same selection model is translated to .NET filters, Gradle/JUnit filters, Android
 instrumentation arguments, Python framework arguments, and native filters for other
-supported runners where possible. The same selector flags can be used on
+supported runners where possible. Selector flags such as
+.BR --class ,
+.BR --filter ,
+and
+.B --tag
+can be used on
 .BR validate
 and on
-.BR apply-overlay --validate
-so artifact validation can run a medium gate without editing
-.BR .devtool.toml .
+.BR apply-overlay --validate .
+For validation commands, however,
+.B --task
+is an exclusive Android/Gradle task plan: only the named Gradle task or tasks are placed in
+the validation pipeline. Configured preflight, dependency, compile, package, lint, finalize,
+and embedded artifact-validator phases are not added.
 .TP
 .B --list-tests " | " --list
 Discover and list tests without executing them.
@@ -456,7 +464,11 @@ Select a test method. Repeatable.
 Pass a framework-native filter.
 .TP
 .BR --task " TASK"
-Override the native test task, script, or target. Repeat for multiple Gradle/Android tasks or Node/Make scripts.
+On
+.BR test ,
+override the Gradle test task. On validation and artifact-apply validation, replace the
+entire built-in Android/Gradle validation pipeline with this task. Repeat to run multiple
+explicit tasks in one native Gradle invocation.
 .TP
 .BR --test-task " TASK"
 Alias for
@@ -748,12 +760,15 @@ Skip embedded artifact validation scripts while retaining built-in validation.
 The validation skip flags,
 .BR --test-profile ,
 and test selection flags such as
-.BR --task ,
 .BR --class ,
 .BR --filter ,
 and
 .B --tag
-also apply to artifact validation.
+also apply to artifact validation. Supplying
+.B --task
+instead creates an exclusive Android/Gradle validation plan and suppresses all other
+validation phases, including embedded artifact validation scripts. Artifact manifest,
+checksum, inventory, and transactional apply safety checks still run before mutation.
 .SH TRANSACTIONAL APPLY AND EVIDENCE
 Before mutation, devtool backs up paths touched by the artifact. Immediate apply failures
 retain the traditional rollback behavior. Deferred and sequential validation failures block

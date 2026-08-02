@@ -1,19 +1,58 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 
-PACKAGE="io.github.mikeceead.devtoolhud"
-COMPONENT="$PACKAGE/.BridgeReceiver"
-TOKEN_FILE="${DEVTOOL_ANDROID_HUD_TOKEN_FILE:-$HOME/.config/devtool/android-live-hud.token}"
+RELEASE_PACKAGE="io.github.mikeceead.devtoolhud"
+DEBUG_PACKAGE="$RELEASE_PACKAGE.debug"
+RECEIVER_CLASS="$RELEASE_PACKAGE.BridgeReceiver"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/devtool"
+PACKAGE_FILE="${DEVTOOL_ANDROID_HUD_PACKAGE_FILE:-$CONFIG_DIR/android-live-hud.package}"
+COMPONENT_FILE="${DEVTOOL_ANDROID_HUD_COMPONENT_FILE:-$CONFIG_DIR/android-live-hud.component}"
+TOKEN_FILE="${DEVTOOL_ANDROID_HUD_TOKEN_FILE:-$CONFIG_DIR/android-live-hud.token}"
 TOKEN="${DEVTOOL_ANDROID_HUD_TOKEN:-}"
-[[ -n "$TOKEN" ]] || { [[ -r "$TOKEN_FILE" ]] && TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE")"; }
+PACKAGE="${DEVTOOL_ANDROID_HUD_PACKAGE:-}"
+COMPONENT="${DEVTOOL_ANDROID_HUD_COMPONENT:-}"
+ACTION_PREFIX="${DEVTOOL_ANDROID_HUD_ACTION_PREFIX:-}"
+
+read_marker() {
+  local path="$1"
+  [[ -r "$path" ]] || return 1
+  tr -d '\r\n' < "$path"
+}
+
+package_exists() {
+  local candidate="$1"
+  if command -v pm >/dev/null 2>&1 && pm path "$candidate" 2>/dev/null | grep -q '^package:'; then
+    return 0
+  fi
+  if command -v cmd >/dev/null 2>&1 && cmd package path "$candidate" 2>/dev/null | grep -q '^package:'; then
+    return 0
+  fi
+  return 1
+}
+
+[[ -n "$TOKEN" ]] || TOKEN="$(read_marker "$TOKEN_FILE" || true)"
+[[ -n "$PACKAGE" ]] || PACKAGE="$(read_marker "$PACKAGE_FILE" || true)"
+if [[ -z "$PACKAGE" ]]; then
+  if package_exists "$DEBUG_PACKAGE"; then
+    PACKAGE="$DEBUG_PACKAGE"
+  elif package_exists "$RELEASE_PACKAGE"; then
+    PACKAGE="$RELEASE_PACKAGE"
+  else
+    PACKAGE="$DEBUG_PACKAGE"
+  fi
+fi
+[[ -n "$COMPONENT" ]] || COMPONENT="$(read_marker "$COMPONENT_FILE" || true)"
+[[ -n "$COMPONENT" ]] || COMPONENT="$PACKAGE/$RECEIVER_CLASS"
+[[ -n "$ACTION_PREFIX" ]] || ACTION_PREFIX="$PACKAGE"
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage:
   devtool-live-hud update [options]
   devtool-live-hud complete [options]
   devtool-live-hud fail [options]
   devtool-live-hud cancel --run-id ID
+  devtool-live-hud toast --toast TEXT
   devtool-live-hud test
   devtool-live-hud test-overlay
 
@@ -24,6 +63,7 @@ Options:
   --detail TEXT        Current task detail
   --repo TEXT          Repository name
   --target TEXT        Solution/project/target
+  --toast TEXT         Short companion toast text
   --progress N         0..100
   --current N --total N
   --passed N --failed N --skipped N
@@ -35,7 +75,7 @@ Options:
   --indeterminate
   --overlay            Also show this run in the enabled floating overlay HUD
   --no-overlay         Force notification-only presentation (default)
-EOF
+USAGE
 }
 
 [[ -n "$TOKEN" ]] || { echo "Missing token: $TOKEN_FILE" >&2; exit 2; }
@@ -43,10 +83,11 @@ command -v am >/dev/null || { echo "The Android 'am' command is required (pkg in
 
 sub="${1:-}"; shift || true
 case "$sub" in
-  update) action="$PACKAGE.UPDATE"; default_status=running ;;
-  complete) action="$PACKAGE.COMPLETE"; default_status=ok ;;
-  fail) action="$PACKAGE.FAIL"; default_status=failed ;;
-  cancel) action="$PACKAGE.CANCEL"; default_status=cancelled ;;
+  update) action="$ACTION_PREFIX.UPDATE"; default_status=running ;;
+  complete) action="$ACTION_PREFIX.COMPLETE"; default_status=ok ;;
+  fail) action="$ACTION_PREFIX.FAIL"; default_status=failed ;;
+  cancel) action="$ACTION_PREFIX.CANCEL"; default_status=cancelled ;;
+  toast) action="$ACTION_PREFIX.TOAST"; default_status=running ;;
   test)
     exec "$0" update --run-id bridge-test --phase Testing --detail "Running 7 of 10 test projects" --repo sims3tools --target S3Atelier.Modern.sln --progress 72 --passed 160 --skipped 1 --warnings 2 --no-overlay
     ;;
@@ -58,10 +99,10 @@ case "$sub" in
 esac
 
 overlay_requested=false
-args=(am broadcast --user 0 -n "$COMPONENT" -a "$action" --es token "$TOKEN" --es status "$default_status")
+args=(am broadcast --user 0 -f 0x20 -n "$COMPONENT" -a "$action" --es token "$TOKEN" --ei protocol_version 1 --es status "$default_status")
 while (($#)); do
   case "$1" in
-    --run-id|--status|--phase|--detail|--repo|--target|--commit|--summary)
+    --run-id|--status|--phase|--detail|--repo|--target|--commit|--summary|--toast)
       key="${1#--}"; key="${key//-/_}"; args+=(--es "$key" "${2:?missing value for $1}"); shift 2 ;;
     --progress|--current|--total|--passed|--failed|--skipped|--warnings|--errors)
       key="${1#--}"; args+=(--ei "$key" "${2:?missing value for $1}"); shift 2 ;;
@@ -76,4 +117,9 @@ while (($#)); do
 done
 args+=(--ez overlay "$overlay_requested")
 
-"${args[@]}" >/dev/null
+output="$("${args[@]}")"
+if grep -Eq 'result=(201|202|203|204)([^0-9]|$)' <<<"$output"; then
+  detail="$(sed -n 's/.*data="\([^"]*\)".*/\1/p' <<<"$output")"
+  echo "Devtool Live HUD rejected the broadcast${detail:+: $detail}." >&2
+  exit 1
+fi

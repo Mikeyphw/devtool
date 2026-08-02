@@ -1,5 +1,19 @@
 # Changelog
 
+## Chroot Gradle graph transport and completion fallback
+
+- Preserved `DEVTOOL_RUN_ID` explicitly through the Termux-host `sudo/chrootctl` toolchain wrapper so structured Gradle graph events are accepted by the host progress tracker.
+- Counted unique fallback `> Task` lines, parsed Gradle actionable-task summaries, and inferred a successful final total when structured events are unavailable.
+- Prevented completed explicit-task runs from remaining at `N/? tasks • discovering dependencies`; final output now reports requested and dependency counts.
+
+
+## Android Live HUD bridge variant protocol fix
+
+- Derived bridge action namespaces from the resolved debug or release application ID instead of pairing a debug component with release actions.
+- Added protocol versioning, ordered-broadcast acknowledgements, rejection parsing, and local unsupported-action guards.
+- Made the bundled Termux helper consume pairing package/component markers and added executable debug/release protocol regression coverage.
+
+
 ## 1.1.0-rc.3 desktop GTK4 packaging flip
 
 - Promoted GTK4 Control Center packaging and removed brittle historical PHASE_* Markdown release-test requirements.

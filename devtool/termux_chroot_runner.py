@@ -724,6 +724,16 @@ def wrap_specs_for_termux_host_chroot(
             mappings=mappings,
             cwd=host_cwd,
         )
+        # Structured Gradle events are authenticated to the active Devtool run.
+        # sudo/chrootctl may sanitize the host environment, so carry the run ID
+        # inside the explicit ``env`` assignment list instead of relying on
+        # inheritance. Without this, the host tracker rejects every graph event
+        # and falls back to an unknown ``N/?`` total.
+        shared_run_id = str(env.get("DEVTOOL_RUN_ID", "") or "").strip()
+        if shared_run_id:
+            translated_env.setdefault("DEVTOOL_RUN_ID", shared_run_id)
+            if "DEVTOOL_RUN_ID" not in translated_env_keys:
+                translated_env_keys = (*translated_env_keys, "DEVTOOL_RUN_ID")
         assert_chroot_path_safe(
             [chroot_cwd, *argv, *translated_env.values()],
             context=f"{spec.name} chroot plan",

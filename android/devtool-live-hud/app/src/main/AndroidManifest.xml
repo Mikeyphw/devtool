@@ -122,10 +122,11 @@
             android:exported="true"
             tools:ignore="ExportedReceiver">
             <intent-filter>
-                <action android:name="io.github.mikeceead.devtoolhud.UPDATE" />
-                <action android:name="io.github.mikeceead.devtoolhud.COMPLETE" />
-                <action android:name="io.github.mikeceead.devtoolhud.FAIL" />
-                <action android:name="io.github.mikeceead.devtoolhud.CANCEL" />
+                <action android:name="${applicationId}.UPDATE" />
+                <action android:name="${applicationId}.COMPLETE" />
+                <action android:name="${applicationId}.FAIL" />
+                <action android:name="${applicationId}.CANCEL" />
+                <action android:name="${applicationId}.TOAST" />
             </intent-filter>
         </receiver>
 

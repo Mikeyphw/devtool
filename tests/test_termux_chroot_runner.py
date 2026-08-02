@@ -256,6 +256,41 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         self.assertNotIn("JAVA_HOME=", command)
         self.assertNotIn("/data/data/com.termux/", command)
 
+
+    def test_host_chroot_wrapper_preserves_run_id_for_structured_gradle_events(self) -> None:
+        spec = CommandSpec(
+            "android-validation-explicit-tasks",
+            [
+                "python3",
+                "/data/data/com.termux/files/home/.local/share/devtool/runtime/android/build-apk",
+                "/data/data/com.termux/files/home/Code/demo",
+                "--task",
+                ":app:compileDebugKotlin",
+                "--",
+                "--init-script",
+                "/data/data/com.termux/files/home/.local/share/devtool/runtime/gradle/devtool-events.init.gradle",
+            ],
+            cwd="/data/data/com.termux/files/home/Code/demo",
+            metadata={"progress_parser": "gradle"},
+        )
+        wrapped = wrap_specs_for_termux_host_chroot(
+            [spec],
+            "androidos",
+            repo_root="/data/data/com.termux/files/home/Code/demo",
+            env={
+                "HOME": "/data/data/com.termux/files/home",
+                "DEVTOOL_RUN_ID": "shared-gradle-run",
+            },
+        )[0]
+
+        command = wrapped.argv[-1]
+        self.assertIn("DEVTOOL_RUN_ID=shared-gradle-run", command)
+        self.assertIn(
+            "/home/termux/.local/share/devtool/runtime/gradle/devtool-events.init.gradle",
+            command,
+        )
+        self.assertIn("DEVTOOL_RUN_ID", wrapped.metadata["chroot_translated_env"])
+
     def test_full_chroot_runner_refuses_desktop_linux(self) -> None:
         with patch.dict("os.environ", {"HOME": "/home/mike"}, clear=True):
             self.assertEqual(run_auto_chroot(["validate"]), 2)

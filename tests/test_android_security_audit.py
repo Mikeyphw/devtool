@@ -54,7 +54,7 @@ def test_exported_bridge_and_tasker_receivers_are_token_and_action_hardened():
     bridge = read("BridgeReceiver.java")
     tasker = read("TaskerPluginReceiver.java")
     assert "BridgeSecrets.accepts(context" in bridge
-    assert "isExpectedBridgeAction(context, action)" in bridge
+    assert "BridgeProtocol.isExpectedAction(context.getPackageName(), action)" in bridge
     assert "Rejected bridge update without a run id" in bridge
     assert "MAX_TOAST_LENGTH" in bridge
     assert "TaskerAuthorization.matches(context" in tasker

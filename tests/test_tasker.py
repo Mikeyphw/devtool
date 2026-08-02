@@ -354,11 +354,12 @@ def test_direct_termux_android_bridge_reports_unavailable_companion(tmp_path, ca
     }, clear=False), patch("devtool.hud.choose_hud_mode", return_value="android-bridge"), patch(
         "devtool.hud._is_termux_android", return_value=True
     ), patch("devtool.android_live_hud.AndroidLiveHudBridge.available", return_value=False), patch(
-        "devtool.android_live_hud.AndroidLiveHudBridge.install_hint", return_value="debug companion package missing"
+        "devtool.android_live_hud.AndroidLiveHudBridge.install_hint",
+        return_value="Devtool Live HUD companion package was not found.",
     ), patch("devtool.tasker.subprocess.run") as run:
         assert start_auto_hud(tmp_path / "runtime", mode="android-bridge") is False
     run.assert_not_called()
-    assert "Android companion HUD unavailable" in capsys.readouterr().err
+    assert capsys.readouterr().err == "warning: Devtool Live HUD app not found.\n"
 
 def test_devtool_no_hud_hard_disables_auto_hud(tmp_path) -> None:
     with patch.dict("os.environ", {"DEVTOOL_NO_HUD": "1"}, clear=False), patch(

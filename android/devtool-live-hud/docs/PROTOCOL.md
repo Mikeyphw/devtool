@@ -2,25 +2,23 @@
 
 ## Token-protected progress bridge
 
-Component:
+The installed application ID is the bridge namespace. Debug and release builds therefore use different components and action prefixes:
 
 ```text
-io.github.mikeceead.devtoolhud/.BridgeReceiver
+Debug component:  io.github.mikeceead.devtoolhud.debug/io.github.mikeceead.devtoolhud.BridgeReceiver
+Debug actions:    io.github.mikeceead.devtoolhud.debug.UPDATE, .COMPLETE, .FAIL, .CANCEL, .TOAST
+
+Release component: io.github.mikeceead.devtoolhud/io.github.mikeceead.devtoolhud.BridgeReceiver
+Release actions:   io.github.mikeceead.devtoolhud.UPDATE, .COMPLETE, .FAIL, .CANCEL, .TOAST
 ```
 
-Actions:
-
-```text
-io.github.mikeceead.devtoolhud.UPDATE
-io.github.mikeceead.devtoolhud.COMPLETE
-io.github.mikeceead.devtoolhud.FAIL
-io.github.mikeceead.devtoolhud.CANCEL
-```
+Devtool resolves the package and component from the pairing markers and derives the action prefix from that same package. `DEVTOOL_ANDROID_HUD_ACTION_PREFIX` remains an explicit advanced override.
 
 Required extras:
 
 - `token` (`String`)
-- `run_id` (`String`)
+- `protocol_version` (`int`, current value `1`; omitted is accepted as v1 for older helpers)
+- `run_id` (`String`) for every action except `TOAST`
 
 Progress extras:
 
@@ -32,6 +30,19 @@ Progress extras:
 - `overlay`
 
 Notifications are always posted. `overlay=true` asks for overlay presentation but does not grant permission or bypass Android foreground-service rules.
+
+The bridge is an ordered broadcast protocol. New companion versions acknowledge processing with these result codes:
+
+```text
+100 accepted
+110 stale update ignored safely
+201 invalid token
+202 unknown action
+203 missing run id
+204 unsupported protocol version
+```
+
+Devtool accepts legacy result `0` for older companion releases, but parses and reports explicit rejection acknowledgements from current releases.
 
 ## Tasker/Locale plug-in
 

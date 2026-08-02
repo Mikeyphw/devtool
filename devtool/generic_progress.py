@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+import time
 from typing import Any, Callable
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.errors import LiveError
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, ProgressColumn, SpinnerColumn, Task, TextColumn, TimeElapsedColumn
+from rich.progress import ProgressColumn, Task
 from rich.text import Text
+
+from .rich_progress import ThreeLineProgressBody, ThreeLineProgressState
 
 
 _FRACTION_RE = re.compile(r"(?:^|[\[(\s])(?P<completed>\d+)\s*/\s*(?P<total>\d+)(?:[\])\s]|$)")
@@ -35,9 +38,8 @@ class GenericProgressTracker:
     display_target: str = ""
     target_phase_index: int | None = None
     target_phase_total: int | None = None
-    progress: Progress | None = field(init=False, default=None)
+    progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
     live: Live | None = field(init=False, default=None)
-    task_id: int | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
     detail: str = field(init=False, default="Starting")
@@ -47,6 +49,7 @@ class GenericProgressTracker:
     total: int | None = field(init=False, default=None)
     percent: float | None = field(init=False, default=None)
     unit_label: str = field(init=False, default="tasks")
+    _started_at: float = field(init=False, default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
@@ -54,18 +57,8 @@ class GenericProgressTracker:
     def __enter__(self) -> "GenericProgressTracker":
         if not self.enabled:
             return self
-        self.progress = Progress(
-            SpinnerColumn(style="cyan"),
-            TextColumn("[bold]{task.description}"),
-            TextColumn("[dim]{task.fields[phase_label]}[/dim]"),
-            BarColumn(bar_width=None),
-            GenericCountColumn(),
-            TimeElapsedColumn(),
-            console=self.console,
-            expand=True,
-            transient=False,
-        )
-        self.task_id = self.progress.add_task(self._description(), total=None, phase_label=self._phase_label())
+        self._started_at = time.monotonic()
+        self.progress_body = ThreeLineProgressBody(self._progress_state)
         self.live = Live(
             self._renderable(),
             console=self.console,
@@ -77,8 +70,7 @@ class GenericProgressTracker:
             self.live.start()
         except LiveError:
             self.live = None
-            self.progress = None
-            self.task_id = None
+            self.progress_body = None
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
@@ -138,13 +130,6 @@ class GenericProgressTracker:
             self.unit_label = "percent"
 
     def _publish(self, *, force: bool = False) -> None:
-        if self.progress is not None and self.task_id is not None:
-            self.progress.update(
-                self.task_id,
-                phase_label=self._phase_label(),
-                completed=float(self.completed or 0),
-                total=float(self.total) if self.total is not None else None,
-            )
         if self.live is not None:
             self.live.update(self._renderable())
         if self.update_callback is not None:
@@ -168,6 +153,19 @@ class GenericProgressTracker:
             "test": "testing",
         }.get(command, "running command")
 
+    def _progress_state(self) -> ThreeLineProgressState:
+        unit = self.unit_label or "tasks"
+        short = "tasks" if unit == "tasks" else ("%" if unit == "percent" else unit)
+        return ThreeLineProgressState(
+            completed=int(self.completed or 0),
+            total=self.total,
+            unit_label=unit,
+            unit_short=short,
+            detail=self.detail or "Starting",
+            started_at=self._started_at,
+            returncode=self.returncode,
+        )
+
     def _renderable(self) -> Panel:
         target = self.display_target or self.cwd or "command"
         if self.returncode is None:
@@ -187,6 +185,5 @@ class GenericProgressTracker:
         title.append(self.command_name or "command", style="bold")
         title.append(" • ", style="dim")
         title.append(str(target), style="bold white")
-        detail = Text("  " + (self.detail or "Running"), style="dim", overflow="fold")
-        body = Group(self.progress, detail) if self.progress is not None else detail
+        body = self.progress_body or ThreeLineProgressBody(self._progress_state)
         return Panel(body, title=title, border_style=border, padding=(0, 1))

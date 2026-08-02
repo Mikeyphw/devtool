@@ -74,7 +74,10 @@ class DotnetProgressTests(unittest.TestCase):
             tracker.update_from_line("  App -> /tmp/bin/App.dll")
             tracker.finish(0)
 
-        self.assertIn("dotnet build", buffer.getvalue())
+        output = buffer.getvalue()
+        self.assertIn(".NET", output)
+        self.assertIn("1/1 projects", output)
+        self.assertIn("build ok", output)
 
 
 if __name__ == "__main__":
@@ -195,8 +198,9 @@ class DotnetProgressSeparateCommandTests(unittest.TestCase):
             tracker.finish(0)
 
         output = buffer.getvalue()
-        self.assertIn("restore 1/3", output)
-        self.assertIn("dotnet restore", output)
+        self.assertIn("overall 1/3", output)
+        self.assertIn(".NET", output)
+        self.assertNotIn("dotnet restore", output)
         self.assertIn("restore ok", tracker.snapshot()["detail"])
 
     def test_tracker_leaves_render_non_transient_for_separate_completed_bars(self) -> None:
@@ -217,10 +221,11 @@ class DotnetProgressSeparateCommandTests(unittest.TestCase):
             build.finish(0)
 
         output = buffer.getvalue()
-        self.assertIn("restore 1/2", output)
-        self.assertIn("build 2/2", output)
-        self.assertIn("dotnet restore", output)
-        self.assertIn("dotnet build", output)
+        self.assertIn("overall 1/2", output)
+        self.assertIn("overall 2/2", output)
+        self.assertEqual(output.count(".NET"), 2)
+        self.assertNotIn("dotnet restore", output)
+        self.assertNotIn("dotnet build", output)
 
 class DotnetProgressFalseIssueCountTests(unittest.TestCase):
     def test_successful_build_summary_does_not_count_zero_error_warning_lines_as_issues(self) -> None:

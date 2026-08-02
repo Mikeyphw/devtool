@@ -21,18 +21,33 @@ public final class BridgeReceiver extends BroadcastReceiver {
                     runId, "", "", "", "Rejected update with an invalid bridge token",
                     DebugRecorder.details("action", action));
             Log.w(TAG, "Rejected update with an invalid bridge token");
+            respond(BridgeProtocol.RESULT_TOKEN_REJECTED, "invalid-token");
             return;
         }
 
-        if (!isExpectedBridgeAction(context, action)) {
+        int protocolVersion = intent.hasExtra("protocol_version")
+                ? intent.getIntExtra("protocol_version", -1)
+                : BridgeProtocol.VERSION;
+        if (protocolVersion != BridgeProtocol.VERSION) {
+            DebugRecorder.warning(context, "bridge", "BRIDGE_PROTOCOL_REJECTED", "BridgeReceiver",
+                    runId, "", "", "", "Rejected unsupported bridge protocol",
+                    DebugRecorder.details("action", action, "protocol_version", protocolVersion));
+            Log.w(TAG, "Rejected unsupported bridge protocol " + protocolVersion);
+            respond(BridgeProtocol.RESULT_PROTOCOL_REJECTED, "unsupported-protocol");
+            return;
+        }
+
+        if (!BridgeProtocol.isExpectedAction(context.getPackageName(), action)) {
             DebugRecorder.warning(context, "bridge", "BRIDGE_ACTION_REJECTED", "BridgeReceiver",
                     runId, "", "", "", "Rejected bridge update with unexpected action",
                     DebugRecorder.details("action", action));
             Log.w(TAG, "Rejected bridge update with unexpected action " + action);
+            respond(BridgeProtocol.RESULT_ACTION_REJECTED, "unknown-action");
             return;
         }
         if (action.endsWith("TOAST")) {
             showToast(context, intent.getStringExtra("toast"));
+            respond(BridgeProtocol.RESULT_ACCEPTED, "accepted");
             return;
         }
         if (runId == null || runId.trim().isEmpty()) {
@@ -40,6 +55,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
                     "", "", "", "", "Rejected bridge update without a run id",
                     DebugRecorder.details("action", action));
             Log.w(TAG, "Rejected bridge update without a run id");
+            respond(BridgeProtocol.RESULT_RUN_ID_MISSING, "missing-run-id");
             return;
         }
         if (!action.endsWith("CANCEL") && !BridgeUpdateGate.accept(context, intent)) {
@@ -47,6 +63,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
                     runId, "", "", "", "Ignored stale or out-of-order update",
                     DebugRecorder.details("action", action, "sequence", intent.getLongExtra("sequence", 0L)));
             Log.d(TAG, "Ignored stale or out-of-order update for run " + runId);
+            respond(BridgeProtocol.RESULT_IGNORED_STALE, "stale-update");
             return;
         }
         NotificationController controller = new NotificationController(context);
@@ -56,6 +73,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
             RunStore.cancelled(context, runId);
             controller.cancel(runId);
             OverlayHudService.cancel(runId);
+            respond(BridgeProtocol.RESULT_ACCEPTED, "accepted");
             return;
         }
 
@@ -70,6 +88,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
         controller.post(update);
         OverlayHudService.publish(context, update);
         maybeToastApplyCompletion(context, update);
+        respond(BridgeProtocol.RESULT_ACCEPTED, "accepted");
     }
 
     private static void maybeToastApplyCompletion(Context context, HudUpdate update) {
@@ -90,12 +109,9 @@ public final class BridgeReceiver extends BroadcastReceiver {
         Toast.makeText(context.getApplicationContext(), clean, Toast.LENGTH_SHORT).show();
     }
 
-    private static boolean isExpectedBridgeAction(Context context, String action) {
-        String prefix = context.getPackageName() + ".";
-        return (prefix + "UPDATE").equals(action)
-                || (prefix + "COMPLETE").equals(action)
-                || (prefix + "FAIL").equals(action)
-                || (prefix + "CANCEL").equals(action)
-                || (prefix + "TOAST").equals(action);
+    private void respond(int resultCode, String resultData) {
+        if (!isOrderedBroadcast()) return;
+        setResultCode(resultCode);
+        setResultData(resultData);
     }
 }

@@ -373,7 +373,11 @@ def start_auto_hud(directory: Path, *, mode: str = "desktop", poll_interval: flo
             if not bridge.available():
                 detail = bridge.last_error or bridge.install_hint()
                 _append_hud_log(f"android bridge mode unavailable: {detail}")
-                print(f"warning: Android companion HUD unavailable: {detail}", file=sys.stderr)
+                if "companion package was not found" in detail.lower():
+                    warning = "warning: Devtool Live HUD app not found."
+                else:
+                    warning = "warning: Devtool Live HUD unavailable."
+                print(warning, file=sys.stderr)
                 return False
             _append_hud_log("android bridge mode: companion endpoint resolved; starting the native app state forwarder.")
         else:

@@ -5,7 +5,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +15,17 @@ PACKAGE = "io.github.mikeceead.devtoolhud"
 DEBUG_PACKAGE = f"{PACKAGE}.debug"
 RECEIVER_CLASS = f"{PACKAGE}.BridgeReceiver"
 ACTION_PREFIX = PACKAGE
+PROTOCOL_VERSION = 1
+SUPPORTED_ACTIONS = frozenset({"update", "complete", "fail", "cancel", "toast"})
+_ACK_ACCEPTED = frozenset({100, 110})
+_ACK_REJECTED = {
+    201: "invalid-token",
+    202: "unknown-action",
+    203: "missing-run-id",
+    204: "unsupported-protocol",
+}
+_BROADCAST_RESULT_RE = re.compile(r"\bresult=(-?\d+)\b", re.IGNORECASE)
+_BROADCAST_DATA_RE = re.compile(r"\bdata=\"([^\"]*)\"", re.IGNORECASE)
 DEFAULT_TOKEN_FILE = Path.home() / ".config" / "devtool" / "android-live-hud.token"
 DEFAULT_PACKAGE_FILE = Path.home() / ".config" / "devtool" / "android-live-hud.package"
 DEFAULT_COMPONENT_FILE = Path.home() / ".config" / "devtool" / "android-live-hud.component"
@@ -27,7 +37,7 @@ _PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$")
 class AndroidHudEndpoint:
     package: str
     component: str
-    action_prefix: str = ACTION_PREFIX
+    action_prefix: str
 
 
 def _clean_package(value: str) -> str:
@@ -65,6 +75,10 @@ def configured_package() -> str:
 
 def configured_component() -> str:
     return os.environ.get("DEVTOOL_ANDROID_HUD_COMPONENT", "").strip()
+
+
+def configured_action_prefix() -> str:
+    return _clean_package(os.environ.get("DEVTOOL_ANDROID_HUD_ACTION_PREFIX", ""))
 
 
 def active_package() -> str:
@@ -200,7 +214,7 @@ class AndroidLiveHudBridge:
         if self._endpoint is not None and not force:
             return self._endpoint
 
-        action_prefix = _clean_package(os.environ.get("DEVTOOL_ANDROID_HUD_ACTION_PREFIX", "")) or ACTION_PREFIX
+        action_prefix_override = configured_action_prefix()
         explicit_component = configured_component()
         if explicit_component:
             package = _component_package(explicit_component)
@@ -211,18 +225,22 @@ class AndroidLiveHudBridge:
                     "io.github.mikeceead.devtoolhud.BridgeReceiver"
                 )
                 return None
-            self._endpoint = AndroidHudEndpoint(package, explicit_component, action_prefix)
+            self._endpoint = AndroidHudEndpoint(package, explicit_component, action_prefix_override or package)
             return self._endpoint
 
         marked_component = _read_marker(_component_marker_file())
         marked_package = _component_package(marked_component)
         if marked_package and self._package_installed(marked_package):
-            self._endpoint = AndroidHudEndpoint(marked_package, marked_component, action_prefix)
+            self._endpoint = AndroidHudEndpoint(
+                marked_package, marked_component, action_prefix_override or marked_package
+            )
             return self._endpoint
 
         for package in self._candidate_packages():
             if self._package_installed(package):
-                self._endpoint = AndroidHudEndpoint(package, f"{package}/{RECEIVER_CLASS}", action_prefix)
+                self._endpoint = AndroidHudEndpoint(
+                    package, f"{package}/{RECEIVER_CLASS}", action_prefix_override or package
+                )
                 return self._endpoint
 
         self._set_error(
@@ -252,7 +270,6 @@ class AndroidLiveHudBridge:
                 handle.write(line + "\n")
         except OSError:
             pass
-        print(line, file=sys.stderr, flush=True)
 
     def available(self) -> bool:
         if not self._am_binary():
@@ -274,8 +291,9 @@ class AndroidLiveHudBridge:
         )
 
     @staticmethod
-    def _broadcast_succeeded(result: subprocess.CompletedProcess[str]) -> bool:
-        output = (result.stdout or "").lower()
+    def _broadcast_outcome(result: subprocess.CompletedProcess[str]) -> tuple[bool, str]:
+        output = " ".join((result.stdout or "").strip().split())
+        lowered = output.lower()
         failure_markers = (
             "exception",
             "error:",
@@ -284,7 +302,24 @@ class AndroidLiveHudBridge:
             "not found",
             "securityexception",
         )
-        return result.returncode == 0 and not any(marker in output for marker in failure_markers)
+        if result.returncode != 0 or any(marker in lowered for marker in failure_markers):
+            return False, output or f"am broadcast exited with status {result.returncode}"
+
+        result_match = _BROADCAST_RESULT_RE.search(output)
+        result_code = int(result_match.group(1)) if result_match else None
+        data_match = _BROADCAST_DATA_RE.search(output)
+        result_data = data_match.group(1) if data_match else ""
+        if result_code in _ACK_ACCEPTED:
+            return True, result_data
+        if result_code in _ACK_REJECTED:
+            detail = result_data or _ACK_REJECTED[result_code]
+            return False, f"companion rejected broadcast: {detail}"
+        if result_code not in {None, 0}:
+            return False, f"companion returned unknown result code {result_code}"
+
+        # Older companion releases did not acknowledge ordered broadcasts. Keep
+        # them compatible while newer releases provide an authoritative result.
+        return True, result_data
 
     def _send_to_endpoint(
         self,
@@ -310,7 +345,9 @@ class AndroidLiveHudBridge:
             "token",
             token,
         ]
-        for key, value in payload.items():
+        wire_payload = dict(payload)
+        wire_payload["protocol_version"] = PROTOCOL_VERSION
+        for key, value in wire_payload.items():
             if value is None:
                 continue
             key = str(key)
@@ -332,12 +369,17 @@ class AndroidLiveHudBridge:
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return False, str(exc)
-        if self._broadcast_succeeded(result):
-            return True, ""
-        detail = " ".join((result.stdout or "").strip().split())
-        return False, detail or f"am broadcast exited with status {result.returncode}"
+        return self._broadcast_outcome(result)
 
     def send(self, action: str, payload: dict[str, Any]) -> bool:
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action not in SUPPORTED_ACTIONS:
+            self._set_error(
+                f"Unsupported Android HUD action '{normalized_action or action}'. "
+                f"Supported actions: {', '.join(sorted(SUPPORTED_ACTIONS))}."
+            )
+            return False
+
         am = self._am_binary()
         token = self.token()
         if not am:
@@ -352,7 +394,9 @@ class AndroidLiveHudBridge:
         endpoint = self._resolve_endpoint()
         if endpoint is None:
             return False
-        ok, detail = self._send_to_endpoint(am=am, endpoint=endpoint, action=action, token=token, payload=payload)
+        ok, detail = self._send_to_endpoint(
+            am=am, endpoint=endpoint, action=normalized_action, token=token, payload=payload
+        )
         if ok:
             self.last_error = ""
             return True
@@ -365,7 +409,7 @@ class AndroidLiveHudBridge:
         refreshed = self._resolve_endpoint(force=True)
         if refreshed is not None and refreshed != previous:
             ok, retry_detail = self._send_to_endpoint(
-                am=am, endpoint=refreshed, action=action, token=token, payload=payload
+                am=am, endpoint=refreshed, action=normalized_action, token=token, payload=payload
             )
             if ok:
                 self.last_error = ""

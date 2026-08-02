@@ -66,18 +66,19 @@ and directs the user to the execution log or visible Termux session.
 
 The local installer normally installs the debug application ID
 `io.github.mikeceead.devtoolhud.debug`, while signed releases use
-`io.github.mikeceead.devtoolhud`. Devtool probes both packages and always uses
-the receiver's fully qualified Java class,
-`io.github.mikeceead.devtoolhud.BridgeReceiver`, so desktop HUD flags translated
-to `android-bridge` work from manually entered Termux commands as well as runs
-started inside the app.
+`io.github.mikeceead.devtoolhud`. Devtool probes both packages, uses the receiver's
+fully qualified Java class, and derives every bridge action from the selected
+application ID. Debug broadcasts therefore use the `.debug` action namespace
+instead of accidentally pairing a debug component with a release action.
 
 Installing or updating the bridge token now writes package and component marker
 files beside `android-live-hud.token`. Advanced overrides are available through
 `DEVTOOL_ANDROID_HUD_PACKAGE`, `DEVTOOL_ANDROID_HUD_COMPONENT`, and
-`DEVTOOL_ANDROID_HUD_ACTION_PREFIX`. Bridge discovery failures are printed to
-the invoking terminal and recorded in
-`~/.local/state/devtool/android-hud-bridge-error.log`.
+`DEVTOOL_ANDROID_HUD_ACTION_PREFIX`. Bridge diagnostics are recorded in
+`~/.local/state/devtool/android-hud-bridge-error.log`; normal terminal output
+uses a single short availability warning. Current app versions also acknowledge
+accepted, stale, and rejected ordered broadcasts so Devtool does not mistake an
+internal receiver rejection for successful delivery.
 
 
 ## Structured Logs and Repositories

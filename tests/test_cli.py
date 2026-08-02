@@ -17,7 +17,7 @@ from devtool.ai_prompt import AiPromptOptions, render_ai_prompt
 from devtool.apply_notifications import build_apply_notification
 from devtool.artifacts import diff_artifact, preview_artifact
 from devtool import __version__
-from devtool.cli import _apply_artifact_validation_defaults, _apply_runner_cli_options, _artifact_commit_paths, _attempt_auto_repair, _maybe_commit_after_apply, _maybe_copy, _record_apply_history, _run_sequential_overlays, _validation_expectation_result, _validation_specs_for_args, build_parser, main, split_runner_passthrough_args
+from devtool.cli import _apply_artifact_validation_defaults, _apply_runner_cli_options, _artifact_commit_paths, _attempt_auto_repair, _load_or_create_validation_session, _maybe_commit_after_apply, _maybe_copy, _record_apply_history, _run_sequential_overlays, _validate_apply_args, _validation_apply_context, _validation_expectation_result, _validation_specs_for_args, build_parser, main, split_runner_passthrough_args
 from devtool.config import ProjectConfig, load_project_config
 from devtool.log_commands import choose_active_log, parse_log_filename
 from devtool.logstore import write_log
@@ -2354,3 +2354,199 @@ class ApplyOverlayValidationSelectionTests(unittest.TestCase):
             self.assertEqual(len(captured), 1)
             self.assertIn("--filter", captured[0])
             self.assertIn("FullyQualifiedName~ParserTests", captured[0][captured[0].index("--filter") + 1])
+
+
+class ExclusiveValidationTaskTests(unittest.TestCase):
+    def _android_config(self, root: Path) -> ProjectConfig:
+        (root / "settings.gradle.kts").write_text('rootProject.name = "Demo"\ninclude(":app")\n', encoding="utf-8")
+        (root / "build.gradle.kts").write_text("", encoding="utf-8")
+        (root / "gradlew").write_text("#!/bin/sh\n", encoding="utf-8")
+        (root / "gradlew").chmod(0o755)
+        return ProjectConfig(
+            repo_root=root,
+            project_root=str(root),
+            kind="android",
+            runner_options={"validation": {"resumable": True}},
+        )
+
+    def test_validate_task_replaces_entire_builtin_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._android_config(root)
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--sequential",
+                "--task", ":app:testDebugUnitTest",
+                "--task", ":app:lintDebug",
+            ])
+
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].metadata["gradle_tasks"], [":app:testDebugUnitTest", ":app:lintDebug"])
+        self.assertEqual(specs[0].metadata["validation_scope"], "explicit-tasks")
+        self.assertEqual(specs[0].metadata["validation_phase_total"], 1)
+        self.assertNotIn("help", specs[0].metadata["gradle_tasks"])
+        self.assertNotIn("dependencies", specs[0].metadata["gradle_tasks"])
+        self.assertIn("gradle-junit", specs[0].metadata["report_parsers"])
+        self.assertIn("android-lint", specs[0].metadata["report_parsers"])
+
+    def test_apply_overlay_task_uses_same_exclusive_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._android_config(root)
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "apply-overlay", "--validate",
+                "--task", ":app:assembleDebug",
+                "artifact.zip",
+            ])
+
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].metadata["gradle_tasks"], [":app:assembleDebug"])
+        self.assertEqual(specs[0].metadata["validation_components"], ["explicit-tasks"])
+
+    def test_apply_task_disables_embedded_script_phase(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args([
+            "--repo", "/repo",
+            "apply-overlay", "--defer-validate",
+            "--task", ":app:testDebugUnitTest",
+            "artifact.zip",
+        ])
+        context = _validation_apply_context(
+            args,
+            transaction_path="/repo/.devtool/transactions/1.json",
+            manifest={"validation": {"script": "validate.py"}},
+        )
+        self.assertEqual(context["exclusive_validation_tasks"], [":app:testDebugUnitTest"])
+        self.assertEqual(context["minimum_phase"], "finalize")
+        self.assertFalse(context["artifact_script_in_plan"])
+
+
+    def test_immediate_apply_task_does_not_run_embedded_validator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._android_config(root)
+            artifact = root / "artifact.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {
+                    "mode": "required",
+                    "minimum_phase": "package",
+                    "script": {"path": ".devtool-artifact/validate.sh", "runner": "bash"},
+                },
+            }
+            with ZipFile(artifact, "w") as archive:
+                archive.writestr(".devtool-artifact.json", json.dumps(manifest))
+                archive.writestr(".devtool-artifact/validate.sh", "#!/bin/sh\nexit 99\n")
+                archive.writestr("README.txt", "patched\n")
+
+            validation_result = OperationResult(
+                "android-validation-explicit-tasks",
+                ["gradle", ":app:testDebugUnitTest"],
+                0,
+                0.0,
+                "ok",
+                [],
+            )
+            with (
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli._run_apply", return_value=([OperationResult("apply-overlay", ["unzip"], 0, 0.0, "ok", [])], "ok")),
+                patch("devtool.cli.read_artifact_manifest", return_value=manifest),
+                patch("devtool.cli._run_specs_for_args", return_value=([validation_result], "ok")),
+                patch("devtool.cli._artifact_script_result") as validator,
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main([
+                    "--repo", str(root), "--yes", "--no-clipboard",
+                    "apply-overlay", "--validate", "--no-apply-notification",
+                    "--task", ":app:testDebugUnitTest", str(artifact),
+                ])
+
+        self.assertEqual(rc, 0)
+        validator.assert_not_called()
+
+    def test_apply_task_requires_a_validation_mode(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args([
+            "--repo", "/repo",
+            "apply-overlay", "--task", ":app:testDebugUnitTest",
+            "artifact.zip",
+        ])
+        with self.assertRaises(SystemExit):
+            _validate_apply_args(args, parser)
+
+    def test_task_rejects_skip_flags_instead_of_silently_ignoring_them(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._android_config(root)
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task", ":app:testDebugUnitTest", "--skip-build",
+            ])
+            with self.assertRaises(SystemExit):
+                _validation_specs_for_args(config, args, parser)
+
+    def test_task_rejects_non_gradle_projects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task", "tests",
+            ])
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="python")
+            with self.assertRaises(SystemExit):
+                _validation_specs_for_args(config, args, parser)
+
+    def test_sequential_resume_restores_exclusive_task_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._android_config(root)
+            parser = build_parser()
+            first_args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--sequential",
+                "--task", ":app:testDebugUnitTest",
+                "--task", ":core:test",
+            ])
+            first, first_specs = _load_or_create_validation_session(config, first_args, parser)
+
+            resume_args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--sequential",
+            ])
+            resumed, resumed_specs = _load_or_create_validation_session(config, resume_args, parser)
+
+        self.assertEqual(resumed.session_id, first.session_id)
+        self.assertEqual(first.options["test_task"], [":app:testDebugUnitTest", ":core:test"])
+        self.assertEqual(resume_args.test_task, [":app:testDebugUnitTest", ":core:test"])
+        self.assertEqual(len(first_specs), 1)
+        self.assertEqual(len(resumed_specs), 1)
+        self.assertEqual(resumed_specs[0].metadata["gradle_tasks"], [":app:testDebugUnitTest", ":core:test"])
+
+    def test_sequential_resume_rejects_a_different_task_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._android_config(root)
+            parser = build_parser()
+            first_args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--sequential",
+                "--task", ":app:testDebugUnitTest",
+            ])
+            _load_or_create_validation_session(config, first_args, parser)
+            resume_args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--sequential",
+                "--task", ":app:lintDebug",
+            ])
+            with self.assertRaisesRegex(Exception, "task list differs"):
+                _load_or_create_validation_session(config, resume_args, parser)

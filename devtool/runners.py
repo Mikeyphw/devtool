@@ -898,6 +898,7 @@ def _run_process_live(
     target_phase_index: int | None = None,
     target_phase_total: int | None = None,
     progress_parser: str = "",
+    requested_gradle_tasks: list[str] | tuple[str, ...] | None = None,
     live_log_path: Path | str | None = None,
     live_log_header: str = "",
     memory_guard_mb: int = 0,
@@ -982,6 +983,7 @@ def _run_process_live(
                 display_target=display_target,
                 target_phase_index=target_phase_index,
                 target_phase_total=target_phase_total,
+                requested_tasks=tuple(requested_gradle_tasks or ()),
             )
         elif dotnet_progress_plan(parser_argv, parser_cwd):
             tracker = DotnetProgressTracker(
@@ -1427,6 +1429,7 @@ def run_specs(
                     target_phase_index=target_phase_index,
                     target_phase_total=target_phase_total,
                     progress_parser=progress_parser,
+                    requested_gradle_tasks=list(spec.metadata.get("explicit_validation_tasks") or ()),
                     live_log_path=log_path,
                     live_log_header=command_line + "\n" if log_path is not None else "",
                     memory_guard_mb=memory_guard_mb,
@@ -1451,6 +1454,7 @@ def run_specs(
                         target_phase_index=target_phase_index,
                         target_phase_total=target_phase_total,
                         progress_parser=progress_parser,
+                        requested_gradle_tasks=list(spec.metadata.get("explicit_validation_tasks") or ()),
                         live_log_path=log_path,
                         live_log_header=command_line + "\n" if log_path is not None else "",
                         memory_guard_mb=memory_guard_mb,
@@ -1472,6 +1476,7 @@ def run_specs(
                             progress_argv=progress_argv,
                             progress_cwd=progress_cwd,
                             progress_parser=progress_parser,
+                            requested_gradle_tasks=list(spec.metadata.get("explicit_validation_tasks") or ()),
                             live_log_path=log_path,
                             live_log_header=command_line + "\n" if log_path is not None else "",
                             memory_guard_mb=memory_guard_mb,

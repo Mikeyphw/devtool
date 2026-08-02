@@ -2,24 +2,18 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.live import Live
 from rich.errors import LiveError
 from rich.panel import Panel
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskID,
-    TextColumn,
-    TimeElapsedColumn,
-)
 from rich.text import Text
+
+from .rich_progress import ThreeLineProgressBody, ThreeLineProgressState
 
 _DOTNET_COMMANDS = {"restore", "build", "test", "publish", "pack"}
 _PROJECT_EXTENSIONS = {".csproj", ".fsproj", ".vbproj"}
@@ -67,10 +61,8 @@ class DotnetProgressTracker:
     target_phase_index: int | None = None
     target_phase_total: int | None = None
     plan: DotnetProgressPlan | None = field(init=False, default=None)
-    progress: Progress | None = field(init=False, default=None)
+    progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
     live: Live | None = field(init=False, default=None)
-    task_id: TaskID | None = field(init=False, default=None)
-    detail_text: Text = field(init=False, default_factory=Text)
     seen_units: set[str] = field(init=False, default_factory=set)
     errors: int = field(init=False, default=0)
     warnings: int = field(init=False, default=0)
@@ -85,6 +77,7 @@ class DotnetProgressTracker:
     tests_skipped: int = field(init=False, default=0)
     tests_total: int = field(init=False, default=0)
     seen_test_results: set[str] = field(init=False, default_factory=set)
+    _started_at: float = field(init=False, default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
         self.plan = dotnet_progress_plan(self.argv, self.cwd)
@@ -94,20 +87,8 @@ class DotnetProgressTracker:
     def __enter__(self) -> "DotnetProgressTracker":
         if not self.enabled or self.plan is None:
             return self
-        self.progress = Progress(
-            SpinnerColumn(style="cyan"),
-            TextColumn("[bold]{task.description}"),
-            BarColumn(bar_width=None, complete_style="cyan", finished_style="green"),
-            MofNCompleteColumn(),
-            TextColumn("[dim]{task.fields[unit_label]}[/dim]"),
-            TimeElapsedColumn(),
-            console=self.console,
-            expand=True,
-            transient=False,
-        )
-        description = self._progress_description()
-        self.detail_text = Text(self._format_initial_detail(), overflow="fold")
-        self.task_id = self.progress.add_task(description, total=self.plan.total, unit_label=self.plan.label)
+        self._started_at = time.monotonic()
+        self.progress_body = ThreeLineProgressBody(self._progress_state)
         self.live = Live(
             self._renderable(),
             console=self.console,
@@ -116,20 +97,10 @@ class DotnetProgressTracker:
             vertical_overflow="visible",
         )
         try:
-            # Do not call ``Progress.start()`` here. ``Progress.start()`` owns
-            # its own Rich Live display, and this tracker already renders the
-            # Progress inside a parent Live so the detail line can stay below
-            # the one-line progress bar.  Starting both creates nested Live
-            # displays and crashes on Termux with:
-            # ``rich.errors.LiveError: Only one live display may be active``.
             self.live.start()
         except LiveError:
-            # Another Rich status/progress display is already active.  Keep
-            # parsing dotnet output for Tasker/final snapshots, but gracefully
-            # disable the terminal render instead of crashing the devtool run.
             self.live = None
-            self.progress = None
-            self.task_id = None
+            self.progress_body = None
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
@@ -161,8 +132,6 @@ class DotnetProgressTracker:
                 # finishes; finish() will then publish the final exact total.
                 if current_total is not None and completed > current_total:
                     self.total = None
-                    if self.progress is not None and self.task_id is not None:
-                        self.progress.update(self.task_id, total=None)
                     self._set_progress(completed=completed, detail=detail, force_callback=True)
                 else:
                     self._set_progress(completed=completed, total=current_total, detail=detail)
@@ -265,18 +234,8 @@ class DotnetProgressTracker:
             self.total = total
         if detail is not None:
             self.detail = detail
-        if self.progress is not None and self.task_id is not None:
-            kwargs: dict[str, Any] = {}
-            if completed is not None:
-                kwargs["completed"] = completed
-            if total is not None:
-                kwargs["total"] = total
-            if kwargs:
-                self.progress.update(self.task_id, **kwargs)
         if self.live is not None:
-            self.detail_text = Text(_wrap_detail(self.detail or self._format_initial_detail(), self.console.width), overflow="fold")
-            if self.progress is not None:
-                self.live.update(self._renderable())
+            self.live.update(self._renderable())
         if self.update_callback is not None and (force_callback or completed is not None or detail):
             self.update_callback(self.snapshot())
 
@@ -300,6 +259,19 @@ class DotnetProgressTracker:
         if assemblies:
             return len(assemblies)
         return len(self.seen_test_results)
+
+    def _progress_state(self) -> ThreeLineProgressState:
+        label = self.plan.label if self.plan else "items"
+        short = "assemblies" if label == "test assemblies" else "projects" if label == "projects" else "items"
+        return ThreeLineProgressState(
+            completed=int(self.completed or 0),
+            total=self.total,
+            unit_label=label,
+            unit_short=short,
+            detail=self.detail or self._format_initial_detail() or "Starting .NET",
+            started_at=self._started_at,
+            returncode=self.returncode,
+        )
 
     def _renderable(self) -> Panel:
         target = (self.display_target or (self.plan.target if self.plan else "") or "repository").strip()
@@ -329,7 +301,7 @@ class DotnetProgressTracker:
         if self.phase_index is not None and self.phase_total:
             phase_bits.append(f"overall {self.phase_index}/{self.phase_total}")
         subtitle = Text(" • ".join(phase_bits), style="dim") if phase_bits else None
-        body = Group(self.progress, Text("  " + (self.detail or self._format_initial_detail()), style="dim")) if self.progress is not None else self.detail_text
+        body = self.progress_body or ThreeLineProgressBody(self._progress_state)
         return Panel(
             body,
             title=title,

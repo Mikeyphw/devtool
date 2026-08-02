@@ -14,14 +14,17 @@ import json
 from pathlib import Path
 import re
 import shlex
+import time
 from typing import Any, Callable
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.errors import LiveError
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, ProgressColumn, SpinnerColumn, Task, TextColumn, TimeElapsedColumn
+from rich.progress import ProgressColumn, Task
 from rich.text import Text
+
+from .rich_progress import ThreeLineProgressBody, ThreeLineProgressState
 
 
 _NODE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
@@ -84,9 +87,8 @@ class NpmProgressTracker:
     display_target: str = ""
     target_phase_index: int | None = None
     target_phase_total: int | None = None
-    progress: Progress | None = field(init=False, default=None)
+    progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
     live: Live | None = field(init=False, default=None)
-    task_id: int | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
     detail: str = field(init=False, default="Starting npm script")
@@ -99,6 +101,7 @@ class NpmProgressTracker:
     current_script: str = field(init=False, default="")
     plan: NpmProgressPlan | None = field(init=False, default=None)
     _started_count: int = field(init=False, default=0)
+    _started_at: float = field(init=False, default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
         self.plan = npm_progress_plan(self.argv, self.cwd)
@@ -108,23 +111,8 @@ class NpmProgressTracker:
     def __enter__(self) -> "NpmProgressTracker":
         if not self.enabled:
             return self
-        self.progress = Progress(
-            SpinnerColumn(style="cyan"),
-            TextColumn("[bold]{task.description}"),
-            TextColumn("[dim]{task.fields[phase_label]}[/dim]"),
-            BarColumn(bar_width=None),
-            NpmCountColumn(),
-            TimeElapsedColumn(),
-            console=self.console,
-            expand=True,
-            transient=False,
-        )
-        self.task_id = self.progress.add_task(
-            self._description(),
-            total=float(self.total) if self.total is not None else None,
-            completed=0,
-            phase_label=self._phase_label(),
-        )
+        self._started_at = time.monotonic()
+        self.progress_body = ThreeLineProgressBody(self._progress_state)
         self.live = Live(
             self._renderable(),
             console=self.console,
@@ -136,8 +124,7 @@ class NpmProgressTracker:
             self.live.start()
         except LiveError:
             self.live = None
-            self.progress = None
-            self.task_id = None
+            self.progress_body = None
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
@@ -204,13 +191,6 @@ class NpmProgressTracker:
             self.percent = min(100.0, (self.completed or 0) * 100.0 / max(1, self.total))
 
     def _publish(self, *, force: bool = False) -> None:
-        if self.progress is not None and self.task_id is not None:
-            self.progress.update(
-                self.task_id,
-                phase_label=self._phase_label(),
-                completed=float(self.completed or 0),
-                total=float(self.total) if self.total is not None else None,
-            )
         if self.live is not None:
             self.live.update(self._renderable())
         if self.update_callback is not None:
@@ -233,6 +213,17 @@ class NpmProgressTracker:
             return self.plan.script
         return "node scripts"
 
+    def _progress_state(self) -> ThreeLineProgressState:
+        return ThreeLineProgressState(
+            completed=int(self.completed or 0),
+            total=self.total,
+            unit_label="scripts",
+            unit_short="scripts",
+            detail=self.current_script or self.detail or "Starting npm script",
+            started_at=self._started_at,
+            returncode=self.returncode,
+        )
+
     def _renderable(self) -> Panel:
         target = self.display_target or self.cwd or "npm"
         if self.returncode is None:
@@ -252,8 +243,7 @@ class NpmProgressTracker:
         title.append(self.command_name or "npm", style="bold")
         title.append(" • ", style="dim")
         title.append(str(target), style="bold white")
-        detail = Text("  " + (self.detail or "Running npm script"), style="dim", overflow="fold")
-        body = Group(self.progress, detail) if self.progress is not None else detail
+        body = self.progress_body or ThreeLineProgressBody(self._progress_state)
         return Panel(body, title=title, border_style=border, padding=(0, 1))
 
 
