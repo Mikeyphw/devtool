@@ -91,6 +91,42 @@ class GradleReportTests(unittest.TestCase):
         self.assertEqual(issues[0].code, "UnusedResources")
         self.assertEqual(issues[0].line, 8)
 
+    def test_deduplicates_android_lint_xml_and_sarif_for_same_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_dir = root / "app/build/reports"
+            report_dir.mkdir(parents=True)
+            (report_dir / "lint-results-debug.xml").write_text(
+                """<?xml version='1.0' encoding='UTF-8'?>
+<issues format='6' by='lint 8'>
+  <issue id='OldTargetApi' severity='Error' message='Not targeting latest Android'>
+    <location file='app/build.gradle.kts' line='14' column='9'/>
+  </issue>
+</issues>
+""",
+                encoding="utf-8",
+            )
+            (report_dir / "lint-results-debug.sarif").write_text(json.dumps({
+                "runs": [{
+                    "results": [{
+                        "ruleId": "OldTargetApi",
+                        "level": "error",
+                        "message": {"text": "Not targeting the latest versions of Android; compatibility modes apply."},
+                        "locations": [{"physicalLocation": {
+                            "artifactLocation": {"uri": "app/build.gradle.kts"},
+                            "region": {"startLine": 14},
+                        }}],
+                    }],
+                }],
+            }), encoding="utf-8")
+
+            result = collect_android_lint_reports(root, tasks=["lintDebug"])
+
+        self.assertEqual(result.metadata["errors"], 1)
+        self.assertEqual(result.metadata["warnings"], 0)
+        self.assertEqual(result.metadata["total"], 1)
+        self.assertEqual(len(result.issues), 1)
+
     def test_run_specs_attaches_junit_metadata_and_fails_on_report_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

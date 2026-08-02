@@ -26,7 +26,7 @@ def test_indeterminate_three_line_layout_preserves_spinner_count_timer_and_bar()
         assert "00:03" in status
         assert status[0] in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
         assert len(bar) == width
-        assert "━" in bar and "─" in bar
+        assert "█" in bar and "░" in bar
         assert detail.endswith("compileDebugKotlin")
         assert all(len(line) <= width for line in (status, bar, detail))
 
@@ -49,7 +49,7 @@ def test_determinate_explicit_task_layout_keeps_dependency_breakdown_on_narrow_t
     assert "2r+16d" in status
     assert "00:27" in status
     assert len(bar) == 36
-    assert bar.startswith("━") and "─" in bar
+    assert bar.startswith("█") and "░" in bar
     assert detail.startswith("[dep] ")
     assert detail.endswith("compileDebugKotlin")
     assert all(len(line) <= 36 for line in (status, bar, detail))
@@ -66,7 +66,7 @@ def test_completed_unknown_total_renders_a_full_real_bar() -> None:
     )
     status, bar, _ = render_three_line_progress(state, 24, now=104.0)
     assert status.startswith("✓")
-    assert bar == "━" * 24
+    assert bar == "█" * 24
 
 
 def test_explicit_gradle_tasks_are_announced_and_graph_counts_dependencies() -> None:
@@ -164,3 +164,43 @@ def test_run_specs_forwards_explicit_task_list_to_gradle_progress_tracker(tmp_pa
         ":app:compileDebugKotlin",
         ":app:testDebugUnitTest",
     ]
+
+
+def test_run_specs_forwards_gradle_tasks_metadata_to_progress_tracker(tmp_path: Path) -> None:
+    from devtool.models import CommandSpec, ProjectConfig
+    from devtool.runners import run_specs
+
+    config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="android")
+    spec = CommandSpec(
+        "android-validation-explicit-tasks",
+        ["python3", "build-apk", str(tmp_path), "--task", ":app:testDebugUnitTest"],
+        cwd=str(tmp_path),
+        metadata={
+            "progress_parser": "gradle",
+            "gradle_tasks": [":core:diagnostics:test", ":app:testDebugUnitTest"],
+        },
+    )
+    with patch("devtool.runners._run_process_live", return_value=(0, "")) as run:
+        results, _ = run_specs(config, [spec], verbose=False)
+    assert results[0].returncode == 0
+    assert run.call_args.kwargs["requested_gradle_tasks"] == [
+        ":core:diagnostics:test",
+        ":app:testDebugUnitTest",
+    ]
+
+
+def test_run_specs_parses_task_args_when_metadata_is_missing(tmp_path: Path) -> None:
+    from devtool.models import CommandSpec, ProjectConfig
+    from devtool.runners import run_specs
+
+    config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="android")
+    spec = CommandSpec(
+        "android-validation-explicit-tasks",
+        ["python3", "build-apk", str(tmp_path), "--task", ":app:testDebugUnitTest", "--task=:app:lintDebug"],
+        cwd=str(tmp_path),
+        metadata={"progress_parser": "gradle"},
+    )
+    with patch("devtool.runners._run_process_live", return_value=(0, "")) as run:
+        results, _ = run_specs(config, [spec], verbose=False)
+    assert results[0].returncode == 0
+    assert run.call_args.kwargs["requested_gradle_tasks"] == [":app:testDebugUnitTest", ":app:lintDebug"]

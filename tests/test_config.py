@@ -419,6 +419,24 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.selected_target, "two")
             self.assertEqual(config.project_root, str((root / "two").resolve()))
 
+    def test_unknown_target_suggests_close_match_and_targets_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "android").mkdir()
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='command'\n"
+                "\n[targets.chrootctl_android]\ntype='command'\nroot='android'\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SystemExit, "Did you mean 'chrootctl_android'") as caught:
+                load_project_config(str(root), None, target_name="chroot_android")
+
+            message = str(caught.exception)
+            self.assertIn("Unknown target 'chroot_android'", message)
+            self.assertIn("Available targets: chrootctl_android", message)
+            self.assertIn("Run 'devtool targets' to list configured targets.", message)
+
     def test_invalid_configured_default_target_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

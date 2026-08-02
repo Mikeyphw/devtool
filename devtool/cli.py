@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import traceback
 import resource
 import tempfile
 import zipfile
@@ -1346,7 +1347,11 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         else:
             failure_details = summarize_failure_output(raw_output, max_lines=80, max_chars=12000) or summary_text.strip() or json_text.strip()
 
-        lines = ["Devtool failed."]
+        completion = payload.get("completion") if isinstance(payload.get("completion"), dict) else {}
+        headline = str(completion.get("headline") or "").strip()
+        if not headline and failed_steps:
+            headline = failed_steps[0].capitalize() + " failed"
+        lines = [headline or "Devtool failed."]
         overlay_lines = _overlay_failure_lines()
         if overlay_lines:
             lines.extend(("", *overlay_lines))
@@ -1693,6 +1698,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
     target_name = args.target
     solution = args.solution
     project = args.project
+    manifest: dict[str, object] | None = None
 
     if args.command in LEGACY_APPLY_VALIDATE_COMMANDS:
         manifest = _read_artifact_manifest(_single_artifact_arg(getattr(args, "artifact", "")))
@@ -1726,10 +1732,11 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
         # apply once the artifact-created configuration exists. Explicit CLI target
         # mistakes remain fatal unless the requested target is the artifact's own
         # declared target.
-        manifest_target = artifact_target(manifest)
+        manifest_target = artifact_target(manifest) if manifest is not None else ""
         target_is_artifact_declared = bool(target_name and manifest_target and target_name == manifest_target)
         if (
-            args.command in APPLY_COMMANDS
+            manifest is not None
+            and args.command in APPLY_COMMANDS
             and (not getattr(args, "_devtool_cli_target_explicit", False) or target_is_artifact_declared)
             and "Unknown target" in str(exc)
         ):
@@ -6909,6 +6916,35 @@ def main(argv: list[str] | None = None) -> int:
     parse_argv, passthrough_args = split_runner_passthrough_args(raw_argv)
     parser = build_parser()
     args = parser.parse_args(parse_argv)
+    try:
+        return _main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args)
+    except SystemExit as exc:
+        code = exc.code
+        if isinstance(code, int):
+            raise
+        message = str(code or "devtool command failed")
+        print(f"Error: {message}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        if bool(getattr(args, "verbose", False)) or _tracebacks_enabled():
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+            return 1
+        print(f"Internal devtool error: {exc}", file=sys.stderr)
+        print("Run again with --verbose or DEVTOOL_TRACEBACK=1 for a full traceback.", file=sys.stderr)
+        return 1
+
+
+def _tracebacks_enabled() -> bool:
+    return str(os.environ.get("DEVTOOL_TRACEBACK", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _main_after_parse(
+    raw_argv: list[str],
+    parse_argv: list[str],
+    passthrough_args: list[str],
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> int:
     args._devtool_passthrough_args = passthrough_args
     args._devtool_hud_explicit = any(token in {"--auto-hud", "--hud-auto", "--no-hud"} for token in parse_argv)
     _normalize_command_aliases(args)
@@ -7087,17 +7123,21 @@ def main(argv: list[str] | None = None) -> int:
             console.print("[red]Legacy Qt Control Center backend was removed; use --backend gtk4.[/red]")
             return 2
         if bool(getattr(args, "once", False)) or backend == "gtk4" or Gtk4ControlCenter.available():
-            return center.run(
-                repository=config.repo_root,
-                config_path=str(config.config_path or "") or None,
-                target=str(getattr(args, "target", "") or ""),
-                variant=str(getattr(args, "variant", "") or ""),
-                state_dir=Path(getattr(args, "state_dir", DEFAULT_TASKER_DIR)).expanduser(),
-                follow_active=bool(getattr(args, "follow_active", False)),
-                once=bool(getattr(args, "once", False)),
-                page=str(getattr(args, "page", "overview") or "overview"),
-                interval_s=float(getattr(args, "poll_interval", 1.0)),
-            )
+            try:
+                return center.run(
+                    repository=config.repo_root,
+                    config_path=str(config.config_path or "") or None,
+                    target=str(getattr(args, "target", "") or ""),
+                    variant=str(getattr(args, "variant", "") or ""),
+                    state_dir=Path(getattr(args, "state_dir", DEFAULT_TASKER_DIR)).expanduser(),
+                    follow_active=bool(getattr(args, "follow_active", False)),
+                    once=bool(getattr(args, "once", False)),
+                    page=str(getattr(args, "page", "overview") or "overview"),
+                    interval_s=float(getattr(args, "poll_interval", 1.0)),
+                )
+            except RuntimeError as exc:
+                console.print(f"[red]{exc}[/red]")
+                return 2
         console.print("[red]Devtool GTK4 Control Center is not available.[/red]")
         console.print("Install GTK4 dependencies: python3-gi gir1.2-gtk-4.0 gir1.2-adw-1.")
         return 2

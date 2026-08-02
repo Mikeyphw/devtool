@@ -106,22 +106,22 @@ def _bar_line(state: ThreeLineProgressState, width: int, now: float) -> str:
     width = max(1, int(width))
     total = state.total
     if total is None and state.returncode == 0:
-        return "━" * width
+        return "█" * width
     if total is not None and total > 0:
         ratio = max(0.0, min(1.0, float(state.completed or 0) / float(total)))
         filled = int(round(width * ratio))
         if 0.0 < ratio < 1.0:
             filled = max(1, min(width - 1 if width > 1 else 1, filled))
-        return "━" * filled + "─" * (width - filled)
+        return "█" * filled + "░" * (width - filled)
 
     # Indeterminate pulse while a task graph/total is being discovered.
     pulse = max(1, min(width, max(3, width // 5)))
     travel = max(1, width - pulse + 1)
     started = state.started_at or now
     position = int(max(0.0, now - started) * 8.0) % travel
-    chars = ["─"] * width
+    chars = ["░"] * width
     for index in range(position, min(width, position + pulse)):
-        chars[index] = "━"
+        chars[index] = "█"
     return "".join(chars)
 
 
@@ -169,7 +169,10 @@ class ThreeLineProgressBody:
             status_style = "bold red"
             bar_style = "red"
         yield Text(status, style=status_style, no_wrap=True, overflow="crop")
-        yield Text(bar, style=bar_style, no_wrap=True, overflow="crop")
+        bar_text = Text(no_wrap=True, overflow="crop")
+        for char in bar:
+            bar_text.append(char, style=bar_style if char == "█" else "dim")
+        yield bar_text
         yield Text(detail, style="dim", no_wrap=True, overflow="crop")
 
     def __rich_measure__(self, console: Console, options: ConsoleOptions) -> Measurement:

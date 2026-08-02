@@ -82,6 +82,41 @@ class GradleProgressTests(unittest.TestCase):
         self.assertTrue(snapshots[-1]["force"])
         self.assertEqual(tracker.fallback_lines, 0)
 
+    def test_structured_gradle_total_never_shrinks_after_nested_build_finish(self) -> None:
+        tracker = GradleProgressTracker(
+            ["./gradlew", ":core:diagnostics:test", ":app:testDebugUnitTest"],
+            "/repo",
+            "android-validation-explicit-tasks",
+            Console(force_terminal=False),
+            requested_tasks=(":core:diagnostics:test", ":app:testDebugUnitTest"),
+        )
+        tracker.update_from_line(self.event(1, "task-graph", total=893))
+        tracker.update_from_line(self.event(2, "task-start", task=":app:testDebugUnitTest", completed=431, total=893))
+        tracker.update_from_line(self.event(3, "build-finish", success=True, completed=7, total=7))
+
+        current = tracker.snapshot()
+        self.assertEqual(current["completed"], 431)
+        self.assertEqual(current["total"], 893)
+        self.assertEqual(current["requested_task_count"], 2)
+        self.assertEqual(current["dependency_task_count"], 891)
+
+    def test_requested_counts_update_when_first_total_arrives_on_task_start(self) -> None:
+        tracker = GradleProgressTracker(
+            ["./gradlew", ":app:testDebugUnitTest", ":app:lintDebug"],
+            "/repo",
+            "android-validation-explicit-tasks",
+            Console(force_terminal=False),
+            requested_tasks=(":app:testDebugUnitTest", ":app:lintDebug"),
+        )
+        self.assertEqual(tracker._progress_state().extra_full, "discovering dependencies")
+        tracker.update_from_line(self.event(1, "task-start", task=":app:compileDebugKotlin", completed=10, total=893))
+
+        current = tracker.snapshot()
+        self.assertEqual(current["total"], 893)
+        self.assertEqual(current["requested_task_count"], 2)
+        self.assertEqual(current["dependency_task_count"], 891)
+        self.assertEqual(tracker._progress_state().extra_full, "2 requested + 891 deps")
+
 
     def test_plain_gradle_success_infers_final_total_and_dependency_breakdown(self) -> None:
         tracker = GradleProgressTracker(

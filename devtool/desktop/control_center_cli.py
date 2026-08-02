@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from ..tasker import DEFAULT_TASKER_DIR
@@ -27,19 +28,23 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     center = Gtk4ControlCenter(history_limit=args.history_limit, recent_events=args.recent_events)
-    if args.once or args.backend == "gtk4" or Gtk4ControlCenter.available():
-        return center.run(
-            repository=Path(args.repo).expanduser(),
-            config_path=args.config or None,
-            target=args.target,
-            variant=args.variant,
-            state_dir=Path(args.state_dir).expanduser(),
-            follow_active=bool(args.follow_active),
-            once=bool(args.once),
-            page=args.page,
-            interval_s=float(args.poll_interval),
-        )
-    raise RuntimeError("Devtool GTK4 Control Center requires python3-gi, GTK 4, and libadwaita.")
+    try:
+        if args.once or args.backend == "gtk4" or Gtk4ControlCenter.available():
+            return center.run(
+                repository=Path(args.repo).expanduser(),
+                config_path=args.config or None,
+                target=args.target,
+                variant=args.variant,
+                state_dir=Path(args.state_dir).expanduser(),
+                follow_active=bool(args.follow_active),
+                once=bool(args.once),
+                page=args.page,
+                interval_s=float(args.poll_interval),
+            )
+        raise RuntimeError("Devtool GTK4 Control Center requires python3-gi, GTK 4, and libadwaita.")
+    except RuntimeError as exc:
+        print(f"devtool-control-center: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

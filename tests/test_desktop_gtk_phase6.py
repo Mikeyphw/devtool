@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from devtool.cli import build_parser, main
+from devtool.desktop import control_center_cli, gtk_hud_cli
 from devtool.hud import choose_hud_mode, run_hud
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,6 +70,17 @@ def test_control_center_once_still_outputs_gtk4_snapshot(tmp_path: Path, capsys,
     assert main(["-r", str(repo), "control-center", "--backend", "gtk4", "--once"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["renderer"] == "gtk4-control-center"
+
+
+def test_direct_gtk_scripts_report_runtime_errors_without_traceback(capsys) -> None:
+    with patch("devtool.desktop.control_center_cli.Gtk4ControlCenter.available", return_value=True), \
+         patch("devtool.desktop.control_center_cli.Gtk4ControlCenter.run", side_effect=RuntimeError("display denied")):
+        assert control_center_cli.main([]) == 2
+    assert "devtool-control-center: display denied" in capsys.readouterr().err
+
+    with patch("devtool.desktop.gtk_hud_cli.Gtk4CompactHud.run", side_effect=RuntimeError("display denied")):
+        assert gtk_hud_cli.main([]) == 2
+    assert "devtool-gtk-hud: display denied" in capsys.readouterr().err
 
 
 def test_shell_release_and_completion_references_are_gtk4_only() -> None:

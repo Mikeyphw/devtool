@@ -1045,6 +1045,7 @@ def _run_process_live(
                             "command", "unit_label", "tests_passed", "tests_failed",
                             "tests_skipped", "tests_total", "test_assemblies",
                             "current_task", "current_test",
+                            "requested_tasks", "requested_task_count", "dependency_task_count",
                         )
                         if snapshot.get(key) is not None
                     },
@@ -1159,6 +1160,32 @@ def _run_process_live(
         _close_live_log()
         with contextlib.suppress(Exception):
             proc.stdout.close()
+
+
+def _requested_gradle_tasks_for_spec(spec: CommandSpec, progress_argv: list[str]) -> list[str]:
+    for key in ("explicit_validation_tasks", "gradle_tasks"):
+        raw = spec.metadata.get(key)
+        if isinstance(raw, (list, tuple)):
+            tasks = [str(item).strip() for item in raw if str(item).strip()]
+            if tasks:
+                return list(dict.fromkeys(tasks))
+
+    tasks: list[str] = []
+    index = 0
+    while index < len(progress_argv):
+        token = str(progress_argv[index])
+        if token == "--task" and index + 1 < len(progress_argv):
+            task = str(progress_argv[index + 1]).strip()
+            if task:
+                tasks.append(task)
+            index += 2
+            continue
+        if token.startswith("--task="):
+            task = token.split("=", 1)[1].strip()
+            if task:
+                tasks.append(task)
+        index += 1
+    return list(dict.fromkeys(tasks))
 
 
 def _shutdown_gradle_daemons(
@@ -1402,6 +1429,7 @@ def run_specs(
             progress_argv = list(spec.metadata.get("progress_argv") or effective_argv)
             progress_cwd = str(spec.metadata.get("progress_cwd") or cwd)
             progress_parser = str(spec.metadata.get("progress_parser") or "")
+            requested_gradle_tasks = _requested_gradle_tasks_for_spec(spec, progress_argv)
             memory_guard_mb = int(
                 spec.metadata.get("validation_memory_guard_mb")
                 or spec.metadata.get("memory_guard_mb")
@@ -1429,7 +1457,7 @@ def run_specs(
                     target_phase_index=target_phase_index,
                     target_phase_total=target_phase_total,
                     progress_parser=progress_parser,
-                    requested_gradle_tasks=list(spec.metadata.get("explicit_validation_tasks") or ()),
+                    requested_gradle_tasks=requested_gradle_tasks,
                     live_log_path=log_path,
                     live_log_header=command_line + "\n" if log_path is not None else "",
                     memory_guard_mb=memory_guard_mb,
@@ -1454,7 +1482,7 @@ def run_specs(
                         target_phase_index=target_phase_index,
                         target_phase_total=target_phase_total,
                         progress_parser=progress_parser,
-                        requested_gradle_tasks=list(spec.metadata.get("explicit_validation_tasks") or ()),
+                        requested_gradle_tasks=requested_gradle_tasks,
                         live_log_path=log_path,
                         live_log_header=command_line + "\n" if log_path is not None else "",
                         memory_guard_mb=memory_guard_mb,
@@ -1476,7 +1504,7 @@ def run_specs(
                             progress_argv=progress_argv,
                             progress_cwd=progress_cwd,
                             progress_parser=progress_parser,
-                            requested_gradle_tasks=list(spec.metadata.get("explicit_validation_tasks") or ()),
+                            requested_gradle_tasks=requested_gradle_tasks,
                             live_log_path=log_path,
                             live_log_header=command_line + "\n" if log_path is not None else "",
                             memory_guard_mb=memory_guard_mb,

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +18,30 @@ def _has_display() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
-class Gtk4ControlCenter:
-    """GTK4/libadwaita read-only Control Center shell.
+def _gtk_can_initialize(Gtk: Any) -> bool:
+    try:
+        result = Gtk.init_check()
+    except Exception:
+        return False
+    if isinstance(result, tuple):
+        return bool(result[0])
+    return bool(result)
 
-    Phase 3 intentionally ports the dashboard, history, diagnostics,
-    repositories, targets, and settings surfaces before the mutable Run workflow.
-    Commands are built through the shared argv-first desktop command model.
+
+def _require_gtk_initialized(Gtk: Any) -> None:
+    if not _gtk_can_initialize(Gtk):
+        raise RuntimeError(
+            "GTK4 Control Center could not initialize the desktop display. "
+            "Check DISPLAY/WAYLAND_DISPLAY and X11/Wayland access."
+        )
+
+
+class Gtk4ControlCenter:
+    """GTK4/libadwaita Control Center shell.
+
+    The GTK implementation keeps Qt removed but preserves the old desktop app's
+    richer surfaces: dashboard cards, active-run progress, command workflow,
+    artifact history, diagnostics, repositories, targets, and HUD settings.
     """
 
     def __init__(self, *, history_limit: int = 25, recent_events: int = 8) -> None:
@@ -50,7 +72,9 @@ class Gtk4ControlCenter:
 
             if importlib.util.find_spec("gi") is None:
                 return False
-            cls._require_gtk4()
+            _Adw, _Gio, _GLib, Gtk = cls._require_gtk4()
+            if not _gtk_can_initialize(Gtk):
+                return False
         except Exception:
             return False
         return True
@@ -111,13 +135,24 @@ class Gtk4ControlCenter:
                 "GTK4 Control Center requires PyGObject, GTK 4, and libadwaita. "
                 "On Ubuntu: sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1"
             ) from exc
+        _require_gtk_initialized(Gtk)
 
         app_id = "io.github.mikeceead.DevtoolControlCenter"
         application = Adw.Application(application_id=app_id) if Adw is not None else Gtk.Application(application_id=app_id)
         poll_ms = max(250, int(max(0.25, interval_s) * 1000))
         selected_page = page if page in _PAGE_KEYS else "overview"
+        exit_code = 0
 
         def activate(app: Any) -> None:
+            nonlocal exit_code
+            try:
+                _activate(app)
+            except RuntimeError as exc:  # pragma: no cover - host display dependent
+                exit_code = 2
+                print(f"devtool-control-center: {exc}", file=sys.stderr)
+                app.quit()
+
+        def _activate(app: Any) -> None:
             if Adw is not None:
                 window = Adw.ApplicationWindow(application=app)
             else:
@@ -142,6 +177,8 @@ class Gtk4ControlCenter:
             nav = Gtk.ListBox()
             nav.set_selection_mode(Gtk.SelectionMode.SINGLE)
             nav.set_size_request(210, -1)
+            with _suppress_exception():
+                nav.add_css_class("navigation-sidebar")
             stack = Gtk.Stack()
             stack.set_hexpand(True)
             stack.set_vexpand(True)
@@ -153,17 +190,28 @@ class Gtk4ControlCenter:
                 row.set_name(key)
                 nav.append(row)
                 nav_rows[key] = row
-                page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+                page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
                 page_box.set_margin_top(18)
                 page_box.set_margin_bottom(18)
                 page_box.set_margin_start(18)
                 page_box.set_margin_end(18)
-                stack.add_titled(page_box, key, label)
+                page_box.set_hexpand(True)
+                page_box.set_vexpand(True)
+                scroller = Gtk.ScrolledWindow()
+                scroller.set_child(page_box)
+                scroller.set_hexpand(True)
+                scroller.set_vexpand(True)
+                with _suppress_exception():
+                    scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+                stack.add_titled(scroller, key, label)
                 pages[key] = page_box
             body.append(nav)
             body.append(stack)
             root.append(body)
-            window.set_child(root)
+            if Adw is not None:
+                window.set_content(root)
+            else:
+                window.set_child(root)
 
             def current_snapshot() -> dict[str, Any]:
                 return self.snapshot(
@@ -180,6 +228,7 @@ class Gtk4ControlCenter:
                 _render_overview(Gtk, pages["overview"], payload)
                 _render_runs(Gtk, pages["runs"], payload)
                 _render_history(Gtk, pages["history"], payload)
+                _render_artifacts(Gtk, pages["artifacts"], payload)
                 _render_diagnostics(Gtk, pages["diagnostics"], payload)
                 _render_repositories(Gtk, pages["repositories"], payload)
                 _render_targets(Gtk, pages["targets"], payload)
@@ -203,7 +252,8 @@ class Gtk4ControlCenter:
             window.present()
 
         application.connect("activate", activate)
-        return int(application.run([]))
+        app_rc = int(application.run([]))
+        return exit_code or app_rc
 
 
 
@@ -211,6 +261,7 @@ _PAGE_KEYS = {
     "overview": "Overview",
     "runs": "Active runs",
     "history": "History",
+    "artifacts": "Artifacts",
     "diagnostics": "Diagnostics",
     "repositories": "Repository",
     "targets": "Targets",
@@ -233,11 +284,106 @@ def _append_heading(Gtk: Any, box: Any, text: str) -> None:
     box.append(label)
 
 
+def _append_subheading(Gtk: Any, box: Any, text: str) -> None:
+    label = Gtk.Label(label=text, xalign=0.0)
+    with _suppress_exception():
+        label.add_css_class("heading")
+    box.append(label)
+
+
 def _append_text(Gtk: Any, box: Any, text: str) -> None:
     label = Gtk.Label(label=text, xalign=0.0)
     label.set_wrap(True)
     label.set_selectable(True)
     box.append(label)
+
+
+def _append_card(Gtk: Any, box: Any, title: str, value: str, subtitle: str = "") -> None:
+    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    card.set_margin_top(8)
+    card.set_margin_bottom(8)
+    card.set_margin_start(10)
+    card.set_margin_end(10)
+    card.set_size_request(150, 72)
+    with _suppress_exception():
+        card.add_css_class("card")
+    title_label = Gtk.Label(label=title, xalign=0.0)
+    with _suppress_exception():
+        title_label.add_css_class("dim-label")
+    value_label = Gtk.Label(label=value or "-", xalign=0.0)
+    value_label.set_wrap(True)
+    with _suppress_exception():
+        value_label.add_css_class("title-4")
+    card.append(title_label)
+    card.append(value_label)
+    if subtitle:
+        subtitle_label = Gtk.Label(label=subtitle, xalign=0.0)
+        subtitle_label.set_wrap(True)
+        with _suppress_exception():
+            subtitle_label.add_css_class("dim-label")
+        card.append(subtitle_label)
+    box.append(card)
+
+
+def _append_metric_strip(Gtk: Any, box: Any, metrics: list[tuple[str, str, str]]) -> None:
+    strip = Gtk.FlowBox()
+    strip.set_selection_mode(Gtk.SelectionMode.NONE)
+    strip.set_max_children_per_line(4)
+    strip.set_min_children_per_line(2)
+    strip.set_column_spacing(10)
+    strip.set_row_spacing(10)
+    for title, value, subtitle in metrics:
+        _append_card(Gtk, strip, title, value, subtitle)
+    box.append(strip)
+
+
+def _append_button_row(Gtk: Any, box: Any, buttons: list[tuple[str, Any | None]]) -> None:
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    for label, callback in buttons:
+        button = Gtk.Button(label=label)
+        if callback is None:
+            with _suppress_exception():
+                button.set_sensitive(False)
+        else:
+            button.connect("clicked", callback)
+        row.append(button)
+    box.append(row)
+
+
+def _copy_text_callback(Gtk: Any, widget: Any, text: str) -> Any:
+    def copy(_button: Any) -> None:
+        if not text:
+            return
+        with _suppress_exception():
+            clipboard = Gtk.Widget.get_clipboard(widget)
+            clipboard.set(text)
+
+    return copy
+
+
+def _open_path_callback(path: str) -> Any | None:
+    if not path:
+        return None
+
+    def open_path(_button: Any) -> None:
+        opener = shutil.which("xdg-open")
+        if not opener:
+            return
+        target = Path(path).expanduser()
+        if target.is_file():
+            target = target.parent
+        if target.exists():
+            subprocess.Popen([opener, str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    return open_path
+
+
+def _append_search_bar(Gtk: Any, box: Any, placeholder: str) -> Any:
+    search = Gtk.SearchEntry()
+    search.set_placeholder_text(placeholder)
+    search.set_hexpand(True)
+    box.append(search)
+    return search
 
 
 def _append_rows(Gtk: Any, box: Any, rows: list[tuple[str, str]]) -> None:
@@ -263,6 +409,13 @@ def _render_overview(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     runs = payload.get("active_runs", [])
     diagnostics = payload.get("diagnostics", [])
     _append_heading(Gtk, box, "Overview")
+    _append_metric_strip(Gtk, box, [
+        ("Active runs", str(len(runs)), str(runs[0].get("status", "")) if runs and isinstance(runs[0], dict) else "idle"),
+        ("Diagnostics", str(len(diagnostics)), _severity_summary(diagnostics)),
+        ("History", str(len(payload.get("history", []))), "recent artifacts"),
+        ("Targets", str(len(payload.get("targets", []))), str(project.get("selected_target") or "auto")),
+    ])
+    _append_subheading(Gtk, box, "Repository")
     _append_rows(Gtk, box, [
         ("Repository", str(repo.get("path") or "")),
         ("Branch", str(repo.get("branch") or "")),
@@ -274,11 +427,20 @@ def _render_overview(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("Active runs", str(len(runs))),
         ("Diagnostics", str(len(diagnostics))),
     ])
+    if runs:
+        _append_subheading(Gtk, box, "Live pipeline")
+        _render_runs(Gtk, box, payload, embedded=True)
+    if diagnostics:
+        _append_subheading(Gtk, box, "Top diagnostics")
+        for item in diagnostics[:3]:
+            if isinstance(item, dict):
+                _append_text(Gtk, box, f"{item.get('severity', 'info')}: {item.get('message', '')}")
 
 
-def _render_runs(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
-    _clear(Gtk, box)
-    _append_heading(Gtk, box, "Active runs")
+def _render_runs(Gtk: Any, box: Any, payload: dict[str, Any], *, embedded: bool = False) -> None:
+    if not embedded:
+        _clear(Gtk, box)
+        _append_heading(Gtk, box, "Active runs")
     runs = payload.get("active_runs", [])
     if not runs:
         _append_text(Gtk, box, "No active run is currently published by the HUD state or IPC broker.")
@@ -287,10 +449,20 @@ def _render_runs(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         if not isinstance(run, dict):
             continue
         _append_text(Gtk, box, f"{run.get('status', 'idle')} · {run.get('title', 'devtool')} · {run.get('percent', '-')}%")
+        percent = run.get("percent")
+        bar = Gtk.ProgressBar()
+        try:
+            bar.set_fraction(max(0.0, min(1.0, float(percent) / 100.0)) if percent is not None else 0.0)
+        except (TypeError, ValueError):
+            bar.set_fraction(0.0)
+        bar.set_show_text(True)
+        bar.set_text(f"{percent}%" if percent is not None else str(run.get("status") or "idle"))
+        box.append(bar)
         _append_rows(Gtk, box, [
             ("Run ID", str(run.get("run_id") or "")),
             ("Target", str(run.get("target") or "")),
             ("Phase", str(run.get("phase") or "")),
+            ("Summary", str(run.get("text") or "")),
             ("Updated", str(run.get("updated_at") or "")),
             ("Log", str(run.get("log_path") or "")),
         ])
@@ -299,6 +471,7 @@ def _render_runs(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
 def _render_history(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "History")
+    _append_search_bar(Gtk, box, "Search artifacts, commits, hashes, commands")
     history = payload.get("history", [])
     if not history:
         _append_text(Gtk, box, "No artifact history entries were found in this repository.")
@@ -312,6 +485,48 @@ def _render_history(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             ("Applied", str(item.get("applied_at") or item.get("created_at") or "")),
             ("Commit", str(item.get("commit_hash") or "")),
             ("SHA-256", str(item.get("sha256") or "")),
+            ("Command", str(item.get("command") or "")),
+        ])
+        command = str(item.get("command") or "")
+        artifact_path = str(item.get("artifact_path") or item.get("path") or item.get("file") or "")
+        _append_button_row(Gtk, box, [
+            ("Copy command", _copy_text_callback(Gtk, box, command)),
+            ("Inspect artifact", _copy_text_callback(Gtk, box, json.dumps(item, ensure_ascii=False, indent=2))),
+            ("Run again", _copy_text_callback(Gtk, box, command)),
+            ("Open artifact folder", _open_path_callback(artifact_path)),
+        ])
+
+
+def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
+    _clear(Gtk, box)
+    _append_heading(Gtk, box, "Artifacts")
+    _append_text(Gtk, box, "Recent overlays and bundles are indexed from desktop history and the active HUD snapshot.")
+    _append_search_bar(Gtk, box, "Filter by artifact name, package, version, SHA-256")
+    history = [item for item in payload.get("history", []) if isinstance(item, dict)]
+    hud_state = payload.get("hud", {}).get("state", {}) if isinstance(payload.get("hud"), dict) else {}
+    candidates = list(reversed(history[-20:]))
+    if isinstance(hud_state, dict) and hud_state:
+        candidates.insert(0, hud_state)
+    if not candidates:
+        _append_text(Gtk, box, "No artifacts have been recorded yet.")
+        return
+    for item in candidates[:20]:
+        title = str(item.get("artifact") or item.get("artifact_name") or item.get("name") or item.get("title") or "artifact")
+        _append_subheading(Gtk, box, title)
+        _append_rows(Gtk, box, [
+            ("Path", str(item.get("artifact_path") or item.get("path") or item.get("file") or "")),
+            ("Package", str(item.get("package") or item.get("package_name") or "")),
+            ("Version", str(item.get("version") or item.get("version_name") or "")),
+            ("Commit", str(item.get("commit_hash") or item.get("head") or "")),
+            ("SHA-256", str(item.get("sha256") or "")),
+            ("Applied", str(item.get("applied_at") or item.get("created_at") or item.get("updated_at") or "")),
+        ])
+        artifact_path = str(item.get("artifact_path") or item.get("path") or item.get("file") or "")
+        sha256 = str(item.get("sha256") or "")
+        _append_button_row(Gtk, box, [
+            ("Inspect manifest", _copy_text_callback(Gtk, box, json.dumps(item, ensure_ascii=False, indent=2))),
+            ("Open containing folder", _open_path_callback(artifact_path)),
+            ("Copy SHA-256", _copy_text_callback(Gtk, box, sha256)),
         ])
 
 
@@ -319,9 +534,25 @@ def _render_diagnostics(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "Diagnostics")
     diagnostics = payload.get("diagnostics", [])
+    _append_metric_strip(Gtk, box, [
+        ("Errors", str(_count_severity(diagnostics, "error")), "blocking"),
+        ("Warnings", str(_count_severity(diagnostics, "warning")), "review"),
+        ("Info", str(_count_severity(diagnostics, "info")), "context"),
+        ("Total", str(len(diagnostics)), "latest active run"),
+    ])
+    _append_search_bar(Gtk, box, "Filter diagnostics by message, file, phase, code")
     if not diagnostics:
         _append_text(Gtk, box, "No warnings or errors are currently reported by the active run.")
         return
+    log_path = ""
+    active_runs = payload.get("active_runs", [])
+    if active_runs and isinstance(active_runs[0], dict):
+        log_path = str(active_runs[0].get("log_path") or "")
+    _append_button_row(Gtk, box, [
+        ("Copy all diagnostics", _copy_text_callback(Gtk, box, json.dumps(diagnostics, ensure_ascii=False, indent=2))),
+        ("Open log", _open_path_callback(log_path)),
+        ("Show active run", None),
+    ])
     for item in diagnostics[:50]:
         if not isinstance(item, dict):
             continue
@@ -339,6 +570,12 @@ def _render_repositories(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "Repository")
     repo = payload.get("repository", {})
+    _append_metric_strip(Gtk, box, [
+        ("Branch", str(repo.get("branch") or "-"), str(repo.get("head") or "")[:12]),
+        ("Dirty", "yes" if repo.get("dirty") else "no", "working tree"),
+        ("Targets", str(len(payload.get("targets", []))), "configured"),
+        ("IPC", "connected" if payload.get("ipc", {}).get("ok") else "offline", "broker"),
+    ])
     _append_rows(Gtk, box, [
         ("Path", str(repo.get("path") or "")),
         ("Exists", "yes" if repo.get("exists") else "no"),
@@ -346,12 +583,14 @@ def _render_repositories(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("Head", str(repo.get("head") or "")),
         ("Dirty", "yes" if repo.get("dirty") else "no"),
     ])
+    _append_button_row(Gtk, box, [("Add current repository", None), ("Open terminal here", None), ("Refresh git state", None)])
 
 
 def _render_targets(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "Targets")
     targets = payload.get("targets", [])
+    _append_search_bar(Gtk, box, "Filter targets by name, kind, environment, chroot")
     if not targets:
         _append_text(Gtk, box, "No named targets were configured for this repository.")
         return
@@ -383,11 +622,12 @@ def _render_run_workflow(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     operations = list(workflow.operations)
 
     _append_heading(Gtk, box, "Run")
-    _append_text(
-        Gtk,
-        box,
-        "Builds a typed Devtool command from fields, renders a shell review, and launches only after the exact command is visible.",
-    )
+    _append_metric_strip(Gtk, box, [
+        ("Stage 1", "Project", "repo, target, variant"),
+        ("Stage 2", "Operation", "build, test, apply, restore"),
+        ("Stage 3", "Review", "argv-first command"),
+        ("Stage 4", "Launch", "explicit user action"),
+    ])
 
     form = Gtk.Grid(column_spacing=14, row_spacing=10)
     form.set_hexpand(True)
@@ -627,7 +867,36 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("History limit", str(settings.get("history_limit") or 0)),
         ("Recent events", str(settings.get("recent_events") or 0)),
     ])
+    _append_subheading(Gtk, box, "Desktop behavior")
+    _append_button_row(Gtk, box, [("Follow active run", None), ("Enable clipboard monitor", None), ("Compact HUD", None)])
     _append_text(Gtk, box, "The Run workflow is handled by the GTK4 typed command page. It builds argv first and renders shell text only for review/copy.")
+
+
+def _count_severity(diagnostics: Any, severity: str) -> int:
+    if not isinstance(diagnostics, list):
+        return 0
+    aliases = {
+        "warning": {"warning", "warn"},
+        "error": {"error", "failed", "failure"},
+        "info": {"info", "notice", "debug"},
+    }.get(severity, {severity})
+    count = 0
+    for item in diagnostics:
+        if isinstance(item, dict) and str(item.get("severity") or "").lower() in aliases:
+            count += 1
+    return count
+
+
+def _severity_summary(diagnostics: Any) -> str:
+    if not isinstance(diagnostics, list) or not diagnostics:
+        return "clean"
+    errors = _count_severity(diagnostics, "error")
+    warnings = _count_severity(diagnostics, "warning")
+    if errors:
+        return f"{errors} error(s)"
+    if warnings:
+        return f"{warnings} warning(s)"
+    return "info only"
 
 
 class _suppress_exception:

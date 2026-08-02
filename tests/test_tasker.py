@@ -222,6 +222,42 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertEqual(phase["tests_total"], 226)
             self.assertEqual(phase["test_assemblies"], 3)
 
+    def test_progress_event_persists_gradle_requested_dependency_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sink = TaskerProgressSink(
+                directory=Path(tmp),
+                command="apply-overlay",
+                repo_root="/repo/demo",
+                repo_name="demo",
+                enabled=True,
+                update_interval_s=0,
+            )
+            sink.phase_started(
+                "android-validation-explicit-tasks[demo]",
+                index=1,
+                total=1,
+                metadata={"workspace": "demo", "bundle_target": "demo"},
+            )
+            sink.progress(
+                detail="Running :app:testDebugUnitTest",
+                completed=432,
+                total=893,
+                metrics={
+                    "command": "android-validation-explicit-tasks",
+                    "unit_label": "tasks",
+                    "requested_tasks": [":core:diagnostics:test", ":app:testDebugUnitTest"],
+                    "requested_task_count": 2,
+                    "dependency_task_count": 891,
+                },
+                force=True,
+            )
+
+            latest = json.loads((Path(tmp) / "latest_event.json").read_text(encoding="utf-8"))
+            phase = latest["phase_progress"][0]
+            self.assertEqual(phase["requested_tasks"], [":core:diagnostics:test", ":app:testDebugUnitTest"])
+            self.assertEqual(phase["requested_task_count"], 2)
+            self.assertEqual(phase["dependency_task_count"], 891)
+
     def test_coalesced_dotnet_validation_events_explain_implicit_phases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             sink = TaskerProgressSink(

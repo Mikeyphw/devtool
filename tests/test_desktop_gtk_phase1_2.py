@@ -4,9 +4,12 @@ import argparse
 import inspect
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from devtool.desktop.command_model import DevtoolCommandDraft, parse_environment_assignments, split_extra_arguments
+from devtool.desktop.gtk_control_center import Gtk4ControlCenter
+from devtool.desktop.gtk_hud import Gtk4CompactHud
 from devtool.desktop.hud_store import load_hud_snapshot
 from devtool.hud import choose_hud_mode, run_hud
 
@@ -87,6 +90,29 @@ def test_desktop_window_once_uses_gtk4_snapshot_renderer(tmp_path: Path, capsys,
     payload = json.loads(capsys.readouterr().out)
     assert payload["renderer"] == "gtk4-window"
     assert payload["state"]["title"] == "demo"
+
+
+def test_gtk4_availability_checks_display_initialization() -> None:
+    gtk = SimpleNamespace(init_check=lambda: False)
+    with patch("devtool.desktop.gtk_control_center._has_display", return_value=True), \
+         patch("devtool.desktop.gtk_control_center.Gtk4ControlCenter._require_gtk4", return_value=(None, None, None, gtk)), \
+         patch("devtool.desktop.gtk_hud._has_display", return_value=True), \
+         patch("devtool.desktop.gtk_hud.Gtk4CompactHud._require_gtk4", return_value=(None, None, None, gtk)):
+        assert Gtk4ControlCenter.available() is False
+        assert Gtk4CompactHud.available() is False
+
+
+def test_live_gtk4_windows_raise_friendly_init_error(tmp_path: Path) -> None:
+    pytest = __import__("pytest")
+    gtk = SimpleNamespace(init_check=lambda: False)
+    with patch("devtool.desktop.gtk_control_center._has_display", return_value=True), \
+         patch("devtool.desktop.gtk_control_center.Gtk4ControlCenter._require_gtk4", return_value=(None, None, None, gtk)):
+        with pytest.raises(RuntimeError, match="could not initialize the desktop display"):
+            Gtk4ControlCenter().run(repository=tmp_path, once=False)
+    with patch("devtool.desktop.gtk_hud._has_display", return_value=True), \
+         patch("devtool.desktop.gtk_hud.Gtk4CompactHud._require_gtk4", return_value=(None, None, None, gtk)):
+        with pytest.raises(RuntimeError, match="could not initialize the desktop display"):
+            Gtk4CompactHud().run(directory=tmp_path, interval_s=0.1, once=False)
 
 
 def test_hud_store_wraps_canonical_snapshot_reader(tmp_path: Path) -> None:

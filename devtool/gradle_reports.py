@@ -369,12 +369,13 @@ def collect_android_lint_reports(
         else:
             issues.extend(parse_android_lint_sarif(source_root, path, command_name=command_name))
 
-    # Preserve one finding per source/rule/message. Android Lint can emit both
-    # XML and SARIF for the same task.
+    # Preserve one finding per source/rule/location. Android Lint can emit both
+    # XML and SARIF for the same task, and their messages are not always byte
+    # identical for the same finding.
     unique: list[Issue] = []
-    seen: set[tuple[str, str, str, str, int | None]] = set()
+    seen: set[tuple[str, str, str, int | None]] = set()
     for issue in issues:
-        key = (issue.severity, issue.file, issue.code, issue.message, issue.line)
+        key = (issue.severity, issue.file, issue.code, issue.line)
         if key in seen:
             continue
         seen.add(key)

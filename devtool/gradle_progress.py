@@ -173,13 +173,14 @@ class GradleProgressTracker:
             raw_tasks = event.get("tasks")
             if isinstance(raw_tasks, list):
                 self.graph_tasks = tuple(dict.fromkeys(str(task).strip() for task in raw_tasks if str(task).strip()))
-            self.total = int(event.get("total") or len(self.graph_tasks) or 0) or None
+            self._merge_total(event.get("total") or len(self.graph_tasks) or None)
             self._update_requested_dependency_counts()
             self.detail = f"Gradle task graph ready: {self.total or 0} tasks"
         elif kind == "task-start":
             self.current_task = str(event.get("task") or "")
-            self.completed = int(event.get("completed") or 0)
-            self.total = int(event.get("total") or 0) or self.total
+            self._merge_completed(event.get("completed"))
+            self._merge_total(event.get("total"))
+            self._update_requested_dependency_counts()
             if self.failed_task:
                 self.detail = (
                     f"Failed {self.failed_task}; collecting diagnostics in "
@@ -189,8 +190,9 @@ class GradleProgressTracker:
                 self.detail = f"Running {self.current_task or 'Gradle task'}"
         elif kind == "task-finish":
             self.current_task = str(event.get("task") or self.current_task)
-            self.completed = int(event.get("completed") or self.completed or 0)
-            self.total = int(event.get("total") or 0) or self.total
+            self._merge_completed(event.get("completed"))
+            self._merge_total(event.get("total"))
+            self._update_requested_dependency_counts()
             outcome = str(event.get("outcome") or "complete")
             self.detail = f"{self.current_task or 'Gradle task'}: {outcome}"
             if outcome == "failed":
@@ -209,8 +211,9 @@ class GradleProgressTracker:
                 f"{self.tests_skipped} skipped"
             )
         elif kind == "build-finish":
-            self.completed = int(event.get("completed") or self.completed or 0)
-            self.total = int(event.get("total") or 0) or self.total
+            self._merge_completed(event.get("completed"))
+            self._merge_total(event.get("total"))
+            self._update_requested_dependency_counts()
             self._update_tests({
                 "passed": event.get("passed"),
                 "failed": event.get("failed"),
@@ -254,7 +257,7 @@ class GradleProgressTracker:
 
         summary = _ACTIONABLE_TASKS_RE.match(text)
         if summary:
-            self.total = max(0, int(summary.group("total") or 0))
+            self._merge_total(max(0, int(summary.group("total") or 0)))
             self.completed = self.total
             self._update_requested_dependency_counts()
             self.detail = text
@@ -345,6 +348,26 @@ class GradleProgressTracker:
             snapshot = self.snapshot()
             snapshot["force"] = force
             self.update_callback(snapshot)
+
+    def _merge_total(self, value: Any) -> None:
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            return
+        if candidate <= 0:
+            return
+        if self.total is None or candidate > self.total:
+            self.total = candidate
+
+    def _merge_completed(self, value: Any) -> None:
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            return
+        if candidate < 0:
+            return
+        if self.completed is None or candidate > self.completed:
+            self.completed = candidate
 
     @staticmethod
     def _canonical_task(task: str) -> str:

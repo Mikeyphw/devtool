@@ -1062,9 +1062,16 @@ class TaskerProgressSink:
                 "tests_skipped",
                 "tests_total",
                 "test_assemblies",
+                "requested_tasks",
+                "requested_task_count",
+                "dependency_task_count",
             ):
                 value = metrics.get(metric_key)
                 if value is None:
+                    continue
+                if metric_key == "requested_tasks":
+                    if isinstance(value, list):
+                        current[metric_key] = [str(item) for item in value if str(item)]
                     continue
                 if metric_key in {
                     "tests_passed",
@@ -1072,6 +1079,8 @@ class TaskerProgressSink:
                     "tests_skipped",
                     "tests_total",
                     "test_assemblies",
+                    "requested_task_count",
+                    "dependency_task_count",
                 }:
                     current[metric_key] = max(0, int(value))
                 else:

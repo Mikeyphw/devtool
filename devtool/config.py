@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import os
 import json
 import subprocess
@@ -836,8 +837,14 @@ def _resolve_targets(
     if selected_target_name:
         target = targets.get(selected_target_name)
         if target is None:
-            available = ", ".join(sorted(targets)) or "<none>"
-            raise SystemExit(f"Unknown target '{selected_target_name}'. Available targets: {available}")
+            target_names = sorted(targets)
+            available = ", ".join(target_names) or "<none>"
+            message = f"Unknown target '{selected_target_name}'. Available targets: {available}"
+            matches = difflib.get_close_matches(selected_target_name, target_names, n=1)
+            if matches:
+                message += f"\nDid you mean '{matches[0]}'?"
+            message += "\nRun 'devtool targets' to list configured targets."
+            raise SystemExit(message)
         target_kind = target.kind or kind
         if target_kind == "dotnet":
             return {

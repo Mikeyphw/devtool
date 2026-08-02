@@ -6,7 +6,7 @@ import os
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from zipfile import ZipFile
@@ -152,6 +152,53 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.validate)
         self.assertFalse(args.validate_only)
         self.assertEqual(args.commit, "msg")
+
+    def test_unknown_target_returns_friendly_error_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "android").mkdir()
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='command'\n"
+                "\n[targets.chrootctl_android]\ntype='command'\nroot='android'\n",
+                encoding="utf-8",
+            )
+            stream = io.StringIO()
+
+            with redirect_stderr(stream):
+                rc = main(["--repo", str(root), "--target", "chroot_android", "validate-all"])
+
+            stderr = stream.getvalue()
+            self.assertEqual(rc, 1)
+            self.assertIn("Error: Unknown target 'chroot_android'", stderr)
+            self.assertIn("Available targets: chrootctl_android", stderr)
+            self.assertIn("Did you mean 'chrootctl_android'?", stderr)
+            self.assertIn("Run 'devtool targets' to list configured targets.", stderr)
+            self.assertNotIn("Traceback", stderr)
+
+    def test_internal_error_is_concise_without_verbose(self) -> None:
+        stream = io.StringIO()
+
+        with patch("devtool.cli._normalize_command_aliases", side_effect=RuntimeError("boom")):
+            with redirect_stderr(stream):
+                rc = main(["status"])
+
+        stderr = stream.getvalue()
+        self.assertEqual(rc, 1)
+        self.assertIn("Internal devtool error: boom", stderr)
+        self.assertIn("Run again with --verbose or DEVTOOL_TRACEBACK=1", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_internal_error_prints_traceback_with_verbose(self) -> None:
+        stream = io.StringIO()
+
+        with patch("devtool.cli._normalize_command_aliases", side_effect=RuntimeError("boom")):
+            with redirect_stderr(stream):
+                rc = main(["--verbose", "status"])
+
+        stderr = stream.getvalue()
+        self.assertEqual(rc, 1)
+        self.assertIn("Traceback", stderr)
+        self.assertIn("RuntimeError: boom", stderr)
 
     def test_parser_accepts_artifact_cleanup_flags_for_apply(self) -> None:
         parser = build_parser()
@@ -709,11 +756,19 @@ artifact-cleanup: ok exit=0 time=0.10s
         )
         copied: list[str] = []
         result = SimpleNamespace(success=True, backend="test", reason="")
+        json_text = json.dumps({
+            "warnings": 0,
+            "errors": 1,
+            "failed": 1,
+            "skipped": 0,
+            "completion": {"headline": "Build failed; changes rolled back"},
+        })
         with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
-            _maybe_copy(raw_output, summary_text, '{"warnings":0,"errors":1,"failed":1,"skipped":0}', args)
+            _maybe_copy(raw_output, summary_text, json_text, args)
 
         self.assertEqual(len(copied), 1)
         text = copied[0]
+        self.assertTrue(text.startswith("Build failed; changes rolled back"))
         self.assertIn("Succeeded: overlay apply, restore", text)
         self.assertIn("Failed: build", text)
         self.assertIn("Recovery: rollback succeeded; artifact cleanup succeeded", text)
