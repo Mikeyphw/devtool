@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,12 +21,15 @@ from devtool.transactions import (
     transaction_pending_validation,
 )
 from devtool.validation_sessions import (
+    ValidationSessionError,
+    active_session_marker,
     create_session,
     load_active_session,
     load_session,
     reconcile_inputs,
     record_phase_result,
     recover_interrupted_phases,
+    resolve_resumable_session,
     mark_phase_running,
     retry_failed,
     select_phase_keys,
@@ -33,6 +37,7 @@ from devtool.validation_sessions import (
     save_session,
     status_payload,
     sync_plan,
+    validation_plan_path,
 )
 
 
@@ -228,6 +233,136 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertEqual(second_rc, 0)
             self.assertEqual(resumed.session_id, active.session_id)
             self.assertEqual(resumed.phases[1].status, "passed")
+
+    def test_plain_sequential_recovers_missing_active_marker_and_keeps_session_progress(self) -> None:
+        def fake_run(_config, specs, _args, **_kwargs):
+            results = [
+                OperationResult(spec.name, list(spec.argv), 0, 0.01, "ok", [], metadata=dict(spec.metadata))
+                for spec in specs
+            ]
+            return results, "\n".join(result.name for result in results)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "start", "--next"]), 0)
+
+            before = load_active_session(root, required=True)
+            self.assertEqual(before.phases[0].status, "passed")
+            active_session_marker(root).unlink()
+
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "--sequential"]), 0)
+
+            resumed = load_active_session(root, required=True)
+            self.assertEqual(resumed.session_id, before.session_id)
+            self.assertEqual(resumed.phases[0].status, "passed")
+            self.assertEqual(resumed.phases[1].status, "passed")
+
+    def test_orphaned_validation_plan_refuses_to_create_replacement_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = validation_config(root)
+            session = create_session(
+                config,
+                [CommandSpec("preflight", ["true"], metadata={"validation_phase_name": "preflight"})],
+            )
+            active_session_marker(root).unlink()
+            Path(root / ".devtool" / "state" / "android-validation" / session.session_id / "state.json").unlink()
+
+            with self.assertRaisesRegex(ValidationSessionError, "No new validation session was created"):
+                resolve_resumable_session(root)
+
+    def test_multiple_unfinished_sessions_require_explicit_session_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = validation_config(root)
+            specs = [CommandSpec("preflight", ["true"], metadata={"validation_phase_name": "preflight"})]
+            first = create_session(config, specs)
+            second = create_session(config, specs, replace_active=True)
+            self.assertNotEqual(first.session_id, second.session_id)
+            active_session_marker(root).unlink()
+            validation_plan_path(root).unlink()
+
+            with self.assertRaisesRegex(ValidationSessionError, "Multiple unfinished validation sessions"):
+                resolve_resumable_session(root)
+
+    def test_validation_plan_contains_recovery_identity_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = validation_config(root)
+            config.selected_target = "mobile"
+            config.variant = "debug"
+            session = create_session(
+                config,
+                [CommandSpec("preflight", ["true"], metadata={"validation_phase_name": "preflight"})],
+            )
+
+            payload = json.loads(validation_plan_path(root).read_text(encoding="utf-8"))
+            self.assertEqual(payload["session_id"], session.session_id)
+            self.assertEqual(payload["repo_root"], str(root.resolve()))
+            self.assertEqual(payload["project_root"], str(root.resolve()))
+            self.assertEqual(payload["project_type"], "android")
+            self.assertEqual(payload["target"], "mobile")
+            self.assertEqual(payload["variant"], "debug")
+
+    def test_omitted_target_inherits_active_validation_session_target(self) -> None:
+        observed_targets: list[str] = []
+
+        def fake_run(config, specs, _args, **_kwargs):
+            observed_targets.append(config.selected_target)
+            results = [
+                OperationResult(spec.name, list(spec.argv), 0, 0.01, "ok", [], metadata=dict(spec.metadata))
+                for spec in specs
+            ]
+            return results, "\n".join(result.name for result in results)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='android'\ndefault_target='one'\n"
+                "\n[targets.one]\ntype='android'\nroot='.'\n"
+                "\n[targets.two]\ntype='android'\nroot='.'\n",
+                encoding="utf-8",
+            )
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
+                self.assertEqual(main(["--repo", str(root), "--target", "two", "--no-clipboard", "validate", "start", "--next"]), 0)
+                self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "continue"]), 0)
+
+            resumed = load_active_session(root, required=True)
+            self.assertEqual(resumed.target, "two")
+            self.assertEqual(observed_targets, ["two", "two"])
+
+    def test_second_validation_process_refuses_live_phase_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = validation_config(root)
+            specs = [CommandSpec("package", ["true"], metadata={"validation_phase_name": "package"})]
+            session = create_session(config, specs)
+            mark_phase_running(session, session.phases[0].key)
+            parser = build_parser()
+            args = parser.parse_args(["validate", "continue"])
+
+            with self.assertRaisesRegex(ValidationSessionError, "already running.*phase 1 of 1"):
+                _run_validation_session(
+                    config,
+                    args,
+                    parser,
+                    log_path=None,
+                    tasker_progress=None,
+                    continue_on_error=False,
+                )
 
     def test_cli_recovers_stale_running_phase_and_retries_it_with_plain_continue(self) -> None:
         def fake_run(_config, specs, _args, **_kwargs):

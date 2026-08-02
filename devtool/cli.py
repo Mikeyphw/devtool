@@ -78,6 +78,7 @@ from .config import (
     load_global_config,
     load_project_config,
     minimal_global_config_template,
+    resolve_repository_root,
     resolve_config_dict,
 )
 from .log_commands import choose_active_log, format_log_entries, list_log_entries, open_log, resolve_log_path, tail_log
@@ -115,6 +116,7 @@ from .validation_sessions import (
     guard_reason as validation_guard_reason,
     load_active_session,
     load_session as load_validation_session,
+    live_running_phase as live_validation_phase,
     mark_aborted as mark_validation_aborted,
     mark_completed as mark_validation_completed,
     mark_failure_terminal as mark_validation_failure_terminal,
@@ -134,6 +136,7 @@ from .validation_sessions import (
     reconcile_inputs as reconcile_validation_inputs,
     record_phase_result,
     recover_interrupted_phases as recover_interrupted_validation_phases,
+    resolve_resumable_session,
     reset_all as reset_all_validation,
     reset_phase as reset_validation_phase,
     retry_failed as retry_failed_validation,
@@ -146,6 +149,7 @@ from .validation_sessions import (
     status_text as validation_status_text,
     checkpoint_text as validation_checkpoint_text,
     sync_plan as sync_validation_plan,
+    validation_session_target_hint,
 )
 from .validation_reports import (
     finalization_issues as validation_finalization_issues,
@@ -1657,6 +1661,27 @@ def _single_artifact_arg(value: object) -> str:
     return items[0] if items else ""
 
 
+def _validation_command_reuses_session(args: argparse.Namespace) -> bool:
+    command = str(getattr(args, "command", "") or "")
+    if str(getattr(args, "session", "") or "").strip():
+        return True
+    if command in {
+        "validation-status", "vs", "validation-plan", "vplan",
+        "validation-events", "vevents", "validation-report", "vreport",
+        "validation-pause", "vpause", "validation-stop", "vstop",
+        "validation-abort", "va", "validation-recover", "vrec",
+        "validation-reset", "vreset", "validation-accept-plan-change", "vapc",
+        "validation-finalize", "vf",
+    }:
+        return True
+    if command not in {"validate", "v"}:
+        return False
+    mode = str(getattr(args, "_devtool_validation_mode", "") or "").strip()
+    return bool(getattr(args, "sequential", False)) and mode != "start" and not bool(
+        getattr(args, "restart_session", False)
+    )
+
+
 def _make_ad_hoc_overlay_bundle(artifacts: list[str], *, name: str = "adhoc_overlay_bundle") -> tuple[tempfile.TemporaryDirectory[str], Path, list[Path]]:
     tmp = tempfile.TemporaryDirectory(prefix="devtool-adhoc-overlays-")
     paths = [resolve_artifact_path(item) for item in artifacts]
@@ -1678,6 +1703,12 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
         if not project:
             project = manifest.get("run_project", "") or manifest.get("project", "")
 
+    if not target_name and _validation_command_reuses_session(args):
+        target_name = validation_session_target_hint(
+            Path(args.repo or Path.cwd()).expanduser().resolve(),
+            str(getattr(args, "session", "") or ""),
+        )
+
     try:
         return load_project_config(
             args.repo,
@@ -1687,6 +1718,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             solution_override=solution,
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
+            allow_ambiguous_target=args.command in {"targets", "tg"},
         )
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
@@ -1709,6 +1741,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
                 solution_override=solution,
                 project_override=project,
                 kind_override=str(getattr(args, "project_type", "auto") or "auto"),
+                allow_ambiguous_target=True,
             )
         raise
 
@@ -2879,17 +2912,45 @@ def _load_or_create_validation_session(
     apply_context: dict[str, object] | None = None,
 ) -> tuple[ValidationSession, list[CommandSpec]]:
     requested_session = str(getattr(args, "session", "") or "").strip()
-    active = load_validation_session(config.repo_root, requested_session) if requested_session else load_active_session(config.repo_root)
     mode = str(getattr(args, "_devtool_validation_mode", "") or "").strip()
     explicitly_resuming = mode == "resume" or bool(getattr(args, "resume", False)) or bool(requested_session)
+    force_new = mode == "start" or bool(getattr(args, "restart_session", False))
+    if requested_session:
+        active = load_validation_session(config.repo_root, requested_session)
+    elif force_new:
+        try:
+            active = load_active_session(config.repo_root)
+        except ValidationSessionError:
+            active = None
+    else:
+        active = resolve_resumable_session(config.repo_root, required=explicitly_resuming)
     if active is not None and str(getattr(args, "_devtool_validation_api_action", "") or ""):
         previous_revision = require_validation_revision(active, _validation_expected_revision(args))
         args._devtool_validation_previous_revision = previous_revision
     if explicitly_resuming and active is None:
         raise ValidationSessionError("No matching active validation session exists to resume.")
 
-    start_new = mode == "start" or bool(getattr(args, "restart_session", False)) or active is None
+    start_new = force_new or active is None
     if not start_new and active is not None:
+        selected_target = str(config.selected_target or "")
+        selected_variant = str(config.variant or "")
+        if selected_target != active.target:
+            raise ValidationSessionError(
+                f"Validation session target is {active.target or '-'}, but the selected target is "
+                f"{selected_target or '-'}. Use --target {active.target} or start a new session explicitly."
+            )
+        if selected_variant != active.variant:
+            raise ValidationSessionError(
+                f"Validation session variant is {active.variant or '-'}, but the selected variant is "
+                f"{selected_variant or '-'}. Select the session variant or start a new session explicitly."
+            )
+        live_phase = live_validation_phase(active)
+        if live_phase is not None:
+            raise ValidationSessionError(
+                f"Validation session {active.session_id} is already running. "
+                f"Current phase: {live_phase.label}, phase {live_phase.index} of {live_phase.total}; "
+                f"owner PID: {live_phase.owner_pid}."
+            )
         # A resumed plan must retain its original skip/daemon choices. Runtime,
         # battery, temperature and phase selection are intentionally per-run.
         for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "max_workers", "cpu_limit", "gradle_heap_mb", "memory_guard_mb", "validation_low_priority", "validation_parallel", "validation_build_cache", "validation_daemon", "max_infrastructure_retries", "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action"):
@@ -3269,8 +3330,35 @@ def _run_validation_session(
     if bool(getattr(args, "dry_run", False)):
         requested = str(getattr(args, "session", "") or "").strip()
         mode = str(getattr(args, "_devtool_validation_mode", "") or "").strip()
-        active = load_validation_session(config.repo_root, requested) if requested else load_active_session(config.repo_root)
+        explicitly_resuming = mode == "resume" or bool(getattr(args, "resume", False)) or bool(requested)
+        force_new = mode == "start" or bool(getattr(args, "restart_session", False))
+        if requested:
+            active = load_validation_session(config.repo_root, requested)
+        elif force_new:
+            try:
+                active = load_active_session(config.repo_root)
+            except ValidationSessionError:
+                active = None
+        else:
+            active = resolve_resumable_session(
+                config.repo_root,
+                required=explicitly_resuming,
+                repair_active_marker=False,
+            )
         start_new = mode == "start" or bool(getattr(args, "restart_session", False)) or active is None
+        if active is not None and not start_new:
+            selected_target = str(config.selected_target or "")
+            selected_variant = str(config.variant or "")
+            if selected_target != active.target or selected_variant != active.variant:
+                raise ValidationSessionError(
+                    "Validation session target or variant does not match the selected configuration."
+                )
+            live_phase = live_validation_phase(active)
+            if live_phase is not None:
+                raise ValidationSessionError(
+                    f"Validation session {active.session_id} is already running phase "
+                    f"{live_phase.index} of {live_phase.total} ({live_phase.label}), owner PID {live_phase.owner_pid}."
+                )
         _enable_resumable_validation(config, args)
         effective_context = dict(apply_context or (active.apply_context if active is not None else {}) or {})
         if active is not None and not start_new:
@@ -6677,6 +6765,9 @@ def main(argv: list[str] | None = None) -> int:
     _warn_deprecated_validation_profile_alias(args, parse_argv)
     _apply_global_cli_defaults(args, parse_argv)
     _normalize_live_progress_args(args)
+    args._devtool_cli_repo_explicit = bool(str(getattr(args, "repo", "") or "").strip())
+    if args._devtool_cli_repo_explicit or args.command not in {"inspect-artifact", "ia"}:
+        args.repo = str(resolve_repository_root(args.repo, args.config))
     args._devtool_cli_target_explicit = bool(str(getattr(args, "target", "") or "").strip())
     args._devtool_cli_solution_explicit = bool(str(getattr(args, "solution", "") or "").strip())
     _apply_artifact_manifest_defaults(args)

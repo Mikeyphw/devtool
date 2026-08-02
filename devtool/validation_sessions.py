@@ -682,6 +682,11 @@ def save_session(
     plan_payload = {
         "schema_version": SESSION_SCHEMA_VERSION,
         "session_id": session.session_id,
+        "repo_root": session.repo_root,
+        "project_root": session.project_root,
+        "project_type": session.project_type,
+        "target": session.target,
+        "variant": session.variant,
         "status": session.status,
         "validation_mode": str(session.apply_context.get("validation_mode") or "standalone"),
         "artifact": session.apply_context.get("artifact") or session.apply_context.get("artifacts") or "",
@@ -772,6 +777,155 @@ def load_active_session(repo_root: Path, *, required: bool = False) -> Validatio
     if not session_id:
         raise ValidationSessionError(f"Active validation marker has no session ID: {marker}")
     return load_session(repo_root, session_id)
+
+
+def _session_is_unfinished(session: ValidationSession) -> bool:
+    return session.status not in _TERMINAL_SESSION_STATES
+
+
+def unfinished_sessions(repo_root: Path) -> list[ValidationSession]:
+    """Return durable unfinished sessions ordered newest first."""
+
+    root = session_root(repo_root)
+    sessions: list[ValidationSession] = []
+    if not root.is_dir():
+        return sessions
+    for state_path in root.glob("*/state.json"):
+        try:
+            session = load_session(repo_root, state_path.parent.name)
+        except ValidationSessionError:
+            continue
+        if _session_is_unfinished(session):
+            sessions.append(session)
+    sessions.sort(key=lambda item: (item.updated_at, item.created_at, item.session_id), reverse=True)
+    return sessions
+
+
+def resolve_resumable_session(
+    repo_root: Path,
+    requested_session: str = "",
+    *,
+    required: bool = False,
+    repair_active_marker: bool = True,
+) -> ValidationSession | None:
+    """Resolve an unfinished session without silently discarding progress.
+
+    ``active.json`` is only an index.  If it is missing or damaged, recover the
+    session referenced by ``validation-plan.json`` or the sole unfinished
+    durable session.  An orphaned plan and ambiguous unfinished sessions are
+    safety errors rather than permission to create a replacement session.
+    """
+
+    repo_root = repo_root.expanduser().resolve()
+    requested = str(requested_session or "").strip()
+    if requested:
+        session = load_session(repo_root, requested)
+        if not _session_is_unfinished(session):
+            raise ValidationSessionError(
+                f"Validation session {requested} is already terminal ({session.status})."
+            )
+        return session
+
+    marker_error: ValidationSessionError | None = None
+    try:
+        active = load_active_session(repo_root)
+    except ValidationSessionError as exc:
+        active = None
+        marker_error = exc
+    if active is not None and _session_is_unfinished(active):
+        return active
+
+    plan = validation_plan_path(repo_root)
+    if plan.is_file():
+        try:
+            payload = json.loads(plan.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValidationSessionError(f"Invalid validation plan: {plan}: {exc}") from exc
+        plan_session_id = str(payload.get("session_id") or "").strip()
+        plan_status = str(payload.get("status") or "").strip()
+        if plan_session_id and plan_status not in _TERMINAL_SESSION_STATES:
+            try:
+                session = load_session(repo_root, plan_session_id)
+            except ValidationSessionError as exc:
+                raise ValidationSessionError(
+                    "Validation plan references session "
+                    f"{plan_session_id}, but its state.json is missing or invalid. "
+                    "No new validation session was created. Restore that session state, "
+                    "select another session explicitly, or run validation-reset after review."
+                ) from exc
+            if _session_is_unfinished(session):
+                if repair_active_marker:
+                    save_session(session, active=True, bump_revision=False)
+                return session
+
+    candidates = unfinished_sessions(repo_root)
+    if len(candidates) == 1:
+        session = candidates[0]
+        if repair_active_marker:
+            save_session(session, active=True, bump_revision=False)
+        return session
+    if len(candidates) > 1:
+        details = "\n".join(
+            f"  - {item.session_id}  target={item.target or '-'}  "
+            f"status={item.status}  updated={item.updated_at}"
+            for item in candidates
+        )
+        raise ValidationSessionError(
+            "Multiple unfinished validation sessions exist and no active marker selects one:\n"
+            f"{details}\nUse --session <id>."
+        )
+    if required:
+        if marker_error is not None:
+            raise ValidationSessionError(
+                f"No recoverable active validation session exists. {marker_error}"
+            ) from marker_error
+        raise ValidationSessionError("No active validation session exists for this repository.")
+    return None
+
+
+def validation_session_target_hint(repo_root: Path, requested_session: str = "") -> str:
+    """Best-effort target hint used before full project configuration loading."""
+
+    requested = str(requested_session or "").strip()
+    if requested:
+        return load_session(repo_root, requested).target
+    try:
+        active = load_active_session(repo_root)
+    except ValidationSessionError:
+        active = None
+    if active is not None and _session_is_unfinished(active):
+        return active.target
+    plan = validation_plan_path(repo_root)
+    if plan.is_file():
+        try:
+            payload = json.loads(plan.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        target = str(payload.get("target") or "").strip()
+        if target:
+            return target
+        session_id = str(payload.get("session_id") or "").strip()
+        if session_id:
+            try:
+                return load_session(repo_root, session_id).target
+            except ValidationSessionError:
+                pass
+    candidates = unfinished_sessions(repo_root)
+    return candidates[0].target if len(candidates) == 1 else ""
+
+
+def live_running_phase(session: ValidationSession) -> PhaseRecord | None:
+    """Return a running phase whose recorded owner process is still alive."""
+
+    return next(
+        (
+            phase
+            for phase in session.phases
+            if phase.status == "running"
+            and _process_is_alive(phase.owner_pid, phase.owner_process_start)
+        ),
+        None,
+    )
 
 
 def clear_active_session(session: ValidationSession) -> None:
@@ -1169,7 +1323,15 @@ def create_session(
     replace_active: bool = False,
     persist: bool = True,
 ) -> ValidationSession:
-    existing = load_active_session(config.repo_root) if persist else None
+    if persist:
+        try:
+            existing = load_active_session(config.repo_root)
+        except ValidationSessionError:
+            if not replace_active:
+                raise
+            existing = None
+    else:
+        existing = None
     if existing is not None and existing.status not in _TERMINAL_SESSION_STATES and not replace_active:
         raise ValidationSessionError(
             f"Validation session {existing.session_id} is already active. Resume or abort it before starting another."

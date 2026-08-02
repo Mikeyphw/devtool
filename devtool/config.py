@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -205,6 +206,93 @@ def find_config(repo_root: Path, config_path_arg: str | None) -> Path | None:
     return None
 
 
+def resolve_repository_root(
+    repo_root_arg: str | None,
+    config_path_arg: str | None = None,
+    *,
+    cwd: Path | None = None,
+) -> Path:
+    """Resolve the repository boundary used for project state.
+
+    An explicit ``--repo`` remains authoritative.  When it is omitted, prefer
+    the directory containing an explicitly selected or nearest ``.devtool.toml``
+    file, then the nearest Git worktree root, and finally the current directory.
+    This keeps durable validation state stable when Devtool is launched from a
+    nested project directory.
+    """
+
+    if repo_root_arg:
+        return Path(repo_root_arg).expanduser().resolve()
+
+    if config_path_arg:
+        config_path = Path(config_path_arg).expanduser().resolve()
+        if config_path.exists():
+            return config_path.parent.resolve()
+
+    start = Path(cwd or Path.cwd()).expanduser().resolve()
+    for parent in (start, *start.parents):
+        if (parent / CONFIG_NAME).is_file():
+            return parent.resolve()
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(start), "rev-parse", "--show-toplevel"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is not None and result.returncode == 0 and result.stdout.strip():
+        return Path(result.stdout.strip()).expanduser().resolve()
+    return start
+
+
+def _default_target_name(
+    project_section: dict[str, Any],
+    targets: dict[str, DotnetTarget],
+    *,
+    requested: str,
+    explicit_solution: str,
+    explicit_project: str,
+    allow_ambiguous: bool,
+) -> str:
+    """Choose a named target without silently guessing between alternatives."""
+
+    requested_name = str(requested or "").strip()
+    if requested_name:
+        return requested_name
+
+    # Explicit solution/project paths are themselves an unambiguous selection
+    # and intentionally bypass named-target defaulting.
+    if str(explicit_solution or "").strip() or str(explicit_project or "").strip():
+        return ""
+
+    configured_default = str(project_section.get("default_target", "") or "").strip()
+    if configured_default:
+        if configured_default not in targets:
+            available = ", ".join(sorted(targets)) or "<none>"
+            raise SystemExit(
+                f"Configured default target '{configured_default}' does not exist. "
+                f"Available targets: {available}"
+            )
+        return configured_default
+
+    if len(targets) == 1:
+        return next(iter(targets))
+    if len(targets) > 1:
+        if allow_ambiguous:
+            return ""
+        available = "\n".join(f"  - {name}" for name in sorted(targets))
+        raise SystemExit(
+            "Multiple targets are configured and none is the default:\n"
+            f"{available}\n"
+            "Use --target <name> or set [project].default_target."
+        )
+    return ""
+
+
 def load_project_config(
     repo_root_arg: str | None,
     config_path_arg: str | None,
@@ -214,8 +302,9 @@ def load_project_config(
     solution_override: str = "",
     project_override: str = "",
     kind_override: str = "",
+    allow_ambiguous_target: bool = False,
 ) -> ProjectConfig:
-    repo_root = Path(repo_root_arg or Path.cwd()).expanduser().resolve()
+    repo_root = resolve_repository_root(repo_root_arg, config_path_arg)
     config_path = find_config(repo_root, config_path_arg)
     config_root = config_path.parent if config_path else repo_root
 
@@ -261,7 +350,15 @@ def load_project_config(
         detected_kind = kind
 
     targets = _load_named_targets(config_root, loaded.get("targets", {}), env_section)
-    selected_target_hint = targets.get(target_name.strip()) if target_name.strip() else None
+    selected_target_name = _default_target_name(
+        project_section,
+        targets,
+        requested=target_name,
+        explicit_solution=solution_override,
+        explicit_project=project_override,
+        allow_ambiguous=allow_ambiguous_target,
+    )
+    selected_target_hint = targets.get(selected_target_name) if selected_target_name else None
     if selected_target_hint is not None and selected_target_hint.kind:
         detected_kind = selected_target_hint.kind
     if detected_kind == "unknown" and len(kind_details.get("candidates", ())) > 1 and selected_target_hint is None:
@@ -272,10 +369,6 @@ def load_project_config(
             f"({available}). Set [project].kind, pass --project-type, or select a typed --target. "
             f"Named targets: {named}."
         )
-    # Legacy [project].default_target is intentionally ignored. Devtool no longer
-    # chooses a target implicitly; use --target, --solution, or artifact metadata.
-
-    selected_target_name = target_name.strip()
     selected_variant_name = (variant_name.strip() or str(project_section.get("variant", "")).strip())
     explicit_solution = solution_override.strip()
     explicit_project = project_override.strip()

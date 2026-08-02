@@ -277,9 +277,10 @@ class ConfigTests(unittest.TestCase):
             base = load_project_config(str(root), None)
             selected = load_project_config(str(root), None, target_name="app")
 
-        self.assertEqual(base.execution_environment, "native-termux")
-        self.assertEqual(base.chroot_name, "androidos")
-        self.assertEqual(base.device_serial, "host-device")
+        self.assertEqual(base.selected_target, "app")
+        self.assertEqual(base.execution_environment, "chroot")
+        self.assertEqual(base.chroot_name, "ubuntu")
+        self.assertEqual(base.device_serial, "target-device")
         self.assertEqual(selected.execution_environment, "chroot")
         self.assertEqual(selected.chroot_name, "ubuntu")
         self.assertEqual(selected.device_serial, "target-device")
@@ -326,8 +327,9 @@ class ConfigTests(unittest.TestCase):
             selected = load_project_config(str(root), None, target_name="demo_extension")
             data = resolve_config_dict(selected)
 
-        self.assertEqual(base.kind, "node")
-        self.assertEqual(base.build_command, "node root-build.js")
+        self.assertEqual(base.selected_target, "demo_extension")
+        self.assertEqual(base.kind, "command")
+        self.assertEqual(base.build_command, "python3 build.py")
         self.assertEqual(selected.kind, "command")
         self.assertEqual(selected.project_root, str((root / "extensions" / "demo").resolve()))
         self.assertEqual(selected.build_command, "python3 build.py")
@@ -376,14 +378,76 @@ class ConfigTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaises(SystemExit):
-                load_project_config(str(root), None)
-
-            config = load_project_config(str(root), None, target_name="s3pe")
+            config = load_project_config(str(root), None)
             self.assertEqual(config.selected_target, "s3pe")
             self.assertTrue(config.build_target.endswith("apps/S3pe.Modern.sln"))
             self.assertTrue(config.run_target.endswith("apps/S3pe.App.csproj"))
             self.assertEqual(sorted(config.targets), ["s3pe", "tools"])
+
+    def test_multiple_named_targets_without_default_refuse_to_guess(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "one").mkdir()
+            (root / "two").mkdir()
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='command'\n"
+                "\n[targets.one]\ntype='command'\nroot='one'\n"
+                "\n[targets.two]\ntype='command'\nroot='two'\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SystemExit, "Multiple targets are configured"):
+                load_project_config(str(root), None)
+
+            neutral = load_project_config(str(root), None, allow_ambiguous_target=True)
+            self.assertEqual(neutral.selected_target, "")
+
+    def test_explicit_target_overrides_configured_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "one").mkdir()
+            (root / "two").mkdir()
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='command'\ndefault_target='one'\n"
+                "\n[targets.one]\ntype='command'\nroot='one'\n"
+                "\n[targets.two]\ntype='command'\nroot='two'\n",
+                encoding="utf-8",
+            )
+
+            config = load_project_config(str(root), None, target_name="two")
+
+            self.assertEqual(config.selected_target, "two")
+            self.assertEqual(config.project_root, str((root / "two").resolve()))
+
+    def test_invalid_configured_default_target_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "one").mkdir()
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='command'\ndefault_target='missing'\n"
+                "\n[targets.one]\ntype='command'\nroot='one'\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SystemExit, "Configured default target 'missing' does not exist"):
+                load_project_config(str(root), None)
+
+    def test_omitted_repo_uses_nearest_devtool_config_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            child = root / "app" / "src"
+            child.mkdir(parents=True)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='demo'\nversion='0.1.0'\n",
+                encoding="utf-8",
+            )
+            (root / ".devtool.toml").write_text("[project]\nkind='python'\n", encoding="utf-8")
+
+            with patch("devtool.config.Path.cwd", return_value=child):
+                config = load_project_config(None, None)
+
+            self.assertEqual(config.repo_root, root.resolve())
+            self.assertEqual(config.config_path, root / ".devtool.toml")
 
     def test_load_project_config_resolves_project_and_run_targets_from_config_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
