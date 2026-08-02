@@ -6,6 +6,16 @@ from pathlib import Path
 from typing import Any
 
 from ..config import load_project_config
+from ..hud import (
+    compact_detail_text,
+    compact_operation_title,
+    completion_copy_text,
+    live_issue_counts,
+    operation_steps,
+    parse_hud_state,
+    state_context_label,
+    state_metric_text,
+)
 from ..models import ProjectConfig
 from ..tasker import DEFAULT_TASKER_DIR
 from .history_store import DesktopHistoryStore
@@ -212,22 +222,39 @@ def _field_text(value: Any, *keys: str) -> str:
 
 
 def _run_summary_dict(item: dict[str, Any]) -> dict[str, Any]:
+    state = parse_hud_state(item)
+    events = item.get("events") if isinstance(item.get("events"), list) else []
+    steps = [step.to_dict() for step in operation_steps(state, events)]
+    errors, warnings = live_issue_counts(events, state)
     percent = item.get("percent")
     try:
         percent_value = int(percent) if percent is not None and str(percent) != "" else None
     except (TypeError, ValueError):
         percent_value = None
-    return asdict(DesktopRunSummary(
+    if percent_value is None:
+        percent_value = state.percent
+    summary = asdict(DesktopRunSummary(
         run_id=str(item.get("run_id") or item.get("id") or ""),
-        title=str(item.get("display_title") or item.get("title") or item.get("artifact_name") or item.get("command") or "devtool"),
-        status=str(item.get("status") or "idle"),
-        text=str(item.get("display_text") or item.get("text") or item.get("summary") or ""),
+        title=str(item.get("display_title") or item.get("title") or item.get("artifact_name") or item.get("command") or compact_operation_title(state) or "devtool"),
+        status=str(item.get("status") or state.status or "idle"),
+        text=str(compact_detail_text(state) or item.get("display_text") or item.get("text") or item.get("summary") or ""),
         percent=percent_value,
-        target=_field_text(item.get("target_summary") or item.get("target"), "name", "target"),
-        phase=_field_text(item.get("phase_name") or item.get("phase"), "name", "phase"),
-        updated_at=str(item.get("updated_at") or ""),
+        target=_field_text(item.get("target_summary") or item.get("target") or state.target, "name", "target"),
+        phase=_field_text(item.get("phase_name") or item.get("phase") or state.phase_name, "name", "phase"),
+        updated_at=str(item.get("updated_at") or state.updated_at or ""),
         log_path=_field_text(item.get("log_path") or item.get("result"), "log_path"),
     ))
+    summary.update({
+        "context": state_context_label(state),
+        "metric_text": state_metric_text(state, events),
+        "errors": errors,
+        "warnings": warnings,
+        "steps": steps,
+        "copy_text": completion_copy_text(state),
+        "detail_title": state.display_title,
+        "detail_text": state.display_text,
+    })
+    return summary
 
 
 def _diagnostics_from_runs_and_events(runs: list[dict[str, Any]], events: list[dict[str, Any]]) -> list[dict[str, Any]]:

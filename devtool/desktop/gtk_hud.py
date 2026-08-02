@@ -8,6 +8,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from ..hud import (
+    compact_detail_text,
+    compact_operation_title,
+    completion_copy_text,
+    live_issue_counts,
+    operation_steps,
+    parse_hud_state,
+    state_context_label,
+    state_metric_text,
+    state_window_title,
+)
 from .hud_store import load_hud_snapshot
 
 
@@ -121,7 +132,7 @@ class Gtk4CompactHud:
             else:
                 window = Gtk.ApplicationWindow(application=app)
             window.set_title("Devtool HUD")
-            window.set_default_size(560, 430)
+            window.set_default_size(620, 500)
             with _suppress_exception():
                 window.set_icon_name("devtool-hud")
                 window.set_resizable(True)
@@ -138,9 +149,20 @@ class Gtk4CompactHud:
             status = Gtk.Label(label="waiting for devtool progress")
             status.set_xalign(0.0)
             status.set_wrap(True)
+            context = Gtk.Label(label="Waiting for target")
+            context.set_xalign(0.0)
+            context.set_wrap(True)
+            with _suppress_exception():
+                context.add_css_class("dim-label")
             progress = Gtk.ProgressBar()
             with _suppress_exception():
                 progress.add_css_class("devtool-progress")
+            metrics = Gtk.FlowBox()
+            metrics.set_selection_mode(Gtk.SelectionMode.NONE)
+            metrics.set_min_children_per_line(2)
+            metrics.set_max_children_per_line(4)
+            metrics.set_column_spacing(8)
+            metrics.set_row_spacing(8)
             phase_strip = Gtk.FlowBox()
             phase_strip.set_selection_mode(Gtk.SelectionMode.NONE)
             phase_strip.set_min_children_per_line(2)
@@ -168,7 +190,9 @@ class Gtk4CompactHud:
             actions.append(close_button)
             box.append(title)
             box.append(status)
+            box.append(context)
             box.append(progress)
+            box.append(metrics)
             box.append(phase_strip)
             box.append(scroller)
             box.append(actions)
@@ -183,24 +207,53 @@ class Gtk4CompactHud:
                 snap = load_hud_snapshot(directory, follow_active=follow_active, recent_events=self.recent_events)
                 state = snap.state
                 events = snap.events
+                hud_state = parse_hud_state(state)
                 pct = state.get("percent")
+                if pct is None:
+                    pct = hud_state.percent
                 try:
                     fraction = max(0.0, min(1.0, float(pct) / 100.0)) if pct is not None else 0.0
                 except (TypeError, ValueError):
                     fraction = 0.0
-                title.set_label(str(state.get("display_title") or state.get("title") or "devtool"))
-                status.set_label(str(state.get("display_text") or state.get("text") or "waiting for devtool progress"))
+                window.set_title(state_window_title(hud_state))
+                title.set_label(compact_operation_title(hud_state) or str(state.get("display_title") or state.get("title") or "devtool"))
+                status.set_label(compact_detail_text(hud_state) or str(state.get("display_text") or state.get("text") or "waiting for devtool progress"))
+                context.set_label(state_context_label(hud_state))
                 progress.set_fraction(fraction)
                 progress.set_show_text(True)
                 progress.set_text(f"{int(round(fraction * 100))}%" if pct is not None else "idle")
                 _set_status_css(progress, str(state.get("status") or "idle"))
+                errors, warnings = live_issue_counts(events, hud_state)
+                _clear_flowbox(Gtk, metrics)
+                _append_phase_card(Gtk, metrics, "Errors", str(errors), "live diagnostics")
+                _append_phase_card(Gtk, metrics, "Warnings", str(warnings), "live diagnostics")
+                _append_phase_card(Gtk, metrics, "Metric", state_metric_text(hud_state, events), "parser metrics")
+                _append_phase_card(Gtk, metrics, "Mode", "autoSizeEnabled", "manualResize ready")
                 _clear_flowbox(Gtk, phase_strip)
-                phases = _phase_cards_from_snapshot(state, snap.phase_highlights)
-                if not phases:
+                steps = operation_steps(hud_state, events)
+                if steps:
+                    for step in steps[:12]:
+                        _append_step_card(Gtk, phase_strip, step.to_dict())
+                else:
+                    phases = _phase_cards_from_snapshot(state, snap.phase_highlights)
+                    if not phases:
+                        phases = [("status", str(state.get("status") or "idle"), str(state.get("phase_name") or state.get("phase") or ""))]
+                    for name, value, subtitle in phases[:8]:
+                        _append_phase_card(Gtk, phase_strip, name, value, subtitle)
+                detail_lines = ["Run", state_context_label(hud_state), state_metric_text(hud_state, events)]
+                if steps:
+                    detail_lines.append("")
+                    detail_lines.append("Pipeline")
+                    for step in steps:
+                        detail_lines.append(f"{step.status}: {step.label} ({step.progress}%)")
+                lanes = _workspace_lanes_from_steps([step.to_dict() for step in steps])
+                if lanes:
+                    detail_lines.append("")
+                    detail_lines.append("workspace lane")
+                    for lane, lane_steps in lanes.items():
+                        detail_lines.append(f"{lane}: " + ", ".join(str(item.get("label") or "") for item in lane_steps))
+                if not steps:
                     phases = [("status", str(state.get("status") or "idle"), str(state.get("phase_name") or state.get("phase") or ""))]
-                for name, value, subtitle in phases[:8]:
-                    _append_phase_card(Gtk, phase_strip, name, value, subtitle)
-                detail_lines = ["Run"]
                 for key in ("repo_name", "target", "phase_name", "status", "updated_at"):
                     value = state.get(key)
                     if value:
@@ -220,11 +273,19 @@ class Gtk4CompactHud:
                         detail_lines.append(f"• {text}")
                 details.get_buffer().set_text("\n".join(detail_lines))
                 last_snapshot.clear()
-                last_snapshot.update({"state": state, "events": events, "phase_highlights": snap.phase_highlights, "diagnostics": diagnostics})
+                last_snapshot.update({
+                    "state": state,
+                    "events": events,
+                    "phase_highlights": snap.phase_highlights,
+                    "diagnostics": diagnostics,
+                    "steps": [step.to_dict() for step in steps],
+                    "copy_text": completion_copy_text(hud_state),
+                })
                 return last_snapshot
 
             def copy_summary(_button: Any) -> None:
-                text = json.dumps(last_snapshot or read(), ensure_ascii=False, indent=2)
+                snap = last_snapshot or read()
+                text = str(snap.get("copy_text") or "") or json.dumps(snap, ensure_ascii=False, indent=2)
                 clipboard = Gtk.Widget.get_clipboard(window)
                 clipboard.set(text)
 
@@ -249,6 +310,12 @@ class Gtk4CompactHud:
             diagnostics_button.connect("clicked", copy_diagnostics)
             log_button.connect("clicked", open_log)
             close_button.connect("clicked", lambda _button: window.close())
+            _install_shortcuts(Gtk, window, {
+                "<Control>c": copy_summary,
+                "<Control>d": copy_diagnostics,
+                "<Control>l": open_log,
+                "Escape": lambda _unused: window.close(),
+            })
             read()
             GLib.timeout_add(poll_ms, lambda: (read(), True)[1])
             window.present()
@@ -296,6 +363,58 @@ def _append_phase_card(Gtk: Any, box: Any, title: str, value: str, subtitle: str
         subtitle_label.set_wrap(True)
         card.append(subtitle_label)
     box.append(card)
+
+
+def _append_step_card(Gtk: Any, box: Any, step: dict[str, Any]) -> None:
+    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    card.set_size_request(138, 78)
+    card.set_margin_top(4)
+    card.set_margin_bottom(4)
+    card.set_margin_start(4)
+    card.set_margin_end(4)
+    with _suppress_exception():
+        card.add_css_class("card")
+    label = Gtk.Label(label=str(step.get("label") or step.get("key") or "step"), xalign=0.0)
+    label.set_wrap(True)
+    status = Gtk.Label(label=str(step.get("status") or "pending"), xalign=0.0)
+    with _suppress_exception():
+        status.add_css_class("dim-label")
+    progress = Gtk.ProgressBar()
+    with _suppress_exception():
+        progress.add_css_class("devtool-progress")
+    try:
+        percent = max(0, min(100, int(step.get("progress") or 0)))
+    except (TypeError, ValueError):
+        percent = 0
+    progress.set_fraction(percent / 100.0)
+    progress.set_show_text(True)
+    progress.set_text(f"{percent}%")
+    _set_status_css(progress, str(step.get("status") or "pending"))
+    card.append(label)
+    card.append(status)
+    card.append(progress)
+    box.append(card)
+
+
+def _workspace_lanes_from_steps(steps: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    lanes: dict[str, list[dict[str, Any]]] = {}
+    for step in steps:
+        label = str(step.get("label") or "")
+        if " · " not in label:
+            continue
+        _base, lane = label.split(" · ", 1)
+        lanes.setdefault(lane, []).append(step)
+    return lanes
+
+
+def _install_shortcuts(Gtk: Any, window: Any, actions: dict[str, Any]) -> None:
+    with _suppress_exception():
+        controller = Gtk.ShortcutController()
+        for trigger_text, callback in actions.items():
+            trigger = Gtk.ShortcutTrigger.parse_string(trigger_text)
+            action = Gtk.CallbackAction.new(lambda _widget, _args, cb=callback: (cb(None), True)[1])
+            controller.add_shortcut(Gtk.Shortcut.new(trigger, action))
+        window.add_controller(controller)
 
 
 def _phase_cards_from_snapshot(state: dict[str, Any], phase_highlights: Any) -> list[tuple[str, str, str]]:

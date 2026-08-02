@@ -163,13 +163,28 @@ class Gtk4ControlCenter:
                 window.set_icon_name("io.github.mikeceead.DevtoolControlCenter")
 
             root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            _install_control_center_css(Gtk, window)
             header = Gtk.HeaderBar()
-            title = Gtk.Label(label="Devtool Control Center")
+            header_title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            title = Gtk.Label(label="Devtool")
+            title.set_xalign(0.0)
             with _suppress_exception():
                 title.add_css_class("title-2")
-            header.set_title_widget(title)
+            repo_status = Gtk.Label(label="Loading repository state")
+            repo_status.set_xalign(0.0)
+            with _suppress_exception():
+                repo_status.add_css_class("dim-label")
+            header_title.append(title)
+            header_title.append(repo_status)
+            header.set_title_widget(header_title)
+            ipc_status = Gtk.Label(label="IPC idle")
+            with _suppress_exception():
+                ipc_status.add_css_class("devtool-status-pill")
+            hud_button = Gtk.Button(label="Open HUD")
             refresh_button = Gtk.Button(label="Refresh")
             header.pack_end(refresh_button)
+            header.pack_end(hud_button)
+            header.pack_end(ipc_status)
             root.append(header)
 
             body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -225,6 +240,7 @@ class Gtk4ControlCenter:
 
             def render() -> bool:
                 payload = current_snapshot()
+                _update_header(repo_status, ipc_status, payload)
                 _render_overview(Gtk, pages["overview"], payload)
                 _render_runs(Gtk, pages["runs"], payload)
                 _render_history(Gtk, pages["history"], payload)
@@ -244,10 +260,12 @@ class Gtk4ControlCenter:
 
             nav.connect("row-selected", on_row_selected)
             refresh_button.connect("clicked", lambda _button: render())
+            hud_button.connect("clicked", lambda _button: _launch_hud(state_dir, follow_active))
             render()
             if selected_page in nav_rows:
                 nav.select_row(nav_rows[selected_page])
             stack.set_visible_child_name(selected_page)
+            _install_navigation_shortcuts(Gtk, window, stack, nav, nav_rows)
             GLib.timeout_add(poll_ms, render)
             window.present()
 
@@ -268,6 +286,77 @@ _PAGE_KEYS = {
     "run": "Run",
     "settings": "Settings",
 }
+
+
+def _update_header(repo_status: Any, ipc_status: Any, payload: dict[str, Any]) -> None:
+    repo = payload.get("repository", {}) if isinstance(payload.get("repository"), dict) else {}
+    project = payload.get("project", {}) if isinstance(payload.get("project"), dict) else {}
+    repo_bits = [
+        str(Path(str(repo.get("path") or ".")).name),
+        str(project.get("selected_target") or "auto"),
+        "dirty" if repo.get("dirty") else "clean",
+    ]
+    repo_status.set_label(" · ".join(bit for bit in repo_bits if bit))
+    ipc = payload.get("ipc", {}) if isinstance(payload.get("ipc"), dict) else {}
+    ipc_status.set_label("IPC connected" if ipc.get("ok") else "IPC fallback")
+
+
+def _launch_hud(state_dir: Path | str, follow_active: bool) -> None:
+    launcher = shutil.which("devtool-gtk-hud") or shutil.which("devtool")
+    if not launcher:
+        return
+    argv = [launcher]
+    if Path(launcher).name == "devtool":
+        argv.extend(["hud", "--mode", "desktop-window"])
+    argv.extend(["--state-dir", str(state_dir)])
+    if follow_active:
+        argv.append("--follow-active")
+    subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _install_control_center_css(Gtk: Any, window: Any) -> None:
+    css = b"""
+    .devtool-status-pill {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background-color: alpha(@accent_bg_color, 0.18);
+    }
+    progressbar.devtool-progress trough {
+      min-height: 16px;
+      border-radius: 4px;
+      background-color: alpha(@window_fg_color, 0.18);
+    }
+    progressbar.devtool-progress progress {
+      min-height: 16px;
+      border-radius: 4px;
+      background-color: #1c71d8;
+    }
+    """
+    with _suppress_exception():
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_display(window.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+
+def _install_navigation_shortcuts(Gtk: Any, window: Any, stack: Any, nav: Any, nav_rows: dict[str, Any]) -> None:
+    keys = list(_PAGE_KEYS)
+    with _suppress_exception():
+        controller = Gtk.ShortcutController()
+        for index, key in enumerate(keys[:9], start=1):
+            for prefix in ("<Control>", "<Alt>"):
+                trigger = Gtk.ShortcutTrigger.parse_string(f"{prefix}{index}")
+                action = Gtk.CallbackAction.new(lambda _widget, _args, page=key: (_select_page(stack, nav, nav_rows, page), True)[1])
+                controller.add_shortcut(Gtk.Shortcut.new(trigger, action))
+        trigger = Gtk.ShortcutTrigger.parse_string("F9")
+        action = Gtk.CallbackAction.new(lambda _widget, _args: (_select_page(stack, nav, nav_rows, "runs"), True)[1])
+        controller.add_shortcut(Gtk.Shortcut.new(trigger, action))
+        window.add_controller(controller)
+
+
+def _select_page(stack: Any, nav: Any, nav_rows: dict[str, Any], page: str) -> None:
+    if page in nav_rows:
+        nav.select_row(nav_rows[page])
+    stack.set_visible_child_name(page)
 
 
 def _clear(Gtk: Any, box: Any) -> None:
@@ -322,6 +411,71 @@ def _append_card(Gtk: Any, box: Any, title: str, value: str, subtitle: str = "")
         with _suppress_exception():
             subtitle_label.add_css_class("dim-label")
         card.append(subtitle_label)
+    box.append(card)
+
+
+def _append_progress(Gtk: Any, box: Any, percent: Any, status: str = "") -> None:
+    bar = Gtk.ProgressBar()
+    with _suppress_exception():
+        bar.add_css_class("devtool-progress")
+    try:
+        value = max(0.0, min(1.0, float(percent) / 100.0)) if percent is not None else 0.0
+    except (TypeError, ValueError):
+        value = 0.0
+    bar.set_fraction(value)
+    bar.set_show_text(True)
+    bar.set_text(f"{int(round(value * 100))}%" if percent is not None else (status or "idle"))
+    box.append(bar)
+
+
+def _append_run_card(Gtk: Any, box: Any, run: dict[str, Any]) -> None:
+    _append_subheading(Gtk, box, str(run.get("title") or "devtool"))
+    _append_text(Gtk, box, str(run.get("text") or run.get("detail_text") or "Waiting for progress"))
+    _append_progress(Gtk, box, run.get("percent"), str(run.get("status") or "idle"))
+    _append_metric_strip(Gtk, box, [
+        ("Status", str(run.get("status") or "idle"), str(run.get("phase") or "")),
+        ("Errors", str(run.get("errors") or 0), "live diagnostics"),
+        ("Warnings", str(run.get("warnings") or 0), "live diagnostics"),
+        ("Metric", str(run.get("metric_text") or "-"), str(run.get("context") or "")),
+    ])
+    steps = run.get("steps") if isinstance(run.get("steps"), list) else []
+    if steps:
+        strip = Gtk.FlowBox()
+        strip.set_selection_mode(Gtk.SelectionMode.NONE)
+        strip.set_min_children_per_line(2)
+        strip.set_max_children_per_line(5)
+        strip.set_column_spacing(8)
+        strip.set_row_spacing(8)
+        for step in steps[:12]:
+            if isinstance(step, dict):
+                _append_step_card(Gtk, strip, step)
+        box.append(strip)
+    _append_rows(Gtk, box, [
+        ("Run ID", str(run.get("run_id") or "")),
+        ("Target", str(run.get("target") or "")),
+        ("Phase", str(run.get("phase") or "")),
+        ("Updated", str(run.get("updated_at") or "")),
+        ("Log", str(run.get("log_path") or "")),
+    ])
+
+
+def _append_step_card(Gtk: Any, box: Any, step: dict[str, Any]) -> None:
+    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    card.set_size_request(132, 78)
+    card.set_margin_top(4)
+    card.set_margin_bottom(4)
+    card.set_margin_start(4)
+    card.set_margin_end(4)
+    with _suppress_exception():
+        card.add_css_class("card")
+    label = Gtk.Label(label=str(step.get("label") or step.get("key") or "step"), xalign=0.0)
+    label.set_wrap(True)
+    status = Gtk.Label(label=str(step.get("status") or "pending"), xalign=0.0)
+    with _suppress_exception():
+        status.add_css_class("dim-label")
+    card.append(label)
+    card.append(status)
+    _append_progress(Gtk, card, step.get("progress"), str(step.get("status") or "pending"))
     box.append(card)
 
 
@@ -409,6 +563,14 @@ def _render_overview(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     runs = payload.get("active_runs", [])
     diagnostics = payload.get("diagnostics", [])
     _append_heading(Gtk, box, "Overview")
+    _append_subheading(Gtk, box, "Next action")
+    next_action = "Review active run" if runs else "Validate repository"
+    _append_text(Gtk, box, f"{next_action} · {str(project.get('selected_target') or 'auto')}")
+    _append_button_row(Gtk, box, [
+        ("Build workflow", None),
+        ("Open HUD", lambda _button: _launch_hud(str(payload.get("hud", {}).get("directory") or DEFAULT_TASKER_DIR), bool(payload.get("settings", {}).get("follow_active")))),
+        ("Copy repository path", _copy_text_callback(Gtk, box, str(repo.get("path") or ""))),
+    ])
     _append_metric_strip(Gtk, box, [
         ("Active runs", str(len(runs)), str(runs[0].get("status", "")) if runs and isinstance(runs[0], dict) else "idle"),
         ("Diagnostics", str(len(diagnostics)), _severity_summary(diagnostics)),
@@ -448,30 +610,23 @@ def _render_runs(Gtk: Any, box: Any, payload: dict[str, Any], *, embedded: bool 
     for run in runs:
         if not isinstance(run, dict):
             continue
-        _append_text(Gtk, box, f"{run.get('status', 'idle')} · {run.get('title', 'devtool')} · {run.get('percent', '-')}%")
-        percent = run.get("percent")
-        bar = Gtk.ProgressBar()
-        try:
-            bar.set_fraction(max(0.0, min(1.0, float(percent) / 100.0)) if percent is not None else 0.0)
-        except (TypeError, ValueError):
-            bar.set_fraction(0.0)
-        bar.set_show_text(True)
-        bar.set_text(f"{percent}%" if percent is not None else str(run.get("status") or "idle"))
-        box.append(bar)
-        _append_rows(Gtk, box, [
-            ("Run ID", str(run.get("run_id") or "")),
-            ("Target", str(run.get("target") or "")),
-            ("Phase", str(run.get("phase") or "")),
-            ("Summary", str(run.get("text") or "")),
-            ("Updated", str(run.get("updated_at") or "")),
-            ("Log", str(run.get("log_path") or "")),
-        ])
+        _append_run_card(Gtk, box, run)
 
 
 def _render_history(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "History")
-    _append_search_bar(Gtk, box, "Search artifacts, commits, hashes, commands")
+    filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    search = Gtk.SearchEntry()
+    search.set_placeholder_text("Search artifacts, commits, hashes, commands")
+    search.set_hexpand(True)
+    status_filter = Gtk.ComboBoxText()
+    for value, label in (("all", "All statuses"), ("ok", "Succeeded"), ("failed", "Failed"), ("paused", "Paused")):
+        status_filter.append(value, label)
+    status_filter.set_active_id("all")
+    filters.append(search)
+    filters.append(status_filter)
+    box.append(filters)
     history = payload.get("history", [])
     if not history:
         _append_text(Gtk, box, "No artifact history entries were found in this repository.")
@@ -500,7 +655,16 @@ def _render_history(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
 def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "Artifacts")
-    _append_text(Gtk, box, "Recent overlays and bundles are indexed from desktop history and the active HUD snapshot.")
+    inputs = Gtk.Grid(column_spacing=8, row_spacing=8)
+    artifact_entry = Gtk.Entry()
+    artifact_entry.set_placeholder_text("Artifact path, overlay bundle, or manifest")
+    repo_entry = Gtk.Entry()
+    repo_entry.set_placeholder_text("Repository override")
+    inputs.attach(Gtk.Label(label="Artifact", xalign=0.0), 0, 0, 1, 1)
+    inputs.attach(artifact_entry, 1, 0, 1, 1)
+    inputs.attach(Gtk.Label(label="Repository", xalign=0.0), 0, 1, 1, 1)
+    inputs.attach(repo_entry, 1, 1, 1, 1)
+    box.append(inputs)
     _append_search_bar(Gtk, box, "Filter by artifact name, package, version, SHA-256")
     history = [item for item in payload.get("history", []) if isinstance(item, dict)]
     hud_state = payload.get("hud", {}).get("state", {}) if isinstance(payload.get("hud"), dict) else {}
@@ -510,6 +674,28 @@ def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     if not candidates:
         _append_text(Gtk, box, "No artifacts have been recorded yet.")
         return
+    metric_item = candidates[0] if isinstance(candidates[0], dict) else {}
+    _append_metric_strip(Gtk, box, [
+        ("FILES", str(metric_item.get("file_count") or metric_item.get("paths") or "-"), "inventory"),
+        ("ADDED", str(metric_item.get("added") or "-"), "change set"),
+        ("MODIFIED", str(metric_item.get("modified") or "-"), "change set"),
+        ("Validation", str(metric_item.get("validation") or metric_item.get("status") or "-"), "manifest"),
+    ])
+    notebook = Gtk.Notebook()
+    notebook.set_hexpand(True)
+    notebook.set_vexpand(False)
+    for tab_name in ("Summary", "Inventory", "Manifest", "Diff"):
+        page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page_box.set_margin_top(8)
+        page_box.set_margin_bottom(8)
+        page_box.set_margin_start(8)
+        page_box.set_margin_end(8)
+        if tab_name == "Summary":
+            _append_rows(Gtk, page_box, [("Candidates", str(len(candidates))), ("Selected", str(metric_item.get("artifact") or metric_item.get("artifact_name") or metric_item.get("title") or "artifact"))])
+        else:
+            _append_text(Gtk, page_box, json.dumps(metric_item, ensure_ascii=False, indent=2) if metric_item else f"No {tab_name.lower()} data yet.")
+        notebook.append_page(page_box, Gtk.Label(label=tab_name))
+    box.append(notebook)
     for item in candidates[:20]:
         title = str(item.get("artifact") or item.get("artifact_name") or item.get("name") or item.get("title") or "artifact")
         _append_subheading(Gtk, box, title)
@@ -540,7 +726,17 @@ def _render_diagnostics(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("Info", str(_count_severity(diagnostics, "info")), "context"),
         ("Total", str(len(diagnostics)), "latest active run"),
     ])
-    _append_search_bar(Gtk, box, "Filter diagnostics by message, file, phase, code")
+    filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    search = Gtk.SearchEntry()
+    search.set_placeholder_text("Filter diagnostics by message, file, phase, code")
+    search.set_hexpand(True)
+    severity = Gtk.ComboBoxText()
+    for value, label in (("all", "Severity: all"), ("error", "Errors"), ("warning", "Warnings"), ("info", "Info")):
+        severity.append(value, label)
+    severity.set_active_id("all")
+    filters.append(search)
+    filters.append(severity)
+    box.append(filters)
     if not diagnostics:
         _append_text(Gtk, box, "No warnings or errors are currently reported by the active run.")
         return
@@ -568,7 +764,7 @@ def _render_diagnostics(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
 
 def _render_repositories(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
-    _append_heading(Gtk, box, "Repository")
+    _append_heading(Gtk, box, "Repository manager")
     repo = payload.get("repository", {})
     _append_metric_strip(Gtk, box, [
         ("Branch", str(repo.get("branch") or "-"), str(repo.get("head") or "")[:12]),
@@ -583,7 +779,12 @@ def _render_repositories(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("Head", str(repo.get("head") or "")),
         ("Dirty", "yes" if repo.get("dirty") else "no"),
     ])
-    _append_button_row(Gtk, box, [("Add current repository", None), ("Open terminal here", None), ("Refresh git state", None)])
+    _append_button_row(Gtk, box, [
+        ("Add current repository", None),
+        ("Open terminal here", _open_path_callback(str(repo.get("path") or ""))),
+        ("Refresh git state", None),
+        ("Copy repo path", _copy_text_callback(Gtk, box, str(repo.get("path") or ""))),
+    ])
 
 
 def _render_targets(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
@@ -868,7 +1069,20 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("Recent events", str(settings.get("recent_events") or 0)),
     ])
     _append_subheading(Gtk, box, "Desktop behavior")
-    _append_button_row(Gtk, box, [("Follow active run", None), ("Enable clipboard monitor", None), ("Compact HUD", None)])
+    toggles = Gtk.FlowBox()
+    toggles.set_selection_mode(Gtk.SelectionMode.NONE)
+    for label, active in (
+        ("Follow active run", bool(settings.get("follow_active"))),
+        ("Clipboard monitor", False),
+        ("Keep HUD above windows", True),
+        ("Persist history", True),
+    ):
+        check = Gtk.CheckButton(label=label)
+        check.set_active(active)
+        check.set_sensitive(False)
+        toggles.append(check)
+    box.append(toggles)
+    _append_button_row(Gtk, box, [("Follow active run", None), ("Enable clipboard monitor", None), ("Compact HUD", lambda _button: _launch_hud(str(hud.get("directory") or DEFAULT_TASKER_DIR), bool(settings.get("follow_active"))))])
     _append_text(Gtk, box, "The Run workflow is handled by the GTK4 typed command page. It builds argv first and renders shell text only for review/copy.")
 
 
