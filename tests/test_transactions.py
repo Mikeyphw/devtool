@@ -51,6 +51,30 @@ class TransactionalApplyTests(unittest.TestCase):
             self.assertFalse((root / ".devtool" / "transactions").exists())
             self.assertFalse(any(transaction_root(root).glob("*/backup")))
 
+    def test_apply_overlay_explicit_validate_overrides_manifest_disabled_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            (root / ".git").mkdir()
+            (root / "file.txt").write_text("old\n", encoding="utf-8")
+            self._write_generic_config(root, restore="exit 1")
+            artifact = Path(tmp) / "overlay.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {"required": False, "mode": "disabled"},
+            }
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr(".devtool-artifact.json", __import__("json").dumps(manifest))
+                zf.writestr("file.txt", "new\n")
+
+            with patch("devtool.cli.render_summary"):
+                rc = main(["--repo", str(root), "--yes", "--no-clipboard", "apply-overlay", "--validate", str(artifact)])
+
+            self.assertEqual(rc, 1)
+            self.assertEqual((root / "file.txt").read_text(encoding="utf-8"), "old\n")
+            self.assertIsNone(find_active_transaction(root))
+
     def test_stale_apply_transaction_is_restored_before_next_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):
             root = Path(tmp) / "repo"

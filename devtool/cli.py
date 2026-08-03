@@ -1755,6 +1755,12 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
 
 def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
     """Apply manifest defaults while preserving explicit CLI precedence."""
+    cli_requested_validation = bool(
+        getattr(args, "validate", False)
+        or getattr(args, "validate_only", False)
+        or getattr(args, "defer_validate", False)
+        or getattr(args, "static_validate", False)
+    )
     if getattr(args, "command", "") not in APPLY_COMMANDS:
         return
     artifacts = _artifact_arg_list(getattr(args, "artifact", ""))
@@ -1775,17 +1781,19 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
     validation = artifact_validation_policy(manifest)
     if validation and not getattr(args, "no_validate", False) and not preview_only:
         if (
-            not getattr(args, "defer_validate", False)
+            not cli_requested_validation
+            and not getattr(args, "defer_validate", False)
             and bool(validation.get("required", False))
             and not getattr(args, "validate_only", False)
         ):
             args.validate = True
-        if not bool(validation.get("restore", True)):
-            args.skip_restore = True
-        if not bool(validation.get("build", True)):
-            args.skip_build = True
-        if not bool(validation.get("test", True)):
-            args.skip_test = True
+        if not cli_requested_validation:
+            if not bool(validation.get("restore", True)):
+                args.skip_restore = True
+            if not bool(validation.get("build", True)):
+                args.skip_build = True
+            if not bool(validation.get("test", True)):
+                args.skip_test = True
     if getattr(args, "no_validate", False) or getattr(args, "defer_validate", False):
         args.validate = False
 

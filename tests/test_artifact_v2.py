@@ -65,6 +65,34 @@ class ArtifactV2Tests(unittest.TestCase):
             self.assertFalse(args.validate)
             self.assertEqual(args.commit, "")
 
+    def test_explicit_validate_overrides_manifest_disabled_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "overlay.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {
+                    "required": False,
+                    "mode": "disabled",
+                    "restore": True,
+                    "build": True,
+                    "test": True,
+                },
+            }
+            write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), "file.txt": b"ok"})
+
+            parser = build_parser()
+            args = parser.parse_args(["apply-overlay", str(archive), "--validate", "--task", ":app:testReleaseUnitTest"])
+            _normalize_command_aliases(args)
+            args._devtool_cli_target_explicit = False
+            args._devtool_cli_solution_explicit = False
+            _apply_artifact_manifest_defaults(args)
+
+            self.assertTrue(args.validate)
+            self.assertFalse(args.skip_restore)
+            self.assertFalse(args.skip_build)
+            self.assertFalse(args.skip_test)
+
 
     def test_overlay_can_create_first_solution_and_auto_register_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
