@@ -1,5 +1,11 @@
 # Changelog
 
+## Desktop HUD and Control Center phase 6-7
+
+- Replaced the Control Center Run page shell launch with a direct argv process launcher that assigns a stable desktop run id, captures live stdout/stderr, writes redacted per-run logs, and supports graceful cancel plus force-cancel through the process group.
+- Added persisted desktop preferences for window size, selected Control Center page, appearance, and reduced motion.
+- Added Adwaita appearance hooks, semantic accent colors, keyboard shortcuts, accessibility labels, and reduced-motion handling for the GTK Control Center and HUD.
+
 ## Chroot Gradle graph transport and completion fallback
 
 - Preserved `DEVTOOL_RUN_ID` explicitly through the Termux-host `sudo/chrootctl` toolchain wrapper so structured Gradle graph events are accepted by the host progress tracker.

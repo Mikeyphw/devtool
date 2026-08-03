@@ -15,8 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y python3-gi python3-rich gir1.2-gtk-4.0 gir1.2-adw-1 libgtk-4-1 libadwaita-1-0 dpkg-dev
+      - run: sudo apt-get update && sudo apt-get install -y xvfb python3-gi python3-rich gir1.2-gtk-4.0 gir1.2-adw-1 libgtk-4-1 libadwaita-1-0 dpkg-dev
       - run: python3 -m devtool control-center --backend gtk4 --once
+      - run: xvfb-run -a python3 -m devtool control-center --backend gtk4 --startup-test
+      - run: xvfb-run -a -s "-screen 0 1024x722x24" env DEVTOOL_GTK_THREAD_GUARD=1 DEVTOOL_DESKTOP_ASSERT_CONSTRAINED_LAYOUT=1 python3 -m devtool control-center --backend gtk4 --startup-test
+      - run: xvfb-run -a python3 -m devtool.desktop.gtk_hud_cli --startup-test --state-dir .devtool/ci-hud
+      - run: xvfb-run -a -s "-screen 0 1024x722x24" env DEVTOOL_GTK_THREAD_GUARD=1 DEVTOOL_DESKTOP_ASSERT_CONSTRAINED_LAYOUT=1 python3 -m devtool.desktop.gtk_hud_cli --startup-test --state-dir .devtool/ci-hud-short
       - run: desktop/gtk-control-center/package-deb.sh --verify
       - run: mkdir -p dist/release && cp desktop/gtk-control-center/dist/devtool-control-center_*_all.deb dist/release/desktop-first.deb
       - run: rm -rf desktop/gtk-control-center/dist && desktop/gtk-control-center/package-deb.sh --verify

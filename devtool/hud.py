@@ -854,12 +854,191 @@ def completion_copy_text(state: HudState) -> str:
     return "\n".join(lines).strip()
 
 
+
+
+@dataclass(slots=True)
+class HudDiagnostic:
+    severity: str
+    message: str
+    code: str = ""
+    phase: str = ""
+    file: str = ""
+    source: str = "runtime"
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "severity": self.severity,
+            "message": self.message,
+            "code": self.code,
+            "phase": self.phase,
+            "file": self.file,
+            "source": self.source,
+        }
+
+
+def _diagnostic_severity(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    if normalized in {"error", "failed", "failure", "fatal"}:
+        return "error"
+    if normalized in {"warning", "warn"}:
+        return "warning"
+    if normalized in {"info", "notice", "debug"}:
+        return "info"
+    return "info"
+
+
+def _diagnostic_message(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("detail") or value.get("message") or value.get("text") or value.get("summary") or "").strip()
+
+
+def canonical_diagnostics(events: Iterable[dict[str, Any]], state: HudState) -> list[dict[str, str]]:
+    """Return deduplicated canonical diagnostics for desktop and HUD surfaces.
+
+    The state snapshot is the primary source of truth because runners can emit
+    exact diagnostic objects and totals there.  Events are used as a fallback for
+    live compiler/progress lines.  Parser-only summary observations are not
+    mixed into this list unless no structured diagnostic exists for the same
+    message, preventing the HUD from showing one count in the header and another
+    in the details pane.
+    """
+    collected: list[HudDiagnostic] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+
+    def append(raw: Any, *, phase: str = "", source: str = "runtime") -> None:
+        if not isinstance(raw, dict):
+            return
+        message = _diagnostic_message(raw)
+        if not message:
+            return
+        severity = _diagnostic_severity(raw.get("severity") or raw.get("level") or raw.get("type"))
+        if severity == "info" and source == "event":
+            # Plain progress events are not diagnostics.  They stay in the raw
+            # log and parser-observation counters.
+            return
+        item = HudDiagnostic(
+            severity=severity,
+            message=message,
+            code=str(raw.get("code") or ""),
+            phase=str(raw.get("phase") or phase or ""),
+            file=str(raw.get("file") or raw.get("path") or ""),
+            source=source,
+        )
+        key = (item.severity, item.code, item.phase, item.file, re.sub(r"\s+", " ", item.message).casefold())
+        if key in seen:
+            return
+        seen.add(key)
+        collected.append(item)
+
+    raw = state.raw if isinstance(state.raw, dict) else {}
+    for issue in raw.get("diagnostics", []) if isinstance(raw.get("diagnostics"), list) else []:
+        append(issue, phase=str(raw.get("phase_name") or raw.get("phase") or ""), source="state")
+    for result in raw.get("results", []) if isinstance(raw.get("results"), list) else []:
+        if not isinstance(result, dict):
+            continue
+        phase = str(result.get("name") or result.get("phase") or "")
+        for key in ("diagnostics", "issues", "errors", "warnings"):
+            for issue in result.get(key, []) if isinstance(result.get(key), list) else []:
+                append(issue, phase=phase, source="result")
+    completion = completion_from_state(state)
+    for issue in completion.get("diagnostics", []) if isinstance(completion.get("diagnostics"), list) else []:
+        append(issue, phase=str(completion.get("phase") or "completion"), source="completion")
+    for text in completion.get("warning_details", []) if isinstance(completion.get("warning_details"), list) else []:
+        append({"severity": "warning", "message": str(text)}, phase="completion", source="completion")
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event_is_error(event):
+            append({**event, "severity": "error"}, source="event")
+        elif event_is_warning(event):
+            append({**event, "severity": "warning"}, source="event")
+
+    return [item.to_dict() for item in collected]
+
+
+def canonical_issue_counts(events: Iterable[dict[str, Any]], state: HudState) -> tuple[int, int]:
+    """Return the canonical visible error/warning counts for the current run."""
+    events_list = list(events)
+    diagnostics = canonical_diagnostics(events_list, state)
+    diag_errors = sum(1 for item in diagnostics if item.get("severity") == "error")
+    diag_warnings = sum(1 for item in diagnostics if item.get("severity") == "warning")
+
+    explicit_errors = 0
+    explicit_warnings = 0
+    raw = state.raw if isinstance(state.raw, dict) else {}
+    raw_totals = raw.get("totals") if isinstance(raw.get("totals"), dict) else {}
+    explicit_errors = max(explicit_errors, int(_coerce_int(raw_totals.get("errors") or raw_totals.get("failed")) or 0))
+    explicit_warnings = max(explicit_warnings, int(_coerce_int(raw_totals.get("warnings")) or 0))
+    phase_progress = raw.get("phase_progress") if isinstance(raw.get("phase_progress"), list) else []
+    for item in phase_progress:
+        if not isinstance(item, dict):
+            continue
+        explicit_errors = max(explicit_errors, int(_coerce_int(item.get("errors")) or 0))
+        explicit_warnings = max(explicit_warnings, int(_coerce_int(item.get("warnings")) or 0))
+    completion = completion_from_state(state)
+    explicit_errors = max(explicit_errors, int(completion.get("errors", 0) or 0), int(completion.get("failed", 0) or 0))
+    explicit_warnings = max(explicit_warnings, int(completion.get("warnings", 0) or 0))
+
+    # Fall back to event parsing only when structured diagnostics/totals are
+    # absent. This preserves live compiler feedback without contradicting the
+    # canonical totals emitted at completion.
+    if explicit_errors == 0 and explicit_warnings == 0 and diag_errors == 0 and diag_warnings == 0:
+        parsed_errors, parsed_warnings = _parser_observation_counts(events_list, state)
+        explicit_errors = max(explicit_errors, parsed_errors)
+        explicit_warnings = max(explicit_warnings, parsed_warnings)
+
+    error_count = max(explicit_errors, diag_errors, 1 if state.status == "failed" else 0)
+    warning_count = max(explicit_warnings, diag_warnings)
+    return error_count, warning_count
+
+
+def _parser_observation_counts(events: Iterable[dict[str, Any]], state: HudState) -> tuple[int, int]:
+    errors: set[str] = set()
+    warnings: set[str] = set()
+    explicit_errors = 0
+    explicit_warnings = 0
+    summary_re = re.compile(r"(?P<count>\d+)\s+(?P<kind>warning|error)\(s\)", re.I)
+    for event in events:
+        totals = event.get("totals") if isinstance(event.get("totals"), dict) else {}
+        explicit_errors = max(explicit_errors, int(_coerce_int(totals.get("errors") or totals.get("failed")) or 0))
+        explicit_warnings = max(explicit_warnings, int(_coerce_int(totals.get("warnings")) or 0))
+        message = _event_message(event).strip()
+        for match in summary_re.finditer(message):
+            count = int(match.group("count"))
+            if match.group("kind").lower().startswith("error"):
+                explicit_errors = max(explicit_errors, count)
+            else:
+                explicit_warnings = max(explicit_warnings, count)
+        normalized = re.sub(r"\s+", " ", message).casefold()
+        event_type = _coerce_str(event.get("event_type") or event.get("type")).lower().replace("_", "-")
+        if normalized and event_type not in {"phase-finished", "finished"}:
+            if event_is_error(event) and normalized not in {"devtool finished with errors", "step failed"}:
+                errors.add(normalized)
+            elif event_is_warning(event):
+                warnings.add(normalized)
+    return max(explicit_errors, len(errors), 1 if state.status == "failed" else 0), max(explicit_warnings, len(warnings))
+
+
+def primary_failure_message(events: Iterable[dict[str, Any]], state: HudState) -> str:
+    diagnostics = canonical_diagnostics(events, state)
+    for item in diagnostics:
+        if item.get("severity") == "error" and item.get("message"):
+            return str(item.get("message"))
+    for event in reversed(list(events)):
+        text = str(event.get("message") or event.get("text") or "").strip() if isinstance(event, dict) else ""
+        if text and ("error" in text.lower() or "failed" in text.lower()):
+            return text
+    return compact_detail_text(state) or str(state.raw.get("text") or "The last operation reported a failure.") if isinstance(state.raw, dict) else "The last operation reported a failure."
+
 @dataclass(slots=True)
 class HudOperationStep:
     key: str
     label: str
     status: str = "pending"
     progress: int = 0
+    detail: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -867,6 +1046,7 @@ class HudOperationStep:
             "label": self.label,
             "status": self.status,
             "progress": max(0, min(100, int(self.progress))),
+            "detail": self.detail,
         }
 
 
@@ -1122,8 +1302,15 @@ def operation_steps(state: HudState, events: Iterable[dict[str, Any]]) -> list[H
     if terminal:
         for base, scope in descriptors:
             instance = _step_instance_key(base, scope)
-            statuses.setdefault(instance, "skipped")
-            progresses.setdefault(instance, 100 if statuses[instance] != "pending" else 0)
+            if instance not in statuses:
+                statuses[instance] = "skipped"
+            status = statuses.get(instance, "pending")
+            if status == "skipped":
+                progresses.setdefault(instance, 0)
+            elif status in {"ok", "failed"}:
+                progresses.setdefault(instance, 100)
+            else:
+                progresses.setdefault(instance, 0)
 
     # Generic placeholders are replaced once target-scoped equivalents exist.
     scoped_bases = {base for base, scope in descriptors if scope}
@@ -1140,64 +1327,15 @@ def operation_steps(state: HudState, events: Iterable[dict[str, Any]]) -> list[H
             _step_display_label(base, scope),
             statuses.get(_step_instance_key(base, scope), "pending"),
             progresses.get(_step_instance_key(base, scope), 0),
+            "Repository restored" if base == "rollback" and statuses.get(_step_instance_key(base, scope)) in {"ok", "success", "complete", "completed"} else "Not run" if statuses.get(_step_instance_key(base, scope), "pending") == "skipped" else "",
         )
         for base, scope in descriptors
     ]
 
 
 def live_issue_counts(events: Iterable[dict[str, Any]], state: HudState) -> tuple[int, int]:
-    """Return live warning/error counts for the current run.
-
-    Explicit totals emitted by runners win. Otherwise unique diagnostic lines
-    are counted, preventing repeated summary/final events from inflating the
-    HUD while still updating immediately as compiler output arrives.
-    """
-    errors: set[str] = set()
-    warnings: set[str] = set()
-    explicit_errors = 0
-    explicit_warnings = 0
-    summary_re = re.compile(r"(?P<count>\d+)\s+(?P<kind>warning|error)\(s\)", re.I)
-    for event in events:
-        totals = event.get("totals") if isinstance(event.get("totals"), dict) else {}
-        explicit_errors = max(explicit_errors, int(_coerce_int(totals.get("errors") or totals.get("failed")) or 0))
-        explicit_warnings = max(explicit_warnings, int(_coerce_int(totals.get("warnings")) or 0))
-        message = _event_message(event).strip()
-        for match in summary_re.finditer(message):
-            count = int(match.group("count"))
-            if match.group("kind").lower().startswith("error"):
-                explicit_errors = max(explicit_errors, count)
-            else:
-                explicit_warnings = max(explicit_warnings, count)
-        normalized = re.sub(r"\s+", " ", message).casefold()
-        event_type = _coerce_str(event.get("event_type") or event.get("type")).lower().replace("_", "-")
-        if normalized and event_type not in {"phase-finished", "finished"}:
-            if event_is_error(event) and normalized not in {"devtool finished with errors", "step failed"}:
-                errors.add(normalized)
-            elif event_is_warning(event):
-                warnings.add(normalized)
-    # The state snapshot is authoritative and contains live phase counters even
-    # when the Android forwarder deliberately avoids reparsing the full JSONL
-    # history on every refresh.
-    raw = state.raw if isinstance(state.raw, dict) else {}
-    raw_totals = raw.get("totals") if isinstance(raw.get("totals"), dict) else {}
-    explicit_errors = max(
-        explicit_errors,
-        int(_coerce_int(raw_totals.get("errors") or raw_totals.get("failed")) or 0),
-    )
-    explicit_warnings = max(explicit_warnings, int(_coerce_int(raw_totals.get("warnings")) or 0))
-    phase_progress = raw.get("phase_progress") if isinstance(raw.get("phase_progress"), list) else []
-    for item in phase_progress:
-        if not isinstance(item, dict):
-            continue
-        explicit_errors = max(explicit_errors, int(_coerce_int(item.get("errors")) or 0))
-        explicit_warnings = max(explicit_warnings, int(_coerce_int(item.get("warnings")) or 0))
-
-    completion = completion_from_state(state)
-    explicit_errors = max(explicit_errors, int(completion.get("errors", 0) or 0), int(completion.get("failed", 0) or 0))
-    explicit_warnings = max(explicit_warnings, int(completion.get("warnings", 0) or 0))
-    error_count = max(explicit_errors, len(errors), 1 if state.status == "failed" else 0)
-    warning_count = max(explicit_warnings, len(warnings))
-    return error_count, warning_count
+    """Return canonical visible warning/error counts for the current run."""
+    return canonical_issue_counts(events, state)
 
 
 def pipeline_label(state: HudState, highlights: dict[str, str]) -> str:
@@ -1229,18 +1367,16 @@ def state_context_label(state: HudState) -> str:
 
 def state_metric_text(state: HudState, events: Iterable[dict[str, Any]]) -> str:
     completion = completion_from_state(state)
-    if completion:
-        return str(completion.get("detail") or completion.get("headline") or "Completed")
-    summary = hud_event_summary(events)
-    errors = summary.get("errors", 0)
-    warnings = summary.get("warnings", 0)
-    if state.status == "failed" and errors == 0:
-        errors = 1
+    errors, warnings = canonical_issue_counts(events, state)
     parts = [f"{errors} errors", f"{warnings} warnings"]
-    if state.percent is not None:
+    if completion and str(completion.get("detail") or "").strip():
+        parts.append(str(completion.get("detail")))
+    elif state.percent is not None:
         parts.append(f"{state.percent}%")
-    elif summary.get("events", 0):
-        parts.append(f"{summary['events']} events")
+    else:
+        summary = hud_event_summary(events)
+        if summary.get("events", 0):
+            parts.append(f"{summary['events']} events")
     return " · ".join(parts)
 
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from ..tasker import DEFAULT_TASKER_DIR
 from .gtk_control_center import Gtk4ControlCenter
+from .gtk_runtime import report_cli_exception
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,9 +19,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--history-limit", type=int, default=25, help="Artifact history rows to load")
     parser.add_argument("--recent-events", type=int, default=8, help="Recent HUD events to load")
     parser.add_argument("--poll-interval", type=float, default=1.0, help="Seconds between GTK refreshes")
-    parser.add_argument("--page", choices=["overview", "runs", "history", "diagnostics", "repositories", "targets", "run", "settings"], default="overview")
+    parser.add_argument("--page", choices=["overview", "runs", "history", "artifacts", "diagnostics", "repositories", "targets", "run", "settings"], default="overview")
     parser.add_argument("--backend", choices=["auto", "gtk4"], default="auto", help="Control Center backend; GTK4 is the only desktop backend")
     parser.add_argument("--once", action="store_true", help="Print a read-only GTK4 Control Center JSON snapshot and exit")
+    parser.add_argument("--startup-test", action="store_true", help="Open one GTK frame, record startup diagnostics, then exit")
     return parser
 
 
@@ -40,11 +41,11 @@ def main(argv: list[str] | None = None) -> int:
                 once=bool(args.once),
                 page=args.page,
                 interval_s=float(args.poll_interval),
+                startup_test=bool(args.startup_test),
             )
         raise RuntimeError("Devtool GTK4 Control Center requires python3-gi, GTK 4, and libadwaita.")
-    except RuntimeError as exc:
-        print(f"devtool-control-center: {exc}", file=sys.stderr)
-        return 2
+    except Exception as exc:
+        return report_cli_exception("control-center", "devtool-control-center", exc)
 
 
 if __name__ == "__main__":

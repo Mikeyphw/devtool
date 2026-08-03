@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from ..tasker import DEFAULT_TASKER_DIR
 from .gtk_hud import Gtk4CompactHud
+from .gtk_runtime import report_cli_exception
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,6 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--recent-events", type=int, default=8, help="Recent JSONL events to display")
     parser.add_argument("--once", action="store_true", help="Print one JSON snapshot and exit")
     parser.add_argument("--follow-active", action="store_true", help="Follow the global active HUD directory")
+    parser.add_argument("--startup-test", action="store_true", help="Open one GTK frame, record startup diagnostics, then exit")
     return parser
 
 
@@ -26,10 +27,10 @@ def main(argv: list[str] | None = None) -> int:
             interval_s=max(0.05, float(args.poll_interval)),
             once=bool(args.once),
             follow_active=bool(args.follow_active),
+            startup_test=bool(args.startup_test),
         )
-    except RuntimeError as exc:
-        print(f"devtool-gtk-hud: {exc}", file=sys.stderr)
-        return 2
+    except Exception as exc:
+        return report_cli_exception("hud", "devtool-gtk-hud", exc)
 
 
 if __name__ == "__main__":

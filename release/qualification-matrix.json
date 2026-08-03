@@ -32,10 +32,40 @@
       "description": "GTK4 desktop shell/HUD source contracts, run workflow contracts, and desktop packaging integration remain coherent"
     },
     {
-      "id": "desktop-gtk-smoke",
+      "id": "desktop-gtk-imports",
       "group": "desktop",
       "required": false,
-      "description": "GTK4 Control Center starts and emits a once snapshot when GTK4/libadwaita bindings are installed"
+      "description": "GTK4/libadwaita/Rich imports resolve before desktop runtime gates run"
+    },
+    {
+      "id": "desktop-gtk-model-snapshot",
+      "group": "desktop",
+      "required": false,
+      "description": "Control Center read-only model snapshot works; this is not a mapped-window smoke test"
+    },
+    {
+      "id": "desktop-gtk-control-center-startup",
+      "group": "desktop",
+      "required": false,
+      "description": "Control Center maps a real GTK4 window under the host display or Xvfb without GTK/Adwaita warnings"
+    },
+    {
+      "id": "desktop-gtk-hud-startup",
+      "group": "desktop",
+      "required": false,
+      "description": "Compact HUD maps a real GTK4 window under the host display or Xvfb without GTK/Adwaita warnings or height overflow"
+    },
+    {
+      "id": "desktop-gtk-control-center-constrained-layout",
+      "group": "desktop",
+      "required": false,
+      "description": "Control Center maps in a 1024x722 short workarea with GTK thread guard enabled and no overflow warnings"
+    },
+    {
+      "id": "desktop-gtk-hud-constrained-layout",
+      "group": "desktop",
+      "required": false,
+      "description": "HUD maps in a 1024x722 short workarea with sticky footer, scrollable content, GTK thread guard enabled, and no 816/722-style overflow warnings"
     },
     {
       "id": "desktop-gtk-package",

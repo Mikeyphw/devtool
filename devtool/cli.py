@@ -703,8 +703,9 @@ def build_parser() -> argparse.ArgumentParser:
     control_center.add_argument("--history-limit", type=int, default=25, help="Artifact history rows to load in the GTK4 shell")
     control_center.add_argument("--recent-events", type=int, default=8, help="Recent HUD events to load in the GTK4 shell")
     control_center.add_argument("--poll-interval", type=float, default=1.0, help="Seconds between GTK4 shell refreshes")
-    control_center.add_argument("--page", choices=["overview", "runs", "history", "diagnostics", "repositories", "targets", "run", "settings"], default="overview", help="Initial GTK4 shell page")
+    control_center.add_argument("--page", choices=["overview", "runs", "history", "artifacts", "diagnostics", "repositories", "targets", "run", "settings"], default="overview", help="Initial GTK4 shell page")
     control_center.add_argument("--once", action="store_true", help="Print a read-only GTK4 Control Center JSON snapshot and exit")
+    control_center.add_argument("--startup-test", action="store_true", help="Open one GTK frame, record startup diagnostics, then exit")
 
     ipc_server = subparsers.add_parser("ipc-server", help="Run or start the local Control Center IPC broker")
     ipc_server.add_argument("--socket", default="", help="Override the Unix socket path")
@@ -7142,9 +7143,13 @@ def _main_after_parse(
                     once=bool(getattr(args, "once", False)),
                     page=str(getattr(args, "page", "overview") or "overview"),
                     interval_s=float(getattr(args, "poll_interval", 1.0)),
+                    startup_test=bool(getattr(args, "startup_test", False)),
                 )
-            except RuntimeError as exc:
-                console.print(f"[red]{exc}[/red]")
+            except Exception as exc:
+                from .desktop.gtk_runtime import append_gtk_log, redact_text
+                log_path = append_gtk_log("control-center", "devtool control-center command failed", exc)
+                console.print(f"[red]{redact_text(str(exc))}[/red]")
+                console.print(f"Details logged to {log_path}")
                 return 2
         console.print("[red]Devtool GTK4 Control Center is not available.[/red]")
         console.print("Install GTK4 dependencies: python3-gi gir1.2-gtk-4.0 gir1.2-adw-1.")

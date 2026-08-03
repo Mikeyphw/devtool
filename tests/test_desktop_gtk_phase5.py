@@ -23,7 +23,11 @@ def test_phase5_versions_and_release_matrix_are_gtk4_desktop_first() -> None:
     assert versions["minimums"]["libadwaita"] == "1"
     assert "qt" not in versions["minimums"]
     assert validate_version_consistency(ROOT) == []
-    assert "desktop-gtk-smoke" in gates
+    assert "desktop-gtk-smoke" not in gates
+    assert "desktop-gtk-imports" in gates
+    assert "desktop-gtk-model-snapshot" in gates
+    assert "desktop-gtk-control-center-startup" in gates
+    assert "desktop-gtk-hud-startup" in gates
     assert "desktop-gtk-package" in gates
     assert "qt-configure" not in gates
     assert "qt-build" not in gates
@@ -64,7 +68,10 @@ def test_installer_uses_gtk4_desktop_fingerprint_and_package_script() -> None:
 def test_release_qualification_uses_gtk4_desktop_gates_with_compatibility_aliases() -> None:
     source = read(ROOT / "devtool" / "release_qualification.py")
     assert "def gtk4_available" in source
-    assert "desktop-gtk-smoke" in source
+    assert "desktop-gtk-smoke" not in source
+    assert "desktop-gtk-model-snapshot" in source
+    assert "desktop-gtk-control-center-startup" in source
+    assert "desktop-gtk-hud-startup" in source
     assert "desktop-gtk-package" in source
     assert "gtk-control-center" in source and "package-deb.sh" in source
     assert "def desktop_available" in source

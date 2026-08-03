@@ -6,12 +6,18 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from ..tasker import DEFAULT_TASKER_DIR
 from .control_center_model import DesktopControlCenterModel
+from .repository_store import DesktopRepositoryStore
 from .run_workflow import payload_from_mapping, review_payload, workflow_snapshot
+from .gtk_runtime import append_gtk_log, install_exception_hooks, install_gtk_thread_guard, redact_text, show_startup_error_window, suppress_gtk_error, wrap_periodic_callback
+from .preferences import DesktopPreferences
+from .run_process import DesktopRunHandle, DesktopRunLauncher
 
 
 def _has_display() -> bool:
@@ -112,6 +118,7 @@ class Gtk4ControlCenter:
         once: bool = False,
         page: str = "overview",
         interval_s: float = 1.0,
+        startup_test: bool = False,
     ) -> int:
         if once:
             payload = self.snapshot(
@@ -136,21 +143,37 @@ class Gtk4ControlCenter:
                 "On Ubuntu: sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1"
             ) from exc
         _require_gtk_initialized(Gtk)
+        install_exception_hooks("control-center")
+        install_gtk_thread_guard(Gtk, app_slug="control-center")
 
         app_id = "io.github.mikeceead.DevtoolControlCenter"
         application = Adw.Application(application_id=app_id) if Adw is not None else Gtk.Application(application_id=app_id)
         poll_ms = max(250, int(max(0.25, interval_s) * 1000))
+        preferences = DesktopPreferences.load("control-center")
         selected_page = page if page in _PAGE_KEYS else "overview"
+        if page == "overview" and preferences.selected_page in _PAGE_KEYS:
+            selected_page = preferences.selected_page
+        run_launcher = DesktopRunLauncher()
         exit_code = 0
 
         def activate(app: Any) -> None:
             nonlocal exit_code
             try:
                 _activate(app)
-            except RuntimeError as exc:  # pragma: no cover - host display dependent
+            except Exception as exc:  # pragma: no cover - host display dependent
                 exit_code = 2
-                print(f"devtool-control-center: {exc}", file=sys.stderr)
-                app.quit()
+                log_path = append_gtk_log("control-center", "Control Center activation failed", exc)
+                if not show_startup_error_window(
+                    Gtk=Gtk,
+                    Adw=Adw,
+                    app=app,
+                    app_slug="control-center",
+                    title="Devtool Control Center startup error",
+                    exc=exc,
+                    log_path=log_path,
+                ):
+                    print(f"devtool-control-center: {exc}", file=sys.stderr)
+                    app.quit()
 
         def _activate(app: Any) -> None:
             if Adw is not None:
@@ -158,11 +181,18 @@ class Gtk4ControlCenter:
             else:
                 window = Gtk.ApplicationWindow(application=app)
             window.set_title("Devtool Control Center")
-            window.set_default_size(1120, 720)
+            window.set_default_size(preferences.window_width, preferences.window_height)
+            with _suppress_exception():
+                if preferences.window_maximized:
+                    window.maximize()
+            _apply_appearance_preference(Adw, preferences)
             with _suppress_exception():
                 window.set_icon_name("io.github.mikeceead.DevtoolControlCenter")
 
             root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            with _suppress_exception():
+                if preferences.high_contrast:
+                    root.add_css_class("devtool-high-contrast")
             _install_control_center_css(Gtk, window)
             header = Gtk.HeaderBar()
             header_title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -238,36 +268,134 @@ class Gtk4ControlCenter:
                     follow_active=follow_active,
                 )
 
-            def render() -> bool:
-                payload = current_snapshot()
+            last_payload: dict[str, Any] = {}
+            dirty_pages: set[str] = set(_PAGE_KEYS)
+            refresh_state: dict[str, Any] = {
+                "in_flight": False,
+                "queued": False,
+                "closed": False,
+                "token": 0,
+            }
+
+            def visible_page() -> str:
+                name = stack.get_visible_child_name()
+                return str(name or selected_page or "overview")
+
+            def render_visible_page(*, stale: bool = False) -> None:
+                page_name = visible_page()
+                if not last_payload:
+                    _render_loading_page(Gtk, pages[page_name], page_name, "Loading repository, history, IPC, and Git state…")
+                    return
+                _render_control_center_page(Gtk, pages, page_name, last_payload, stale=stale, run_launcher=run_launcher, GLib=GLib)
+                dirty_pages.discard(page_name)
+
+            def refresh_failed(exc: BaseException, log_path: Path) -> None:
+                label = "Refresh failed; showing stale data" if last_payload else f"Refresh failed; see {log_path}"
+                repo_status.set_label(label)
+                ipc_status.set_label("UI error")
+                if not last_payload:
+                    _render_loading_page(Gtk, pages[visible_page()], visible_page(), f"Refresh failed. Full details: {log_path}")
+                else:
+                    render_visible_page(stale=True)
+                with suppress_gtk_error():
+                    repo_status.set_tooltip_text(str(log_path))
+                    ipc_status.set_tooltip_text(str(log_path))
+
+            def finish_refresh(payload: dict[str, Any], token: int) -> bool:
+                if refresh_state.get("closed") or token != refresh_state.get("token"):
+                    return False
+                last_payload.clear()
+                last_payload.update(payload)
+                dirty_pages.update(_PAGE_KEYS)
                 _update_header(repo_status, ipc_status, payload)
-                _render_overview(Gtk, pages["overview"], payload)
-                _render_runs(Gtk, pages["runs"], payload)
-                _render_history(Gtk, pages["history"], payload)
-                _render_artifacts(Gtk, pages["artifacts"], payload)
-                _render_diagnostics(Gtk, pages["diagnostics"], payload)
-                _render_repositories(Gtk, pages["repositories"], payload)
-                _render_targets(Gtk, pages["targets"], payload)
-                _render_run_workflow(Gtk, pages["run"], payload)
-                _render_settings(Gtk, pages["settings"], payload)
+                render_visible_page()
+                refresh_state["in_flight"] = False
+                refresh_button.set_sensitive(True)
+                if refresh_state.pop("queued", False):
+                    GLib.idle_add(lambda: (request_refresh("coalesced"), False)[1])
+                return False
+
+            def fail_refresh(exc: BaseException, token: int) -> bool:
+                if refresh_state.get("closed") or token != refresh_state.get("token"):
+                    return False
+                path = append_gtk_log("control-center", "Control Center background refresh failed", exc)
+                refresh_state["in_flight"] = False
+                refresh_button.set_sensitive(True)
+                refresh_failed(exc, path)
+                if refresh_state.pop("queued", False):
+                    GLib.idle_add(lambda: (request_refresh("coalesced-after-error"), False)[1])
+                return False
+
+            def refresh_worker(token: int) -> None:
+                try:
+                    payload = current_snapshot()
+                except Exception as exc:  # pragma: no cover - worker scheduling is display dependent
+                    GLib.idle_add(fail_refresh, exc, token)
+                    return
+                GLib.idle_add(finish_refresh, payload, token)
+
+            def request_refresh(reason: str = "manual") -> bool:
+                if refresh_state.get("closed"):
+                    return False
+                if refresh_state.get("in_flight"):
+                    refresh_state["queued"] = True
+                    repo_status.set_label("Refresh queued; current snapshot still loading")
+                    return True
+                refresh_state["token"] = int(refresh_state.get("token") or 0) + 1
+                token = int(refresh_state["token"])
+                refresh_state["in_flight"] = True
+                refresh_state["queued"] = False
+                refresh_button.set_sensitive(False)
+                repo_status.set_label("Refreshing repository state…" if last_payload else "Loading repository state…")
+                thread = threading.Thread(
+                    target=refresh_worker,
+                    args=(token,),
+                    name=f"devtool-control-center-refresh-{token}",
+                    daemon=True,
+                )
+                thread.start()
                 return True
+
+            render_safe = wrap_periodic_callback(
+                app_slug="control-center",
+                callback=request_refresh,
+                on_error=refresh_failed,
+            )
 
             def on_row_selected(_box: Any, row: Any) -> None:
                 if row is None:
                     return
                 name = row.get_name() or "overview"
                 stack.set_visible_child_name(name)
+                preferences.selected_page = name
+                preferences.save("control-center")
+                if name in dirty_pages or not last_payload:
+                    render_visible_page(stale=bool(last_payload and refresh_state.get("in_flight")))
+
+            def on_close_request(*_unused: Any) -> bool:
+                refresh_state["closed"] = True
+                refresh_state["token"] = int(refresh_state.get("token") or 0) + 1
+                _save_window_preferences(window, stack, preferences)
+                return False
 
             nav.connect("row-selected", on_row_selected)
-            refresh_button.connect("clicked", lambda _button: render())
+            with suppress_gtk_error():
+                window.connect("close-request", on_close_request)
+            refresh_button.connect("clicked", lambda _button: render_safe())
             hud_button.connect("clicked", lambda _button: _launch_hud(state_dir, follow_active))
-            render()
             if selected_page in nav_rows:
                 nav.select_row(nav_rows[selected_page])
             stack.set_visible_child_name(selected_page)
+            _render_loading_page(Gtk, pages[selected_page], selected_page, "Loading repository, history, IPC, and Git state…")
             _install_navigation_shortcuts(Gtk, window, stack, nav, nav_rows)
-            GLib.timeout_add(poll_ms, render)
+            _install_app_shortcuts(Gtk, window, refresh_button)
+            for widget, label in ((refresh_button, "Refresh repository state"), (hud_button, "Open Devtool desktop HUD"), (ipc_status, "IPC status")):
+                _set_accessible_label(Gtk, widget, label)
             window.present()
+            GLib.idle_add(lambda: (request_refresh("startup"), False)[1])
+            if startup_test:
+                GLib.timeout_add(150, app.quit)
+            GLib.timeout_add(poll_ms, render_safe)
 
         application.connect("activate", activate)
         app_rc = int(application.run([]))
@@ -329,7 +457,20 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
     progressbar.devtool-progress progress {
       min-height: 16px;
       border-radius: 4px;
-      background-color: #1c71d8;
+      background-color: @accent_bg_color;
+    }
+    .devtool-stale-banner {
+      padding: 10px 12px;
+      border-radius: 10px;
+      background-color: alpha(@warning_bg_color, 0.14);
+      border: 1px solid alpha(@warning_color, 0.32);
+    }
+    .devtool-high-contrast {
+      border: 2px solid @window_fg_color;
+    }
+    .devtool-high-contrast .devtool-status-pill {
+      border: 1px solid @window_fg_color;
+      background-color: @window_bg_color;
     }
     """
     with _suppress_exception():
@@ -357,6 +498,133 @@ def _select_page(stack: Any, nav: Any, nav_rows: dict[str, Any], page: str) -> N
     if page in nav_rows:
         nav.select_row(nav_rows[page])
     stack.set_visible_child_name(page)
+
+
+def _apply_appearance_preference(Adw: Any, preferences: DesktopPreferences) -> None:
+    if Adw is None:
+        return
+    with _suppress_exception():
+        manager = Adw.StyleManager.get_default()
+        scheme = str(preferences.appearance or "system").lower()
+        if scheme == "dark":
+            manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+        elif scheme == "light":
+            manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+        else:
+            manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+
+
+def _save_window_preferences(window: Any, stack: Any, preferences: DesktopPreferences) -> None:
+    with _suppress_exception():
+        width = int(window.get_width())
+        height = int(window.get_height())
+        if width > 0 and height > 0:
+            preferences.window_width = width
+            preferences.window_height = height
+    with _suppress_exception():
+        preferences.window_maximized = bool(window.is_maximized())
+    with _suppress_exception():
+        page = str(stack.get_visible_child_name() or preferences.selected_page or "overview")
+        if page in _PAGE_KEYS:
+            preferences.selected_page = page
+    preferences.save("control-center")
+
+
+def _set_accessible_label(Gtk: Any, widget: Any, label: str) -> None:
+    # GTK 4 exposes AccessibleProperty.LABEL; older introspection builds may not.
+    with _suppress_exception():
+        widget.update_property([Gtk.AccessibleProperty.LABEL], [label])
+        return
+    with _suppress_exception():
+        widget.set_tooltip_text(label)
+
+
+def _install_app_shortcuts(Gtk: Any, window: Any, refresh_button: Any) -> None:
+    with _suppress_exception():
+        controller = Gtk.ShortcutController()
+        for accelerator, callback in (
+            ("<Control>r", lambda _widget, _args: (refresh_button.emit("clicked"), True)[1]),
+            ("F5", lambda _widget, _args: (refresh_button.emit("clicked"), True)[1]),
+            ("<Control>q", lambda _widget, _args: (window.close(), True)[1]),
+            ("Escape", lambda _widget, _args: (window.close(), True)[1]),
+        ):
+            trigger = Gtk.ShortcutTrigger.parse_string(accelerator)
+            action = Gtk.CallbackAction.new(callback)
+            controller.add_shortcut(Gtk.Shortcut.new(trigger, action))
+        window.add_controller(controller)
+
+
+def _prefers_reduced_motion(Gtk: Any) -> bool:
+    if os.environ.get("DEVTOOL_REDUCED_MOTION", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    with _suppress_exception():
+        settings = Gtk.Settings.get_default()
+        return not bool(settings.get_property("gtk-enable-animations"))
+    return False
+
+
+def _render_loading_page(Gtk: Any, box: Any, page: str, message: str) -> None:
+    _clear(Gtk, box)
+    _append_heading(Gtk, box, _PAGE_KEYS.get(page, page.title()))
+    spinner = Gtk.Spinner()
+    if not _prefers_reduced_motion(Gtk):
+        with _suppress_exception():
+            spinner.start()
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    row.append(spinner)
+    label = Gtk.Label(label=message, xalign=0.0)
+    label.set_wrap(True)
+    row.append(label)
+    box.append(row)
+
+
+def _append_stale_banner(Gtk: Any, box: Any) -> None:
+    banner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    banner.set_margin_top(8)
+    banner.set_margin_bottom(8)
+    with _suppress_exception():
+        banner.add_css_class("devtool-stale-banner")
+    label = Gtk.Label(label="Showing last good snapshot. A background refresh failed.", xalign=0.0)
+    label.set_wrap(True)
+    banner.append(label)
+    box.prepend(banner)
+
+
+def _render_control_center_page(
+    Gtk: Any,
+    pages: dict[str, Any],
+    page: str,
+    payload: dict[str, Any],
+    *,
+    stale: bool = False,
+    run_launcher: DesktopRunLauncher | None = None,
+    GLib: Any | None = None,
+) -> None:
+    target = pages.get(page)
+    if target is None:
+        return
+    if page == "overview":
+        _render_overview(Gtk, target, payload)
+    elif page == "runs":
+        _render_runs(Gtk, target, payload)
+    elif page == "history":
+        _render_history(Gtk, target, payload)
+    elif page == "artifacts":
+        _render_artifacts(Gtk, target, payload)
+    elif page == "diagnostics":
+        _render_diagnostics(Gtk, target, payload)
+    elif page == "repositories":
+        _render_repositories(Gtk, target, payload)
+    elif page == "targets":
+        _render_targets(Gtk, target, payload)
+    elif page == "run":
+        _render_run_workflow(Gtk, target, payload, run_launcher=run_launcher, GLib=GLib)
+    elif page == "settings":
+        _render_settings(Gtk, target, payload)
+    else:
+        _render_loading_page(Gtk, target, page, "Unknown Control Center page.")
+    if stale:
+        _append_stale_banner(Gtk, target)
 
 
 def _clear(Gtk: Any, box: Any) -> None:
@@ -516,6 +784,7 @@ def _copy_text_callback(Gtk: Any, widget: Any, text: str) -> Any:
 
 
 def _open_path_callback(path: str) -> Any | None:
+    """Open a directory or a file's containing folder."""
     if not path:
         return None
 
@@ -530,6 +799,182 @@ def _open_path_callback(path: str) -> Any | None:
             subprocess.Popen([opener, str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     return open_path
+
+
+def _open_file_callback(path: str) -> Any | None:
+    """Open the exact file when it exists, instead of opening only its folder."""
+    if not path:
+        return None
+
+    def open_file(_button: Any) -> None:
+        opener = shutil.which("xdg-open")
+        if not opener:
+            return
+        target = Path(path).expanduser()
+        if target.exists():
+            subprocess.Popen([opener, str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    return open_file
+
+
+def _open_terminal_callback(path: str) -> Any | None:
+    if not path:
+        return None
+
+    def open_terminal(_button: Any) -> None:
+        cwd = Path(path).expanduser()
+        if not cwd.is_dir():
+            return
+        candidates = [
+            ("gnome-terminal", ["gnome-terminal", "--working-directory", str(cwd)]),
+            ("kgx", ["kgx", "--working-directory", str(cwd)]),
+            ("xfce4-terminal", ["xfce4-terminal", "--working-directory", str(cwd)]),
+            ("konsole", ["konsole", "--workdir", str(cwd)]),
+            ("x-terminal-emulator", ["x-terminal-emulator"]),
+            ("xterm", ["xterm"]),
+        ]
+        for binary, argv in candidates:
+            launcher = shutil.which(binary)
+            if launcher:
+                argv[0] = launcher
+                subprocess.Popen(argv, cwd=str(cwd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+
+    return open_terminal
+
+
+def _append_inline_status(Gtk: Any, box: Any, text: str) -> Any:
+    label = Gtk.Label(label=text, xalign=0.0)
+    label.set_wrap(True)
+    with _suppress_exception():
+        label.add_css_class("dim-label")
+    box.append(label)
+    return label
+
+
+def _item_search_text(item: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for value in item.values():
+        if isinstance(value, (str, int, float, bool)):
+            parts.append(str(value))
+        elif isinstance(value, dict):
+            parts.append(_item_search_text(value))
+        elif isinstance(value, list):
+            parts.extend(str(entry) for entry in value if isinstance(entry, (str, int, float, bool)))
+    return " ".join(parts).casefold()
+
+
+def _matches_search(item: dict[str, Any], query: str) -> bool:
+    query = query.strip().casefold()
+    return not query or all(part in _item_search_text(item) for part in query.split())
+
+
+def _clear_list(Gtk: Any, box: Any) -> None:
+    _clear(Gtk, box)
+
+
+def _run_again_callback(Gtk: Any, parent: Any, command: str, cwd: str) -> Any | None:
+    if not command:
+        return None
+
+    def run_again(_button: Any) -> None:
+        try:
+            argv = shlex.split(command)
+        except ValueError as exc:
+            _append_inline_status(Gtk, parent, f"Run again blocked: {exc}")
+            return
+        if not argv:
+            _append_inline_status(Gtk, parent, "Run again blocked: empty command")
+            return
+        review = Gtk.Window(title="Review command before running")
+        review.set_default_size(720, 420)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        outer.set_margin_top(12)
+        outer.set_margin_bottom(12)
+        outer.set_margin_start(12)
+        outer.set_margin_end(12)
+        _append_text(Gtk, outer, "Review the reconstructed argv before launching this previous command.")
+        text = Gtk.TextView()
+        text.set_editable(False)
+        text.set_monospace(True)
+        text.get_buffer().set_text("\n".join(shlex.quote(part) for part in argv))
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_child(text)
+        scroller.set_vexpand(True)
+        outer.append(scroller)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        cancel = Gtk.Button(label="Cancel")
+        launch = Gtk.Button(label="Launch reviewed argv")
+        row.append(cancel)
+        row.append(launch)
+        outer.append(row)
+        review.set_child(outer)
+
+        def do_launch(_launch: Any) -> None:
+            try:
+                subprocess.Popen(argv, cwd=str(Path(cwd or ".").expanduser()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as exc:  # pragma: no cover - host process dependent
+                _append_inline_status(Gtk, parent, f"Run again failed: {exc}")
+            else:
+                _append_inline_status(Gtk, parent, "Previous command launched after review.")
+            review.close()
+
+        cancel.connect("clicked", lambda _unused: review.close())
+        launch.connect("clicked", do_launch)
+        review.present()
+
+    return run_again
+
+
+def _remember_repository_callback(Gtk: Any, box: Any, repo_path: str, state_dir: str = "") -> Any | None:
+    if not repo_path:
+        return None
+
+    def remember(_button: Any) -> None:
+        try:
+            saved = DesktopRepositoryStore(repo_path).remember(state_dir=state_dir or None)
+        except Exception as exc:  # pragma: no cover - filesystem dependent
+            _append_inline_status(Gtk, box, f"Could not add repository: {exc}")
+            return
+        _append_inline_status(Gtk, box, f"Repository added to {saved}")
+
+    return remember
+
+
+def _refresh_git_state_callback(Gtk: Any, box: Any, repo_path: str) -> Any | None:
+    if not repo_path:
+        return None
+
+    def refresh(_button: Any) -> None:
+        output = DesktopRepositoryStore(repo_path).git_status()
+        _append_subheading(Gtk, box, "Git state refreshed")
+        _append_text(Gtk, box, output)
+
+    return refresh
+
+
+def _show_active_run_callback(Gtk: Any, box: Any, payload: dict[str, Any]) -> Any | None:
+    runs = [item for item in payload.get("active_runs", []) if isinstance(item, dict)]
+    if not runs:
+        return None
+
+    def show(_button: Any) -> None:
+        _append_subheading(Gtk, box, "Active run")
+        _append_run_card(Gtk, box, runs[0])
+
+    return show
+
+
+def _build_workflow_callback(Gtk: Any, box: Any, payload: dict[str, Any]) -> Any:
+    def build(_button: Any) -> None:
+        workflow = workflow_snapshot(payload)
+        review = review_payload(payload_from_mapping(dict(workflow.default_draft)))
+        _append_subheading(Gtk, box, "Default workflow")
+        _append_text(Gtk, box, review.command or "No runnable default workflow yet. Open the Run page to fill missing fields.")
+        if review.errors:
+            _append_text(Gtk, box, "Errors: " + "; ".join(review.errors))
+
+    return build
 
 
 def _append_search_bar(Gtk: Any, box: Any, placeholder: str) -> Any:
@@ -567,7 +1012,7 @@ def _render_overview(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     next_action = "Review active run" if runs else "Validate repository"
     _append_text(Gtk, box, f"{next_action} · {str(project.get('selected_target') or 'auto')}")
     _append_button_row(Gtk, box, [
-        ("Build workflow", None),
+        ("Build workflow", _build_workflow_callback(Gtk, box, payload)),
         ("Open HUD", lambda _button: _launch_hud(str(payload.get("hud", {}).get("directory") or DEFAULT_TASKER_DIR), bool(payload.get("settings", {}).get("follow_active")))),
         ("Copy repository path", _copy_text_callback(Gtk, box, str(repo.get("path") or ""))),
     ])
@@ -616,6 +1061,7 @@ def _render_runs(Gtk: Any, box: Any, payload: dict[str, Any], *, embedded: bool 
 def _render_history(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "History")
+    prefs = DesktopPreferences.load("control-center")
     filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     search = Gtk.SearchEntry()
     search.set_placeholder_text("Search artifacts, commits, hashes, commands")
@@ -623,38 +1069,67 @@ def _render_history(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     status_filter = Gtk.ComboBoxText()
     for value, label in (("all", "All statuses"), ("ok", "Succeeded"), ("failed", "Failed"), ("paused", "Paused")):
         status_filter.append(value, label)
-    status_filter.set_active_id("all")
+    search.set_text(prefs.filter_value("history", "query"))
+    status_filter.set_active_id(prefs.filter_value("history", "status", "all") or "all")
     filters.append(search)
     filters.append(status_filter)
     box.append(filters)
-    history = payload.get("history", [])
+    count_label = _append_inline_status(Gtk, box, "")
+    list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    box.append(list_box)
+    history = [item for item in payload.get("history", []) if isinstance(item, dict)]
+    repo_path = str(payload.get("repository", {}).get("path") or ".") if isinstance(payload.get("repository"), dict) else "."
     if not history:
-        _append_text(Gtk, box, "No artifact history entries were found in this repository.")
+        count_label.set_label("0 visible")
+        _append_text(Gtk, list_box, "No artifact history entries were found in this repository.")
         return
-    for item in history[-15:]:
-        if not isinstance(item, dict):
-            continue
-        title = item.get("artifact") or item.get("artifact_name") or item.get("name") or item.get("history_id") or "artifact"
-        _append_text(Gtk, box, f"{title}")
-        _append_rows(Gtk, box, [
-            ("Applied", str(item.get("applied_at") or item.get("created_at") or "")),
-            ("Commit", str(item.get("commit_hash") or "")),
-            ("SHA-256", str(item.get("sha256") or "")),
-            ("Command", str(item.get("command") or "")),
-        ])
-        command = str(item.get("command") or "")
-        artifact_path = str(item.get("artifact_path") or item.get("path") or item.get("file") or "")
-        _append_button_row(Gtk, box, [
-            ("Copy command", _copy_text_callback(Gtk, box, command)),
-            ("Inspect artifact", _copy_text_callback(Gtk, box, json.dumps(item, ensure_ascii=False, indent=2))),
-            ("Run again", _copy_text_callback(Gtk, box, command)),
-            ("Open artifact folder", _open_path_callback(artifact_path)),
-        ])
+
+    def render_filtered(*_unused: Any) -> None:
+        _clear_list(Gtk, list_box)
+        query = str(search.get_text() or "")
+        status_id = str(status_filter.get_active_id() or "all")
+        prefs.set_filter_value("history", "query", query)
+        prefs.set_filter_value("history", "status", status_id)
+        prefs.save("control-center")
+        visible = []
+        for item in reversed(history[-50:]):
+            item_status = str(item.get("status") or item.get("result") or item.get("validation") or "ok").strip().lower()
+            if status_id != "all" and status_id not in item_status:
+                continue
+            if not _matches_search(item, query):
+                continue
+            visible.append(item)
+        count_label.set_label(f"{len(visible)} visible")
+        if not visible:
+            _append_text(Gtk, list_box, "No history entries match the current filters.")
+            return
+        for item in visible[:50]:
+            title = item.get("artifact") or item.get("artifact_name") or item.get("name") or item.get("history_id") or "artifact"
+            _append_subheading(Gtk, list_box, f"{title}")
+            _append_rows(Gtk, list_box, [
+                ("Applied", str(item.get("applied_at") or item.get("created_at") or "")),
+                ("Commit", str(item.get("commit_hash") or "")),
+                ("SHA-256", str(item.get("sha256") or "")),
+                ("Command", str(item.get("command") or "")),
+            ])
+            command = str(item.get("command") or "")
+            artifact_path = str(item.get("artifact_path") or item.get("path") or item.get("file") or "")
+            _append_button_row(Gtk, list_box, [
+                ("Copy command", _copy_text_callback(Gtk, list_box, command)),
+                ("Inspect artifact", _copy_text_callback(Gtk, list_box, json.dumps(item, ensure_ascii=False, indent=2))),
+                ("Run again", _run_again_callback(Gtk, list_box, command, repo_path)),
+                ("Open artifact folder", _open_path_callback(artifact_path)),
+            ])
+
+    search.connect("search-changed", render_filtered)
+    status_filter.connect("changed", render_filtered)
+    render_filtered()
 
 
 def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "Artifacts")
+    prefs = DesktopPreferences.load("control-center")
     inputs = Gtk.Grid(column_spacing=8, row_spacing=8)
     artifact_entry = Gtk.Entry()
     artifact_entry.set_placeholder_text("Artifact path, overlay bundle, or manifest")
@@ -665,66 +1140,86 @@ def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     inputs.attach(Gtk.Label(label="Repository", xalign=0.0), 0, 1, 1, 1)
     inputs.attach(repo_entry, 1, 1, 1, 1)
     box.append(inputs)
-    _append_search_bar(Gtk, box, "Filter by artifact name, package, version, SHA-256")
+    search = _append_search_bar(Gtk, box, "Filter by artifact name, package, version, SHA-256")
+    search.set_text(prefs.filter_value("artifacts", "query"))
+    count_label = _append_inline_status(Gtk, box, "")
     history = [item for item in payload.get("history", []) if isinstance(item, dict)]
     hud_state = payload.get("hud", {}).get("state", {}) if isinstance(payload.get("hud"), dict) else {}
-    candidates = list(reversed(history[-20:]))
+    candidates = list(reversed(history[-50:]))
     if isinstance(hud_state, dict) and hud_state:
         candidates.insert(0, hud_state)
+    list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    box.append(list_box)
     if not candidates:
-        _append_text(Gtk, box, "No artifacts have been recorded yet.")
+        count_label.set_label("0 visible")
+        _append_text(Gtk, list_box, "No artifacts have been recorded yet.")
         return
-    metric_item = candidates[0] if isinstance(candidates[0], dict) else {}
-    _append_metric_strip(Gtk, box, [
-        ("FILES", str(metric_item.get("file_count") or metric_item.get("paths") or "-"), "inventory"),
-        ("ADDED", str(metric_item.get("added") or "-"), "change set"),
-        ("MODIFIED", str(metric_item.get("modified") or "-"), "change set"),
-        ("Validation", str(metric_item.get("validation") or metric_item.get("status") or "-"), "manifest"),
-    ])
-    notebook = Gtk.Notebook()
-    notebook.set_hexpand(True)
-    notebook.set_vexpand(False)
-    for tab_name in ("Summary", "Inventory", "Manifest", "Diff"):
-        page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        page_box.set_margin_top(8)
-        page_box.set_margin_bottom(8)
-        page_box.set_margin_start(8)
-        page_box.set_margin_end(8)
-        if tab_name == "Summary":
-            _append_rows(Gtk, page_box, [("Candidates", str(len(candidates))), ("Selected", str(metric_item.get("artifact") or metric_item.get("artifact_name") or metric_item.get("title") or "artifact"))])
-        else:
-            _append_text(Gtk, page_box, json.dumps(metric_item, ensure_ascii=False, indent=2) if metric_item else f"No {tab_name.lower()} data yet.")
-        notebook.append_page(page_box, Gtk.Label(label=tab_name))
-    box.append(notebook)
-    for item in candidates[:20]:
-        title = str(item.get("artifact") or item.get("artifact_name") or item.get("name") or item.get("title") or "artifact")
-        _append_subheading(Gtk, box, title)
-        _append_rows(Gtk, box, [
-            ("Path", str(item.get("artifact_path") or item.get("path") or item.get("file") or "")),
-            ("Package", str(item.get("package") or item.get("package_name") or "")),
-            ("Version", str(item.get("version") or item.get("version_name") or "")),
-            ("Commit", str(item.get("commit_hash") or item.get("head") or "")),
-            ("SHA-256", str(item.get("sha256") or "")),
-            ("Applied", str(item.get("applied_at") or item.get("created_at") or item.get("updated_at") or "")),
+
+    def render_filtered(*_unused: Any) -> None:
+        _clear_list(Gtk, list_box)
+        query = str(search.get_text() or "")
+        prefs.set_filter_value("artifacts", "query", query)
+        prefs.save("control-center")
+        visible = [item for item in candidates if isinstance(item, dict) and _matches_search(item, query)]
+        count_label.set_label(f"{len(visible)} visible")
+        if not visible:
+            _append_text(Gtk, list_box, "No artifacts match the current filter.")
+            return
+        metric_item = visible[0]
+        _append_metric_strip(Gtk, list_box, [
+            ("FILES", str(metric_item.get("file_count") or metric_item.get("paths") or "-"), "inventory"),
+            ("ADDED", str(metric_item.get("added") or "-"), "change set"),
+            ("MODIFIED", str(metric_item.get("modified") or "-"), "change set"),
+            ("Validation", str(metric_item.get("validation") or metric_item.get("status") or "-"), "manifest"),
         ])
-        artifact_path = str(item.get("artifact_path") or item.get("path") or item.get("file") or "")
-        sha256 = str(item.get("sha256") or "")
-        _append_button_row(Gtk, box, [
-            ("Inspect manifest", _copy_text_callback(Gtk, box, json.dumps(item, ensure_ascii=False, indent=2))),
-            ("Open containing folder", _open_path_callback(artifact_path)),
-            ("Copy SHA-256", _copy_text_callback(Gtk, box, sha256)),
-        ])
+        notebook = Gtk.Notebook()
+        notebook.set_hexpand(True)
+        notebook.set_vexpand(False)
+        for tab_name in ("Summary", "Inventory", "Manifest", "Diff"):
+            page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            page_box.set_margin_top(8)
+            page_box.set_margin_bottom(8)
+            page_box.set_margin_start(8)
+            page_box.set_margin_end(8)
+            if tab_name == "Summary":
+                _append_rows(Gtk, page_box, [("Candidates", str(len(visible))), ("Selected", str(metric_item.get("artifact") or metric_item.get("artifact_name") or metric_item.get("title") or "artifact"))])
+            else:
+                _append_text(Gtk, page_box, json.dumps(metric_item, ensure_ascii=False, indent=2) if metric_item else f"No {tab_name.lower()} data yet.")
+            notebook.append_page(page_box, Gtk.Label(label=tab_name))
+        list_box.append(notebook)
+        for item in visible[:20]:
+            title = str(item.get("artifact") or item.get("artifact_name") or item.get("name") or item.get("title") or "artifact")
+            _append_subheading(Gtk, list_box, title)
+            _append_rows(Gtk, list_box, [
+                ("Path", str(item.get("artifact_path") or item.get("path") or item.get("file") or "")),
+                ("Package", str(item.get("package") or item.get("package_name") or "")),
+                ("Version", str(item.get("version") or item.get("version_name") or "")),
+                ("Commit", str(item.get("commit_hash") or item.get("head") or "")),
+                ("SHA-256", str(item.get("sha256") or "")),
+                ("Applied", str(item.get("applied_at") or item.get("created_at") or item.get("updated_at") or "")),
+            ])
+            artifact_path = str(item.get("artifact_path") or item.get("path") or item.get("file") or "")
+            sha256 = str(item.get("sha256") or "")
+            _append_button_row(Gtk, list_box, [
+                ("Inspect manifest", _copy_text_callback(Gtk, list_box, json.dumps(item, ensure_ascii=False, indent=2))),
+                ("Open containing folder", _open_path_callback(artifact_path)),
+                ("Copy SHA-256", _copy_text_callback(Gtk, list_box, sha256)),
+            ])
+
+    search.connect("search-changed", render_filtered)
+    render_filtered()
 
 
 def _render_diagnostics(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "Diagnostics")
-    diagnostics = payload.get("diagnostics", [])
+    prefs = DesktopPreferences.load("control-center")
+    diagnostics = [item for item in payload.get("diagnostics", []) if isinstance(item, dict)]
     _append_metric_strip(Gtk, box, [
         ("Errors", str(_count_severity(diagnostics, "error")), "blocking"),
         ("Warnings", str(_count_severity(diagnostics, "warning")), "review"),
         ("Info", str(_count_severity(diagnostics, "info")), "context"),
-        ("Total", str(len(diagnostics)), "latest active run"),
+        ("Total", str(len(diagnostics)), "canonical active run"),
     ])
     filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     search = Gtk.SearchEntry()
@@ -733,39 +1228,75 @@ def _render_diagnostics(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     severity = Gtk.ComboBoxText()
     for value, label in (("all", "Severity: all"), ("error", "Errors"), ("warning", "Warnings"), ("info", "Info")):
         severity.append(value, label)
-    severity.set_active_id("all")
+    search.set_text(prefs.filter_value("diagnostics", "query"))
+    severity.set_active_id(prefs.filter_value("diagnostics", "severity", "all") or "all")
     filters.append(search)
     filters.append(severity)
     box.append(filters)
-    if not diagnostics:
-        _append_text(Gtk, box, "No warnings or errors are currently reported by the active run.")
-        return
+    count_label = _append_inline_status(Gtk, box, "")
+    action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    box.append(action_row)
+    list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    box.append(list_box)
     log_path = ""
     active_runs = payload.get("active_runs", [])
     if active_runs and isinstance(active_runs[0], dict):
         log_path = str(active_runs[0].get("log_path") or "")
-    _append_button_row(Gtk, box, [
-        ("Copy all diagnostics", _copy_text_callback(Gtk, box, json.dumps(diagnostics, ensure_ascii=False, indent=2))),
-        ("Open log", _open_path_callback(log_path)),
-        ("Show active run", None),
-    ])
-    for item in diagnostics[:50]:
-        if not isinstance(item, dict):
-            continue
-        _append_text(Gtk, box, f"{item.get('severity', 'info')}: {item.get('message', '')}")
-        detail_rows = []
-        for key in ("code", "phase", "file"):
-            value = str(item.get(key) or "")
-            if value:
-                detail_rows.append((key.title(), value))
-        if detail_rows:
-            _append_rows(Gtk, box, detail_rows)
+    diagnostic_actions: list[tuple[str, Any | None]] = [
+        ("Copy all diagnostics", _copy_text_callback(Gtk, list_box, json.dumps(diagnostics, ensure_ascii=False, indent=2))),
+    ]
+    open_log_cb = _open_file_callback(log_path)
+    if open_log_cb is not None:
+        diagnostic_actions.append(("Open log", open_log_cb))
+    show_run_cb = _show_active_run_callback(Gtk, list_box, payload)
+    if show_run_cb is not None:
+        diagnostic_actions.append(("Show active run", show_run_cb))
+    _append_button_row(Gtk, action_row, diagnostic_actions)
+    if not diagnostics:
+        count_label.set_label("0 visible")
+        _append_text(Gtk, list_box, "No warnings or errors are currently reported by the active run.")
+        return
+
+    def render_filtered(*_unused: Any) -> None:
+        _clear_list(Gtk, list_box)
+        query = str(search.get_text() or "")
+        severity_id = str(severity.get_active_id() or "all")
+        prefs.set_filter_value("diagnostics", "query", query)
+        prefs.set_filter_value("diagnostics", "severity", severity_id)
+        prefs.save("control-center")
+        visible = []
+        for item in diagnostics:
+            item_severity = str(item.get("severity") or "info").lower()
+            if severity_id != "all" and item_severity != severity_id:
+                continue
+            if not _matches_search(item, query):
+                continue
+            visible.append(item)
+        count_label.set_label(f"{len(visible)} visible")
+        if not visible:
+            _append_text(Gtk, list_box, "No diagnostics match the current filters.")
+            return
+        for item in visible[:100]:
+            _append_text(Gtk, list_box, f"{item.get('severity', 'info')}: {item.get('message', '')}")
+            detail_rows = []
+            for key in ("code", "phase", "file", "source"):
+                value = str(item.get(key) or "")
+                if value:
+                    detail_rows.append((key.title(), value))
+            if detail_rows:
+                _append_rows(Gtk, list_box, detail_rows)
+
+    search.connect("search-changed", render_filtered)
+    severity.connect("changed", render_filtered)
+    render_filtered()
 
 
 def _render_repositories(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "Repository manager")
-    repo = payload.get("repository", {})
+    repo = payload.get("repository", {}) if isinstance(payload.get("repository"), dict) else {}
+    repo_path = str(repo.get("path") or "")
+    state_dir = str(repo.get("state_dir") or payload.get("hud", {}).get("directory") or "") if isinstance(payload.get("hud"), dict) else str(repo.get("state_dir") or "")
     _append_metric_strip(Gtk, box, [
         ("Branch", str(repo.get("branch") or "-"), str(repo.get("head") or "")[:12]),
         ("Dirty", "yes" if repo.get("dirty") else "no", "working tree"),
@@ -773,43 +1304,68 @@ def _render_repositories(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("IPC", "connected" if payload.get("ipc", {}).get("ok") else "offline", "broker"),
     ])
     _append_rows(Gtk, box, [
-        ("Path", str(repo.get("path") or "")),
+        ("Path", repo_path),
         ("Exists", "yes" if repo.get("exists") else "no"),
         ("Branch", str(repo.get("branch") or "")),
         ("Head", str(repo.get("head") or "")),
         ("Dirty", "yes" if repo.get("dirty") else "no"),
     ])
     _append_button_row(Gtk, box, [
-        ("Add current repository", None),
-        ("Open terminal here", _open_path_callback(str(repo.get("path") or ""))),
-        ("Refresh git state", None),
-        ("Copy repo path", _copy_text_callback(Gtk, box, str(repo.get("path") or ""))),
+        ("Add current repository", _remember_repository_callback(Gtk, box, repo_path, state_dir)),
+        ("Open terminal here", _open_terminal_callback(repo_path)),
+        ("Refresh git state", _refresh_git_state_callback(Gtk, box, repo_path)),
+        ("Copy repo path", _copy_text_callback(Gtk, box, repo_path)),
     ])
 
 
 def _render_targets(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "Targets")
-    targets = payload.get("targets", [])
-    _append_search_bar(Gtk, box, "Filter targets by name, kind, environment, chroot")
+    prefs = DesktopPreferences.load("control-center")
+    targets = [item for item in payload.get("targets", []) if isinstance(item, dict)]
+    search = _append_search_bar(Gtk, box, "Filter targets by name, kind, environment, chroot")
+    search.set_text(prefs.filter_value("targets", "query"))
+    count_label = _append_inline_status(Gtk, box, "")
+    list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    box.append(list_box)
     if not targets:
-        _append_text(Gtk, box, "No named targets were configured for this repository.")
+        count_label.set_label("0 visible")
+        _append_text(Gtk, list_box, "No named targets were configured for this repository.")
         return
-    for target in targets:
-        if not isinstance(target, dict):
-            continue
-        _append_text(Gtk, box, f"{target.get('name', '')} · {target.get('kind', 'auto')}")
-        _append_rows(Gtk, box, [
-            ("Root", str(target.get("root") or "")),
-            ("Build", str(target.get("build") or "")),
-            ("Test", str(target.get("test") or "")),
-            ("Run", str(target.get("run") or "")),
-            ("Environment", str(target.get("environment") or "auto")),
-            ("Chroot", str(target.get("chroot") or "")),
-        ])
+
+    def render_filtered(*_unused: Any) -> None:
+        _clear_list(Gtk, list_box)
+        query = str(search.get_text() or "")
+        prefs.set_filter_value("targets", "query", query)
+        prefs.save("control-center")
+        visible = [target for target in targets if _matches_search(target, query)]
+        count_label.set_label(f"{len(visible)} visible")
+        if not visible:
+            _append_text(Gtk, list_box, "No targets match the current filter.")
+            return
+        for target in visible:
+            _append_subheading(Gtk, list_box, f"{target.get('name', '')} · {target.get('kind', 'auto')}")
+            _append_rows(Gtk, list_box, [
+                ("Root", str(target.get("root") or "")),
+                ("Build", str(target.get("build") or "")),
+                ("Test", str(target.get("test") or "")),
+                ("Run", str(target.get("run") or "")),
+                ("Environment", str(target.get("environment") or "auto")),
+                ("Chroot", str(target.get("chroot") or "")),
+            ])
+
+    search.connect("search-changed", render_filtered)
+    render_filtered()
 
 
-def _render_run_workflow(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
+def _render_run_workflow(
+    Gtk: Any,
+    box: Any,
+    payload: dict[str, Any],
+    *,
+    run_launcher: DesktopRunLauncher | None = None,
+    GLib: Any | None = None,
+) -> None:
     """Render the Phase 4 mutable Run workflow.
 
     The page is intentionally initialized once so periodic Control Center
@@ -932,10 +1488,33 @@ def _render_run_workflow(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     preview.set_monospace(True)
     preview.set_vexpand(True)
     preview.set_hexpand(True)
+    _set_accessible_label(Gtk, preview, "Command preview showing shell review text and argv")
     box.append(preview)
     status = Gtk.Label(label="", xalign=0.0)
     status.set_wrap(True)
     box.append(status)
+
+    _append_subheading(Gtk, box, "Live run output")
+    run_identity = Gtk.Label(label="No desktop-launched run yet.", xalign=0.0)
+    run_identity.set_wrap(True)
+    with _suppress_exception():
+        run_identity.add_css_class("dim-label")
+    box.append(run_identity)
+    output_view = Gtk.TextView()
+    output_view.set_editable(False)
+    output_view.set_cursor_visible(False)
+    output_view.set_monospace(True)
+    output_view.set_vexpand(True)
+    output_view.set_hexpand(True)
+    _set_accessible_label(Gtk, output_view, "Live stdout and stderr for the launched Devtool command")
+    output_scroll = Gtk.ScrolledWindow()
+    output_scroll.set_child(output_view)
+    output_scroll.set_vexpand(True)
+    with _suppress_exception():
+        output_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    box.append(output_scroll)
+    run_state: dict[str, DesktopRunHandle | None] = {"handle": None}
+    launcher = run_launcher or DesktopRunLauncher()
 
     def entry_text(key: str) -> str:
         widget = widgets[key]
@@ -1020,17 +1599,84 @@ def _render_run_workflow(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             clipboard.set(review.command)
             status.set_text("Copied command to clipboard.")
 
+    def append_run_output(line: str) -> None:
+        buffer = output_view.get_buffer()
+        start = buffer.get_start_iter()
+        end = buffer.get_end_iter()
+        current = buffer.get_text(start, end, False)
+        next_text = (current + "\n" if current else "") + redact_text(line)
+        buffer.set_text(next_text[-60000:])
+        with _suppress_exception():
+            mark = buffer.create_mark(None, buffer.get_end_iter(), False)
+            output_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+
+    def idle_call(callback: Any, *args: Any) -> None:
+        if GLib is not None:
+            GLib.idle_add(lambda: (callback(*args), False)[1])
+        else:
+            callback(*args)
+
+    action_buttons: dict[str, Any] = {}
+
+    def on_run_exit(handle: DesktopRunHandle) -> None:
+        if handle.returncode not in (None, 0):
+            _write_desktop_run_hud_failure(payload, handle)
+
+        def update() -> None:
+            run_identity.set_text(f"{handle.summary()} · log {handle.log_path}")
+            status.set_text(f"Run finished with exit code {handle.returncode}. Log: {handle.log_path}")
+            launch_button = action_buttons.get("Launch")
+            if launch_button is not None:
+                launch_button.set_sensitive(True)
+        idle_call(update)
+
     def launch_command(_button: Any) -> None:
+        active = run_state.get("handle")
+        if active is not None and active.running:
+            status.set_text(f"Run {active.run_id} is still running; duplicate launch blocked.")
+            return
         review = review_payload(payload_from_mapping(current_mapping()))
         if not review.runnable:
             status.set_text("Command has errors; launch blocked.")
             return
         try:
-            subprocess.Popen(["sh", "-lc", review.command], cwd=str(Path(current_mapping()["repository"]).expanduser()))
+            output_view.get_buffer().set_text("")
+            handle = launcher.start(
+                review.argv,
+                cwd=Path(current_mapping()["repository"]).expanduser(),
+                environment=review.environment,
+                on_output=lambda channel, line: idle_call(append_run_output, f"[{channel}] {line}"),
+                on_exit=on_run_exit,
+            )
         except Exception as exc:  # pragma: no cover - host process/display dependent
             status.set_text(f"Launch failed: {exc}")
             return
-        status.set_text("Launched Devtool command.")
+        run_state["handle"] = handle
+        launch_button = action_buttons.get("Launch")
+        if launch_button is not None:
+            launch_button.set_sensitive(False)
+        run_identity.set_text(f"{handle.run_id} · pid {handle.process.pid} · phase waiting · log {handle.log_path}")
+        status.set_text("Launched Devtool command as direct argv. Live stdout/stderr are streaming below.")
+
+    def cancel_running(_button: Any) -> None:
+        handle = run_state.get("handle")
+        if handle is None:
+            status.set_text("No desktop-launched run is active.")
+            return
+        if launcher.cancel(handle, force=False):
+            status.set_text(f"Cancel requested for {handle.run_id}.")
+        else:
+            status.set_text(f"Run {handle.run_id} is not running.")
+
+    def force_cancel_running(_button: Any) -> None:
+        handle = run_state.get("handle")
+        if handle is None:
+            status.set_text("No desktop-launched run is active.")
+            return
+        if launcher.cancel(handle, force=True):
+            status.set_text(f"Force-cancel requested for {handle.run_id}.")
+        else:
+            status.set_text(f"Run {handle.run_id} is not running.")
 
     def dry_run(_button: Any) -> None:
         mapping = current_mapping()
@@ -1040,9 +1686,18 @@ def _render_run_workflow(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         buffer.set_text(review.command or "No runnable dry-run command yet.")
         status.set_text("Dry-run command previewed; launch still uses the editable fields above.")
 
-    for label, callback in (("Refresh preview", update_preview), ("Copy command", copy_command), ("Preview dry-run", dry_run), ("Launch", launch_command)):
+    for label, callback, accessible in (
+        ("Refresh preview", update_preview, "Refresh the command preview"),
+        ("Copy command", copy_command, "Copy the reviewed shell command"),
+        ("Preview dry-run", dry_run, "Preview a dry-run form of this command"),
+        ("Launch", launch_command, "Launch the reviewed command as direct argv"),
+        ("Cancel", cancel_running, "Request graceful cancellation of the active desktop-launched run"),
+        ("Force cancel", force_cancel_running, "Force-cancel the active desktop-launched run"),
+    ):
         button = Gtk.Button(label=label)
+        action_buttons[label] = button
         button.connect("clicked", callback)
+        _set_accessible_label(Gtk, button, accessible)
         button_row.append(button)
 
     for widget in widgets.values():
@@ -1051,6 +1706,53 @@ def _render_run_workflow(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         with _suppress_exception():
             widget.connect("toggled", update_preview)
     update_preview()
+
+
+def _write_desktop_run_hud_failure(payload: dict[str, Any], handle: DesktopRunHandle) -> None:
+    """Publish a failed desktop-launched run to the same HUD surface users watch.
+
+    The Control Center's run page can start ad-hoc commands that are not always
+    represented by the normal IPC broker. On failure, write a small HUD state so
+    the failure card, canonical diagnostic counts, and Copy diagnostics action
+    show the desktop run instead of leaving the user in a dead-end log cave.
+    """
+    hud = payload.get("hud", {}) if isinstance(payload.get("hud"), dict) else {}
+    directory = Path(str(hud.get("directory") or DEFAULT_TASKER_DIR)).expanduser()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        diagnostics = handle.diagnostics or [{"severity": "error", "message": handle.failure_summary() or f"Desktop run exited {handle.returncode}", "source": "desktop-run"}]
+        state = {
+            "run_id": handle.run_id,
+            "status": "failed",
+            "event_type": "desktop-run-failed",
+            "title": "Desktop-launched Devtool run failed",
+            "text": handle.failure_summary() or f"Run exited {handle.returncode}. See {handle.log_path}",
+            "expanded_text": f"{handle.summary()}\nLog: {handle.log_path}",
+            "phase_name": handle.current_phase or "desktop run",
+            "command": " ".join(handle.argv),
+            "repo_name": handle.cwd.name,
+            "repo_root": str(handle.cwd),
+            "target": "desktop-control-center",
+            "current": 1,
+            "total": 1,
+            "updated_at": str(int(time.time())),
+            "diagnostics": diagnostics,
+            "completion": {
+                "headline": "Desktop-launched Devtool run failed",
+                "detail": handle.failure_summary() or f"Run exited {handle.returncode}. See {handle.log_path}",
+                "phase": handle.current_phase or "desktop run",
+                "errors": max(1, sum(1 for item in diagnostics if item.get("severity") == "error")),
+                "warnings": sum(1 for item in diagnostics if item.get("severity") == "warning"),
+                "diagnostics": diagnostics,
+                "duration_seconds": round(handle.elapsed_seconds, 3),
+                "log_path": str(handle.log_path),
+            },
+        }
+        (directory / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        with (directory / "events.jsonl").open("a", encoding="utf-8") as events:
+            events.write(json.dumps({"run_id": handle.run_id, "event_type": "desktop-run-failed", "status": "failed", "message": state["text"], "diagnostics": diagnostics}, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        append_gtk_log("control-center", "Failed to publish desktop run failure to HUD", exc)
 
 def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
@@ -1069,21 +1771,20 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("Recent events", str(settings.get("recent_events") or 0)),
     ])
     _append_subheading(Gtk, box, "Desktop behavior")
-    toggles = Gtk.FlowBox()
-    toggles.set_selection_mode(Gtk.SelectionMode.NONE)
-    for label, active in (
-        ("Follow active run", bool(settings.get("follow_active"))),
-        ("Clipboard monitor", False),
-        ("Keep HUD above windows", True),
-        ("Persist history", True),
-    ):
-        check = Gtk.CheckButton(label=label)
-        check.set_active(active)
-        check.set_sensitive(False)
-        toggles.append(check)
-    box.append(toggles)
-    _append_button_row(Gtk, box, [("Follow active run", None), ("Enable clipboard monitor", None), ("Compact HUD", lambda _button: _launch_hud(str(hud.get("directory") or DEFAULT_TASKER_DIR), bool(settings.get("follow_active"))))])
-    _append_text(Gtk, box, "The Run workflow is handled by the GTK4 typed command page. It builds argv first and renders shell text only for review/copy.")
+    preferences = DesktopPreferences.load("control-center")
+    _append_rows(Gtk, box, [
+        ("Appearance", preferences.appearance),
+        ("Reduced motion", "yes" if preferences.reduced_motion else "no"),
+        ("Saved window", f"{preferences.window_width}×{preferences.window_height}"),
+        ("Saved page", preferences.selected_page),
+    ])
+    _append_text(Gtk, box, "Appearance follows the system by default, can be forced with DEVTOOL_DESKTOP_APPEARANCE=light|dark, and honors DEVTOOL_REDUCED_MOTION=1 for quieter motion.")
+    _append_button_row(Gtk, box, [
+        ("Copy settings JSON", _copy_text_callback(Gtk, box, json.dumps(settings, ensure_ascii=False, indent=2))),
+        ("Open HUD", lambda _button: _launch_hud(str(hud.get("directory") or DEFAULT_TASKER_DIR), bool(settings.get("follow_active")))),
+        ("Copy HUD state path", _copy_text_callback(Gtk, box, str(hud.get("directory") or ""))),
+    ])
+    _append_text(Gtk, box, "Clipboard monitoring is intentionally unavailable until a real supported service mode exists.")
 
 
 def _count_severity(diagnostics: Any, severity: str) -> int:

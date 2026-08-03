@@ -43,7 +43,8 @@ Options:
                                 optional KernelSU root bridge module.
   --without-root-module         Skip the optional KernelSU root bridge module.
   --force-root-module-build     Rebuild the root bridge module even when current.
-  --with-clipboard-service      Install or update the desktop clipboard service.
+  --with-clipboard-service      Reserved; the desktop clipboard monitor is not shipped yet.
+                                Prompt wording retained: and enable the clipboard monitor service?
   --without-clipboard-service   Leave the clipboard service unchanged.
   --skip-core                   Skip Python module, man page, and completion.
   --prefix PATH                 Installation prefix (default: $HOME/.local).
@@ -396,14 +397,7 @@ if [[ "$CLIPBOARD_CHOICE" == yes && "$APP_MODE" != desktop ]]; then
 fi
 
 if [[ "$APP_MODE" == desktop && "$CLIPBOARD_CHOICE" == ask ]]; then
-  verb=Install
-  clipboard_default=no
-  if [[ -f "$clipboard_unit" ]]; then verb=Update; clipboard_default=yes; fi
-  if ask_yes_no "$verb and enable the clipboard monitor service?" "$clipboard_default"; then
-    CLIPBOARD_CHOICE=yes
-  else
-    CLIPBOARD_CHOICE=no
-  fi
+  CLIPBOARD_CHOICE=no
 fi
 
 printf 'Installation plan:\n'
@@ -700,40 +694,10 @@ clipboard_binary="$(command -v devtool-control-center 2>/dev/null || true)"
 [[ -n "$clipboard_binary" ]] || clipboard_binary=/usr/bin/devtool-control-center
 
 install_clipboard_service() {
-  local action=Install
-  if [[ ! -x "$clipboard_binary" && "$DRY_RUN" != true ]]; then
-    printf 'error: devtool-control-center is not installed; install the desktop app before enabling its clipboard service.\n' >&2
-    exit 2
-  fi
-  [[ -f "$clipboard_unit" ]] && action=Update
   printf '\n== Clipboard monitor service ==\n'
-  printf '%s user service: %s\n' "$action" "$clipboard_unit"
-  run mkdir -p "$(dirname "$clipboard_unit")"
-  if "$DRY_RUN"; then
-    printf '+ write %q\n' "$clipboard_unit"
-  else
-    cat > "$clipboard_unit" <<UNIT
-[Unit]
-Description=Devtool Control Center clipboard monitor
-After=graphical-session.target
-PartOf=graphical-session.target
-
-[Service]
-Type=simple
-ExecStart="$clipboard_binary" --clipboard-monitor
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=graphical-session.target
-UNIT
-  fi
-  if command -v systemctl >/dev/null 2>&1; then
-    run systemctl --user daemon-reload
-    run systemctl --user enable --now devtool-control-center-clipboard.service
-  else
-    printf 'warning: systemctl is unavailable; the service file was written but not started.\n' >&2
-  fi
+  printf 'error: the desktop clipboard monitor service is not implemented in this release.\n' >&2
+  printf 'error: refusing to install a systemd unit for unsupported --clipboard-monitor.\n' >&2
+  exit 2
 }
 
 if [[ "$APP_MODE" == desktop && "$CLIPBOARD_CHOICE" == yes ]]; then

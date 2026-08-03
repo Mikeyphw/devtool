@@ -96,22 +96,22 @@ find "$stage/usr/lib/python3/dist-packages/devtool" -type d -name '__pycache__' 
 find "$stage/usr/lib/python3/dist-packages/devtool" -type f -name '*.pyc' -delete
 
 cat > "$stage/usr/bin/devtool-control-center" <<'EOF'
-#!/usr/bin/env python3
+#!/usr/bin/python3
 from devtool.desktop.control_center_cli import main
 raise SystemExit(main())
 EOF
 cat > "$stage/usr/bin/devtool-gtk-control-center" <<'EOF'
-#!/usr/bin/env python3
+#!/usr/bin/python3
 from devtool.desktop.control_center_cli import main
 raise SystemExit(main())
 EOF
 cat > "$stage/usr/bin/devtool-control-center-hud" <<'EOF'
-#!/usr/bin/env python3
+#!/usr/bin/python3
 from devtool.desktop.gtk_hud_cli import main
 raise SystemExit(main())
 EOF
 cat > "$stage/usr/bin/devtool-gtk-hud" <<'EOF'
-#!/usr/bin/env python3
+#!/usr/bin/python3
 from devtool.desktop.gtk_hud_cli import main
 raise SystemExit(main())
 EOF
@@ -154,6 +154,40 @@ if "$verify_package"; then
   [[ "$contents" == *"./usr/share/applications/io.github.mikeceead.DevtoolControlCenter.desktop"* ]] || { echo "error: desktop entry missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/share/metainfo/io.github.mikeceead.DevtoolControlCenter.metainfo.xml"* ]] || { echo "error: metainfo missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/share/icons/hicolor/128x128/apps/io.github.mikeceead.DevtoolControlCenter.png"* ]] || { echo "error: raster icon missing from package" >&2; exit 1; }
+  for launcher in devtool-control-center devtool-gtk-control-center devtool-control-center-hud devtool-gtk-hud; do
+    if ! dpkg-deb --fsys-tarfile "$deb_path" | tar -xOf - "./usr/bin/$launcher" | head -n 1 | grep -qx '#!/usr/bin/python3'; then
+      echo "error: $launcher must use /usr/bin/python3 so PyGObject resolves to distro packages" >&2
+      exit 1
+    fi
+  done
+  if ! grep -qx 'Exec=/usr/bin/devtool-control-center' "$root/packaging/io.github.mikeceead.DevtoolControlCenter.desktop"; then
+    echo "error: desktop entry must use the stable installed /usr/bin/devtool-control-center launcher" >&2
+    exit 1
+  fi
+  if ! grep -qx 'TryExec=/usr/bin/devtool-control-center' "$root/packaging/io.github.mikeceead.DevtoolControlCenter.desktop"; then
+    echo "error: desktop entry must probe the stable installed /usr/bin/devtool-control-center launcher" >&2
+    exit 1
+  fi
+  verify_stage=$(mktemp -d "${TMPDIR:-/tmp}/devtool-gtk-control-center-verify.XXXXXX")
+  trap '"$rm_bin" -rf "$stage" "${verify_stage:-}"' EXIT
+  dpkg-deb --fsys-tarfile "$deb_path" | tar -xf - -C "$verify_stage"
+  if ! PYTHONPATH="$verify_stage/usr/lib/python3/dist-packages" /usr/bin/python3 - <<'PY'
+import gi
+import rich
+import devtool
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Adw
+from devtool.desktop.control_center_cli import main as control_center_main
+from devtool.desktop.gtk_hud_cli import main as hud_main
+assert callable(control_center_main)
+assert callable(hud_main)
+print('staged GTK runtime imports passed')
+PY
+  then
+    echo "error: staged package imports must pass with /usr/bin/python3, PyGObject, GTK4, libadwaita, Rich, and Devtool" >&2
+    exit 1
+  fi
   if dpkg-deb -f "$deb_path" Depends | grep -Eq 'qml-module|libqt5|qtbase5|qtdeclarative'; then
     echo "error: GTK package unexpectedly depends on Qt/QML" >&2
     exit 1

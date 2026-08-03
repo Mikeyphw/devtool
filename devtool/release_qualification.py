@@ -115,21 +115,16 @@ def android_sdk_available(environment: Mapping[str, str] | None = None) -> bool:
 
 
 def gtk4_available() -> bool:
-    probe = (
-        "import gi; "
-        "gi.require_version('Gtk', '4.0'); "
-        "gi.require_version('Adw', '1'); "
-        "from gi.repository import Gtk, Adw"
-    )
-    try:
-        subprocess.run([sys.executable, "-c", probe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return True
+    from .desktop.gtk_smoke import gtk_runtime_import_probe
+
+    ok, _detail = gtk_runtime_import_probe(sys.executable)
+    return ok
 
 
 def desktop_available() -> bool:
-    return gtk4_available()
+    from .desktop.gtk_smoke import has_display, has_xvfb
+
+    return gtk4_available() and (has_display() or has_xvfb())
 
 
 def qt_available() -> bool:
@@ -254,23 +249,86 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
 
     gtk_package = root / "desktop" / "gtk-control-center" / "package-deb.sh"
     if include_qt:
-        if gtk4_available():
+        from .desktop.gtk_smoke import (
+            control_center_startup_command,
+            gtk_runtime_import_probe,
+            hud_startup_command,
+            run_gtk_constrained_layout_test,
+            run_gtk_startup_test,
+        )
+
+        gtk_import_ok, gtk_import_detail = gtk_runtime_import_probe(sys.executable)
+        report.results.append(GateResult(
+            gate="desktop-gtk-imports",
+            status="passed" if gtk_import_ok else ("failed" if require_qt else "skipped"),
+            required=require_qt,
+            detail="GTK4/libadwaita/Rich imports are available" if gtk_import_ok else gtk_import_detail,
+        ))
+        if gtk_import_ok:
             report.results.append(_run(
-                "desktop-gtk-smoke",
+                "desktop-gtk-model-snapshot",
                 [sys.executable, "-m", "devtool", "control-center", "--backend", "gtk4", "--once"],
                 root, logs, required=require_qt, timeout=60,
             ))
+            for probe in (
+                run_gtk_startup_test(
+                    "desktop-gtk-control-center-startup",
+                    control_center_startup_command(repo=root, python=sys.executable),
+                    root=root,
+                    logs_dir=logs,
+                    required=require_qt,
+                    timeout=45,
+                    geometry="1280x720x24",
+                ),
+                run_gtk_startup_test(
+                    "desktop-gtk-hud-startup",
+                    hud_startup_command(state_dir=root / ".devtool" / "gtk-startup-test", python=sys.executable),
+                    root=root,
+                    logs_dir=logs,
+                    required=require_qt,
+                    timeout=45,
+                    geometry="800x720x24",
+                ),
+                run_gtk_constrained_layout_test(
+                    "desktop-gtk-control-center-constrained-layout",
+                    control_center_startup_command(repo=root, python=sys.executable),
+                    root=root,
+                    logs_dir=logs,
+                    required=require_qt,
+                    timeout=45,
+                ),
+                run_gtk_constrained_layout_test(
+                    "desktop-gtk-hud-constrained-layout",
+                    hud_startup_command(state_dir=root / ".devtool" / "gtk-startup-test", python=sys.executable),
+                    root=root,
+                    logs_dir=logs,
+                    required=require_qt,
+                    timeout=45,
+                ),
+            ):
+                report.results.append(GateResult(
+                    gate=probe.name,
+                    status=probe.status,
+                    required=probe.required,
+                    command=probe.wrapped_command or probe.command,
+                    detail=probe.detail,
+                    log_path=probe.log_path,
+                ))
+        else:
+            for gate in ("desktop-gtk-model-snapshot", "desktop-gtk-control-center-startup", "desktop-gtk-hud-startup", "desktop-gtk-control-center-constrained-layout", "desktop-gtk-hud-constrained-layout"):
+                report.results.append(_skip(gate, "GTK4/libadwaita Python bindings were not detected", required=require_qt))
+        if gtk_import_ok or require_qt:
+            report.results.append(_run(
+                "desktop-gtk-package",
+                ["bash", str(gtk_package.relative_to(root)), "--verify"],
+                root, logs, required=require_qt, timeout=180,
+            ))
         else:
             report.results.append(_skip(
-                "desktop-gtk-smoke",
-                "GTK4/libadwaita Python bindings were not detected",
+                "desktop-gtk-package",
+                "GTK4/libadwaita Python bindings were not detected; package import verification skipped",
                 required=require_qt,
             ))
-        report.results.append(_run(
-            "desktop-gtk-package",
-            ["bash", str(gtk_package.relative_to(root)), "--verify"],
-            root, logs, required=require_qt, timeout=180,
-        ))
 
     android_root = root / "android" / "devtool-live-hud"
     if include_android and android_sdk_available():

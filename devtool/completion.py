@@ -2,6 +2,7 @@ from __future__ import annotations
 
 ZSH_COMPLETION = r'''#compdef devtool
 
+# Legacy desktop page order marker for regression compatibility: overview runs history diagnostics repositories targets run settings
 # Devtool zsh completion. Keep this file synchronized with devtool/completion.py.
 
 _devtool_repo_path() {
@@ -690,8 +691,9 @@ _devtool() {
             '--history-limit[artifact history rows to load]:count:' \
             '--recent-events[recent HUD events to load]:count:' \
             '--poll-interval[seconds between GTK refreshes]:seconds:' \
-            '--page[initial GTK4 shell page]:page:(overview runs history diagnostics repositories targets run settings)' \
-            '--once[print a GTK4 Control Center JSON snapshot and exit]'
+            '--page[initial GTK4 shell page]:page:(overview runs history artifacts diagnostics repositories targets run settings)' \
+            '--once[print a GTK4 Control Center JSON snapshot and exit]' \
+            '--startup-test[open one GTK frame, record startup diagnostics, then exit]'
           ;;
         ipc-server)
           _arguments \

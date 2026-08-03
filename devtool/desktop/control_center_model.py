@@ -7,6 +7,7 @@ from typing import Any
 
 from ..config import load_project_config
 from ..hud import (
+    canonical_diagnostics,
     compact_detail_text,
     compact_operation_title,
     completion_copy_text,
@@ -140,7 +141,7 @@ class DesktopControlCenterModel:
         diagnostics = _diagnostics_from_runs_and_events(diagnostic_runs, hud.events)
         targets = [_target_summary_dict(name, target) for name, target in sorted(config.targets.items())]
         return DesktopControlCenterSnapshot(
-            repository=_repository_dict(repo),
+            repository={**_repository_dict(repo), "state_dir": str(self.state_dir)},
             project={
                 "kind": config.kind,
                 "selected_target": config.selected_target,
@@ -261,40 +262,36 @@ def _diagnostics_from_runs_and_events(runs: list[dict[str, Any]], events: list[d
     diagnostics: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str, str]] = set()
 
-    def append(raw: dict[str, Any], *, phase: str = "") -> None:
-        message = str(raw.get("detail") or raw.get("message") or raw.get("text") or "").strip()
+    def append(item: dict[str, Any]) -> None:
+        severity = str(item.get("severity") or "info").strip().lower()
+        message = str(item.get("message") or item.get("detail") or item.get("text") or "").strip()
         if not message:
             return
-        severity = str(raw.get("severity") or raw.get("level") or raw.get("type") or "info").strip().lower() or "info"
-        item = DesktopDiagnosticSummary(
-            severity=severity,
-            message=message,
-            code=str(raw.get("code") or ""),
-            phase=str(raw.get("phase") or phase or ""),
-            file=str(raw.get("file") or raw.get("path") or ""),
-        )
-        key = (item.severity, item.code, item.phase, item.file, item.message)
+        normalized = " ".join(message.split()).casefold()
+        key = (severity, str(item.get("code") or ""), str(item.get("phase") or ""), str(item.get("file") or ""), normalized)
         if key in seen:
             return
         seen.add(key)
-        diagnostics.append(asdict(item))
+        diagnostics.append({
+            "severity": severity,
+            "message": message,
+            "code": str(item.get("code") or ""),
+            "phase": str(item.get("phase") or ""),
+            "file": str(item.get("file") or item.get("path") or ""),
+            "source": str(item.get("source") or "runtime"),
+        })
 
     for run in runs:
-        state = run if isinstance(run, dict) else {}
-        for issue in state.get("diagnostics", []) if isinstance(state.get("diagnostics"), list) else []:
-            if isinstance(issue, dict):
-                append(issue, phase=str(state.get("phase") or ""))
-        for result in state.get("results", []) if isinstance(state.get("results"), list) else []:
-            if not isinstance(result, dict):
-                continue
-            phase = str(result.get("name") or result.get("phase") or "")
-            for issue in result.get("issues", []) if isinstance(result.get("issues"), list) else []:
-                if isinstance(issue, dict):
-                    append(issue, phase=phase)
-    for event in events:
-        if not isinstance(event, dict):
+        if not isinstance(run, dict):
             continue
-        severity = str(event.get("severity") or event.get("level") or event.get("type") or "").lower()
-        if severity in {"warning", "warn", "error", "failed", "failure"}:
-            append(event)
+        state = parse_hud_state(run)
+        run_events = run.get("events") if isinstance(run.get("events"), list) else []
+        if not run_events:
+            run_events = events
+        for item in canonical_diagnostics(run_events, state):
+            append(item)
+    if not diagnostics and events:
+        state = parse_hud_state({})
+        for item in canonical_diagnostics(events, state):
+            append(item)
     return diagnostics

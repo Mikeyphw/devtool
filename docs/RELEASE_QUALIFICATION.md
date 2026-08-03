@@ -28,19 +28,28 @@ to `dist/release-qualification.json`.
 
 ## GTK4 desktop gate
 
-The desktop package now stages the GTK4/libadwaita Control Center and compact
-HUD as the canonical desktop executables:
+The desktop package stages the GTK4/libadwaita Control Center and compact HUD as
+the canonical desktop executables. `--once` remains a model snapshot gate only;
+it does not count as a mapped-window GTK launch test:
 
 ```bash
 devtool control-center --backend gtk4 --once
-devtool-control-center --once
-devtool-control-center-hud --once
 ```
 
-The Debian package builder no longer runs a native desktop build. It stages the Python
-`devtool.desktop` modules, GTK4 launchers, desktop metadata, metainfo, and icons,
-then verifies that the resulting package has GTK4/libadwaita dependencies and no
-removed desktop runtime baggage:
+Real desktop release smoke coverage maps both windows under the host display or
+under Xvfb and fails on uncaught exceptions, GTK/Adwaita warnings, and impossible
+height allocation warnings:
+
+```bash
+xvfb-run -a devtool control-center --backend gtk4 --startup-test
+xvfb-run -a devtool-control-center-hud --startup-test --state-dir .devtool/gtk-hud-smoke
+```
+
+The Debian package builder extracts its generated package and verifies that
+PyGObject, GTK4, libadwaita, Rich, and Devtool import with `/usr/bin/python3`,
+the exact interpreter used by the installed launchers. It also verifies GTK4 and
+libadwaita dependencies, stable `/usr/bin` desktop-entry launchers, checksums,
+and absence of removed Qt runtime baggage:
 
 ```bash
 desktop/gtk-control-center/package-deb.sh --verify
@@ -91,7 +100,7 @@ prefix. It writes `release-artifacts.json` and `SHA256SUMS` next to the archive.
 `.github/workflows/release-qualification.yml` runs:
 
 - Python 3.11, 3.12, and 3.13 portable gates;
-- GTK4 once-smoke and Debian packaging without removed desktop runtime dependencies;
+- GTK4 model snapshot, real Xvfb mapped-window startup tests, and Debian packaging without removed desktop runtime dependencies;
 - Android lint, JVM tests, ephemeral-key signed release, and signature checks;
 - Android emulator instrumentation;
 - deterministic source release generation after all preceding jobs pass.
