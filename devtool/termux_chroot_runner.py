@@ -41,7 +41,8 @@ from .xdg import cache_dir, state_dir
 
 _PATH_VALUE_FLAGS = {
     "-r", "--repo", "-c", "--config", "--solution", "--project",
-    "--machine-file",
+    "--machine-file", "--android-sdk-root", "--java-home", "--gradle-command",
+    "--gradle-user-home",
     "-o", "--output",
 }
 
@@ -52,6 +53,7 @@ _FLAGS_WITH_VALUES = _PATH_VALUE_FLAGS | {
     "--build-target", "--run-target", "--target-name", "--solution-target",
     "--delivery-mode", "--artifact-type", "--port", "--poll-interval",
     "--recent-events", "--from-ref", "--to-ref", "-m",
+    "--toolchain-profile",
 }
 
 _APPLY_COMMANDS = {"apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as"}

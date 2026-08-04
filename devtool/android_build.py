@@ -46,6 +46,8 @@ ARM_BUILD_TOOLS_NATIVE_NAMES = ("aidl", "zipalign", "split-select")
 ANDROID_CMDLINE_TOOLS_URL = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
 AAPT2_OVERRIDE_PROPERTY = "android.aapt2FromMavenOverride"
 UNSUPPORTED_OPTION_WARNINGS_PROPERTY = "android.suppressUnsupportedOptionWarnings"
+BOOTSTRAP_DOWNLOAD_POLICIES = {"never", "missing", "auto", "force"}
+BOOTSTRAP_NETWORK_POLICIES = {"deny", "allow"}
 
 
 class BuildError(RuntimeError):
@@ -66,6 +68,45 @@ def warn(message: str) -> None:
 
 def fail(message: str) -> "None":
     raise BuildError(message)
+
+
+def normalize_bootstrap_downloads(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    if normalized in {"off", "false", "disabled", "disable", "no", "none"}:
+        normalized = "never"
+    if normalized not in BOOTSTRAP_DOWNLOAD_POLICIES:
+        valid = ", ".join(sorted(BOOTSTRAP_DOWNLOAD_POLICIES))
+        fail(f"Unsupported bootstrap download policy: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def normalize_bootstrap_network(value: str | None) -> str:
+    normalized = str(value or "allow").strip().lower() or "allow"
+    if normalized in {"off", "false", "disabled", "disable", "no", "none"}:
+        normalized = "deny"
+    if normalized not in BOOTSTRAP_NETWORK_POLICIES:
+        valid = ", ".join(sorted(BOOTSTRAP_NETWORK_POLICIES))
+        fail(f"Unsupported bootstrap network policy: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def bootstrap_provisioning_allowed(downloads: str, network: str) -> bool:
+    return normalize_bootstrap_network(network) == "allow" and normalize_bootstrap_downloads(downloads) != "never"
+
+
+def fail_bootstrap_blocked(component: str, *, downloads: str, network: str, checked: Sequence[str] = ()) -> "None":
+    checked_lines = "\n".join(f"- {item}" for item in checked if item)
+    checked_block = f"\n\nChecked:\n{checked_lines}" if checked_lines else ""
+    fail(
+        f"{component} location is unknown or incomplete.\n\n"
+        f"Download policy: {normalize_bootstrap_downloads(downloads)}\n"
+        f"Network policy: {normalize_bootstrap_network(network)}"
+        f"{checked_block}\n\n"
+        "Fix:\n"
+        "- set [chroots.<name>.android] or [android] toolchain paths in ~/.config/devtool/config.toml\n"
+        "- or pass --android-sdk-root, --gradle-command, or --java-home\n"
+        "- or change [bootstrap].downloads to \"missing\" or \"auto\" with [bootstrap].network = \"allow\""
+    )
 
 
 def shell_join(parts: Sequence[str | os.PathLike[str]]) -> str:
@@ -2009,12 +2050,29 @@ def ensure_android_sdk(
     dry_run: bool,
     arm_build_tools_provider: str = "auto",
     allow_managed_fallback: bool = True,
+    bootstrap_downloads: str = "auto",
+    bootstrap_network: str = "allow",
 ) -> tuple[Path, str | None, str | None, str | None, str | None]:
     if not project.android:
         fail("Internal error: ensure_android_sdk called for a non-Android project")
     if sdk_root is None:
         if skip_install:
             fail("Android SDK not found and --skip-sdk-install was used. Set ANDROID_HOME/ANDROID_SDK_ROOT or pass --sdk-root.")
+        if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+            fail_bootstrap_blocked(
+                "Android SDK",
+                downloads=bootstrap_downloads,
+                network=bootstrap_network,
+                checked=[
+                    "local.properties sdk.dir",
+                    "$ANDROID_HOME",
+                    "$ANDROID_SDK_ROOT",
+                    str(Path.home() / "Android" / "Sdk"),
+                    str(Path.home() / "android-sdk"),
+                    "/opt/android-sdk",
+                    "/usr/lib/android-sdk",
+                ],
+            )
         sdk_root = managed_sdk_root_for_host(cache_root)
         sdk_root.mkdir(parents=True, exist_ok=True)
         configure_android_sdk_env(env, sdk_root)
@@ -2097,6 +2155,13 @@ def ensure_android_sdk(
                 "The selected Android SDK requires additional packages but is not writable: "
                 f"{sdk_root}. Choose a writable --sdk-root."
             )
+        if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+            fail_bootstrap_blocked(
+                "Android SDK packages",
+                downloads=bootstrap_downloads,
+                network=bootstrap_network,
+                checked=[str(sdk_root), *missing, *[str(item) for item in native_replacements]],
+            )
 
         previous_sdk_root = sdk_root
         sdk_root = managed_sdk_root_for_host(cache_root)
@@ -2136,8 +2201,22 @@ def ensure_android_sdk(
     if missing:
         if skip_install:
             fail("Missing Android SDK packages: " + ", ".join(missing))
+        if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+            fail_bootstrap_blocked(
+                "Android SDK packages",
+                downloads=bootstrap_downloads,
+                network=bootstrap_network,
+                checked=[str(sdk_root), *missing],
+            )
         manager = find_sdkmanager(sdk_root)
         if manager is None:
+            if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+                fail_bootstrap_blocked(
+                    "Android SDK command-line tools",
+                    downloads=bootstrap_downloads,
+                    network=bootstrap_network,
+                    checked=[str(candidate) for candidate in sdkmanager_candidates(sdk_root)] + ["sdkmanager in PATH"],
+                )
             manager = ensure_sdkmanager_available(
                 sdk_root,
                 cache_root,
@@ -2187,12 +2266,19 @@ def ensure_android_sdk(
             info(f"NDK: {ndk_version}")
         if cmake_version:
             info(f"CMake: {cmake_version}")
+    if native_replacements and not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+        fail_bootstrap_blocked(
+            "Android SDK ARM build-tools repair",
+            downloads=bootstrap_downloads,
+            network=bootstrap_network,
+            checked=[str(sdk_root / "build-tools" / str(build_tools or "")), *native_replacements],
+        )
     ensure_arm64_build_tools_compatible(
         sdk_root,
         build_tools,
         cache_root,
         provider=arm_build_tools_provider,
-        offline=offline,
+        offline=offline or not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network),
         force=force_setup,
         dry_run=dry_run,
     )
@@ -2270,6 +2356,35 @@ def gradle_version_matches(actual: str | None, requested: str) -> bool:
     return actual_key[:width] == requested_key
 
 
+def gradle_wrapper_distribution_cached(
+    project_root: Path,
+    version: str,
+    *,
+    gradle_user_home: Path | None = None,
+) -> bool:
+    gradle_user_home = (gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser()
+    custom = gradle_user_home / "devtool-bootstrap" / f"gradle-{version}" / "bin" / "gradle"
+    if custom.is_file():
+        return True
+    wrapper_root = gradle_user_home / "wrapper" / "dists"
+    if wrapper_root.is_dir():
+        pattern = f"gradle-{version}-*"
+        for candidate in wrapper_root.glob(f"{pattern}/*/gradle-{version}/bin/gradle"):
+            if candidate.is_file():
+                return True
+    properties = project_root / "gradle" / "wrapper" / "gradle-wrapper.properties"
+    if properties.is_file():
+        try:
+            text = properties.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        match = re.search(r"distributionPath\s*=\s*(.+)$", text, re.MULTILINE)
+        distribution_path = match.group(1).strip() if match else ""
+        if distribution_path and (project_root / distribution_path).exists():
+            return True
+    return False
+
+
 def select_gradle(
     project_root: Path,
     *,
@@ -2278,6 +2393,9 @@ def select_gradle(
     cache_root: Path,
     offline: bool,
     force: bool,
+    bootstrap_downloads: str = "auto",
+    bootstrap_network: str = "allow",
+    gradle_user_home: Path | None = None,
 ) -> Path:
     wrapper = project_root / "gradlew"
     requested = version or wrapper_distribution_version(project_root) or DEFAULT_GRADLE_VERSION
@@ -2299,6 +2417,30 @@ def select_gradle(
             )
         info(f"Using explicit compatible Gradle: {candidate} ({actual})")
         return candidate
+
+    if wrapper.is_file() and not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+        wrapper_version = wrapper_distribution_version(project_root)
+        if wrapper_version and gradle_wrapper_distribution_cached(project_root, wrapper_version, gradle_user_home=gradle_user_home):
+            info(f"Using project Gradle wrapper with cached distribution: {wrapper} ({wrapper_version})")
+            return ensure_executable(wrapper, "Gradle wrapper")
+        system = shutil.which("gradle")
+        if system:
+            system_path = ensure_executable(Path(system), "Gradle launcher")
+            actual = gradle_version(system_path)
+            if gradle_version_matches(actual, requested):
+                info(f"Using compatible Gradle from PATH: {system_path} ({actual})")
+                return system_path
+        fail_bootstrap_blocked(
+            "Gradle wrapper distribution",
+            downloads=bootstrap_downloads,
+            network=bootstrap_network,
+            checked=[
+                str(wrapper),
+                str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "wrapper" / "dists"),
+                str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "devtool-bootstrap"),
+                "gradle in PATH",
+            ],
+        )
 
     if wrapper.is_file():
         wrapper_version = wrapper_distribution_version(project_root)
@@ -2325,6 +2467,17 @@ def select_gradle(
             f"({actual or 'unknown'}); Gradle {requested} is required."
         )
 
+    if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+        fail_bootstrap_blocked(
+            "Gradle",
+            downloads=bootstrap_downloads,
+            network=bootstrap_network,
+            checked=[
+                str(wrapper),
+                "gradle in PATH",
+                str(cache_root / "gradle" / f"gradle-{requested}" / "bin" / "gradle"),
+            ],
+        )
     info(f"Using managed Gradle {requested}")
     return managed_gradle(requested, cache_root, offline=offline, force=force)
 
@@ -2617,6 +2770,18 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cmake-version", default="auto", help="CMake version, auto, or none")
     parser.add_argument("-I", "--skip-sdk-install", action="store_true", help="Never install missing SDK packages")
     parser.add_argument("--auto-sdk", action="store_true", help="Explicitly allow automatic SDK package downloads and managed SDK creation")
+    parser.add_argument(
+        "--toolchain-downloads",
+        choices=sorted(BOOTSTRAP_DOWNLOAD_POLICIES),
+        default="auto",
+        help="Devtool-managed toolchain provisioning policy",
+    )
+    parser.add_argument(
+        "--bootstrap-network",
+        choices=sorted(BOOTSTRAP_NETWORK_POLICIES),
+        default="allow",
+        help="Whether Devtool-managed bootstrap downloads may use the network",
+    )
 
     parser.add_argument("-j", "--java-home", type=Path, help="JDK home")
     parser.add_argument(
@@ -2629,6 +2794,7 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-J", "--min-java", type=int, help="Minimum Java version; inferred when omitted")
     parser.add_argument("-g", "--gradle-command", help="Explicit Gradle or gradlew executable")
     parser.add_argument("-G", "--gradle-version", help="Managed Gradle version when no wrapper is available")
+    parser.add_argument("--gradle-user-home", type=Path, help="GRADLE_USER_HOME for this build")
     parser.add_argument("-k", "--cache-dir", type=Path, default=devtool_cache_dir() / APP_NAME)
     parser.add_argument("-w", "--max-workers", type=int, default=max(1, min(4, os.cpu_count() or 2)))
     parser.add_argument("--gradle-jvm-heap-mb", type=int, default=0, help="Cap the Gradle JVM heap in MiB")
@@ -2717,6 +2883,11 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--daemon-idle-timeout-ms cannot be negative")
     if args.gradle_lock_timeout_ms < 0:
         parser.error("--gradle-lock-timeout-ms cannot be negative")
+    args.toolchain_downloads = normalize_bootstrap_downloads(args.toolchain_downloads)
+    args.bootstrap_network = normalize_bootstrap_network(args.bootstrap_network)
+    if args.offline:
+        args.toolchain_downloads = "never"
+        args.bootstrap_network = "deny"
     args.gradle_args = extra_gradle_args
     return args
 
@@ -2843,6 +3014,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if delegated is not None:
         return delegated
     args = parse_args(raw_args)
+    if args.toolchain_downloads == "force":
+        args.force_setup = True
+    provisioning_allowed = bootstrap_provisioning_allowed(
+        args.toolchain_downloads,
+        args.bootstrap_network,
+    )
     apply_low_priority(args)
     project_root = resolve_project_root(args.project)
     project = inspect_project(project_root)
@@ -2874,6 +3051,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     need_java = java_home is None
     need_certificates = not certificate_store_available()
     if args.system_deps == "always":
+        if not provisioning_allowed:
+            fail_bootstrap_blocked(
+                "System dependency installation",
+                downloads=args.toolchain_downloads,
+                network=args.bootstrap_network,
+                checked=[f"java_home={args.java_home}" if args.java_home else "java in PATH", "system CA certificate store"],
+            )
         install_missing_system_dependencies(
             need_java=True,
             need_certificates=need_certificates,
@@ -2882,6 +3066,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
     elif args.system_deps == "auto" and (need_java or need_certificates):
+        if not provisioning_allowed:
+            missing = []
+            if need_java:
+                missing.append(f"Java {requirement.exact or str(minimum_java) + '+'}")
+            if need_certificates:
+                missing.append("CA certificates")
+            fail_bootstrap_blocked(
+                "System dependencies",
+                downloads=args.toolchain_downloads,
+                network=args.bootstrap_network,
+                checked=[*missing, f"java_home={args.java_home}" if args.java_home else "java in PATH"],
+            )
         install_missing_system_dependencies(
             need_java=need_java,
             need_certificates=need_certificates,
@@ -2900,6 +3096,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     env = os.environ.copy()
     env["JAVA_HOME"] = str(java_home)
     env["PATH"] = os.pathsep.join([str(java_home / "bin"), env.get("PATH", "")])
+    if args.gradle_user_home:
+        env["GRADLE_USER_HOME"] = str(args.gradle_user_home.expanduser())
     heading("Java")
     info(f"JAVA_HOME={java_home}")
     if requirement.exact is not None:
@@ -2913,6 +3111,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     if project.android:
         sdk_root, sdk_source = discover_sdk_root_with_source(args.sdk_root, project.root)
         if sdk_root is None and not args.skip_sdk_install:
+            if not provisioning_allowed:
+                fail_bootstrap_blocked(
+                    "Android SDK",
+                    downloads=args.toolchain_downloads,
+                    network=args.bootstrap_network,
+                    checked=[
+                        str(args.sdk_root) if args.sdk_root else "--sdk-root not set",
+                        "local.properties sdk.dir",
+                        "$ANDROID_HOME",
+                        "$ANDROID_SDK_ROOT",
+                        str(Path.home() / "Android" / "Sdk"),
+                        str(Path.home() / "android-sdk"),
+                        "/opt/android-sdk",
+                        "/usr/lib/android-sdk",
+                    ],
+                )
             sdk_root = managed_sdk_root_for_host(cache_root)
             sdk_source = "managed cache"
         if sdk_root:
@@ -2937,6 +3151,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             dry_run=args.dry_run,
             arm_build_tools_provider=args.arm_build_tools_provider,
             allow_managed_fallback=args.sdk_root is None,
+            bootstrap_downloads=args.toolchain_downloads,
+            bootstrap_network=args.bootstrap_network,
         )
 
     aapt2: Path | None = None
@@ -2946,10 +3162,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.aapt2_provider == "revanced" or (
             args.aapt2_provider == "auto" and normalized_machine() in {"arm64", "armv7"}
         ):
+            if not provisioning_allowed:
+                cached_aapt2 = sorted(
+                    (cache_root / "aapt2" / "revanced").glob("*/aapt2"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                if not cached_aapt2:
+                    fail_bootstrap_blocked(
+                        "AAPT2",
+                        downloads=args.toolchain_downloads,
+                        network=args.bootstrap_network,
+                        checked=[
+                            "--aapt2 not set",
+                            str(cache_root / "aapt2" / "revanced"),
+                            "Android Gradle Plugin default AAPT2",
+                        ],
+                    )
             aapt2 = obtain_revanced_aapt2(
                 cache_root,
                 release_name=args.aapt2_release,
-                offline=args.offline,
+                offline=args.offline or not provisioning_allowed,
                 force=args.force_setup,
                 dry_run=args.dry_run,
             )
@@ -2963,6 +3196,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         cache_root=cache_root,
         offline=args.offline,
         force=args.force_setup,
+        bootstrap_downloads=args.toolchain_downloads,
+        bootstrap_network=args.bootstrap_network,
+        gradle_user_home=args.gradle_user_home,
     )
     heading("Gradle")
     info(f"Launcher: {gradle}")

@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from devtool.android_integration import should_prefer_android_chroot
-from devtool.cli import _apply_global_cli_defaults, _resolve_config_editor, build_parser, main
+from devtool.cli import _apply_global_cli_defaults, _apply_runner_cli_options, _resolve_config_editor, build_parser, main
 from devtool.config import global_config_doctor_entries, load_project_config, minimal_global_config_template
 from devtool.models import ProjectConfig
 
@@ -40,6 +40,38 @@ class GlobalConfigTests(unittest.TestCase):
         self.assertEqual(config.runner_options["termux_chroot"]["project_kinds"], ["python"])
         self.assertTrue(config.runner_options["dotnet"]["stop_after_run"])
         self.assertEqual(config.runner_options["android"]["aapt2_provider"], "auto")
+
+    def test_global_chroot_profile_supplies_android_toolchain_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            (root / "settings.gradle.kts").write_text("pluginManagement { repositories { google() } }\n", encoding="utf-8")
+            (root / ".devtool.toml").write_text(
+                "[project]\nkind='android'\n"
+                "[execution]\nenvironment='chroot'\nchroot_name='androidos'\n",
+                encoding="utf-8",
+            )
+            xdg = Path(tmp) / "xdg"
+            global_path = xdg / "devtool" / "config.toml"
+            global_path.parent.mkdir(parents=True)
+            global_path.write_text(
+                "[bootstrap]\ndownloads='never'\nnetwork='deny'\n"
+                "[chroots.androidos.android]\n"
+                "sdk_root='/opt/android-sdk'\n"
+                "gradle='/opt/gradle/bin/gradle'\n"
+                "java_home='/usr/lib/jvm/java-21-openjdk-amd64'\n"
+                "gradle_user_home='/root/.gradle'\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(xdg)}, clear=False):
+                config = load_project_config(str(root), None)
+
+        self.assertEqual(config.runner_options["bootstrap"]["downloads"], "never")
+        self.assertEqual(config.runner_options["android"]["sdk_root"], "/opt/android-sdk")
+        self.assertEqual(config.runner_options["android"]["gradle"], "/opt/gradle/bin/gradle")
+        self.assertEqual(config.runner_options["android"]["java_home"], "/usr/lib/jvm/java-21-openjdk-amd64")
+        self.assertEqual(config.runner_options["android"]["gradle_user_home"], "/root/.gradle")
 
     def test_repo_config_overrides_global_chroot_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -121,6 +153,33 @@ class GlobalConfigTests(unittest.TestCase):
         self.assertTrue(args.minimal)
         self.assertTrue(args.force)
 
+    def test_bootstrap_cli_overrides_update_runner_options(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args([
+            "--offline",
+            "--toolchain-profile", "androidos",
+            "--android-sdk-root", "/opt/android-sdk",
+            "--gradle-command", "/opt/gradle/bin/gradle",
+            "--java-home", "/usr/lib/jvm/java-21-openjdk-amd64",
+            "--gradle-user-home", "/root/.gradle",
+            "build",
+        ])
+        config = ProjectConfig(
+            repo_root=Path("/tmp/demo"),
+            kind="android",
+            runner_options={"chroots": {"androidos": {"android": {"sdk_root": "/wrong"}}}},
+        )
+        _apply_runner_cli_options(config, args)
+
+        self.assertEqual(config.chroot_name, "androidos")
+        self.assertEqual(config.runner_options["bootstrap"]["downloads"], "never")
+        self.assertEqual(config.runner_options["bootstrap"]["network"], "deny")
+        self.assertTrue(config.runner_options["gradle"]["offline"])
+        self.assertEqual(config.runner_options["android"]["sdk_root"], "/opt/android-sdk")
+        self.assertEqual(config.runner_options["gradle"]["command"], "/opt/gradle/bin/gradle")
+        self.assertEqual(config.runner_options["android"]["java_home"], "/usr/lib/jvm/java-21-openjdk-amd64")
+        self.assertEqual(config.runner_options["gradle"]["user_home"], "/root/.gradle")
+
     def test_termux_chroot_policy_can_include_python_projects(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = ProjectConfig(
@@ -141,6 +200,8 @@ class GlobalConfigTests(unittest.TestCase):
 
     def test_global_config_template_documents_chroot_project_kinds(self) -> None:
         text = minimal_global_config_template()
+        self.assertIn("[bootstrap]", text)
+        self.assertIn("downloads", text)
         self.assertIn("[termux_chroot]", text)
         self.assertIn("project_kinds", text)
         self.assertIn("micro", text)

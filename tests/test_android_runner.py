@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from devtool.android_build import (
+    BuildError,
     JavaRequirement,
     ProjectInfo,
     artifact_variant,
@@ -468,6 +469,92 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         self.assertEqual(inspect_rows["execution_mode"], "host")
         self.assertEqual(doctor_rows["sdk_install"], "auto")
         self.assertEqual(doctor_rows["execution_mode"], "host")
+
+    def test_chroot_android_defaults_to_no_bootstrap_downloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+            termux = {
+                "HOME": "/data/data/com.termux/files/home",
+                "PREFIX": "/data/data/com.termux/files/usr",
+                "TERMUX_VERSION": "0.119",
+                "DEVTOOL_ANDROID_BUILDER": str(root / "state" / "build-apk"),
+                "DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "state" / "events.gradle"),
+            }
+            with patch.dict(os.environ, termux, clear=True), patch(
+                "devtool.android_integration.shutil.which",
+                return_value="/data/data/com.termux/files/usr/bin/chrootctl",
+            ):
+                args = android_builder_arguments(config, "build")
+                inspect_rows = dict(android_inspect_rows(config))
+
+        self.assertIn("--toolchain-downloads", args)
+        self.assertEqual(args[args.index("--toolchain-downloads") + 1], "never")
+        self.assertEqual(args[args.index("--bootstrap-network") + 1], "deny")
+        self.assertEqual(inspect_rows["bootstrap_downloads"], "never")
+
+    def test_android_builder_threads_explicit_toolchain_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "android": {
+                        "sdk_root": "/opt/android-sdk",
+                        "java_home": "/usr/lib/jvm/java-21-openjdk-amd64",
+                        "gradle": "/opt/gradle/bin/gradle",
+                        "gradle_user_home": "/root/.gradle",
+                    },
+                    "bootstrap": {"downloads": "never", "network": "deny"},
+                },
+            )
+            with patch.dict(os.environ, {
+                "DEVTOOL_ANDROID_BUILDER": str(root / "state" / "build-apk"),
+                "DEVTOOL_GRADLE_INIT_SCRIPT": str(root / "state" / "events.gradle"),
+            }, clear=False):
+                args = android_builder_arguments(config, "build")
+
+        self.assertEqual(args[args.index("--sdk-root") + 1], "/opt/android-sdk")
+        self.assertEqual(args[args.index("--java-home") + 1], "/usr/lib/jvm/java-21-openjdk-amd64")
+        self.assertEqual(args[args.index("--gradle-command") + 1], "/opt/gradle/bin/gradle")
+        self.assertEqual(args[args.index("--gradle-user-home") + 1], "/root/.gradle")
+        self.assertEqual(args[args.index("--toolchain-downloads") + 1], "never")
+
+    def test_download_policy_never_blocks_managed_sdk_creation(self) -> None:
+        project = ProjectInfo(
+            root=Path("/tmp/demo"),
+            name="demo",
+            android=True,
+            android_application=True,
+            compile_sdk=35,
+            build_tools=None,
+            agp_major=8,
+            native_build=False,
+            ndk_version=None,
+            cmake_version=None,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(BuildError, "Download policy: never"):
+                ensure_android_sdk(
+                    project,
+                    None,
+                    Path(tmp),
+                    force_setup=False,
+                    platform_override="auto",
+                    build_tools_override="auto",
+                    ndk_override="none",
+                    cmake_override="none",
+                    skip_install=False,
+                    offline=False,
+                    env={},
+                    dry_run=True,
+                    bootstrap_downloads="never",
+                    bootstrap_network="deny",
+                )
 
     def test_android_chroot_is_preferred_from_termux_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

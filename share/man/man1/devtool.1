@@ -411,6 +411,38 @@ or
 .TP
 .B --no-auto-chroot
 Do not automatically route incompatible Termux operations into a chroot.
+.TP
+.B --no-bootstrap-downloads
+Never download or install missing toolchain components during Devtool-managed Android/Gradle bootstrap.
+.TP
+.B --deny-network
+Deny Devtool-managed bootstrap network downloads for this run.
+.TP
+.B --offline
+Alias for
+.BR --no-bootstrap-downloads
+and
+.BR --deny-network ,
+and also passes Gradle offline mode for Android/Gradle runs.
+.TP
+.BR --toolchain-profile " NAME"
+Use a named
+.BR [chroots.NAME]
+toolchain profile from global or repository config.
+.TP
+.BR --android-sdk-root " PATH"
+Set the Android SDK root for Android/Gradle runs.
+.TP
+.BR --gradle-command " PATH"
+Set the Gradle or gradlew executable for Android/Gradle runs.
+.TP
+.BR --java-home " PATH"
+Set the JDK home for Android/Gradle runs.
+.TP
+.BR --gradle-user-home " PATH"
+Set
+.B GRADLE_USER_HOME
+for Android/Gradle runs.
 .PP
 Devtool records the selected environment in structured logs and HUD state. Chroot workers
 use a recursion guard, translate known Termux/chroot paths, and verify the mapped project

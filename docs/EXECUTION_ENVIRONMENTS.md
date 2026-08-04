@@ -100,6 +100,34 @@ implementation.
 
 Android/Gradle commands can run natively in Termux or through the configured chroot. This automatic policy is never evaluated on a PC. Auto mode uses the existing host-UI/chroot-toolchain backend when it is available, preserving Termux-side progress and notification state. Set `prefer_native_termux = true` in the target's Android settings or pass `--execution-environment native-termux` to force native execution. The sparse user global config may extend this policy with `[termux_chroot] project_kinds`, allowing additional project kinds such as Python to use the same Android/Termux chroot backend while leaving repo `.devtool.toml` and explicit CLI flags in control.
 
+## Toolchain discovery and bootstrap policy
+
+Chroot Android/Gradle runs default to discovery-only bootstrap behavior:
+
+```toml
+[bootstrap]
+downloads = "never" # never | missing | auto | force
+network = "deny"    # deny | allow
+fail_on_missing_tools = true
+
+[chroots.androidos.android]
+sdk_root = "/opt/android-sdk"
+gradle = "/opt/gradle/gradle-9.6.1/bin/gradle"
+java_home = "/usr/lib/jvm/java-21-openjdk-amd64"
+gradle_user_home = "/root/.gradle"
+```
+
+Unknown location is not treated as permission to provision. With downloads set
+to `never`, Devtool reuses explicit paths, chroot-visible environment values,
+project-local metadata, PATH tools, and already cached wrapper distributions.
+If a required Android SDK, Gradle, JDK, AAPT2, SDK package, or ARM build-tool
+repair is unavailable, the run fails with the checked locations and the exact
+config or CLI override to use. Pass `--no-bootstrap-downloads`,
+`--deny-network`, `--offline`, `--toolchain-profile NAME`,
+`--android-sdk-root`, `--gradle-command`, `--java-home`, or
+`--gradle-user-home` for one-run overrides. Non-chroot hosts keep the existing
+automatic bootstrap behavior unless `[bootstrap]` or CLI flags change it.
+
 
 ## Path isolation
 

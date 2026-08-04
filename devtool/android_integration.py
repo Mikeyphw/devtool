@@ -169,6 +169,7 @@ def configured_tasks(config: ProjectConfig, action: str) -> list[str]:
     if action == "clean":
         return ["clean"]
     android = _dict_option(config, "android")
+    downloads, network = _bootstrap_policy(config)
     variant = str(config.variant or android.get("variant", "debug") or "debug").strip()
     variant_title = variant[:1].upper() + variant[1:]
     if action == "build":
@@ -430,6 +431,17 @@ def _bool_setting(value: Any, default: bool) -> bool:
     return default
 
 
+def _bootstrap_policy(config: ProjectConfig) -> tuple[str, str]:
+    bootstrap = _dict_option(config, "bootstrap")
+    downloads = str(bootstrap.get("downloads", "") or "").strip().lower()
+    network = str(bootstrap.get("network", "") or "").strip().lower()
+    if downloads not in {"never", "missing", "auto", "force"}:
+        downloads = "never" if _android_execution_mode(config) == "chroot" else "auto"
+    if network not in {"deny", "allow"}:
+        network = "deny" if downloads == "never" else "allow"
+    return downloads, network
+
+
 def _is_android_packaging_workload(tasks: Iterable[str]) -> bool:
     """Return whether tasks can invoke D8/R8 or final APK/AAB packaging."""
 
@@ -481,8 +493,12 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--build-tools", android.get("build_tools", "auto"))
     _append_option(argv, "--ndk-version", android.get("ndk_version", "auto"))
     _append_option(argv, "--cmake-version", android.get("cmake_version", "auto"))
-    _append_option(argv, "--gradle-command", gradle.get("command"))
+    _append_option(argv, "--gradle-command", gradle.get("command") or android.get("gradle"))
     _append_option(argv, "--gradle-version", gradle.get("version"))
+    _append_option(argv, "--gradle-user-home", gradle.get("user_home") or android.get("gradle_user_home"))
+    downloads, network = _bootstrap_policy(config)
+    _append_option(argv, "--toolchain-downloads", downloads)
+    _append_option(argv, "--bootstrap-network", network)
     validation_policy = (
         resolve_android_validation_phase_policy(config, validation_phase)
         if validation and validation_phase
@@ -660,6 +676,7 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     requirement = android_build.infer_java_requirement(project)
     sdk_root, sdk_source = android_build.discover_sdk_root_with_source(None, project.root)
     android = _dict_option(config, "android")
+    downloads, network = _bootstrap_policy(config)
     tasks = configured_tasks(config, "build")
     test_tasks = configured_tasks(config, "test")
     lint_tasks = configured_tasks(config, "lint")
@@ -673,6 +690,9 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("compile_sdk", str(project.compile_sdk) if project.compile_sdk else "auto/unknown"),
         ("android_gradle_plugin", str(project.agp_major) if project.agp_major else "unknown"),
         ("sdk_install", "manual" if bool(android.get("skip_sdk_install", False)) else "auto"),
+        ("bootstrap_downloads", downloads),
+        ("bootstrap_network", network),
+        ("toolchain_profile", str(config.runner_options.get("toolchain_profile") or config.chroot_name or "")),
         ("auto_sdk", "yes" if bool(android.get("auto_sdk", False)) else "no"),
         ("sdk_source", sdk_source or "missing"),
         ("sdk_root", str(sdk_root) if sdk_root else "missing"),
@@ -690,6 +710,7 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     project = inspect_android_project(config)
     requirement = android_build.infer_java_requirement(project)
     android = _dict_option(config, "android")
+    downloads, network = _bootstrap_policy(config)
     java_home: Path | None = None
     try:
         java_home = android_build.find_java_home(None, requirement.minimum, exact=requirement.exact)
@@ -734,6 +755,9 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ),
         ("gradle", str(gradle_path) if gradle_path else "missing wrapper/Gradle"),
         ("sdk_install", "manual" if bool(android.get("skip_sdk_install", False)) else "auto"),
+        ("bootstrap_downloads", downloads),
+        ("bootstrap_network", network),
+        ("toolchain_profile", str(config.runner_options.get("toolchain_profile") or config.chroot_name or "")),
         ("auto_sdk", "yes" if bool(android.get("auto_sdk", False)) else "no"),
         ("android_sdk", str(sdk) if sdk else "missing"),
         ("android_sdk_source", sdk_source or "missing"),

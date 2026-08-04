@@ -361,6 +361,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     environment.add_argument("--no-auto-chroot", action="store_true", help="On Termux, do not auto-route command phases through chrootctl")
 
+    bootstrap = parser.add_argument_group("Toolchain bootstrap")
+    bootstrap.add_argument("--no-bootstrap-downloads", action="store_true", help="Never download or install missing toolchain components")
+    bootstrap.add_argument("--deny-network", action="store_true", help="Deny Devtool-managed network downloads for this run")
+    bootstrap.add_argument("--offline", action="store_true", help="Alias for --no-bootstrap-downloads --deny-network and Gradle offline mode")
+    bootstrap.add_argument("--toolchain-profile", default="", help="Chroot/toolchain profile name from global or repo config")
+    bootstrap.add_argument("--android-sdk-root", default="", help="Android SDK root for Android/Gradle projects")
+    bootstrap.add_argument("--gradle-command", default="", help="Gradle or gradlew executable for Android/Gradle projects")
+    bootstrap.add_argument("--java-home", default="", help="JDK home for Android/Gradle projects")
+    bootstrap.add_argument("--gradle-user-home", default="", help="GRADLE_USER_HOME for Android/Gradle projects")
+
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for name, aliases in [
@@ -2249,6 +2259,61 @@ def _apply_validation_resource_overrides(config: ProjectConfig, args: argparse.N
 def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -> None:
     _apply_validation_resource_profile(config, args)
     _apply_validation_resource_overrides(config, args)
+    def ensure_section(name: str) -> dict:
+        section = config.runner_options.get(name, {})
+        if not isinstance(section, dict):
+            section = {}
+        config.runner_options[name] = section
+        return section
+
+    if bool(getattr(args, "offline", False)):
+        bootstrap = ensure_section("bootstrap")
+        android = ensure_section("android")
+        gradle = ensure_section("gradle")
+        bootstrap["downloads"] = "never"
+        bootstrap["network"] = "deny"
+        android["offline"] = True
+        gradle["offline"] = True
+    if bool(getattr(args, "no_bootstrap_downloads", False)):
+        bootstrap = ensure_section("bootstrap")
+        bootstrap["downloads"] = "never"
+    if bool(getattr(args, "deny_network", False)):
+        bootstrap = ensure_section("bootstrap")
+        bootstrap["network"] = "deny"
+    profile = str(getattr(args, "toolchain_profile", "") or "").strip()
+    if profile:
+        config.runner_options["toolchain_profile"] = profile
+        config.chroot_name = profile
+        chroots = config.runner_options.get("chroots", {})
+        selected = chroots.get(profile) if isinstance(chroots, dict) else None
+        if isinstance(selected, dict):
+            for section_name in ("android", "gradle", "bootstrap"):
+                section_value = selected.get(section_name, {})
+                if not isinstance(section_value, dict):
+                    continue
+                current = config.runner_options.get(section_name, {})
+                config.runner_options[section_name] = {
+                    **dict(section_value),
+                    **(dict(current) if isinstance(current, dict) else {}),
+                }
+    sdk_root = str(getattr(args, "android_sdk_root", "") or "").strip()
+    if sdk_root:
+        android = ensure_section("android")
+        android["sdk_root"] = sdk_root
+    java_home = str(getattr(args, "java_home", "") or "").strip()
+    if java_home:
+        android = ensure_section("android")
+        android["java_home"] = java_home
+    gradle_command = str(getattr(args, "gradle_command", "") or "").strip()
+    if gradle_command:
+        gradle = ensure_section("gradle")
+        gradle["command"] = gradle_command
+    gradle_user_home = str(getattr(args, "gradle_user_home", "") or "").strip()
+    if gradle_user_home:
+        gradle = ensure_section("gradle")
+        android = ensure_section("android")
+        gradle["user_home"] = gradle_user_home
+        android["gradle_user_home"] = gradle_user_home
     if args.command in {"build", "b"} and config.kind in {"android", "gradle"}:
         artifacts = config.runner_options.setdefault("artifacts", {})
         if not isinstance(artifacts, dict):
@@ -5194,6 +5259,13 @@ def _run_deferred_apply(
     try:
         config = _reload_config_after_artifact_apply(args, config, manifest)
         _apply_artifact_validation_defaults(config, args, manifest)
+        if policy:
+            if not bool(policy.get("restore", True)):
+                args.skip_restore = True
+            if not bool(policy.get("build", True)):
+                args.skip_build = True
+            if not bool(policy.get("test", True)):
+                args.skip_test = True
         context = _validation_apply_context(args, transaction_path=transaction_path, manifest=manifest)
         session, _specs = _load_or_create_validation_session(
             config,

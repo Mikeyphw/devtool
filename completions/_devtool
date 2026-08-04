@@ -427,6 +427,14 @@ _devtool() {
     '(--host --chroot --execution-environment)--chroot[run command phases in a named chroot]:name:' \
     '(--host --chroot --execution-environment)--execution-environment[execution backend]:backend:(auto native-termux chroot desktop-linux android-device external-device)' \
     '--no-auto-chroot[disable automatic Termux-to-chroot routing]' \
+    '--no-bootstrap-downloads[never download or install missing toolchain components]' \
+    '--deny-network[deny Devtool-managed bootstrap network downloads]' \
+    '--offline[disable bootstrap downloads, deny bootstrap network, and use Gradle offline mode]' \
+    '--toolchain-profile[chroot/toolchain profile]:profile:' \
+    '--android-sdk-root[Android SDK root]:directory:_files -/' \
+    '--gradle-command[Gradle or gradlew executable]:command:_command_names -e' \
+    '--java-home[JDK home]:directory:_files -/' \
+    '--gradle-user-home[Gradle user home]:directory:_files -/' \
     '1:command:->command' \
     '*::argument:->args'
 

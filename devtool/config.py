@@ -17,6 +17,7 @@ CONFIG_NAME = ".devtool.toml"
 GLOBAL_CONFIG_NAME = "config.toml"
 GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
     "cli", "environment", "termux_chroot", "android", "dotnet", "terminal",
+    "bootstrap", "chroots",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "targets", "tasks", "artifacts", "python", "node", "rust",
@@ -73,7 +74,7 @@ def _global_project_defaults(global_config: dict[str, Any]) -> dict[str, Any]:
         default_chroot = str(environment.get("default_chroot", "") or "").strip()
         if default_chroot:
             defaults.setdefault("execution", {})["chroot_name"] = default_chroot
-    for section in ("android", "dotnet"):
+    for section in ("android", "dotnet", "bootstrap", "chroots"):
         value = global_config.get(section, {})
         if isinstance(value, dict) and value:
             defaults[section] = dict(value)
@@ -119,6 +120,11 @@ def minimal_global_config_template() -> str:
         "",
         "[environment]",
         "default_chroot = \"androidos\"",
+        "",
+        "[bootstrap]",
+        "downloads = \"auto\" # never | missing | auto | force",
+        "network = \"allow\" # deny | allow",
+        "fail_on_missing_tools = true",
         "",
         "[termux_chroot]",
         "# Project kinds that auto mode may route through chroot when running on native Termux.",
@@ -166,7 +172,7 @@ SUPPORTED_PROJECT_KINDS = {
 RUNNER_OPTION_SECTIONS = (
     "android", "gradle", "python", "dotnet", "node", "rust", "go",
     "maven", "cmake", "meson", "make", "build", "tasks", "artifacts",
-    "test_profiles", "validation", "termux_chroot",
+    "test_profiles", "validation", "termux_chroot", "bootstrap", "chroots",
 )
 PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
 RUNTIME_ENV_PREFIX = "DEVTOOL_ENV_"
@@ -453,6 +459,33 @@ def load_project_config(
                     effective_env.update({str(k): str(v) for k, v in value.items()})
                 elif isinstance(value, dict):
                     runner_options[key] = _merge_option_value(runner_options.get(key), value)
+
+    chroots_options = runner_options.get("chroots", {})
+    selected_chroot_profile = (
+        chroots_options.get(chroot_name)
+        if isinstance(chroots_options, dict) and chroot_name
+        else None
+    )
+    if isinstance(selected_chroot_profile, dict):
+        profile_android = selected_chroot_profile.get("android", {})
+        if isinstance(profile_android, dict):
+            runner_options["android"] = _deep_merge_defaults(
+                dict(profile_android),
+                dict(runner_options.get("android", {})) if isinstance(runner_options.get("android", {}), dict) else {},
+            )
+        profile_gradle = selected_chroot_profile.get("gradle", {})
+        if isinstance(profile_gradle, dict):
+            runner_options["gradle"] = _deep_merge_defaults(
+                dict(profile_gradle),
+                dict(runner_options.get("gradle", {})) if isinstance(runner_options.get("gradle", {}), dict) else {},
+            )
+        profile_bootstrap = selected_chroot_profile.get("bootstrap", {})
+        if isinstance(profile_bootstrap, dict):
+            runner_options["bootstrap"] = _deep_merge_defaults(
+                dict(profile_bootstrap),
+                dict(runner_options.get("bootstrap", {})) if isinstance(runner_options.get("bootstrap", {}), dict) else {},
+            )
+        runner_options.setdefault("toolchain_profile", chroot_name)
     project_root = (selected_target.root if selected_target and selected_target.root else "")
     if not project_root:
         configured_root = str(project_section.get("root", "")).strip()
