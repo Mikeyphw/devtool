@@ -255,6 +255,37 @@ class CliExecutionIntegrationTests(unittest.TestCase):
 
         self.assertEqual(prepared[0].argv, ["python", "-m", "pytest"])
 
+    def test_execution_preparation_refreshes_stale_android_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            builder = root / "runtime" / "build-apk"
+            builder.parent.mkdir(parents=True)
+            builder.write_text("#!/usr/bin/env python3\n# stale builder\n", encoding="utf-8")
+            config = ProjectConfig(repo_root=root, kind="android", execution_environment="auto")
+            spec = CommandSpec(
+                "android-validation",
+                [
+                    "python3",
+                    str(builder),
+                    str(root),
+                    "--toolchain-downloads",
+                    "never",
+                    "--bootstrap-network",
+                    "deny",
+                ],
+                cwd=str(root),
+                metadata={"android_builder": str(builder)},
+            )
+
+            with patch.dict("os.environ", {"HOME": str(root / "home")}, clear=True):
+                prepared = _prepare_specs_for_execution(config, [spec], self._args())
+            refreshed = builder.read_text(encoding="utf-8")
+
+        self.assertEqual(prepared[0].argv, spec.argv)
+        self.assertIn("--toolchain-downloads", refreshed)
+        self.assertIn("--bootstrap-network", refreshed)
+        self.assertIn("def standalone_main", refreshed)
+
     def test_inside_chroot_rejects_termux_interpreter_from_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = ProjectConfig(repo_root=Path(tmp), kind="python", execution_environment="chroot")

@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import tempfile
 from typing import Any, Iterable
 
 from .build_optimization import resolve_android_validation_phase_policy, resolve_android_validation_policy, resolve_build_policy
@@ -97,14 +98,60 @@ def stage_android_builder(*, destination: Path | None = None) -> Path:
                 value.update(chunk)
         return value.hexdigest()
 
-    if not target.is_file() or digest(target) != digest(source):
-        temporary = target.with_suffix(".tmp")
-        shutil.copy2(source, temporary)
-        temporary.chmod(0o755)
-        temporary.replace(target)
+    source_digest = digest(source)
+    if not target.is_file() or digest(target) != source_digest:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            shutil.copy2(source, temporary)
+            temporary.chmod(0o755)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        if digest(target) != source_digest:
+            raise RuntimeError(f"Failed to refresh staged Android builder: {target}")
     elif not os.access(target, os.X_OK):
         target.chmod(target.stat().st_mode | 0o111)
     return target
+
+
+def refresh_android_builders_for_specs(specs: Iterable[Any]) -> None:
+    """Refresh staged Android builders immediately before command wrapping.
+
+    Validation plans can be resumed or reconstructed after the builder was first
+    staged.  Re-staging at the execution boundary prevents a newer Devtool
+    command line from reaching an older ``build-apk`` parser in the chroot.
+    """
+
+    for spec in specs:
+        metadata = getattr(spec, "metadata", {})
+        if not isinstance(metadata, dict):
+            continue
+        raw_builder = str(metadata.get("android_builder") or "").strip()
+        if not raw_builder:
+            continue
+        staged = stage_android_builder(destination=Path(raw_builder))
+        argv = [str(value) for value in getattr(spec, "argv", ())]
+        required_options = {
+            option
+            for option in ("--gradle-user-home", "--toolchain-downloads", "--bootstrap-network")
+            if option in argv
+        }
+        if not required_options:
+            continue
+        staged_text = staged.read_text(encoding="utf-8", errors="replace")
+        missing = sorted(option for option in required_options if option not in staged_text)
+        if missing:
+            raise RuntimeError(
+                "Staged Android builder is incompatible with the planned command: "
+                + ", ".join(missing)
+                + f" ({staged})"
+            )
 
 
 def _state_gradle_init_path() -> Path:

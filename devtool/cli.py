@@ -2652,6 +2652,12 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
 
     plan = _execution_plan_for_args(config, args)
 
+    # Validation sessions and retries may outlive the staged Android builder
+    # that existed when their command specs were first planned. Refresh it at
+    # the final execution boundary before any host-to-chroot path wrapping.
+    from .android_integration import refresh_android_builders_for_specs
+    refresh_android_builders_for_specs(specs)
+
     # Toolchain discovery occurs in the current host process. Do not inject a
     # host-only mise wrapper into commands that will execute inside a chroot.
     if not (plan.uses_chroot and plan.current != EXECUTION_CHROOT):

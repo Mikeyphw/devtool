@@ -51,13 +51,14 @@ from devtool.android_integration import (
     android_inspect_rows,
     android_validation_lint_tasks,
     configured_tasks,
+    refresh_android_builders_for_specs,
     stage_android_builder,
     stage_gradle_init_script,
     should_prefer_android_chroot,
 )
 from devtool.config import detect_project_kind, discover_gradle_roots, load_project_config
 from devtool.diagnostics import parse_issues
-from devtool.models import ProjectConfig
+from devtool.models import CommandSpec, ProjectConfig
 from devtool.project_runners import AndroidGradleRunner, get_project_runner
 from devtool.runners import (
     build_specs,
@@ -1675,6 +1676,46 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             self.assertTrue(os.access(staged, os.X_OK))
             self.assertIn("def standalone_main", text)
             self.assertNotIn("from devtool", text)
+
+    def test_execution_boundary_refreshes_stale_android_builder_parser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "build-apk"
+            target.write_text(
+                "#!/usr/bin/env python3\n# legacy parser without bootstrap policy options\n",
+                encoding="utf-8",
+            )
+            spec = CommandSpec(
+                "android-validation",
+                [
+                    "python3",
+                    str(target),
+                    ".",
+                    "--toolchain-downloads",
+                    "never",
+                    "--bootstrap-network",
+                    "deny",
+                ],
+                metadata={"android_builder": str(target)},
+            )
+
+            refresh_android_builders_for_specs([spec])
+            refreshed = target.read_text(encoding="utf-8")
+
+        self.assertIn("--toolchain-downloads", refreshed)
+        self.assertIn("--bootstrap-network", refreshed)
+        self.assertIn("def standalone_main", refreshed)
+
+    def test_staged_builder_refresh_leaves_no_shared_temporary_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "build-apk"
+            target.write_text("stale\n", encoding="utf-8")
+
+            stage_android_builder(destination=target)
+
+            leftovers = list(root.glob(".build-apk.*.tmp"))
+
+        self.assertEqual(leftovers, [])
 
     def test_find_java_home_prefers_exact_toolchain_match_over_newer_jdk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
