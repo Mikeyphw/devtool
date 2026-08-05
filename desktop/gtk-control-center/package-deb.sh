@@ -42,7 +42,7 @@ if "$delete_after_install" && ! "$install_after_build"; then
   exit 2
 fi
 
-stage=$(mktemp -d "${TMPDIR:-/tmp}/devtool-gtk-control-center-deb.XXXXXX")
+stage=$(mktemp -d "${TMPDIR:-/tmp}/devtool-control-center-deb.XXXXXX")
 trap '"$rm_bin" -rf "$stage"' EXIT
 mkdir -p "$out"
 deb_path="$out/devtool-control-center_${version}_${arch}.deb"
@@ -100,25 +100,13 @@ cat > "$stage/usr/bin/devtool-control-center" <<'EOF'
 from devtool.desktop.control_center_cli import main
 raise SystemExit(main())
 EOF
-cat > "$stage/usr/bin/devtool-gtk-control-center" <<'EOF'
-#!/usr/bin/python3
-from devtool.desktop.control_center_cli import main
-raise SystemExit(main())
-EOF
 cat > "$stage/usr/bin/devtool-control-center-hud" <<'EOF'
 #!/usr/bin/python3
 from devtool.desktop.gtk_hud_cli import main
 raise SystemExit(main())
 EOF
-cat > "$stage/usr/bin/devtool-gtk-hud" <<'EOF'
-#!/usr/bin/python3
-from devtool.desktop.gtk_hud_cli import main
-raise SystemExit(main())
-EOF
 chmod 0755 "$stage/usr/bin/devtool-control-center" \
-           "$stage/usr/bin/devtool-gtk-control-center" \
-           "$stage/usr/bin/devtool-control-center-hud" \
-           "$stage/usr/bin/devtool-gtk-hud"
+           "$stage/usr/bin/devtool-control-center-hud"
 
 install -m 0644 "$root/packaging/io.github.mikeceead.DevtoolControlCenter.desktop" \
   "$stage/usr/share/applications/io.github.mikeceead.DevtoolControlCenter.desktop"
@@ -149,12 +137,14 @@ if "$verify_package"; then
   contents=$(dpkg-deb --contents "$deb_path")
   [[ "$contents" == *"./usr/bin/devtool-control-center"* ]] || { echo "error: GTK Control Center executable missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/bin/devtool-control-center-hud"* ]] || { echo "error: GTK HUD executable missing from package" >&2; exit 1; }
+  [[ "$contents" != *"./usr/bin/devtool-gtk-control-center"* ]] || { echo "error: obsolete devtool-gtk-control-center alias must not be packaged" >&2; exit 1; }
+  [[ "$contents" != *"./usr/bin/devtool-gtk-hud"* ]] || { echo "error: obsolete devtool-gtk-hud alias must not be packaged" >&2; exit 1; }
   [[ "$contents" == *"./usr/lib/python3/dist-packages/devtool/desktop/gtk_control_center.py"* ]] || { echo "error: GTK Control Center module missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/lib/python3/dist-packages/devtool/desktop/gtk_hud.py"* ]] || { echo "error: GTK HUD module missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/share/applications/io.github.mikeceead.DevtoolControlCenter.desktop"* ]] || { echo "error: desktop entry missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/share/metainfo/io.github.mikeceead.DevtoolControlCenter.metainfo.xml"* ]] || { echo "error: metainfo missing from package" >&2; exit 1; }
   [[ "$contents" == *"./usr/share/icons/hicolor/128x128/apps/io.github.mikeceead.DevtoolControlCenter.png"* ]] || { echo "error: raster icon missing from package" >&2; exit 1; }
-  for launcher in devtool-control-center devtool-gtk-control-center devtool-control-center-hud devtool-gtk-hud; do
+  for launcher in devtool-control-center devtool-control-center-hud; do
     if ! dpkg-deb --fsys-tarfile "$deb_path" | tar -xOf - "./usr/bin/$launcher" | head -n 1 | grep -qx '#!/usr/bin/python3'; then
       echo "error: $launcher must use /usr/bin/python3 so PyGObject resolves to distro packages" >&2
       exit 1
@@ -168,7 +158,7 @@ if "$verify_package"; then
     echo "error: desktop entry must probe the stable installed /usr/bin/devtool-control-center launcher" >&2
     exit 1
   fi
-  verify_stage=$(mktemp -d "${TMPDIR:-/tmp}/devtool-gtk-control-center-verify.XXXXXX")
+  verify_stage=$(mktemp -d "${TMPDIR:-/tmp}/devtool-control-center-verify.XXXXXX")
   trap '"$rm_bin" -rf "$stage" "${verify_stage:-}"' EXIT
   dpkg-deb --fsys-tarfile "$deb_path" | tar -xf - -C "$verify_stage"
   if ! PYTHONPATH="$verify_stage/usr/lib/python3/dist-packages" /usr/bin/python3 - <<'PY'

@@ -40,7 +40,7 @@ def test_direct_gtk_launchers_log_unexpected_exceptions_without_traceback_leak(t
     with patch("devtool.desktop.gtk_hud_cli.Gtk4CompactHud.run", side_effect=TypeError("password=supersecret")):
         assert gtk_hud_cli.main([]) == 2
     err = capsys.readouterr().err
-    assert "devtool-gtk-hud:" in err
+    assert "devtool-control-center-hud:" in err
     assert "supersecret" not in err
     assert (tmp_path / "devtool" / "hud.log").is_file()
 

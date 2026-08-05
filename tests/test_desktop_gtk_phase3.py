@@ -144,7 +144,7 @@ def test_cli_control_center_options_and_scripts_are_registered() -> None:
     completion = read(ROOT / "devtool" / "completion.py")
 
     assert 'devtool-control-center = "devtool.desktop.control_center_cli:main"' in pyproject
-    assert 'devtool-gtk-control-center = "devtool.desktop.control_center_cli:main"' in pyproject
+    assert 'devtool-gtk-control-center =' not in pyproject
     assert 'choices=["auto", "gtk4"]' in cli
     assert 'Gtk4ControlCenter.available()' in cli
     assert 'launch_legacy_qt_control_center' not in read(ROOT / "devtool" / "desktop" / "gtk_control_center.py")

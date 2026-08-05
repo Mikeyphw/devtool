@@ -427,6 +427,7 @@ if "$INSTALL_CORE"; then
   else
     (cd "$ROOT" && python3 -m pip "${pip_args[@]}")
   fi
+  run rm -f "$BIN_DIR/devtool-gtk-control-center" "$BIN_DIR/devtool-gtk-hud"
   run install -m 0644 "$ROOT/share/man/man1/devtool.1" "$MAN_DIR/devtool.1"
   install_zsh_completion
 

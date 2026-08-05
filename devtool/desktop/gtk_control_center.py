@@ -506,7 +506,7 @@ def _update_header(repo_status: Any, ipc_status: Any, payload: dict[str, Any]) -
 
 
 def _launch_hud(state_dir: Path | str, follow_active: bool) -> None:
-    launcher = shutil.which("devtool-gtk-hud") or shutil.which("devtool")
+    launcher = shutil.which("devtool-control-center-hud") or shutil.which("devtool")
     if not launcher:
         return
     argv = [launcher]

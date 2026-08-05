@@ -11,8 +11,8 @@ devtool control-center --once
 devtool control-center --backend gtk4 --page run
 devtool hud --mode desktop-window --follow-active
 devtool hud --mode gtk4-window --follow-active
-devtool-gtk-control-center
-devtool-gtk-hud
+devtool-control-center
+devtool-control-center-hud
 ```
 
 `desktop-window` and `gtk4-window` both resolve to the GTK4 compact HUD. `control-center` launches the GTK4 Control Center. `gtk-window` is accepted as a deprecated alias that maps to the GTK4 HUD. Qt-specific modes such as `qt`, `qt5`, `qt6`, `qt-window`, and `qt-control-center` now fail with a migration hint.

@@ -54,6 +54,8 @@ def test_gtk4_package_script_stages_python_modules_launchers_and_no_qt_deps() ->
     assert "libqt5" not in control.lower()
     assert "Exec=/usr/bin/devtool-control-center" in desktop
     assert "StartupWMClass=io.github.mikeceead.DevtoolControlCenter" in desktop
+    assert 'cat > "$stage/usr/bin/devtool-gtk-control-center"' not in package
+    assert 'cat > "$stage/usr/bin/devtool-gtk-hud"' not in package
 
 
 def test_installer_uses_gtk4_desktop_fingerprint_and_package_script() -> None:

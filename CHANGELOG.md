@@ -1,5 +1,10 @@
 # Changelog
 
+## Desktop launcher cleanup
+
+- Removed the obsolete `devtool-gtk-control-center` and `devtool-gtk-hud` compatibility executables.
+- Kept `devtool-control-center` and `devtool-control-center-hud` as the only standalone desktop commands.
+
 ## Desktop HUD and Control Center phase 6-7
 
 - Replaced the Control Center Run page shell launch with a direct argv process launcher that assigns a stable desktop run id, captures live stdout/stderr, writes redacted per-run logs, and supports graceful cancel plus force-cancel through the process group.

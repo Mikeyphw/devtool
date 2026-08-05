@@ -9,7 +9,7 @@ from .gtk_runtime import report_cli_exception
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="devtool-gtk-hud")
+    parser = argparse.ArgumentParser(prog="devtool-control-center-hud")
     parser.add_argument("--state-dir", default=DEFAULT_TASKER_DIR, help="Directory containing devtool live HUD state")
     parser.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
     parser.add_argument("--recent-events", type=int, default=8, help="Recent JSONL events to display")
@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
             startup_test=bool(args.startup_test),
         )
     except Exception as exc:
-        return report_cli_exception("hud", "devtool-gtk-hud", exc)
+        return report_cli_exception("hud", "devtool-control-center-hud", exc)
 
 
 if __name__ == "__main__":

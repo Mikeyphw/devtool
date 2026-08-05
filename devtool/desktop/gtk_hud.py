@@ -146,7 +146,7 @@ class Gtk4CompactHud:
                     exc=exc,
                     log_path=log_path,
                 ):
-                    print(f"devtool-gtk-hud: {exc}", file=sys.stderr)
+                    print(f"devtool-control-center-hud: {exc}", file=sys.stderr)
                     app.quit()
 
         def _activate(app: Any) -> None:

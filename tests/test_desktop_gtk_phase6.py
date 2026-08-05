@@ -80,7 +80,7 @@ def test_direct_gtk_scripts_report_runtime_errors_without_traceback(capsys) -> N
 
     with patch("devtool.desktop.gtk_hud_cli.Gtk4CompactHud.run", side_effect=RuntimeError("display denied")):
         assert gtk_hud_cli.main([]) == 2
-    assert "devtool-gtk-hud: display denied" in capsys.readouterr().err
+    assert "devtool-control-center-hud: display denied" in capsys.readouterr().err
 
 
 def test_shell_release_and_completion_references_are_gtk4_only() -> None:

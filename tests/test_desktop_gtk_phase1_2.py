@@ -144,4 +144,5 @@ def test_cli_hud_preserves_explicit_state_dir(tmp_path: Path, capsys, monkeypatc
 
 def test_gtk_hud_console_script_registered() -> None:
     pyproject = read(ROOT / "pyproject.toml")
-    assert 'devtool-gtk-hud = "devtool.desktop.gtk_hud_cli:main"' in pyproject
+    assert 'devtool-control-center-hud = "devtool.desktop.gtk_hud_cli:main"' in pyproject
+    assert 'devtool-gtk-hud =' not in pyproject
