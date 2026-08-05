@@ -191,27 +191,38 @@ class Gtk4ControlCenter:
 
             root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
             with _suppress_exception():
+                root.add_css_class("devtool-app-root")
                 if preferences.high_contrast:
                     root.add_css_class("devtool-high-contrast")
+                if preferences.compact_density:
+                    root.add_css_class("devtool-compact-density")
             _install_control_center_css(Gtk, window)
             header = Gtk.HeaderBar()
-            header_title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            with _suppress_exception():
+                header.add_css_class("devtool-app-header")
+            header_title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
             title = Gtk.Label(label="Devtool")
             title.set_xalign(0.0)
             with _suppress_exception():
-                title.add_css_class("title-2")
+                title.add_css_class("devtool-app-title")
             repo_status = Gtk.Label(label="Loading repository state")
             repo_status.set_xalign(0.0)
             with _suppress_exception():
-                repo_status.add_css_class("dim-label")
+                repo_status.add_css_class("devtool-app-context")
             header_title.append(title)
             header_title.append(repo_status)
             header.set_title_widget(header_title)
             ipc_status = Gtk.Label(label="IPC idle")
             with _suppress_exception():
                 ipc_status.add_css_class("devtool-status-pill")
+            navigation_button = Gtk.ToggleButton(label="Compact nav")
+            navigation_button.set_active(bool(preferences.compact_navigation))
             hud_button = Gtk.Button(label="Open HUD")
             refresh_button = Gtk.Button(label="Refresh")
+            _style_action_button(navigation_button)
+            _style_action_button(hud_button, primary=True)
+            _style_action_button(refresh_button)
+            header.pack_start(navigation_button)
             header.pack_end(refresh_button)
             header.pack_end(hud_button)
             header.pack_end(ipc_status)
@@ -219,34 +230,53 @@ class Gtk4ControlCenter:
 
             body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
             body.set_vexpand(True)
+            with _suppress_exception():
+                body.add_css_class("devtool-body")
             nav = Gtk.ListBox()
             nav.set_selection_mode(Gtk.SelectionMode.SINGLE)
-            nav.set_size_request(210, -1)
+            nav.set_size_request(190, -1)
             with _suppress_exception():
                 nav.add_css_class("navigation-sidebar")
             stack = Gtk.Stack()
             stack.set_hexpand(True)
             stack.set_vexpand(True)
+            with _suppress_exception():
+                stack.add_css_class("devtool-content-stack")
             pages: dict[str, Any] = {}
             nav_rows: dict[str, Any] = {}
+            nav_labels: dict[str, Any] = {}
             for key, label in _PAGE_KEYS.items():
                 row = Gtk.ListBoxRow()
-                row.set_child(Gtk.Label(label=label, xalign=0.0))
+                row_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                icon = Gtk.Label(label=_PAGE_ICONS.get(key, "•"), xalign=0.5)
+                nav_label = Gtk.Label(label=label, xalign=0.0)
+                nav_label.set_hexpand(True)
+                with _suppress_exception():
+                    icon.add_css_class("devtool-nav-icon")
+                    nav_label.add_css_class("devtool-nav-label")
+                row_content.append(icon)
+                row_content.append(nav_label)
+                row.set_child(row_content)
                 row.set_name(key)
                 nav.append(row)
                 nav_rows[key] = row
-                page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-                page_box.set_margin_top(18)
-                page_box.set_margin_bottom(18)
-                page_box.set_margin_start(18)
-                page_box.set_margin_end(18)
+                nav_labels[key] = nav_label
+                row.set_tooltip_text(label)
+                page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+                page_box.set_margin_top(24)
+                page_box.set_margin_bottom(24)
+                page_box.set_margin_start(24)
+                page_box.set_margin_end(24)
                 page_box.set_hexpand(True)
                 page_box.set_vexpand(True)
+                with _suppress_exception():
+                    page_box.add_css_class("devtool-page")
                 scroller = Gtk.ScrolledWindow()
                 scroller.set_child(page_box)
                 scroller.set_hexpand(True)
                 scroller.set_vexpand(True)
                 with _suppress_exception():
+                    scroller.add_css_class("devtool-page-scroller")
                     scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
                 stack.add_titled(scroller, key, label)
                 pages[key] = page_box
@@ -257,6 +287,37 @@ class Gtk4ControlCenter:
                 window.set_content(root)
             else:
                 window.set_child(root)
+
+            navigation_state = {"syncing": False, "manual": False}
+
+            def apply_compact_navigation(compact: bool, *, persist: bool = True) -> None:
+                compact = bool(compact)
+                nav.set_size_request(66 if compact else 190, -1)
+                for label_widget in nav_labels.values():
+                    label_widget.set_visible(not compact)
+                _set_css_class(nav, "devtool-navigation-compact", compact)
+                if navigation_button.get_active() != compact:
+                    navigation_state["syncing"] = True
+                    navigation_button.set_active(compact)
+                    navigation_state["syncing"] = False
+                navigation_button.set_label("Expand nav" if compact else "Compact nav")
+                if persist:
+                    preferences.compact_navigation = compact
+                    preferences.save("control-center")
+
+            apply_compact_navigation(bool(preferences.compact_navigation or preferences.window_width < 980), persist=False)
+
+            def navigation_toggled(button: Any) -> None:
+                if navigation_state["syncing"]:
+                    return
+                navigation_state["manual"] = True
+                apply_compact_navigation(bool(button.get_active()))
+
+            def sync_navigation_width() -> bool:
+                if not navigation_state["manual"]:
+                    with _suppress_exception():
+                        apply_compact_navigation(bool(preferences.compact_navigation or window.get_width() < 980), persist=False)
+                return not bool(refresh_state.get("closed"))
 
             def current_snapshot() -> dict[str, Any]:
                 return self.snapshot(
@@ -382,6 +443,7 @@ class Gtk4ControlCenter:
             with suppress_gtk_error():
                 window.connect("close-request", on_close_request)
             refresh_button.connect("clicked", lambda _button: render_safe())
+            navigation_button.connect("toggled", navigation_toggled)
             hud_button.connect("clicked", lambda _button: _launch_hud(state_dir, follow_active))
             if selected_page in nav_rows:
                 nav.select_row(nav_rows[selected_page])
@@ -389,13 +451,14 @@ class Gtk4ControlCenter:
             _render_loading_page(Gtk, pages[selected_page], selected_page, "Loading repository, history, IPC, and Git state…")
             _install_navigation_shortcuts(Gtk, window, stack, nav, nav_rows)
             _install_app_shortcuts(Gtk, window, refresh_button)
-            for widget, label in ((refresh_button, "Refresh repository state"), (hud_button, "Open Devtool desktop HUD"), (ipc_status, "IPC status")):
+            for widget, label in ((navigation_button, "Toggle compact navigation"), (refresh_button, "Refresh repository state"), (hud_button, "Open Devtool desktop HUD"), (ipc_status, "IPC status")):
                 _set_accessible_label(Gtk, widget, label)
             window.present()
             GLib.idle_add(lambda: (request_refresh("startup"), False)[1])
             if startup_test:
                 GLib.timeout_add(150, app.quit)
             GLib.timeout_add(poll_ms, render_safe)
+            GLib.timeout_add(300, sync_navigation_width)
 
         application.connect("activate", activate)
         app_rc = int(application.run([]))
@@ -413,6 +476,19 @@ _PAGE_KEYS = {
     "targets": "Targets",
     "run": "Run",
     "settings": "Settings",
+}
+
+
+_PAGE_ICONS = {
+    "overview": "⌂",
+    "runs": "▶",
+    "history": "↺",
+    "artifacts": "◇",
+    "diagnostics": "!",
+    "repositories": "⌘",
+    "targets": "◎",
+    "run": "+",
+    "settings": "⚙",
 }
 
 
@@ -444,30 +520,290 @@ def _launch_hud(state_dir: Path | str, follow_active: bool) -> None:
 
 def _install_control_center_css(Gtk: Any, window: Any) -> None:
     css = b"""
+    .devtool-app-root,
+    .devtool-content-stack,
+    .devtool-page-scroller,
+    .devtool-page {
+      background-color: @window_bg_color;
+    }
+    .devtool-app-header {
+      min-height: 58px;
+      background-color: @window_bg_color;
+      border: none;
+      box-shadow: inset 0 -1px alpha(@window_fg_color, 0.07);
+    }
+    .devtool-app-title {
+      font-size: 18px;
+      font-weight: 850;
+    }
+    .devtool-app-context,
+    .devtool-body-copy,
+    .devtool-section-subtitle,
+    .devtool-metric-subtitle,
+    .devtool-inline-status {
+      color: alpha(@window_fg_color, 0.62);
+    }
+    .navigation-sidebar {
+      padding: 12px 8px;
+      background-color: alpha(@window_fg_color, 0.025);
+      border: none;
+      box-shadow: inset -1px 0 alpha(@window_fg_color, 0.07);
+    }
+    .navigation-sidebar row {
+      margin: 2px 4px;
+      padding: 9px 10px;
+      border-radius: 8px;
+    }
+    .navigation-sidebar row:hover {
+      background-color: alpha(@window_fg_color, 0.055);
+    }
+    .navigation-sidebar row:selected {
+      background-color: alpha(@accent_bg_color, 0.14);
+      color: @window_fg_color;
+      box-shadow: inset 3px 0 @accent_bg_color;
+    }
+    .devtool-nav-icon {
+      min-width: 18px;
+      color: alpha(@window_fg_color, 0.56);
+      font-weight: 850;
+    }
+    .navigation-sidebar row:selected .devtool-nav-icon {
+      color: @accent_bg_color;
+    }
+    .devtool-nav-label {
+      font-weight: 680;
+    }
+    .devtool-navigation-compact {
+      padding-left: 6px;
+      padding-right: 6px;
+    }
+    .devtool-navigation-compact row {
+      padding-left: 9px;
+      padding-right: 9px;
+    }
+    .devtool-navigation-compact .devtool-nav-icon {
+      min-width: 24px;
+    }
+    .devtool-page-title {
+      font-size: 26px;
+      font-weight: 850;
+      margin-bottom: 2px;
+    }
+    .devtool-section-title {
+      font-size: 15px;
+      font-weight: 800;
+    }
+    .devtool-surface {
+      padding: 16px;
+      border: none;
+      border-radius: 12px;
+      background-color: alpha(@window_fg_color, 0.045);
+    }
+    .devtool-surface-compact {
+      padding: 12px;
+      border-radius: 10px;
+    }
+    .devtool-accent-surface {
+      background-color: alpha(@accent_bg_color, 0.10);
+      box-shadow: inset 3px 0 @accent_bg_color;
+    }
+    .devtool-danger-surface {
+      background-color: alpha(@error_color, 0.09);
+      box-shadow: inset 3px 0 @error_color;
+    }
+    .devtool-section-heading {
+      margin-bottom: 8px;
+    }
+    .devtool-metric-strip {
+      padding: 0;
+      border: none;
+      border-radius: 12px;
+      background-color: alpha(@window_fg_color, 0.045);
+    }
+    .devtool-metric-strip flowboxchild {
+      padding: 0;
+      margin: 0;
+      background-color: transparent;
+      border-radius: 0;
+    }
+    .devtool-metric-strip flowboxchild + flowboxchild {
+      box-shadow: inset 1px 0 alpha(@window_fg_color, 0.07);
+    }
+    .devtool-metric {
+      padding: 14px 16px;
+      min-width: 140px;
+      background-color: transparent;
+    }
+    .devtool-metric-label,
+    .devtool-data-key {
+      color: alpha(@window_fg_color, 0.58);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .devtool-metric-value {
+      font-size: 21px;
+      font-weight: 850;
+    }
+    .devtool-data-group {
+      border-radius: 10px;
+      background-color: alpha(@window_fg_color, 0.035);
+    }
+    .devtool-data-row {
+      padding: 10px 12px;
+      box-shadow: inset 0 -1px alpha(@window_fg_color, 0.06);
+    }
+    .devtool-data-row-last {
+      box-shadow: none;
+    }
+    .devtool-data-value {
+      color: alpha(@window_fg_color, 0.92);
+    }
     .devtool-status-pill {
-      padding: 4px 8px;
-      border-radius: 999px;
-      background-color: alpha(@accent_bg_color, 0.18);
+      padding: 5px 9px;
+      border: none;
+      border-radius: 7px;
+      background-color: alpha(@window_fg_color, 0.065);
+      font-weight: 760;
+    }
+    .devtool-action-row {
+      margin-top: 2px;
+    }
+    button.devtool-flat-button,
+    button.devtool-primary-button,
+    button.devtool-danger-button {
+      min-height: 36px;
+      padding: 0 12px;
+      border: none;
+      border-radius: 8px;
+      box-shadow: none;
+    }
+    button.devtool-flat-button {
+      background-color: alpha(@window_fg_color, 0.065);
+    }
+    button.devtool-flat-button:hover {
+      background-color: alpha(@window_fg_color, 0.10);
+    }
+    button.devtool-primary-button {
+      background-color: @accent_bg_color;
+      color: @window_fg_color;
+    }
+    button.devtool-danger-button {
+      background-color: alpha(@error_color, 0.13);
+      color: @error_color;
+    }
+    entry,
+    combobox button,
+    searchentry entry {
+      min-height: 36px;
+      border: none;
+      border-radius: 8px;
+      background-color: alpha(@window_fg_color, 0.055);
+      box-shadow: none;
+    }
+    entry:focus,
+    combobox button:focus,
+    searchentry entry:focus {
+      box-shadow: 0 0 0 3px alpha(@accent_bg_color, 0.18);
+    }
+    checkbutton {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background-color: alpha(@window_fg_color, 0.045);
+    }
+    textview.devtool-command-preview,
+    textview.devtool-run-output {
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      background-color: alpha(@window_fg_color, 0.055);
+    }
+    .devtool-command-workspace {
+      min-height: 560px;
+    }
+    paned.devtool-command-workspace > separator {
+      min-width: 1px;
+      margin: 0 4px;
+      background-color: alpha(@window_fg_color, 0.07);
+    }
+    notebook {
+      border: none;
+      background-color: transparent;
+    }
+    notebook > header {
+      border: none;
+      border-radius: 8px;
+      background-color: alpha(@window_fg_color, 0.045);
+    }
+    notebook > header tabs tab {
+      min-height: 32px;
+      padding: 0 10px;
+      border: none;
+      border-radius: 7px;
+    }
+    notebook > header tabs tab:checked {
+      background-color: alpha(@accent_bg_color, 0.13);
+    }
+    .devtool-composer-column {
+      padding: 0 6px;
+    }
+    .devtool-composer-column-left {
+      padding-right: 12px;
+    }
+    .devtool-composer-column-right {
+      padding-left: 12px;
+    }
+    .devtool-options-flow flowboxchild {
+      margin: 0;
+      padding: 2px;
+    }
+    .devtool-list {
+      margin-top: 2px;
+    }
+    .devtool-diagnostic-error {
+      background-color: alpha(@error_color, 0.09);
+      box-shadow: inset 3px 0 @error_color;
+    }
+    .devtool-diagnostic-warning {
+      background-color: alpha(@warning_color, 0.09);
+      box-shadow: inset 3px 0 @warning_color;
     }
     progressbar.devtool-progress trough {
-      min-height: 16px;
-      border-radius: 4px;
-      background-color: alpha(@window_fg_color, 0.18);
+      min-height: 10px;
+      border: none;
+      border-radius: 999px;
+      background-color: alpha(@window_fg_color, 0.12);
     }
     progressbar.devtool-progress progress {
-      min-height: 16px;
-      border-radius: 4px;
+      min-height: 10px;
+      border: none;
+      border-radius: 999px;
       background-color: @accent_bg_color;
     }
     .devtool-stale-banner {
+      padding: 11px 13px;
+      border: none;
+      border-radius: 9px;
+      background-color: alpha(@warning_bg_color, 0.12);
+      box-shadow: inset 3px 0 @warning_color;
+    }
+    .devtool-compact-density .devtool-surface {
+      padding: 11px;
+    }
+    .devtool-compact-density .devtool-metric {
       padding: 10px 12px;
-      border-radius: 10px;
-      background-color: alpha(@warning_bg_color, 0.14);
-      border: 1px solid alpha(@warning_color, 0.32);
+    }
+    .devtool-compact-density .devtool-data-row {
+      padding: 7px 10px;
+    }
+    .devtool-compact-density button.devtool-flat-button,
+    .devtool-compact-density button.devtool-primary-button,
+    .devtool-compact-density button.devtool-danger-button {
+      min-height: 32px;
     }
     .devtool-high-contrast {
       border: 2px solid @window_fg_color;
     }
+    .devtool-high-contrast .devtool-surface,
     .devtool-high-contrast .devtool-status-pill {
       border: 1px solid @window_fg_color;
       background-color: @window_bg_color;
@@ -539,6 +875,14 @@ def _set_accessible_label(Gtk: Any, widget: Any, label: str) -> None:
         widget.set_tooltip_text(label)
 
 
+def _set_css_class(widget: Any, class_name: str, enabled: bool) -> None:
+    with _suppress_exception():
+        if enabled:
+            widget.add_css_class(class_name)
+        else:
+            widget.remove_css_class(class_name)
+
+
 def _install_app_shortcuts(Gtk: Any, window: Any, refresh_button: Any) -> None:
     with _suppress_exception():
         controller = Gtk.ShortcutController()
@@ -557,6 +901,9 @@ def _install_app_shortcuts(Gtk: Any, window: Any, refresh_button: Any) -> None:
 def _prefers_reduced_motion(Gtk: Any) -> bool:
     if os.environ.get("DEVTOOL_REDUCED_MOTION", "").strip().lower() in {"1", "true", "yes", "on"}:
         return True
+    with _suppress_exception():
+        if DesktopPreferences.load("control-center").reduced_motion:
+            return True
     with _suppress_exception():
         settings = Gtk.Settings.get_default()
         return not bool(settings.get_property("gtk-enable-animations"))
@@ -637,14 +984,14 @@ def _clear(Gtk: Any, box: Any) -> None:
 def _append_heading(Gtk: Any, box: Any, text: str) -> None:
     label = Gtk.Label(label=text, xalign=0.0)
     with _suppress_exception():
-        label.add_css_class("title-3")
+        label.add_css_class("devtool-page-title")
     box.append(label)
 
 
 def _append_subheading(Gtk: Any, box: Any, text: str) -> None:
     label = Gtk.Label(label=text, xalign=0.0)
     with _suppress_exception():
-        label.add_css_class("heading")
+        label.add_css_class("devtool-section-title")
     box.append(label)
 
 
@@ -652,32 +999,61 @@ def _append_text(Gtk: Any, box: Any, text: str) -> None:
     label = Gtk.Label(label=text, xalign=0.0)
     label.set_wrap(True)
     label.set_selectable(True)
+    with _suppress_exception():
+        label.add_css_class("devtool-body-copy")
     box.append(label)
 
 
-def _append_card(Gtk: Any, box: Any, title: str, value: str, subtitle: str = "") -> None:
-    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-    card.set_margin_top(8)
-    card.set_margin_bottom(8)
-    card.set_margin_start(10)
-    card.set_margin_end(10)
-    card.set_size_request(150, 72)
+def _new_surface(Gtk: Any, *, accent: bool = False, compact: bool = False, danger: bool = False) -> Any:
+    surface = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    surface.set_hexpand(True)
     with _suppress_exception():
-        card.add_css_class("card")
+        surface.add_css_class("devtool-surface")
+        if accent:
+            surface.add_css_class("devtool-accent-surface")
+        if compact:
+            surface.add_css_class("devtool-surface-compact")
+        if danger:
+            surface.add_css_class("devtool-danger-surface")
+    return surface
+
+
+def _append_section_heading(Gtk: Any, box: Any, title: str, subtitle: str = "") -> None:
+    heading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    with _suppress_exception():
+        heading.add_css_class("devtool-section-heading")
     title_label = Gtk.Label(label=title, xalign=0.0)
     with _suppress_exception():
-        title_label.add_css_class("dim-label")
+        title_label.add_css_class("devtool-section-title")
+    heading.append(title_label)
+    if subtitle:
+        subtitle_label = Gtk.Label(label=subtitle, xalign=0.0)
+        subtitle_label.set_wrap(True)
+        with _suppress_exception():
+            subtitle_label.add_css_class("devtool-section-subtitle")
+        heading.append(subtitle_label)
+    box.append(heading)
+
+
+def _append_card(Gtk: Any, box: Any, title: str, value: str, subtitle: str = "") -> None:
+    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+    card.set_hexpand(True)
+    with _suppress_exception():
+        card.add_css_class("devtool-metric")
+    title_label = Gtk.Label(label=title, xalign=0.0)
+    with _suppress_exception():
+        title_label.add_css_class("devtool-metric-label")
     value_label = Gtk.Label(label=value or "-", xalign=0.0)
     value_label.set_wrap(True)
     with _suppress_exception():
-        value_label.add_css_class("title-4")
+        value_label.add_css_class("devtool-metric-value")
     card.append(title_label)
     card.append(value_label)
     if subtitle:
         subtitle_label = Gtk.Label(label=subtitle, xalign=0.0)
         subtitle_label.set_wrap(True)
         with _suppress_exception():
-            subtitle_label.add_css_class("dim-label")
+            subtitle_label.add_css_class("devtool-metric-subtitle")
         card.append(subtitle_label)
     box.append(card)
 
@@ -697,14 +1073,14 @@ def _append_progress(Gtk: Any, box: Any, percent: Any, status: str = "") -> None
 
 
 def _append_run_card(Gtk: Any, box: Any, run: dict[str, Any]) -> None:
-    _append_subheading(Gtk, box, str(run.get("title") or "devtool"))
-    _append_text(Gtk, box, str(run.get("text") or run.get("detail_text") or "Waiting for progress"))
-    _append_progress(Gtk, box, run.get("percent"), str(run.get("status") or "idle"))
-    _append_metric_strip(Gtk, box, [
+    surface = _new_surface(Gtk, accent=str(run.get("status") or "").lower() == "running")
+    _append_section_heading(Gtk, surface, str(run.get("title") or "devtool"), str(run.get("text") or run.get("detail_text") or "Waiting for progress"))
+    _append_progress(Gtk, surface, run.get("percent"), str(run.get("status") or "idle"))
+    _append_metric_strip(Gtk, surface, [
         ("Status", str(run.get("status") or "idle"), str(run.get("phase") or "")),
         ("Errors", str(run.get("errors") or 0), "live diagnostics"),
         ("Warnings", str(run.get("warnings") or 0), "live diagnostics"),
-        ("Metric", str(run.get("metric_text") or "-"), str(run.get("context") or "")),
+        ("Counts", str(run.get("metric_text") or "-"), str(run.get("context") or "")),
     ])
     steps = run.get("steps") if isinstance(run.get("steps"), list) else []
     if steps:
@@ -712,35 +1088,30 @@ def _append_run_card(Gtk: Any, box: Any, run: dict[str, Any]) -> None:
         strip.set_selection_mode(Gtk.SelectionMode.NONE)
         strip.set_min_children_per_line(2)
         strip.set_max_children_per_line(5)
-        strip.set_column_spacing(8)
-        strip.set_row_spacing(8)
+        strip.set_column_spacing(6)
+        strip.set_row_spacing(6)
         for step in steps[:12]:
             if isinstance(step, dict):
                 _append_step_card(Gtk, strip, step)
-        box.append(strip)
-    _append_rows(Gtk, box, [
+        surface.append(strip)
+    _append_rows(Gtk, surface, [
         ("Run ID", str(run.get("run_id") or "")),
         ("Target", str(run.get("target") or "")),
         ("Phase", str(run.get("phase") or "")),
         ("Updated", str(run.get("updated_at") or "")),
         ("Log", str(run.get("log_path") or "")),
     ])
+    box.append(surface)
 
 
 def _append_step_card(Gtk: Any, box: Any, step: dict[str, Any]) -> None:
-    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-    card.set_size_request(132, 78)
-    card.set_margin_top(4)
-    card.set_margin_bottom(4)
-    card.set_margin_start(4)
-    card.set_margin_end(4)
-    with _suppress_exception():
-        card.add_css_class("card")
+    card = _new_surface(Gtk, compact=True)
+    card.set_size_request(132, -1)
     label = Gtk.Label(label=str(step.get("label") or step.get("key") or "step"), xalign=0.0)
     label.set_wrap(True)
     status = Gtk.Label(label=str(step.get("status") or "pending"), xalign=0.0)
     with _suppress_exception():
-        status.add_css_class("dim-label")
+        status.add_css_class("devtool-metric-subtitle")
     card.append(label)
     card.append(status)
     _append_progress(Gtk, card, step.get("progress"), str(step.get("status") or "pending"))
@@ -752,17 +1123,34 @@ def _append_metric_strip(Gtk: Any, box: Any, metrics: list[tuple[str, str, str]]
     strip.set_selection_mode(Gtk.SelectionMode.NONE)
     strip.set_max_children_per_line(4)
     strip.set_min_children_per_line(2)
-    strip.set_column_spacing(10)
-    strip.set_row_spacing(10)
+    strip.set_column_spacing(0)
+    strip.set_row_spacing(0)
+    with _suppress_exception():
+        strip.add_css_class("devtool-metric-strip")
     for title, value, subtitle in metrics:
         _append_card(Gtk, strip, title, value, subtitle)
     box.append(strip)
 
 
+def _style_action_button(button: Any, *, primary: bool = False, danger: bool = False) -> None:
+    with _suppress_exception():
+        if danger:
+            button.add_css_class("devtool-danger-button")
+        elif primary:
+            button.add_css_class("devtool-primary-button")
+        else:
+            button.add_css_class("devtool-flat-button")
+
+
 def _append_button_row(Gtk: Any, box: Any, buttons: list[tuple[str, Any | None]]) -> None:
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    with _suppress_exception():
+        row.add_css_class("devtool-action-row")
+    primary_labels = {"Launch", "Build workflow", "Validate repository", "Open HUD"}
+    danger_labels = {"Cancel", "Force cancel"}
     for label, callback in buttons:
         button = Gtk.Button(label=label)
+        _style_action_button(button, primary=label in primary_labels, danger=label in danger_labels)
         if callback is None:
             with _suppress_exception():
                 button.set_sensitive(False)
@@ -986,19 +1374,31 @@ def _append_search_bar(Gtk: Any, box: Any, placeholder: str) -> Any:
 
 
 def _append_rows(Gtk: Any, box: Any, rows: list[tuple[str, str]]) -> None:
-    grid = Gtk.Grid(column_spacing=16, row_spacing=8)
-    row_index = 0
-    for key, value in rows:
-        key_label = Gtk.Label(label=key, xalign=0.0)
+    group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    group.set_hexpand(True)
+    with _suppress_exception():
+        group.add_css_class("devtool-data-group")
+    for index, (key, value) in enumerate(rows):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        row.set_hexpand(True)
         with _suppress_exception():
-            key_label.add_css_class("dim-label")
+            row.add_css_class("devtool-data-row")
+            if index == len(rows) - 1:
+                row.add_css_class("devtool-data-row-last")
+        key_label = Gtk.Label(label=key, xalign=0.0)
+        key_label.set_size_request(130, -1)
+        with _suppress_exception():
+            key_label.add_css_class("devtool-data-key")
         value_label = Gtk.Label(label=value or "-", xalign=0.0)
+        value_label.set_hexpand(True)
         value_label.set_selectable(True)
         value_label.set_wrap(True)
-        grid.attach(key_label, 0, row_index, 1, 1)
-        grid.attach(value_label, 1, row_index, 1, 1)
-        row_index += 1
-    box.append(grid)
+        with _suppress_exception():
+            value_label.add_css_class("devtool-data-value")
+        row.append(key_label)
+        row.append(value_label)
+        group.append(row)
+    box.append(group)
 
 
 def _render_overview(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
@@ -1008,40 +1408,66 @@ def _render_overview(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     runs = payload.get("active_runs", [])
     diagnostics = payload.get("diagnostics", [])
     _append_heading(Gtk, box, "Overview")
-    _append_subheading(Gtk, box, "Next action")
+    _append_text(Gtk, box, "Repository health, active execution, and the next useful action in one control surface.")
+
+    hero = _new_surface(Gtk, accent=True)
     next_action = "Review active run" if runs else "Validate repository"
-    _append_text(Gtk, box, f"{next_action} · {str(project.get('selected_target') or 'auto')}")
-    _append_button_row(Gtk, box, [
+    next_label = Gtk.Label(label="Next action", xalign=0.0)
+    with _suppress_exception():
+        next_label.add_css_class("devtool-metric-label")
+    hero.append(next_label)
+    _append_section_heading(Gtk, hero, next_action, f"{str(project.get('selected_target') or 'Automatic target')} · {str(repo.get('branch') or 'no branch')}")
+    _append_button_row(Gtk, hero, [
         ("Build workflow", _build_workflow_callback(Gtk, box, payload)),
         ("Open HUD", lambda _button: _launch_hud(str(payload.get("hud", {}).get("directory") or DEFAULT_TASKER_DIR), bool(payload.get("settings", {}).get("follow_active")))),
         ("Copy repository path", _copy_text_callback(Gtk, box, str(repo.get("path") or ""))),
     ])
+    box.append(hero)
+
     _append_metric_strip(Gtk, box, [
         ("Active runs", str(len(runs)), str(runs[0].get("status", "")) if runs and isinstance(runs[0], dict) else "idle"),
         ("Diagnostics", str(len(diagnostics)), _severity_summary(diagnostics)),
         ("History", str(len(payload.get("history", []))), "recent artifacts"),
         ("Targets", str(len(payload.get("targets", []))), str(project.get("selected_target") or "auto")),
     ])
-    _append_subheading(Gtk, box, "Repository")
-    _append_rows(Gtk, box, [
-        ("Repository", str(repo.get("path") or "")),
+
+    overview_grid = Gtk.Grid(column_spacing=12, row_spacing=12)
+    overview_grid.set_hexpand(True)
+    repository_surface = _new_surface(Gtk)
+    _append_section_heading(Gtk, repository_surface, "Repository", "Current Git and project selection")
+    _append_rows(Gtk, repository_surface, [
+        ("Path", str(repo.get("path") or "")),
         ("Branch", str(repo.get("branch") or "")),
         ("Head", str(repo.get("head") or "")),
-        ("Dirty", "yes" if repo.get("dirty") else "no"),
+        ("Working tree", "dirty" if repo.get("dirty") else "clean"),
         ("Project", str(project.get("kind") or "auto")),
         ("Target", str(project.get("selected_target") or "-")),
         ("Variant", str(project.get("variant") or "-")),
-        ("Active runs", str(len(runs))),
-        ("Diagnostics", str(len(diagnostics))),
     ])
+    health_surface = _new_surface(Gtk)
+    _append_section_heading(Gtk, health_surface, "Run readiness", "What needs attention before the next command")
+    readiness = "Ready to run" if not diagnostics else _severity_summary(diagnostics)
+    _append_rows(Gtk, health_surface, [
+        ("State", readiness),
+        ("IPC", "connected" if payload.get("ipc", {}).get("ok") else "fallback"),
+        ("Active", str(len(runs))),
+        ("Errors", str(_count_severity(diagnostics, "error"))),
+        ("Warnings", str(_count_severity(diagnostics, "warning"))),
+    ])
+    overview_grid.attach(repository_surface, 0, 0, 1, 1)
+    overview_grid.attach(health_surface, 1, 0, 1, 1)
+    box.append(overview_grid)
+
     if runs:
         _append_subheading(Gtk, box, "Live pipeline")
         _render_runs(Gtk, box, payload, embedded=True)
     if diagnostics:
-        _append_subheading(Gtk, box, "Top diagnostics")
+        diagnostic_surface = _new_surface(Gtk, danger=_count_severity(diagnostics, "error") > 0)
+        _append_section_heading(Gtk, diagnostic_surface, "Top diagnostics", "The first issues reported by the canonical active run")
         for item in diagnostics[:3]:
             if isinstance(item, dict):
-                _append_text(Gtk, box, f"{item.get('severity', 'info')}: {item.get('message', '')}")
+                _append_text(Gtk, diagnostic_surface, f"{item.get('severity', 'info')}: {item.get('message', '')}")
+        box.append(diagnostic_surface)
 
 
 def _render_runs(Gtk: Any, box: Any, payload: dict[str, Any], *, embedded: bool = False) -> None:
@@ -1105,8 +1531,9 @@ def _render_history(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             return
         for item in visible[:50]:
             title = item.get("artifact") or item.get("artifact_name") or item.get("name") or item.get("history_id") or "artifact"
-            _append_subheading(Gtk, list_box, f"{title}")
-            _append_rows(Gtk, list_box, [
+            item_surface = _new_surface(Gtk, compact=True)
+            _append_section_heading(Gtk, item_surface, f"{title}", str(item.get("status") or item.get("result") or "Recorded run"))
+            _append_rows(Gtk, item_surface, [
                 ("Applied", str(item.get("applied_at") or item.get("created_at") or "")),
                 ("Commit", str(item.get("commit_hash") or "")),
                 ("SHA-256", str(item.get("sha256") or "")),
@@ -1114,12 +1541,13 @@ def _render_history(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             ])
             command = str(item.get("command") or "")
             artifact_path = str(item.get("artifact_path") or item.get("path") or item.get("file") or "")
-            _append_button_row(Gtk, list_box, [
-                ("Copy command", _copy_text_callback(Gtk, list_box, command)),
-                ("Inspect artifact", _copy_text_callback(Gtk, list_box, json.dumps(item, ensure_ascii=False, indent=2))),
-                ("Run again", _run_again_callback(Gtk, list_box, command, repo_path)),
+            _append_button_row(Gtk, item_surface, [
+                ("Copy command", _copy_text_callback(Gtk, item_surface, command)),
+                ("Inspect artifact", _copy_text_callback(Gtk, item_surface, json.dumps(item, ensure_ascii=False, indent=2))),
+                ("Run again", _run_again_callback(Gtk, item_surface, command, repo_path)),
                 ("Open artifact folder", _open_path_callback(artifact_path)),
             ])
+            list_box.append(item_surface)
 
     search.connect("search-changed", render_filtered)
     status_filter.connect("changed", render_filtered)
@@ -1189,8 +1617,9 @@ def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         list_box.append(notebook)
         for item in visible[:20]:
             title = str(item.get("artifact") or item.get("artifact_name") or item.get("name") or item.get("title") or "artifact")
-            _append_subheading(Gtk, list_box, title)
-            _append_rows(Gtk, list_box, [
+            item_surface = _new_surface(Gtk, compact=True)
+            _append_section_heading(Gtk, item_surface, title, str(item.get("validation") or item.get("status") or "Artifact record"))
+            _append_rows(Gtk, item_surface, [
                 ("Path", str(item.get("artifact_path") or item.get("path") or item.get("file") or "")),
                 ("Package", str(item.get("package") or item.get("package_name") or "")),
                 ("Version", str(item.get("version") or item.get("version_name") or "")),
@@ -1200,11 +1629,12 @@ def _render_artifacts(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             ])
             artifact_path = str(item.get("artifact_path") or item.get("path") or item.get("file") or "")
             sha256 = str(item.get("sha256") or "")
-            _append_button_row(Gtk, list_box, [
-                ("Inspect manifest", _copy_text_callback(Gtk, list_box, json.dumps(item, ensure_ascii=False, indent=2))),
+            _append_button_row(Gtk, item_surface, [
+                ("Inspect manifest", _copy_text_callback(Gtk, item_surface, json.dumps(item, ensure_ascii=False, indent=2))),
                 ("Open containing folder", _open_path_callback(artifact_path)),
-                ("Copy SHA-256", _copy_text_callback(Gtk, list_box, sha256)),
+                ("Copy SHA-256", _copy_text_callback(Gtk, item_surface, sha256)),
             ])
+            list_box.append(item_surface)
 
     search.connect("search-changed", render_filtered)
     render_filtered()
@@ -1277,14 +1707,20 @@ def _render_diagnostics(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             _append_text(Gtk, list_box, "No diagnostics match the current filters.")
             return
         for item in visible[:100]:
-            _append_text(Gtk, list_box, f"{item.get('severity', 'info')}: {item.get('message', '')}")
+            severity_text = str(item.get("severity") or "info").lower()
+            item_surface = _new_surface(Gtk, compact=True, danger=severity_text in {"error", "failed", "failure"})
+            if severity_text in {"warning", "warn"}:
+                with _suppress_exception():
+                    item_surface.add_css_class("devtool-diagnostic-warning")
+            _append_section_heading(Gtk, item_surface, severity_text.title(), str(item.get("message") or ""))
             detail_rows = []
             for key in ("code", "phase", "file", "source"):
                 value = str(item.get(key) or "")
                 if value:
                     detail_rows.append((key.title(), value))
             if detail_rows:
-                _append_rows(Gtk, list_box, detail_rows)
+                _append_rows(Gtk, item_surface, detail_rows)
+            list_box.append(item_surface)
 
     search.connect("search-changed", render_filtered)
     severity.connect("changed", render_filtered)
@@ -1344,8 +1780,9 @@ def _render_targets(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             _append_text(Gtk, list_box, "No targets match the current filter.")
             return
         for target in visible:
-            _append_subheading(Gtk, list_box, f"{target.get('name', '')} · {target.get('kind', 'auto')}")
-            _append_rows(Gtk, list_box, [
+            item_surface = _new_surface(Gtk, compact=True)
+            _append_section_heading(Gtk, item_surface, str(target.get("name") or "Target"), str(target.get("kind") or "auto"))
+            _append_rows(Gtk, item_surface, [
                 ("Root", str(target.get("root") or "")),
                 ("Build", str(target.get("build") or "")),
                 ("Test", str(target.get("test") or "")),
@@ -1353,6 +1790,7 @@ def _render_targets(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
                 ("Environment", str(target.get("environment") or "auto")),
                 ("Chroot", str(target.get("chroot") or "")),
             ])
+            list_box.append(item_surface)
 
     search.connect("search-changed", render_filtered)
     render_filtered()
@@ -1379,23 +1817,49 @@ def _render_run_workflow(
     operations = list(workflow.operations)
 
     _append_heading(Gtk, box, "Run")
+    _append_text(Gtk, box, "Compose a typed Devtool command, review its exact argv, then launch and watch output without leaving the page.")
     _append_metric_strip(Gtk, box, [
-        ("Stage 1", "Project", "repo, target, variant"),
+        ("Stage 1", "Project", "repository, target, variant"),
         ("Stage 2", "Operation", "build, test, apply, restore"),
-        ("Stage 3", "Review", "argv-first command"),
-        ("Stage 4", "Launch", "explicit user action"),
+        ("Stage 3", "Review", "exact argv and warnings"),
+        ("Stage 4", "Launch", "stream output and cancel"),
     ])
 
+    workspace = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+    workspace.set_hexpand(True)
+    workspace.set_vexpand(True)
+    workspace.set_position(430)
+    with _suppress_exception():
+        workspace.add_css_class("devtool-command-workspace")
+    left_column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    right_column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    with _suppress_exception():
+        left_column.add_css_class("devtool-composer-column")
+        left_column.add_css_class("devtool-composer-column-left")
+        right_column.add_css_class("devtool-composer-column")
+        right_column.add_css_class("devtool-composer-column-right")
+    workspace.set_start_child(left_column)
+    workspace.set_end_child(right_column)
+    box.append(workspace)
+
+    setup_surface = _new_surface(Gtk)
+    _append_section_heading(Gtk, setup_surface, "Command setup", "Common fields stay visible; less-used selectors live under Advanced.")
     form = Gtk.Grid(column_spacing=14, row_spacing=10)
     form.set_hexpand(True)
-    box.append(form)
+    setup_surface.append(form)
+    left_column.append(setup_surface)
     row = 0
     widgets: dict[str, Any] = {}
+
+    def use_form(next_form: Any) -> None:
+        nonlocal form, row
+        form = next_form
+        row = 0
 
     def add_label(text: str, r: int) -> None:
         label = Gtk.Label(label=text, xalign=0.0)
         with _suppress_exception():
-            label.add_css_class("dim-label")
+            label.add_css_class("devtool-data-key")
         form.attach(label, 0, r, 1, 1)
 
     def add_entry(key: str, label: str, value: str = "", *, placeholder: str = "") -> None:
@@ -1414,6 +1878,7 @@ def _render_run_workflow(
         nonlocal row
         add_label(label, row)
         combo = Gtk.ComboBoxText()
+        combo.set_hexpand(True)
         for value, text in values:
             combo.append(value, text)
         if active:
@@ -1429,10 +1894,20 @@ def _render_run_workflow(
     target_values = [("", "Automatic / repository default"), *[(item, item) for item in targets]]
     add_combo("target", "Target", target_values, str(draft.get("target") or ""))
     add_entry("repository", "Repository", str(draft.get("repository") or "."))
+    add_entry("artifact", "Overlay / bundle", str(draft.get("artifact") or ""), placeholder="required for apply-overlay/apply-overlays")
+    add_entry("test_tasks", "Native tasks", str(draft.get("test_tasks") or ""), placeholder=":app:testDebugUnitTest")
+    add_entry("commit_message", "Commit message", str(draft.get("commit_message") or ""))
+
+    advanced_form = Gtk.Grid(column_spacing=14, row_spacing=10)
+    advanced_form.set_hexpand(True)
+    advanced_expander = Gtk.Expander(label="Advanced project, test, environment, and HUD options")
+    advanced_expander.set_expanded(False)
+    advanced_expander.set_child(advanced_form)
+    setup_surface.append(advanced_expander)
+    use_form(advanced_form)
     add_entry("variant", "Variant", str(draft.get("variant") or ""), placeholder="optional")
     add_entry("project_type", "Project type", str(draft.get("project_type") or "auto"), placeholder="auto, python, android, dotnet…")
     add_entry("execution_environment", "Execution environment", str(draft.get("execution_environment") or "auto"), placeholder="auto, host, desktop-linux…")
-    add_entry("artifact", "Overlay / bundle", str(draft.get("artifact") or ""), placeholder="required for apply-overlay/apply-overlays")
     add_entry("test_profile", "Test profile", str(draft.get("test_profile") or ""), placeholder="optional saved profile")
     add_entry("selectors", "Selectors", str(draft.get("selectors") or ""), placeholder="shell-split values, e.g. tests/foo.py::test_bar")
     add_entry("test_ids", "Test IDs", str(draft.get("test_ids") or ""), placeholder="exact framework IDs")
@@ -1442,8 +1917,6 @@ def _render_run_workflow(
     add_entry("test_class", "Test class", str(draft.get("test_class") or ""))
     add_entry("test_method", "Test method", str(draft.get("test_method") or ""))
     add_entry("test_filter", "Native filter", str(draft.get("test_filter") or ""))
-    add_entry("test_tasks", "Native tasks", str(draft.get("test_tasks") or ""), placeholder=":app:testDebugUnitTest")
-    add_entry("commit_message", "Commit message", str(draft.get("commit_message") or ""))
     add_entry("environment", "Environment", str(draft.get("environment") or ""), placeholder="NAME=value OTHER='two words'")
     add_entry("extra_global_args", "Extra global args", str(draft.get("extra_global_args") or ""))
     add_entry("extra_operation_args", "Extra operation args", str(draft.get("extra_operation_args") or ""))
@@ -1454,13 +1927,19 @@ def _render_run_workflow(
         [("control-center", "Control Center"), ("desktop-window", "Desktop window"), ("terminal", "Terminal"), ("web", "Web"), ("studio", "Studio"), ("none", "Disabled")],
         str(draft.get("hud_mode") or "control-center"),
     )
+    add_entry("changed_from", "Changed from", str(draft.get("changed_from") or "HEAD"))
 
+    options_surface = _new_surface(Gtk)
+    _append_section_heading(Gtk, options_surface, "Execution options", "Tonal switches replace a wall of outlined controls.")
     checks = Gtk.FlowBox()
     checks.set_selection_mode(Gtk.SelectionMode.NONE)
     checks.set_max_children_per_line(3)
-    checks.set_column_spacing(8)
-    checks.set_row_spacing(8)
-    box.append(checks)
+    checks.set_column_spacing(4)
+    checks.set_row_spacing(4)
+    with _suppress_exception():
+        checks.add_css_class("devtool-options-flow")
+    options_surface.append(checks)
+    left_column.append(options_surface)
 
     def add_check(key: str, label: str, active: bool = False) -> None:
         check = Gtk.CheckButton(label=label)
@@ -1479,40 +1958,85 @@ def _render_run_workflow(
     add_check("changed", "Changed tests", bool(draft.get("changed", False)))
     add_check("instrumented", "Instrumented", bool(draft.get("instrumented", False)))
 
-    add_entry("changed_from", "Changed from", str(draft.get("changed_from") or "HEAD"))
-
-    button_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-    box.append(button_row)
+    review_surface = _new_surface(Gtk, accent=True)
+    _append_section_heading(Gtk, review_surface, "Review & launch", "The exact shell form and argv stay beside the editable command.")
     preview = Gtk.TextView()
     preview.set_editable(False)
     preview.set_monospace(True)
     preview.set_vexpand(True)
     preview.set_hexpand(True)
+    with _suppress_exception():
+        preview.add_css_class("devtool-command-preview")
     _set_accessible_label(Gtk, preview, "Command preview showing shell review text and argv")
-    box.append(preview)
+    preview_scroll = Gtk.ScrolledWindow()
+    preview_scroll.set_child(preview)
+    preview_scroll.set_min_content_height(210)
+    preview_scroll.set_vexpand(True)
+    review_surface.append(preview_scroll)
     status = Gtk.Label(label="", xalign=0.0)
     status.set_wrap(True)
-    box.append(status)
+    with _suppress_exception():
+        status.add_css_class("devtool-inline-status")
+    review_surface.append(status)
+    button_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    with _suppress_exception():
+        button_row.add_css_class("devtool-action-row")
+    review_surface.append(button_row)
+    right_column.append(review_surface)
 
-    _append_subheading(Gtk, box, "Live run output")
+    output_surface = _new_surface(Gtk)
+    _append_section_heading(Gtk, output_surface, "Live run output", "stdout and stderr remain distinct while the command is running.")
     run_identity = Gtk.Label(label="No desktop-launched run yet.", xalign=0.0)
     run_identity.set_wrap(True)
     with _suppress_exception():
-        run_identity.add_css_class("dim-label")
-    box.append(run_identity)
+        run_identity.add_css_class("devtool-inline-status")
+    output_surface.append(run_identity)
     output_view = Gtk.TextView()
     output_view.set_editable(False)
     output_view.set_cursor_visible(False)
     output_view.set_monospace(True)
     output_view.set_vexpand(True)
     output_view.set_hexpand(True)
+    with _suppress_exception():
+        output_view.add_css_class("devtool-run-output")
     _set_accessible_label(Gtk, output_view, "Live stdout and stderr for the launched Devtool command")
     output_scroll = Gtk.ScrolledWindow()
     output_scroll.set_child(output_view)
+    output_scroll.set_min_content_height(220)
     output_scroll.set_vexpand(True)
     with _suppress_exception():
         output_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-    box.append(output_scroll)
+    output_surface.append(output_scroll)
+    right_column.append(output_surface)
+
+    evidence_surface = _new_surface(Gtk)
+    _append_section_heading(Gtk, evidence_surface, "Diagnostics & evidence", "Live parsed issues and durable run identity stay beside the output.")
+    evidence_tabs = Gtk.Notebook()
+    diagnostics_view = Gtk.TextView()
+    diagnostics_view.set_editable(False)
+    diagnostics_view.set_cursor_visible(False)
+    diagnostics_view.set_monospace(True)
+    diagnostics_view.get_buffer().set_text("No diagnostics yet.")
+    evidence_view = Gtk.TextView()
+    evidence_view.set_editable(False)
+    evidence_view.set_cursor_visible(False)
+    evidence_view.set_monospace(True)
+    evidence_view.get_buffer().set_text("Launch a reviewed command to capture run identity, argv, cwd, PID, and log path.")
+    for view, accessible in ((diagnostics_view, "Live parsed diagnostics for the launched Devtool command"), (evidence_view, "Execution evidence for the launched Devtool command")):
+        view.set_vexpand(True)
+        view.set_hexpand(True)
+        _set_accessible_label(Gtk, view, accessible)
+    diagnostics_scroll = Gtk.ScrolledWindow()
+    diagnostics_scroll.set_child(diagnostics_view)
+    diagnostics_scroll.set_min_content_height(150)
+    evidence_scroll = Gtk.ScrolledWindow()
+    evidence_scroll.set_child(evidence_view)
+    evidence_scroll.set_min_content_height(150)
+    evidence_tabs.append_page(diagnostics_scroll, Gtk.Label(label="Diagnostics"))
+    evidence_tabs.append_page(evidence_scroll, Gtk.Label(label="Evidence"))
+    evidence_surface.append(evidence_tabs)
+    right_column.append(evidence_surface)
+
     run_state: dict[str, DesktopRunHandle | None] = {"handle": None}
     launcher = run_launcher or DesktopRunLauncher()
 
@@ -1599,6 +2123,29 @@ def _render_run_workflow(
             clipboard.set(review.command)
             status.set_text("Copied command to clipboard.")
 
+    def update_run_evidence(handle: DesktopRunHandle | None) -> None:
+        if handle is None:
+            diagnostics_view.get_buffer().set_text("No diagnostics yet.")
+            return
+        diagnostics = handle.diagnostics
+        if diagnostics:
+            diagnostics_view.get_buffer().set_text("\n".join(f"{item.get('severity', 'info')}: {item.get('message', '')}" for item in diagnostics[-100:]))
+        else:
+            diagnostics_view.get_buffer().set_text("No parsed errors or warnings.")
+        evidence_lines = [
+            f"run_id: {handle.run_id}",
+            f"status: {handle.status}",
+            f"pid: {handle.process.pid}",
+            f"cwd: {handle.cwd}",
+            f"log: {handle.log_path}",
+            f"elapsed_seconds: {handle.elapsed_seconds:.3f}",
+            "argv:",
+            *[f"  {shlex.quote(part)}" for part in handle.argv],
+        ]
+        if handle.returncode is not None:
+            evidence_lines.insert(2, f"exit_code: {handle.returncode}")
+        evidence_view.get_buffer().set_text("\n".join(evidence_lines))
+
     def append_run_output(line: str) -> None:
         buffer = output_view.get_buffer()
         start = buffer.get_start_iter()
@@ -1609,6 +2156,7 @@ def _render_run_workflow(
         with _suppress_exception():
             mark = buffer.create_mark(None, buffer.get_end_iter(), False)
             output_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+        update_run_evidence(run_state.get("handle"))
 
     def idle_call(callback: Any, *args: Any) -> None:
         if GLib is not None:
@@ -1628,6 +2176,7 @@ def _render_run_workflow(
             launch_button = action_buttons.get("Launch")
             if launch_button is not None:
                 launch_button.set_sensitive(True)
+            update_run_evidence(handle)
         idle_call(update)
 
     def launch_command(_button: Any) -> None:
@@ -1652,6 +2201,7 @@ def _render_run_workflow(
             status.set_text(f"Launch failed: {exc}")
             return
         run_state["handle"] = handle
+        update_run_evidence(handle)
         launch_button = action_buttons.get("Launch")
         if launch_button is not None:
             launch_button.set_sensitive(False)
@@ -1696,6 +2246,7 @@ def _render_run_workflow(
     ):
         button = Gtk.Button(label=label)
         action_buttons[label] = button
+        _style_action_button(button, primary=label == "Launch", danger=label in {"Cancel", "Force cancel"})
         button.connect("clicked", callback)
         _set_accessible_label(Gtk, button, accessible)
         button_row.append(button)
@@ -1757,11 +2308,15 @@ def _write_desktop_run_hud_failure(payload: dict[str, Any], handle: DesktopRunHa
 def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _clear(Gtk, box)
     _append_heading(Gtk, box, "Settings")
+    _append_text(Gtk, box, "Tune the desktop surfaces directly. Changes are persisted without editing environment variables by hand.")
     project = payload.get("project", {})
     settings = payload.get("settings", {})
     hud = payload.get("hud", {})
     ipc = payload.get("ipc", {})
-    _append_rows(Gtk, box, [
+
+    paths_surface = _new_surface(Gtk)
+    _append_section_heading(Gtk, paths_surface, "Runtime paths", "Repository, configuration, HUD state, and IPC discovery")
+    _append_rows(Gtk, paths_surface, [
         ("Config", str(project.get("config_path") or "")),
         ("Global config", str(project.get("global_config_path") or "")),
         ("HUD state", str(hud.get("directory") or "")),
@@ -1770,15 +2325,100 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("History limit", str(settings.get("history_limit") or 0)),
         ("Recent events", str(settings.get("recent_events") or 0)),
     ])
-    _append_subheading(Gtk, box, "Desktop behavior")
+    box.append(paths_surface)
+
     preferences = DesktopPreferences.load("control-center")
-    _append_rows(Gtk, box, [
-        ("Appearance", preferences.appearance),
-        ("Reduced motion", "yes" if preferences.reduced_motion else "no"),
-        ("Saved window", f"{preferences.window_width}×{preferences.window_height}"),
-        ("Saved page", preferences.selected_page),
-    ])
-    _append_text(Gtk, box, "Appearance follows the system by default, can be forced with DEVTOOL_DESKTOP_APPEARANCE=light|dark, and honors DEVTOOL_REDUCED_MOTION=1 for quieter motion.")
+    appearance_surface = _new_surface(Gtk, accent=True)
+    _append_section_heading(Gtk, appearance_surface, "Appearance", "System-aware theme, contrast, density, and motion preferences")
+    form = Gtk.Grid(column_spacing=16, row_spacing=10)
+    form.set_hexpand(True)
+    appearance_surface.append(form)
+
+    def add_form_label(text: str, row: int) -> None:
+        label = Gtk.Label(label=text, xalign=0.0)
+        with _suppress_exception():
+            label.add_css_class("devtool-data-key")
+        form.attach(label, 0, row, 1, 1)
+
+    appearance_combo = Gtk.ComboBoxText()
+    for value, label in (("system", "Follow system"), ("dark", "Dark"), ("light", "Light")):
+        appearance_combo.append(value, label)
+    appearance_combo.set_active_id(preferences.appearance)
+    add_form_label("Theme", 0)
+    form.attach(appearance_combo, 1, 0, 1, 1)
+
+    high_contrast = Gtk.CheckButton(label="Increase boundaries and text contrast")
+    high_contrast.set_active(bool(preferences.high_contrast))
+    add_form_label("High contrast", 1)
+    form.attach(high_contrast, 1, 1, 1, 1)
+
+    compact_density = Gtk.CheckButton(label="Reduce spacing on information-heavy screens")
+    compact_density.set_active(bool(preferences.compact_density))
+    add_form_label("Compact density", 2)
+    form.attach(compact_density, 1, 2, 1, 1)
+
+    reduced_motion = Gtk.CheckButton(label="Avoid non-essential motion")
+    reduced_motion.set_active(bool(preferences.reduced_motion))
+    add_form_label("Reduced motion", 3)
+    form.attach(reduced_motion, 1, 3, 1, 1)
+
+    nav_hint = Gtk.Label(label="Use the Compact nav button in the header to collapse or expand the sidebar immediately.", xalign=0.0)
+    nav_hint.set_wrap(True)
+    with _suppress_exception():
+        nav_hint.add_css_class("devtool-section-subtitle")
+    add_form_label("Navigation", 4)
+    form.attach(nav_hint, 1, 4, 1, 1)
+
+    save_status = Gtk.Label(label="Preferences are saved automatically.", xalign=0.0)
+    save_status.set_wrap(True)
+    with _suppress_exception():
+        save_status.add_css_class("devtool-inline-status")
+    appearance_surface.append(save_status)
+    box.append(appearance_surface)
+
+    def root_widget() -> Any:
+        with _suppress_exception():
+            return box.get_root()
+        return None
+
+    def save_preferences(message: str) -> None:
+        preferences.save("control-center")
+        save_status.set_label(message)
+
+    def appearance_changed(combo: Any) -> None:
+        preferences.appearance = str(combo.get_active_id() or "system")
+        try:
+            import gi  # type: ignore[import-not-found]
+            gi.require_version("Adw", "1")
+            from gi.repository import Adw  # type: ignore[import-not-found]
+        except Exception:
+            Adw = None
+        _apply_appearance_preference(Adw, preferences)
+        save_preferences(f"Theme set to {preferences.appearance}.")
+
+    def high_contrast_changed(button: Any) -> None:
+        preferences.high_contrast = bool(button.get_active())
+        root = root_widget()
+        if root is not None:
+            _set_css_class(root, "devtool-high-contrast", preferences.high_contrast)
+        save_preferences("High contrast updated.")
+
+    def compact_density_changed(button: Any) -> None:
+        preferences.compact_density = bool(button.get_active())
+        root = root_widget()
+        if root is not None:
+            _set_css_class(root, "devtool-compact-density", preferences.compact_density)
+        save_preferences("Compact density updated.")
+
+    def reduced_motion_changed(button: Any) -> None:
+        preferences.reduced_motion = bool(button.get_active())
+        save_preferences("Reduced motion preference updated.")
+
+    appearance_combo.connect("changed", appearance_changed)
+    high_contrast.connect("toggled", high_contrast_changed)
+    compact_density.connect("toggled", compact_density_changed)
+    reduced_motion.connect("toggled", reduced_motion_changed)
+
     _append_button_row(Gtk, box, [
         ("Copy settings JSON", _copy_text_callback(Gtk, box, json.dumps(settings, ensure_ascii=False, indent=2))),
         ("Open HUD", lambda _button: _launch_hud(str(hud.get("directory") or DEFAULT_TASKER_DIR), bool(settings.get("follow_active")))),

@@ -21,6 +21,9 @@ class DesktopPreferences:
     window_maximized: bool = False
     hud_details_expanded: bool = False
     high_contrast: bool = False
+    compact_density: bool = False
+    compact_navigation: bool = False
+    hud_size_mode: str = "auto"
     filters: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -51,6 +54,9 @@ class DesktopPreferences:
         appearance = str(data.get("appearance") or os.environ.get("DEVTOOL_DESKTOP_APPEARANCE") or "system").lower()
         if appearance not in {"system", "light", "dark"}:
             appearance = "system"
+        hud_size_mode = str(data.get("hud_size_mode") or "auto").lower()
+        if hud_size_mode not in {"compact", "auto", "expanded"}:
+            hud_size_mode = "auto"
         filters = data.get("filters") if isinstance(data.get("filters"), dict) else {}
         clean_filters = {str(key): str(value) for key, value in filters.items() if str(key)}
         return cls(
@@ -62,6 +68,9 @@ class DesktopPreferences:
             window_maximized=boolean("window_maximized"),
             hud_details_expanded=boolean("hud_details_expanded"),
             high_contrast=boolean("high_contrast", "DEVTOOL_HIGH_CONTRAST"),
+            compact_density=boolean("compact_density", "DEVTOOL_COMPACT_DENSITY"),
+            compact_navigation=boolean("compact_navigation"),
+            hud_size_mode=hud_size_mode,
             filters=clean_filters,
         )
 

@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+from ..ipc import default_ipc_socket_path
 from ..hud import (
     compact_detail_text,
     canonical_diagnostics,
@@ -152,7 +155,8 @@ class Gtk4CompactHud:
             else:
                 window = Gtk.ApplicationWindow(application=app)
             window.set_title("Devtool HUD")
-            window.set_default_size(max(520, min(preferences.window_width, 900)), max(420, min(preferences.window_height, 760)))
+            initial_width, initial_height = _hud_size_for_mode(preferences.hud_size_mode, preferences.window_width, preferences.window_height)
+            window.set_default_size(initial_width, initial_height)
             with _suppress_exception():
                 if preferences.window_maximized:
                     window.maximize()
@@ -233,13 +237,35 @@ class Gtk4CompactHud:
             progress_row.append(progress_label)
             header.append(progress_row)
 
-            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            size_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            size_label = Gtk.Label(label="HUD size", xalign=0.0)
+            size_label.set_hexpand(True)
+            with _suppress_exception():
+                size_label.add_css_class("devtool-hud-context")
+            size_row.append(size_label)
+            size_buttons: dict[str, Any] = {}
+            first_size_button: Any | None = None
+            for mode, label in (("compact", "Compact"), ("auto", "Auto"), ("expanded", "Expanded")):
+                button = Gtk.ToggleButton(label=label)
+                if first_size_button is None:
+                    first_size_button = button
+                else:
+                    button.set_group(first_size_button)
+                with _suppress_exception():
+                    button.add_css_class("devtool-hud-size-button")
+                size_buttons[mode] = button
+                size_row.append(button)
+            header.append(size_row)
+
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             content.set_margin_top(12)
             content.set_margin_bottom(12)
             content.set_margin_start(14)
             content.set_margin_end(14)
             content.set_hexpand(True)
             content.set_vexpand(True)
+            with _suppress_exception():
+                content.add_css_class("devtool-hud-content")
 
             summary_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
             with _suppress_exception():
@@ -264,8 +290,10 @@ class Gtk4CompactHud:
             metrics.set_selection_mode(Gtk.SelectionMode.NONE)
             metrics.set_min_children_per_line(1)
             metrics.set_max_children_per_line(4)
-            metrics.set_column_spacing(8)
-            metrics.set_row_spacing(8)
+            metrics.set_column_spacing(0)
+            metrics.set_row_spacing(0)
+            with _suppress_exception():
+                metrics.add_css_class("devtool-hud-metrics")
             content.append(metrics)
 
             stepper_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
@@ -278,6 +306,18 @@ class Gtk4CompactHud:
             stepper_panel.append(stepper_heading)
             stepper_panel.append(stepper)
             content.append(stepper_panel)
+
+            lanes_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
+            with _suppress_exception():
+                lanes_panel.add_css_class("devtool-stepper-panel")
+            lanes_heading = Gtk.Label(label="Workspace lanes", xalign=0.0)
+            with _suppress_exception():
+                lanes_heading.add_css_class("devtool-card-value")
+            lanes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            lanes_panel.append(lanes_heading)
+            lanes_panel.append(lanes_box)
+            lanes_panel.set_visible(False)
+            content.append(lanes_panel)
 
             raw_text = Gtk.TextView()
             raw_text.set_editable(False)
@@ -310,7 +350,12 @@ class Gtk4CompactHud:
             with _suppress_exception():
                 scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
 
-            actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            actions = Gtk.FlowBox()
+            actions.set_selection_mode(Gtk.SelectionMode.NONE)
+            actions.set_min_children_per_line(2)
+            actions.set_max_children_per_line(3)
+            actions.set_column_spacing(8)
+            actions.set_row_spacing(6)
             actions.set_margin_top(10)
             actions.set_margin_bottom(10)
             actions.set_margin_start(14)
@@ -320,10 +365,26 @@ class Gtk4CompactHud:
             copy_button = Gtk.Button(label="Copy summary")
             diagnostics_button = Gtk.Button(label="Copy diagnostics")
             log_button = Gtk.Button(label="Open log")
+            cancel_button = Gtk.Button(label="Cancel")
+            force_cancel_button = Gtk.Button(label="Force cancel")
             close_button = Gtk.Button(label="Close")
+            for button in (copy_button, diagnostics_button, log_button, cancel_button, force_cancel_button, close_button):
+                with _suppress_exception():
+                    button.add_css_class("devtool-hud-button")
+            with _suppress_exception():
+                diagnostics_button.add_css_class("devtool-hud-primary-button")
+            with _suppress_exception():
+                cancel_button.add_css_class("devtool-hud-danger-button")
+                force_cancel_button.add_css_class("devtool-hud-danger-button")
+                cancel_button.set_sensitive(False)
+                force_cancel_button.set_sensitive(False)
+            for button, label in ((cancel_button, "Request graceful cancellation of the active Devtool run"), (force_cancel_button, "Force-stop the verified active Devtool process")):
+                _set_accessible_label(Gtk, button, label)
             actions.append(copy_button)
             actions.append(diagnostics_button)
             actions.append(log_button)
+            actions.append(cancel_button)
+            actions.append(force_cancel_button)
             actions.append(close_button)
 
             root.append(header)
@@ -335,6 +396,31 @@ class Gtk4CompactHud:
                 window.set_child(root)
 
             last_snapshot: dict[str, Any] = {}
+            lanes_available = {"value": False}
+            last_auto_size: dict[str, tuple[int, int] | None] = {"value": None}
+
+            def apply_hud_size_mode(mode: str, *, persist: bool = True) -> None:
+                normalized = mode if mode in {"compact", "auto", "expanded"} else "auto"
+                preferences.hud_size_mode = normalized
+                compact = normalized == "compact"
+                metrics.set_visible(not compact)
+                stepper_panel.set_visible(not compact)
+                lanes_panel.set_visible(bool(lanes_available["value"]) and not compact)
+                raw_expander.set_visible(not compact)
+                if normalized != "auto":
+                    width, height = _hud_size_for_mode(normalized, preferences.window_width, preferences.window_height)
+                    with _suppress_exception():
+                        window.unmaximize()
+                        window.set_default_size(width, height)
+                for key, button in size_buttons.items():
+                    if button.get_active() != (key == normalized):
+                        button.set_active(key == normalized)
+                if persist:
+                    preferences.save("hud")
+
+            for mode, button in size_buttons.items():
+                button.connect("toggled", lambda active_button, selected=mode: apply_hud_size_mode(selected) if active_button.get_active() else None)
+            apply_hud_size_mode(preferences.hud_size_mode, persist=False)
 
             def read() -> dict[str, Any]:
                 snap = load_hud_snapshot(directory, follow_active=follow_active, recent_events=self.recent_events)
@@ -395,6 +481,24 @@ class Gtk4CompactHud:
                     for name, value, subtitle in phases[:8]:
                         _append_stepper_row(Gtk, stepper, {"label": name, "status": value or "pending", "detail": subtitle, "progress": state.get("percent") or 0})
 
+                lanes = _workspace_lanes_from_steps([step.to_dict() for step in steps])
+                lanes_available["value"] = bool(lanes)
+                _clear_box(Gtk, lanes_box)
+                for lane, lane_steps in lanes.items():
+                    _append_lane_row(Gtk, lanes_box, lane, lane_steps)
+                lanes_panel.set_visible(bool(lanes) and preferences.hud_size_mode != "compact")
+
+                if preferences.hud_size_mode == "auto":
+                    auto_size = _auto_hud_size(preferences.window_width, bool(lanes), bool(diagnostics), raw_expander.get_expanded())
+                    if last_auto_size["value"] != auto_size:
+                        last_auto_size["value"] = auto_size
+                        with _suppress_exception():
+                            window.set_default_size(*auto_size)
+
+                running = str(status_text or "").lower() == "running"
+                cancel_button.set_sensitive(running and bool(state.get("run_id")))
+                force_cancel_button.set_sensitive(running and _can_force_cancel_state(state))
+
                 detail_lines = ["Run", display_context, state_metric_text(hud_state, events)]
                 if steps:
                     detail_lines.append("")
@@ -402,7 +506,6 @@ class Gtk4CompactHud:
                     for step in steps:
                         progress_suffix = f" ({step.progress}%)" if step.status not in {"skipped", "pending"} else ""
                         detail_lines.append(f"{_human_step_status(step.status, step.label)}: {step.label}{progress_suffix}")
-                lanes = _workspace_lanes_from_steps([step.to_dict() for step in steps])
                 if lanes:
                     detail_lines.append("")
                     detail_lines.append("workspace lane")
@@ -484,14 +587,36 @@ class Gtk4CompactHud:
                 clipboard = Gtk.Widget.get_clipboard(window)
                 clipboard.set(text)
 
+            def cancel_run(_button: Any) -> None:
+                snap = last_snapshot or read()
+                state = snap.get("state") if isinstance(snap.get("state"), dict) else {}
+                run_id = str(state.get("run_id") or "").strip()
+                accepted, message = _request_ipc_cancel(run_id)
+                summary_hint.set_label(message)
+                if accepted:
+                    cancel_button.set_sensitive(False)
+
+            def force_cancel_run(_button: Any) -> None:
+                snap = last_snapshot or read()
+                state = snap.get("state") if isinstance(snap.get("state"), dict) else {}
+                accepted, message = _force_cancel_state(state)
+                summary_hint.set_label(message)
+                if accepted:
+                    cancel_button.set_sensitive(False)
+                    force_cancel_button.set_sensitive(False)
+
             copy_button.connect("clicked", copy_summary)
             diagnostics_button.connect("clicked", copy_diagnostics)
             log_button.connect("clicked", open_log)
+            cancel_button.connect("clicked", cancel_run)
+            force_cancel_button.connect("clicked", force_cancel_run)
             close_button.connect("clicked", lambda _button: window.close())
             _install_shortcuts(Gtk, window, {
                 "<Control>c": copy_summary,
                 "<Control>d": copy_diagnostics,
                 "<Control>l": open_log,
+                "<Control>k": cancel_run,
+                "<Control><Shift>k": force_cancel_run,
                 "Escape": lambda _unused: window.close(),
             })
             window.present()
@@ -765,6 +890,145 @@ def _append_step_card(Gtk: Any, box: Any, step: dict[str, Any]) -> None:
     box.append(card)
 
 
+def _hud_size_for_mode(mode: str, saved_width: int, saved_height: int) -> tuple[int, int]:
+    normalized = str(mode or "auto").lower()
+    if normalized == "compact":
+        return 520, 420
+    if normalized == "expanded":
+        return 820, 760
+    return max(560, min(int(saved_width or 680), 900)), max(500, min(int(saved_height or 620), 760))
+
+
+def _auto_hud_size(saved_width: int, has_lanes: bool, has_diagnostics: bool, raw_expanded: bool) -> tuple[int, int]:
+    width = max(620, min(int(saved_width or 680), 900))
+    height = 520
+    if has_lanes:
+        height += 90
+    if has_diagnostics:
+        height += 70
+    if raw_expanded:
+        height += 120
+    return width, min(height, 760)
+
+
+def _append_lane_row(Gtk: Any, box: Any, lane: str, steps: list[dict[str, Any]]) -> None:
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    row.set_hexpand(True)
+    with _suppress_exception():
+        row.add_css_class("devtool-stepper-row")
+    lane_label = Gtk.Label(label=str(lane or "workspace"), xalign=0.0)
+    lane_label.set_size_request(120, -1)
+    with _suppress_exception():
+        lane_label.add_css_class("devtool-card-label")
+    summary = ", ".join(str(item.get("label") or item.get("key") or "step").split(" · ", 1)[0] for item in steps)
+    detail = Gtk.Label(label=summary or "No lane steps", xalign=0.0)
+    detail.set_hexpand(True)
+    detail.set_wrap(True)
+    with _suppress_exception():
+        detail.add_css_class("devtool-step-title")
+    state = Gtk.Label(label=f"{len(steps)} step{'s' if len(steps) != 1 else ''}", xalign=1.0)
+    with _suppress_exception():
+        state.add_css_class("devtool-card-subtitle")
+    row.append(lane_label)
+    row.append(detail)
+    row.append(state)
+    box.append(row)
+
+
+def _request_ipc_cancel(run_id: str, *, socket_path: Path | None = None) -> tuple[bool, str]:
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        return False, "No active run identity is available for cancellation."
+    path = socket_path or default_ipc_socket_path()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(0.6)
+    try:
+        sock.connect(str(path))
+        payload = {"type": "cancel", "run_id": run_id, "reason": "Desktop HUD request"}
+        sock.sendall((json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
+        buffer = bytearray()
+        while b"\n" not in buffer:
+            chunk = sock.recv(8192)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+        line = bytes(buffer).split(b"\n", 1)[0]
+        response = json.loads(line.decode("utf-8")) if line else {}
+        accepted = bool(isinstance(response, dict) and response.get("type") == "cancel_ack" and response.get("accepted"))
+        if accepted:
+            return True, f"Cancellation requested for {run_id}."
+        return False, f"The run {run_id} is not connected to the IPC broker; cancellation was not sent."
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return False, f"Cancellation request failed: {exc}"
+    finally:
+        with _suppress_exception():
+            sock.close()
+
+
+def _process_start_token(pid: int) -> str:
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace").split()
+        return fields[21] if len(fields) > 21 else ""
+    except OSError:
+        return ""
+
+
+def _current_boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _same_process_owner(pid: int) -> bool:
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("Uid:"):
+                values = line.split()[1:]
+                return bool(values) and int(values[0]) == os.getuid()
+    except (OSError, ValueError):
+        return False
+    return False
+
+
+def _can_force_cancel_state(state: dict[str, Any]) -> bool:
+    if str(state.get("status") or "").lower() not in {"running", "cancelling", "canceling", "force-cancelling"}:
+        return False
+    try:
+        pid = int(state.get("pid") or 0)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 1 or pid == os.getpid() or not _same_process_owner(pid):
+        return False
+    expected_boot = str(state.get("boot_id") or "").strip()
+    current_boot = _current_boot_id()
+    if expected_boot and current_boot and expected_boot != current_boot:
+        return False
+    expected_start = str(state.get("process_start") or "").strip()
+    if not expected_start or _process_start_token(pid) != expected_start:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _force_cancel_state(state: dict[str, Any]) -> tuple[bool, str]:
+    if not _can_force_cancel_state(state):
+        return False, "Force cancel was blocked because the HUD could not verify the active process identity."
+    pid = int(state.get("pid") or 0)
+    try:
+        pgid = os.getpgid(pid)
+        if pgid == pid and pgid != os.getpgrp():
+            os.killpg(pgid, signal.SIGKILL)
+        else:
+            os.kill(pid, signal.SIGKILL)
+    except OSError as exc:
+        return False, f"Force cancel failed: {exc}"
+    return True, f"Force cancel sent to verified process {pid}."
+
+
 def _workspace_lanes_from_steps(steps: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     lanes: dict[str, list[dict[str, Any]]] = {}
     for step in steps:
@@ -804,7 +1068,7 @@ def _save_window_preferences(window: Any, preferences: DesktopPreferences) -> No
     with _suppress_exception():
         width = int(window.get_width())
         height = int(window.get_height())
-        if width > 0 and height > 0:
+        if preferences.hud_size_mode == "auto" and width > 0 and height > 0:
             preferences.window_width = width
             preferences.window_height = height
     with _suppress_exception():
@@ -867,52 +1131,88 @@ def _install_progress_css(Gtk: Any, Gdk: Any) -> None:
       background-color: @window_bg_color;
     }
     .devtool-hud-header {
-      border-bottom: 1px solid alpha(@window_fg_color, 0.10);
+      padding-bottom: 2px;
+      border: none;
+      background-color: @window_bg_color;
+      box-shadow: inset 0 -1px alpha(@window_fg_color, 0.07);
+    }
+    .devtool-hud-content {
+      background-color: @window_bg_color;
     }
     .devtool-hud-title {
       font-size: 18px;
-      font-weight: 800;
+      font-weight: 850;
     }
     .devtool-hud-subtitle {
       color: alpha(@window_fg_color, 0.88);
-      font-weight: 600;
+      font-weight: 650;
     }
     .devtool-hud-context,
     .devtool-hud-progress-label,
     .devtool-card-label,
     .devtool-card-subtitle {
-      color: alpha(@window_fg_color, 0.62);
+      color: alpha(@window_fg_color, 0.60);
     }
     .devtool-hud-status-pill {
-      padding: 6px 10px;
-      border-radius: 999px;
-      background-color: alpha(@window_fg_color, 0.08);
-      color: alpha(@window_fg_color, 0.88);
+      padding: 5px 9px;
+      border: none;
+      border-radius: 7px;
+      background-color: alpha(@window_fg_color, 0.065);
+      color: alpha(@window_fg_color, 0.90);
       font-weight: 800;
     }
     .devtool-hud-status-pill.devtool-progress-ok,
     .devtool-stepper-row.devtool-progress-ok .devtool-step-symbol {
-      background-color: alpha(@success_color, 0.16);
+      background-color: alpha(@success_color, 0.14);
       color: @success_color;
     }
     .devtool-hud-status-pill.devtool-progress-failed,
     .devtool-summary-card.devtool-progress-failed,
     .devtool-stepper-row.devtool-progress-failed .devtool-step-symbol {
-      background-color: alpha(@error_color, 0.16);
+      background-color: alpha(@error_color, 0.13);
       color: @error_color;
+    }
+    .devtool-summary-card.devtool-progress-failed {
+      box-shadow: inset 3px 0 @error_color;
     }
     .devtool-hud-status-pill.devtool-progress-cancelled,
     .devtool-stepper-row.devtool-progress-cancelled .devtool-step-symbol {
-      background-color: alpha(@warning_color, 0.16);
+      background-color: alpha(@warning_color, 0.13);
       color: @warning_color;
     }
-    .devtool-summary-card,
-    .devtool-stepper-panel,
+    .devtool-summary-card {
+      padding: 13px 14px;
+      border: none;
+      border-radius: 10px;
+      background-color: alpha(@accent_bg_color, 0.10);
+      box-shadow: inset 3px 0 @accent_bg_color;
+    }
+    .devtool-hud-metrics {
+      padding: 0;
+      border: none;
+      border-radius: 10px;
+      background-color: alpha(@window_fg_color, 0.045);
+    }
+    .devtool-hud-metrics flowboxchild {
+      padding: 0;
+      margin: 0;
+      background-color: transparent;
+      border-radius: 0;
+    }
+    .devtool-hud-metrics flowboxchild + flowboxchild {
+      box-shadow: inset 1px 0 alpha(@window_fg_color, 0.07);
+    }
     .devtool-metric-card {
       padding: 10px 12px;
-      border-radius: 12px;
-      background-color: alpha(@window_fg_color, 0.055);
-      border: 1px solid alpha(@window_fg_color, 0.08);
+      border: none;
+      border-radius: 0;
+      background-color: transparent;
+    }
+    .devtool-stepper-panel {
+      padding: 12px 13px;
+      border: none;
+      border-radius: 10px;
+      background-color: alpha(@window_fg_color, 0.045);
     }
     .devtool-summary-title,
     .devtool-card-value,
@@ -921,30 +1221,78 @@ def _install_progress_css(Gtk: Any, Gdk: Any) -> None:
       font-weight: 800;
     }
     .devtool-stepper-row {
-      padding: 6px 4px;
-      border-radius: 10px;
+      padding: 7px 2px;
+      border-radius: 7px;
+      box-shadow: inset 0 -1px alpha(@window_fg_color, 0.055);
+    }
+    .devtool-stepper-row:last-child {
+      box-shadow: none;
     }
     .devtool-step-symbol {
-      border-radius: 999px;
-      padding: 3px 7px;
-      background-color: alpha(@window_fg_color, 0.09);
+      min-width: 20px;
+      padding: 3px 5px;
+      border: none;
+      border-radius: 7px;
+      background-color: alpha(@window_fg_color, 0.075);
       font-weight: 900;
     }
     .devtool-details {
-      background-color: alpha(@window_fg_color, 0.04);
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      background-color: alpha(@window_fg_color, 0.045);
       color: alpha(@window_fg_color, 0.88);
     }
     .devtool-action-row {
-      border-top: 1px solid alpha(@window_fg_color, 0.10);
-      background-color: alpha(@window_bg_color, 0.96);
+      border: none;
+      background-color: alpha(@window_bg_color, 0.97);
+      box-shadow: inset 0 1px alpha(@window_fg_color, 0.07);
+    }
+    .devtool-action-row flowboxchild {
+      margin: 0;
+      padding: 0;
+      background-color: transparent;
+    }
+    button.devtool-hud-button {
+      min-height: 34px;
+      padding: 0 11px;
+      border: none;
+      border-radius: 8px;
+      background-color: alpha(@window_fg_color, 0.065);
+      box-shadow: none;
+    }
+    button.devtool-hud-button:hover {
+      background-color: alpha(@window_fg_color, 0.10);
+    }
+    button.devtool-hud-size-button {
+      min-height: 28px;
+      padding: 0 9px;
+      border: none;
+      border-radius: 7px;
+      background-color: alpha(@window_fg_color, 0.05);
+      box-shadow: none;
+    }
+    button.devtool-hud-size-button:checked {
+      background-color: alpha(@accent_bg_color, 0.16);
+      color: @accent_bg_color;
+    }
+    button.devtool-hud-danger-button {
+      background-color: alpha(@error_color, 0.12);
+      color: @error_color;
+    }
+    button.devtool-hud-primary-button {
+      background-color: @accent_bg_color;
+      color: @window_fg_color;
     }
     progressbar.devtool-progress trough {
-      min-height: 10px;
+      min-height: 9px;
+      border: none;
       border-radius: 999px;
-      background-color: alpha(@window_fg_color, 0.14);
+      background-color: alpha(@window_fg_color, 0.12);
     }
     progressbar.devtool-progress progress {
-      min-height: 10px;
+      min-height: 9px;
+      border: none;
       border-radius: 999px;
       background-color: @accent_bg_color;
     }
@@ -961,7 +1309,8 @@ def _install_progress_css(Gtk: Any, Gdk: Any) -> None:
       border: 2px solid @window_fg_color;
     }
     .devtool-high-contrast .devtool-hud-status-pill,
-    .devtool-high-contrast .devtool-summary-card {
+    .devtool-high-contrast .devtool-summary-card,
+    .devtool-high-contrast .devtool-stepper-panel {
       border: 1px solid @window_fg_color;
       background-color: @window_bg_color;
     }
