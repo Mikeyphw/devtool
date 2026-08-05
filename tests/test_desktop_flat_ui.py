@@ -59,7 +59,7 @@ def test_hud_groups_metrics_and_pipeline_without_nested_card_borders() -> None:
         "devtool-hud-primary-button",
         ".devtool-summary-card {",
         ".devtool-stepper-panel {",
-        "box-shadow: inset 3px 0 @accent_bg_color",
+        "box-shadow: inset 3px 0 rgb(53, 132, 228)",
     ):
         assert token in source
 

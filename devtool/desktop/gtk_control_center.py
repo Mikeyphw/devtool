@@ -524,13 +524,13 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
     .devtool-content-stack,
     .devtool-page-scroller,
     .devtool-page {
-      background-color: @window_bg_color;
+      background-color: transparent;
     }
     .devtool-app-header {
       min-height: 58px;
-      background-color: @window_bg_color;
+      background-color: transparent;
       border: none;
-      box-shadow: inset 0 -1px alpha(@window_fg_color, 0.07);
+      box-shadow: inset 0 -1px alpha(currentColor, 0.07);
     }
     .devtool-app-title {
       font-size: 18px;
@@ -541,13 +541,13 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
     .devtool-section-subtitle,
     .devtool-metric-subtitle,
     .devtool-inline-status {
-      color: alpha(@window_fg_color, 0.62);
+      color: alpha(currentColor, 0.62);
     }
     .navigation-sidebar {
       padding: 12px 8px;
-      background-color: alpha(@window_fg_color, 0.025);
+      background-color: alpha(currentColor, 0.025);
       border: none;
-      box-shadow: inset -1px 0 alpha(@window_fg_color, 0.07);
+      box-shadow: inset -1px 0 alpha(currentColor, 0.07);
     }
     .navigation-sidebar row {
       margin: 2px 4px;
@@ -555,20 +555,20 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
       border-radius: 8px;
     }
     .navigation-sidebar row:hover {
-      background-color: alpha(@window_fg_color, 0.055);
+      background-color: alpha(currentColor, 0.055);
     }
     .navigation-sidebar row:selected {
-      background-color: alpha(@accent_bg_color, 0.14);
-      color: @window_fg_color;
-      box-shadow: inset 3px 0 @accent_bg_color;
+      background-color: rgba(53, 132, 228, 0.14);
+      color: currentColor;
+      box-shadow: inset 3px 0 rgb(53, 132, 228);
     }
     .devtool-nav-icon {
       min-width: 18px;
-      color: alpha(@window_fg_color, 0.56);
+      color: alpha(currentColor, 0.56);
       font-weight: 850;
     }
     .navigation-sidebar row:selected .devtool-nav-icon {
-      color: @accent_bg_color;
+      color: rgb(53, 132, 228);
     }
     .devtool-nav-label {
       font-weight: 680;
@@ -597,19 +597,19 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
       padding: 16px;
       border: none;
       border-radius: 12px;
-      background-color: alpha(@window_fg_color, 0.045);
+      background-color: alpha(currentColor, 0.045);
     }
     .devtool-surface-compact {
       padding: 12px;
       border-radius: 10px;
     }
     .devtool-accent-surface {
-      background-color: alpha(@accent_bg_color, 0.10);
-      box-shadow: inset 3px 0 @accent_bg_color;
+      background-color: rgba(53, 132, 228, 0.10);
+      box-shadow: inset 3px 0 rgb(53, 132, 228);
     }
     .devtool-danger-surface {
-      background-color: alpha(@error_color, 0.09);
-      box-shadow: inset 3px 0 @error_color;
+      background-color: rgba(192, 28, 40, 0.09);
+      box-shadow: inset 3px 0 rgb(192, 28, 40);
     }
     .devtool-section-heading {
       margin-bottom: 8px;
@@ -618,7 +618,7 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
       padding: 0;
       border: none;
       border-radius: 12px;
-      background-color: alpha(@window_fg_color, 0.045);
+      background-color: alpha(currentColor, 0.045);
     }
     .devtool-metric-strip flowboxchild {
       padding: 0;
@@ -627,7 +627,7 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
       border-radius: 0;
     }
     .devtool-metric-strip flowboxchild + flowboxchild {
-      box-shadow: inset 1px 0 alpha(@window_fg_color, 0.07);
+      box-shadow: inset 1px 0 alpha(currentColor, 0.07);
     }
     .devtool-metric {
       padding: 14px 16px;
@@ -636,7 +636,7 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
     }
     .devtool-metric-label,
     .devtool-data-key {
-      color: alpha(@window_fg_color, 0.58);
+      color: alpha(currentColor, 0.58);
       font-size: 12px;
       font-weight: 700;
     }
@@ -646,23 +646,23 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
     }
     .devtool-data-group {
       border-radius: 10px;
-      background-color: alpha(@window_fg_color, 0.035);
+      background-color: alpha(currentColor, 0.035);
     }
     .devtool-data-row {
       padding: 10px 12px;
-      box-shadow: inset 0 -1px alpha(@window_fg_color, 0.06);
+      box-shadow: inset 0 -1px alpha(currentColor, 0.06);
     }
     .devtool-data-row-last {
       box-shadow: none;
     }
     .devtool-data-value {
-      color: alpha(@window_fg_color, 0.92);
+      color: alpha(currentColor, 0.92);
     }
     .devtool-status-pill {
       padding: 5px 9px;
       border: none;
       border-radius: 7px;
-      background-color: alpha(@window_fg_color, 0.065);
+      background-color: alpha(currentColor, 0.065);
       font-weight: 760;
     }
     .devtool-action-row {
@@ -678,18 +678,18 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
       box-shadow: none;
     }
     button.devtool-flat-button {
-      background-color: alpha(@window_fg_color, 0.065);
+      background-color: alpha(currentColor, 0.065);
     }
     button.devtool-flat-button:hover {
-      background-color: alpha(@window_fg_color, 0.10);
+      background-color: alpha(currentColor, 0.10);
     }
     button.devtool-primary-button {
-      background-color: @accent_bg_color;
-      color: @window_fg_color;
+      background-color: rgb(53, 132, 228);
+      color: currentColor;
     }
     button.devtool-danger-button {
-      background-color: alpha(@error_color, 0.13);
-      color: @error_color;
+      background-color: rgba(192, 28, 40, 0.13);
+      color: rgb(192, 28, 40);
     }
     entry,
     combobox button,
@@ -697,25 +697,25 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
       min-height: 36px;
       border: none;
       border-radius: 8px;
-      background-color: alpha(@window_fg_color, 0.055);
+      background-color: alpha(currentColor, 0.055);
       box-shadow: none;
     }
     entry:focus,
     combobox button:focus,
     searchentry entry:focus {
-      box-shadow: 0 0 0 3px alpha(@accent_bg_color, 0.18);
+      box-shadow: 0 0 0 3px rgba(53, 132, 228, 0.18);
     }
     checkbutton {
       padding: 8px 10px;
       border-radius: 8px;
-      background-color: alpha(@window_fg_color, 0.045);
+      background-color: alpha(currentColor, 0.045);
     }
     textview.devtool-command-preview,
     textview.devtool-run-output {
       padding: 12px;
       border: none;
       border-radius: 8px;
-      background-color: alpha(@window_fg_color, 0.055);
+      background-color: alpha(currentColor, 0.055);
     }
     .devtool-command-workspace {
       min-height: 560px;
@@ -723,7 +723,7 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
     paned.devtool-command-workspace > separator {
       min-width: 1px;
       margin: 0 4px;
-      background-color: alpha(@window_fg_color, 0.07);
+      background-color: alpha(currentColor, 0.07);
     }
     notebook {
       border: none;
@@ -732,7 +732,7 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
     notebook > header {
       border: none;
       border-radius: 8px;
-      background-color: alpha(@window_fg_color, 0.045);
+      background-color: alpha(currentColor, 0.045);
     }
     notebook > header tabs tab {
       min-height: 32px;
@@ -741,7 +741,7 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
       border-radius: 7px;
     }
     notebook > header tabs tab:checked {
-      background-color: alpha(@accent_bg_color, 0.13);
+      background-color: rgba(53, 132, 228, 0.13);
     }
     .devtool-composer-column {
       padding: 0 6px;
@@ -760,31 +760,31 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
       margin-top: 2px;
     }
     .devtool-diagnostic-error {
-      background-color: alpha(@error_color, 0.09);
-      box-shadow: inset 3px 0 @error_color;
+      background-color: rgba(192, 28, 40, 0.09);
+      box-shadow: inset 3px 0 rgb(192, 28, 40);
     }
     .devtool-diagnostic-warning {
-      background-color: alpha(@warning_color, 0.09);
-      box-shadow: inset 3px 0 @warning_color;
+      background-color: rgba(229, 165, 10, 0.09);
+      box-shadow: inset 3px 0 rgb(229, 165, 10);
     }
     progressbar.devtool-progress trough {
       min-height: 10px;
       border: none;
       border-radius: 999px;
-      background-color: alpha(@window_fg_color, 0.12);
+      background-color: alpha(currentColor, 0.12);
     }
     progressbar.devtool-progress progress {
       min-height: 10px;
       border: none;
       border-radius: 999px;
-      background-color: @accent_bg_color;
+      background-color: rgb(53, 132, 228);
     }
     .devtool-stale-banner {
       padding: 11px 13px;
       border: none;
       border-radius: 9px;
-      background-color: alpha(@warning_bg_color, 0.12);
-      box-shadow: inset 3px 0 @warning_color;
+      background-color: rgba(229, 165, 10, 0.12);
+      box-shadow: inset 3px 0 rgb(229, 165, 10);
     }
     .devtool-compact-density .devtool-surface {
       padding: 11px;
@@ -801,12 +801,12 @@ def _install_control_center_css(Gtk: Any, window: Any) -> None:
       min-height: 32px;
     }
     .devtool-high-contrast {
-      border: 2px solid @window_fg_color;
+      border: 2px solid currentColor;
     }
     .devtool-high-contrast .devtool-surface,
     .devtool-high-contrast .devtool-status-pill {
-      border: 1px solid @window_fg_color;
-      background-color: @window_bg_color;
+      border: 1px solid currentColor;
+      background-color: transparent;
     }
     """
     with _suppress_exception():

@@ -1128,70 +1128,70 @@ def _diagnostics_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
 def _install_progress_css(Gtk: Any, Gdk: Any) -> None:
     css = b"""
     .devtool-hud-root {
-      background-color: @window_bg_color;
+      background-color: transparent;
     }
     .devtool-hud-header {
       padding-bottom: 2px;
       border: none;
-      background-color: @window_bg_color;
-      box-shadow: inset 0 -1px alpha(@window_fg_color, 0.07);
+      background-color: transparent;
+      box-shadow: inset 0 -1px alpha(currentColor, 0.07);
     }
     .devtool-hud-content {
-      background-color: @window_bg_color;
+      background-color: transparent;
     }
     .devtool-hud-title {
       font-size: 18px;
       font-weight: 850;
     }
     .devtool-hud-subtitle {
-      color: alpha(@window_fg_color, 0.88);
+      color: alpha(currentColor, 0.88);
       font-weight: 650;
     }
     .devtool-hud-context,
     .devtool-hud-progress-label,
     .devtool-card-label,
     .devtool-card-subtitle {
-      color: alpha(@window_fg_color, 0.60);
+      color: alpha(currentColor, 0.60);
     }
     .devtool-hud-status-pill {
       padding: 5px 9px;
       border: none;
       border-radius: 7px;
-      background-color: alpha(@window_fg_color, 0.065);
-      color: alpha(@window_fg_color, 0.90);
+      background-color: alpha(currentColor, 0.065);
+      color: alpha(currentColor, 0.90);
       font-weight: 800;
     }
     .devtool-hud-status-pill.devtool-progress-ok,
     .devtool-stepper-row.devtool-progress-ok .devtool-step-symbol {
-      background-color: alpha(@success_color, 0.14);
-      color: @success_color;
+      background-color: rgba(38, 162, 105, 0.14);
+      color: rgb(38, 162, 105);
     }
     .devtool-hud-status-pill.devtool-progress-failed,
     .devtool-summary-card.devtool-progress-failed,
     .devtool-stepper-row.devtool-progress-failed .devtool-step-symbol {
-      background-color: alpha(@error_color, 0.13);
-      color: @error_color;
+      background-color: rgba(192, 28, 40, 0.13);
+      color: rgb(192, 28, 40);
     }
     .devtool-summary-card.devtool-progress-failed {
-      box-shadow: inset 3px 0 @error_color;
+      box-shadow: inset 3px 0 rgb(192, 28, 40);
     }
     .devtool-hud-status-pill.devtool-progress-cancelled,
     .devtool-stepper-row.devtool-progress-cancelled .devtool-step-symbol {
-      background-color: alpha(@warning_color, 0.13);
-      color: @warning_color;
+      background-color: rgba(229, 165, 10, 0.13);
+      color: rgb(229, 165, 10);
     }
     .devtool-summary-card {
       padding: 13px 14px;
       border: none;
       border-radius: 10px;
-      background-color: alpha(@accent_bg_color, 0.10);
-      box-shadow: inset 3px 0 @accent_bg_color;
+      background-color: rgba(53, 132, 228, 0.10);
+      box-shadow: inset 3px 0 rgb(53, 132, 228);
     }
     .devtool-hud-metrics {
       padding: 0;
       border: none;
       border-radius: 10px;
-      background-color: alpha(@window_fg_color, 0.045);
+      background-color: alpha(currentColor, 0.045);
     }
     .devtool-hud-metrics flowboxchild {
       padding: 0;
@@ -1200,7 +1200,7 @@ def _install_progress_css(Gtk: Any, Gdk: Any) -> None:
       border-radius: 0;
     }
     .devtool-hud-metrics flowboxchild + flowboxchild {
-      box-shadow: inset 1px 0 alpha(@window_fg_color, 0.07);
+      box-shadow: inset 1px 0 alpha(currentColor, 0.07);
     }
     .devtool-metric-card {
       padding: 10px 12px;
@@ -1212,18 +1212,18 @@ def _install_progress_css(Gtk: Any, Gdk: Any) -> None:
       padding: 12px 13px;
       border: none;
       border-radius: 10px;
-      background-color: alpha(@window_fg_color, 0.045);
+      background-color: alpha(currentColor, 0.045);
     }
     .devtool-summary-title,
     .devtool-card-value,
     .devtool-step-title {
-      color: alpha(@window_fg_color, 0.95);
+      color: alpha(currentColor, 0.95);
       font-weight: 800;
     }
     .devtool-stepper-row {
       padding: 7px 2px;
       border-radius: 7px;
-      box-shadow: inset 0 -1px alpha(@window_fg_color, 0.055);
+      box-shadow: inset 0 -1px alpha(currentColor, 0.055);
     }
     .devtool-stepper-row:last-child {
       box-shadow: none;
@@ -1233,20 +1233,20 @@ def _install_progress_css(Gtk: Any, Gdk: Any) -> None:
       padding: 3px 5px;
       border: none;
       border-radius: 7px;
-      background-color: alpha(@window_fg_color, 0.075);
+      background-color: alpha(currentColor, 0.075);
       font-weight: 900;
     }
     .devtool-details {
       padding: 10px;
       border: none;
       border-radius: 8px;
-      background-color: alpha(@window_fg_color, 0.045);
-      color: alpha(@window_fg_color, 0.88);
+      background-color: alpha(currentColor, 0.045);
+      color: alpha(currentColor, 0.88);
     }
     .devtool-action-row {
       border: none;
-      background-color: alpha(@window_bg_color, 0.97);
-      box-shadow: inset 0 1px alpha(@window_fg_color, 0.07);
+      background-color: transparent;
+      box-shadow: inset 0 1px alpha(currentColor, 0.07);
     }
     .devtool-action-row flowboxchild {
       margin: 0;
@@ -1258,61 +1258,61 @@ def _install_progress_css(Gtk: Any, Gdk: Any) -> None:
       padding: 0 11px;
       border: none;
       border-radius: 8px;
-      background-color: alpha(@window_fg_color, 0.065);
+      background-color: alpha(currentColor, 0.065);
       box-shadow: none;
     }
     button.devtool-hud-button:hover {
-      background-color: alpha(@window_fg_color, 0.10);
+      background-color: alpha(currentColor, 0.10);
     }
     button.devtool-hud-size-button {
       min-height: 28px;
       padding: 0 9px;
       border: none;
       border-radius: 7px;
-      background-color: alpha(@window_fg_color, 0.05);
+      background-color: alpha(currentColor, 0.05);
       box-shadow: none;
     }
     button.devtool-hud-size-button:checked {
-      background-color: alpha(@accent_bg_color, 0.16);
-      color: @accent_bg_color;
+      background-color: rgba(53, 132, 228, 0.16);
+      color: rgb(53, 132, 228);
     }
     button.devtool-hud-danger-button {
-      background-color: alpha(@error_color, 0.12);
-      color: @error_color;
+      background-color: rgba(192, 28, 40, 0.12);
+      color: rgb(192, 28, 40);
     }
     button.devtool-hud-primary-button {
-      background-color: @accent_bg_color;
-      color: @window_fg_color;
+      background-color: rgb(53, 132, 228);
+      color: currentColor;
     }
     progressbar.devtool-progress trough {
       min-height: 9px;
       border: none;
       border-radius: 999px;
-      background-color: alpha(@window_fg_color, 0.12);
+      background-color: alpha(currentColor, 0.12);
     }
     progressbar.devtool-progress progress {
       min-height: 9px;
       border: none;
       border-radius: 999px;
-      background-color: @accent_bg_color;
+      background-color: rgb(53, 132, 228);
     }
     progressbar.devtool-progress.devtool-progress-ok progress {
-      background-color: @success_color;
+      background-color: rgb(38, 162, 105);
     }
     progressbar.devtool-progress.devtool-progress-failed progress {
-      background-color: @error_color;
+      background-color: rgb(192, 28, 40);
     }
     progressbar.devtool-progress.devtool-progress-cancelled progress {
-      background-color: @warning_color;
+      background-color: rgb(229, 165, 10);
     }
     .devtool-high-contrast {
-      border: 2px solid @window_fg_color;
+      border: 2px solid currentColor;
     }
     .devtool-high-contrast .devtool-hud-status-pill,
     .devtool-high-contrast .devtool-summary-card,
     .devtool-high-contrast .devtool-stepper-panel {
-      border: 1px solid @window_fg_color;
-      background-color: @window_bg_color;
+      border: 1px solid currentColor;
+      background-color: transparent;
     }
     """
     with _suppress_exception():

@@ -99,7 +99,7 @@ def test_phase7_gtk_sources_have_accessibility_shortcuts_reduced_motion_and_sema
         "DesktopPreferences.load(\"control-center\")",
         "preferences.save(\"control-center\")",
         "Adw.ColorScheme.FORCE_DARK",
-        "@accent_bg_color",
+        "rgb(53, 132, 228)",
     ):
         assert token in cc
     for token in (
