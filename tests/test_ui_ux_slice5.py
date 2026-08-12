@@ -55,7 +55,10 @@ def test_release_qualification_matrix_covers_every_native_and_package_gate() -> 
     gates = {gate["id"]: gate for gate in matrix["gates"]}
     expected_gates = {
         "versions", "python-compile", "python-tests", "shell-syntax", "ui-ux-contract",
-        "desktop-gtk-smoke", "desktop-gtk-package",
+        "desktop-gtk-imports", "desktop-gtk-model-snapshot",
+        "desktop-gtk-control-center-startup", "desktop-gtk-hud-startup",
+        "desktop-gtk-control-center-constrained-layout", "desktop-gtk-hud-constrained-layout",
+        "desktop-gtk-package",
         "android-lint", "android-unit", "android-release", "android-instrumentation",
         "source-archive",
     }
