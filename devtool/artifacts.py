@@ -57,6 +57,37 @@ _VALIDATION_EXPECTED_OUTCOMES = {
     "error",
     "errors",
 }
+_VALIDATION_TASK_KEYS = ("tasks", "gradle_tasks", "test_tasks", "test_task", "task")
+
+
+def _normalize_validation_tasks(value: Any) -> list[str]:
+    """Normalize overlay-declared validation tasks.
+
+    The canonical manifest field is ``validation.tasks``.  A few aliases are
+    accepted for compatibility with CLI terms and Android/Gradle wording.
+    Strings may be comma-separated; lists are flattened only one level by
+    reusing the string parser for each item.
+    """
+
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return list(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
+    if isinstance(value, (list, tuple)):
+        tasks: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("validation.tasks entries must be strings.")
+            tasks.extend(_normalize_validation_tasks(item))
+        return list(dict.fromkeys(tasks))
+    raise ValueError("validation.tasks must be a string or list of strings.")
+
+
+def _validation_tasks_from_mapping(mapping: dict[str, Any]) -> list[str]:
+    for key in _VALIDATION_TASK_KEYS:
+        if key in mapping:
+            return _normalize_validation_tasks(mapping.get(key))
+    return []
 
 _HASH_CACHE_LIMIT = 2048
 _HASH_CACHE: "OrderedDict[tuple[str, int, int, int], str]" = OrderedDict()
@@ -281,6 +312,7 @@ class BundleOverlaySpec:
     required: bool = True
     after: tuple[str, ...] = ()
     requires: tuple[str, ...] = ()
+    validation_tasks: tuple[str, ...] = ()
     index: int = 0
 
 
@@ -292,6 +324,7 @@ class MaterializedBundleOverlay:
     target: str = ""
     label: str = ""
     required: bool = True
+    validation_tasks: tuple[str, ...] = ()
     index: int = 0
 
 
@@ -389,7 +422,14 @@ def artifact_validation_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     policy["minimum_phase"] = "package" if minimum_phase == "artifact-check" else minimum_phase
     policy.setdefault("test_profile", "")
     policy.setdefault("execution_environment", "")
+    tasks = _validation_tasks_from_mapping(policy)
+    if tasks:
+        policy["tasks"] = tasks
     return policy
+
+
+def artifact_validation_tasks(manifest: dict[str, Any]) -> list[str]:
+    return list(artifact_validation_policy(manifest).get("tasks") or [])
 
 
 def artifact_validation_script(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -501,6 +541,14 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
     if "test_profile" in raw and not isinstance(raw.get("test_profile"), str):
         ok = False
         messages.append("validation.test_profile must be a string.")
+    for key in _VALIDATION_TASK_KEYS:
+        if key not in raw:
+            continue
+        try:
+            _normalize_validation_tasks(raw.get(key))
+        except ValueError as exc:
+            ok = False
+            messages.append(str(exc).replace("validation.tasks", f"validation.{key}"))
     if "execution_environment" in raw:
         environment = str(raw.get("execution_environment") or "").strip().lower()
         if environment and environment not in {"auto", "native-termux", "chroot", "desktop-linux", "android-device", "external-device"}:
@@ -733,6 +781,7 @@ def _bundle_overlay_spec_from_item(item: Any, index: int) -> BundleOverlaySpec:
         required = True
         after: tuple[str, ...] = ()
         requires: tuple[str, ...] = ()
+        validation_tasks: tuple[str, ...] = ()
     elif isinstance(item, dict):
         name = str(item.get("path") or item.get("artifact") or item.get("overlay") or "").strip()
         overlay_id = str(item.get("id") or Path(name).stem).strip()
@@ -740,7 +789,9 @@ def _bundle_overlay_spec_from_item(item: Any, index: int) -> BundleOverlaySpec:
         label = str(item.get("label") or item.get("name") or item.get("description") or "").strip()
         required = bool(item.get("required", True))
         after = tuple(str(value).strip() for value in item.get("after", []) if str(value).strip()) if isinstance(item.get("after"), list) else ()
-        requires = tuple(str(value).strip() for value in item.get("requires", []) if str(value).strip()) if isinstance(item.get("requires"), list) else ()
+        requires = tuple(str(value).strip() for value in item.get("requires", []) if str(value).strip()) if isinstance(item.get("requires", []), list) else ()
+        entry_validation = item.get("validation") if isinstance(item.get("validation"), dict) else {}
+        validation_tasks = tuple(_validation_tasks_from_mapping(item) or _validation_tasks_from_mapping(entry_validation))
     else:
         raise RuntimeError(f"Overlay bundle apply_order item #{index} must be a string path or object.")
     if not name:
@@ -758,6 +809,7 @@ def _bundle_overlay_spec_from_item(item: Any, index: int) -> BundleOverlaySpec:
         required=required,
         after=after,
         requires=requires,
+        validation_tasks=validation_tasks,
         index=index,
     )
 
@@ -803,6 +855,7 @@ def _bundle_overlay_specs(bundle: str | Path, manifest: dict[str, Any] | None = 
         required=spec.required,
         after=spec.after,
         requires=spec.requires,
+        validation_tasks=spec.validation_tasks,
         index=index,
     ) for index, spec in enumerate(ordered, 1)]
 
@@ -858,6 +911,7 @@ def materialize_overlay_bundle_entries(bundle: str | Path, target_dir: str | Pat
                 target=resolved_target,
                 label=spec.label,
                 required=spec.required,
+                validation_tasks=spec.validation_tasks,
                 index=spec.index,
             )
         )
@@ -1110,6 +1164,7 @@ def create_overlay_bundle(
     validation_script: str | Path | None = None,
     validation_runner: str = "bash",
     validation_timeout_seconds: int = 900,
+    validation_tasks: list[str] | tuple[str, ...] | str | None = None,
 ) -> Path:
     if not overlays:
         raise RuntimeError("No overlays were provided for the bundle.")
@@ -1150,6 +1205,7 @@ def create_overlay_bundle(
         raise RuntimeError(f"Unsupported bundle validation strategy: {validation_strategy}")
     if validation_runner not in {"bash", "sh", "python3"}:
         raise RuntimeError(f"Unsupported validation script runner: {validation_runner}")
+    clean_validation_tasks = _normalize_validation_tasks(validation_tasks) if validation_tasks else []
 
     bundle_manifest: dict[str, Any] = {
         "schema_version": 2,
@@ -1177,6 +1233,8 @@ def create_overlay_bundle(
             "failure_action": "pause",
         },
     }
+    if clean_validation_tasks:
+        bundle_manifest["validation"]["tasks"] = clean_validation_tasks
     clean_repository = {str(key): str(value).strip() for key, value in (repository or {}).items() if str(value).strip()}
     if clean_repository:
         bundle_manifest["repository"] = clean_repository

@@ -15,6 +15,7 @@ from devtool.artifacts import (
     materialize_overlay_bundle_entries,
     overlay_bundle_targets,
     read_artifact_manifest,
+    artifact_validation_tasks,
     validate_artifact,
     write_archive_entries,
 )
@@ -107,6 +108,80 @@ class ArchiveBundleSupportTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as mat_tmp:
                 _manifest, entries = materialize_overlay_bundle_entries(out, mat_tmp)
                 self.assertEqual([entry.target for entry in entries], ["core", "s3mo"])
+
+
+    def test_bundle_manifest_can_declare_validation_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = self._zip_overlay(root / "001.zip", "a.txt", "one")
+            out = create_overlay_bundle(
+                root / "bundle.zip",
+                [first],
+                name="bundle",
+                validation_required=True,
+                validation_tasks=[":app:compileDebugKotlin", ":app:lintDebug"],
+            )
+
+            manifest = read_artifact_manifest(out)
+            self.assertEqual(manifest.get("type"), "overlay_bundle")
+            self.assertEqual(manifest["validation"]["tasks"], [":app:compileDebugKotlin", ":app:lintDebug"])
+            self.assertEqual(artifact_validation_tasks(manifest), [":app:compileDebugKotlin", ":app:lintDebug"])
+
+    def test_bundle_command_writes_validation_task_flags_into_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = self._zip_overlay(root / "001.zip", "a.txt", "one")
+            out = root / "bundle.zip"
+
+            rc = main([
+                "bundle",
+                "overlays",
+                str(first),
+                "--validate",
+                "--validation-task",
+                ":app:compileDebugKotlin",
+                "--validation-tasks",
+                ":app:testDebugUnitTest,:app:lintDebug",
+                "-o",
+                str(out),
+            ])
+
+            self.assertEqual(rc, 0)
+            manifest = read_artifact_manifest(out)
+            self.assertEqual(
+                manifest["validation"]["tasks"],
+                [":app:compileDebugKotlin", ":app:testDebugUnitTest", ":app:lintDebug"],
+            )
+
+    def test_bundle_apply_order_item_can_declare_validation_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = self._zip_overlay(root / "001.zip", "a.txt", "one")
+            bundle = root / "bundle.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay_bundle",
+                "kind": "devtool.overlay_bundle",
+                "apply_order": [
+                    {
+                        "id": "android",
+                        "path": "overlays/001.zip",
+                        "target": "dustui_android",
+                        "validation": {"tasks": [":app:testDebugUnitTest"]},
+                    }
+                ],
+                "validation": {"required": True, "strategy": "per-overlay"},
+            }
+            write_archive_entries(bundle, {
+                "devtool-bundle.json": json.dumps(manifest).encode(),
+                "overlays/001.zip": first.read_bytes(),
+            })
+
+            with tempfile.TemporaryDirectory() as mat_tmp:
+                _manifest, entries = materialize_overlay_bundle_entries(bundle, mat_tmp)
+                self.assertEqual(len(entries), 1)
+                self.assertEqual(entries[0].target, "dustui_android")
+                self.assertEqual(entries[0].validation_tasks, (":app:testDebugUnitTest",))
 
     def test_validate_overlays_accepts_multiple_overlay_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

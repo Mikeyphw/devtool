@@ -584,6 +584,8 @@ _devtool() {
               '--validation-script[embed a disposable validation script]:file:_files' \
               '--validation-runner[script runner]:runner:(bash sh python3)' \
               '--validation-timeout[script timeout in seconds]:seconds:' \
+              '--validation-task[Gradle task to store in bundle validation.tasks]:task:' \
+              '--validation-tasks[comma-separated Gradle tasks for bundle validation.tasks]:tasks:' \
               '(-o --out)'{-o,--out}'[output bundle archive]:file:_files' \
               '*:overlay:_devtool_artifact_path'
           fi

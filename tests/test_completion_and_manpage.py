@@ -62,6 +62,16 @@ class CompletionAndManpageTests(unittest.TestCase):
             ZSH_COMPLETION,
         )
 
+    def test_completion_documents_bundle_validation_task_manifest_flags(self) -> None:
+        self.assertIn(
+            "--validation-task[Gradle task to store in bundle validation.tasks]:task:",
+            ZSH_COMPLETION,
+        )
+        self.assertIn(
+            "--validation-tasks[comma-separated Gradle tasks for bundle validation.tasks]:tasks:",
+            ZSH_COMPLETION,
+        )
+
     def test_manpage_documents_exclusive_validation_task_semantics(self) -> None:
         man = MAN_PATH.read_text(encoding="utf-8")
         required = (
@@ -73,6 +83,10 @@ class CompletionAndManpageTests(unittest.TestCase):
             "validation phases, including embedded artifact validation scripts",
             "Artifact manifest,\n"
             "checksum, inventory, and transactional apply safety checks still run",
+            "validation.tasks",
+            "CLI flags take precedence",
+            "--validation-task",
+            "--validation-tasks",
         )
         for token in required:
             with self.subTest(token=token):

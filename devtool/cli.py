@@ -32,6 +32,7 @@ from .artifacts import (
     artifact_solution,
     artifact_target,
     artifact_validation_policy,
+    artifact_validation_tasks,
     artifact_workspaces,
     create_overlay_bundle,
     diff_artifact,
@@ -543,6 +544,8 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_overlays.add_argument("--validation-script", default="", help="Embed a disposable bundle validation script")
     bundle_overlays.add_argument("--validation-runner", choices=["bash", "sh", "python3"], default="bash")
     bundle_overlays.add_argument("--validation-timeout", type=int, default=900, help="Embedded validation script timeout in seconds")
+    bundle_overlays.add_argument("--validation-task", "--task", dest="validation_tasks", action="append", default=[], help="Gradle task to write into bundle validation.tasks; repeatable")
+    bundle_overlays.add_argument("--validation-tasks", dest="validation_tasks_csv", default="", help="Comma-separated Gradle tasks to write into bundle validation.tasks")
     bundle_overlays.add_argument("-o", "--out", required=True, help="Output bundle archive; extension selects format")
 
     batch = subparsers.add_parser("batch")
@@ -1764,14 +1767,37 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
         raise
 
 
-def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
-    """Apply manifest defaults while preserving explicit CLI precedence."""
-    cli_requested_validation = bool(
+def _argv_contains_option(argv: list[str], names: tuple[str, ...]) -> bool:
+    for token in argv:
+        if token in names:
+            return True
+        if any(token.startswith(name + "=") for name in names):
+            return True
+    return False
+
+
+def _validation_is_requested_by_args(args: argparse.Namespace) -> bool:
+    return bool(
         getattr(args, "validate", False)
         or getattr(args, "validate_only", False)
         or getattr(args, "defer_validate", False)
         or getattr(args, "static_validate", False)
     )
+
+
+def _apply_declared_validation_tasks(args: argparse.Namespace, manifest: dict, *, active: bool) -> None:
+    if not active or getattr(args, "_devtool_cli_test_task_explicit", False):
+        return
+    tasks = artifact_validation_tasks(manifest)
+    if not tasks:
+        return
+    args.test_task = list(tasks)
+    args._devtool_manifest_validation_tasks = list(tasks)
+
+
+def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
+    """Apply manifest defaults while preserving explicit CLI precedence."""
+    cli_requested_validation = _validation_is_requested_by_args(args)
     if getattr(args, "command", "") not in APPLY_COMMANDS:
         return
     artifacts = _artifact_arg_list(getattr(args, "artifact", ""))
@@ -1805,6 +1831,7 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
                 args.skip_build = True
             if not bool(validation.get("test", True)):
                 args.skip_test = True
+        _apply_declared_validation_tasks(args, manifest, active=_validation_is_requested_by_args(args))
     if getattr(args, "no_validate", False) or getattr(args, "defer_validate", False):
         args.validate = False
 
@@ -2156,6 +2183,7 @@ def _apply_artifact_validation_defaults(config: ProjectConfig, args: argparse.Na
     need project-type-specific validation code.
     """
     policy = artifact_validation_policy(manifest)
+    _apply_declared_validation_tasks(args, manifest, active=True)
     if not str(getattr(args, "test_profile", "") or "").strip():
         profile = str(policy.get("test_profile") or "").strip()
         if profile:
@@ -5538,6 +5566,45 @@ def _tag_overlay_results(
         result.metadata = metadata
 
 
+def _manifest_with_validation_tasks(manifest: dict, tasks: list[str] | tuple[str, ...]) -> dict:
+    """Return a manifest copy whose validation policy carries explicit tasks.
+
+    Bundle apply_order entries can intentionally override the nested overlay
+    manifest for validation routing.  Keeping that override in a manifest copy
+    makes every later validation decision see the same task set instead of
+    falling back to the nested target/default pipeline.
+    """
+
+    clean_tasks = list(dict.fromkeys(str(item).strip() for item in tasks if str(item).strip()))
+    if not clean_tasks:
+        return manifest
+    updated = dict(manifest)
+    validation = dict(updated.get("validation") if isinstance(updated.get("validation"), dict) else {})
+    validation["tasks"] = clean_tasks
+    updated["validation"] = validation
+    return updated
+
+
+def _bundle_entry_validation_tasks(entry: dict[str, object], entry_manifest: dict, bundle_manifest: dict) -> list[str]:
+    """Resolve validation tasks for a materialized bundle entry.
+
+    Precedence is intentionally narrower than CLI precedence, which is enforced
+    by callers before applying this value:
+
+    1. bundle apply_order / overlays entry ``validation.tasks``
+    2. nested overlay manifest ``validation.tasks``
+    3. bundle-level ``validation.tasks`` as a default for bundle validation
+    """
+
+    entry_tasks = [str(item).strip() for item in (entry.get("validation_tasks") or []) if str(item).strip()]
+    if entry_tasks:
+        return list(dict.fromkeys(entry_tasks))
+    nested_tasks = artifact_validation_tasks(entry_manifest)
+    if nested_tasks:
+        return nested_tasks
+    return artifact_validation_tasks(bundle_manifest)
+
+
 def _overlay_sequence_entries(args: argparse.Namespace):
     """Return materialized overlays in execution order.
 
@@ -5566,6 +5633,7 @@ def _overlay_sequence_entries(args: argparse.Namespace):
                     "bundle_member": item.bundle_path,
                     "label": label,
                     "target": item.target.strip(),
+                    "validation_tasks": list(item.validation_tasks),
                     "index": item.index,
                     "total": total,
                     "materialized": True,
@@ -5584,6 +5652,7 @@ def _overlay_sequence_entries(args: argparse.Namespace):
                     "bundle_member": "",
                     "label": label,
                     "target": target,
+                    "validation_tasks": [],
                     "index": index,
                     "total": total,
                     "materialized": False,
@@ -5750,7 +5819,9 @@ def _run_sequential_overlays(
             for entry in entries:
                 path = Path(entry["path"])
                 label = str(entry["label"])
-                entry_manifest = read_artifact_manifest(path)
+                raw_entry_manifest = read_artifact_manifest(path)
+                selected_entry_tasks = _bundle_entry_validation_tasks(entry, raw_entry_manifest, bundle_manifest)
+                entry_manifest = _manifest_with_validation_tasks(raw_entry_manifest, selected_entry_tasks)
                 entry_policy = artifact_validation_policy(entry_manifest)
                 should_validate = not getattr(args, "no_validate", False) and bool(
                     getattr(args, "validate", False)
@@ -5776,6 +5847,9 @@ def _run_sequential_overlays(
                 entry_args = argparse.Namespace(**vars(args))
                 entry_args.command = "apply-overlay"
                 entry_args.artifact = str(path)
+                if selected_entry_tasks and not getattr(entry_args, "_devtool_cli_test_task_explicit", False):
+                    entry_args.test_task = list(selected_entry_tasks)
+                    entry_args._devtool_manifest_validation_tasks = list(selected_entry_tasks)
                 _apply_artifact_validation_defaults(entry_config, entry_args, entry_manifest)
                 restore_enabled = entry_policy.get("restore", bundle_policy.get("restore", True))
                 build_enabled = entry_policy.get("build", bundle_policy.get("build", True))
@@ -6596,6 +6670,10 @@ def _run_bundle_command(args: argparse.Namespace) -> int:
         validation_script=str(getattr(args, "validation_script", "") or "") or None,
         validation_runner=str(getattr(args, "validation_runner", "bash") or "bash"),
         validation_timeout_seconds=int(getattr(args, "validation_timeout", 900) or 900),
+        validation_tasks=[
+            *(_cli_string_list(getattr(args, "validation_tasks", []))),
+            *(_cli_string_list(getattr(args, "validation_tasks_csv", ""))),
+        ],
     )
     console.print(f"[green]Created overlay bundle[/green] {out}")
     return 0
@@ -7043,6 +7121,7 @@ def _main_after_parse(
         args.repo = str(resolve_repository_root(args.repo, args.config))
     args._devtool_cli_target_explicit = bool(str(getattr(args, "target", "") or "").strip())
     args._devtool_cli_solution_explicit = bool(str(getattr(args, "solution", "") or "").strip())
+    args._devtool_cli_test_task_explicit = _argv_contains_option(parse_argv, ("--task", "--test-task"))
     _apply_artifact_manifest_defaults(args)
     _validate_apply_args(args, parser)
     effective_payload, _copy_mode = _validate_output_flags(args, parser)

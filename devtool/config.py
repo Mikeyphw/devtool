@@ -1131,6 +1131,13 @@ manager = "auto" # auto | mise | none
 [android]
 variant = "debug"
 aapt2_provider = "auto"
+ndk_host_provider = "auto" # auto | google | arm64 | qemu | none
+arm64_ndk_url = ""
+qemu_command = ""
+qemu_ld_prefix = "auto"
+qemu_sysroot_url = "" # optional amd64 rootfs archive; default auto-download uses Ubuntu Base
+qemu_sysroot_sha256 = ""
+qemu_install = "auto"
 prefer_native_termux = false
 
 [gradle]

@@ -15,6 +15,7 @@ from devtool.artifacts import (
     list_archive_members,
     materialize_overlay_bundle_entries,
     read_artifact_manifest,
+    artifact_validation_tasks,
     validate_artifact,
     write_archive_entries,
 )
@@ -77,22 +78,154 @@ class ArtifactV2Tests(unittest.TestCase):
                     "restore": True,
                     "build": True,
                     "test": True,
+                    "tasks": [":app:compileDebugKotlin"],
                 },
             }
             write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), "file.txt": b"ok"})
 
             parser = build_parser()
-            args = parser.parse_args(["apply-overlay", str(archive), "--validate", "--task", ":app:testReleaseUnitTest"])
+            args = parser.parse_args(["apply-overlay", str(archive), "--validate"])
             _normalize_command_aliases(args)
             args._devtool_cli_target_explicit = False
             args._devtool_cli_solution_explicit = False
+            args._devtool_cli_test_task_explicit = False
             _apply_artifact_manifest_defaults(args)
 
             self.assertTrue(args.validate)
             self.assertFalse(args.skip_restore)
             self.assertFalse(args.skip_build)
             self.assertFalse(args.skip_test)
+            self.assertEqual(args.test_task, [":app:compileDebugKotlin"])
 
+    def test_cli_validation_task_overrides_manifest_disabled_validation_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "overlay.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {
+                    "mode": "disabled",
+                    "tasks": [":app:compileDebugKotlin"],
+                },
+            }
+            write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), "file.txt": b"ok"})
+
+            parser = build_parser()
+            args = parser.parse_args([
+                "apply-overlay",
+                str(archive),
+                "--validate",
+                "--task",
+                ":app:testDebugUnitTest",
+            ])
+            _normalize_command_aliases(args)
+            args._devtool_cli_target_explicit = False
+            args._devtool_cli_solution_explicit = False
+            args._devtool_cli_test_task_explicit = True
+            _apply_artifact_manifest_defaults(args)
+
+            self.assertTrue(args.validate)
+            self.assertEqual(args.test_task, [":app:testDebugUnitTest"])
+
+    def test_manifest_validation_task_aliases_are_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "overlay.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {
+                    "required": True,
+                    "gradle_tasks": ":app:compileDebugKotlin, :app:lintDebug, :app:lintDebug",
+                },
+            }
+            write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), "file.txt": b"ok"})
+
+            read_manifest = read_artifact_manifest(archive)
+            self.assertEqual(
+                artifact_validation_tasks(read_manifest),
+                [":app:compileDebugKotlin", ":app:lintDebug"],
+            )
+            validation = validate_artifact(Path(tmp), archive)
+            self.assertTrue(validation.ok, validation.messages)
+
+    def test_manifest_validation_tasks_reject_non_string_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "overlay.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {"required": True, "tasks": [":app:lintDebug", 123]},
+            }
+            write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), "file.txt": b"ok"})
+
+            validation = validate_artifact(Path(tmp), archive)
+            self.assertFalse(validation.ok)
+            self.assertTrue(
+                any("validation.tasks entries must be strings" in message for message in validation.messages),
+                validation.messages,
+            )
+
+    def test_manifest_validation_tasks_are_applied_and_cli_task_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "overlay.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "target": "dustui_android",
+                "validation": {
+                    "required": True,
+                    "tasks": [":app:compileDebugKotlin", ":app:lintDebug"],
+                },
+            }
+            write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), "file.txt": b"ok"})
+
+            parser = build_parser()
+            args = parser.parse_args(["apply-overlay", str(archive)])
+            _normalize_command_aliases(args)
+            args._devtool_cli_target_explicit = False
+            args._devtool_cli_solution_explicit = False
+            args._devtool_cli_test_task_explicit = False
+            _apply_artifact_manifest_defaults(args)
+
+            self.assertTrue(args.validate)
+            self.assertEqual(args.test_task, [":app:compileDebugKotlin", ":app:lintDebug"])
+            self.assertEqual(artifact_validation_tasks(manifest), [":app:compileDebugKotlin", ":app:lintDebug"])
+
+            args = parser.parse_args([
+                "apply-overlay", str(archive), "--validate", "--task", ":app:testDebugUnitTest"
+            ])
+            _normalize_command_aliases(args)
+            args._devtool_cli_target_explicit = False
+            args._devtool_cli_solution_explicit = False
+            args._devtool_cli_test_task_explicit = True
+            _apply_artifact_manifest_defaults(args)
+
+            self.assertTrue(args.validate)
+            self.assertEqual(args.test_task, [":app:testDebugUnitTest"])
+
+    def test_no_validate_suppresses_manifest_required_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "overlay.zip"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {
+                    "required": True,
+                    "tasks": [":app:compileDebugKotlin"],
+                },
+            }
+            write_archive_entries(archive, {".devtool-artifact.json": json.dumps(manifest).encode(), "file.txt": b"ok"})
+
+            parser = build_parser()
+            args = parser.parse_args(["apply-overlay", str(archive), "--no-validate"])
+            _normalize_command_aliases(args)
+            args._devtool_cli_target_explicit = False
+            args._devtool_cli_solution_explicit = False
+            args._devtool_cli_test_task_explicit = False
+            _apply_artifact_manifest_defaults(args)
+
+            self.assertFalse(args.validate)
+            self.assertEqual(args.test_task, [])
 
     def test_overlay_can_create_first_solution_and_auto_register_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

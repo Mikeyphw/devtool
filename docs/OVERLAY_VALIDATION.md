@@ -24,6 +24,61 @@ Schema-v2 artifacts may declare language-neutral validation defaults:
 Explicit CLI or frontend choices take precedence. The same defaults work on a
 single overlay, a bundle, and each bundle entry.
 
+Artifacts may also declare an exclusive Gradle task list:
+
+```json
+{
+  "validation": {
+    "required": true,
+    "tasks": [
+      ":app:compileDebugKotlin",
+      ":app:testDebugUnitTest",
+      ":app:lintDebug"
+    ]
+  }
+}
+```
+
+`validation.tasks` is equivalent to passing repeated `--task` flags during
+validation: devtool runs exactly those native Android/Gradle tasks and does not
+append its built-in restore/build/test/lint/package phases. The aliases
+`validation.gradle_tasks`, `validation.test_tasks`, `validation.test_task`, and
+`validation.task` are accepted for compatibility, but new artifacts should write
+`validation.tasks`.
+
+CLI flags still win:
+
+- `--no-validate` disables manifest-requested validation and ignores manifest tasks.
+- `--validate` enables validation even when the manifest says `mode=disabled`.
+- `--task` / `--test-task` replaces `validation.tasks`.
+
+Overlay bundles may declare tasks at the bundle level:
+
+```json
+{
+  "type": "overlay_bundle",
+  "validation": {
+    "required": true,
+    "strategy": "both",
+    "tasks": [":app:compileDebugKotlin", ":app:lintDebug"]
+  }
+}
+```
+
+A bundle entry may also override tasks for one nested overlay:
+
+```json
+{
+  "apply_order": [
+    {
+      "path": "overlays/android.zip",
+      "target": "dustui_android",
+      "validation": {"tasks": [":app:testDebugUnitTest"]}
+    }
+  ]
+}
+```
+
 ## Transaction sequence
 
 A validating apply follows this sequence:

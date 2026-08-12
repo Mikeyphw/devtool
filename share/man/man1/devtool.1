@@ -187,7 +187,12 @@ Print artifact, bundle, inventory, validation, and optional repository-diff meta
 .TP
 .B bundle overlays " OVERLAY... -o OUTPUT"
 Create an overlay bundle with optional repository identity, target mapping, validation
-policy, embedded validator, and final commit metadata.
+policy, embedded validator, exact validation.tasks defaults, and final commit metadata.
+Use
+.BR --validation-task
+or
+.BR --validation-tasks
+to write Gradle task defaults into the bundle manifest.
 .SH OTHER COMMANDS
 .TP
 .B batch " STEP..."
@@ -500,7 +505,16 @@ On
 .BR test ,
 override the Gradle test task. On validation and artifact-apply validation, replace the
 entire built-in Android/Gradle validation pipeline with this task. Repeat to run multiple
-explicit tasks in one native Gradle invocation.
+explicit tasks in one native Gradle invocation. Artifact manifests may declare the same
+exclusive task plan with
+.B validation.tasks
+or
+.B validation.gradle_tasks ;
+CLI flags take precedence, so
+.B --task
+and
+.B --test-task
+replace manifest tasks.
 .TP
 .BR --test-task " TASK"
 Alias for
@@ -735,13 +749,39 @@ the configured dependency synchronization, tests, lint/type checks, PEP 517 buil
 verification, and optional clean-environment import/install checks. Devtool-owned Python
 venvs, caches, and environment snapshots are stored under devtool XDG directories unless
 an explicit Python environment path is configured.
+.SH ARTIFACT VALIDATION MANIFESTS
+Schema-v2 overlay and overlay-bundle manifests may declare validation defaults in a
+.B validation
+object. The canonical Gradle task field is
+.B validation.tasks ;
+accepted aliases are
+.BR validation.gradle_tasks ,
+.BR validation.test_tasks ,
+.BR validation.test_task ,
+and
+.BR validation.task .
+When tasks are present, devtool uses the exclusive Gradle task pipeline: only those
+tasks are run, with normal artifact checksum, inventory, and transactional apply checks
+still enforced. CLI flags take precedence: 
+.B --no-validate
+disables manifest validation and tasks,
+.B --validate
+enables validation even when the manifest says disabled, and
+.BR --task / --test-task
+replace manifest task lists. Overlay bundles can set bundle-wide tasks in
+.B validation.tasks
+or per-overlay tasks on an
+.B apply_order
+entry through
+.BR validation.tasks .
 .SH APPLY OPTIONS
 .TP
 .B --validate
-Run target validation after applying.
+Run target validation after applying. This CLI flag takes precedence over manifest
+validation mode values that disable validation.
 .TP
 .B --no-validate
-Disable validation requested by artifact metadata.
+Disable validation requested by artifact metadata and ignore manifest validation.tasks.
 .TP
 .B --validate-only
 Do not apply; only run the selected validation.

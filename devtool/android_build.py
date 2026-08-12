@@ -29,7 +29,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import tarfile
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from collections import deque
@@ -43,6 +45,11 @@ REVANCED_REPOSITORY = "ReVanced/aapt2"
 REVANCED_API = f"https://api.github.com/repos/{REVANCED_REPOSITORY}"
 ARM_BUILD_TOOLS_REPOSITORY = "Commit451/android-arm-build-tools"
 ARM_BUILD_TOOLS_NATIVE_NAMES = ("aidl", "zipalign", "split-select")
+NDK_HOST_PROVIDERS = {"auto", "google", "arm64", "qemu", "none"}
+QEMU_INSTALL_POLICIES = {"auto", "never"}
+QEMU_X86_64_NAMES = ("qemu-x86_64", "qemu-x86_64-static", "qemu-user-x86_64")
+DEFAULT_QEMU_X86_64_SYSROOT_URL = "https://cdimages.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-amd64.tar.gz"
+DEFAULT_QEMU_X86_64_SYSROOT_SHA256 = "c1e67ef7b17a6300e136118bd1dc04725009cb376c1aad10abcf8cd453628d58"
 ANDROID_CMDLINE_TOOLS_URL = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
 AAPT2_OVERRIDE_PROPERTY = "android.aapt2FromMavenOverride"
 UNSUPPORTED_OPTION_WARNINGS_PROPERTY = "android.suppressUnsupportedOptionWarnings"
@@ -597,6 +604,21 @@ def extract_zip(archive: Path, destination: Path) -> None:
                     pass
 
 
+def extract_archive(archive: Path, destination: Path) -> None:
+    """Extract a zip/tar NDK-style archive while preserving executable bits."""
+
+    destination.mkdir(parents=True, exist_ok=True)
+    suffixes = "".join(archive.suffixes).lower()
+    if archive.suffix.lower() == ".zip":
+        extract_zip(archive, destination)
+        return
+    if suffixes.endswith((".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2")) or archive.suffix.lower() == ".tar":
+        with tarfile.open(archive) as package:
+            package.extractall(destination)
+        return
+    fail(f"Unsupported archive type for Android NDK bootstrap: {archive}")
+
+
 def root_command(command: Sequence[str]) -> list[str]:
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         return list(command)
@@ -1089,6 +1111,612 @@ def native_tool_matches_host(path: Path, machine: str | None = None) -> bool:
         return True
     detected = _elf_machine(header)
     return detected is None or detected == (machine or normalized_machine())
+
+
+
+def native_tool_arch(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    try:
+        header = path.read_bytes()[:4096]
+    except OSError:
+        return None
+    if not header.startswith(b"\x7fELF"):
+        return "script"
+    return _elf_machine(header)
+
+
+def ndk_root_for_version(sdk_root: Path, version: str) -> Path:
+    return sdk_root / "ndk" / version
+
+
+def ndk_prebuilt_root(ndk_root: Path) -> Path:
+    return ndk_root / "toolchains" / "llvm" / "prebuilt"
+
+
+def ndk_google_host_tag() -> str:
+    # Android Gradle Plugin and CMake's Android toolchain historically select
+    # this host tag for Linux hosts.  Keep it stable even on ARM Linux so an
+    # ARM64 unofficial NDK can expose a compatibility symlink here.
+    return "linux-x86_64"
+
+
+def ndk_google_tool_bin(sdk_root: Path, version: str) -> Path:
+    return ndk_root_for_version(sdk_root, version) / "toolchains" / "llvm" / "prebuilt" / ndk_google_host_tag() / "bin"
+
+
+def ndk_clangxx(sdk_root: Path, version: str) -> Path:
+    return ndk_google_tool_bin(sdk_root, version) / "clang++"
+
+
+def ndk_host_toolchain_runs(sdk_root: Path, version: str) -> bool:
+    return executable_runs(ndk_clangxx(sdk_root, version), "--version")
+
+
+def find_arm64_ndk_prebuilt(ndk_root: Path) -> Path | None:
+    prebuilt = ndk_prebuilt_root(ndk_root)
+    candidates = (
+        "linux-aarch64",
+        "linux-arm64",
+        "linux-arm64-v8a",
+        "linux-aarch64-musl",
+    )
+    for name in candidates:
+        candidate = prebuilt / name
+        if executable_runs(candidate / "bin" / "clang++", "--version"):
+            return candidate
+    for candidate in prebuilt.iterdir() if prebuilt.is_dir() else []:
+        if candidate.name == ndk_google_host_tag():
+            continue
+        if native_tool_matches_host(candidate / "bin" / "clang++") and executable_runs(candidate / "bin" / "clang++", "--version"):
+            return candidate
+    return None
+
+
+def expose_arm64_ndk_as_linux_x86_64(sdk_root: Path, version: str, *, dry_run: bool) -> bool:
+    ndk_root = ndk_root_for_version(sdk_root, version)
+    arm_prebuilt = find_arm64_ndk_prebuilt(ndk_root)
+    if arm_prebuilt is None:
+        return False
+    google_tag = ndk_prebuilt_root(ndk_root) / ndk_google_host_tag()
+    if google_tag.resolve() == arm_prebuilt.resolve():
+        return True
+    if google_tag.exists() or google_tag.is_symlink():
+        backup = google_tag.with_name(google_tag.name + ".google-x86_64")
+        if not backup.exists():
+            if dry_run:
+                info(f"Would backup Google NDK host prebuilt: {google_tag} -> {backup}")
+            else:
+                google_tag.rename(backup)
+        else:
+            if dry_run:
+                info(f"Would replace existing Google host tag with ARM64 NDK alias: {google_tag}")
+            else:
+                if google_tag.is_symlink() or google_tag.is_file():
+                    google_tag.unlink(missing_ok=True)
+                elif google_tag.is_dir():
+                    shutil.rmtree(google_tag)
+    if dry_run:
+        info(f"Would expose ARM64 NDK host prebuilt as {google_tag}: {arm_prebuilt}")
+        return True
+    google_tag.symlink_to(arm_prebuilt, target_is_directory=True)
+    info(f"Exposed ARM64 NDK host prebuilt as {google_tag}: {arm_prebuilt}")
+    return ndk_host_toolchain_runs(sdk_root, version)
+
+
+def find_extracted_ndk_root(directory: Path) -> Path | None:
+    candidates = [directory, *[p for p in directory.rglob("source.properties") if p.is_file()][:20]]
+    for candidate in candidates:
+        root = candidate.parent if candidate.is_file() else candidate
+        if (root / "build" / "cmake" / "android.toolchain.cmake").is_file() and ndk_prebuilt_root(root).is_dir():
+            return root
+    return None
+
+
+def obtain_unofficial_arm64_ndk(
+    sdk_root: Path,
+    version: str,
+    cache_root: Path,
+    *,
+    url: str,
+    offline: bool,
+    force: bool,
+    dry_run: bool,
+) -> bool:
+    """Install a configured unofficial ARM64-host NDK archive.
+
+    The URL is deliberately explicit.  There is no official Google Linux ARM64
+    host NDK archive; different community archives use different names and host
+    tags.  Devtool can download/cache/use one once the URL is supplied through
+    config, CLI, or DEVTOOL_ARM64_NDK_URL.
+    """
+
+    if not url:
+        return False
+    if normalized_machine() not in {"arm64", "armv7"}:
+        return False
+    safe_version = re.sub(r"[^A-Za-z0-9._-]+", "-", version)
+    suffix = Path(urllib.parse.urlparse(url).path).name or f"ndk-{safe_version}.archive"
+    archive = cache_root / "ndk" / "arm64" / safe_version / suffix
+    download(url, archive, offline=offline, force=force)
+    target = ndk_root_for_version(sdk_root, version)
+    with tempfile.TemporaryDirectory(prefix="gradle-build-arm64-ndk-") as temporary_dir:
+        temporary = Path(temporary_dir)
+        extract_archive(archive, temporary)
+        extracted = find_extracted_ndk_root(temporary)
+        if extracted is None:
+            fail(f"Configured ARM64 NDK archive did not contain a recognizable NDK layout: {archive}")
+        revision = source_properties_revision(extracted)
+        if revision and revision != version:
+            warn(f"Configured ARM64 NDK revision is {revision}, but project requested {version}")
+        if dry_run:
+            info(f"Would install ARM64 NDK {version}: {extracted} -> {target}")
+            return True
+        if target.exists():
+            backup = target.with_name(target.name + ".google-x86_64")
+            if not backup.exists():
+                target.rename(backup)
+            else:
+                if target.is_symlink() or target.is_file():
+                    target.unlink(missing_ok=True)
+                else:
+                    shutil.rmtree(target)
+        shutil.copytree(extracted, target, symlinks=True)
+    if not expose_arm64_ndk_as_linux_x86_64(sdk_root, version, dry_run=dry_run):
+        fail(f"Installed ARM64 NDK but clang++ is still not executable for this host: {target}")
+    info(f"Installed configured ARM64-host NDK {version}: {target}")
+    return True
+
+
+def find_qemu_x86_64(explicit: str | None = None) -> Path | None:
+    candidates: list[str] = []
+    if explicit:
+        candidates.append(explicit)
+    candidates.extend(QEMU_X86_64_NAMES)
+    for candidate in candidates:
+        path = Path(candidate).expanduser() if "/" in candidate else None
+        resolved = path if path and path.is_file() else shutil.which(candidate)
+        if resolved:
+            return Path(resolved).resolve()
+    return None
+
+
+def install_qemu_x86_64_if_needed(*, offline: bool, dry_run: bool, install_policy: str) -> Path | None:
+    found = find_qemu_x86_64()
+    if found:
+        return found
+    if install_policy == "never" or offline:
+        return None
+
+    if running_under_termux_python():
+        manager = shutil.which("pkg") or shutil.which("apt") or shutil.which("apt-get")
+        if manager:
+            heading("Installing Termux QEMU user-mode for x86_64 NDK fallback")
+            run([manager, "install", "-y", "qemu-user-x86-64"], check=False, dry_run=dry_run)
+            return find_qemu_x86_64()
+        return None
+
+    apt_get = shutil.which("apt-get")
+    if apt_get:
+        heading("Installing QEMU user-mode for x86_64 NDK fallback")
+        run(root_command([apt_get, "update"]), check=False, dry_run=dry_run)
+        for packages in (
+            ["qemu-user", "qemu-user-binfmt", "libc6-amd64-cross"],
+            ["qemu-user", "libc6-amd64-cross"],
+            ["qemu-user"],
+            ["qemu-user-static"],
+        ):
+            run(root_command([apt_get, "install", "-y", "--no-install-recommends", *packages]), check=False, dry_run=dry_run)
+            found = find_qemu_x86_64()
+            if found:
+                return found
+    return None
+
+
+def qemu_prefix_has_x86_64_loader(prefix: Path) -> bool:
+    """Return true when prefix looks usable as qemu-x86_64 -L root."""
+
+    for relative in (
+        "lib64/ld-linux-x86-64.so.2",
+        "lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "usr/lib64/ld-linux-x86-64.so.2",
+        "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+    ):
+        if (prefix / relative).exists():
+            return True
+    return False
+
+
+def verify_sha256(path: Path, expected: str | None, label: str) -> None:
+    normalized = str(expected or "").strip().lower()
+    if not normalized:
+        return
+    actual = sha256(path).lower()
+    if actual != normalized:
+        fail(f"{label} SHA256 mismatch for {path}\nexpected: {normalized}\nactual:   {actual}")
+
+
+def qemu_sysroot_cache_dir(cache_root: Path, url: str) -> Path:
+    stem = Path(urllib.parse.urlparse(url).path).name or "qemu-x86_64-sysroot.tar.gz"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", stem)
+    return cache_root / "qemu" / "x86_64-sysroot" / safe.replace(".tar.gz", "").replace(".tgz", "")
+
+
+def obtain_qemu_x86_64_sysroot(
+    cache_root: Path,
+    *,
+    url: str | None,
+    expected_sha256: str | None,
+    offline: bool,
+    force: bool,
+    dry_run: bool,
+) -> Path | None:
+    """Download/extract a small amd64 Linux rootfs for qemu-x86_64 -L.
+
+    Termux can install qemu-x86_64 but normally lacks the amd64 dynamic
+    loader that the official Google linux-x86_64 NDK executables need.  Ubuntu
+    Base is small enough for validation use and contains the loader/libc layout
+    QEMU expects.  A custom URL can be supplied for air-gapped or mirrored
+    setups.
+    """
+
+    selected_url = str(url or os.environ.get("DEVTOOL_QEMU_SYSROOT_URL", "").strip() or DEFAULT_QEMU_X86_64_SYSROOT_URL)
+    selected_sha = str(expected_sha256 or os.environ.get("DEVTOOL_QEMU_SYSROOT_SHA256", "").strip() or DEFAULT_QEMU_X86_64_SYSROOT_SHA256)
+    target = qemu_sysroot_cache_dir(cache_root, selected_url)
+    if qemu_prefix_has_x86_64_loader(target) and not force:
+        info(f"Using cached QEMU x86_64 sysroot: {target}")
+        return target
+    if dry_run:
+        info(f"Would download/extract QEMU x86_64 sysroot: {selected_url} -> {target}")
+        return target
+    archive_name = Path(urllib.parse.urlparse(selected_url).path).name or "qemu-x86_64-sysroot.tar.gz"
+    archive = cache_root / "qemu" / "downloads" / archive_name
+    download(selected_url, archive, offline=offline, force=force)
+    verify_sha256(archive, selected_sha, "QEMU x86_64 sysroot")
+    staging = target.with_name(target.name + ".tmp")
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True, exist_ok=True)
+    extract_archive(archive, staging)
+    if not qemu_prefix_has_x86_64_loader(staging):
+        shutil.rmtree(staging, ignore_errors=True)
+        fail(
+            "Downloaded QEMU x86_64 sysroot does not contain ld-linux-x86-64.so.2.\n"
+            f"URL: {selected_url}\n"
+            "Set --qemu-sysroot-url to a tar/zip rootfs containing an amd64 loader/libc."
+        )
+    if target.exists():
+        shutil.rmtree(target)
+    staging.replace(target)
+    info(f"Installed QEMU x86_64 sysroot: {target}")
+    return target
+
+
+def resolve_qemu_ld_prefix(
+    value: str | None,
+    cache_root: Path,
+    *,
+    qemu_sysroot_url: str | None,
+    qemu_sysroot_sha256: str | None,
+    offline: bool,
+    force: bool,
+    dry_run: bool,
+) -> Path | None:
+    normalized = str(value or "auto").strip()
+    if normalized.lower() in {"none", "off", "false"}:
+        return None
+    if normalized.lower() not in {"", "auto"}:
+        explicit = Path(normalized).expanduser()
+        if not qemu_prefix_has_x86_64_loader(explicit):
+            warn(f"Configured QEMU loader prefix does not contain an x86_64 loader: {explicit}")
+        return explicit
+    for candidate in (
+        "/usr/x86_64-linux-gnu",
+        "/usr/x86_64-linux-gnu/libc",
+        "/usr/gnemul/qemu-x86_64",
+        "/",
+    ):
+        path = Path(candidate)
+        if path.exists() and qemu_prefix_has_x86_64_loader(path):
+            return path
+    if bootstrap_provisioning_allowed("auto", "allow"):
+        return obtain_qemu_x86_64_sysroot(
+            cache_root,
+            url=qemu_sysroot_url,
+            expected_sha256=qemu_sysroot_sha256,
+            offline=offline,
+            force=force,
+            dry_run=dry_run,
+        )
+    return None
+
+
+def ndk_wrapped_backup(path: Path) -> Path:
+    return path.with_name(path.name + ".devtool-x86_64")
+
+
+def wrapper_mentions_devtool(path: Path) -> bool:
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        head = path.read_text(encoding="utf-8", errors="ignore")[:512]
+    except OSError:
+        return False
+    return "devtool-x86_64" in head and "qemu" in head
+
+
+def x86_64_binary_candidate(path: Path) -> Path | None:
+    """Return an x86_64 ELF executable for an NDK bin entry.
+
+    NDK tool names such as clang++ are often symlinks.  A wrapper must execute
+    the real ELF binary through QEMU, not a symlink that may later resolve back
+    to another wrapper.  This helper also recovers from the first-generation
+    devtool wrappers where ``clang++.devtool-x86_64`` could be a symlink to the
+    newly wrapped ``clang`` script.
+    """
+
+    if path.is_symlink():
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError:
+            return None
+        resolved_backup = ndk_wrapped_backup(resolved)
+        if resolved_backup.is_file() and native_tool_arch(resolved_backup) == "x86_64":
+            return resolved_backup
+        if native_tool_arch(resolved) == "x86_64":
+            return resolved
+        return None
+
+    backup = ndk_wrapped_backup(path)
+    if backup.exists():
+        if backup.is_symlink():
+            try:
+                resolved = backup.resolve(strict=True)
+            except OSError:
+                resolved = None
+            if resolved is not None:
+                resolved_backup = ndk_wrapped_backup(resolved)
+                if resolved_backup.is_file() and native_tool_arch(resolved_backup) == "x86_64":
+                    return resolved_backup
+                if native_tool_arch(resolved) == "x86_64":
+                    return resolved
+        if native_tool_arch(backup) == "x86_64":
+            return backup
+    if native_tool_arch(path) == "x86_64":
+        return path
+    return None
+
+
+def ndk_x86_64_real_binary(path: Path) -> Path | None:
+    return x86_64_binary_candidate(path)
+
+
+def snapshot_ndk_x86_64_targets(bin_dir: Path) -> dict[Path, Path]:
+    """Map each visible NDK tool entry to the real x86_64 ELF it should run."""
+
+    targets: dict[Path, Path] = {}
+    entries = [p for p in sorted(bin_dir.iterdir() if bin_dir.is_dir() else []) if not p.name.endswith(".devtool-x86_64")]
+
+    # First preserve every direct ELF executable.  Symlink wrappers can then
+    # target the preserved ELF even if the original target path is replaced by
+    # a wrapper later in this function.
+    for path in entries:
+        if path.is_symlink() or native_tool_arch(path) != "x86_64":
+            continue
+        backup = ndk_wrapped_backup(path)
+        targets[path] = backup
+
+    # Then resolve symlink entries to the preserved target ELF when possible.
+    for path in entries:
+        if not path.is_symlink():
+            candidate = x86_64_binary_candidate(path)
+            if candidate is not None:
+                targets.setdefault(path, ndk_wrapped_backup(path) if candidate == path else candidate)
+            continue
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError:
+            continue
+        resolved_backup = ndk_wrapped_backup(resolved)
+        if resolved_backup in targets.values() or native_tool_arch(resolved_backup) == "x86_64":
+            targets[path] = resolved_backup
+        elif native_tool_arch(resolved) == "x86_64":
+            targets[path] = resolved
+    return targets
+
+
+def write_qemu_wrapper(wrapper: Path, real_binary: Path, qemu: Path, ld_prefix: Path | None, *, dry_run: bool) -> None:
+    import shlex
+
+    qemu_parts = [shlex.quote(str(qemu))]
+    if ld_prefix is not None:
+        qemu_parts.extend(["-L", shlex.quote(str(ld_prefix))])
+    script = "#!/bin/sh\nexec " + " ".join(qemu_parts) + " " + shlex.quote(str(real_binary)) + " \"$@\"\n"
+    if dry_run:
+        info(f"Would install QEMU wrapper: {wrapper} -> {real_binary}")
+        return
+    if wrapper.exists() or wrapper.is_symlink():
+        if wrapper.is_dir() and not wrapper.is_symlink():
+            shutil.rmtree(wrapper)
+        else:
+            wrapper.unlink()
+    wrapper.write_text(script, encoding="utf-8")
+    wrapper.chmod(0o755)
+
+def install_qemu_ndk_wrappers(
+    sdk_root: Path,
+    version: str,
+    *,
+    cache_root: Path,
+    qemu_command: str | None,
+    qemu_ld_prefix: str | None,
+    qemu_sysroot_url: str | None,
+    qemu_sysroot_sha256: str | None,
+    offline: bool,
+    force: bool,
+    dry_run: bool,
+    install_policy: str,
+) -> bool:
+    bin_dir = ndk_google_tool_bin(sdk_root, version)
+    clang = bin_dir / "clang++"
+    if not clang.is_file():
+        return False
+    if ndk_host_toolchain_runs(sdk_root, version):
+        return True
+    if normalized_machine() not in {"arm64", "armv7"}:
+        return False
+    if ndk_x86_64_real_binary(clang) is None:
+        return False
+
+    qemu = find_qemu_x86_64(qemu_command) or install_qemu_x86_64_if_needed(
+        offline=offline,
+        dry_run=dry_run,
+        install_policy=install_policy,
+    )
+    if qemu is None:
+        return False
+    ld_prefix = resolve_qemu_ld_prefix(
+        qemu_ld_prefix,
+        cache_root,
+        qemu_sysroot_url=qemu_sysroot_url,
+        qemu_sysroot_sha256=qemu_sysroot_sha256,
+        offline=offline,
+        force=force,
+        dry_run=dry_run,
+    )
+    heading(f"Wrapping x86_64 Android NDK {version} with QEMU")
+    info(f"QEMU: {qemu}")
+    if ld_prefix:
+        info(f"QEMU loader prefix: {ld_prefix}")
+
+    targets = snapshot_ndk_x86_64_targets(bin_dir)
+    if not targets:
+        return False
+
+    # Preserve all direct ELF executables before writing any wrapper.  This is
+    # critical for NDK symlinks such as clang++ -> clang: a wrapper must never
+    # execute a backup symlink that later resolves to another wrapper.
+    for path, real in sorted(targets.items()):
+        backup = ndk_wrapped_backup(path)
+        if path.is_symlink():
+            continue
+        if real == backup and not backup.exists():
+            if dry_run:
+                info(f"Would backup NDK host executable: {path} -> {backup}")
+            else:
+                path.rename(backup)
+
+    for path, real in sorted(targets.items()):
+        if not dry_run and (not real.is_file() or native_tool_arch(real) != "x86_64"):
+            warn(f"Skipping NDK QEMU wrapper with non-ELF target: {path} -> {real}")
+            continue
+        write_qemu_wrapper(path, real, qemu, ld_prefix, dry_run=dry_run)
+    if dry_run:
+        return True
+    if not ndk_host_toolchain_runs(sdk_root, version):
+        fail(
+            "QEMU NDK wrapper was installed but clang++ still cannot execute.\n"
+            f"Checked: {clang}\n"
+            f"QEMU: {qemu}\n"
+            f"QEMU loader prefix: {ld_prefix or 'none'}\n"
+            "Devtool tried to provision an x86_64 sysroot automatically. If this still fails, "
+            "configure --qemu-sysroot-url to a trusted amd64 rootfs or configure an ARM64 NDK URL."
+        )
+    info(f"QEMU NDK wrapper ready: {clang}")
+    return True
+
+
+def ensure_ndk_host_compatible(
+    sdk_root: Path,
+    version: str | None,
+    cache_root: Path,
+    *,
+    provider: str,
+    arm64_ndk_url: str | None,
+    qemu_command: str | None,
+    qemu_ld_prefix: str | None,
+    qemu_sysroot_url: str | None,
+    qemu_sysroot_sha256: str | None,
+    qemu_install: str,
+    offline: bool,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    if not version:
+        return
+    if provider not in NDK_HOST_PROVIDERS:
+        valid = ", ".join(sorted(NDK_HOST_PROVIDERS))
+        fail(f"Unsupported NDK host provider: {provider}. Expected one of: {valid}")
+    if qemu_install not in QEMU_INSTALL_POLICIES:
+        valid = ", ".join(sorted(QEMU_INSTALL_POLICIES))
+        fail(f"Unsupported QEMU install policy: {qemu_install}. Expected one of: {valid}")
+    if not ndk_is_ready(sdk_root, version):
+        return
+    machine = normalized_machine()
+
+    # On ARM hosts, auto mode intentionally prefers a native ARM64-host NDK
+    # before accepting an existing QEMU wrapper or installing a new one. This
+    # keeps Termux/chroot validation fast when the user has configured a
+    # trusted unofficial NDK, while still falling back to QEMU when no native
+    # toolchain is available.
+    if machine in {"arm64", "armv7"} and provider in {"auto", "arm64"}:
+        if expose_arm64_ndk_as_linux_x86_64(sdk_root, version, dry_run=dry_run):
+            return
+        configured_url = arm64_ndk_url or os.environ.get("DEVTOOL_ARM64_NDK_URL", "").strip()
+        if configured_url and obtain_unofficial_arm64_ndk(
+            sdk_root,
+            version,
+            cache_root,
+            url=configured_url,
+            offline=offline,
+            force=force,
+            dry_run=dry_run,
+        ):
+            return
+        if provider == "arm64":
+            fail(
+                "An ARM64-host NDK was requested, but no runnable ARM64 prebuilt was found.\n"
+                "Set --arm64-ndk-url or DEVTOOL_ARM64_NDK_URL to a trusted unofficial NDK archive."
+            )
+
+    if ndk_host_toolchain_runs(sdk_root, version):
+        info(f"NDK host toolchain executable: {version}")
+        return
+    if machine not in {"arm64", "armv7"}:
+        fail(f"NDK {version} is installed but clang++ cannot run on this host: {ndk_clangxx(sdk_root, version)}")
+    if provider == "none":
+        warn(f"NDK host compatibility repair disabled; native Gradle tasks may fail: {ndk_clangxx(sdk_root, version)}")
+        return
+    if provider in {"auto", "qemu"}:
+        if install_qemu_ndk_wrappers(
+            sdk_root,
+            version,
+            cache_root=cache_root,
+            qemu_command=qemu_command,
+            qemu_ld_prefix=qemu_ld_prefix,
+            qemu_sysroot_url=qemu_sysroot_url,
+            qemu_sysroot_sha256=qemu_sysroot_sha256,
+            offline=offline,
+            force=force,
+            dry_run=dry_run,
+            install_policy=qemu_install,
+        ):
+            return
+        if provider == "qemu":
+            fail(
+                "QEMU NDK fallback was requested but qemu-x86_64 could not be installed or used.\n"
+                "Install qemu-user-x86-64/qemu-user, or set --qemu-command."
+            )
+    if provider == "google":
+        fail(
+            f"The official Google NDK host compiler is not executable on {machine}: {ndk_clangxx(sdk_root, version)}\n"
+            "Use --ndk-host-provider qemu or configure --arm64-ndk-url."
+        )
+    warn(
+        f"NDK {version} host compiler is still not executable on {machine}. "
+        "Native/CMake Gradle tasks may fail. Configure [android].ndk_host_provider='qemu' "
+        "or set [android].arm64_ndk_url to a trusted ARM64 NDK archive."
+    )
 
 
 def obtain_commit451_arm64_tool(
@@ -1871,6 +2499,30 @@ def clear_android_download_debris(sdk_root: Path, *, dry_run: bool) -> None:
                 info(f"Cleared Android download cache: {candidate}")
 
 
+def clean_android_cxx_state(project_root: Path, *, dry_run: bool) -> None:
+    """Remove stale AGP/CMake state after NDK host-toolchain rewriting."""
+
+    candidates: set[Path] = {project_root / ".cxx"}
+    try:
+        for child in project_root.iterdir():
+            if child.is_dir() and not child.name.startswith("."):
+                candidates.add(child / ".cxx")
+                candidates.add(child / "build" / ".cxx")
+    except OSError:
+        return
+    removed = False
+    for candidate in sorted(candidates):
+        if candidate.exists():
+            if dry_run:
+                info(f"Would clear stale Android native configuration cache: {candidate}")
+            else:
+                shutil.rmtree(candidate, ignore_errors=True)
+                info(f"Cleared stale Android native configuration cache: {candidate}")
+            removed = True
+    if removed:
+        info("Android .cxx native configuration caches were reset for NDK host fallback")
+
+
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _SDKMANAGER_PERCENT_RE = re.compile(r"(?<!\d)(\d{1,3})%")
 
@@ -2049,6 +2701,13 @@ def ensure_android_sdk(
     env: MutableMapping[str, str],
     dry_run: bool,
     arm_build_tools_provider: str = "auto",
+    ndk_host_provider: str = "auto",
+    arm64_ndk_url: str | None = None,
+    qemu_command: str | None = None,
+    qemu_ld_prefix: str | None = "auto",
+    qemu_sysroot_url: str | None = None,
+    qemu_sysroot_sha256: str | None = None,
+    qemu_install: str = "auto",
     allow_managed_fallback: bool = True,
     bootstrap_downloads: str = "auto",
     bootstrap_network: str = "allow",
@@ -2278,6 +2937,21 @@ def ensure_android_sdk(
         build_tools,
         cache_root,
         provider=arm_build_tools_provider,
+        offline=offline or not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network),
+        force=force_setup,
+        dry_run=dry_run,
+    )
+    ensure_ndk_host_compatible(
+        sdk_root,
+        ndk_version,
+        cache_root,
+        provider=ndk_host_provider,
+        arm64_ndk_url=arm64_ndk_url,
+        qemu_command=qemu_command,
+        qemu_ld_prefix=qemu_ld_prefix,
+        qemu_sysroot_url=qemu_sysroot_url,
+        qemu_sysroot_sha256=qemu_sysroot_sha256,
+        qemu_install=qemu_install,
         offline=offline or not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network),
         force=force_setup,
         dry_run=dry_run,
@@ -2767,6 +3441,22 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-P", "--android-platform", default="auto", help="android-36, 36, auto, or none")
     parser.add_argument("-B", "--build-tools", default="auto", help="Build Tools version, auto, or none")
     parser.add_argument("--ndk-version", default="auto", help="NDK version, auto, or none")
+    parser.add_argument(
+        "--ndk-host-provider",
+        choices=sorted(NDK_HOST_PROVIDERS),
+        default=os.environ.get("DEVTOOL_NDK_HOST_PROVIDER", "auto"),
+        help=(
+            "Host compatibility strategy for Android NDK on ARM Linux/Termux/chroot: "
+            "auto prefers configured ARM64 NDK first, then existing runnable NDK/QEMU, then QEMU bootstrap; google requires official host binary, "
+            "arm64 requires an ARM64-host NDK, qemu wraps Google x86_64 tools, none warns only"
+        ),
+    )
+    parser.add_argument("--arm64-ndk-url", default=os.environ.get("DEVTOOL_ARM64_NDK_URL", ""), help="Trusted unofficial ARM64-host NDK archive URL")
+    parser.add_argument("--qemu-command", default=os.environ.get("DEVTOOL_QEMU_X86_64", ""), help="qemu-x86_64 executable used for x86_64 NDK fallback")
+    parser.add_argument("--qemu-ld-prefix", default=os.environ.get("DEVTOOL_QEMU_LD_PREFIX", "auto"), help="qemu -L loader prefix, auto, none, or a path")
+    parser.add_argument("--qemu-sysroot-url", default=os.environ.get("DEVTOOL_QEMU_SYSROOT_URL", ""), help="amd64 rootfs archive used to bootstrap qemu -L when auto prefix is missing")
+    parser.add_argument("--qemu-sysroot-sha256", default=os.environ.get("DEVTOOL_QEMU_SYSROOT_SHA256", ""), help="optional SHA256 for --qemu-sysroot-url; defaults to the built-in Ubuntu Base checksum")
+    parser.add_argument("--qemu-install", choices=sorted(QEMU_INSTALL_POLICIES), default=os.environ.get("DEVTOOL_QEMU_INSTALL", "auto"), help="Whether devtool may install qemu-user when needed")
     parser.add_argument("--cmake-version", default="auto", help="CMake version, auto, or none")
     parser.add_argument("-I", "--skip-sdk-install", action="store_true", help="Never install missing SDK packages")
     parser.add_argument("--auto-sdk", action="store_true", help="Explicitly allow automatic SDK package downloads and managed SDK creation")
@@ -3150,10 +3840,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             env=env,
             dry_run=args.dry_run,
             arm_build_tools_provider=args.arm_build_tools_provider,
+            ndk_host_provider=args.ndk_host_provider,
+            arm64_ndk_url=args.arm64_ndk_url,
+            qemu_command=args.qemu_command,
+            qemu_ld_prefix=args.qemu_ld_prefix,
+            qemu_sysroot_url=args.qemu_sysroot_url,
+            qemu_sysroot_sha256=args.qemu_sysroot_sha256,
+            qemu_install=args.qemu_install,
             allow_managed_fallback=args.sdk_root is None,
             bootstrap_downloads=args.toolchain_downloads,
             bootstrap_network=args.bootstrap_network,
         )
+
+        if project.native_build and normalized_machine() in {"arm64", "armv7"} and args.ndk_host_provider in {"auto", "arm64", "qemu"}:
+            clean_android_cxx_state(project.root, dry_run=args.dry_run)
 
     aapt2: Path | None = None
     if project.android:

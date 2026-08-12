@@ -2605,3 +2605,107 @@ class ExclusiveValidationTaskTests(unittest.TestCase):
             ])
             with self.assertRaisesRegex(Exception, "task list differs"):
                 _load_or_create_validation_session(config, resume_args, parser)
+
+
+class BundleEntryValidationTaskApplyTests(unittest.TestCase):
+    def _make_android_repo(self, root: Path) -> None:
+        (root / ".git").mkdir()
+        android = root / "android"
+        (android / "app" / "src" / "main").mkdir(parents=True)
+        (android / "app" / "src" / "main" / "AndroidManifest.xml").write_text("<manifest package='demo'/>", encoding="utf-8")
+        (android / "settings.gradle.kts").write_text('rootProject.name = "Demo"\ninclude(":app")\n', encoding="utf-8")
+        (android / "build.gradle.kts").write_text('plugins { id("com.android.application") version "8.8.0" apply false }\n', encoding="utf-8")
+        (android / "app" / "build.gradle.kts").write_text('plugins { id("com.android.application") }\nandroid { compileSdk = 35 }\n', encoding="utf-8")
+        (android / "gradle" / "wrapper").mkdir(parents=True)
+        (android / "gradle" / "wrapper" / "gradle-wrapper.properties").write_text(
+            "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip\n",
+            encoding="utf-8",
+        )
+        (android / "gradlew").write_text("#!/bin/sh\n", encoding="utf-8")
+        (android / "gradlew").chmod(0o755)
+        (root / ".devtool.toml").write_text(
+            '[project]\nkind = "auto"\n\n[targets.chrootctl_android]\ntype = "android"\nroot = "android"\n',
+            encoding="utf-8",
+        )
+
+    def _make_bundle(self, root: Path) -> Path:
+        overlay = root / "android_overlay.zip"
+        nested_manifest = {
+            "schema_version": 2,
+            "type": "overlay",
+            "name": "android-overlay",
+            "target": "chrootctl_android",
+            "validation": {"required": True, "build": True, "test": True},
+        }
+        with ZipFile(overlay, "w") as archive:
+            archive.writestr(".devtool-artifact.json", json.dumps(nested_manifest))
+            archive.writestr("android/app/lint.xml", "<lint/>\n")
+
+        bundle = root / "bundle.zip"
+        bundle_manifest = {
+            "schema_version": 2,
+            "type": "overlay_bundle",
+            "kind": "devtool.overlay_bundle",
+            "validation": {"required": True, "strategy": "per-overlay"},
+            "apply_order": [
+                {
+                    "id": "android",
+                    "path": "overlays/android.zip",
+                    "target": "chrootctl_android",
+                    "validation": {
+                        "tasks": [":app:compileDebugKotlin", ":app:testDebugUnitTest", ":app:lintDebug"],
+                    },
+                }
+            ],
+        }
+        with ZipFile(bundle, "w") as archive:
+            archive.writestr("devtool-bundle.json", json.dumps(bundle_manifest))
+            archive.writestr("overlays/android.zip", overlay.read_bytes())
+        return bundle
+
+    def test_bundle_entry_validation_tasks_drive_apply_overlays_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_android_repo(root)
+            bundle = self._make_bundle(root)
+            captured: list[list[str]] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.extend(list(spec.metadata.get("gradle_tasks", [])) for spec in specs)
+                return ([OperationResult("validate", ["gradle"], 0, 0.0, "ok", [])], "validate output")
+
+            with (
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["-r", str(root), "--yes", "apply-overlays", str(bundle), "--validate"])
+
+            self.assertEqual(rc, 0)
+            self.assertIn([":app:compileDebugKotlin", ":app:testDebugUnitTest", ":app:lintDebug"], captured)
+            self.assertNotIn(["assembleDebug"], captured)
+
+    def test_cli_task_overrides_bundle_entry_validation_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_android_repo(root)
+            bundle = self._make_bundle(root)
+            captured: list[list[str]] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.extend(list(spec.metadata.get("gradle_tasks", [])) for spec in specs)
+                return ([OperationResult("validate", ["gradle"], 0, 0.0, "ok", [])], "validate output")
+
+            with (
+                patch("devtool.cli._git_dirty", return_value=False),
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main([
+                    "-r", str(root), "--yes", "apply-overlays", str(bundle), "--validate",
+                    "--task", ":app:assembleDebug",
+                ])
+
+            self.assertEqual(rc, 0)
+            self.assertIn([":app:assembleDebug"], captured)
+            self.assertNotIn([":app:compileDebugKotlin", ":app:testDebugUnitTest", ":app:lintDebug"], captured)

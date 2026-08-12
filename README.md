@@ -646,3 +646,10 @@ Sealed final reports use a content hash and a write-once `.final.json` path; lat
 
 
 See `docs/DESKTOP_GTK_MIGRATION.md` for the Phase 1/2 desktop GTK4 migration notes.
+
+## Android NDK host fallback
+
+For ARM64 Termux/chroot validation of Android projects with native code, devtool
+can optionally use an unofficial ARM64-host NDK or wrap the official x86_64 NDK
+with QEMU plus an auto-provisioned amd64 sysroot. See
+`docs/ANDROID_NDK_HOST_FALLBACK.md`.

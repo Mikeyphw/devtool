@@ -40,6 +40,11 @@
     "restore": true,
     "build": true,
     "test": true,
+    "tasks": [
+      ":app:compileDebugKotlin",
+      ":app:testDebugUnitTest",
+      ":app:lintDebug"
+    ],
     "rollback_on_failure": true,
     "expected": {
       "restore": "pass",
