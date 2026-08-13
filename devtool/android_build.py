@@ -44,6 +44,7 @@ DEFAULT_GRADLE_VERSION = "8.13"
 REVANCED_REPOSITORY = "ReVanced/aapt2"
 REVANCED_API = f"https://api.github.com/repos/{REVANCED_REPOSITORY}"
 ARM_BUILD_TOOLS_REPOSITORY = "Commit451/android-arm-build-tools"
+ARM_BUILD_TOOLS_RELEASE_ALIASES = {"35.0.0": "35.0.1"}
 ARM_BUILD_TOOLS_NATIVE_NAMES = ("aidl", "zipalign", "split-select")
 NDK_HOST_PROVIDERS = {"auto", "google", "arm64", "qemu", "none"}
 QEMU_INSTALL_POLICIES = {"auto", "never"}
@@ -1735,7 +1736,15 @@ def obtain_commit451_arm64_tool(
     if normalized_machine() != "arm64":
         fail("Commit451 Android build-tools are only used on ARM64 Linux hosts")
 
-    tag = f"platform-tools-{build_tools_version}"
+    release_version = ARM_BUILD_TOOLS_RELEASE_ALIASES.get(
+        build_tools_version, build_tools_version
+    )
+    if release_version != build_tools_version:
+        warn(
+            "Commit451 does not publish ARM64 binaries for Android Build Tools "
+            f"{build_tools_version}; using the compatible {release_version} release."
+        )
+    tag = f"platform-tools-{release_version}"
     base_url = (
         f"https://github.com/{ARM_BUILD_TOOLS_REPOSITORY}/releases/download/{tag}"
     )
@@ -2683,7 +2692,7 @@ def default_build_tools_version(project: ProjectInfo) -> str:
             return "36.0.0"
         if project.compile_sdk == 35:
             return "35.0.1"
-    return "35.0.0"
+    return "35.0.1"
 
 
 def ensure_android_sdk(
