@@ -279,6 +279,22 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         self.assertEqual(default_build_tools_version(project), "36.0.0")
 
+    def test_unknown_compile_sdk_defaults_to_published_commit451_build_tools(self) -> None:
+        project = ProjectInfo(
+            root=Path("/tmp/project"),
+            name="Demo",
+            android=True,
+            android_application=True,
+            compile_sdk=None,
+            build_tools=None,
+            agp_major=None,
+            native_build=False,
+            ndk_version=None,
+            cmake_version=None,
+        )
+
+        self.assertEqual(default_build_tools_version(project), "35.0.1")
+
     def test_commit451_tools_replace_incompatible_sdk_binaries(self) -> None:
         x86_header = (
             b"\x7fELF"
@@ -343,6 +359,73 @@ class AndroidProjectInspectionTests(unittest.TestCase):
                 self.assertTrue(native_tool_matches_host(build_tools / name, "arm64"))
                 self.assertTrue((build_tools / f"{name}.google-x86_64").is_file())
             self.assertIn("Repairing Android Build Tools 36.0.0 for ARM64", output.getvalue())
+
+    def test_commit451_35_0_0_uses_published_35_0_1_release(self) -> None:
+        x86_header = (
+            b"\x7fELF"
+            + bytes([2, 1, 1])
+            + bytes(11)
+            + (62).to_bytes(2, "little")
+            + bytes(64)
+        )
+        arm_header = (
+            b"\x7fELF"
+            + bytes([2, 1, 1])
+            + bytes(11)
+            + (183).to_bytes(2, "little")
+            + bytes(64)
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sdk_root = root / "sdk"
+            cache_root = root / "cache"
+            build_tools = sdk_root / "build-tools" / "35.0.0"
+            build_tools.mkdir(parents=True)
+            payloads = {
+                name: arm_header + name.encode("ascii")
+                for name in ("aidl", "zipalign", "split-select")
+            }
+            for name in payloads:
+                target = build_tools / name
+                target.write_bytes(x86_header + name.encode("ascii"))
+                target.chmod(0o755)
+
+            manifest = "\n".join(
+                f"{hashlib.sha256(payload).hexdigest()}  {name}"
+                for name, payload in payloads.items()
+            ) + "\n"
+            urls: list[str] = []
+
+            def fake_download(url: str, destination: Path, **kwargs) -> Path:
+                urls.append(url)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if url.endswith("/SHA256SUMS"):
+                    destination.write_text(manifest, encoding="utf-8")
+                else:
+                    name = url.rsplit("/", 1)[-1]
+                    destination.write_bytes(payloads[name])
+                return destination
+
+            with patch("devtool.android_build.normalized_machine", return_value="arm64"), patch(
+                "devtool.android_build.download",
+                side_effect=fake_download,
+            ):
+                ensure_arm64_build_tools_compatible(
+                    sdk_root,
+                    "35.0.0",
+                    cache_root,
+                    provider="auto",
+                    offline=False,
+                    force=False,
+                    dry_run=False,
+                )
+
+            self.assertTrue(urls)
+            self.assertTrue(
+                all("/platform-tools-35.0.1/" in url for url in urls),
+                urls,
+            )
 
     def test_arm_build_tools_provider_can_be_disabled(self) -> None:
         args = parse_args(["--arm-build-tools-provider", "none"])
