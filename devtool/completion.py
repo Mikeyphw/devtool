@@ -427,15 +427,18 @@ _devtool() {
     '(--hud-overlay --hud-no-overlay)--hud-no-overlay[keep the run in the app without opening the overlay]' \
     '(--host --chroot --ssh --ssh-host --execution-environment)--host[force the current host environment]' \
     '(--host --chroot --ssh --ssh-host --execution-environment)--chroot[run command phases in a named chroot]:name:' \
-    '(--host --chroot --ssh --ssh-host --execution-environment)'{--ssh,--ssh-host}'[run the whole devtool invocation on an SSH host inside tmux]:host:_hosts' \
+    '(--host --chroot --ssh --ssh-host --execution-environment)'{--ssh,--ssh-host}'[use an SSH host for devtool or command-phase execution]:host:_hosts' \
     '(--host --chroot --ssh --ssh-host --execution-environment)--execution-environment[execution backend]:backend:(auto native-termux chroot desktop-linux android-device external-device ssh)' \
     '--ssh-port[SSH port]:port:' \
     '--ssh-user[SSH login user]:user:' \
     '--ssh-identity[SSH private key]:file:_files' \
     '--ssh-session[tmux session name]:name:' \
     '--ssh-cwd[working directory on the SSH host; no local path inference]:directory:' \
-    '--ssh-tool[remote devtool executable]:command:' \
-    '--ssh-detached[start or reuse the remote tmux session without attaching]' \
+    '--ssh-tool[remote devtool executable used by devtool mode]:command:' \
+    '--ssh-mode[SSH execution mode]:mode:(devtool commands)' \
+    '--ssh-stage-dir[remote staging root for copied artifacts/helpers]:directory:' \
+    '--ssh-no-artifact-copy[disable automatic SSH/SCP artifact transfer]' \
+    '--ssh-detached[start or reuse the remote tmux session without attaching; devtool mode]' \
     '--no-auto-chroot[disable automatic Termux-to-chroot routing]' \
     '--no-bootstrap-downloads[never download or install missing toolchain components]' \
     '--deny-network[deny Devtool-managed bootstrap network downloads]' \

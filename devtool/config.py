@@ -1130,10 +1130,13 @@ host = ""
 port = 22
 user = ""
 identity = ""
-cwd = "" # optional remote working directory; no local-path inference
+mode = "devtool" # devtool | commands
+cwd = "" # remote working directory; required by commands mode
 session = ""
-tool = "devtool"
-detached = false
+tool = "devtool" # used only by devtool mode
+stage_dir = "~/.cache/devtool/ssh-stage"
+copy_artifacts = true
+detached = false # whole-run devtool mode only
 
 [toolchain]
 manager = "auto" # auto | mise | none

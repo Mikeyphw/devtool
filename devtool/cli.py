@@ -234,6 +234,8 @@ GLOBAL_OPTIONS_WITH_VALUE = {
     "--ssh-session",
     "--ssh-cwd",
     "--ssh-tool",
+    "--ssh-mode",
+    "--ssh-stage-dir",
     "--execution-environment",
 }
 
@@ -363,7 +365,7 @@ def build_parser() -> argparse.ArgumentParser:
     exec_group = environment.add_mutually_exclusive_group()
     exec_group.add_argument("--host", action="store_true", help="Force command phases to run in devtool's current host environment")
     exec_group.add_argument("--chroot", default="", help="Run command phases inside a named chroot via chrootctl exec")
-    exec_group.add_argument("--ssh", "--ssh-host", dest="ssh", default="", metavar="HOST", help="Run the entire devtool invocation on HOST over SSH inside tmux")
+    exec_group.add_argument("--ssh", "--ssh-host", dest="ssh", default="", metavar="HOST", help="Use HOST as the SSH execution target (whole devtool or command-phase mode)")
     exec_group.add_argument(
         "--execution-environment",
         choices=EXECUTION_ENVIRONMENTS,
@@ -375,8 +377,11 @@ def build_parser() -> argparse.ArgumentParser:
     environment.add_argument("--ssh-identity", default="", metavar="PATH", help="SSH private-key identity file")
     environment.add_argument("--ssh-session", default="", metavar="NAME", help="tmux session name; stable names can be reattached")
     environment.add_argument("--ssh-cwd", default="", metavar="PATH", help="Working directory on the SSH host; omitted means the remote login default")
-    environment.add_argument("--ssh-tool", default="", metavar="COMMAND", help="Remote devtool executable (default: devtool)")
-    environment.add_argument("--ssh-detached", action="store_true", help="Start/reuse the remote tmux session without attaching")
+    environment.add_argument("--ssh-tool", default="", metavar="COMMAND", help="Remote devtool executable used by --ssh-mode devtool (default: devtool)")
+    environment.add_argument("--ssh-mode", choices=["devtool", "commands"], default="", help="SSH mode: delegate the whole devtool run, or keep devtool local and run command phases remotely")
+    environment.add_argument("--ssh-stage-dir", default="", metavar="PATH", help="Remote staging root for copied overlays/helper files")
+    environment.add_argument("--ssh-no-artifact-copy", action="store_true", help="Disable automatic SSH/SCP artifact transfer")
+    environment.add_argument("--ssh-detached", action="store_true", help="Start/reuse the remote tmux session without attaching (whole-run devtool mode)")
     environment.add_argument("--no-auto-chroot", action="store_true", help="On Termux, do not auto-route command phases through chrootctl")
 
     bootstrap = parser.add_argument_group("Toolchain bootstrap")
@@ -2707,7 +2712,7 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
 
     # Toolchain discovery occurs in the current host process. Do not inject a
     # host-only mise wrapper into commands that will execute inside a chroot.
-    if not (plan.uses_chroot and plan.current != EXECUTION_CHROOT):
+    if not ((plan.uses_chroot and plan.current != EXECUTION_CHROOT) or plan.effective == EXECUTION_SSH):
         specs = apply_toolchain_wrapper(config, specs)
     preflight = preflight_execution(
         config.repo_root,
@@ -2750,6 +2755,22 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
                 [str(spec.cwd or ""), *spec.argv, *spec.env.values()],
                 context=f"{spec.name} execution plan",
             )
+    elif plan.effective == EXECUTION_SSH:
+        from .ssh_tmux_runner import SSHRunnerConfig, wrap_specs_for_ssh_commands
+
+        ssh_config = getattr(args, "_devtool_ssh_config", None)
+        if not isinstance(ssh_config, SSHRunnerConfig):
+            raise SystemExit("SSH command execution was selected without resolved SSH connection settings.")
+        try:
+            specs = wrap_specs_for_ssh_commands(
+                specs,
+                ssh_config,
+                project_config=config,
+                repo_root=config.repo_root,
+                dry_run=bool(getattr(args, "dry_run", False)),
+            )
+        except ValueError as exc:
+            raise SystemExit(f"SSH command execution unavailable: {exc}") from exc
 
     for spec in specs:
         metadata = dict(spec.metadata)
@@ -6887,17 +6908,20 @@ def _config_command(args: argparse.Namespace) -> int:
     return 1
 
 def _maybe_delegate_ssh(raw_argv: list[str], args: argparse.Namespace) -> int | None:
-    """Delegate the complete devtool invocation to SSH + tmux when requested.
-
-    This happens before local repository discovery. SSH is transport-only: no
-    local repository path is translated or projected onto the remote host.
-    """
+    """Select SSH whole-run or local-devtool/remote-command mode."""
     if str(os.environ.get("DEVTOOL_INSIDE_SSH", "")).strip().lower() in {"1", "true", "yes", "on"}:
         return None
-    from .ssh_tmux_runner import run_ssh_tmux, ssh_requested
+    from .ssh_tmux_runner import resolve_ssh_config, run_ssh_tmux, ssh_requested
 
     try:
         if not ssh_requested(raw_argv, cwd=os.getcwd()):
+            return None
+        ssh_config = resolve_ssh_config(raw_argv, cwd=os.getcwd())
+        args._devtool_ssh_config = ssh_config
+        if ssh_config.mode == "commands":
+            # Keep this devtool process local; only planned external command
+            # phases are wrapped later at the shared execution boundary.
+            args.execution_environment = EXECUTION_SSH
             return None
         return run_ssh_tmux(raw_argv, cwd=os.getcwd())
     except ValueError as exc:

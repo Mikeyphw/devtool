@@ -345,10 +345,11 @@ def preflight_execution(
     elif plan.effective == DESKTOP_LINUX:
         checks.append(PreflightCheck("desktop-linux", "ready" if plan.current == DESKTOP_LINUX else "incompatible", plan.current))
     elif plan.effective == SSH:
+        executable = shutil.which(os.environ.get("DEVTOOL_SSH_COMMAND", "ssh"))
         checks.append(PreflightCheck(
             "ssh-transport",
-            "incompatible",
-            "SSH is a whole-process transport and must be delegated before command-phase planning",
+            "ready" if executable else "missing",
+            executable or "ssh executable not found",
         ))
     elif plan.effective in {ANDROID_DEVICE, EXTERNAL_DEVICE}:
         # The environment is modelled now, while runner-specific device command
