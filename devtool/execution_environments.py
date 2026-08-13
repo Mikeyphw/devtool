@@ -20,6 +20,7 @@ CHROOT = "chroot"
 DESKTOP_LINUX = "desktop-linux"
 ANDROID_DEVICE = "android-device"
 EXTERNAL_DEVICE = "external-device"
+SSH = "ssh"
 
 EXECUTION_ENVIRONMENTS = (
     AUTO,
@@ -28,6 +29,7 @@ EXECUTION_ENVIRONMENTS = (
     DESKTOP_LINUX,
     ANDROID_DEVICE,
     EXTERNAL_DEVICE,
+    SSH,
 )
 
 _CHROOT_CONTEXT_VALUES = {"chroot", "android-chroot", "termux-chroot"}
@@ -141,6 +143,7 @@ def normalize_execution_environment(value: str | None) -> str:
         "android": ANDROID_DEVICE,
         "device": ANDROID_DEVICE,
         "external": EXTERNAL_DEVICE,
+        "remote": SSH,
     }
     normalized = aliases.get(normalized, normalized)
     if normalized not in EXECUTION_ENVIRONMENTS:
@@ -341,6 +344,12 @@ def preflight_execution(
         checks.append(PreflightCheck("termux", "ready" if plan.current == NATIVE_TERMUX else "incompatible", plan.current))
     elif plan.effective == DESKTOP_LINUX:
         checks.append(PreflightCheck("desktop-linux", "ready" if plan.current == DESKTOP_LINUX else "incompatible", plan.current))
+    elif plan.effective == SSH:
+        checks.append(PreflightCheck(
+            "ssh-transport",
+            "incompatible",
+            "SSH is a whole-process transport and must be delegated before command-phase planning",
+        ))
     elif plan.effective in {ANDROID_DEVICE, EXTERNAL_DEVICE}:
         # The environment is modelled now, while runner-specific device command
         # execution arrives with Android instrumentation support.

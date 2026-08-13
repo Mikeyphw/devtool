@@ -172,7 +172,7 @@ SUPPORTED_PROJECT_KINDS = {
 RUNNER_OPTION_SECTIONS = (
     "android", "gradle", "python", "dotnet", "node", "rust", "go",
     "maven", "cmake", "meson", "make", "build", "tasks", "artifacts",
-    "test_profiles", "validation", "termux_chroot", "bootstrap", "chroots",
+    "test_profiles", "validation", "termux_chroot", "ssh", "bootstrap", "chroots",
 )
 PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
 RUNTIME_ENV_PREFIX = "DEVTOOL_ENV_"
@@ -1121,9 +1121,19 @@ run_command = ""
 package_command = ""
 
 [execution]
-environment = "auto" # auto | native-termux | chroot | desktop-linux | android-device | external-device
+environment = "auto" # auto | native-termux | chroot | desktop-linux | ssh | android-device | external-device
 chroot_name = "androidos"
 device_serial = ""
+
+[ssh]
+host = ""
+port = 22
+user = ""
+identity = ""
+cwd = "" # optional remote working directory; no local-path inference
+session = ""
+tool = "devtool"
+detached = false
 
 [toolchain]
 manager = "auto" # auto | mise | none

@@ -411,8 +411,33 @@ Select
 .BR chroot ,
 .BR desktop-linux ,
 .BR android-device ,
+.BR external-device ,
 or
-.BR external-device .
+.BR ssh .
+.TP
+.BR --ssh " HOST"
+Run the entire devtool invocation on an SSH host inside tmux. SSH is transport-only; local paths are not translated into remote paths.
+.TP
+.BR --ssh-port " PORT"
+Set the SSH port. The default is 22 unless overridden by configuration.
+.TP
+.BR --ssh-user " USER"
+Set the SSH login user.
+.TP
+.BR --ssh-identity " PATH"
+Use a local SSH identity file.
+.TP
+.BR --ssh-session " NAME"
+Set the remote tmux session name.
+.TP
+.BR --ssh-cwd " PATH"
+Start the remote devtool process in this remote working directory. If omitted, use the SSH login default working directory; no local path is inferred.
+.TP
+.BR --ssh-tool " COMMAND"
+Set the remote devtool executable.
+.TP
+.B --ssh-detached
+Start or reuse the remote tmux session without attaching. An attached session may be detached with Ctrl-b followed by d.
 .TP
 .B --no-auto-chroot
 Do not automatically route incompatible Termux operations into a chroot.
