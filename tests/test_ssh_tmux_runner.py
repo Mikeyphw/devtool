@@ -15,6 +15,14 @@ from devtool.ssh_tmux_runner import (
 )
 
 
+def _remote_script_from_ssh_argv(command: list[str]) -> str:
+    remote = command[-1]
+    parsed = __import__("shlex").split(remote)
+    assert parsed[:2] == ["sh", "-lc"]
+    assert len(parsed) == 3
+    return parsed[2]
+
+
 def test_cli_ssh_config_and_port_are_resolved() -> None:
     config = resolve_ssh_config(
         ["--ssh", "buildbox", "--ssh-port", "2222", "--ssh-user", "mike", "build"],
@@ -80,8 +88,9 @@ def test_build_command_uses_explicit_remote_cwd_and_tmux_without_path_translatio
     assert config.cwd == "/srv/projects/demo"
     assert forwarded[:2] == ["--repo", local_repo]
     assert "--ssh" not in forwarded
-    assert command[:6] == ["ssh", "-tt", "-p", "2222", "mike@buildbox", "sh"]
-    remote_script = command[-1]
+    assert command[:5] == ["ssh", "-tt", "-p", "2222", "mike@buildbox"]
+    assert len(command) == 6
+    remote_script = _remote_script_from_ssh_argv(command)
     assert "tmux new-session -d" in remote_script
     assert "tmux attach-session" in remote_script
     assert "DEVTOOL_INSIDE_SSH=1" in remote_script
@@ -103,7 +112,7 @@ def test_no_remote_cwd_means_no_cd_or_local_cwd_inference() -> None:
     )
     assert config.cwd == ""
     assert forwarded == ["build"]
-    remote_script = command[-1]
+    remote_script = _remote_script_from_ssh_argv(command)
     assert f"cd {local_cwd}" not in remote_script
     assert local_cwd not in remote_script
     assert "/home/termux" not in remote_script
@@ -125,7 +134,7 @@ def test_remote_path_arguments_are_forwarded_verbatim() -> None:
     assert forwarded == [
         "--repo", "/opt/work/app", "apply-overlay", "/mnt/incoming/fix.zip"
     ]
-    remote_script = command[-1]
+    remote_script = _remote_script_from_ssh_argv(command)
     assert "/opt/work/app" in remote_script
     assert "/mnt/incoming/fix.zip" in remote_script
 
@@ -137,7 +146,7 @@ def test_remote_home_expression_can_be_forwarded_for_remote_expansion() -> None:
         env={},
     )
     assert forwarded == ["--repo", "~/Code/demo", "build"]
-    assert "~/Code/demo" in command[-1]
+    assert "~/Code/demo" in _remote_script_from_ssh_argv(command)
 
 
 def test_detached_mode_does_not_allocate_tty_and_returns_launcher_status() -> None:
@@ -148,7 +157,7 @@ def test_detached_mode_does_not_allocate_tty_and_returns_launcher_status() -> No
     assert rc == 0
     launched = run.call_args.args[0]
     assert "-tt" not in launched
-    assert "tmux new-session -d" in launched[-1]
+    assert "tmux new-session -d" in _remote_script_from_ssh_argv(launched)
 
 
 def test_invalid_port_is_rejected() -> None:
@@ -176,7 +185,15 @@ def test_whole_run_stages_local_overlay_over_scp_and_rewrites_operand(tmp_path: 
     assert rewritten[1].startswith("~/.cache/devtool/ssh-stage/apply-fix/inputs/")
     assert rewritten[1].endswith("-fix.zip")
     commands = [call.args[0] for call in run.call_args_list]
-    assert any(command[0] == "ssh" and "mkdir -p" in command[-1] for command in commands)
+    mkdir_commands = [command for command in commands if command[0] == "ssh" and "mkdir -p" in command[-1]]
+    assert len(mkdir_commands) == 1
+    mkdir_remote = mkdir_commands[0][-1]
+    assert __import__("shlex").split(mkdir_remote) == [
+        "sh", "-lc", 'mkdir -p -- "$HOME/.cache/devtool/ssh-stage/apply-fix/inputs"'
+    ]
+    # The complete remote shell invocation is one SSH argv item. This is what
+    # prevents OpenSSH from flattening the -lc payload into mkdir's argv.
+    assert mkdir_commands[0][-1].startswith("sh -lc ")
     assert any(command[0] == "scp" and str(artifact.resolve()) in command for command in commands)
 
 

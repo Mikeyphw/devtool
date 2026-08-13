@@ -486,11 +486,31 @@ def _remote_scp_path(path: str) -> str:
     return text
 
 
+def _remote_sh_command(script: str) -> str:
+    """Build one remote command string for OpenSSH.
+
+    OpenSSH does not preserve argv boundaries for the remote command. It joins
+    everything after the destination with spaces before handing it to the
+    remote login shell. Therefore ``ssh host sh -lc SCRIPT`` is unsafe when
+    SCRIPT is passed as a separate local argv item: the remote shell can turn
+    it into ``sh -lc <first-word> ...``. Quote the complete ``-c`` payload and
+    send the remote command as a single SSH argv item instead.
+    """
+    return "sh -lc " + shlex.quote(str(script))
+
+
+def _build_ssh_remote_sh_argv(
+    config: SSHRunnerConfig,
+    script: str,
+    *,
+    tty: bool,
+) -> list[str]:
+    return [*build_ssh_base_argv(config, tty=tty), _remote_sh_command(script)]
+
+
 def _ensure_remote_dir(config: SSHRunnerConfig, remote_dir: str) -> None:
-    command = [
-        *build_ssh_base_argv(config, tty=False),
-        "sh", "-lc", f"mkdir -p -- {_remote_shell_path(remote_dir)}",
-    ]
+    script = f"mkdir -p -- {_remote_shell_path(remote_dir)}"
+    command = _build_ssh_remote_sh_argv(config, script, tty=False)
     completed = subprocess.run(command, check=False)
     if completed.returncode != 0:
         raise ValueError(f"could not create remote SSH staging directory: {remote_dir}")
@@ -813,7 +833,7 @@ def wrap_specs_for_ssh_commands(
         env_prefix = "env " + " ".join(shlex.quote(item) for item in assignments) + " " if assignments else ""
         command = "cd " + _remote_shell_path(remote_cwd) + " && exec " + env_prefix + _shell_join_remote(translated_argv)
         remote_script = _build_remote_phase_script(config, session=session, command=command)
-        ssh_command = [*build_ssh_base_argv(config, tty=True), "sh", "-lc", remote_script]
+        ssh_command = _build_ssh_remote_sh_argv(config, remote_script, tty=True)
 
         local_script = shlex.join(ssh_command) + "; rc=$?"
         if bool(metadata.get("collect_artifacts") or metadata.get("verify_artifacts")) and config.copy_artifacts:
@@ -900,7 +920,7 @@ def build_ssh_tmux_argv(
     config = resolve_ssh_config(argv, cwd=cwd or os.getcwd(), env=env)
     forwarded = _forwarded_argv(argv)
     remote_script = build_remote_tmux_script(config, forwarded)
-    command = [*build_ssh_base_argv(config, tty=not config.detached), "sh", "-lc", remote_script]
+    command = _build_ssh_remote_sh_argv(config, remote_script, tty=not config.detached)
     return config, forwarded, command
 
 
@@ -922,7 +942,7 @@ def run_ssh_tmux(
     _ensure_session(config, forwarded)
     forwarded, staged = stage_forwarded_artifacts(config, forwarded, cwd=local_cwd)
     remote_script = build_remote_tmux_script(config, forwarded)
-    command = [*build_ssh_base_argv(config, tty=not config.detached), "sh", "-lc", remote_script]
+    command = _build_ssh_remote_sh_argv(config, remote_script, tty=not config.detached)
     print(f"Devtool SSH: {config.destination}:{config.port} (mode: {config.mode})")
     if config.cwd:
         print(f"Remote cwd: {config.cwd}")
