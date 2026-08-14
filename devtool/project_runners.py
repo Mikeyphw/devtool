@@ -1937,6 +1937,13 @@ class PythonRunner(ProjectRunner):
                     metadata=_tool_metadata(self.kind, root, validation_component="package-preparation"),
                 ))
             info = self._info(config)
+            build_env = self._env(config)
+            if info.manager == "uv" and detect_current_environment() == NATIVE_TERMUX:
+                # Termux commonly places uv's cache and the project/build
+                # destination on filesystems where hardlinks cannot cross.
+                # Select copy mode up front instead of letting uv emit its
+                # hardlink-fallback warning on every successful build.
+                build_env.setdefault("UV_LINK_MODE", "copy")
             if info.manager == "uv":
                 # uv-managed projects should use uv's native PEP 517 build
                 # frontend. `uv run python -m build` requires the separate
@@ -1947,7 +1954,7 @@ class PythonRunner(ProjectRunner):
                     argv.append("--offline")
             else:
                 argv = self._module(config, "build", "--outdir", str(outdir))
-            specs.append(CommandSpec("build", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, collect_artifacts=True, verify_artifacts=True)))
+            specs.append(CommandSpec("build", argv, env=build_env, cwd=str(root), metadata=_tool_metadata(self.kind, root, collect_artifacts=True, verify_artifacts=True)))
             return specs
         if action in {"test", "wine-test"}:
             if config.test_command:

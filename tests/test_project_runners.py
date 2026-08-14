@@ -389,6 +389,58 @@ class ExistingRunnerCompatibilityTests(unittest.TestCase):
         self.assertEqual(result.metadata.get("report_parsing_skipped"), "interrupted")
         self.assertFalse(any(issue.code == "PYTHON_PACKAGE_RESULT" for issue in result.issues))
 
+    def test_python_uv_build_uses_copy_link_mode_on_native_termux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='demo'\nversion='1'\n",
+                encoding="utf-8",
+            )
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "uv"}},
+            )
+            with mock.patch(
+                "devtool.project_runners.detect_current_environment",
+                return_value="native-termux",
+            ):
+                spec = next(
+                    item for item in build_specs(config, "build")
+                    if item.name == "build"
+                )
+
+        self.assertEqual(spec.argv[:2], ["uv", "build"])
+        self.assertEqual(spec.env.get("UV_LINK_MODE"), "copy")
+
+    def test_python_uv_build_does_not_force_copy_link_mode_on_desktop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='demo'\nversion='1'\n",
+                encoding="utf-8",
+            )
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "uv"}},
+            )
+            with mock.patch(
+                "devtool.project_runners.detect_current_environment",
+                return_value="host",
+            ), mock.patch.dict(os.environ, {}, clear=False):
+                spec = next(
+                    item for item in build_specs(config, "build")
+                    if item.name == "build"
+                )
+
+        self.assertEqual(spec.argv[:2], ["uv", "build"])
+        self.assertNotEqual(spec.env.get("UV_LINK_MODE"), "copy")
+
 
 class DotnetBuildServerReuseTests(unittest.TestCase):
     def test_dotnet_build_server_shutdown_is_opt_in(self) -> None:
