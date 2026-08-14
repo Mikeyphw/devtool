@@ -93,7 +93,10 @@ from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
-from .termux_toolchains import VALID_GRADLE_PROVIDERS, VALID_JAVA_PROVIDERS
+from .termux_toolchains import (
+    VALID_GRADLE_PROVIDERS, VALID_JAVA_PROVIDERS, VALID_NATIVE_PROVIDERS,
+    VALID_NATIVE_CACHE_PROVIDERS, VALID_ANDROID_BUILD_TOOLS_PROVIDERS,
+)
 from .transactions import (
     abandon_transaction,
     devtool_xdg_dir,
@@ -396,6 +399,10 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--java-home", default="", help="JDK home for Android/Gradle projects")
     bootstrap.add_argument("--java-provider", choices=sorted(VALID_JAVA_PROVIDERS), default="", help="Java provider for Android/Gradle projects: auto, termux, or system")
     bootstrap.add_argument("--gradle-user-home", default="", help="GRADLE_USER_HOME for Android/Gradle projects")
+    bootstrap.add_argument("--native-provider", choices=sorted(VALID_NATIVE_PROVIDERS), default="", help="Native provider for Android/native projects: auto, termux-sysroot, ndk, or system")
+    bootstrap.add_argument("--native-cache", choices=sorted(VALID_NATIVE_CACHE_PROVIDERS), default="", help="Native compiler cache provider: auto, ccache, or off")
+    bootstrap.add_argument("--android-build-tools-provider", choices=sorted(VALID_ANDROID_BUILD_TOOLS_PROVIDERS), default="", help="Android native build-tools provider: auto, termux, sdk, commit451, or none")
+    bootstrap.add_argument("--aapt2-provider", choices=["auto", "termux", "sdk", "revanced", "none"], default="", help="AAPT2 provider for Android builds")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -2378,6 +2385,28 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
         android = ensure_section("android")
         gradle["user_home"] = gradle_user_home
         android["gradle_user_home"] = gradle_user_home
+    native_provider = str(getattr(args, "native_provider", "") or "").strip()
+    native_cache = str(getattr(args, "native_cache", "") or "").strip()
+    if native_provider or native_cache:
+        android = ensure_section("android")
+        native_options = android.get("native", {}) if isinstance(android.get("native", {}), dict) else {}
+        native_options = dict(native_options)
+        if native_provider:
+            native_options["provider"] = native_provider
+        if native_cache:
+            native_options["cache"] = native_cache
+        android["native"] = native_options
+    build_tools_provider = str(getattr(args, "android_build_tools_provider", "") or "").strip()
+    aapt2_provider = str(getattr(args, "aapt2_provider", "") or "").strip()
+    if build_tools_provider or aapt2_provider:
+        android = ensure_section("android")
+        build_tools = android.get("build_tools", {}) if isinstance(android.get("build_tools", {}), dict) else {}
+        build_tools = dict(build_tools)
+        if build_tools_provider:
+            build_tools["provider"] = build_tools_provider
+        if aapt2_provider:
+            build_tools["aapt2_provider"] = aapt2_provider
+        android["build_tools"] = build_tools
     if args.command in {"build", "b"} and config.kind in {"android", "gradle"}:
         artifacts = config.runner_options.setdefault("artifacts", {})
         if not isinstance(artifacts, dict):

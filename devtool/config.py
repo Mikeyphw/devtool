@@ -145,6 +145,14 @@ def minimal_global_config_template() -> str:
         "[android.java]",
         "provider = \"auto\" # auto | termux | system",
         "",
+        "[android.native]",
+        "provider = \"auto\" # auto | termux-sysroot | ndk | system",
+        "cache = \"auto\" # auto | ccache | off",
+        "",
+        "[android.build_tools]",
+        "provider = \"auto\" # auto | termux | sdk | commit451 | none",
+        "aapt2_provider = \"auto\" # auto | termux | sdk | revanced | none",
+        "",
         "[gradle]",
         "provider = \"auto\" # auto | wrapper | termux | system | download",
         "",
@@ -1162,6 +1170,14 @@ prefer_native_termux = false
 [android.java]
 provider = "auto" # auto | termux | system
 
+[android.native]
+provider = "auto" # auto | termux-sysroot | ndk | system
+cache = "auto" # auto | ccache | off
+
+[android.build_tools]
+provider = "auto" # auto | termux | sdk | commit451 | none
+aapt2_provider = "auto" # auto | termux | sdk | revanced | none
+
 [gradle]
 provider = "auto" # auto | wrapper | termux | system | download
 max_workers = 4
@@ -1256,6 +1272,9 @@ coalesce_validation = true
 
 [cmake]
 build_directory = ".devtool/build/cmake"
+provider = "auto" # auto | termux | system
+native_provider = "auto" # auto | termux-sysroot | system
+cache = "auto" # auto | ccache | off
 
 [meson]
 build_directory = ".devtool/build/meson"

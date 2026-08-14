@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 Termux native and Android tool providers
+
+- Added first-class Termux clang/lld/ndk-sysroot, CMake, Ninja, and ccache capability providers without pretending ndk-sysroot is a complete Android NDK.
+- Added capability classification so Android external native builds continue to require a real NDK while compiler-only native work can use Termux-native tooling.
+- Added Termux Android tool discovery, AAPT2 platform capability probing, and Termux-first ARM64 aidl/zipalign/split-select repair with runtime execution checks; native Termux/Bionic now rejects Commit451's glibc binaries while ARM64 glibc hosts retain the verified fallback.
+- Added Commit451 release-availability resolution and kept the 35.0.0 -> 35.0.1 compatibility alias so unavailable tags fail before asset downloads.
+- Tightened Android native classification so unrelated host-side CMakeLists.txt files do not trigger a full NDK, while ndkVersion and ndk-build makefiles do.
+- Added explicit native/cache/build-tools/AAPT2 provider controls across CLI, config, doctor output, completion, manpage, and the staged standalone Android builder.
+
 ## 1.1.0 Termux provider foundation
 
 - Added first-class Termux runtime, OpenJDK, and Gradle provider discovery with wrapper-safe selection and explicit provider controls.

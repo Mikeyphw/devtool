@@ -22,6 +22,7 @@ from .build_optimization import resolve_android_validation_phase_policy, resolve
 from . import android_build
 from .execution_environments import CHROOT, NATIVE_TERMUX, detect_current_environment
 from .models import ProjectConfig
+from .termux_toolchains import detect_runtime_identity, termux_native_provider, termux_cmake_probe, termux_ninja_probe, termux_ccache_probe, termux_android_tool_providers, classify_native_requirement
 from .xdg import data_dir
 
 
@@ -521,6 +522,9 @@ def android_builder_arguments_for_tasks(
     gradle = _dict_option(config, "gradle")
     java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
     nested_gradle = android.get("gradle", {}) if isinstance(android.get("gradle", {}), dict) else {}
+    native_options = android.get("native", {}) if isinstance(android.get("native", {}), dict) else {}
+    build_tools_value = android.get("build_tools", "auto")
+    build_tools_options = build_tools_value if isinstance(build_tools_value, dict) else {}
     artifacts = _dict_option(config, "artifacts")
 
     argv = [str(root), "--no-chroot"]
@@ -536,10 +540,11 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--java-provider", java_options.get("provider") or android.get("java_provider", "auto"))
     _append_option(argv, "--sdk-root", android.get("sdk_root"))
     _append_option(argv, "--aapt2", android.get("aapt2"))
-    _append_option(argv, "--aapt2-provider", android.get("aapt2_provider", "auto"))
+    _append_option(argv, "--aapt2-provider", build_tools_options.get("aapt2_provider") or android.get("aapt2_provider", "auto"))
     _append_option(argv, "--aapt2-release", android.get("aapt2_release"))
     _append_option(argv, "--android-platform", android.get("platform", "auto"))
-    _append_option(argv, "--build-tools", android.get("build_tools", "auto"))
+    _append_option(argv, "--build-tools", build_tools_options.get("version") or (build_tools_value if not isinstance(build_tools_value, dict) else "auto"))
+    _append_option(argv, "--arm-build-tools-provider", build_tools_options.get("provider") or android.get("build_tools_provider", "auto"))
     _append_option(argv, "--ndk-version", android.get("ndk_version", "auto"))
     _append_option(argv, "--ndk-host-provider", android.get("ndk_host_provider", "auto"))
     _append_option(argv, "--arm64-ndk-url", android.get("arm64_ndk_url"))
@@ -549,6 +554,8 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--qemu-sysroot-sha256", android.get("qemu_sysroot_sha256"))
     _append_option(argv, "--qemu-install", android.get("qemu_install", "auto"))
     _append_option(argv, "--cmake-version", android.get("cmake_version", "auto"))
+    _append_option(argv, "--native-provider", native_options.get("provider") or android.get("native_provider", "auto"))
+    _append_option(argv, "--native-cache", native_options.get("cache") or android.get("native_cache", "auto"))
     _append_option(argv, "--gradle-command", gradle.get("command") or nested_gradle.get("command") or (android.get("gradle") if not isinstance(android.get("gradle"), dict) else None))
     _append_option(argv, "--gradle-provider", gradle.get("provider") or nested_gradle.get("provider") or "auto")
     _append_option(argv, "--gradle-version", gradle.get("version"))
@@ -737,6 +744,13 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
     java_provider = str(java_options.get("provider") or android.get("java_provider") or "auto")
     gradle_provider = str(gradle.get("provider") or "auto")
+    native_options = android.get("native", {}) if isinstance(android.get("native", {}), dict) else {}
+    build_tools_value = android.get("build_tools", {})
+    build_tools_options = build_tools_value if isinstance(build_tools_value, dict) else {}
+    native_provider_name = str(native_options.get("provider") or android.get("native_provider") or "auto")
+    native_cache = str(native_options.get("cache") or android.get("native_cache") or "auto")
+    build_tools_provider = str(build_tools_options.get("provider") or android.get("build_tools_provider") or "auto")
+    aapt2_provider = str(build_tools_options.get("aapt2_provider") or android.get("aapt2_provider") or "auto")
     downloads, network = _bootstrap_policy(config)
     tasks = configured_tasks(config, "build")
     test_tasks = configured_tasks(config, "test")
@@ -749,6 +763,10 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("gradle_wrapper", wrapper_version or "not declared"),
         ("java_provider", java_provider),
         ("gradle_provider", gradle_provider),
+        ("native_provider", native_provider_name),
+        ("native_cache", native_cache),
+        ("android_build_tools_provider", build_tools_provider),
+        ("aapt2_provider", aapt2_provider),
         ("minimum_java", str(requirement.minimum) + (" exact toolchain" if requirement.exact else "")),
         ("compile_sdk", str(project.compile_sdk) if project.compile_sdk else "auto/unknown"),
         ("android_gradle_plugin", str(project.agp_major) if project.agp_major else "unknown"),
@@ -777,6 +795,13 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
     java_provider = str(java_options.get("provider") or android.get("java_provider") or "auto")
     gradle_provider = str(gradle.get("provider") or "auto")
+    native_options = android.get("native", {}) if isinstance(android.get("native", {}), dict) else {}
+    build_tools_value = android.get("build_tools", {})
+    build_tools_options = build_tools_value if isinstance(build_tools_value, dict) else {}
+    native_provider_name = str(native_options.get("provider") or android.get("native_provider") or "auto")
+    native_cache = str(native_options.get("cache") or android.get("native_cache") or "auto")
+    build_tools_provider = str(build_tools_options.get("provider") or android.get("build_tools_provider") or "auto")
+    aapt2_provider = str(build_tools_options.get("aapt2_provider") or android.get("aapt2_provider") or "auto")
     downloads, network = _bootstrap_policy(config)
     java_home: Path | None = None
     try:
@@ -807,9 +832,25 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         platform = sdk / "platforms" / f"android-{project.compile_sdk}" / "android.jar"
         platform_status = "ready" if platform.is_file() else f"missing android-{project.compile_sdk}"
 
+    native_requirement = classify_native_requirement(project.root, android=project.android)
+    runtime = detect_runtime_identity()
+    termux_rows: list[tuple[str, str]] = []
+    if runtime.is_termux:
+        native_probe = termux_native_provider(runtime=runtime)
+        termux_rows.append(("termux_native", f"READY {native_probe.version} @ {native_probe.path}" if native_probe.compatible and native_probe.path else f"UNUSABLE {native_probe.rejection_reason or native_probe.reason}"))
+        for label, probe in (("termux_cmake", termux_cmake_probe(runtime=runtime)), ("termux_ninja", termux_ninja_probe(runtime=runtime)), ("termux_ccache", termux_ccache_probe(runtime=runtime))):
+            termux_rows.append((label, f"READY {probe.version} @ {probe.path}" if probe.compatible and probe.path else "MISSING/UNUSABLE"))
+        tools = termux_android_tool_providers(runtime=runtime)
+        termux_rows.append(("termux_android_tools", ", ".join(f"{item.capability}:{'ready' if item.compatible else 'unavailable'}" for item in tools)))
+
     return [
         ("android_project", "ready" if project.android else "not Android"),
         ("execution_mode", _android_execution_mode(config)),
+        ("native_requirement", native_requirement.capability),
+        ("native_provider", native_provider_name),
+        ("native_cache", native_cache),
+        ("android_build_tools_provider", build_tools_provider),
+        ("aapt2_provider", aapt2_provider),
         ("java_provider", java_provider),
         ("gradle_provider", gradle_provider),
         (
@@ -835,6 +876,7 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("build_tools", build_tools[0] if build_tools else "missing/repairable"),
         ("aapt2", aapt2_status),
         ("builder", str(stage_android_builder())),
+        *termux_rows,
     ]
 
 

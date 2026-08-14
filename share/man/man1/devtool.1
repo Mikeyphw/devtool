@@ -479,6 +479,18 @@ Select the Java provider for Android/Gradle runs: \fBauto\fR, \fBtermux\fR, or \
 Set
 .B GRADLE_USER_HOME
 for Android/Gradle runs.
+.TP
+.BR --native-provider " PROVIDER"
+Select native compiler capability provider: \fBauto\fR, \fBtermux-sysroot\fR, \fBndk\fR, or \fBsystem\fR. Android external native builds still require a complete NDK.
+.TP
+.BR --native-cache " PROVIDER"
+Select native compiler cache: \fBauto\fR, \fBccache\fR, or \fBoff\fR.
+.TP
+.BR --android-build-tools-provider " PROVIDER"
+Select native Android SDK build-tools provider: \fBauto\fR, \fBtermux\fR, \fBsdk\fR, \fBcommit451\fR, or \fBnone\fR. Native Termux/Bionic requires runnable Termux helpers; Commit451 linux-glibc-arm64 binaries are used only on compatible Linux/chroot hosts.
+.TP
+.BR --aapt2-provider " PROVIDER"
+Select AAPT2 provider: \fBauto\fR, \fBtermux\fR, \fBsdk\fR, \fBrevanced\fR, or \fBnone\fR. Native Termux AAPT2 is capability-probed against the selected Android platform before use.
 .PP
 Devtool records the selected environment in structured logs and HUD state. Chroot workers
 use a recursion guard, translate known Termux/chroot paths, and verify the mapped project

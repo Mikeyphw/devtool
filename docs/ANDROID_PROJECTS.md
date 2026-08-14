@@ -282,6 +282,50 @@ then `getprop` fallback), and provider diagnostics distinguish missing tools fro
 detected executables whose version probe is unusable. Use `--gradle-provider` or
 `--java-provider` when deliberately selecting a provider.
 
+### Termux native/sysroot and Android build-tools policy
+
+Termux `clang` depends on the NDK-derived `ndk-sysroot`, but devtool treats that
+combination as a native compiler capability rather than a complete Android NDK.
+Plain compiler/CMake work can use the native Termux provider; Android Gradle
+projects using external native integration continue through the complete NDK
+provider and existing NDK host-compatibility logic. Android Gradle Plugin uses
+CMake or ndk-build for `externalNativeBuild`, so those projects are never silently
+redirected to the Termux sysroot-only provider.
+
+```toml
+[android.native]
+provider = "auto" # auto | termux-sysroot | ndk | system
+cache = "auto" # auto | ccache | off
+
+[android.build_tools]
+provider = "auto" # auto | termux | sdk | commit451 | none
+aapt2_provider = "auto" # auto | termux | sdk | revanced | none
+
+[cmake]
+provider = "auto" # auto | termux | system
+native_provider = "auto" # auto | termux-sysroot | system
+cache = "auto" # auto | ccache | off
+```
+
+On native Termux, `auto` discovers CMake, Ninja, ccache, AAPT/AAPT2, apksigner,
+adb, and the native SDK helper names under `$PREFIX`. AAPT2 is selected only
+after a compile/link probe against the actual selected Android platform. ARM64
+SDK helper repair also executes a harmless probe for `aidl`, `zipalign`, and
+`split-select`, because matching AArch64 ELF architecture alone cannot distinguish
+Bionic from glibc compatibility. Native Termux therefore requires runnable
+Termux-native helpers. Commit451 publishes linux-glibc-arm64 build tools, so that
+provider is rejected under native Termux/Bionic and retained only for compatible
+ARM64 Linux/chroot hosts. Commit451 release availability is resolved before asset
+downloads, while the `35.0.0 -> 35.0.1` compatibility alias remains supported.
+The explicit `sdk` provider refuses an SDK whose native tools cannot execute on
+the host instead of quietly substituting another provider.
+
+A `CMakeLists.txt` that merely exists somewhere in an Android repository is not
+by itself treated as Android NDK integration. Devtool requires an explicit
+`externalNativeBuild`/`ndkVersion`/ndk-build signal (or Android.mk/Application.mk)
+before forcing the complete NDK provider, so host-side CMake helpers do not trigger
+unnecessary NDK provisioning.
+
 ## Exact Gradle progress
 
 Devtool stages a bundled init script under the same XDG data root:

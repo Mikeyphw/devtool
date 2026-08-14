@@ -675,6 +675,45 @@ provider = "auto"
 provider = "auto"
 ```
 
+## Termux native and Android build-tool providers
+
+Native Termux can use its packaged `clang`, `clang++`, `lld`, `llvm-ar`,
+`llvm-ranlib`, `ndk-sysroot`, `cmake`, `ninja`, and `ccache` as explicit
+providers. `ndk-sysroot` is treated only as a compiler/sysroot capability; an
+Android project using `externalNativeBuild`, CMake/ndk-build integration, or an
+NDK declaration still requires a complete Android NDK. This prevents native
+helper builds from triggering an unnecessary NDK bootstrap without weakening
+Android NDK reproducibility.
+
+Termux Android tools are also discovered as providers. In `auto` mode, a native
+Termux `aapt2` must pass a real compile/link capability probe against the selected
+`android.jar` before it can override AGP. On native Termux/Bionic, incompatible SDK
+`aidl`/`zipalign`/`split-select` binaries must be replaced by runnable Termux-native
+executables; Commit451 artifacts are deliberately rejected there because upstream
+publishes linux-glibc-arm64 binaries. On ARM64 glibc hosts/chroots, the verified
+Commit451 provider remains the fallback and release availability is resolved before
+asset URLs are downloaded.
+
+```toml
+[android.native]
+provider = "auto" # auto | termux-sysroot | ndk | system
+cache = "auto" # auto | ccache | off
+
+[android.build_tools]
+provider = "auto" # auto | termux | sdk | commit451 | none
+aapt2_provider = "auto" # auto | termux | sdk | revanced | none
+
+[cmake]
+provider = "auto" # auto | termux | system
+native_provider = "auto" # auto | termux-sysroot | system
+cache = "auto" # auto | ccache | off
+```
+
+Equivalent one-run options are `--native-provider`, `--native-cache`,
+`--android-build-tools-provider`, and `--aapt2-provider`. `doctor` reports the
+Termux native compiler, CMake, Ninja, ccache, and Android-tool capability states.
+Generic CMake projects may also set `[cmake].native_provider`; on native Termux, `auto` uses the complete clang/lld + `ndk-sysroot` provider when available and never treats it as a full Android NDK.
+
 ## Android NDK host fallback
 
 For ARM64 Termux/chroot validation of Android projects with native code, devtool

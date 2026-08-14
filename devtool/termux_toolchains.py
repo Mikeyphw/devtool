@@ -13,6 +13,9 @@ from typing import Mapping, Sequence
 TERMUX_PREFIX_FALLBACK = Path('/data/data/com.termux/files/usr')
 VALID_JAVA_PROVIDERS = {'auto', 'termux', 'system'}
 VALID_GRADLE_PROVIDERS = {'auto', 'wrapper', 'termux', 'system', 'download'}
+VALID_NATIVE_PROVIDERS = {'auto', 'termux-sysroot', 'ndk', 'system'}
+VALID_NATIVE_CACHE_PROVIDERS = {'auto', 'ccache', 'off'}
+VALID_ANDROID_BUILD_TOOLS_PROVIDERS = {'auto', 'termux', 'sdk', 'commit451', 'none'}
 
 
 @dataclass(frozen=True)
@@ -330,6 +333,188 @@ def termux_java_providers(
             reason=detected_reason if compatible else rejection,
         ))
     return tuple(providers)
+
+
+@dataclass(frozen=True)
+class NativeRequirement:
+    capability: str
+    reason: str
+
+    @property
+    def requires_full_ndk(self) -> bool:
+        return self.capability == 'android-ndk'
+
+
+def normalize_native_provider(value: str | None) -> str:
+    normalized = str(value or 'auto').strip().lower() or 'auto'
+    aliases = {'termux': 'termux-sysroot', 'full-ndk': 'ndk', 'android-ndk': 'ndk'}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in VALID_NATIVE_PROVIDERS:
+        valid = ', '.join(sorted(VALID_NATIVE_PROVIDERS))
+        raise ValueError(f'Unsupported native provider: {value}. Expected one of: {valid}')
+    return normalized
+
+
+def normalize_native_cache_provider(value: str | None) -> str:
+    normalized = str(value or 'auto').strip().lower() or 'auto'
+    if normalized in {'none', 'false', 'disabled'}:
+        normalized = 'off'
+    if normalized not in VALID_NATIVE_CACHE_PROVIDERS:
+        valid = ', '.join(sorted(VALID_NATIVE_CACHE_PROVIDERS))
+        raise ValueError(f'Unsupported native cache provider: {value}. Expected one of: {valid}')
+    return normalized
+
+
+def normalize_android_build_tools_provider(value: str | None) -> str:
+    normalized = str(value or 'auto').strip().lower() or 'auto'
+    aliases = {'download': 'commit451', 'downloaded': 'commit451', 'android-sdk': 'sdk'}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in VALID_ANDROID_BUILD_TOOLS_PROVIDERS:
+        valid = ', '.join(sorted(VALID_ANDROID_BUILD_TOOLS_PROVIDERS))
+        raise ValueError(f'Unsupported Android build-tools provider: {value}. Expected one of: {valid}')
+    return normalized
+
+
+def _termux_binary_probe(
+    capability: str,
+    names: Sequence[str],
+    *,
+    package: str = '',
+    version_args: Sequence[str] = ('--version',),
+    version_pattern: str = r'([0-9]+(?:\.[0-9A-Za-z_-]+)+)',
+    require_version: bool = True,
+    env: Mapping[str, str] | None = None,
+    runtime: RuntimeIdentity | None = None,
+) -> ToolProvider:
+    env = env or os.environ
+    runtime = runtime or detect_runtime_identity(env)
+    if not runtime.is_termux:
+        return ToolProvider(capability, 'termux', False, runtime=runtime, compatible=False, rejection_reason='not running in native Termux', reason='not running in native Termux')
+    path_value = str(env.get('PATH', '') or '')
+    found = next((shutil.which(name, path=path_value) for name in names if shutil.which(name, path=path_value)), None)
+    if not found:
+        return ToolProvider(capability, 'termux', False, package=package, runtime=runtime, compatible=False, rejection_reason=f'{"/".join(names)} not found on PATH', reason=f'{"/".join(names)} not found on PATH')
+    resolved = Path(found).expanduser().resolve(strict=False)
+    if runtime.prefix is None or not _path_is_within(resolved, runtime.prefix):
+        reason = f'{capability} resolves outside Termux PREFIX: {resolved}'
+        return ToolProvider(capability, 'termux', False, path=resolved, package=package, runtime=runtime, compatible=False, rejection_reason=reason, reason=reason)
+    package_probe = termux_package_probe(package, env=env, runtime=runtime) if package else PackageProbe('', False)
+    version = _tool_version([str(resolved), *version_args], version_pattern, env=env) if version_args else ''
+    if not version and not require_version:
+        version = package_probe.version
+    if not version and require_version:
+        reason = f'Termux {capability} detected at {resolved}, but version probe could not be parsed'
+        return ToolProvider(capability, 'termux', True, path=resolved, package=package, package_version=package_probe.version, package_manager=package_probe.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=(capability,), reason=reason)
+    reason = f'Termux {capability} detected at {resolved}'
+    return ToolProvider(capability, 'termux', True, path=resolved, version=version, package=package, package_version=package_probe.version, package_manager=package_probe.manager, runtime=runtime, compatible=True, selection_reason=reason, capabilities=(capability,), reason=reason)
+
+
+def termux_cmake_probe(*, env: Mapping[str, str] | None = None, runtime: RuntimeIdentity | None = None) -> ToolProvider:
+    return _termux_binary_probe('cmake', ('cmake',), package='cmake', version_pattern=r'cmake version\s+([^\s]+)', env=env, runtime=runtime)
+
+
+def termux_ninja_probe(*, env: Mapping[str, str] | None = None, runtime: RuntimeIdentity | None = None) -> ToolProvider:
+    return _termux_binary_probe('ninja', ('ninja', 'ninja-build'), package='ninja', version_pattern=r'^([^\s]+)', env=env, runtime=runtime)
+
+
+def termux_ccache_probe(*, env: Mapping[str, str] | None = None, runtime: RuntimeIdentity | None = None) -> ToolProvider:
+    return _termux_binary_probe('ccache', ('ccache',), package='ccache', version_pattern=r'ccache version\s+([^\s]+)', env=env, runtime=runtime)
+
+
+def termux_native_provider(*, env: Mapping[str, str] | None = None, runtime: RuntimeIdentity | None = None) -> ToolProvider:
+    env = env or os.environ
+    runtime = runtime or detect_runtime_identity(env)
+    if not runtime.is_termux:
+        return ToolProvider('native-compiler', 'termux-sysroot', False, runtime=runtime, compatible=False, rejection_reason='not running in native Termux', reason='not running in native Termux')
+    prefix = runtime.prefix or termux_prefix(env)
+    required = ('clang', 'clang++', 'ld.lld', 'llvm-ar', 'llvm-ranlib')
+    missing: list[str] = []
+    paths: dict[str, Path] = {}
+    path_value = str(env.get('PATH', '') or '')
+    for name in required:
+        found = shutil.which(name, path=path_value)
+        if not found:
+            missing.append(name)
+            continue
+        resolved = Path(found).expanduser().resolve(strict=False)
+        if not _path_is_within(resolved, prefix):
+            missing.append(f'{name} (outside PREFIX)')
+            continue
+        paths[name] = resolved
+    sysroot = termux_package_probe('ndk-sysroot', env=env, runtime=runtime)
+    clang_pkg = termux_package_probe('clang', env=env, runtime=runtime)
+    if missing or not sysroot.installed:
+        details = []
+        if missing:
+            details.append('missing ' + ', '.join(missing))
+        if not sysroot.installed:
+            details.append('ndk-sysroot package is not installed')
+        reason = 'Termux native compiler provider incomplete: ' + '; '.join(details)
+        return ToolProvider('native-compiler', 'termux-sysroot', bool(paths), path=paths.get('clang'), package='ndk-sysroot', package_version=sysroot.version, package_manager=sysroot.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=tuple(paths), reason=reason)
+    version = _tool_version([str(paths['clang']), '--version'], r'(?:clang version|clang version\s*)([^\s]+)', env=env)
+    if not version:
+        reason = 'Termux clang --version could not be parsed'
+        return ToolProvider('native-compiler', 'termux-sysroot', True, path=paths['clang'], package='ndk-sysroot', package_version=sysroot.version, package_manager=sysroot.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=required, reason=reason)
+    return ToolProvider('native-compiler', 'termux-sysroot', True, path=paths['clang'], version=version, package='ndk-sysroot', package_version=sysroot.version, package_manager=sysroot.manager, runtime=runtime, compatible=True, selection_reason='Termux clang/lld with ndk-sysroot is complete', capabilities=required, reason='Termux clang/lld with ndk-sysroot is complete')
+
+
+_TERMUX_ANDROID_TOOL_PACKAGES = {
+    'aapt': 'aapt',
+    'aapt2': 'aapt',
+    'apksigner': 'apksigner',
+    'adb': 'android-tools',
+    'aidl': 'aapt',
+    'zipalign': 'aapt',
+    'split-select': 'aapt',
+}
+
+
+def termux_android_tool_probe(name: str, *, env: Mapping[str, str] | None = None, runtime: RuntimeIdentity | None = None) -> ToolProvider:
+    package = _TERMUX_ANDROID_TOOL_PACKAGES.get(name, '')
+    patterns = {
+        'aapt': r'v?([0-9]+(?:\.[0-9A-Za-z_-]+)+)',
+        'aapt2': r'v?([0-9]+(?:\.[0-9A-Za-z_-]+)+)',
+        'apksigner': r'([0-9]+(?:\.[0-9A-Za-z_-]+)+)',
+        'adb': r'Version\s+([^\s]+)',
+    }
+    versioned = name in {'adb', 'aapt', 'aapt2', 'apksigner'}
+    args = ('version',) if name in {'adb', 'aapt', 'aapt2'} else ('--version',) if versioned else ()
+    return _termux_binary_probe(
+        name,
+        (name,),
+        package=package,
+        version_args=args,
+        version_pattern=patterns.get(name, r'([0-9]+(?:\.[0-9A-Za-z_-]+)+)'),
+        require_version=versioned,
+        env=env,
+        runtime=runtime,
+    )
+
+
+def termux_android_tool_providers(*, env: Mapping[str, str] | None = None, runtime: RuntimeIdentity | None = None) -> tuple[ToolProvider, ...]:
+    return tuple(termux_android_tool_probe(name, env=env, runtime=runtime) for name in ('aapt', 'aapt2', 'apksigner', 'adb', 'aidl', 'zipalign', 'split-select'))
+
+
+def classify_native_requirement(project_root: Path, *, android: bool = False) -> NativeRequirement:
+    root = Path(project_root).expanduser()
+    chunks: list[str] = []
+    for pattern in ('*.gradle', '*.gradle.kts', 'gradle.properties'):
+        for path in root.rglob(pattern):
+            try:
+                chunks.append(path.read_text(encoding='utf-8', errors='replace'))
+            except OSError:
+                pass
+    text = '\n'.join(chunks)
+    # A CMakeLists.txt by itself is not enough to prove Android NDK integration:
+    # repositories often contain host-side helpers or third-party CMake projects.
+    # Require an Android/Gradle NDK declaration or an ndk-build makefile instead.
+    full_ndk_markers = ('externalNativeBuild', 'ndkVersion', 'ndk-build', 'android.toolchain.cmake')
+    has_ndk_makefiles = any(root.rglob('Android.mk')) or any(root.rglob('Application.mk'))
+    if android and (any(marker in text for marker in full_ndk_markers) or has_ndk_makefiles):
+        return NativeRequirement('android-ndk', 'Android native build integration requires a complete Android NDK')
+    if any(root.rglob('CMakeLists.txt')) or any(root.rglob('*.c')) or any(root.rglob('*.cc')) or any(root.rglob('*.cpp')):
+        return NativeRequirement('compiler', 'project contains native compiler inputs without Android NDK integration')
+    return NativeRequirement('none', 'no native compiler requirement detected')
 
 @dataclass(frozen=True)
 class GradleWrapperProbe:

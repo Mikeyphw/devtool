@@ -45,6 +45,7 @@ REVANCED_REPOSITORY = "ReVanced/aapt2"
 REVANCED_API = f"https://api.github.com/repos/{REVANCED_REPOSITORY}"
 ARM_BUILD_TOOLS_REPOSITORY = "Commit451/android-arm-build-tools"
 ARM_BUILD_TOOLS_RELEASE_ALIASES = {"35.0.0": "35.0.1"}
+ARM_BUILD_TOOLS_PUBLISHED_RELEASES = {"35.0.1", "36.0.0", "36.1.0", "37.0.0"}
 ARM_BUILD_TOOLS_NATIVE_NAMES = ("aidl", "zipalign", "split-select")
 NDK_HOST_PROVIDERS = {"auto", "google", "arm64", "qemu", "none"}
 QEMU_INSTALL_POLICIES = {"auto", "never"}
@@ -58,6 +59,9 @@ BOOTSTRAP_DOWNLOAD_POLICIES = {"never", "missing", "auto", "force"}
 BOOTSTRAP_NETWORK_POLICIES = {"deny", "allow"}
 JAVA_PROVIDERS = {"auto", "termux", "system"}
 GRADLE_PROVIDERS = {"auto", "wrapper", "termux", "system", "download"}
+NATIVE_PROVIDERS = {"auto", "termux-sysroot", "ndk", "system"}
+NATIVE_CACHE_PROVIDERS = {"auto", "ccache", "off"}
+ANDROID_BUILD_TOOLS_PROVIDERS = {"auto", "termux", "sdk", "commit451", "none"}
 
 
 class BuildError(RuntimeError):
@@ -826,6 +830,96 @@ def executable_provider(path: Path) -> str:
     return "system"
 
 
+def normalize_native_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    aliases = {"termux": "termux-sysroot", "full-ndk": "ndk", "android-ndk": "ndk"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in NATIVE_PROVIDERS:
+        valid = ", ".join(sorted(NATIVE_PROVIDERS))
+        fail(f"Unsupported native provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def normalize_native_cache_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    if normalized in {"none", "false", "disabled"}:
+        normalized = "off"
+    if normalized not in NATIVE_CACHE_PROVIDERS:
+        valid = ", ".join(sorted(NATIVE_CACHE_PROVIDERS))
+        fail(f"Unsupported native cache provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def normalize_android_build_tools_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    aliases = {"download": "commit451", "downloaded": "commit451", "android-sdk": "sdk"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in ANDROID_BUILD_TOOLS_PROVIDERS:
+        valid = ", ".join(sorted(ANDROID_BUILD_TOOLS_PROVIDERS))
+        fail(f"Unsupported Android build-tools provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def termux_tool_path(name: str) -> Path | None:
+    if not running_under_termux_python():
+        return None
+    found = shutil.which(name)
+    if not found:
+        return None
+    resolved = Path(found).expanduser().resolve(strict=False)
+    return resolved if _path_is_within(resolved, termux_prefix_path()) else None
+
+
+def termux_ndk_sysroot_ready() -> tuple[bool, str]:
+    if not running_under_termux_python():
+        return False, "not running in native Termux"
+    version = termux_package_version("ndk-sysroot")
+    required = ("clang", "clang++", "ld.lld", "llvm-ar", "llvm-ranlib")
+    missing = [name for name in required if termux_tool_path(name) is None]
+    if not version:
+        return False, "ndk-sysroot package is not installed"
+    if missing:
+        return False, "missing Termux native tools: " + ", ".join(missing)
+    return True, f"ndk-sysroot {version} with Termux clang/lld"
+
+
+def native_requirement(project: "ProjectInfo") -> str:
+    if project.android and project.native_build:
+        return "android-ndk"
+    return "none"
+
+
+def select_native_provider(project: "ProjectInfo", requested: str) -> str:
+    provider = normalize_native_provider(requested)
+    requirement = native_requirement(project)
+    if requirement == "android-ndk":
+        if provider not in {"auto", "ndk"}:
+            fail("This Android native build requires a complete Android NDK; termux-sysroot/system compiler providers are insufficient")
+        return "ndk"
+    if provider in {"auto", "termux-sysroot"}:
+        ready, reason = termux_ndk_sysroot_ready()
+        if ready:
+            info(f"Native provider: Termux sysroot ({reason})")
+            return "termux-sysroot"
+        if provider == "termux-sysroot":
+            fail(f"Termux native provider requested but unavailable: {reason}")
+    return "system" if provider == "auto" else provider
+
+
+def configure_native_cache(env: MutableMapping[str, str], requested: str) -> str:
+    provider = normalize_native_cache_provider(requested)
+    ccache = termux_tool_path("ccache") if running_under_termux_python() else (Path(shutil.which("ccache")).resolve() if shutil.which("ccache") else None)
+    if provider == "ccache" and ccache is None:
+        fail("ccache provider requested but ccache is not available")
+    if provider != "off" and ccache is not None:
+        env.setdefault("CCACHE_DIR", str(Path.home() / ".cache" / "devtool" / "ccache"))
+        env.setdefault("CMAKE_C_COMPILER_LAUNCHER", str(ccache))
+        env.setdefault("CMAKE_CXX_COMPILER_LAUNCHER", str(ccache))
+        info(f"Native compiler cache: {ccache}")
+        return "ccache"
+    return "off"
+
+
 def termux_package_version(name: str) -> str | None:
     if not running_under_termux_python():
         return None
@@ -1197,6 +1291,67 @@ def obtain_revanced_aapt2(
     return validate_aapt2(target, dry_run=dry_run)
 
 
+def termux_aapt2_path() -> Path | None:
+    path = termux_tool_path("aapt2")
+    if path is None or not executable_runs(path, "version"):
+        return None
+    return path
+
+
+def termux_aapt2_supports_platform(
+    aapt2: Path,
+    sdk_root: Path,
+    platform_id: str | None,
+    *,
+    dry_run: bool = False,
+) -> bool:
+    if dry_run:
+        return True
+    if not platform_id:
+        return executable_runs(aapt2, "version")
+    android_jar = sdk_root / "platforms" / platform_id / "android.jar"
+    if not android_jar.is_file():
+        return False
+    try:
+        with tempfile.TemporaryDirectory(prefix="devtool-aapt2-probe-") as temporary_dir:
+            root = Path(temporary_dir)
+            values = root / "res" / "values"
+            values.mkdir(parents=True)
+            (values / "strings.xml").write_text('<resources><string name="app_name">probe</string></resources>\n', encoding="utf-8")
+            manifest = root / "AndroidManifest.xml"
+            manifest.write_text('<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="devtool.probe"><uses-sdk android:minSdkVersion="21"/><application android:label="@string/app_name"/></manifest>\n', encoding="utf-8")
+            compiled = root / "compiled.zip"
+            linked = root / "probe.apk"
+            compile_result = subprocess.run([str(aapt2), "compile", "--dir", str(root / "res"), "-o", str(compiled)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20, check=False)
+            if compile_result.returncode != 0:
+                return False
+            link_result = subprocess.run([str(aapt2), "link", "-I", str(android_jar), "--manifest", str(manifest), "-o", str(linked), str(compiled)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20, check=False)
+            return link_result.returncode == 0 and linked.is_file()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def select_termux_aapt2(
+    sdk_root: Path | None,
+    platform_id: str | None,
+    *,
+    required: bool,
+    dry_run: bool = False,
+) -> Path | None:
+    candidate = termux_aapt2_path()
+    if candidate is None:
+        if required:
+            fail("Termux AAPT2 provider requested but $PREFIX/bin/aapt2 is unavailable or cannot run")
+        return None
+    if sdk_root is None or not termux_aapt2_supports_platform(candidate, sdk_root, platform_id, dry_run=dry_run):
+        if required:
+            fail(f"Termux AAPT2 is not compatible with selected Android platform {platform_id or 'unknown'}: {candidate}")
+        warn(f"Termux AAPT2 failed capability probe for Android platform {platform_id or 'unknown'}; using another provider")
+        return None
+    info(f"AAPT2 provider: Termux ({candidate})")
+    return candidate
+
+
 def _checksum_from_manifest(text: str, asset_name: str) -> str | None:
     """Return the SHA-256 recorded for ``asset_name`` in SHA256SUMS text."""
 
@@ -1236,6 +1391,46 @@ def native_tool_matches_host(path: Path, machine: str | None = None) -> bool:
     detected = _elf_machine(header)
     return detected is None or detected == (machine or normalized_machine())
 
+
+
+def android_build_tool_executes(path: Path, tool_name: str, *, timeout: float = 5.0) -> bool:
+    """Return whether an Android build-tool executable can actually start here.
+
+    Matching ELF architecture is not enough on Android/Termux: an AArch64
+    glibc executable still cannot run under Bionic. Use a harmless probe and
+    accept any normal exit status; loader/exec failures and timeouts are not
+    compatible.
+    """
+
+    probes = {
+        "aidl": ("--version",),
+        "zipalign": ("-h",),
+        "split-select": ("--help",),
+        "aapt2": ("version",),
+    }
+    args = probes.get(tool_name, ("--help",))
+    try:
+        subprocess.run(
+            [str(path), *args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def native_android_build_tool_compatible(path: Path, tool_name: str, machine: str | None = None) -> bool:
+    if not native_tool_matches_host(path, machine):
+        return False
+    # Native Termux must also prove runtime/loader compatibility. Linux/chroot
+    # hosts retain the historical architecture-only fast path.
+    if running_under_termux_python():
+        return android_build_tool_executes(path, tool_name)
+    return True
 
 
 def native_tool_arch(path: Path) -> str | None:
@@ -1843,6 +2038,67 @@ def ensure_ndk_host_compatible(
     )
 
 
+def commit451_release_available(
+    cache_root: Path,
+    release_version: str,
+    *,
+    offline: bool,
+) -> bool:
+    """Resolve whether Commit451 publishes the requested build-tools release."""
+
+    tag = f"platform-tools-{release_version}"
+    release_dir = cache_root / "android-build-tools" / "commit451" / tag
+    if (release_dir / "SHA256SUMS").is_file() or release_version in ARM_BUILD_TOOLS_PUBLISHED_RELEASES:
+        return True
+    if offline:
+        return False
+    url = f"https://api.github.com/repos/{ARM_BUILD_TOOLS_REPOSITORY}/releases/tags/{urllib.parse.quote(tag, safe='')}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": f"{APP_NAME}/1.0",
+    }
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        fail(f"Could not resolve Commit451 release availability: {url}\n{exc}")
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        fail(f"Could not resolve Commit451 release availability: {url}\n{exc}")
+    return str(payload.get("tag_name") or "") == tag
+
+
+def resolve_commit451_release_version(
+    cache_root: Path,
+    build_tools_version: str,
+    *,
+    offline: bool,
+) -> str:
+    release_version = ARM_BUILD_TOOLS_RELEASE_ALIASES.get(build_tools_version, build_tools_version)
+    if release_version != build_tools_version:
+        warn(
+            "Commit451 does not publish ARM64 binaries for Android Build Tools "
+            f"{build_tools_version}; using the compatible {release_version} release."
+        )
+    if commit451_release_available(cache_root, release_version, offline=offline):
+        return release_version
+    if offline:
+        fail(
+            f"Commit451 release platform-tools-{release_version} is not cached and availability "
+            "cannot be resolved in --offline mode."
+        )
+    fail(
+        f"Commit451 does not publish ARM64 Android Build Tools release platform-tools-{release_version}. "
+        "Select a supported build-tools version, use the Termux-native provider, or use another execution backend."
+    )
+
+
 def obtain_commit451_arm64_tool(
     cache_root: Path,
     build_tools_version: str,
@@ -1852,21 +2108,21 @@ def obtain_commit451_arm64_tool(
     force: bool,
     dry_run: bool,
 ) -> Path:
-    """Download and verify one Commit451 linux-arm64 build-tools executable."""
+    """Download and verify one Commit451 linux-glibc-arm64 build-tools executable."""
 
     if tool_name not in ARM_BUILD_TOOLS_NATIVE_NAMES:
         fail(f"Unsupported ARM build-tools executable: {tool_name}")
     if normalized_machine() != "arm64":
         fail("Commit451 Android build-tools are only used on ARM64 Linux hosts")
-
-    release_version = ARM_BUILD_TOOLS_RELEASE_ALIASES.get(
-        build_tools_version, build_tools_version
-    )
-    if release_version != build_tools_version:
-        warn(
-            "Commit451 does not publish ARM64 binaries for Android Build Tools "
-            f"{build_tools_version}; using the compatible {release_version} release."
+    if running_under_termux_python():
+        fail(
+            "Commit451 Android build-tools target linux-glibc-arm64 and cannot run in native "
+            "Termux/Bionic. Use the Termux-native provider or a glibc chroot/PRoot/SSH backend."
         )
+
+    release_version = resolve_commit451_release_version(
+        cache_root, build_tools_version, offline=offline
+    )
     tag = f"platform-tools-{release_version}"
     base_url = (
         f"https://github.com/{ARM_BUILD_TOOLS_REPOSITORY}/releases/download/{tag}"
@@ -1940,7 +2196,7 @@ def arm64_build_tools_replacements_needed(
     return [
         name
         for name in ARM_BUILD_TOOLS_NATIVE_NAMES
-        if not native_tool_matches_host(directory / name, "arm64")
+        if not native_android_build_tool_compatible(directory / name, name, "arm64")
     ]
 
 
@@ -1958,10 +2214,9 @@ def ensure_arm64_build_tools_compatible(
 
     if normalized_machine() != "arm64" or not build_tools_version:
         return
+    provider = normalize_android_build_tools_provider(provider)
     if provider == "none":
         return
-    if provider not in {"auto", "commit451"}:
-        fail(f"Unsupported ARM build-tools provider: {provider}")
 
     directory = sdk_root / "build-tools" / build_tools_version
     if not directory.is_dir():
@@ -1982,17 +2237,41 @@ def ensure_arm64_build_tools_compatible(
             f"repaired because it is read-only: {sdk_root}"
         )
 
+    if provider == "sdk":
+        fail(
+            "Android SDK build-tools provider was requested, but the selected SDK contains "
+            "native tools that are incompatible with this ARM64 host: " + ", ".join(replacements)
+        )
+
     heading(f"Repairing Android Build Tools {build_tools_version} for ARM64")
     selected = list(ARM_BUILD_TOOLS_NATIVE_NAMES) if force else replacements
     for tool_name in selected:
-        source = obtain_commit451_arm64_tool(
-            cache_root,
-            build_tools_version,
-            tool_name,
-            offline=offline,
-            force=force,
-            dry_run=dry_run,
-        )
+        source: Path | None = None
+        if provider in {"auto", "termux"} and running_under_termux_python():
+            candidate = termux_tool_path(tool_name)
+            if candidate is not None and native_android_build_tool_compatible(candidate, tool_name, "arm64"):
+                source = candidate
+                info(f"Using Termux-native {tool_name}: {candidate}")
+            elif provider == "termux":
+                fail(f"Termux build-tools provider requested but compatible {tool_name} is unavailable under {termux_prefix_path()}")
+        if source is None:
+            if provider == "termux":
+                fail(f"Termux build-tools provider requested but no compatible {tool_name} was found")
+            if running_under_termux_python():
+                fail(
+                    f"No compatible Termux-native {tool_name} is available. Commit451 publishes "
+                    "linux-glibc-arm64 binaries, which cannot run in native Termux/Bionic. "
+                    "Install/update the Termux aapt package or run this Android build through "
+                    "a glibc chroot/PRoot/SSH backend."
+                )
+            source = obtain_commit451_arm64_tool(
+                cache_root,
+                build_tools_version,
+                tool_name,
+                offline=offline,
+                force=force,
+                dry_run=dry_run,
+            )
         target = directory / tool_name
         if dry_run:
             info(f"Would install ARM64 {tool_name}: {source} -> {target}")
@@ -2008,8 +2287,8 @@ def ensure_arm64_build_tools_compatible(
         shutil.copy2(source, temporary)
         temporary.chmod(temporary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         temporary.replace(target)
-        if not native_tool_matches_host(target, "arm64"):
-            fail(f"Installed ARM64 {tool_name} failed architecture validation: {target}")
+        if not native_android_build_tool_compatible(target, tool_name, "arm64"):
+            fail(f"Installed ARM64 {tool_name} failed host/runtime validation: {target}")
         info(f"Installed ARM64 {tool_name}: {target}")
 
 
@@ -2140,9 +2419,19 @@ def inspect_project(root: Path) -> ProjectInfo:
         ],
         text,
     )
-    native_build = "externalNativeBuild" in text or any(root.rglob("CMakeLists.txt"))
     ndk_match = re.search(r"\bndkVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", text)
     ndk_version = ndk_match.group(1).strip() if ndk_match else None
+    # Do not classify an Android repository as an NDK build merely because it
+    # contains an unrelated CMakeLists.txt. Require explicit Android native
+    # integration, an NDK declaration, or ndk-build makefiles.
+    native_build = (
+        "externalNativeBuild" in text
+        or "ndk-build" in text
+        or "android.toolchain.cmake" in text
+        or ndk_version is not None
+        or any(root.rglob("Android.mk"))
+        or any(root.rglob("Application.mk"))
+    )
     cmake_match = re.search(
         r"externalNativeBuild\s*\{.*?cmake\s*\{.*?\bversion\s*=\s*['\"]([^'\"]+)",
         text,
@@ -3708,18 +3997,18 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-a", "--aapt2", type=Path, help="Use this AAPT2 binary; shared-storage files are staged automatically")
     parser.add_argument(
         "-A", "--aapt2-provider",
-        choices=("auto", "revanced", "none"),
+        choices=("auto", "termux", "sdk", "revanced", "none"),
         default="auto",
-        help="AAPT2 source when --aapt2 is omitted; auto uses ReVanced on ARM Android builds",
+        help="AAPT2 source when --aapt2 is omitted; auto prefers a compatible Termux AAPT2 before managed fallbacks on native Termux",
     )
     parser.add_argument("-R", "--aapt2-release", default="latest", help="ReVanced AAPT2 tag or latest")
     parser.add_argument(
         "--arm-build-tools-provider",
-        choices=("auto", "commit451", "none"),
+        choices=("auto", "termux", "sdk", "commit451", "none"),
         default="auto",
         help=(
-            "ARM64 provider for SDK aidl/zipalign/split-select; auto repairs "
-            "incompatible Google binaries from Commit451 releases"
+            "ARM64 provider for SDK aidl/zipalign/split-select; auto prefers compatible "
+            "Termux-native tools before Commit451 on native Termux"
         ),
     )
 
@@ -3744,6 +4033,8 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--qemu-sysroot-sha256", default=os.environ.get("DEVTOOL_QEMU_SYSROOT_SHA256", ""), help="optional SHA256 for --qemu-sysroot-url; defaults to the built-in Ubuntu Base checksum")
     parser.add_argument("--qemu-install", choices=sorted(QEMU_INSTALL_POLICIES), default=os.environ.get("DEVTOOL_QEMU_INSTALL", "auto"), help="Whether devtool may install qemu-user when needed")
     parser.add_argument("--cmake-version", default="auto", help="CMake version, auto, or none")
+    parser.add_argument("--native-provider", choices=sorted(NATIVE_PROVIDERS), default="auto", help="Native compiler provider: auto, termux-sysroot, ndk, or system")
+    parser.add_argument("--native-cache", choices=sorted(NATIVE_CACHE_PROVIDERS), default="auto", help="Native compiler cache provider: auto, ccache, or off")
     parser.add_argument("-I", "--skip-sdk-install", action="store_true", help="Never install missing SDK packages")
     parser.add_argument("--auto-sdk", action="store_true", help="Explicitly allow automatic SDK package downloads and managed SDK creation")
     parser.add_argument(
@@ -4121,8 +4412,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         info(f"Minimum Java: {minimum_java}+")
     run([java_home / "bin" / "java", "-version"], env=env, dry_run=args.dry_run)
 
+    selected_native_provider = "none"
+    if project.native_build or args.native_provider != "auto" or args.native_cache != "auto":
+        selected_native_provider = select_native_provider(project, args.native_provider)
+        configure_native_cache(env, args.native_cache)
+        if project.native_build:
+            info(f"Native provider: {selected_native_provider}")
+        else:
+            info(f"Native provider configured without detected native Android work: {selected_native_provider}")
+
     sdk_root: Path | None = None
     sdk_source: str | None = None
+    platform_id: str | None = None
     if project.android:
         sdk_root, sdk_source = discover_sdk_root_with_source(args.sdk_root, project.root)
         if sdk_root is None and not args.skip_sdk_install:
@@ -4151,7 +4452,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 info(f"SDK path source: {sdk_source}")
             if args.auto_sdk and not args.skip_sdk_install:
                 info("Auto SDK downloads: enabled")
-        sdk_root, _, _, _, _ = ensure_android_sdk(
+        sdk_root, platform_id, _, _, _ = ensure_android_sdk(
             project,
             sdk_root,
             cache_root,
@@ -4184,8 +4485,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if project.android:
         if args.aapt2:
             aapt2 = stage_aapt2(args.aapt2, cache_root, force=args.force_setup, dry_run=args.dry_run)
-        elif args.aapt2_provider == "revanced" or (
-            args.aapt2_provider == "auto" and normalized_machine() in {"arm64", "armv7"}
+        elif args.aapt2_provider in {"auto", "termux"} and running_under_termux_python():
+            aapt2 = select_termux_aapt2(
+                sdk_root,
+                platform_id,
+                required=args.aapt2_provider == "termux",
+                dry_run=args.dry_run,
+            )
+        if aapt2 is None and (
+            args.aapt2_provider == "revanced"
+            or (args.aapt2_provider == "auto" and normalized_machine() in {"arm64", "armv7"})
         ):
             if not provisioning_allowed:
                 cached_aapt2 = sorted(
@@ -4201,6 +4510,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         checked=[
                             "--aapt2 not set",
                             str(cache_root / "aapt2" / "revanced"),
+                            "Termux AAPT2 capability probe",
                             "Android Gradle Plugin default AAPT2",
                         ],
                     )
@@ -4211,7 +4521,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 force=args.force_setup,
                 dry_run=args.dry_run,
             )
-        elif args.aapt2_provider == "none":
+        elif aapt2 is None and args.aapt2_provider in {"sdk", "none"}:
             info("Using the AAPT2 selected by Android Gradle Plugin")
 
     gradle = select_gradle(

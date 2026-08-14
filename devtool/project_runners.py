@@ -23,6 +23,7 @@ from typing import Iterable
 from .build_optimization import optimized_build_env, optimized_validation_env, resolve_android_validation_phase_policy, resolve_android_validation_policy, resolve_build_policy
 from .execution_environments import detect_current_environment
 from .models import CommandSpec, ProjectConfig
+from .termux_toolchains import detect_runtime_identity, normalize_native_cache_provider, normalize_native_provider, termux_cmake_probe, termux_ninja_probe, termux_ccache_probe, termux_native_provider
 
 
 @dataclass(frozen=True, slots=True)
@@ -2444,20 +2445,71 @@ class CMakeRunner(ProjectRunner):
             path = Path(str(path).replace("{variant}", variant))
         return path.resolve()
 
+    def _native_termux_context(self, config: ProjectConfig) -> tuple[object | None, bool]:
+        policy = resolve_build_policy(config, self.kind)
+        native_tool_detection = policy.environment == detect_current_environment()
+        runtime = detect_runtime_identity() if native_tool_detection else None
+        return runtime, native_tool_detection
+
+    def _cmake_command(self, config: ProjectConfig, tool: str = "cmake") -> str:
+        options = self._options(config)
+        runtime, _ = self._native_termux_context(config)
+        provider = str(options.get("provider") or "auto").strip().lower()
+        if provider not in {"auto", "termux", "system"}:
+            raise SystemExit("Unsupported CMake provider: " + provider + ". Expected auto, termux, or system")
+        if runtime is not None and getattr(runtime, "is_termux", False) and provider in {"auto", "termux"}:
+            probe = termux_cmake_probe(runtime=runtime)
+            if provider == "termux" and not probe.compatible:
+                raise SystemExit(f"Termux CMake provider requested but unavailable: {probe.rejection_reason or probe.reason}")
+            if probe.compatible and probe.path:
+                if tool == "cmake":
+                    return str(probe.path)
+                sibling = probe.path.with_name(tool)
+                if sibling.is_file() and os.access(sibling, os.X_OK) and (runtime.prefix is None or sibling.resolve(strict=False).is_relative_to(runtime.prefix.resolve(strict=False))):
+                    return str(sibling)
+                if provider == "termux":
+                    raise SystemExit(f"Termux CMake provider requested but executable {tool} is unavailable next to {probe.path}")
+        return tool
+
     def _configure_spec(self, config: ProjectConfig) -> CommandSpec:
         root = self._root(config)
         build_dir = self._build_dir(config)
         options = self._options(config)
-        argv = ["cmake", "-S", str(root), "-B", str(build_dir)]
-        policy = resolve_build_policy(config, self.kind)
-        native_tool_detection = policy.environment == detect_current_environment()
-        generator = str(options.get("generator") or ("Ninja" if native_tool_detection and shutil.which("ninja") else "")).strip()
+        runtime, native_tool_detection = self._native_termux_context(config)
+        provider = str(options.get("provider") or "auto").strip().lower()
+        cmake_command = self._cmake_command(config)
+        ninja_available = bool(shutil.which("ninja"))
+        ccache_command = shutil.which("ccache")
+        native_compiler_provider = normalize_native_provider(str(options.get("native_provider") or "auto"))
+        native_probe = None
+        if runtime is not None and runtime.is_termux:
+            ninja_probe = termux_ninja_probe(runtime=runtime)
+            ccache_probe = termux_ccache_probe(runtime=runtime)
+            ninja_available = bool(ninja_probe.compatible and ninja_probe.path)
+            ccache_command = str(ccache_probe.path) if ccache_probe.compatible and ccache_probe.path else None
+            if native_compiler_provider in {"auto", "termux-sysroot"}:
+                native_probe = termux_native_provider(runtime=runtime)
+                if native_compiler_provider == "termux-sysroot" and not native_probe.compatible:
+                    raise SystemExit(f"Termux native compiler provider requested but unavailable: {native_probe.rejection_reason or native_probe.reason}")
+            elif native_compiler_provider == "ndk":
+                raise SystemExit("Generic CMake projects cannot select native_provider=ndk without an Android NDK toolchain file; use the Android runner for Android NDK builds")
+        elif native_compiler_provider == "termux-sysroot":
+            raise SystemExit("Termux native compiler provider requested outside native Termux execution")
+        argv = [cmake_command, "-S", str(root), "-B", str(build_dir)]
+        generator = str(options.get("generator") or ("Ninja" if native_tool_detection and ninja_available else "")).strip()
         if generator:
             argv.extend(["-G", generator])
         configuration = str(config.variant or options.get("configuration") or "Debug")
         argv.extend([f"-DCMAKE_BUILD_TYPE={configuration}", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"])
-        if bool(options.get("ccache", True)) and native_tool_detection and shutil.which("ccache"):
-            argv.extend(["-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"])
+        if native_probe is not None and native_probe.compatible and native_probe.path:
+            clang = native_probe.path
+            clangxx = clang.with_name("clang++")
+            argv.extend([f"-DCMAKE_C_COMPILER={clang}", f"-DCMAKE_CXX_COMPILER={clangxx}"])
+        cache_provider = normalize_native_cache_provider(str(options.get("cache") or ("auto" if bool(options.get("ccache", True)) else "off")))
+        if cache_provider == "ccache" and not ccache_command:
+            raise SystemExit("ccache provider requested but ccache is unavailable in the selected execution environment")
+        if cache_provider != "off" and native_tool_detection and ccache_command:
+            argv.extend([f"-DCMAKE_C_COMPILER_LAUNCHER={ccache_command}", f"-DCMAKE_CXX_COMPILER_LAUNCHER={ccache_command}"])
         extra = options.get("configure_args", [])
         if isinstance(extra, str):
             argv.extend(shlex.split(extra))
@@ -2478,20 +2530,20 @@ class CMakeRunner(ProjectRunner):
             return [self._configure_spec(config)]
         if action == "build":
             specs = [] if configured else [self._configure_spec(config)]
-            argv = ["cmake", "--build", str(build_dir), "--parallel", str(workers)]
+            argv = [self._cmake_command(config), "--build", str(build_dir), "--parallel", str(workers)]
             configuration = str(config.variant or self._options(config).get("configuration") or "Debug")
             argv.extend(["--config", configuration])
             specs.append(CommandSpec("build", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir))))
             return specs
         if action in {"test", "wine-test"}:
-            argv = ["ctest", "--test-dir", str(build_dir), "--parallel", str(workers), "--output-on-failure"]
+            argv = [self._cmake_command(config, "ctest"), "--test-dir", str(build_dir), "--parallel", str(workers), "--output-on-failure"]
             spec = CommandSpec("test", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))
             from .test_selection import apply_test_selection
             return [apply_test_selection(config, spec)]
         if action == "package":
-            return [CommandSpec("package", ["cpack", "--config", str(build_dir / "CPackConfig.cmake")], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            return [CommandSpec("package", [self._cmake_command(config, "cpack"), "--config", str(build_dir / "CPackConfig.cmake")], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
         if action == "clean":
-            return [CommandSpec("clean", ["cmake", "--build", str(build_dir), "--target", "clean", "--parallel", str(workers)], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            return [CommandSpec("clean", [self._cmake_command(config), "--build", str(build_dir), "--target", "clean", "--parallel", str(workers)], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
         raise SystemExit(f"Unsupported CMake action: {action}")
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:

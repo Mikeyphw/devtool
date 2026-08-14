@@ -10,6 +10,11 @@ from .models import CommandSpec, ProjectConfig
 from .termux_toolchains import (
     detect_runtime_identity,
     termux_gradle_probe,
+    termux_native_provider,
+    termux_cmake_probe,
+    termux_ninja_probe,
+    termux_ccache_probe,
+    termux_android_tool_providers,
     termux_installed_packages,
     termux_java_providers,
     termux_package_probe,
@@ -172,5 +177,26 @@ def toolchain_doctor_rows(
                 for provider in java_providers
                 if provider.path
             ) or "MISSING",
+        ))
+        native = termux_native_provider(env=env, runtime=runtime)
+        rows.append((
+            "termux_native_provider",
+            f"{native.version} @ {native.path}" if native.compatible and native.path
+            else f"UNUSABLE ({native.rejection_reason or native.reason})" if native.available
+            else f"MISSING ({native.reason or 'not detected'})",
+        ))
+        for label, probe in (
+            ("termux_cmake_provider", termux_cmake_probe(env=env, runtime=runtime)),
+            ("termux_ninja_provider", termux_ninja_probe(env=env, runtime=runtime)),
+            ("termux_ccache_provider", termux_ccache_probe(env=env, runtime=runtime)),
+        ):
+            rows.append((label, f"{probe.version} @ {probe.path}" if probe.compatible and probe.path else f"UNUSABLE ({probe.rejection_reason or probe.reason})" if probe.available else "MISSING"))
+        android_tools = termux_android_tool_providers(env=env, runtime=runtime)
+        rows.append((
+            "termux_android_tools",
+            ", ".join(
+                f"{provider.capability}={provider.version or ('UNUSABLE' if provider.available else 'MISSING')}"
+                for provider in android_tools
+            ),
         ))
     return rows

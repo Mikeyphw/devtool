@@ -450,6 +450,10 @@ _devtool() {
     '--java-home[JDK home]:directory:_files -/' \
     '--java-provider[Java provider]:provider:(auto termux system)' \
     '--gradle-user-home[Gradle user home]:directory:_files -/' \
+    '--native-provider[Native provider]:provider:(auto termux-sysroot ndk system)' \
+    '--native-cache[Native compiler cache]:provider:(auto ccache off)' \
+    '--android-build-tools-provider[Android native build-tools provider]:provider:(auto termux sdk commit451 none)' \
+    '--aapt2-provider[AAPT2 provider]:provider:(auto termux sdk revanced none)' \
     '1:command:->command' \
     '*::argument:->args'
 
