@@ -60,6 +60,7 @@ from .execution_environments import (
     AUTO as EXECUTION_AUTO,
     CHROOT as EXECUTION_CHROOT,
     NATIVE_TERMUX as EXECUTION_NATIVE_TERMUX,
+    SSH as EXECUTION_SSH,
     EXECUTION_ENVIRONMENTS,
     assert_chroot_path_safe,
     detect_current_environment,
@@ -225,6 +226,16 @@ GLOBAL_OPTIONS_WITH_VALUE = {
     "--stdout-payload",
     "--hud-mode",
     "--chroot",
+    "--ssh",
+    "--ssh-host",
+    "--ssh-port",
+    "--ssh-user",
+    "--ssh-identity",
+    "--ssh-session",
+    "--ssh-cwd",
+    "--ssh-tool",
+    "--ssh-mode",
+    "--ssh-stage-dir",
     "--execution-environment",
 }
 
@@ -354,12 +365,23 @@ def build_parser() -> argparse.ArgumentParser:
     exec_group = environment.add_mutually_exclusive_group()
     exec_group.add_argument("--host", action="store_true", help="Force command phases to run in devtool's current host environment")
     exec_group.add_argument("--chroot", default="", help="Run command phases inside a named chroot via chrootctl exec")
+    exec_group.add_argument("--ssh", "--ssh-host", dest="ssh", default="", metavar="HOST", help="Use HOST as the SSH execution target (whole devtool or command-phase mode)")
     exec_group.add_argument(
         "--execution-environment",
         choices=EXECUTION_ENVIRONMENTS,
         default=EXECUTION_AUTO,
-        help="Execution backend: auto, native-termux, chroot, desktop-linux, android-device, or external-device",
+        help="Execution backend: auto, native-termux, chroot, desktop-linux, ssh, android-device, or external-device",
     )
+    environment.add_argument("--ssh-port", type=int, default=0, metavar="PORT", help="SSH port (default: 22 or [ssh].port)")
+    environment.add_argument("--ssh-user", default="", metavar="USER", help="SSH login user")
+    environment.add_argument("--ssh-identity", default="", metavar="PATH", help="SSH private-key identity file")
+    environment.add_argument("--ssh-session", default="", metavar="NAME", help="tmux session name; stable names can be reattached")
+    environment.add_argument("--ssh-cwd", default="", metavar="PATH", help="Working directory on the SSH host; omitted means the remote login default")
+    environment.add_argument("--ssh-tool", default="", metavar="COMMAND", help="Remote devtool executable used by --ssh-mode devtool (default: devtool)")
+    environment.add_argument("--ssh-mode", choices=["devtool", "commands"], default="", help="SSH mode: delegate the whole devtool run, or keep devtool local and run command phases remotely")
+    environment.add_argument("--ssh-stage-dir", default="", metavar="PATH", help="Remote staging root for copied overlays/helper files")
+    environment.add_argument("--ssh-no-artifact-copy", action="store_true", help="Disable automatic SSH/SCP artifact transfer")
+    environment.add_argument("--ssh-detached", action="store_true", help="Start/reuse the remote tmux session without attaching (whole-run devtool mode)")
     environment.add_argument("--no-auto-chroot", action="store_true", help="On Termux, do not auto-route command phases through chrootctl")
 
     bootstrap = parser.add_argument_group("Toolchain bootstrap")
@@ -2589,6 +2611,8 @@ def _matrix_items(args: argparse.Namespace) -> list[str]:
 def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
     requested = str(getattr(args, "execution_environment", EXECUTION_AUTO) or EXECUTION_AUTO)
     configured_environment = str(config.execution_environment or EXECUTION_AUTO)
+    if str(os.environ.get("DEVTOOL_INSIDE_SSH", "")).strip().lower() in {"1", "true", "yes", "on"} and configured_environment == EXECUTION_SSH:
+        configured_environment = EXECUTION_AUTO
     current_environment = detect_current_environment()
     explicit_chroot = bool(str(getattr(args, "chroot", "") or "").strip())
     auto_promoted_to_chroot = False
@@ -2688,7 +2712,7 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
 
     # Toolchain discovery occurs in the current host process. Do not inject a
     # host-only mise wrapper into commands that will execute inside a chroot.
-    if not (plan.uses_chroot and plan.current != EXECUTION_CHROOT):
+    if not ((plan.uses_chroot and plan.current != EXECUTION_CHROOT) or plan.effective == EXECUTION_SSH):
         specs = apply_toolchain_wrapper(config, specs)
     preflight = preflight_execution(
         config.repo_root,
@@ -2731,6 +2755,22 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
                 [str(spec.cwd or ""), *spec.argv, *spec.env.values()],
                 context=f"{spec.name} execution plan",
             )
+    elif plan.effective == EXECUTION_SSH:
+        from .ssh_tmux_runner import SSHRunnerConfig, wrap_specs_for_ssh_commands
+
+        ssh_config = getattr(args, "_devtool_ssh_config", None)
+        if not isinstance(ssh_config, SSHRunnerConfig):
+            raise SystemExit("SSH command execution was selected without resolved SSH connection settings.")
+        try:
+            specs = wrap_specs_for_ssh_commands(
+                specs,
+                ssh_config,
+                project_config=config,
+                repo_root=config.repo_root,
+                dry_run=bool(getattr(args, "dry_run", False)),
+            )
+        except ValueError as exc:
+            raise SystemExit(f"SSH command execution unavailable: {exc}") from exc
 
     for spec in specs:
         metadata = dict(spec.metadata)
@@ -6867,6 +6907,27 @@ def _config_command(args: argparse.Namespace) -> int:
         return 0
     return 1
 
+def _maybe_delegate_ssh(raw_argv: list[str], args: argparse.Namespace) -> int | None:
+    """Select SSH whole-run or local-devtool/remote-command mode."""
+    if str(os.environ.get("DEVTOOL_INSIDE_SSH", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        return None
+    from .ssh_tmux_runner import resolve_ssh_config, run_ssh_tmux, ssh_requested
+
+    try:
+        if not ssh_requested(raw_argv, cwd=os.getcwd()):
+            return None
+        ssh_config = resolve_ssh_config(raw_argv, cwd=os.getcwd())
+        args._devtool_ssh_config = ssh_config
+        if ssh_config.mode == "commands":
+            # Keep this devtool process local; only planned external command
+            # phases are wrapped later at the shared execution boundary.
+            args.execution_environment = EXECUTION_SSH
+            return None
+        return run_ssh_tmux(raw_argv, cwd=os.getcwd())
+    except ValueError as exc:
+        raise SystemExit(f"SSH execution requested but unavailable: {exc}") from exc
+
+
 def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namespace) -> int | None:
     """Enable Android chroot execution from Termux.
 
@@ -6898,6 +6959,8 @@ def _maybe_prepare_termux_auto_chroot(raw_argv: list[str], args: argparse.Namesp
                 kind_override=str(getattr(args, "project_type", "auto") or "auto"),
             )
             configured_environment = str(configured.execution_environment or EXECUTION_AUTO)
+            if str(os.environ.get("DEVTOOL_INSIDE_SSH", "")).strip().lower() in {"1", "true", "yes", "on"} and configured_environment == EXECUTION_SSH:
+                configured_environment = EXECUTION_AUTO
             if configured_environment == EXECUTION_CHROOT:
                 requested_environment = EXECUTION_CHROOT
                 if not str(getattr(args, "chroot", "") or "").strip():
@@ -7116,6 +7179,9 @@ def _main_after_parse(
     _warn_deprecated_validation_profile_alias(args, parse_argv)
     _apply_global_cli_defaults(args, parse_argv)
     _normalize_live_progress_args(args)
+    ssh_rc = _maybe_delegate_ssh(raw_argv, args)
+    if ssh_rc is not None:
+        return ssh_rc
     args._devtool_cli_repo_explicit = bool(str(getattr(args, "repo", "") or "").strip())
     if args._devtool_cli_repo_explicit or args.command not in {"inspect-artifact", "ia"}:
         args.repo = str(resolve_repository_root(args.repo, args.config))

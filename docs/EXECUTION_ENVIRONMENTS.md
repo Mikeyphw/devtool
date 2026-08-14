@@ -11,10 +11,15 @@ Supported environment identifiers:
 - `desktop-linux`
 - `android-device`
 - `external-device`
+- `ssh`
 
-`android-device` and `external-device` are represented in the shared model now,
-but command execution through those backends is intentionally rejected until
-the Android instrumentation phase implements them.
+`ssh` supports two tmux-backed modes. `devtool` delegates the whole invocation
+to a remote devtool. `commands` keeps devtool local and sends only planned
+external command phases to the remote host, similar to the Termux/chroot
+toolchain-runner architecture. `android-device` and `external-device` are
+represented in the shared model now, but command execution through those
+backends is intentionally rejected until the Android instrumentation phase
+implements them.
 
 ## CLI
 
@@ -23,6 +28,8 @@ devtool --execution-environment native-termux -r "$HOME/Code/demo" validate
 devtool --execution-environment chroot -r "$HOME/Code/demo" validate
 devtool --chroot androidos -r "$HOME/Code/demo" validate
 devtool --host -r "$HOME/Code/demo" validate
+devtool --ssh buildbox --ssh-port 2222 --ssh-user builder \
+  --ssh-cwd /srv/projects/demo validate
 ```
 
 `--host` means the environment where the current devtool process is running. On
@@ -31,6 +38,111 @@ Termux that is `native-termux`; on ordinary Linux it is `desktop-linux`.
 setting its name. Chroot delegation is accepted only on native Termux. On
 desktop Linux it fails preflight even when `chrootctl` is installed; when
 Devtool is already inside the chroot, recursive delegation is suppressed.
+
+
+## SSH + tmux transport
+
+SSH has two explicit modes. Neither mode assumes that the remote filesystem is
+a chroot or that it has any Termux-style paths.
+
+### Whole-run `devtool` mode
+
+This is the default and is the fully detachable mode. The local process launches
+the configured remote devtool inside `tmux`; repository discovery, overlay
+application, validation, and builds then belong to the remote devtool process.
+The remote host must have `devtool` and `tmux`.
+
+```bash
+devtool --ssh buildbox --ssh-mode devtool --ssh-port 2222 \
+  --ssh-user builder --ssh-cwd /srv/projects/xdm \
+  --ssh-session xdm-validation validate
+
+# Detach immediately. The whole remote devtool run continues.
+devtool --ssh buildbox --ssh-mode devtool --ssh-detached \
+  --ssh-cwd /srv/projects/xdm validate
+```
+
+An existing local overlay/snapshot archive passed on the command line is copied
+to a session-scoped remote staging directory over SCP and the remote invocation
+receives that remote path. A path that does not exist locally is treated as an
+already-remote path and is forwarded unchanged. This makes commands such as the
+following work without requiring shared storage:
+
+```bash
+devtool --ssh buildbox --ssh-cwd /srv/projects/xdm \
+  apply-overlay ~/Downloads/fix.zip --no-validate
+```
+
+### Local-devtool `commands` mode
+
+This mode does **not** require devtool to be installed on the remote host. The
+local devtool performs planning/UI/orchestration and wraps each external command
+phase with SSH + tmux. The remote host needs only `tmux` and the project
+toolchain required by the actual command.
+
+Because an SSH host is an independent filesystem, command mode requires
+`--ssh-cwd` (or `[ssh].cwd`) as the explicit remote counterpart of the local
+repository root. Only that one user-supplied repository mapping is applied; no
+remote HOME, username, Termux, or chroot path is inferred. Devtool-owned helper
+files referenced by a phase (for example the staged Android builder/Gradle init
+script) are copied to the remote staging directory over SCP. Android/Gradle
+build artifacts written to the configured artifact output directory are pulled
+back over SCP before the local artifact verifier runs.
+
+```bash
+devtool --ssh buildbox --ssh-mode commands \
+  --ssh-cwd /srv/projects/xdm validate
+```
+
+`--ssh-detached` is intentionally reserved for whole-run `devtool` mode. In
+`commands` mode the local devtool must wait for each phase so it can preserve
+ordering, validation state, progress parsing, and final result handling. A phase
+still runs inside a named remote tmux session; manually detaching leaves that
+phase alive, but the local run stops with a distinct status instead of falsely
+advancing to the next phase.
+
+Command mode assumes the remote checkout already contains the source state that
+should be built/tested. For overlay application against an independent remote
+checkout, prefer whole-run `devtool` mode so the copied overlay is applied by the
+remote devtool itself.
+
+The local machine must provide `ssh` and `scp`. Port 22 is the default, but any
+TCP port from 1 to 65535 can be selected. Automatic artifact transfer can be
+disabled with `--ssh-no-artifact-copy`. `--ssh-stage-dir` controls the remote
+staging root.
+
+Every whole-run attached invocation prints an `ssh ... tmux attach-session ...`
+reattach command before connecting.
+
+Transport defaults can be stored in the local `.devtool.toml`:
+
+```toml
+[execution]
+environment = "ssh"
+
+[ssh]
+host = "buildbox"
+port = 2222
+user = "builder"
+identity = "~/.ssh/id_ed25519"
+mode = "devtool" # or "commands"
+cwd = "/srv/projects/xdm" # required by commands mode
+session = "xdm-validation"
+tool = "devtool" # devtool mode only
+stage_dir = "~/.cache/devtool/ssh-stage"
+copy_artifacts = true
+detached = false
+```
+
+CLI values override environment variables (`DEVTOOL_SSH_HOST`,
+`DEVTOOL_SSH_PORT`, `DEVTOOL_SSH_USER`, `DEVTOOL_SSH_IDENTITY`,
+`DEVTOOL_SSH_CWD`, `DEVTOOL_SSH_SESSION`, `DEVTOOL_SSH_TOOL`,
+`DEVTOOL_SSH_MODE`, `DEVTOOL_SSH_STAGE_DIR`,
+`DEVTOOL_SSH_NO_ARTIFACT_COPY`, and `DEVTOOL_SSH_DETACHED`), which override
+file settings.
+
+In whole-run mode the remote devtool receives `DEVTOOL_INSIDE_SSH=1` to suppress
+recursive SSH delegation.
 
 ## Configuration
 
