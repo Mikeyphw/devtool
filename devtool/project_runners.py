@@ -1936,7 +1936,17 @@ class PythonRunner(ProjectRunner):
                     env=self._env(config), cwd=str(root),
                     metadata=_tool_metadata(self.kind, root, validation_component="package-preparation"),
                 ))
-            argv = self._module(config, "build", "--outdir", str(outdir))
+            info = self._info(config)
+            if info.manager == "uv":
+                # uv-managed projects should use uv's native PEP 517 build
+                # frontend. `uv run python -m build` requires the separate
+                # PyPA `build` package to be declared in the project
+                # environment, which is not a runtime/project dependency.
+                argv = ["uv", "build", "--out-dir", str(outdir)]
+                if bool(options.get("offline", False)):
+                    argv.append("--offline")
+            else:
+                argv = self._module(config, "build", "--outdir", str(outdir))
             specs.append(CommandSpec("build", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, collect_artifacts=True, verify_artifacts=True)))
             return specs
         if action in {"test", "wine-test"}:

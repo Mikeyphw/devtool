@@ -369,6 +369,46 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
             )
         )
 
+    def test_python_uv_build_uses_native_uv_frontend_without_python_build_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[build-system]\nrequires=['setuptools>=68','wheel']\nbuild-backend='setuptools.build_meta'\n"
+                "[project]\nname='demo'\nversion='0.1'\n",
+                encoding="utf-8",
+            )
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(
+                    repo_root=root,
+                    project_root=str(root),
+                    kind="python",
+                    runner_options={"python": {"manager": "auto"}},
+                )
+                build = next(spec for spec in build_specs(config, "build") if spec.name == "build")
+
+        self.assertEqual(build.argv[:2], ["uv", "build"])
+        self.assertIn("--out-dir", build.argv)
+        self.assertNotIn("-m", build.argv)
+        self.assertNotIn("build", build.argv[2:])
+
+    def test_python_uv_build_threads_offline_mode_to_native_uv_frontend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(
+                    repo_root=root,
+                    project_root=str(root),
+                    kind="python",
+                    runner_options={"python": {"manager": "auto", "offline": True}},
+                )
+                build = next(spec for spec in build_specs(config, "build") if spec.name == "build")
+
+        self.assertEqual(build.argv[:2], ["uv", "build"])
+        self.assertIn("--offline", build.argv)
+
     def test_python_uv_dependency_check_uses_uv_pip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
             root = Path(tmp)

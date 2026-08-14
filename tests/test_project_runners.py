@@ -286,7 +286,12 @@ class ExistingRunnerCompatibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
-            config = ProjectConfig(repo_root=root, kind="python", python_executable="python3.12")
+            config = ProjectConfig(
+                repo_root=root,
+                kind="python",
+                python_executable="python3.12",
+                runner_options={"python": {"manager": "venv"}},
+            )
 
             build_argv = next(spec.argv for spec in build_specs(config, "build") if spec.name == "build")
             test_argv = build_specs(config, "test")[0].argv

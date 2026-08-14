@@ -48,3 +48,12 @@ This is the literal final acceptance audit for the Termux-native/PRoot campaign.
 The final validator runs the complete non-Android-app Python/devtool regression suite and targeted cross-backend suites. It does **not** launch `android/devtool-live-hud` Gradle build/lint/test tasks. Android runner/provider behavior is covered at the Python command-planning, provider-selection, artifact, and compatibility layers.
 
 Normal native-Termux `devtool validate` is also a supported acceptance path: its isolated Python test HOME/TMPDIR must not sit beneath the repository, must not inherit the repository config/Git boundary into temporary fixture projects, and must use Termux-private writable temporary storage for local IPC fixtures.
+
+
+### Post-seal build-stage correction (overlay 08)
+
+- **Normal validation reaches build after the complete Python suite:** confirmed from the native-Termux validation report: 1,327 tests passed before the build-stage failure.
+- **uv build frontend is self-consistent:** uv-managed projects now plan `uv build --out-dir <dist>` instead of `uv run python -m build`, so validation does not rely on an undeclared `build` module in the project environment.
+- **Build backend contract remains PEP 517 based:** `uv build` consumes the project's `[build-system]` metadata and creates sdist/wheel artifacts.
+- **Offline semantics preserved:** Devtool's Python `offline` option is forwarded to `uv build --offline`.
+- **Non-uv behavior unchanged:** other Python managers continue to use the pre-existing `python -m build` invocation.

@@ -114,3 +114,10 @@
 ## UI contract archival cleanup
 
 - Finalized the UI/UX contract gate without requiring historical PHASE_* Markdown files.
+
+## Post-seal validation build hotfix (2026-08-14)
+
+- Fixed uv-managed Python builds so Devtool uses `uv build --out-dir ...` instead of `uv run python -m build --outdir ...`.
+- This removes an accidental dependency on the separately-installed PyPA `build` frontend from ordinary `devtool validate` while preserving PEP 517 build-system isolation.
+- Python projects managed by other environment managers retain the existing `python -m build` path.
+- Native uv build planning preserves Devtool's Python `offline` option by forwarding `--offline`.
