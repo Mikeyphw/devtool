@@ -647,6 +647,34 @@ Sealed final reports use a content hash and a write-once `.final.json` path; lat
 
 See `docs/DESKTOP_GTK_MIGRATION.md` for the Phase 1/2 desktop GTK4 migration notes.
 
+## Termux Java and Gradle providers
+
+Native Termux runs now distinguish Termux-packaged Java/Gradle from ordinary
+Linux toolchains. A complete project Gradle Wrapper remains authoritative in
+`auto` mode; if wrapper metadata is present but `gradle-wrapper.jar` or another
+required wrapper file is missing, devtool reports the incomplete wrapper instead
+of silently switching Gradle versions. Use `--java-provider` (`auto`, `termux`,
+`system`) and `--gradle-provider` (`auto`, `wrapper`, `termux`, `system`,
+`download`) for explicit selection. An explicit `--java-home` or
+`--gradle-command` remains authoritative. For wrapperless Gradle projects, native
+Termux `gradle` is eligible in `auto` mode; Android projects additionally require
+a conservative AGP/Gradle major-generation match before an unpinned Termux
+Gradle is selected. `doctor` reports the detected Termux Gradle/OpenJDK provider
+paths and tool versions alongside read-only package metadata, without installing
+packages. Native Termux runtime reporting uses the Android API environment value
+when available and falls back to Android `getprop`; providers whose version probe
+fails are shown as detected but unusable rather than as compatible tools.
+
+Configuration can be stored as:
+
+```toml
+[android.java]
+provider = "auto"
+
+[gradle]
+provider = "auto"
+```
+
 ## Android NDK host fallback
 
 For ARM64 Termux/chroot validation of Android projects with native code, devtool

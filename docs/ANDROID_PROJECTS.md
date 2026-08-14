@@ -244,14 +244,43 @@ ${DEVTOOL_XDG_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/devtool}/android/build-a
 
 The backend provides:
 
-- Gradle wrapper, compatible PATH Gradle, or managed Gradle selection.
-- JDK discovery and minimum-version inference from AGP and toolchain settings.
+- Complete Gradle Wrapper preference, explicit Termux/system provider selection, compatible PATH Gradle, or managed Gradle fallback.
+- JDK discovery with Termux/system provider identity and minimum-version inference from AGP and toolchain settings.
 - Android SDK/platform/Build Tools preparation.
 - NDK, CMake, and Ninja preparation for native projects.
 - Native ARM AAPT2 staging.
 - APK, AAB, AAR, JAR, WAR, ZIP, and TAR output discovery.
 - Stable artifact naming and optional output copying.
 - Gradle daemon/process cleanup in a `finally` path.
+
+### Termux Java/Gradle provider policy
+
+On native Termux, devtool recognizes JDKs under `$PREFIX/lib/jvm` and Gradle
+resolved from `$PREFIX` as Termux providers. Provider selection is explicit and
+capability-preserving:
+
+```toml
+[android.java]
+provider = "auto" # auto | termux | system
+
+[gradle]
+provider = "auto" # auto | wrapper | termux | system | download
+```
+
+A complete project Wrapper (`gradlew`, `gradle-wrapper.properties`, and
+`gradle-wrapper.jar`) wins in Gradle `auto` mode. If only part of the Wrapper is
+present, devtool stops with an actionable diagnostic rather than substituting a
+Termux/system Gradle that could violate the project's Gradle/AGP version
+contract. An explicit `--gradle-command` or `--java-home` remains authoritative.
+For a wrapperless non-Android Gradle project, the packaged Termux Gradle is
+eligible in `auto` mode without pretending devtool's managed fallback version is
+a project pin. For Android projects without a wrapper, auto-selection only uses
+an unpinned Termux Gradle when its major generation matches the detected AGP
+major (AGP 7+); otherwise devtool keeps the managed fallback path. Native
+Termux runtime detection also records the Android API level (environment first,
+then `getprop` fallback), and provider diagnostics distinguish missing tools from
+detected executables whose version probe is unusable. Use `--gradle-provider` or
+`--java-provider` when deliberately selecting a provider.
 
 ## Exact Gradle progress
 

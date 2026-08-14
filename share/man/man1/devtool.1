@@ -466,8 +466,14 @@ Set the Android SDK root for Android/Gradle runs.
 .BR --gradle-command " PATH"
 Set the Gradle or gradlew executable for Android/Gradle runs.
 .TP
+.BR --gradle-provider " PROVIDER"
+Select the Gradle provider for Android/Gradle runs: \fBauto\fR, \fBwrapper\fR, \fBtermux\fR, \fBsystem\fR, or \fBdownload\fR. A complete project Wrapper remains preferred in auto mode.
+.TP
 .BR --java-home " PATH"
 Set the JDK home for Android/Gradle runs.
+.TP
+.BR --java-provider " PROVIDER"
+Select the Java provider for Android/Gradle runs: \fBauto\fR, \fBtermux\fR, or \fBsystem\fR. An explicit \fB--java-home\fR remains authoritative.
 .TP
 .BR --gradle-user-home " PATH"
 Set
@@ -931,9 +937,11 @@ for manual-only retry control.
 .SH ANDROID AND GRADLE
 The Android runner integrates the same backend used by the
 .B build-apk
-compatibility command. It supports JDK and SDK inspection/setup, Gradle wrapper or managed
-Gradle selection, ARM-compatible AAPT2 handling, Build Tools/platform/NDK/CMake discovery,
-Termux-native execution, and chroot fallback.
+compatibility command. It supports JDK and SDK inspection/setup, complete Gradle Wrapper
+preference, Termux/system/download Gradle providers, Termux/system Java providers,
+ARM-compatible AAPT2 handling, Build Tools/platform/NDK/CMake discovery, Termux-native
+execution, and chroot fallback. In auto mode an incomplete project Wrapper is reported as
+an error instead of silently changing Gradle versions.
 .PP
 Gradle is launched with a bundled init script that emits ordered run-scoped events. Terminal,
 desktop, and Android views consume the same task and test stream. Stale, wrong-run, invalid,

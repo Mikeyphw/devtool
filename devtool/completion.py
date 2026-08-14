@@ -446,7 +446,9 @@ _devtool() {
     '--toolchain-profile[chroot/toolchain profile]:profile:' \
     '--android-sdk-root[Android SDK root]:directory:_files -/' \
     '--gradle-command[Gradle or gradlew executable]:command:_command_names -e' \
+    '--gradle-provider[Gradle provider]:provider:(auto wrapper termux system download)' \
     '--java-home[JDK home]:directory:_files -/' \
+    '--java-provider[Java provider]:provider:(auto termux system)' \
     '--gradle-user-home[Gradle user home]:directory:_files -/' \
     '1:command:->command' \
     '*::argument:->args'

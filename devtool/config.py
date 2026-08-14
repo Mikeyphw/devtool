@@ -16,7 +16,7 @@ CONFIG_NAME = ".devtool.toml"
 
 GLOBAL_CONFIG_NAME = "config.toml"
 GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
-    "cli", "environment", "termux_chroot", "android", "dotnet", "terminal",
+    "cli", "environment", "termux_chroot", "android", "gradle", "dotnet", "terminal",
     "bootstrap", "chroots",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
@@ -74,7 +74,7 @@ def _global_project_defaults(global_config: dict[str, Any]) -> dict[str, Any]:
         default_chroot = str(environment.get("default_chroot", "") or "").strip()
         if default_chroot:
             defaults.setdefault("execution", {})["chroot_name"] = default_chroot
-    for section in ("android", "dotnet", "bootstrap", "chroots"):
+    for section in ("android", "gradle", "dotnet", "bootstrap", "chroots"):
         value = global_config.get(section, {})
         if isinstance(value, dict) and value:
             defaults[section] = dict(value)
@@ -141,6 +141,12 @@ def minimal_global_config_template() -> str:
         "[android]",
         "aapt2_provider = \"auto\"",
         "aapt2_fallback_path = \"/sdcard/Download/aapt2-arm64-v8a.bin\"",
+        "",
+        "[android.java]",
+        "provider = \"auto\" # auto | termux | system",
+        "",
+        "[gradle]",
+        "provider = \"auto\" # auto | wrapper | termux | system | download",
         "",
     ]
     return "\n".join(lines)
@@ -1153,7 +1159,11 @@ qemu_sysroot_sha256 = ""
 qemu_install = "auto"
 prefer_native_termux = false
 
+[android.java]
+provider = "auto" # auto | termux | system
+
 [gradle]
+provider = "auto" # auto | wrapper | termux | system | download
 max_workers = 4
 offline = false
 

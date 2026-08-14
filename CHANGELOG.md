@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 Termux provider foundation
+
+- Added first-class Termux runtime, OpenJDK, and Gradle provider discovery with wrapper-safe selection and explicit provider controls.
+- Added read-only Termux package metadata probing, Android/Bionic runtime capability reporting, and actionable provider diagnostics.
+- Preserved explicit host execution for devtool-side validation so repository tooling does not implicitly route through the Android chroot.
+
 ## Desktop launcher cleanup
 
 - Removed the obsolete `devtool-gtk-control-center` and `devtool-gtk-hud` compatibility executables.

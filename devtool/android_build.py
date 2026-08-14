@@ -56,6 +56,8 @@ AAPT2_OVERRIDE_PROPERTY = "android.aapt2FromMavenOverride"
 UNSUPPORTED_OPTION_WARNINGS_PROPERTY = "android.suppressUnsupportedOptionWarnings"
 BOOTSTRAP_DOWNLOAD_POLICIES = {"never", "missing", "auto", "force"}
 BOOTSTRAP_NETWORK_POLICIES = {"deny", "allow"}
+JAVA_PROVIDERS = {"auto", "termux", "system"}
+GRADLE_PROVIDERS = {"auto", "wrapper", "termux", "system", "download"}
 
 
 class BuildError(RuntimeError):
@@ -672,7 +674,14 @@ def debian_package_installed(name: str) -> bool:
     return result.returncode == 0 and "install ok installed" in result.stdout
 
 
-def install_missing_system_dependencies(*, need_java: bool, need_certificates: bool, offline: bool, java_version: int = 17) -> None:
+def install_missing_system_dependencies(
+    *,
+    need_java: bool,
+    need_certificates: bool,
+    offline: bool,
+    java_version: int = 17,
+    java_provider: str = "auto",
+) -> None:
     if not need_java and not need_certificates:
         info("System dependencies are already ready")
         return
@@ -685,6 +694,13 @@ def install_missing_system_dependencies(*, need_java: bool, need_certificates: b
         fail("Missing system dependencies in --offline mode: " + ", ".join(missing))
 
     if running_under_termux_python():
+        provider = normalize_java_provider(java_provider)
+        if need_java and provider == "system":
+            fail(
+                "Java provider system was requested on native Termux, but automatic Termux package "
+                "installation only supplies Termux JDKs. Install/provide an external JDK with "
+                "--java-home, or use --java-provider termux/auto."
+            )
         packages: list[str] = []
         if need_java:
             packages.append(f"openjdk-{java_version}")
@@ -769,6 +785,113 @@ def running_under_termux_python() -> bool:
         except ValueError:
             continue
     return False
+
+
+def termux_prefix_path() -> Path:
+    raw = str(os.environ.get("PREFIX", "") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve(strict=False)
+    return Path("/data/data/com.termux/files/usr")
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def normalize_java_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    if normalized not in JAVA_PROVIDERS:
+        valid = ", ".join(sorted(JAVA_PROVIDERS))
+        fail(f"Unsupported Java provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def normalize_gradle_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    if normalized in {"managed", "downloaded"}:
+        normalized = "download"
+    if normalized not in GRADLE_PROVIDERS:
+        valid = ", ".join(sorted(GRADLE_PROVIDERS))
+        fail(f"Unsupported Gradle provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def executable_provider(path: Path) -> str:
+    if running_under_termux_python() and _path_is_within(path, termux_prefix_path()):
+        return "termux"
+    return "system"
+
+
+def termux_package_version(name: str) -> str | None:
+    if not running_under_termux_python():
+        return None
+    dpkg_query = shutil.which("dpkg-query")
+    if not dpkg_query:
+        return None
+    try:
+        result = subprocess.run(
+            [dpkg_query, "-W", "-f=${Status}\t${Version}", name],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    status, _, version = result.stdout.strip().partition("\t")
+    if result.returncode != 0 or "install ok installed" not in status:
+        return None
+    return version.strip() or None
+
+
+def termux_jvm_candidates() -> list[Path]:
+    if not running_under_termux_python():
+        return []
+    root = termux_prefix_path() / "lib" / "jvm"
+    if not root.is_dir():
+        return []
+    try:
+        return sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name)
+    except OSError:
+        return []
+
+
+@dataclass(frozen=True)
+class GradleWrapperState:
+    present: bool
+    complete: bool
+    missing: tuple[str, ...]
+
+
+def gradle_wrapper_state(project_root: Path) -> GradleWrapperState:
+    files = (
+        ("gradlew", project_root / "gradlew"),
+        ("gradle/wrapper/gradle-wrapper.properties", project_root / "gradle" / "wrapper" / "gradle-wrapper.properties"),
+        ("gradle/wrapper/gradle-wrapper.jar", project_root / "gradle" / "wrapper" / "gradle-wrapper.jar"),
+    )
+    present = any(path.exists() for _, path in files)
+    missing = tuple(label for label, path in files if not path.is_file())
+    return GradleWrapperState(present=present, complete=present and not missing, missing=missing)
+
+
+def broken_wrapper_message(project_root: Path, state: GradleWrapperState) -> str:
+    missing = "\n".join(f"- {item}" for item in state.missing) or "- unknown wrapper component"
+    termux_gradle = shutil.which("gradle") if running_under_termux_python() else None
+    fallback = ""
+    if termux_gradle:
+        fallback = (
+            f"\n\nTermux Gradle is available at {termux_gradle}, but it was not selected "
+            "automatically because replacing an incomplete project wrapper can violate the project's Gradle/AGP version contract."
+        )
+    return (
+        f"Project Gradle wrapper is incomplete in {project_root}.\n\nMissing:\n{missing}"
+        f"{fallback}\n\nRestore the wrapper files from version control, regenerate them with a compatible Gradle version, "
+        "or explicitly select another provider with --gradle-provider."
+    )
 
 
 def parse_chroot_launch_options(raw_args: Sequence[str]) -> ChrootLaunchOptions:
@@ -2098,7 +2221,8 @@ def inferred_min_java(project: ProjectInfo) -> int:
     return infer_java_requirement(project).minimum
 
 
-def java_home_candidates(explicit: Path | None) -> list[Path]:
+def java_home_candidates(explicit: Path | None, provider: str = "auto") -> list[Path]:
+    provider = normalize_java_provider(provider)
     candidates: list[Path] = []
     if explicit:
         candidates.append(explicit.expanduser())
@@ -2108,23 +2232,54 @@ def java_home_candidates(explicit: Path | None) -> list[Path]:
         found = shutil.which(executable)
         if found:
             candidates.append(Path(found).resolve().parent.parent)
+    candidates.extend(termux_jvm_candidates())
     jvm_root = Path("/usr/lib/jvm")
     if jvm_root.is_dir():
         candidates.extend(path for path in jvm_root.iterdir() if path.is_dir())
+
     unique: list[Path] = []
     seen: set[str] = set()
     for item in candidates:
         resolved = item.resolve(strict=False)
-        if str(resolved) not in seen:
-            seen.add(str(resolved))
-            unique.append(resolved)
+        if str(resolved) in seen:
+            continue
+        seen.add(str(resolved))
+        if explicit is None and provider != "auto":
+            candidate_provider = executable_provider(resolved / "bin" / "java")
+            if candidate_provider != provider:
+                continue
+        unique.append(resolved)
     return unique
 
 
-def find_java_home(explicit: Path | None, minimum: int, *, exact: int | None = None) -> Path:
+def find_java_home(
+    explicit: Path | None,
+    minimum: int,
+    *,
+    exact: int | None = None,
+    provider: str = "auto",
+) -> Path:
+    provider = normalize_java_provider(provider)
+    if explicit is not None:
+        home = explicit.expanduser().resolve(strict=False)
+        java = home / "bin" / "java"
+        javac = home / "bin" / "javac"
+        if not java.is_file() or not javac.is_file():
+            fail(f"Explicit Java home is incomplete: {home}. Expected bin/java and bin/javac.")
+        major = java_major(java)
+        if major is None:
+            fail(f"Could not determine Java version from explicit Java home: {home}")
+        if major < minimum:
+            fail(f"Explicit Java home {home} provides Java {major}, but Java {minimum}+ is required.")
+        if exact is not None and major != exact:
+            fail(f"Explicit Java home {home} provides Java {major}, but exact Java {exact} is required.")
+        info(f"Using explicit Java home: {home} (Java {major}); provider={executable_provider(java)}")
+        return home
+    if provider == "termux" and not running_under_termux_python():
+        fail("Java provider termux requires native Termux execution or an explicit --java-home.")
     rejected: list[str] = []
-    accepted: list[tuple[int, int, Path]] = []
-    for home in java_home_candidates(explicit):
+    accepted: list[tuple[int, int, int, Path]] = []
+    for home in java_home_candidates(None, provider):
         java = home / "bin" / "java"
         javac = home / "bin" / "javac"
         if not java.is_file() or not javac.is_file():
@@ -2139,21 +2294,26 @@ def find_java_home(explicit: Path | None, minimum: int, *, exact: int | None = N
         if exact is not None and major != exact:
             rejected.append(f"{home} (Java {major}, needs exact Java {exact})")
             continue
-        # Prefer the narrowest matching toolchain so we select Java 17 when the
-        # project requests an exact Java 17 toolchain and both 17 and 21 are
-        # installed.
-        accepted.append((0 if exact is not None and major == exact else 1, major, home))
+        # On native Termux, prefer a compatible JDK from PREFIX over a foreign
+        # system tree. Within the same provider, keep the narrowest compatible
+        # Java version; exact project toolchains still win first.
+        selected_provider = executable_provider(java)
+        provider_rank = 0 if provider == "auto" and running_under_termux_python() and selected_provider == "termux" else 1
+        accepted.append((0 if exact is not None and major == exact else 1, provider_rank, major, home))
 
     if accepted:
-        accepted.sort(key=lambda item: (item[0], item[1], str(item[2])))
-        return accepted[0][2]
+        accepted.sort(key=lambda item: (item[0], item[1], item[2], str(item[3])))
+        return accepted[0][3]
     details = f" Candidates checked: {', '.join(rejected)}." if rejected else ""
     if exact is not None:
         fail(
-            f"A JDK with Java {exact} is required for this project's declared toolchain.{details} "
-            "Use --java-home to select one."
+            f"A JDK with Java {exact} is required for this project's declared toolchain "
+            f"using Java provider {provider}.{details} Use --java-home or --java-provider to select one."
         )
-    fail(f"A JDK with Java {minimum}+ is required.{details} Use --java-home to select one.")
+    fail(
+        f"A JDK with Java {minimum}+ is required using Java provider {provider}.{details} "
+        "Use --java-home or --java-provider to select one."
+    )
 
 
 def _sdk_root_from_local_properties(project_root: Path | None) -> Path | None:
@@ -3068,6 +3228,31 @@ def gradle_wrapper_distribution_cached(
     return False
 
 
+def _auto_installed_gradle_compatible(
+    actual: str | None,
+    *,
+    selected_provider: str,
+    project: ProjectInfo | None,
+) -> bool:
+    """Return whether an unpinned installed Gradle is safe for auto selection.
+
+    Devtool's managed default is not a project version pin. On native Termux we
+    may prefer the packaged Gradle for wrapperless projects, but Android builds
+    still need a conservative AGP-generation check. Non-Termux/system behavior
+    remains on the historical managed-default compatibility path.
+    """
+    key = version_key(actual)
+    if not key:
+        return False
+    if selected_provider != "termux" or not running_under_termux_python():
+        return gradle_version_matches(actual, DEFAULT_GRADLE_VERSION)
+    if project is None or not project.android:
+        return True
+    if project.agp_major is not None and project.agp_major >= 7:
+        return key[0] == project.agp_major
+    return False
+
+
 def select_gradle(
     project_root: Path,
     *,
@@ -3079,9 +3264,18 @@ def select_gradle(
     bootstrap_downloads: str = "auto",
     bootstrap_network: str = "allow",
     gradle_user_home: Path | None = None,
+    provider: str = "auto",
+    project: ProjectInfo | None = None,
 ) -> Path:
+    provider = normalize_gradle_provider(provider)
+    if provider == "termux" and explicit is None and not running_under_termux_python():
+        fail("Gradle provider termux requires native Termux execution or an explicit --gradle-command.")
+
     wrapper = project_root / "gradlew"
-    requested = version or wrapper_distribution_version(project_root) or DEFAULT_GRADLE_VERSION
+    wrapper_state = gradle_wrapper_state(project_root)
+    wrapper_version = wrapper_distribution_version(project_root)
+    pinned_version = version or wrapper_version
+    requested = pinned_version or DEFAULT_GRADLE_VERSION
 
     if explicit:
         candidate = Path(explicit).expanduser()
@@ -3092,63 +3286,147 @@ def select_gradle(
             candidate = Path(found)
         candidate = ensure_executable(candidate.resolve(), "Gradle launcher")
         actual = gradle_version(candidate)
-        if not gradle_version_matches(actual, requested):
+        if actual is None:
+            fail(f"Could not determine Gradle version from explicit launcher: {candidate}")
+        if pinned_version and not gradle_version_matches(actual, pinned_version):
             fail(
                 f"Explicit Gradle launcher is incompatible: {candidate} reports "
-                f"{actual or 'an unknown version'}, but this build requires Gradle "
-                f"{requested}. Choose another launcher or pass --gradle-version."
+                f"{actual}, but this build requires Gradle {pinned_version}. "
+                "Choose another launcher or pass --gradle-version."
             )
-        info(f"Using explicit compatible Gradle: {candidate} ({actual})")
+        info(
+            f"Using explicit Gradle: {candidate} ({actual}); "
+            f"provider={executable_provider(candidate)}"
+        )
         return candidate
 
-    if wrapper.is_file() and not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
-        wrapper_version = wrapper_distribution_version(project_root)
-        if wrapper_version and gradle_wrapper_distribution_cached(project_root, wrapper_version, gradle_user_home=gradle_user_home):
-            info(f"Using project Gradle wrapper with cached distribution: {wrapper} ({wrapper_version})")
-            return ensure_executable(wrapper, "Gradle wrapper")
-        system = shutil.which("gradle")
-        if system:
-            system_path = ensure_executable(Path(system), "Gradle launcher")
-            actual = gradle_version(system_path)
-            if gradle_version_matches(actual, requested):
-                info(f"Using compatible Gradle from PATH: {system_path} ({actual})")
-                return system_path
-        fail_bootstrap_blocked(
-            "Gradle wrapper distribution",
-            downloads=bootstrap_downloads,
-            network=bootstrap_network,
-            checked=[
-                str(wrapper),
-                str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "wrapper" / "dists"),
-                str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "devtool-bootstrap"),
-                "gradle in PATH",
-            ],
-        )
-
-    if wrapper.is_file():
-        wrapper_version = wrapper_distribution_version(project_root)
-        if wrapper_version and not gradle_version_matches(wrapper_version, requested):
+    def _warn_wrapper_version_override() -> None:
+        if version and wrapper_version and not gradle_version_matches(wrapper_version, version):
             warn(
-                f"Project wrapper declares Gradle {wrapper_version}, while Gradle "
-                f"{requested} is requested. The wrapper remains authoritative."
+                f"Project wrapper declares Gradle {wrapper_version}, while Gradle {version} "
+                "was requested. The wrapper remains authoritative."
+            )
+
+    if provider == "wrapper":
+        if not wrapper_state.complete:
+            fail(broken_wrapper_message(project_root, wrapper_state))
+        _warn_wrapper_version_override()
+        if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+            if wrapper_version and gradle_wrapper_distribution_cached(
+                project_root, wrapper_version, gradle_user_home=gradle_user_home
+            ):
+                info(f"Using project Gradle wrapper with cached distribution: {wrapper} ({wrapper_version}); provider=wrapper")
+                return ensure_executable(wrapper, "Gradle wrapper")
+            fail_bootstrap_blocked(
+                "Gradle wrapper distribution",
+                downloads=bootstrap_downloads,
+                network=bootstrap_network,
+                checked=[
+                    str(wrapper),
+                    str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "wrapper" / "dists"),
+                    str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "devtool-bootstrap"),
+                ],
             )
         info(
             f"Using project Gradle wrapper: {wrapper}"
             + (f" ({wrapper_version})" if wrapper_version else "")
+            + "; provider=wrapper"
         )
         return ensure_executable(wrapper, "Gradle wrapper")
+
+    if provider == "auto" and wrapper_state.present and not wrapper_state.complete:
+        fail(broken_wrapper_message(project_root, wrapper_state))
+
+    if provider == "auto" and wrapper_state.complete:
+        _warn_wrapper_version_override()
+        if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+            if wrapper_version and gradle_wrapper_distribution_cached(
+                project_root, wrapper_version, gradle_user_home=gradle_user_home
+            ):
+                info(f"Using project Gradle wrapper with cached distribution: {wrapper} ({wrapper_version}); provider=wrapper")
+                return ensure_executable(wrapper, "Gradle wrapper")
+            system = shutil.which("gradle")
+            if system:
+                system_path = ensure_executable(Path(system), "Gradle launcher")
+                actual = gradle_version(system_path)
+                if wrapper_version and gradle_version_matches(actual, wrapper_version):
+                    selected_provider = executable_provider(system_path)
+                    info(
+                        f"Using compatible {selected_provider} Gradle because the wrapper distribution is not cached: "
+                        f"{system_path} ({actual}); wrapper version remains authoritative"
+                    )
+                    return system_path
+            fail_bootstrap_blocked(
+                "Gradle wrapper distribution",
+                downloads=bootstrap_downloads,
+                network=bootstrap_network,
+                checked=[
+                    str(wrapper),
+                    str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "wrapper" / "dists"),
+                    str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "devtool-bootstrap"),
+                    "gradle in PATH",
+                ],
+            )
+        info(
+            f"Using project Gradle wrapper: {wrapper}"
+            + (f" ({wrapper_version})" if wrapper_version else "")
+            + "; provider=wrapper"
+        )
+        return ensure_executable(wrapper, "Gradle wrapper")
+
+    if provider == "download":
+        if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+            fail_bootstrap_blocked(
+                "Gradle",
+                downloads=bootstrap_downloads,
+                network=bootstrap_network,
+                checked=[str(cache_root / "gradle" / f"gradle-{requested}" / "bin" / "gradle")],
+            )
+        info(f"Using managed Gradle {requested}; provider=download")
+        return managed_gradle(requested, cache_root, offline=offline, force=force)
 
     system = shutil.which("gradle")
     if system:
         system_path = ensure_executable(Path(system), "Gradle launcher")
-        actual = gradle_version(system_path)
-        if gradle_version_matches(actual, requested):
-            info(f"Using compatible Gradle from PATH: {system_path} ({actual})")
-            return system_path
-        warn(
-            f"Ignoring incompatible Gradle from PATH: {system_path} "
-            f"({actual or 'unknown'}); Gradle {requested} is required."
-        )
+        selected_provider = executable_provider(system_path)
+        provider_matches = provider == "auto" or provider == selected_provider
+        if provider_matches:
+            actual = gradle_version(system_path)
+            if pinned_version:
+                compatible = gradle_version_matches(actual, pinned_version)
+            elif provider in {"termux", "system"}:
+                compatible = actual is not None
+            else:
+                compatible = _auto_installed_gradle_compatible(
+                    actual,
+                    selected_provider=selected_provider,
+                    project=project,
+                )
+            if compatible:
+                info(
+                    f"Using compatible {selected_provider} Gradle: {system_path} "
+                    f"({actual or 'unknown'}); provider={selected_provider}"
+                )
+                return system_path
+            if provider in {"termux", "system"}:
+                requirement = pinned_version or "a project-compatible version"
+                fail(
+                    f"Requested Gradle provider {provider} is installed at {system_path} but reports "
+                    f"{actual or 'an unknown version'}; {requirement} is required. "
+                    "Use the project wrapper, select another provider, or pass --gradle-version if the project supports it."
+                )
+            warn(
+                f"Ignoring incompatible {selected_provider} Gradle from PATH: {system_path} "
+                f"({actual or 'unknown'}); managed Gradle {requested} will be considered instead."
+            )
+        elif provider in {"termux", "system"}:
+            fail(
+                f"Requested Gradle provider {provider}, but gradle on PATH resolves to the "
+                f"{selected_provider} provider at {system_path}."
+            )
+    elif provider in {"termux", "system"}:
+        detail = " Install the Termux gradle package with pkg install gradle." if provider == "termux" else ""
+        fail(f"Requested Gradle provider {provider}, but no gradle executable was found on PATH.{detail}")
 
     if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
         fail_bootstrap_blocked(
@@ -3161,9 +3439,8 @@ def select_gradle(
                 str(cache_root / "gradle" / f"gradle-{requested}" / "bin" / "gradle"),
             ],
         )
-    info(f"Using managed Gradle {requested}")
+    info(f"Using managed Gradle {requested}; provider=download")
     return managed_gradle(requested, cache_root, offline=offline, force=force)
-
 
 def default_tasks(project: ProjectInfo) -> list[str]:
     if project.android_application:
@@ -3484,6 +3761,12 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
 
     parser.add_argument("-j", "--java-home", type=Path, help="JDK home")
     parser.add_argument(
+        "--java-provider",
+        choices=sorted(JAVA_PROVIDERS),
+        default=os.environ.get("DEVTOOL_JAVA_PROVIDER", "auto"),
+        help="Java provider: auto, termux, or system; an explicit --java-home remains authoritative",
+    )
+    parser.add_argument(
         "-D", "--system-deps",
         choices=("auto", "always", "never"),
         default="auto",
@@ -3492,6 +3775,12 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-K", "--skip-system-deps", dest="system_deps", action="store_const", const="never", help="Alias for --system-deps never")
     parser.add_argument("-J", "--min-java", type=int, help="Minimum Java version; inferred when omitted")
     parser.add_argument("-g", "--gradle-command", help="Explicit Gradle or gradlew executable")
+    parser.add_argument(
+        "--gradle-provider",
+        choices=sorted(GRADLE_PROVIDERS),
+        default=os.environ.get("DEVTOOL_GRADLE_PROVIDER", "auto"),
+        help="Gradle provider: auto, wrapper, termux, system, or download; an explicit --gradle-command remains authoritative",
+    )
     parser.add_argument("-G", "--gradle-version", help="Managed Gradle version when no wrapper is available")
     parser.add_argument("--gradle-user-home", type=Path, help="GRADLE_USER_HOME for this build")
     parser.add_argument("-k", "--cache-dir", type=Path, default=devtool_cache_dir() / APP_NAME)
@@ -3742,9 +4031,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     requirement = infer_java_requirement(project)
     minimum_java = args.min_java or requirement.minimum
+    if args.java_provider == "termux" and args.java_home is None and not running_under_termux_python():
+        fail("Java provider termux requires native Termux execution or an explicit --java-home.")
     java_home: Path | None = None
     try:
-        java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
+        java_home = find_java_home(
+            args.java_home,
+            minimum_java,
+            exact=requirement.exact if args.java_home is None else None,
+            provider=args.java_provider,
+        )
     except BuildError:
         java_home = None
     need_java = java_home is None
@@ -3762,8 +4058,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             need_certificates=need_certificates,
             offline=args.offline,
             java_version=minimum_java,
+            java_provider=args.java_provider,
         )
-        java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
+        java_home = find_java_home(
+            args.java_home,
+            minimum_java,
+            exact=requirement.exact if args.java_home is None else None,
+            provider=args.java_provider,
+        )
     elif args.system_deps == "auto" and (need_java or need_certificates):
         if not provisioning_allowed:
             missing = []
@@ -3782,8 +4084,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             need_certificates=need_certificates,
             offline=args.offline,
             java_version=minimum_java,
+            java_provider=args.java_provider,
         )
-        java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
+        java_home = find_java_home(
+            args.java_home,
+            minimum_java,
+            exact=requirement.exact if args.java_home is None else None,
+            provider=args.java_provider,
+        )
     elif need_java:
         if requirement.exact is not None:
             fail(
@@ -3798,7 +4106,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.gradle_user_home:
         env["GRADLE_USER_HOME"] = str(args.gradle_user_home.expanduser())
     heading("Java")
+    selected_java_provider = executable_provider(java_home / "bin" / "java")
     info(f"JAVA_HOME={java_home}")
+    info(f"Provider: {selected_java_provider}")
+    if selected_java_provider == "termux":
+        package_match = re.search(r"java-(\d+)-openjdk", java_home.name)
+        package_name = f"openjdk-{package_match.group(1)}" if package_match else ""
+        package_version = termux_package_version(package_name) if package_name else None
+        if package_version:
+            info(f"Termux package: {package_name} {package_version}")
     if requirement.exact is not None:
         info(f"Toolchain requirement: Java {requirement.exact}")
     elif minimum_java:
@@ -3908,6 +4224,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         bootstrap_downloads=args.toolchain_downloads,
         bootstrap_network=args.bootstrap_network,
         gradle_user_home=args.gradle_user_home,
+        provider=args.gradle_provider,
+        project=project,
     )
     heading("Gradle")
     info(f"Launcher: {gradle}")

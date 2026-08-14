@@ -7,6 +7,13 @@ from pathlib import Path
 from typing import Mapping
 
 from .models import CommandSpec, ProjectConfig
+from .termux_toolchains import (
+    detect_runtime_identity,
+    termux_gradle_probe,
+    termux_installed_packages,
+    termux_java_providers,
+    termux_package_probe,
+)
 
 VALID_TOOLCHAIN_MANAGERS = {"auto", "mise", "none"}
 _MISE_MARKERS = ("mise.toml", ".mise.toml", ".tool-versions")
@@ -118,9 +125,52 @@ def toolchain_doctor_rows(
         root = config.repo_root / root
     marker = has_mise_marker(root.resolve(), stop_at=config.repo_root)
     active = should_use_mise(config, cwd=str(root), env=env)
-    return [
+    rows = [
         ("toolchain", manager),
         ("mise", mise or "MISSING"),
         ("mise_marker", "yes" if marker else "no"),
         ("toolchain_active", "yes" if active else "no"),
     ]
+    runtime = detect_runtime_identity(env)
+    if runtime.is_termux:
+        rows.extend([
+            ("runtime_environment", "termux"),
+            ("termux_prefix", str(runtime.prefix or "")),
+            ("runtime_abi", f"android/{runtime.libc}/{runtime.arch}"),
+            ("android_api", str(runtime.android_api) if runtime.android_api is not None else "unknown"),
+        ])
+        gradle_package = termux_package_probe("gradle", env=env, runtime=runtime)
+        gradle_provider = termux_gradle_probe(env=env, runtime=runtime)
+        rows.append((
+            "termux_package_gradle",
+            gradle_package.version if gradle_package.installed else "MISSING",
+        ))
+        rows.append((
+            "termux_gradle_provider",
+            (
+                f"{gradle_provider.version} @ {gradle_provider.path}"
+                if gradle_provider.available and gradle_provider.compatible and gradle_provider.path
+                else f"UNUSABLE ({gradle_provider.rejection_reason or gradle_provider.reason})"
+                if gradle_provider.available
+                else f"MISSING ({gradle_provider.reason or 'not detected'})"
+            ),
+        ))
+        jdks = [
+            f"{package.name}={package.version or 'installed'}"
+            for package in termux_installed_packages("openjdk-*", env=env, runtime=runtime)
+        ]
+        rows.append(("termux_package_java", ", ".join(jdks) if jdks else "MISSING"))
+        java_providers = termux_java_providers(env=env, runtime=runtime)
+        rows.append((
+            "termux_java_provider",
+            ", ".join(
+                (
+                    f"{provider.version} @ {provider.path}"
+                    if provider.compatible
+                    else f"UNUSABLE {provider.path} ({provider.rejection_reason or provider.reason})"
+                )
+                for provider in java_providers
+                if provider.path
+            ) or "MISSING",
+        ))
+    return rows

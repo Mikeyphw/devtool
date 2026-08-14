@@ -216,7 +216,6 @@ def configured_tasks(config: ProjectConfig, action: str) -> list[str]:
     if action == "clean":
         return ["clean"]
     android = _dict_option(config, "android")
-    downloads, network = _bootstrap_policy(config)
     variant = str(config.variant or android.get("variant", "debug") or "debug").strip()
     variant_title = variant[:1].upper() + variant[1:]
     if action == "build":
@@ -520,6 +519,8 @@ def android_builder_arguments_for_tasks(
     root = android_project_root(config)
     android = _dict_option(config, "android")
     gradle = _dict_option(config, "gradle")
+    java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
+    nested_gradle = android.get("gradle", {}) if isinstance(android.get("gradle", {}), dict) else {}
     artifacts = _dict_option(config, "artifacts")
 
     argv = [str(root), "--no-chroot"]
@@ -531,7 +532,8 @@ def android_builder_arguments_for_tasks(
         seen_tasks.add(task)
         argv.extend(["--task", task])
 
-    _append_option(argv, "--java-home", android.get("java_home") or gradle.get("java_home"))
+    _append_option(argv, "--java-home", android.get("java_home") or java_options.get("home") or gradle.get("java_home"))
+    _append_option(argv, "--java-provider", java_options.get("provider") or android.get("java_provider", "auto"))
     _append_option(argv, "--sdk-root", android.get("sdk_root"))
     _append_option(argv, "--aapt2", android.get("aapt2"))
     _append_option(argv, "--aapt2-provider", android.get("aapt2_provider", "auto"))
@@ -547,7 +549,8 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--qemu-sysroot-sha256", android.get("qemu_sysroot_sha256"))
     _append_option(argv, "--qemu-install", android.get("qemu_install", "auto"))
     _append_option(argv, "--cmake-version", android.get("cmake_version", "auto"))
-    _append_option(argv, "--gradle-command", gradle.get("command") or android.get("gradle"))
+    _append_option(argv, "--gradle-command", gradle.get("command") or nested_gradle.get("command") or (android.get("gradle") if not isinstance(android.get("gradle"), dict) else None))
+    _append_option(argv, "--gradle-provider", gradle.get("provider") or nested_gradle.get("provider") or "auto")
     _append_option(argv, "--gradle-version", gradle.get("version"))
     _append_option(argv, "--gradle-user-home", gradle.get("user_home") or android.get("gradle_user_home"))
     downloads, network = _bootstrap_policy(config)
@@ -730,6 +733,10 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     requirement = android_build.infer_java_requirement(project)
     sdk_root, sdk_source = android_build.discover_sdk_root_with_source(None, project.root)
     android = _dict_option(config, "android")
+    gradle = _dict_option(config, "gradle")
+    java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
+    java_provider = str(java_options.get("provider") or android.get("java_provider") or "auto")
+    gradle_provider = str(gradle.get("provider") or "auto")
     downloads, network = _bootstrap_policy(config)
     tasks = configured_tasks(config, "build")
     test_tasks = configured_tasks(config, "test")
@@ -740,6 +747,8 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("project_type", "Android application" if project.android_application else "Android library/Gradle"),
         ("execution_mode", _android_execution_mode(config)),
         ("gradle_wrapper", wrapper_version or "not declared"),
+        ("java_provider", java_provider),
+        ("gradle_provider", gradle_provider),
         ("minimum_java", str(requirement.minimum) + (" exact toolchain" if requirement.exact else "")),
         ("compile_sdk", str(project.compile_sdk) if project.compile_sdk else "auto/unknown"),
         ("android_gradle_plugin", str(project.agp_major) if project.agp_major else "unknown"),
@@ -764,10 +773,14 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     project = inspect_android_project(config)
     requirement = android_build.infer_java_requirement(project)
     android = _dict_option(config, "android")
+    gradle = _dict_option(config, "gradle")
+    java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
+    java_provider = str(java_options.get("provider") or android.get("java_provider") or "auto")
+    gradle_provider = str(gradle.get("provider") or "auto")
     downloads, network = _bootstrap_policy(config)
     java_home: Path | None = None
     try:
-        java_home = android_build.find_java_home(None, requirement.minimum, exact=requirement.exact)
+        java_home = android_build.find_java_home(None, requirement.minimum, exact=requirement.exact, provider=java_provider)
     except android_build.BuildError:
         pass
 
@@ -797,6 +810,8 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     return [
         ("android_project", "ready" if project.android else "not Android"),
         ("execution_mode", _android_execution_mode(config)),
+        ("java_provider", java_provider),
+        ("gradle_provider", gradle_provider),
         (
             "java",
             str(java_home)

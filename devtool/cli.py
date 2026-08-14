@@ -93,6 +93,7 @@ from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no
 from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
+from .termux_toolchains import VALID_GRADLE_PROVIDERS, VALID_JAVA_PROVIDERS
 from .transactions import (
     abandon_transaction,
     devtool_xdg_dir,
@@ -391,7 +392,9 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--toolchain-profile", default="", help="Chroot/toolchain profile name from global or repo config")
     bootstrap.add_argument("--android-sdk-root", default="", help="Android SDK root for Android/Gradle projects")
     bootstrap.add_argument("--gradle-command", default="", help="Gradle or gradlew executable for Android/Gradle projects")
+    bootstrap.add_argument("--gradle-provider", choices=sorted(VALID_GRADLE_PROVIDERS), default="", help="Gradle provider for Android/Gradle projects: auto, wrapper, termux, system, or download")
     bootstrap.add_argument("--java-home", default="", help="JDK home for Android/Gradle projects")
+    bootstrap.add_argument("--java-provider", choices=sorted(VALID_JAVA_PROVIDERS), default="", help="Java provider for Android/Gradle projects: auto, termux, or system")
     bootstrap.add_argument("--gradle-user-home", default="", help="GRADLE_USER_HOME for Android/Gradle projects")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2354,10 +2357,21 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
     if java_home:
         android = ensure_section("android")
         android["java_home"] = java_home
+    java_provider = str(getattr(args, "java_provider", "") or "").strip()
+    if java_provider:
+        android = ensure_section("android")
+        java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
+        java_options = dict(java_options)
+        java_options["provider"] = java_provider
+        android["java"] = java_options
     gradle_command = str(getattr(args, "gradle_command", "") or "").strip()
     if gradle_command:
         gradle = ensure_section("gradle")
         gradle["command"] = gradle_command
+    gradle_provider = str(getattr(args, "gradle_provider", "") or "").strip()
+    if gradle_provider:
+        gradle = ensure_section("gradle")
+        gradle["provider"] = gradle_provider
     gradle_user_home = str(getattr(args, "gradle_user_home", "") or "").strip()
     if gradle_user_home:
         gradle = ensure_section("gradle")
