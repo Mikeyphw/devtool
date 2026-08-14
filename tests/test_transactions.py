@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from devtool.transactions import (
     find_active_transaction,
     find_active_transactions,
     read_transaction,
+    record_transaction_git_commit,
     rollback_transaction,
     transaction_root,
 )
@@ -28,6 +30,114 @@ class TransactionalApplyTests(unittest.TestCase):
             f"test_command='bash -lc \"{test}\"'\n",
             encoding="utf-8",
         )
+
+
+    def _init_git_repo(self, root: Path) -> str:
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Devtool Tests"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "devtool-tests@example.invalid"], cwd=root, check=True)
+        (root / "file.txt").write_text("old\n", encoding="utf-8")
+        (root / "unrelated.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "file.txt", "unrelated.txt"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=root, check=True)
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+
+    def test_rollback_restores_exact_git_index_after_failed_commit_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            initial_head = self._init_git_repo(root)
+            (root / "unrelated.txt").write_text("preexisting staged\n", encoding="utf-8")
+            subprocess.run(["git", "add", "unrelated.txt"], cwd=root, check=True)
+            initial_cached = subprocess.check_output(["git", "diff", "--cached", "--binary"], cwd=root)
+
+            artifact = Path(tmp) / "overlay.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("file.txt", "new\n")
+            tx = create_apply_transaction(
+                root,
+                artifact,
+                artifact_type="overlay",
+                preview={"changes": [{"kind": "modified", "path": "file.txt"}]},
+            )
+            transaction_path = Path(tx["path"])
+
+            (root / "file.txt").write_text("new\n", encoding="utf-8")
+            subprocess.run(["git", "add", "file.txt"], cwd=root, check=True)
+            result = rollback_transaction(transaction_path, reason="failed commit staging rollback")
+
+            self.assertEqual(result.returncode, 0, result.output)
+            self.assertEqual(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(), initial_head)
+            self.assertEqual((root / "file.txt").read_text(encoding="utf-8"), "old\n")
+            self.assertEqual(subprocess.check_output(["git", "diff", "--cached", "--binary"], cwd=root), initial_cached)
+            self.assertIn("git_state: restored", result.output)
+
+    def test_rollback_rewinds_recorded_apply_commit_and_restores_exact_git_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            initial_head = self._init_git_repo(root)
+            (root / "unrelated.txt").write_text("preexisting staged\n", encoding="utf-8")
+            subprocess.run(["git", "add", "unrelated.txt"], cwd=root, check=True)
+            initial_cached = subprocess.check_output(["git", "diff", "--cached", "--binary"], cwd=root)
+
+            artifact = Path(tmp) / "overlay.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("file.txt", "new\n")
+            tx = create_apply_transaction(
+                root,
+                artifact,
+                artifact_type="overlay",
+                preview={"changes": [{"kind": "modified", "path": "file.txt"}]},
+            )
+            transaction_path = Path(tx["path"])
+
+            (root / "file.txt").write_text("new\n", encoding="utf-8")
+            subprocess.run(["git", "add", "file.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "transaction apply"], cwd=root, check=True)
+            applied_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            self.assertNotEqual(applied_commit, initial_head)
+            record_transaction_git_commit(transaction_path, applied_commit)
+
+            result = rollback_transaction(transaction_path, reason="post-commit verification failure")
+
+            self.assertEqual(result.returncode, 0, result.output)
+            self.assertEqual(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(), initial_head)
+            self.assertEqual((root / "file.txt").read_text(encoding="utf-8"), "old\n")
+            self.assertEqual(subprocess.check_output(["git", "diff", "--cached", "--binary"], cwd=root), initial_cached)
+            self.assertIn("git_state: restored", result.output)
+
+    def test_rollback_refuses_to_rewind_unexpected_commit_after_recorded_apply_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            self._init_git_repo(root)
+            artifact = Path(tmp) / "overlay.zip"
+            with ZipFile(artifact, "w") as zf:
+                zf.writestr("file.txt", "new\n")
+            tx = create_apply_transaction(
+                root,
+                artifact,
+                artifact_type="overlay",
+                preview={"changes": [{"kind": "modified", "path": "file.txt"}]},
+            )
+            transaction_path = Path(tx["path"])
+            (root / "file.txt").write_text("new\n", encoding="utf-8")
+            subprocess.run(["git", "add", "file.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "transaction apply"], cwd=root, check=True)
+            applied_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            record_transaction_git_commit(transaction_path, applied_commit)
+            (root / "later.txt").write_text("user commit\n", encoding="utf-8")
+            subprocess.run(["git", "add", "later.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "later user commit"], cwd=root, check=True)
+            later_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+
+            result = rollback_transaction(transaction_path, reason="must not destroy later commit")
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("HEAD changed after the devtool apply commit", result.output)
+            self.assertEqual(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(), later_head)
+            self.assertTrue(transaction_path.exists())
 
     def test_apply_overlay_validate_failure_restores_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):

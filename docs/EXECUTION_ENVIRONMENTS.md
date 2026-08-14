@@ -163,6 +163,19 @@ PRoot guest environment state is intentionally narrow. Devtool passes selected t
 
 `--isolated`, `--minimal`, and `--shared-tmp` are Termux-only PRoot-Distro options. PRoot-Distro itself can also run on a regular Linux host, so the backend is not restricted to Termux when the executable is available. Devtool deliberately does not use PRoot-Distro `--detach` for validation/build phases because detached sessions discard the normal streams needed for progress and phase control. Use tmux around the whole local devtool invocation when detachment is required.
 
+### Termux/PRoot doctor and provider explanations
+
+The final integration diagnostics are host-only so auto-chroot cannot move the native Termux inspection into another environment:
+
+```bash
+devtool --host termux doctor --explain
+devtool --host termux doctor --distro ubuntu --explain
+devtool --host termux packages
+devtool --host termux explain
+```
+
+`termux doctor` reports native runtime/provider/cache/storage/resource state, each Termux Android-tool candidate, Android SDK/full-NDK readiness when applicable, local SSH/chrootctl/tmux/PRoot availability, and can probe a named installed PRoot guest. The complete campaign promise matrix is maintained in `TERMUX_PROOT_PROMISE_AUDIT.md`. Guest discovery runs the guest's own shell and reports guest tool paths; it never requires a guest devtool installation. `termux packages` emits recommendations only and never invokes `pkg install`, `pkg upgrade`, `apt install`, or `apt upgrade`; OpenJDK package advice is discovered read-only from installed/available package names with a conservative fallback. Generic `devtool doctor --explain` includes the same provider-selection explanations when running on native Termux.
+
 ## Native Termux runtime hardening
 
 Native Termux repositories should live in private app storage such as `$HOME/Code`. Android shared storage (`/sdcard`, `/storage/emulated/...`) is detected before native execution and follows `[termux.storage].shared_storage_policy = "allow|warn|deny"`; `--allow-shared-storage-build` is the one-run override. Verified Android/Gradle output may still be exported afterward with `[termux.artifacts].export_dir` or `--artifact-export`. Devtool caches native-Termux build state under a `host-termux` namespace so Bionic-native state is not mixed with chroot, PRoot, SSH, or conventional glibc-host caches.

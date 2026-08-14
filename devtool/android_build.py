@@ -2066,9 +2066,15 @@ def commit451_release_available(
         with urllib.request.urlopen(request, timeout=20) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return False
-        fail(f"Could not resolve Commit451 release availability: {url}\n{exc}")
+        try:
+            if exc.code == 404:
+                return False
+            fail(f"Could not resolve Commit451 release availability: {url}\n{exc}")
+        finally:
+            # HTTPError owns the underlying response stream.  Close it even for
+            # the expected 404 probe path so repeated release checks do not leak
+            # descriptors or emit ResourceWarning under newer Python versions.
+            exc.close()
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         fail(f"Could not resolve Commit451 release availability: {url}\n{exc}")
     return str(payload.get("tag_name") or "") == tag
@@ -3027,33 +3033,37 @@ def run_sdkmanager_with_progress(
     last_progress_line = ""
     last_plain_line = ""
     assert process.stdout is not None
-    for raw_line in process.stdout:
-        # TextIO's universal-newline handling converts sdkmanager's carriage
-        # returns into iterable lines, which keeps progress visible in pipes,
-        # Devtool logs, notifications, and HUDs.
-        line = _ANSI_ESCAPE_RE.sub("", raw_line).strip()
-        if not line:
-            continue
-        captured.append(line)
-        match = _SDKMANAGER_PERCENT_RE.search(line)
-        if match:
-            percent = min(100, max(0, int(match.group(1))))
-            should_report = (
-                percent >= last_percent + 5
-                or percent in {0, 100}
-                or (line != last_progress_line and percent == last_percent)
-            )
-            if should_report:
-                detail = re.sub(r"^[\[\]=#>.\-\s]*\d{1,3}%\s*", "", line).strip(" []")
-                suffix = f" · {detail}" if detail and detail != line else ""
-                info(f"SDK installation progress: {percent:3d}%{suffix}")
-                last_percent = percent
-                last_progress_line = line
-            continue
+    stdout = process.stdout
+    try:
+        for raw_line in stdout:
+            # TextIO's universal-newline handling converts sdkmanager's carriage
+            # returns into iterable lines, which keeps progress visible in pipes,
+            # Devtool logs, notifications, and HUDs.
+            line = _ANSI_ESCAPE_RE.sub("", raw_line).strip()
+            if not line:
+                continue
+            captured.append(line)
+            match = _SDKMANAGER_PERCENT_RE.search(line)
+            if match:
+                percent = min(100, max(0, int(match.group(1))))
+                should_report = (
+                    percent >= last_percent + 5
+                    or percent in {0, 100}
+                    or (line != last_progress_line and percent == last_percent)
+                )
+                if should_report:
+                    detail = re.sub(r"^[\[\]=#>.\-\s]*\d{1,3}%\s*", "", line).strip(" []")
+                    suffix = f" · {detail}" if detail and detail != line else ""
+                    info(f"SDK installation progress: {percent:3d}%{suffix}")
+                    last_percent = percent
+                    last_progress_line = line
+                continue
 
-        if line != last_plain_line:
-            info(f"sdkmanager: {line}")
-            last_plain_line = line
+            if line != last_plain_line:
+                info(f"sdkmanager: {line}")
+                last_plain_line = line
+    finally:
+        stdout.close()
 
     returncode = int(process.wait())
     if returncode == 0 and last_percent < 100:

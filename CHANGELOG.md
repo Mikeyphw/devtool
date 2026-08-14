@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 Termux integration doctor and final seal
+
+- Added `devtool termux doctor`, `termux packages`, and `termux explain` with text/JSON output, detailed native Termux provider readiness, selection/rejection explanations, read-only package recommendations, and optional installed PRoot guest tool discovery.
+- Extended generic `doctor --explain` with the same provider-selection reasoning while keeping the dedicated Termux diagnostics host-only so auto-chroot cannot relocate them.
+- Finalized configuration, completion, manpage, and documentation contracts for Termux Java/Gradle/native/Android-tool providers, runtime hardening, PRoot execution, backend-scoped caches, and package recommendations.
+- Added final integration regression coverage proving guest probes do not require devtool, package advice never installs/upgrades packages, and the CLI/documentation/configuration surfaces stay synchronized.
+- Final promise audit closed remaining integration gaps: dynamic read-only OpenJDK package advice, per-tool Android/NDK and SSH/chroot backend doctor rows, validation-control live-progress totals compatibility, explicit-XDG log isolation, cleanup of SDK/HTTP probe streams, and exact Git HEAD/index restoration when an atomic apply rolls back after staging or committing.
+- Added `docs/TERMUX_PROOT_PROMISE_AUDIT.md`, a 38-item acceptance matrix tied to regression evidence; the complete non-Android-app Python suite is part of the final seal.
+- Hardened the final host validator against native Android leakage by scrubbing `ANDROID_*` markers, isolating Tasker/phone-log defaults when `DEVTOOL_XDG_DIR` is explicit, and placing full-suite temporary files under a short private root so AF_UNIX IPC tests cannot exceed Android socket-path limits.
+
 ## 1.1.0 Termux runtime hardening and PRoot-Distro backend
 
 - Added shared-storage safety policy, backend-isolated native Termux caches, resource profiles, optional wake-lock lifecycle, verified-artifact export, runtime/network failure classification, shebang adaptation, tmux visibility, and non-fatal Gradle quiet-period diagnostics.

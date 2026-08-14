@@ -292,6 +292,20 @@ devtool --proot-distro ubuntu --proot-user dev --proot-cwd /workspace/project va
 
 By default the repository is explicitly bound to `/workspace/project`; customize it with `--proot-repo-mount` or repeatable `--proot-bind HOST:GUEST`. Helper files outside mapped roots are staged into a host cache bound at `/run/devtool`, and the staging directory is removed after execution. Python support helpers are staged rather than requiring devtool to be installed in the guest, while persistent guest caches are isolated under `~/.cache/devtool/proot/<distro>` and bound at `/var/cache/devtool`. Host-specific `HOME`, `PATH`, `JAVA_HOME`, Gradle home, Android SDK/NDK variables, and other execution-backend state are not blindly propagated; devtool-managed backend variables cannot be overridden through PRoot environment settings. Commands selected from the Termux package prefix are resolved again by name inside the guest instead of copying a Bionic binary or Termux launcher into the Linux container. Use normal foreground execution so devtool retains phase ordering, progress and exit codes; for detachable local orchestration, wrap the whole devtool process in tmux instead of using PRoot-Distro detach mode.
 
+### Termux provider and PRoot diagnostics
+
+Use the final integration doctor to see native Termux runtime identity, provider readiness, selection/rejection reasons, package suggestions, and an optional PRoot guest tool probe:
+
+```bash
+devtool --host termux doctor --explain
+devtool --host termux doctor --distro ubuntu --explain
+devtool --host termux packages
+devtool --host termux explain
+devtool --host doctor --explain
+```
+
+`termux packages` is deliberately read-only: it can print a suggested `pkg install ...` command, but devtool never installs or upgrades Termux packages automatically. OpenJDK advice first inspects installed/available Termux package names instead of permanently assuming one JDK generation. The PRoot guest probe uses `proot-distro login` to inspect the guest's own Python/Java/Gradle/CMake/Ninja/clang/Git commands; it does not require devtool in the guest and does not substitute host Termux providers for guest providers. `termux doctor` also reports each Termux Android-tool candidate separately, Android full-NDK/SDK readiness for Android projects, and local SSH/chrootctl/tmux/PRoot availability. Text and JSON output are available for the dedicated `termux` diagnostics.
+
 ## Termux chroot repository paths
 
 When a repository exists only inside a chroot, devtool now detects that the path is not visible to the Termux host and delegates the full process automatically. Repositories mirrored from Termux home are also probed so mounts under `/home/mike`, `/home/termux`, or another chroot home resolve without manual path-map flags. The Android frontend always launches chroot workflows from a Termux-visible work directory.
@@ -733,3 +747,6 @@ For ARM64 Termux/chroot validation of Android projects with native code, devtool
 can optionally use an unofficial ARM64-host NDK or wrap the official x86_64 NDK
 with QEMU plus an auto-provisioned amd64 sysroot. See
 `docs/ANDROID_NDK_HOST_FALLBACK.md`.
+
+
+Final Termux/PRoot acceptance audit: `docs/TERMUX_PROOT_PROMISE_AUDIT.md`.

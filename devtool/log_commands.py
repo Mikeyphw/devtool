@@ -67,6 +67,7 @@ def _candidate_state_roots() -> list[Path]:
         if path not in roots:
             roots.append(path)
 
+    explicit_xdg = bool(os.environ.get("DEVTOOL_XDG_DIR", "").strip())
     add(state_dir())
     add(os.environ.get("DEVTOOL_TASKER_DIR"))
     add(os.environ.get("DEVTOOL_HUD_BRIDGE_DIR"))
@@ -75,12 +76,28 @@ def _candidate_state_roots() -> list[Path]:
     try:
         from .tasker import default_tasker_dir, read_active_hud_directory
 
-        add(default_tasker_dir())
-        if os.environ.get("DEVTOOL_NO_HUD", "").strip().lower() not in {"1", "true", "yes", "on"}:
-            add(read_active_hud_directory(default=None))
+        # DEVTOOL_XDG_DIR is an explicit isolation boundary. Explicit bridge
+        # directories above may opt back into shared state, but inferred Android
+        # defaults (/sdcard/Tasker/devtool) and the global HUD registry must not
+        # escape the caller-selected state root.
+        if not explicit_xdg:
+            add(default_tasker_dir())
+            if os.environ.get("DEVTOOL_NO_HUD", "").strip().lower() not in {"1", "true", "yes", "on"}:
+                add(read_active_hud_directory(default=None))
     except Exception:
         pass
     return roots
+
+
+def _phone_log_mirror_dir() -> Path | None:
+    """Return the phone log mirror without violating explicit XDG isolation."""
+    configured = os.environ.get("DEVTOOL_PHONE_LOG_MIRROR_DIR")
+    if configured is not None:
+        text = configured.strip()
+        return Path(text).expanduser() if text else None
+    if os.environ.get("DEVTOOL_XDG_DIR", "").strip():
+        return None
+    return Path("/sdcard/.logs/devtool")
 
 
 def _all_log_paths() -> list[Path]:
@@ -95,15 +112,16 @@ def _all_log_paths() -> list[Path]:
             if path not in seen:
                 seen.add(path)
                 paths.append(path)
-    phone_mirror = Path(os.environ.get("DEVTOOL_PHONE_LOG_MIRROR_DIR", "/sdcard/.logs/devtool")).expanduser()
-    try:
-        mirror_candidates = sorted(phone_mirror.glob("*.log"))
-    except OSError:
-        mirror_candidates = []
-    for path in mirror_candidates:
-        if path not in seen:
-            seen.add(path)
-            paths.append(path)
+    phone_mirror = _phone_log_mirror_dir()
+    if phone_mirror is not None:
+        try:
+            mirror_candidates = sorted(phone_mirror.glob("*.log"))
+        except OSError:
+            mirror_candidates = []
+        for path in mirror_candidates:
+            if path not in seen:
+                seen.add(path)
+                paths.append(path)
     return sorted(paths, key=lambda item: _safe_mtime(item))
 
 
@@ -343,9 +361,11 @@ def _accessible_log_path(path: Path | None, fallbacks: Iterable[Path]) -> Path |
             candidate = root / "logs" / basename
             if candidate.exists():
                 return candidate
-        mirror = Path(os.environ.get("DEVTOOL_PHONE_LOG_MIRROR_DIR", "/sdcard/.logs/devtool")).expanduser() / basename
-        if mirror.exists():
-            return mirror
+        mirror_root = _phone_log_mirror_dir()
+        if mirror_root is not None:
+            mirror = mirror_root / basename
+            if mirror.exists():
+                return mirror
     return None
 
 

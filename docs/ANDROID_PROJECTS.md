@@ -481,3 +481,13 @@ devtool --proot-distro ubuntu --proot-cwd /workspace/project validate
 ```
 
 The guest does not need devtool. The repository is bound explicitly, host Termux Java/Gradle/CMake/NDK paths are not injected into the guest, and Android outputs written in the bound checkout remain immediately visible to local devtool artifact verification. If provider planning produced an absolute command under the Termux package prefix, the PRoot wrapper resolves that tool again by command name inside the guest instead of staging the Bionic host executable or launcher. Devtool-managed PRoot/backend environment variables are reserved and cannot be replaced by project or command environment. Do not use PRoot-Distro detached mode for normal validation because local devtool must retain progress, exit-code, and phase-order control.
+
+Before an Android build, inspect why native Termux providers were selected or rejected without running an Android Gradle task:
+
+```bash
+devtool --host termux doctor --explain
+devtool --host termux packages
+devtool --host termux doctor --distro ubuntu --explain
+```
+
+The package view is advisory only. It never changes Termux packages. A PRoot guest probe discovers the guest's own build tools rather than treating the host's Bionic Java/Gradle/CMake/NDK commands as guest tools.

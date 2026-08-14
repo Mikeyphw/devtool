@@ -281,6 +281,7 @@ class AndroidNativeProviderTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(android_build.BuildError, "does not publish"):
                 android_build.resolve_commit451_release_version(Path(tmp), "34.0.0", offline=False)
+        self.assertTrue(error.closed)
 
     def test_commit451_future_release_can_be_resolved_from_github_metadata(self) -> None:
         payload = io.BytesIO(b'{"tag_name":"platform-tools-38.0.0"}')

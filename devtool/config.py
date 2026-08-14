@@ -133,6 +133,7 @@ def minimal_global_config_template() -> str:
         "default_chroot = \"androidos\"",
         "",
         "[termux]",
+        "# Diagnostics/package recommendations are read-only; devtool never runs pkg/apt install or upgrade automatically.",
         "wake_lock = \"auto\" # auto | on | off",
         "resource_profile = \"balanced\" # auto | conservative | balanced | performance",
         "",
@@ -143,6 +144,7 @@ def minimal_global_config_template() -> str:
         "# export_dir = \"/sdcard/Download\"",
         "",
         "[proot]",
+        "# The guest does not need devtool; its tool providers are discovered inside the guest.",
         "# distro = \"ubuntu\"",
         "user = \"root\"",
         "cwd = \"/workspace/project\"",
@@ -1167,6 +1169,7 @@ chroot_name = "androidos"
 device_serial = ""
 
 [proot]
+# The guest does not need devtool; its tool providers are discovered inside the guest.
 distro = ""
 user = "root"
 cwd = "/workspace/project"
@@ -1184,6 +1187,7 @@ bind = []
 env = []
 
 [termux]
+# Diagnostics/package recommendations are read-only; devtool never runs pkg/apt install or upgrade automatically.
 wake_lock = "auto"
 resource_profile = "balanced"
 

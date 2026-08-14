@@ -159,7 +159,9 @@ Show resolved repository, target, runner, execution environment, and configurati
 .B doctor " | " dr
 Diagnose devtool and project prerequisites. Use
 .B --fix
-to create safe devtool state/cache directories where supported.
+to create safe devtool state/cache directories where supported. Use
+.B --explain
+on native Termux to include provider selection and rejection reasons.
 .SH ARTIFACT COMMANDS
 .TP
 .B apply-overlay " | " ao " ARTIFACT"
@@ -234,6 +236,17 @@ and
 .B doctor
 for the sparse user config at
 .IR ~/.config/devtool/config.toml .
+.TP
+.B termux doctor|packages|explain
+Inspect native Termux runtime and provider readiness, print read-only package recommendations, or explain provider selection/rejection decisions.
+.B termux doctor
+accepts
+.B --distro NAME
+to probe the installed PRoot guest's own Python/Java/Gradle/CMake/Ninja/clang/Git commands and
+.B --explain
+to include provider reasoning. The doctor reports per-tool Termux Android providers, Android SDK/full-NDK readiness when applicable, and local SSH/chrootctl/tmux/PRoot availability. The dedicated Termux diagnostics support
+.B --format text|json
+and never install or upgrade Termux packages; OpenJDK suggestions are resolved read-only from installed/available package names before using a conservative fallback.
 .TP
 .B detect
 Detect project type; use

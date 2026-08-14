@@ -156,6 +156,7 @@ _devtool_commands() {
     'st:alias for status'
     'doctor:diagnose devtool and project prerequisites'
     'dr:alias for doctor'
+    'termux:inspect native Termux providers, packages, and PRoot guests'
     'apply-overlay:transactionally apply one overlay'
     'ao:alias for apply-overlay'
     'apply-overlays:transactionally apply a bundle or ordered overlays'
@@ -566,7 +567,24 @@ _devtool() {
             '(--daemon --no-daemon)--no-daemon[disable the Gradle daemon during validation]'
           ;;
         doctor|dr)
-          _arguments '--fix[create safe devtool state and cache directories]'
+          _arguments '--fix[create safe devtool state and cache directories]' '--explain[explain Termux provider selection and rejection reasons]'
+          ;;
+        termux)
+          if (( ${#line} < 2 )); then
+            _values 'termux action' doctor packages explain
+          else
+            case ${line[2]} in
+              doctor)
+                _arguments '--distro[probe an installed PRoot-Distro guest]:distro:' '--explain[include provider selection and rejection reasons]' '--format[output format]:format:(text json)'
+                ;;
+              packages)
+                _arguments '--format[output format]:format:(text json)'
+                ;;
+              explain)
+                _arguments '--format[output format]:format:(text json)'
+                ;;
+            esac
+          fi
           ;;
         clean|cl)
           _arguments '--caches[also prune devtool-managed caches and transient state]'
