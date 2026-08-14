@@ -888,6 +888,8 @@ def build_sync_command(
             commands.append([*uv_pip, "pytest"])
         if info.framework == "pytest" and _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root):
             commands.append([*uv_pip, "pytest-asyncio"])
+        if info.framework == "pytest" and _uses_pexpect(info.root) and not _declares_requirement(info.root, "pexpect"):
+            commands.append([*uv_pip, "pexpect"])
         return commands
     if info.manager == "poetry":
         command = ["poetry", "install", "--sync"]
@@ -968,6 +970,8 @@ def build_sync_command(
         commands.append([*pip_base, "pytest"])
     if info.framework == "pytest" and _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root):
         commands.append([*pip_base, "pytest-asyncio"])
+    if info.framework == "pytest" and _uses_pexpect(info.root) and not _declares_requirement(info.root, "pexpect"):
+        commands.append([*pip_base, "pexpect"])
     build_requires = list(build_system_requirements(info.root)) if (info.root / "pyproject.toml").is_file() else []
     if install_project and build_requires:
         commands.append([*pip_base, *build_requires])
@@ -1690,6 +1694,22 @@ def _uses_pytest_asyncio(root: Path) -> bool:
     return False
 
 
+def _uses_pexpect(root: Path) -> bool:
+    tests_root = root / "tests"
+    candidates = tests_root.rglob("*.py") if tests_root.is_dir() else root.glob("test*.py")
+    pattern = re.compile(r"(?m)^\s*(?:import\s+pexpect\b|from\s+pexpect\b)")
+    for path in candidates:
+        if any(part in IGNORED_DIRECTORIES for part in path.relative_to(root).parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if pattern.search(text):
+            return True
+    return False
+
+
 def _declares_pytest_async_plugin(root: Path) -> bool:
     return any(_declares_requirement(root, name) for name in ("pytest-asyncio", "anyio", "pytest-trio", "pytest-tornasync", "pytest-twisted"))
 
@@ -1715,6 +1735,8 @@ def missing_auto_validator_dependencies(info: PythonProjectInfo, plan: PythonEnv
         missing.append("pytest")
     if _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root) and not _can_import_with_python(plan.python, "pytest_asyncio"):
         missing.append("pytest-asyncio")
+    if _uses_pexpect(info.root) and not _declares_requirement(info.root, "pexpect") and not _can_import_with_python(plan.python, "pexpect"):
+        missing.append("pexpect")
     return tuple(missing)
 
 

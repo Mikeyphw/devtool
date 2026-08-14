@@ -292,6 +292,83 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
             )
         )
 
+    def test_python_native_termux_test_isolation_uses_prefix_tmp_outside_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            outer = Path(tmp)
+            root = outer / "repo"
+            root.mkdir()
+            prefix = outer / "termux-prefix"
+            (prefix / "tmp").mkdir(parents=True)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_demo.py").write_text("def test_demo(): pass\n", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                execution_environment="native-termux",
+                runner_options={"python": {"manager": "venv", "environment": str(outer / "venv")}},
+            )
+            with (
+                patch.dict(os.environ, {"PREFIX": str(prefix)}, clear=False),
+                patch("devtool.project_runners.detect_current_environment", return_value="native-termux"),
+            ):
+                spec = build_specs(config, "test")[0]
+
+        self.assertEqual(Path(spec.env["TMPDIR"]), prefix / "tmp")
+        self.assertTrue(Path(spec.env["HOME"]).is_relative_to(prefix / "tmp"))
+        self.assertFalse(Path(spec.env["HOME"]).is_relative_to(root))
+
+    def test_python_uv_restore_installs_pexpect_for_pty_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_tty.py").write_text(
+                "def test_tty():\n    import pexpect\n    assert pexpect is not None\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(
+                    repo_root=root,
+                    project_root=str(root),
+                    kind="python",
+                    runner_options={"python": {"manager": "auto"}},
+                )
+                specs = build_specs(config, "restore")
+
+        self.assertTrue(
+            any(
+                spec.name == "restore:test-tools"
+                and spec.argv[-1] == "pexpect"
+                for spec in specs
+            )
+        )
+
+    def test_python_venv_restore_installs_pexpect_for_pty_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_tty.py").write_text("import pexpect\n", encoding="utf-8")
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(
+                    repo_root=root,
+                    project_root=str(root),
+                    kind="python",
+                    runner_options={"python": {"manager": "venv"}},
+                )
+                specs = build_specs(config, "restore")
+
+        self.assertTrue(
+            any(
+                spec.name == "restore:test-tools"
+                and spec.argv[-1] == "pexpect"
+                for spec in specs
+            )
+        )
+
     def test_python_uv_dependency_check_uses_uv_pip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
             root = Path(tmp)

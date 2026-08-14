@@ -21,7 +21,7 @@ import sys
 from typing import Iterable
 
 from .build_optimization import optimized_build_env, optimized_validation_env, resolve_android_validation_phase_policy, resolve_android_validation_policy, resolve_build_policy
-from .execution_environments import detect_current_environment
+from .execution_environments import NATIVE_TERMUX, detect_current_environment
 from .models import CommandSpec, ProjectConfig
 from .termux_toolchains import detect_runtime_identity, normalize_native_cache_provider, normalize_native_provider, termux_cmake_probe, termux_ninja_probe, termux_ccache_probe, termux_native_provider
 
@@ -1319,7 +1319,7 @@ class PythonRunner(ProjectRunner):
         return plan
 
     def _env(self, config: ProjectConfig, *, isolated: bool = False) -> dict[str, str]:
-        from .python_support import python_cache_env
+        from .python_support import python_cache_env, python_repo_key
         env = _optimized_env(config, self.kind)
         env.update(python_cache_env(self._root(config), config.execution_environment))
         info = self._info(config)
@@ -1329,8 +1329,36 @@ class PythonRunner(ProjectRunner):
                 env.setdefault("UV_PROJECT_ENVIRONMENT", plan.environment_root)
         options = self._options(config)
         if isolated or bool(options.get("isolation", False)):
-            home = self._root(config) / ".devtool" / "tmp" / "python-home"
-            tmp = self._root(config) / ".devtool" / "tmp" / "python"
+            project_root = self._root(config)
+            execution = str(config.execution_environment or "auto").strip().lower().replace("_", "-")
+            current = detect_current_environment()
+
+            # Test/validator temp trees must not live under the repository.
+            # Otherwise nested TemporaryDirectory projects inherit the parent
+            # .devtool.toml/Git boundary and cease to be isolated. Native
+            # Termux also needs its private $PREFIX/tmp rather than Android's
+            # unwritable /tmp, and the shorter path keeps AF_UNIX fixtures safe.
+            use_host_temp = execution not in {"chroot", "proot", "proot-distro", "ssh"}
+            if current == NATIVE_TERMUX and use_host_temp:
+                prefix = Path(os.environ.get("PREFIX") or "/data/data/com.termux/files/usr").expanduser()
+                tmp = prefix / "tmp"
+                home = tmp / f"dt-home-{python_repo_key(project_root).rsplit('-', 1)[-1][:8]}"
+            elif use_host_temp:
+                tmp = Path(os.environ.get("TMPDIR") or "/tmp").expanduser()
+                try:
+                    tmp.relative_to(project_root)
+                except ValueError:
+                    pass
+                else:
+                    tmp = Path("/tmp")
+                home = tmp / f"devtool-home-{python_repo_key(project_root).rsplit('-', 1)[-1][:8]}"
+            else:
+                # Chroot/PRoot execution keeps the repository-mapped paths so
+                # the guest always sees a writable location without assuming
+                # host /tmp is mounted into the guest.
+                home = project_root / ".devtool" / "tmp" / "python-home"
+                tmp = project_root / ".devtool" / "tmp" / "python"
+
             home.mkdir(parents=True, exist_ok=True)
             tmp.mkdir(parents=True, exist_ok=True)
             for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
@@ -1623,7 +1651,7 @@ class PythonRunner(ProjectRunner):
             filtered.append(text)
         packages = filtered
         normalized = {str(item).split("[", 1)[0].split("==", 1)[0].split(">=", 1)[0].split("<=", 1)[0].lower() for item in packages}
-        if normalized and normalized <= {"pytest", "pytest-asyncio"}:
+        if normalized and normalized <= {"pytest", "pytest-asyncio", "pexpect"}:
             return "restore:test-tools"
         if any(item.startswith("setuptools") or item in {"wheel", "build", "hatchling", "flit_core", "poetry-core"} for item in normalized):
             return "restore:build-system"

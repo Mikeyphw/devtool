@@ -35,14 +35,29 @@ def isolate_devtool_runtime_env(monkeypatch: pytest.MonkeyPatch, request: pytest
         "DEVTOOL_TASKER_DIR",
         "DEVTOOL_CLIPBOARD_SOCKET",
         "DEVTOOL_CLIPBOARD_FIFO",
+        "DEVTOOL_PHONE_LOG_MIRROR_DIR",
+        "DEVTOOL_GLOBAL_CONFIG",
+        "DEVTOOL_TERMUX_CHROOT",
+        "DEVTOOL_TERMUX_HOME",
+        "DEVTOOL_BUILD_ENVIRONMENT",
+        "DEVTOOL_BUILD_CACHE_ROOT",
+        "DEVTOOL_MAX_WORKERS",
+        "DEVTOOL_VALIDATION_MAX_WORKERS",
+        "DEVTOOL_VALIDATION_CPU_LIMIT",
+        "DEVTOOL_VALIDATION_MEMORY_GUARD_MB",
+        "DEVTOOL_VALIDATION_RESOURCE_PROFILE",
+        "DEVTOOL_ANDROID_SAFE_VALIDATION",
     ):
         monkeypatch.delenv(name, raising=False)
+
+    for name in tuple(os.environ):
+        if name.startswith(("DEVTOOL_PROJECT_", "DEVTOOL_ENV_")):
+            monkeypatch.delenv(name, raising=False)
 
     test_home = tmp_path / "home"
     test_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(test_home))
     monkeypatch.setenv("PREFIX", "/usr")
-    monkeypatch.setenv("DEVTOOL_PHONE_LOG_MIRROR_DIR", str(tmp_path / "phone-log-mirror"))
 
     path = Path(str(request.node.fspath))
     if path.name not in HUD_TEST_FILES:

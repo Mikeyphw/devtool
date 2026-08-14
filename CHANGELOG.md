@@ -9,6 +9,7 @@
 - Final promise audit closed remaining integration gaps: dynamic read-only OpenJDK package advice, per-tool Android/NDK and SSH/chroot backend doctor rows, validation-control live-progress totals compatibility, explicit-XDG log isolation, cleanup of SDK/HTTP probe streams, and exact Git HEAD/index restoration when an atomic apply rolls back after staging or committing.
 - Added `docs/TERMUX_PROOT_PROMISE_AUDIT.md`, a 38-item acceptance matrix tied to regression evidence; the complete non-Android-app Python suite is part of the final seal.
 - Hardened the final host validator against native Android leakage by scrubbing `ANDROID_*` markers, isolating Tasker/phone-log defaults when `DEVTOOL_XDG_DIR` is explicit, and placing full-suite temporary files under a short private root so AF_UNIX IPC tests cannot exceed Android socket-path limits.
+- Corrected normal native-Termux `devtool validate` isolation after the final seal: Python validator HOME/TMPDIR now live outside the repository (using private `$PREFIX/tmp` on native Termux), inherited Devtool test-state variables are scrubbed instead of forcing a phone-log mirror, PTY suites auto-restore `pexpect` when imported but undeclared, and AF_UNIX regression fixtures honor the configured temporary directory.
 
 ## 1.1.0 Termux runtime hardening and PRoot-Distro backend
 
