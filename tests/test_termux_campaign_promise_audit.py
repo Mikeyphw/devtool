@@ -23,6 +23,9 @@ class TermuxCampaignPromiseAuditTests(unittest.TestCase):
             "detailed Android/NDK/backend doctor rows",
             "hermetic Android-marker scrubbing",
             "short private temporary roots for AF_UNIX regression tests",
+            "uv-native sdist rebuilds",
+            "installed-wrapper CLI verification",
+            "interruption-aware structured report parsing",
         ):
             self.assertIn(phrase, text)
 

@@ -1561,7 +1561,10 @@ def run_specs(
             report_parsers = [report_parser] if report_parser else []
         report_parsers = list(dict.fromkeys(report_parsers))
         nonfatal_report_issues: list[Issue] = []
-        if report_parsers:
+        report_interrupted = returncode == 130 or "Interrupted by user. Child process was terminated." in output
+        if report_parsers and report_interrupted:
+            result_metadata["report_parsing_skipped"] = "interrupted"
+        if report_parsers and not report_interrupted:
             report_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
             for report_parser in report_parsers:
                 collection = collect_report_metadata(

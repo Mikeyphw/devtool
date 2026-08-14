@@ -11,6 +11,7 @@ import zipfile
 
 from devtool.models import ProjectConfig
 from devtool.python_support import (
+    PackageCheckOptions,
     PythonProjectError,
     audit_source_tree,
     check_notebooks,
@@ -29,6 +30,8 @@ from devtool.python_support import (
     prepare_dist,
     resolve_environment,
     verify_packages,
+    _rebuild_sdist,
+    _verify_wheel_install,
     write_environment_state,
 )
 from devtool.runners import build_specs, build_validation_specs, run_specs
@@ -427,6 +430,59 @@ class PythonSupportTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(payload["invalid"], 1)
         self.assertIn("RECORD digest mismatch", payload["items"][0]["checks"][0]["detail"])
+
+
+    def test_cli_verification_checks_installed_wrapper_without_executing_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheel = root / "demo-1-py3-none-any.whl"
+            files = {
+                "demo/__init__.py": "",
+                "demo/cli.py": "import definitely_missing_runtime_dependency\ndef main(): return 0\n",
+                "demo-1.dist-info/METADATA": "Metadata-Version: 2.1\nName: demo\nVersion: 1\n",
+                "demo-1.dist-info/WHEEL": "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+                "demo-1.dist-info/entry_points.txt": "[console_scripts]\ndemo = demo.cli:main\n",
+            }
+            record = "demo-1.dist-info/RECORD"
+            files[record] = "".join(f"{name},,\n" for name in files) + f"{record},,\n"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                for name, data in files.items():
+                    archive.writestr(name, data)
+            item = {
+                "path": str(wheel),
+                "metadata": {"Name": "demo", "Version": "1"},
+                "imports": ["demo"],
+                "console_scripts": ["demo"],
+                "valid": True,
+                "checks": [],
+            }
+            result = _verify_wheel_install(item, options=PackageCheckOptions(verify_cli=True))
+        self.assertEqual(result["returncode"], 0)
+        self.assertTrue(result["console_scripts"]["demo"]["installed"])
+        self.assertTrue(result["console_scripts"]["demo"]["executable"])
+        self.assertEqual(result["console_scripts"]["demo"]["mode"], "installed-wrapper")
+        self.assertTrue(item["valid"])
+
+    def test_uv_sdist_rebuild_uses_uv_frontend_and_offline_mode(self) -> None:
+        item = {
+            "path": "/tmp/demo-1.0.tar.gz",
+            "metadata": {"Name": "demo", "Version": "1.0"},
+            "valid": True,
+            "checks": [],
+        }
+        proc = mock.Mock(returncode=1, stdout="expected probe failure")
+        with mock.patch("devtool.python_support._run_capture", return_value=proc) as run:
+            result = _rebuild_sdist(
+                item,
+                options=PackageCheckOptions(rebuild_sdist=True, rebuild_frontend="uv", offline=True),
+            )
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:3], ["uv", "build", "--wheel"])
+        self.assertEqual(argv[3], item["path"])
+        self.assertIn("--out-dir", argv)
+        self.assertIn("--offline", argv)
+        self.assertNotIn("pip", argv)
+        self.assertEqual(result["build_returncode"], 1)
 
     def test_import_graph_maps_nonmatching_test_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -164,6 +164,7 @@ class PackageCheckOptions:
     console_scripts: list[str] = field(default_factory=list)
     reproducible: bool = False
     offline: bool = False
+    rebuild_frontend: str = "pip"
 
 
 def _list(value: Any) -> list[str]:
@@ -1406,14 +1407,23 @@ def _verify_wheel_install(
         if options.verify_cli:
             bin_dir = python.parent
             for script in scripts:
-                executable = bin_dir / script
-                checks: dict[str, Any] = {}
-                for flag in ("--help", "--version"):
-                    proc = _run_capture([str(executable), flag], cwd=Path(temporary), timeout=60)
-                    checks[flag] = {"returncode": proc.returncode, "output": proc.stdout.strip()[:4000]}
-                passed = any(value["returncode"] == 0 for value in checks.values())
+                candidates = [bin_dir / script, bin_dir / f"{script}.exe", bin_dir / f"{script}-script.py"]
+                executable = next((candidate for candidate in candidates if candidate.is_file()), None)
+                exists = executable is not None
+                executable_ok = bool(executable and (os.name == "nt" or os.access(executable, os.X_OK)))
+                passed = exists and executable_ok
+                checks = {
+                    "installed": exists,
+                    "executable": executable_ok,
+                    "path": str(executable) if executable else "",
+                    "mode": "installed-wrapper",
+                }
                 result_payload["console_scripts"][script] = checks
-                item["checks"].append({"name": f"console_script:{script}", "status": "passed" if passed else "failed", "detail": "" if passed else json.dumps(checks)})
+                item["checks"].append({
+                    "name": f"console_script:{script}",
+                    "status": "passed" if passed else "failed",
+                    "detail": "" if passed else json.dumps(checks),
+                })
                 if not passed:
                     item["valid"] = False
     return result_payload
@@ -1423,10 +1433,15 @@ def _rebuild_sdist(item: dict[str, Any], *, options: PackageCheckOptions) -> dic
     with tempfile.TemporaryDirectory(prefix="devtool-python-sdist-") as temporary:
         output = Path(temporary) / "wheelhouse"
         output.mkdir()
-        command = [sys.executable, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(output)]
-        if options.offline:
-            command.append("--no-index")
-        command.append(str(item["path"]))
+        if options.rebuild_frontend == "uv":
+            command = ["uv", "build", "--wheel", str(item["path"]), "--out-dir", str(output)]
+            if options.offline:
+                command.append("--offline")
+        else:
+            command = [sys.executable, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(output)]
+            if options.offline:
+                command.append("--no-index")
+            command.append(str(item["path"]))
         proc = _run_capture(command, timeout=1200)
         wheels = sorted(output.glob("*.whl"))
         rebuilt: list[dict[str, Any]] = []
@@ -1881,6 +1896,7 @@ def _package_check(args: argparse.Namespace) -> int:
         console_scripts=args.console_script,
         reproducible=args.reproducible,
         offline=args.offline,
+        rebuild_frontend=args.rebuild_frontend,
     )
     payload, rc = verify_packages(args.root.resolve(), options=options)
     report = args.report or args.root.resolve() / ".devtool" / "reports" / "python-packages.json"
@@ -2293,6 +2309,7 @@ def main(raw_args: Sequence[str] | None = None) -> int:
     verify.add_argument("--console-script", action="append", default=[])
     verify.add_argument("--reproducible", action="store_true")
     verify.add_argument("--offline", action="store_true")
+    verify.add_argument("--rebuild-frontend", choices=("pip", "uv"), default="pip")
 
     clean = sub.add_parser("clean")
     clean.add_argument("root", type=Path)

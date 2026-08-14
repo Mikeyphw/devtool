@@ -121,3 +121,9 @@
 - This removes an accidental dependency on the separately-installed PyPA `build` frontend from ordinary `devtool validate` while preserving PEP 517 build-system isolation.
 - Python projects managed by other environment managers retain the existing `python -m build` path.
 - Native uv build planning preserves Devtool's Python `offline` option by forwarding `--offline`.
+
+## Post-seal package-check hotfix (2026-08-14)
+
+- Rebuilt uv-managed sdists with `uv build --wheel` during package verification instead of spawning a separate `pip wheel` build-isolation resolver.
+- Made `verify_cli` validate installed/executable console-script wrappers without launching application entry points from a deliberately no-dependency wheel-check environment.
+- Prevented interrupted package checks from being misreported as missing `DEVTOOL_PYTHON_PACKAGE_RESULT` payloads, and classified Ctrl-C results as interrupted control flow.

@@ -41,7 +41,7 @@ This is the literal final acceptance audit for the Termux-native/PRoot campaign.
 | 35 | CLI, config templates, help/completion, manpage, doctor and implementation agree. | PASS | final integration docs/config/completion/manpage contract tests. |
 | 36 | Every campaign feature has regression coverage. | PASS | phase-specific test modules plus `test_termux_final_integration.py` and this audit contract. |
 | 37 | A literal promise-vs-implementation audit is shipped. | PASS | This document, checked by `test_termux_campaign_promise_audit.py`. |
-| 38 | Gaps found by the final audit are fixed before completion. | PASS | Final seal and post-seal native validation fix live-progress partial totals, explicit-XDG log isolation (including Android Tasker/phone-mirror defaults), dynamic JDK package advice, detailed Android/NDK/backend doctor rows, hermetic Android-marker scrubbing, normal native-Termux validation HOME/TMPDIR isolation outside the repository, automatic `pexpect` restoration for imported PTY tests, short private temporary roots for AF_UNIX regression tests with fixtures rooted in the configured temporary directory, and atomic rollback of Git HEAD/index state after failed staging, commit, or post-commit verification. |
+| 38 | Gaps found by the final audit are fixed before completion. | PASS | Final seal and post-seal native validation fix live-progress partial totals, explicit-XDG log isolation (including Android Tasker/phone-mirror defaults), dynamic JDK package advice, detailed Android/NDK/backend doctor rows, hermetic Android-marker scrubbing, normal native-Termux validation HOME/TMPDIR isolation outside the repository, automatic `pexpect` restoration for imported PTY tests, short private temporary roots for AF_UNIX regression tests with fixtures rooted in the configured temporary directory, uv-native sdist rebuilds during post-build package verification, installed-wrapper CLI verification that does not launch chroot/GUI entry points, interruption-aware structured report parsing, and atomic rollback of Git HEAD/index state after failed staging, commit, or post-commit verification. |
 
 ## Final-seal scope
 
@@ -57,3 +57,12 @@ Normal native-Termux `devtool validate` is also a supported acceptance path: its
 - **Build backend contract remains PEP 517 based:** `uv build` consumes the project's `[build-system]` metadata and creates sdist/wheel artifacts.
 - **Offline semantics preserved:** Devtool's Python `offline` option is forwarded to `uv build --offline`.
 - **Non-uv behavior unchanged:** other Python managers continue to use the pre-existing `python -m build` invocation.
+
+
+### Post-seal package-check correction (overlay 09)
+
+- **Primary build remains authoritative:** the successful uv build still produces the wheel and sdist consumed by the package gate.
+- **sdist rebuild uses the uv frontend:** uv-managed projects verify the source distribution with `uv build --wheel <sdist> --out-dir <dir>` instead of `python -m pip wheel`, avoiding a second pip build-isolation resolver and its independent network/backend bootstrap path.
+- **CLI verification is packaging-safe:** clean no-dependency wheel installs verify that every declared/configured console-script wrapper exists and is executable; package verification no longer launches chroot, GUI, or other application entry points merely to inspect packaging integrity.
+- **Interruptions remain control flow:** an interrupted package-check skips structured package-result parsing instead of inventing a `PYTHON_PACKAGE_RESULT` validation error.
+- **Package depth is preserved:** clean wheel installation, configured import smoke, sdist-to-wheel rebuild, rebuilt-wheel installation, archive/RECORD validation, metadata parity, and optional twine/reproducibility checks remain intact.

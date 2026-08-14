@@ -1968,6 +1968,9 @@ class PythonRunner(ProjectRunner):
             package = options.get("package", {})
             package = dict(package) if isinstance(package, dict) else {}
             argv = [*self._python_support_prefix(config), "package-check", str(root), "--report", str(report)]
+            info = self._info(config)
+            if info.manager == "uv":
+                argv.extend(["--rebuild-frontend", "uv"])
             flags = {
                 "import_smoke": ("--import-smoke", True),
                 "install_dependencies": ("--install-dependencies", False),

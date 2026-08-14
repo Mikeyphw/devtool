@@ -630,6 +630,13 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return ""
     text = output.lower()
     name = command_name.lower()
+    if returncode == 130 or any(marker in text for marker in (
+        "interrupted by user",
+        "cancelled from devtool control center",
+        "canceled from devtool control center",
+        "devtool validation supervisor stopped process: interrupted:",
+    )):
+        return "interrupted"
     compile_signal = (
         "compile" in name
         or "compile" in text
