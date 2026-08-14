@@ -409,6 +409,7 @@ Select
 .BR auto ,
 .BR native-termux ,
 .BR chroot ,
+.BR proot-distro ,
 .BR desktop-linux ,
 .BR android-device ,
 .BR external-device ,
@@ -438,6 +439,60 @@ Set the remote devtool executable.
 .TP
 .B --ssh-detached
 Start or reuse the remote tmux session without attaching. An attached session may be detached with Ctrl-b followed by d.
+.TP
+.BR --proot-distro " DISTRO"
+Keep devtool orchestration on the host and run planned external command phases inside the named PRoot-Distro container. The guest does not need devtool installed. The current repository is automatically bound to /workspace/project unless disabled or overridden.
+.TP
+.BR --proot-user " USER"
+Select the guest user.
+.TP
+.BR --proot-cwd " PATH"
+Set the absolute initial working directory inside the guest.
+.TP
+.BR --proot-repo-mount " PATH"
+Set the absolute guest mount point used by automatic repository binding.
+.TP
+.BR --proot-bind " HOST:GUEST"
+Add a host-to-guest bind. Repeatable. Explicit guest destinations must be absolute.
+.TP
+.BR --proot-env " NAME=VALUE"
+Pass an explicit guest environment variable. Repeatable. Host HOME, PATH, JAVA_HOME, Gradle home, Android SDK/NDK homes, and backend-specific devtool variables are not blindly inherited; devtool-managed execution/backend variables are reserved and cannot be overridden.
+.TP
+.B --proot-no-auto-bind-repo
+Disable automatic binding of the current repository.
+.TP
+.B --proot-shared-home
+Request PRoot-Distro shared-home behavior.
+.TP
+.B --proot-shared-tmp
+Share Termux temporary storage with the guest. This option is Termux-only.
+.TP
+.B --proot-isolated
+Use PRoot-Distro isolated mode. Termux-only and mutually exclusive with --proot-minimal.
+.TP
+.B --proot-minimal
+Use PRoot-Distro minimal mode. Termux-only and mutually exclusive with --proot-isolated.
+.TP
+.BR --proot-stage-dir " PATH"
+Set the host helper staging directory bound into the guest. Staging is cleaned after the command plan finishes.
+.TP
+.BR --termux-resource-profile " PROFILE"
+Choose auto/automatic, conservative, balanced, or performance defaults for workers, JVM memory, memory guard, and native parallelism. Explicit user resource settings remain authoritative. Phone-local defaults are not injected into independent SSH/remote execution plans.
+.TP
+.B --termux-wake-lock
+Acquire a Termux wake lock while command phases run and release it on success, failure, or interruption.
+.TP
+.B --no-termux-wake-lock
+Disable wake-lock integration.
+.TP
+.BR --shared-storage-policy " POLICY"
+Set allow, warn, or deny behavior when a native Termux repository is located on Android shared storage.
+.TP
+.B --allow-shared-storage-build
+Override the shared-storage guard for one run.
+.TP
+.BR --artifact-export " DIR"
+Copy verified Android/Gradle artifacts to a final destination such as /sdcard/Download after private-storage verification.
 .TP
 .B --no-auto-chroot
 Do not automatically route incompatible Termux operations into a chroot.

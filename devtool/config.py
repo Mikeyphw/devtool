@@ -16,7 +16,7 @@ CONFIG_NAME = ".devtool.toml"
 
 GLOBAL_CONFIG_NAME = "config.toml"
 GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
-    "cli", "environment", "termux_chroot", "android", "gradle", "dotnet", "terminal",
+    "cli", "environment", "termux_chroot", "termux", "proot", "android", "gradle", "dotnet", "terminal",
     "bootstrap", "chroots",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
@@ -74,7 +74,7 @@ def _global_project_defaults(global_config: dict[str, Any]) -> dict[str, Any]:
         default_chroot = str(environment.get("default_chroot", "") or "").strip()
         if default_chroot:
             defaults.setdefault("execution", {})["chroot_name"] = default_chroot
-    for section in ("android", "gradle", "dotnet", "bootstrap", "chroots"):
+    for section in ("android", "gradle", "dotnet", "bootstrap", "chroots", "termux", "proot"):
         value = global_config.get(section, {})
         if isinstance(value, dict) and value:
             defaults[section] = dict(value)
@@ -132,6 +132,33 @@ def minimal_global_config_template() -> str:
         "project_kinds = [\"android\", \"gradle\"]",
         "default_chroot = \"androidos\"",
         "",
+        "[termux]",
+        "wake_lock = \"auto\" # auto | on | off",
+        "resource_profile = \"balanced\" # auto | conservative | balanced | performance",
+        "",
+        "[termux.storage]",
+        "shared_storage_policy = \"warn\" # allow | warn | deny",
+        "",
+        "[termux.artifacts]",
+        "# export_dir = \"/sdcard/Download\"",
+        "",
+        "[proot]",
+        "# distro = \"ubuntu\"",
+        "user = \"root\"",
+        "cwd = \"/workspace/project\"",
+        "auto_bind_repo = true",
+        "repo_mount = \"/workspace/project\"",
+        "shared_home = false",
+        "shared_tmp = false",
+        "isolated = false",
+        "minimal = false",
+        "stage_dir = \"~/.cache/devtool/proot-stage\"",
+        "stage_mount = \"/run/devtool\"",
+        "cache_dir = \"~/.cache/devtool/proot\"",
+        "cache_mount = \"/var/cache/devtool\"",
+        "bind = []",
+        "env = []",
+        "",
         "[terminal]",
         "preferred = \"micro\"",
         "",
@@ -186,7 +213,7 @@ SUPPORTED_PROJECT_KINDS = {
 RUNNER_OPTION_SECTIONS = (
     "android", "gradle", "python", "dotnet", "node", "rust", "go",
     "maven", "cmake", "meson", "make", "build", "tasks", "artifacts",
-    "test_profiles", "validation", "termux_chroot", "ssh", "bootstrap", "chroots",
+    "test_profiles", "validation", "termux_chroot", "termux", "proot", "ssh", "bootstrap", "chroots",
 )
 PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
 RUNTIME_ENV_PREFIX = "DEVTOOL_ENV_"
@@ -1135,9 +1162,36 @@ run_command = ""
 package_command = ""
 
 [execution]
-environment = "auto" # auto | native-termux | chroot | desktop-linux | ssh | android-device | external-device
+environment = "auto" # auto | native-termux | chroot | proot-distro | desktop-linux | ssh | android-device | external-device
 chroot_name = "androidos"
 device_serial = ""
+
+[proot]
+distro = ""
+user = "root"
+cwd = "/workspace/project"
+auto_bind_repo = true
+repo_mount = "/workspace/project"
+shared_home = false
+shared_tmp = false
+isolated = false
+minimal = false
+stage_dir = "~/.cache/devtool/proot-stage"
+stage_mount = "/run/devtool"
+cache_dir = "~/.cache/devtool/proot"
+cache_mount = "/var/cache/devtool"
+bind = []
+env = []
+
+[termux]
+wake_lock = "auto"
+resource_profile = "balanced"
+
+[termux.storage]
+shared_storage_policy = "warn"
+
+[termux.artifacts]
+# export_dir = "/sdcard/Download"
 
 [ssh]
 host = ""

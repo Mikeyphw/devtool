@@ -308,6 +308,9 @@ def _cache_root(config: ProjectConfig, kind: str, environment: str, env: Mapping
     configured = str(_option_dict(config, "build").get("cache_root") or "").strip()
     if configured:
         base = Path(configured).expanduser()
+    elif environment == NATIVE_TERMUX:
+        from .termux_runtime import termux_cache_root
+        return termux_cache_root(env) / "build" / kind
     elif environment == CHROOT and detect_current_environment(env) != CHROOT:
         chroot_home = str(env.get("DEVTOOL_TERMUX_CHROOT_HOME") or "").strip()
         if not chroot_home:

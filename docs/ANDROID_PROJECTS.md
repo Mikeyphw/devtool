@@ -470,3 +470,14 @@ When Devtool selects a custom AAPT2 executable, it automatically passes:
 Existing comma-separated suppressions supplied through Gradle passthrough
 arguments are merged. No suppression property is added when Android Gradle
 Plugin uses its default AAPT2.
+
+
+## PRoot-Distro Android command execution
+
+When a Linux guest contains the Android toolchain you want to use, keep devtool on Termux and run only planned command phases inside that guest:
+
+```bash
+devtool --proot-distro ubuntu --proot-cwd /workspace/project validate
+```
+
+The guest does not need devtool. The repository is bound explicitly, host Termux Java/Gradle/CMake/NDK paths are not injected into the guest, and Android outputs written in the bound checkout remain immediately visible to local devtool artifact verification. If provider planning produced an absolute command under the Termux package prefix, the PRoot wrapper resolves that tool again by command name inside the guest instead of staging the Bionic host executable or launcher. Devtool-managed PRoot/backend environment variables are reserved and cannot be replaced by project or command environment. Do not use PRoot-Distro detached mode for normal validation because local devtool must retain progress, exit-code, and phase-order control.

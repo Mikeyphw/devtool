@@ -144,6 +144,31 @@ file settings.
 In whole-run mode the remote devtool receives `DEVTOOL_INSIDE_SSH=1` to suppress
 recursive SSH delegation.
 
+## PRoot-Distro command execution
+
+`proot-distro` is a peer execution backend to chroot and SSH commands mode. Devtool remains on the host and executes the already-planned external commands through `proot-distro login`; the guest therefore does not need devtool installed. PRoot-Distro supports explicit users, work directories, repeatable binds, and repeatable guest environment overrides. Devtool uses those primitives directly and keeps host/guest paths separate.
+
+```bash
+devtool --proot-distro ubuntu --proot-cwd /workspace/project validate
+
+devtool --proot-distro ubuntu \
+  --proot-bind "$HOME/Code/demo:/workspace/demo" \
+  --proot-cwd /workspace/demo \
+  validate
+```
+
+Automatic repository binding maps the actual host checkout to `/workspace/project` by default. Explicit guest bind destinations and configured PRoot work directories must be absolute. Absolute host paths inside ordinary arguments, `--flag=/path`/`-DNAME=/path` arguments, and safe command environment values are translated through the same explicit mapping. Helper files outside mapped roots are copied to a per-session host staging directory bound at `/run/devtool`; owned staging is cleaned after the command plan. Devtool's stdlib-only Python support helper is staged the same way when a Python validation helper is needed, so the guest does not require a devtool installation. Persistent guest package/build caches are isolated under `~/.cache/devtool/proot/<distro>` on the host and bound at `/var/cache/devtool` by default.
+
+PRoot guest environment state is intentionally narrow. Devtool passes selected terminal/locale/session values and explicit `[proot].env` entries, but does not blindly carry host `HOME`, `PATH`, `JAVA_HOME`, `GRADLE_USER_HOME`, Android SDK/NDK homes, Python host environments, or chroot/SSH build state. Devtool-managed execution/backend variables are reserved and cannot be overridden through `[proot].env`, project environment, or command-spec environment. Guest cache variables are recomputed against the PRoot cache bind instead of reusing host cache paths. Tool-provider discovery is scoped to the execution environment: selecting PRoot prevents native-Termux CMake/clang paths from being embedded in the guest command plan, and an absolute command selected from the Termux package prefix is reduced to its command name so the guest resolves its own Linux-compatible provider rather than staging the host Bionic binary or launcher script.
+
+`--isolated`, `--minimal`, and `--shared-tmp` are Termux-only PRoot-Distro options. PRoot-Distro itself can also run on a regular Linux host, so the backend is not restricted to Termux when the executable is available. Devtool deliberately does not use PRoot-Distro `--detach` for validation/build phases because detached sessions discard the normal streams needed for progress and phase control. Use tmux around the whole local devtool invocation when detachment is required.
+
+## Native Termux runtime hardening
+
+Native Termux repositories should live in private app storage such as `$HOME/Code`. Android shared storage (`/sdcard`, `/storage/emulated/...`) is detected before native execution and follows `[termux.storage].shared_storage_policy = "allow|warn|deny"`; `--allow-shared-storage-build` is the one-run override. Verified Android/Gradle output may still be exported afterward with `[termux.artifacts].export_dir` or `--artifact-export`. Devtool caches native-Termux build state under a `host-termux` namespace so Bionic-native state is not mixed with chroot, PRoot, SSH, or conventional glibc-host caches.
+
+`[termux].resource_profile` selects conservative, balanced, or performance phone-aware defaults for Gradle workers/JVM memory, memory guards, and native parallelism; explicit resource configuration wins. These phone-local defaults apply to native Termux/chroot/PRoot work that consumes the device resources, but are not injected into SSH/other independent remote execution plans. Optional wake-lock integration always releases the lock in a `finally` path. Before native execution, devtool inspects ELF architecture and `PT_INTERP` without running the candidate and rejects clearly wrong-architecture or conventional glibc/musl executables on Android/Bionic. Runtime diagnostics still classify common glibc/ABI/DNS/TLS/timeout/404 failures, directly invoked scripts can adapt a missing `/bin` or `/usr/bin` shebang to an equivalent Termux PATH executable, and a non-fatal Gradle quiet-period diagnostic is emitted after a configurable silence window instead of assuming dependency resolution is hung. If `XDG_CACHE_HOME` points at Android shared storage, the automatic Termux cache falls back to private `$HOME/.cache`; only an explicit `DEVTOOL_TERMUX_CACHE_ROOT` overrides that safety default.
+
 ## Configuration
 
 ```toml

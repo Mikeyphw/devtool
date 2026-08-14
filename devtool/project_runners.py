@@ -1278,6 +1278,10 @@ class PythonRunner(ProjectRunner):
         options = self._options(config)
         value = str(options.get("environment") or "").strip()
         if not value:
+            normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+            if normalized_environment in {"proot", "proot-distro"}:
+                from .python_support import python_repo_key
+                return str((self._root(config) / ".devtool" / "proot" / "python" / python_repo_key(self._root(config))).resolve())
             name = config.selected_target or "python"
             return str(default_python_environment_root(self._root(config), name).resolve())
         path = Path(value).expanduser()
@@ -1417,6 +1421,12 @@ class PythonRunner(ProjectRunner):
         if info.manager != "venv":
             return False
         plan = self._plan(config)
+        normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+        if normalized_environment in {"proot", "proot-distro"}:
+            # The guest venv may contain glibc executables that must never be
+            # executed as host-side probes on native Termux. Let the guest-side
+            # idempotent bootstrap decide whether work is required.
+            return True
         if plan.environment_root and not Path(plan.python).is_file():
             return True
         from .python_support import missing_auto_validator_dependencies
@@ -1530,6 +1540,20 @@ class PythonRunner(ProjectRunner):
             ) if marker in data
         ]
 
+    def _python_support_prefix(self, config: ProjectConfig) -> list[str]:
+        normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+        if normalized_environment in {"proot", "proot-distro"}:
+            plan = self._plan(config)
+            return [plan.bootstrap_python or "python3", "-m", "devtool.python_support"]
+        return [sys.executable, "-m", "devtool.python_support"]
+
+    def _python_support_python_arg(self, config: ProjectConfig) -> str:
+        normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+        if normalized_environment in {"proot", "proot-distro"}:
+            plan = self._plan(config)
+            return plan.bootstrap_python or "python3"
+        return config.python_executable
+
     def _lint_specs(self, config: ProjectConfig, *, targets: Iterable[str] = ()) -> list[CommandSpec]:
         root = self._root(config)
         target_values = list(dict.fromkeys(str(item) for item in targets if str(item))) or ["."]
@@ -1550,10 +1574,10 @@ class PythonRunner(ProjectRunner):
             else:
                 tool_args = [*configured_args, *target_values]
             helper = [
-                sys.executable, "-m", "devtool.python_support", "run-tool",
+                *self._python_support_prefix(config), "run-tool",
                 "--manager", self._info(config).manager,
                 "--framework", self._info(config).framework,
-                "--python", config.python_executable,
+                "--python", self._python_support_python_arg(config),
                 "--environment", plan.environment_root,
                 str(root), tool, *tool_args,
             ]
@@ -1634,9 +1658,9 @@ class PythonRunner(ProjectRunner):
         if validator_dependencies and info.manager == "venv":
             specs.append(CommandSpec("validator-dependencies", self._module(config, "pip", "install", *validator_dependencies), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config))))
         snapshot = [
-            sys.executable, "-m", "devtool.python_support", "environment-snapshot",
+            *self._python_support_prefix(config), "environment-snapshot",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
-            "--python", config.python_executable, "--environment", plan.environment_root,
+            "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
             "--execution-environment", config.execution_environment,
         ]
         for group in groups:
@@ -1686,7 +1710,7 @@ class PythonRunner(ProjectRunner):
     def _source_audit_spec(self, config: ProjectConfig) -> CommandSpec:
         info = self._info(config)
         argv = [
-            sys.executable, "-m", "devtool.python_support", "source-audit",
+            *self._python_support_prefix(config), "source-audit",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
         ]
         return CommandSpec(
@@ -1705,7 +1729,7 @@ class PythonRunner(ProjectRunner):
         base = str(selection.get("changed_from") or "HEAD")
         report = self._root(config) / ".devtool" / "reports" / "coverage.xml"
         argv = [
-            sys.executable, "-m", "devtool.python_support", "diff-coverage",
+            *self._python_support_prefix(config), "diff-coverage",
             str(self._root(config)), str(report), "--base", base, "--minimum", str(minimum),
         ]
         return CommandSpec(
@@ -1722,9 +1746,9 @@ class PythonRunner(ProjectRunner):
         info = self._info(config)
         plan = self._plan(config)
         argv = [
-            sys.executable, "-m", "devtool.python_support", "sbom",
+            *self._python_support_prefix(config), "sbom",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
-            "--python", config.python_executable, "--environment", plan.environment_root,
+            "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
         ]
         return CommandSpec("python-sbom", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="sbom"))
 
@@ -1736,9 +1760,9 @@ class PythonRunner(ProjectRunner):
         info = self._info(config)
         plan = self._plan(config)
         argv = [
-            sys.executable, "-m", "devtool.python_support", "reproducible-build",
+            *self._python_support_prefix(config), "reproducible-build",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
-            "--python", config.python_executable, "--environment", plan.environment_root,
+            "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
         ]
         return CommandSpec("python-reproducible-build", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="reproducible-build"))
 
@@ -1750,9 +1774,9 @@ class PythonRunner(ProjectRunner):
             return None
         plan = self._plan(config)
         argv = [
-            sys.executable, "-m", "devtool.python_support", "notebook-check",
+            *self._python_support_prefix(config), "notebook-check",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
-            "--python", config.python_executable, "--environment", plan.environment_root,
+            "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
         ]
         for notebook in info.notebooks:
             argv.extend(["--notebook", notebook])
@@ -1767,7 +1791,7 @@ class PythonRunner(ProjectRunner):
         if not start or service.get("enabled", True) is False:
             return None
         argv = [
-            sys.executable, "-m", "devtool.python_support", "service-check",
+            *self._python_support_prefix(config), "service-check",
             str(self._root(config)), "--start", start,
             "--timeout", str(int(service.get("timeout") or 60)),
         ]
@@ -1828,9 +1852,9 @@ class PythonRunner(ProjectRunner):
         for tool in tools:
             args = ["-r", "."] if tool == "bandit" else []
             argv = [
-                sys.executable, "-m", "devtool.python_support", "run-tool",
+                *self._python_support_prefix(config), "run-tool",
                 "--manager", info.manager, "--framework", info.framework,
-                "--python", config.python_executable, "--environment", plan.environment_root,
+                "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
                 str(self._root(config)), tool, *args,
             ]
             specs.append(CommandSpec(f"security:{tool}", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), report_parser="python-tool", validation_component="security")))
@@ -1880,7 +1904,7 @@ class PythonRunner(ProjectRunner):
             if bool(options.get("fresh_dist", True)):
                 specs.append(CommandSpec(
                     "prepare-dist",
-                    [sys.executable, "-m", "devtool.python_support", "prepare-dist", str(root)],
+                    [*self._python_support_prefix(config), "prepare-dist", str(root)],
                     env=self._env(config), cwd=str(root),
                     metadata=_tool_metadata(self.kind, root, validation_component="package-preparation"),
                 ))
@@ -1905,7 +1929,7 @@ class PythonRunner(ProjectRunner):
             report = root / ".devtool" / "reports" / "python-packages.json"
             package = options.get("package", {})
             package = dict(package) if isinstance(package, dict) else {}
-            argv = [sys.executable, "-m", "devtool.python_support", "package-check", str(root), "--report", str(report)]
+            argv = [*self._python_support_prefix(config), "package-check", str(root), "--report", str(report)]
             flags = {
                 "import_smoke": ("--import-smoke", True),
                 "install_dependencies": ("--install-dependencies", False),
@@ -1926,7 +1950,7 @@ class PythonRunner(ProjectRunner):
             return [CommandSpec("package-check", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, report_parser="python-package", package_report=str(report)))]
         if action == "clean":
             categories = self._list_option(config, "clean_categories") or ["artifacts", "caches"]
-            argv = [sys.executable, "-m", "devtool.python_support", "clean", str(root)]
+            argv = [*self._python_support_prefix(config), "clean", str(root)]
             for category in categories:
                 argv.extend(["--category", category])
             return [CommandSpec("clean", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root))]

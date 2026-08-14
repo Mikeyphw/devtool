@@ -21,6 +21,7 @@ DESKTOP_LINUX = "desktop-linux"
 ANDROID_DEVICE = "android-device"
 EXTERNAL_DEVICE = "external-device"
 SSH = "ssh"
+PROOT_DISTRO = "proot-distro"
 
 EXECUTION_ENVIRONMENTS = (
     AUTO,
@@ -30,6 +31,7 @@ EXECUTION_ENVIRONMENTS = (
     ANDROID_DEVICE,
     EXTERNAL_DEVICE,
     SSH,
+    PROOT_DISTRO,
 )
 
 _CHROOT_CONTEXT_VALUES = {"chroot", "android-chroot", "termux-chroot"}
@@ -144,6 +146,8 @@ def normalize_execution_environment(value: str | None) -> str:
         "device": ANDROID_DEVICE,
         "external": EXTERNAL_DEVICE,
         "remote": SSH,
+        "proot": PROOT_DISTRO,
+        "proot-distro": PROOT_DISTRO,
     }
     normalized = aliases.get(normalized, normalized)
     if normalized not in EXECUTION_ENVIRONMENTS:
@@ -344,6 +348,13 @@ def preflight_execution(
         checks.append(PreflightCheck("termux", "ready" if plan.current == NATIVE_TERMUX else "incompatible", plan.current))
     elif plan.effective == DESKTOP_LINUX:
         checks.append(PreflightCheck("desktop-linux", "ready" if plan.current == DESKTOP_LINUX else "incompatible", plan.current))
+    elif plan.effective == PROOT_DISTRO:
+        executable = shutil.which(os.environ.get("DEVTOOL_PROOT_DISTRO_COMMAND", "proot-distro"))
+        checks.append(PreflightCheck(
+            "proot-distro",
+            "ready" if executable else "missing",
+            executable or "proot-distro executable not found",
+        ))
     elif plan.effective == SSH:
         executable = shutil.which(os.environ.get("DEVTOOL_SSH_COMMAND", "ssh"))
         checks.append(PreflightCheck(

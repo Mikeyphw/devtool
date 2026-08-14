@@ -598,6 +598,15 @@ def _is_chroot_execution_environment(value: str) -> bool:
     return normalized == "chroot"
 
 
+def _is_proot_execution_environment(value: str) -> bool:
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    return normalized in {"proot", "proot-distro"}
+
+
+def _is_guest_execution_environment(value: str) -> bool:
+    return _is_chroot_execution_environment(value) or _is_proot_execution_environment(value)
+
+
 def resolve_bootstrap_python(
     root: Path,
     configured: str,
@@ -611,12 +620,20 @@ def resolve_bootstrap_python(
     /data/data/com.termux/files/usr/bin/python3.13 inside the Ubuntu guest.
     """
 
-    if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(configured):
+    guest = _is_guest_execution_environment(execution_environment)
+    configured_value = str(configured or "python3").strip() or "python3"
+    if guest and _is_termux_host_python(configured_value):
         # A versioned Termux executable name is not evidence that the guest has
         # the same minor version installed. Resolve through the guest's normal
         # python3 command instead of leaking host toolchain assumptions.
         return "python3"
-    resolved = resolve_python_executable(root, configured, environment)
+    if _is_proot_execution_environment(execution_environment):
+        # PRoot tool discovery belongs to the guest. Do not resolve a simple
+        # command name through the host PATH or replace it with sys.executable.
+        if not Path(configured_value).is_absolute() and "/" not in configured_value:
+            return configured_value
+        return configured_value
+    resolved = resolve_python_executable(root, configured_value, environment)
     if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(resolved):
         return "python3"
     return resolved
@@ -641,6 +658,7 @@ def environment_fingerprint(
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     execution_environment: str = "",
+    probe_runtime: bool = True,
 ) -> tuple[str, tuple[str, ...]]:
     inputs: list[str] = []
     files: dict[str, str] = {}
@@ -652,19 +670,19 @@ def environment_fingerprint(
             continue
         files[name] = digest
         inputs.append(name)
-    version, version_text = _interpreter_version(python)
+    version, version_text = _interpreter_version(python) if probe_runtime else ((), "guest")
     payload = {
         "manager": info.manager,
-        "manager_version": _manager_version(info.manager),
+        "manager_version": _manager_version(info.manager) if probe_runtime else "guest",
         "python": str(Path(python).expanduser()),
         "python_version": version_text,
         "requires_python": info.requires_python,
         "groups": sorted(groups),
         "extras": sorted(extras),
         "files": files,
-        "platform": platform.platform(),
-        "machine": platform.machine(),
-        "implementation": platform.python_implementation(),
+        "platform": platform.platform() if probe_runtime else f"guest:{execution_environment}",
+        "machine": platform.machine() if probe_runtime else "guest",
+        "implementation": platform.python_implementation() if probe_runtime else "guest",
         "execution_environment": execution_environment,
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -692,10 +710,14 @@ def resolve_environment(
         if not env_path.is_absolute():
             env_path = info.root / env_path
         requested_environment = str(env_path.resolve())
+    proot_guest = _is_proot_execution_environment(execution_environment)
+    proot_environment_root = str((info.root / ".devtool" / "proot" / "python" / python_repo_key(info.root)).resolve())
     if info.manager == "venv":
         existing_dotvenv = info.root / ".venv"
         if requested_environment:
             environment_root = requested_environment
+        elif proot_guest:
+            environment_root = proot_environment_root
         elif _venv_python(existing_dotvenv).is_file():
             environment_root = str(existing_dotvenv.resolve())
         elif info.dependency_files:
@@ -714,7 +736,7 @@ def resolve_environment(
     else:
         python = bootstrap_python
         if info.manager == "uv":
-            environment_root = str(default_python_environment_root(info.root).resolve())
+            environment_root = proot_environment_root if proot_guest else str(default_python_environment_root(info.root).resolve())
             prefix = ("uv", "run")
         elif info.manager == "poetry":
             environment_root = ""
@@ -733,14 +755,22 @@ def resolve_environment(
             prefix = (python,)
         version_probe = python
     fingerprint, inputs = environment_fingerprint(
-        info, python=version_probe, groups=groups, extras=extras, execution_environment=execution_environment
+        info, python=version_probe, groups=groups, extras=extras, execution_environment=execution_environment,
+        probe_runtime=not proot_guest,
     )
-    version, version_text = _interpreter_version(version_probe)
-    compatible = _specifier_satisfied(version, info.requires_python)
-    detail = (
-        f"Python {version_text or 'unknown'} satisfies {info.requires_python}"
-        if compatible else f"Python {version_text or 'unknown'} does not satisfy requires-python {info.requires_python}"
-    )
+    if proot_guest:
+        # The guest interpreter cannot be truthfully version-probed from the host.
+        # Compatibility is checked by the guest package manager/interpreter when
+        # commands execute rather than by accidentally probing the host Python.
+        compatible = True
+        detail = f"Python compatibility for {info.requires_python or 'unspecified requirement'} will be verified inside PRoot-Distro"
+    else:
+        version, version_text = _interpreter_version(version_probe)
+        compatible = _specifier_satisfied(version, info.requires_python)
+        detail = (
+            f"Python {version_text or 'unknown'} satisfies {info.requires_python}"
+            if compatible else f"Python {version_text or 'unknown'} does not satisfy requires-python {info.requires_python}"
+        )
     return PythonEnvironmentPlan(
         info.manager, python, prefix, environment_root, fingerprint, inputs,
         compatible, detail, bootstrap_python, execution_environment,
@@ -897,17 +927,31 @@ def build_sync_command(
     # Always emit an idempotent venv bootstrap for chroot plans so the check runs
     # in the same environment as the later pip/test commands.
     if (
-        _is_chroot_execution_environment(plan.execution_environment)
+        _is_guest_execution_environment(plan.execution_environment)
         or not venv_python.is_file()
         or (os.access(venv_python, os.X_OK) and not _can_import_with_python(str(venv_python), "pip"))
     ):
-        commands.append([
-            plan.bootstrap_python or plan.python,
-            "-m",
-            "devtool.python_support",
-            "ensure-venv",
-            str(venv_root),
-        ])
+        if _is_proot_execution_environment(plan.execution_environment):
+            # PRoot guests do not need devtool installed. Use only the guest's
+            # Python stdlib to create the environment idempotently.
+            commands.append([
+                plan.bootstrap_python or plan.python,
+                "-c",
+                (
+                    "import pathlib,subprocess,sys; "
+                    "p=pathlib.Path(sys.argv[1]); py=p/'bin'/'python'; "
+                    "raise SystemExit(0 if py.is_file() else subprocess.call([sys.executable,'-m','venv',str(p)]))"
+                ),
+                str(venv_root),
+            ])
+        else:
+            commands.append([
+                plan.bootstrap_python or plan.python,
+                "-m",
+                "devtool.python_support",
+                "ensure-venv",
+                str(venv_root),
+            ])
     pip_base = [str(venv_python), "-m", "pip", "install"]
     if offline:
         pip_base.append("--no-index")

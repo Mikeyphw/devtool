@@ -279,6 +279,19 @@ more important than the next build. See
 [`docs/PROJECT_RUNNERS.md`](docs/PROJECT_RUNNERS.md) and
 [`docs/EXECUTION_ENVIRONMENTS.md`](docs/EXECUTION_ENVIRONMENTS.md).
 
+## Termux runtime hardening and PRoot-Distro
+
+Native Termux runs now get phone-aware resource defaults, backend-isolated caches, optional wake-lock protection, shared-storage safety checks, proactive ELF architecture/libc preflight, conventional Linux shebang adaptation, and Gradle quiet-period diagnostics that warn without killing a still-running dependency resolution. Verified Android/Gradle artifacts can be copied to shared storage only after local verification, for example with `--artifact-export /sdcard/Download`. Explicit worker/JVM/resource settings always override the Termux profile, and phone-sized resource defaults are not injected into SSH jobs that execute on an independent remote host.
+
+PRoot-Distro is a first-class command execution backend. Devtool stays on the host and wraps only planned external commands, so the guest does not need devtool installed:
+
+```bash
+devtool --proot-distro ubuntu validate
+devtool --proot-distro ubuntu --proot-user dev --proot-cwd /workspace/project validate
+```
+
+By default the repository is explicitly bound to `/workspace/project`; customize it with `--proot-repo-mount` or repeatable `--proot-bind HOST:GUEST`. Helper files outside mapped roots are staged into a host cache bound at `/run/devtool`, and the staging directory is removed after execution. Python support helpers are staged rather than requiring devtool to be installed in the guest, while persistent guest caches are isolated under `~/.cache/devtool/proot/<distro>` and bound at `/var/cache/devtool`. Host-specific `HOME`, `PATH`, `JAVA_HOME`, Gradle home, Android SDK/NDK variables, and other execution-backend state are not blindly propagated; devtool-managed backend variables cannot be overridden through PRoot environment settings. Commands selected from the Termux package prefix are resolved again by name inside the guest instead of copying a Bionic binary or Termux launcher into the Linux container. Use normal foreground execution so devtool retains phase ordering, progress and exit codes; for detachable local orchestration, wrap the whole devtool process in tmux instead of using PRoot-Distro detach mode.
+
 ## Termux chroot repository paths
 
 When a repository exists only inside a chroot, devtool now detects that the path is not visible to the Termux host and delegates the full process automatically. Repositories mirrored from Termux home are also probed so mounts under `/home/mike`, `/home/termux`, or another chroot home resolve without manual path-map flags. The Android frontend always launches chroot workflows from a Termux-visible work directory.

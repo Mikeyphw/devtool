@@ -102,7 +102,11 @@ class TermuxChrootRunnerTests(unittest.TestCase):
                 env=env,
                 cwd=tmp,
             ))
-        exists.assert_called_once_with(missing, "androidos", env=env)
+        expected = missing
+        termux_home = env["HOME"].rstrip("/")
+        if missing.startswith(termux_home + "/"):
+            expected = env["DEVTOOL_TERMUX_CHROOT_HOME"].rstrip("/") + missing[len(termux_home):]
+        exists.assert_called_once_with(expected, "androidos", env=env)
 
     def test_batch_apply_steps_are_translated(self) -> None:
         env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike"}

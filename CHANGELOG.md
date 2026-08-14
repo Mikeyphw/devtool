@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 Termux runtime hardening and PRoot-Distro backend
+
+- Added shared-storage safety policy, backend-isolated native Termux caches, resource profiles, optional wake-lock lifecycle, verified-artifact export, runtime/network failure classification, shebang adaptation, tmux visibility, and non-fatal Gradle quiet-period diagnostics.
+- Added first-class PRoot-Distro command-phase execution with explicit host/guest mappings, automatic repository binds, user/work-dir/bind/env controls, helper staging and cleanup, environment hygiene, progress preservation, and installed-container preflight.
+- Scoped provider discovery to the selected execution backend so host Termux tools are not embedded in PRoot guest command plans, including Termux package launcher scripts; reserved backend environment state cannot be overridden by guest configuration.
+- Added pre-execution ELF architecture/libc checks for native Termux, kept automatic caches off shared storage, and prevented phone-local resource defaults from leaking into SSH jobs that execute on independent remote hosts.
+- Re-rooted host-only Python/native/package cache variables into the bound `/var/cache/devtool` PRoot cache so guest commands never require explicit binds for host devtool cache paths.
+- Kept PRoot-Distro available on ordinary Linux hosts when installed.
+
 ## 1.1.0 Termux native and Android tool providers
 
 - Added first-class Termux clang/lld/ndk-sysroot, CMake, Ninja, and ccache capability providers without pretending ndk-sysroot is a complete Android NDK.
