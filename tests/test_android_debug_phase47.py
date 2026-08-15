@@ -253,8 +253,9 @@ def test_phase47_support_bundle_v2_redaction_and_safe_notifications_are_sealed()
         'value.put("private_key_redacted"',
     ):
         assert symbol in support
-    for symbol in ("BEARER", "HTTPS_CREDENTIALS", "KEY_VALUE_SECRET", "PRIVATE_KEY_BLOCK"):
+    for symbol in ("MAX_RECORD_CHARS", "redactPrivateKeyBlocks", "redactRecords", "regionMatches"):
         assert symbol in redactor
+    assert "Pattern.compile" not in redactor
     for symbol in (
         "CHANNEL_ID = \"devtool_debug_notifications\"",
         "safe_actions_only=true",

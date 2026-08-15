@@ -42,7 +42,7 @@ from .npm_progress import NpmProgressTracker, npm_progress_plan
 from .gradle_progress import GradleProgressTracker
 from .gradle_reports import collect_report_metadata
 from .transactions import create_apply_transaction, rollback_transaction
-from .logstore import redact_sensitive_text, write_log
+from .logstore import finalize_log, redact_sensitive_text, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .xdg import state_dir
 from .project_runners import (
@@ -938,10 +938,19 @@ def _run_process_live(
         except OSError:
             pass
 
+    live_log_finalized = False
+
     def _close_live_log() -> None:
+        nonlocal live_log_finalized
         if live_log_handle is not None:
             with contextlib.suppress(Exception):
+                live_log_handle.flush()
+                os.fsync(live_log_handle.fileno())
                 live_log_handle.close()
+            if live_log_path is not None and not live_log_finalized:
+                live_log_finalized = True
+                with contextlib.suppress(Exception):
+                    finalize_log(live_log_path)
 
     try:
         proc = subprocess.Popen(
@@ -1162,14 +1171,21 @@ def _run_process_live(
                 # Non-verbose mode intentionally keeps command stdout/stderr captured only.
                 # Dotnet commands get a parsed Rich progress display instead of raw output.
                 # Use --verbose when the full restore/build/test stream is needed live.
-                if verbose:
+                if verbose or not tracker.enabled:
+                    # Non-interactive/CI output must remain observable even
+                    # when a parser is active; Rich progress is a TTY-only
+                    # presentation layer, never a replacement for stdout.
                     print(line, end="", flush=True)
                 tracker.update_from_line(line)
             returncode = _wait_process_returncode(proc)
             if tasker_progress is not None and tasker_progress.cancel_requested():
                 returncode = 130
                 output_parts.append("\nCancelled from Devtool Control Center. Child process was terminated.\n")
-            tracker.finish(returncode)
+            # Do not render a terminal success here. Report parsing and
+            # post-processing can still turn rc=0 into a failure; the outer
+            # runner publishes the authoritative final state afterwards.
+            if returncode != 0:
+                tracker.finish(returncode)
         return returncode, "".join(output_parts)
     except KeyboardInterrupt:
         _interrupt_process()
@@ -1428,6 +1444,13 @@ def run_specs(
 
     for spec_index, spec in enumerate(specs, start=1):
         effective_argv, cleanup_dir = _prepare_termux_dotnet(spec.argv)
+        last_progress_snapshot: dict[str, object] = {}
+
+        def _capture_progress(snapshot: dict) -> None:
+            last_progress_snapshot.clear()
+            last_progress_snapshot.update(snapshot)
+            if progress_callback is not None:
+                progress_callback(dict(snapshot))
         display_target, target_phase_index, target_phase_total = dotnet_layout.get(
             spec_index - 1, ("", None, None)
         )
@@ -1506,7 +1529,7 @@ def run_specs(
                     memory_guard_mb=memory_guard_mb,
                     supervisor_probe=supervisor_probe,
                     heartbeat_callback=heartbeat_callback,
-                    progress_callback=progress_callback,
+                    progress_callback=_capture_progress,
                 )
             else:
                 if progress_parser == "gradle" or dotnet_progress_plan(progress_argv, progress_cwd):
@@ -1531,7 +1554,7 @@ def run_specs(
                         memory_guard_mb=memory_guard_mb,
                         supervisor_probe=supervisor_probe,
                         heartbeat_callback=heartbeat_callback,
-                        progress_callback=progress_callback,
+                        progress_callback=_capture_progress,
                     )
                 else:
                     returncode, output = _run_process_live(
@@ -1561,7 +1584,7 @@ def run_specs(
                         memory_guard_mb=memory_guard_mb,
                         supervisor_probe=supervisor_probe,
                         heartbeat_callback=heartbeat_callback,
-                        progress_callback=progress_callback,
+                        progress_callback=_capture_progress,
                     )
         finally:
             if cleanup_dir:
@@ -1744,7 +1767,11 @@ def run_specs(
 
         nonfatal_issue_ids = {id(issue) for issue in nonfatal_report_issues}
         has_fatal_error_diagnostics = any(
-            issue.severity == "error" and id(issue) not in nonfatal_issue_ids
+            issue.severity == "error"
+            and id(issue) not in nonfatal_issue_ids
+            # Generic text like "error: cache miss" is not authoritative when
+            # the process itself succeeded. Typed parser/report diagnostics are.
+            and issue.code != "GENERIC"
             for issue in issues
         )
         if returncode == 0 and has_fatal_error_diagnostics:
@@ -1799,6 +1826,33 @@ def run_specs(
                 "interrupted": "interrupted",
                 "environment": "environment_failure",
             }.get(supervisor_events[-1]["kind"], failure_kind)
+        if progress_callback is not None:
+            final_snapshot = dict(last_progress_snapshot)
+            final_snapshot.update({
+                "returncode": returncode,
+                "warnings": sum(1 for issue in issues if issue.severity == "warning" and issue.code != "GENERIC"),
+                "errors": sum(1 for issue in issues if issue.severity == "error" and issue.code != "GENERIC"),
+                "force": True,
+                "final": True,
+            })
+            total_value = final_snapshot.get("total")
+            if returncode == 0 and isinstance(total_value, (int, float)) and total_value:
+                measured_completed = final_snapshot.get("completed")
+                measured_percent = final_snapshot.get("percent")
+                if measured_completed != total_value:
+                    # Process success is authoritative, but do not pretend a
+                    # partially observed progress stream measured every unit.
+                    # Preserve the measured state and declare the finalization
+                    # rule explicitly before publishing terminal 100%.
+                    final_snapshot["progress_finalization"] = "process-exit"
+                    final_snapshot["measured_completed"] = measured_completed
+                    final_snapshot["measured_percent"] = measured_percent
+                final_snapshot["completed"] = total_value
+                final_snapshot["percent"] = 100.0
+            try:
+                progress_callback(final_snapshot)
+            except Exception:
+                pass
         raw_text = command_line + "\n" + output
         if log_path is not None:
             if output != process_output:

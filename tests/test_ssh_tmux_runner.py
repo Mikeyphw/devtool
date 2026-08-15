@@ -146,12 +146,14 @@ def test_remote_home_expression_can_be_forwarded_for_remote_expansion() -> None:
         env={},
     )
     assert forwarded == ["--repo", "~/Code/demo", "build"]
-    assert "~/Code/demo" in _remote_script_from_ssh_argv(command)
+    remote_script = _remote_script_from_ssh_argv(command)
+    assert '"$HOME"/Code/demo' in remote_script
 
 
 def test_detached_mode_does_not_allocate_tty_and_returns_launcher_status() -> None:
     argv = ["--ssh", "buildbox", "--ssh-detached", "--ssh-cwd", "/srv/demo", "build"]
-    with patch("devtool.ssh_tmux_runner.subprocess.run") as run:
+    with patch("devtool.ssh_tmux_runner.shutil.which", side_effect=lambda value: f"/usr/bin/{value}"), \
+         patch("devtool.ssh_tmux_runner.subprocess.run") as run:
         run.return_value.returncode = 0
         rc = run_ssh_tmux(argv, cwd="/tmp", env={})
     assert rc == 0
@@ -177,20 +179,23 @@ def test_whole_run_stages_local_overlay_over_scp_and_rewrites_operand(tmp_path: 
     )
     forwarded = ["apply-overlay", str(artifact), "--no-validate"]
     with patch("devtool.ssh_tmux_runner.subprocess.run") as run:
-        run.return_value.returncode = 0
+        # tmux has-session => 1 means verified inactive; mkdir/scp => success.
+        run.side_effect = [type("R", (), {"returncode": 1})(), type("R", (), {"returncode": 0})(), type("R", (), {"returncode": 0})()]
         rewritten, staged = stage_forwarded_artifacts(config, forwarded, cwd=str(tmp_path))
     assert len(staged) == 1
     assert staged[0][0] == artifact.resolve()
     assert rewritten[0] == "apply-overlay"
-    assert rewritten[1].startswith("~/.cache/devtool/ssh-stage/apply-fix/inputs/")
+    assert rewritten[1].startswith("~/.cache/devtool/ssh-stage/apply-fix/")
+    assert "/inputs/" in rewritten[1]
     assert rewritten[1].endswith("-fix.zip")
     commands = [call.args[0] for call in run.call_args_list]
     mkdir_commands = [command for command in commands if command[0] == "ssh" and "mkdir -p" in command[-1]]
     assert len(mkdir_commands) == 1
     mkdir_remote = mkdir_commands[0][-1]
-    assert __import__("shlex").split(mkdir_remote) == [
-        "sh", "-lc", 'mkdir -p -- "$HOME/.cache/devtool/ssh-stage/apply-fix/inputs"'
-    ]
+    mkdir_parts = __import__("shlex").split(mkdir_remote)
+    assert mkdir_parts[:2] == ["sh", "-lc"]
+    assert mkdir_parts[2].startswith('mkdir -p -- "$HOME"/.cache/devtool/ssh-stage/apply-fix/')
+    assert mkdir_parts[2].endswith('/inputs')
     # The complete remote shell invocation is one SSH argv item. This is what
     # prevents OpenSSH from flattening the -lc payload into mkdir's argv.
     assert mkdir_commands[0][-1].startswith("sh -lc ")
@@ -234,7 +239,9 @@ def test_commands_mode_wraps_actual_command_not_remote_devtool(tmp_path: Path) -
     assert "cd /srv/demo" in shell
     assert "/srv/demo/gradlew" in shell
     assert " devtool " not in shell
-    assert "scp -P 22 -r buildbox:/srv/demo/.devtool/build-artifacts/." in shell
+    assert "scp -P 22 -r" in shell and "buildbox:" in shell and "/outputs/." in shell
+    assert "rm -rf -- /srv/demo/.devtool/build-artifacts" in shell
+    assert "cp -a -- /srv/demo/.devtool/build-artifacts/." in shell
     assert command.metadata["ssh_mode"] == "commands"
 
 
@@ -341,5 +348,8 @@ def test_commands_mode_drops_host_chroot_env_and_maps_android_artifact_output(tm
     assert "DEVTOOL_BUILD_CACHE_ROOT" not in shell
     assert "GRADLE_USER_HOME" not in shell
     assert "DEVTOOL_MAX_WORKERS=1" in shell
-    assert "--output-dir /srv/repo/app/.devtool/build-artifacts" in shell
-    assert f"buildbox:/srv/repo/app/.devtool/build-artifacts/. {project / '.devtool/build-artifacts'}" in shell
+    assert "--output-dir" in shell
+    assert "/outputs" in shell
+    assert "/srv/repo/app/.devtool/build-artifacts" not in shell
+    assert "buildbox:" in shell and "/outputs/." in shell
+    assert str(project / ".devtool/build-artifacts") in shell

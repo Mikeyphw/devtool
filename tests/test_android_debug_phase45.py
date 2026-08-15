@@ -107,5 +107,6 @@ def test_phase45_redaction_self_test_covers_tokens_auth_urls_secrets_and_private
         'privateKeyMarker = "BEGIN " + "PRIVATE KEY"',
     ):
         assert symbol in support
-    for symbol in ("HTTPS_CREDENTIALS", "BEARER", "KEY_VALUE_SECRET", "PRIVATE_KEY_BLOCK"):
+    for symbol in ("MAX_RECORD_CHARS", "redactPrivateKeyBlocks", "redactRecords", "regionMatches"):
         assert symbol in redactor
+    assert "Pattern.compile" not in redactor

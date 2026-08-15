@@ -34,9 +34,9 @@ from .rich_progress import (
 
 
 _NODE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
-_NPM_SCRIPT_BANNER_RE = re.compile(r"^>\s+(?:(?P<pkg>[^\s@][^\s]*)@[^\s]+\s+)?(?P<script>[^\s]+)\s*$")
+_NPM_SCRIPT_BANNER_RE = re.compile(r"^>\s+(?:(?P<pkg>(?:@[^/\s]+/)?[^@\s]+)@[^\s]+\s+)?(?P<script>[^\s]+)\s*$")
 _NPM_SCRIPT_BANNER_WITH_BODY_RE = re.compile(
-    r"^>\s+(?:(?P<pkg>[^\s@][^\s]*)@[^\s]+\s+)?(?P<script>[^\s]+)\s*$"
+    r"^>\s+(?:(?P<pkg>(?:@[^/\s]+/)?[^@\s]+)@[^\s]+\s+)?(?P<script>[^\s]+)\s*$"
 )
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
@@ -202,13 +202,14 @@ class NpmProgressTracker:
         self.detail = f"running {label}"
         if self.plan is None:
             return
-        # npm prints a banner at the start of each script.  Count starts rather
-        # than completions so otherwise quiet script chains still show movement.
-        # This also handles repeated script names across package roots, such as
-        # a root ``build`` script that invokes a child package's ``build``.
+        # A banner means a script started, not that it finished. When the next
+        # lifecycle/workspace banner arrives the previous script has completed;
+        # the final running script is resolved by finish(). This prevents a HUD
+        # from showing 100% while postbuild is still running.
         if self.total is not None:
+            if self._started_count > 0:
+                self.completed = min(self.total, max(self.completed or 0, self._started_count))
             self._started_count = min(self.total, self._started_count + 1)
-            self.completed = min(self.total, max(self.completed or 0, self._started_count))
             self.percent = min(100.0, (self.completed or 0) * 100.0 / max(1, self.total))
 
     def _publish(self, *, force: bool = False) -> None:
@@ -295,6 +296,16 @@ def _parse_run_command(argv: list[str], cwd: Path) -> tuple[str, Path, str] | No
             root = (cwd / raw).resolve() if not Path(raw).is_absolute() else Path(raw).resolve()
             index += 1
             continue
+        if token in {"--workspace", "-w"} and index + 1 < len(values):
+            workspace = values[index + 1]
+            root = _resolve_workspace_root(cwd, workspace) or root
+            index += 2
+            continue
+        if token.startswith("--workspace="):
+            workspace = token.split("=", 1)[1]
+            root = _resolve_workspace_root(cwd, workspace) or root
+            index += 1
+            continue
         break
     if manager in {"npm", "pnpm", "bun"}:
         if index < len(values) and values[index] == "run":
@@ -312,22 +323,47 @@ def _parse_run_command(argv: list[str], cwd: Path) -> tuple[str, Path, str] | No
     return None
 
 
+def _resolve_workspace_root(root: Path, selector: str) -> Path | None:
+    direct = root / selector
+    if direct.is_dir():
+        return direct.resolve()
+    try:
+        payload = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    workspaces = payload.get("workspaces", []) if isinstance(payload, dict) else []
+    if isinstance(workspaces, dict):
+        workspaces = workspaces.get("packages", [])
+    if not isinstance(workspaces, list):
+        return None
+    for pattern in workspaces:
+        for candidate in root.glob(str(pattern)):
+            if not candidate.is_dir():
+                continue
+            if candidate.name == selector or _package_name(candidate) == selector:
+                return candidate.resolve()
+    return None
+
+
 def _expand_script_tree(manager: str, root: Path, script: str) -> list[NpmScriptStep]:
     steps: list[NpmScriptStep] = []
-    seen: set[tuple[Path, str]] = set()
 
-    def visit(current_root: Path, current_script: str, depth: int = 0) -> None:
-        if depth > 20:
+    def visit(current_root: Path, current_script: str, stack: tuple[tuple[Path, str], ...] = ()) -> None:
+        resolved = current_root.resolve()
+        key = (resolved, current_script)
+        if len(stack) > 20 or key in stack:
             return
-        key = (current_root.resolve(), current_script)
-        if key in seen:
-            return
-        seen.add(key)
-        steps.append(NpmScriptStep(script=current_script, root=current_root.resolve()))
-        scripts = _scripts_for_root(current_root)
-        body = scripts.get(current_script, "")
-        for nested_root, nested_script in _nested_run_commands(body, current_root):
-            visit(nested_root, nested_script, depth + 1)
+        scripts = _scripts_for_root(resolved)
+        lifecycle = [
+            name for name in (f"pre{current_script}", current_script, f"post{current_script}")
+            if name in scripts
+        ] or [current_script]
+        next_stack = (*stack, key)
+        for lifecycle_script in lifecycle:
+            steps.append(NpmScriptStep(script=lifecycle_script, root=resolved))
+            body = scripts.get(lifecycle_script, "")
+            for nested_root, nested_script in _nested_run_commands(body, resolved):
+                visit(nested_root, nested_script, next_stack)
 
     visit(root, script)
     return steps

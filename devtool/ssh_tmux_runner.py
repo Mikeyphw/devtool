@@ -19,6 +19,8 @@ import os
 import re
 import shlex
 import subprocess
+import shutil
+import uuid
 import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -45,6 +47,18 @@ _GLOBAL_VALUE_FLAGS = {
     "--stdout-payload", "--hud-mode", "--chroot", "--execution-environment",
     "--matrix", "--matrix-mode", "--toolchain-profile",
 }
+_ARTIFACT_COMMAND_VALUE_FLAGS = _GLOBAL_VALUE_FLAGS | _SSH_VALUE_FLAGS | {
+    "--test-profile", "--select", "--id", "--tag", "--exclude-tag", "--path",
+    "--class", "--tests", "--method", "--filter", "--task", "--test-task",
+    "--changed-from", "--phase", "--phase-only", "--through", "--from-phase",
+    "--from", "--pause-after", "--max-phases", "--max-runtime",
+    "--stop-below-battery", "--stop-above-temperature", "--stop-below-disk-mb",
+    "--resource-profile", "--validation-profile", "--profile",
+    "--max-infrastructure-retries", "--max-resource-retries", "--failure-action",
+    "--session", "--scope", "--if-revision", "--after-event", "--event-limit",
+    "--limit", "--max-workers", "--cpu-limit", "--gradle-heap-mb",
+    "--memory-guard-mb", "--commit",
+}
 _TRUE = {"1", "true", "yes", "on"}
 
 
@@ -62,6 +76,7 @@ class SSHRunnerConfig:
     copy_artifacts: bool = True
     detached: bool = False
     config_path: str = ""
+    operation_id: str = ""
 
     @property
     def destination(self) -> str:
@@ -334,7 +349,9 @@ def _default_session(config: SSHRunnerConfig, forwarded: list[str]) -> str:
     if config.cwd and config.cwd not in {"~", "$HOME"}:
         location = config.cwd.rstrip("/").rsplit("/", 1)[-1]
     command = _command_name(forwarded)
-    parts = ["devtool", location, command]
+    run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+    nonce = _sanitize_session(run_id)[-24:] if run_id else f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    parts = ["devtool", location, command, nonce]
     return _sanitize_session("-".join(part for part in parts if part))
 
 
@@ -345,17 +362,20 @@ def build_ssh_base_argv(config: SSHRunnerConfig, *, tty: bool = True) -> list[st
         argv.append("-tt")
     argv.extend(["-p", str(config.port)])
     if config.identity:
-        argv.extend(["-i", config.identity])
+        argv.extend(["-i", str(Path(config.identity).expanduser())])
     argv.append(config.destination)
     return argv
 
 
 def _quote_remote_token(token: str) -> str:
-    # Preserve explicit remote-home expressions. Users should quote them in the
-    # local shell (for example '--repo', '~/Code/app') to prevent local expansion.
-    if token.startswith("~/") or token.startswith("$HOME/"):
-        return token
-    return shlex.quote(token)
+    text = str(token or "")
+    if text in {"~", "$HOME"}:
+        return '"$HOME"'
+    if text.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(text[2:])
+    if text.startswith("$HOME/"):
+        return '"$HOME"/' + shlex.quote(text[6:])
+    return shlex.quote(text)
 
 
 def _shell_join_remote(argv: list[str]) -> str:
@@ -435,8 +455,94 @@ def build_scp_base_argv(config: SSHRunnerConfig) -> list[str]:
     scp = os.environ.get("DEVTOOL_SCP_COMMAND", "scp").strip() or "scp"
     argv = [scp, "-P", str(config.port)]
     if config.identity:
-        argv.extend(["-i", config.identity])
+        argv.extend(["-i", str(Path(config.identity).expanduser())])
     return argv
+
+
+def _resolve_local_executable(value: str, *, label: str) -> str:
+    candidate = str(value or "").strip()
+    resolved = shutil.which(candidate) if os.sep not in candidate else (candidate if Path(candidate).is_file() and os.access(candidate, os.X_OK) else "")
+    if not resolved:
+        raise ValueError(f"SSH {label} executable is unavailable or not executable: {candidate}")
+    return str(resolved)
+
+
+def _preflight_local_transport(config: SSHRunnerConfig) -> None:
+    _resolve_local_executable(os.environ.get("DEVTOOL_SSH_COMMAND", "ssh"), label="ssh")
+    if config.copy_artifacts:
+        _resolve_local_executable(os.environ.get("DEVTOOL_SCP_COMMAND", "scp"), label="scp")
+    if config.identity:
+        identity = Path(config.identity).expanduser()
+        if not identity.is_file() or not os.access(identity, os.R_OK):
+            raise ValueError(f"SSH identity file is unavailable or unreadable: {identity}")
+
+
+def _remote_tmux_preflight(config: SSHRunnerConfig) -> None:
+    command = _build_ssh_remote_sh_argv(config, "command -v tmux >/dev/null 2>&1", tty=False)
+    if subprocess.run(command, check=False).returncode != 0:
+        raise ValueError("SSH preflight failed: tmux is unavailable on the remote host")
+
+
+def _session_status(config: SSHRunnerConfig, session: str) -> str:
+    command = _build_ssh_remote_sh_argv(config, f"tmux has-session -t {shlex.quote(session)} >/dev/null 2>&1", tty=False)
+    rc = int(subprocess.run(command, check=False).returncode)
+    if rc == 0:
+        return "active"
+    if rc == 1:
+        return "inactive"
+    return "unknown"
+
+
+def _session_active(config: SSHRunnerConfig, session: str) -> bool:
+    # Unknown is conservatively treated as active for cleanup decisions.
+    return _session_status(config, session) != "inactive"
+
+
+def _assert_session_inactive(config: SSHRunnerConfig, session: str) -> None:
+    status = _session_status(config, session)
+    if status == "active":
+        raise ValueError(f"SSH tmux session is already active; refusing to reuse mutable staging: {session}")
+    if status == "unknown":
+        raise ValueError(f"SSH tmux session state could not be verified before staging: {session}")
+
+
+def _remove_remote_tree(config: SSHRunnerConfig, remote_dir: str) -> None:
+    command = _build_ssh_remote_sh_argv(config, f"rm -rf -- {_remote_shell_path(remote_dir)}", tty=False)
+    subprocess.run(command, check=False)
+
+
+def _artifact_operand_indices(forwarded: list[str]) -> set[int]:
+    """Return positional artifact operands without mistaking option values for paths."""
+    commands = {
+        "apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as",
+        "validate-overlay", "vo", "validate-overlays", "vos", "inspect-artifact", "ia",
+    }
+    command_index = next((i for i, token in enumerate(forwarded) if token in commands), None)
+    if command_index is None:
+        return set()
+    command = forwarded[command_index]
+    multi = command in {"apply-overlays", "aos", "validate-overlays", "vos"}
+    indices: set[int] = set()
+    skip_value = False
+    for i in range(command_index + 1, len(forwarded)):
+        token = forwarded[i]
+        if skip_value:
+            skip_value = False
+            continue
+        if token in _ARTIFACT_COMMAND_VALUE_FLAGS:
+            skip_value = True
+            continue
+        if any(
+            flag.startswith("--") and token.startswith(flag + "=")
+            for flag in _ARTIFACT_COMMAND_VALUE_FLAGS
+        ):
+            continue
+        if token.startswith("-"):
+            continue
+        indices.add(i)
+        if not multi:
+            break
+    return indices
 
 
 def _looks_like_local_artifact(token: str, *, cwd: str) -> Path | None:
@@ -463,30 +569,28 @@ def _remote_join(base: str, *parts: str) -> str:
 
 
 def _remote_shell_path(path: str) -> str:
-    """Render a configured remote path for a remote POSIX shell.
-
-    ``~/...`` and ``$HOME/...`` are intentionally expanded by the *remote*
-    shell. Everything else is quoted literally.
-    """
+    """Render a remote path while expanding HOME only, never its tail."""
     text = str(path or "")
-    if text == "~":
+    if text in {"~", "$HOME"}:
         return '"$HOME"'
     if text.startswith("~/"):
-        return '"$HOME/' + text[2:].replace('"', '\\"') + '"'
-    if text == "$HOME":
-        return '"$HOME"'
+        return '"$HOME"/' + shlex.quote(text[2:])
     if text.startswith("$HOME/"):
-        return '"$HOME/' + text[6:].replace('"', '\\"') + '"'
+        return '"$HOME"/' + shlex.quote(text[6:])
     return shlex.quote(text)
 
 
 def _remote_scp_path(path: str) -> str:
-    """Return a remote scp operand path without local expansion."""
+    """Return an scp remote path with HOME expansion and an escaped tail."""
     text = str(path or "")
     if text == "$HOME":
-        return "~/"
-    if text.startswith("$HOME/"):
-        return "~/" + text[6:]
+        text = "~"
+    elif text.startswith("$HOME/"):
+        text = "~/" + text[6:]
+    if text.startswith("~/"):
+        tail = text[2:]
+        escaped = "".join(ch if ch.isalnum() or ch in "._/-" else "\\" + ch for ch in tail)
+        return "~/" + escaped
     return text
 
 
@@ -540,6 +644,34 @@ def _ensure_session(config: SSHRunnerConfig, forwarded: list[str]) -> str:
     return config.session
 
 
+def _ensure_operation_id(config: SSHRunnerConfig) -> str:
+    """Return one immutable staging identity for this local invocation."""
+    if not config.operation_id:
+        run_id = _sanitize_session(str(os.environ.get("DEVTOOL_RUN_ID") or "run"))
+        config.operation_id = _sanitize_session(f"{run_id}-{os.getpid()}-{uuid.uuid4().hex[:10]}")
+    return config.operation_id
+
+
+def _operation_stage_root(config: SSHRunnerConfig, session: str) -> str:
+    return _remote_join(config.stage_dir, session, _ensure_operation_id(config))
+
+
+def _remote_resolve_tool_executable(token: str, local_root: Path) -> str:
+    """Resolve a host-owned executable by name on the destination host.
+
+    argv[0] is a typed tool-executable operand. Repository-owned executables
+    are translated through the declared repo mapping elsewhere; absolute host
+    tools outside that mapping must never leak their host pathname to SSH.
+    """
+    text = str(token or "")
+    if not text or not os.path.isabs(os.path.expanduser(text)) or _path_is_under_root(text, local_root):
+        return text
+    name = Path(text).name
+    if name.startswith("python"):
+        return "python3"
+    return name
+
+
 def stage_forwarded_artifacts(
     config: SSHRunnerConfig,
     forwarded: list[str],
@@ -557,19 +689,23 @@ def stage_forwarded_artifacts(
     staged: list[tuple[Path, str]] = []
     rewritten = list(forwarded)
     seen: dict[Path, str] = {}
-    remote_dir = _remote_join(config.stage_dir, config.session, "inputs")
+    remote_dir = _remote_join(_operation_stage_root(config, config.session), "inputs")
+    artifact_indices = _artifact_operand_indices(forwarded)
     for index, token in enumerate(forwarded):
+        if index not in artifact_indices:
+            continue
         local = _looks_like_local_artifact(token, cwd=cwd)
         if local is None:
             continue
         remote = seen.get(local)
         if remote is None:
-            digest = hashlib.sha256(str(local).encode("utf-8")).hexdigest()[:10]
+            digest = hashlib.sha256(local.read_bytes()).hexdigest()[:16]
             remote = _remote_join(remote_dir, f"{digest}-{local.name}")
             seen[local] = remote
             staged.append((local, remote))
         rewritten[index] = remote
     if staged:
+        _assert_session_inactive(config, config.session)
         _ensure_remote_dir(config, remote_dir)
         for local, remote in staged:
             _copy_local_file_to_remote(config, local, remote)
@@ -622,33 +758,41 @@ def _stage_support_files_for_spec(
     remote_root: str,
     session: str,
     dry_run: bool,
+    metadata: Mapping[str, Any] | None = None,
 ) -> tuple[list[str], list[tuple[Path, str]]]:
-    """Stage local helper scripts referenced by a planned command.
-
-    Files inside the repo are mapped through the explicit repo root mapping.
-    External regular files (for example the staged Android builder and Gradle
-    init script) are copied to the SSH stage directory. Directories and argv[0]
-    are never copied; remote toolchains remain remote-owned.
-    """
+    """Translate typed operands and stage only explicitly local helper files."""
+    metadata = metadata or {}
     rewritten: list[str] = []
     staged: list[tuple[Path, str]] = []
     seen: dict[Path, str] = {}
-    remote_support_dir = _remote_join(config.stage_dir, session, "support")
+    remote_support_dir = _remote_join(_operation_stage_root(config, session), "support")
+    helper_values = {str(metadata.get("android_builder") or "").strip()} - {""}
+    raw_helpers = metadata.get("ssh_local_helper_files")
+    if isinstance(raw_helpers, (list, tuple)):
+        helper_values.update(str(value).strip() for value in raw_helpers if str(value).strip())
+    # Every command-mode phase gets a fresh phase session. Refuse an active or
+    # unverifiable collision before uploads *or* command launch, even when the
+    # phase has no local helper files to stage.
+    if not dry_run:
+        _assert_session_inactive(config, session)
+
+    helper_indices: set[int] = set()
+    for index, token in enumerate(argv[:-1]):
+        if token in {"--init-script", "--script", "--helper-file"}:
+            helper_indices.add(index + 1)
     for index, token in enumerate(argv):
         mapped = _translate_repo_bound_token(token, local_root, remote_root)
         if mapped != token:
             rewritten.append(mapped)
             continue
-        if index == 0 or token.startswith("-") or "=" in token:
-            rewritten.append(token)
-            continue
         path = Path(token).expanduser()
-        if not path.is_absolute() or not path.is_file():
+        explicitly_local = index in helper_indices or token in helper_values
+        if not explicitly_local:
             rewritten.append(token)
             continue
-        # Do not copy executables used as argv[0]; for non-leading file operands
-        # a transient copy is safe and avoids requiring devtool's helper files.
-        digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:10]
+        if not path.is_absolute() or not path.is_file():
+            raise ValueError(f"SSH local helper operand does not exist: {token}")
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
         remote = seen.get(path)
         if remote is None:
             remote = _remote_join(remote_support_dir, f"{digest}-{path.name}")
@@ -664,6 +808,9 @@ def _stage_support_files_for_spec(
 
 def _translate_env_for_repo(env: Mapping[str, str], local_root: Path, remote_root: str) -> dict[str, str]:
     translated: dict[str, str] = {}
+    run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+    if run_id:
+        translated["DEVTOOL_RUN_ID"] = run_id
     for key, raw in env.items():
         key_text = str(key)
         value = str(raw)
@@ -733,42 +880,50 @@ def _rewrite_artifact_output_for_remote(
     remote_cwd: str,
     remote_root: str,
     session: str,
+    artifact_phase: bool,
 ) -> tuple[list[str], Path, str]:
-    """Rewrite an artifact output directory into the independent remote FS."""
+    """Route declared artifact output into one immutable operation directory."""
     rewritten = list(argv)
-    value = _find_value(argv, {"--output-dir", "-o"}).strip()
     local_default = _configured_local_artifact_dir(config_obj, local_root)
+    output_flags = {"--output-dir", "-o", "--out-dir", "--outdir"}
+    value = _find_value(argv, output_flags).strip()
     if not value:
+        if artifact_phase:
+            # Tools without an output flag may still populate the configured
+            # generated-artifact directory. Retrieval is always from an
+            # operation-owned immutable snapshot; the wrapper below snapshots
+            # the freshly-cleared native directory after the command succeeds.
+            return rewritten, local_default, _remote_join(_operation_stage_root(config, session), "outputs")
         return rewritten, local_default, _translate_repo_bound_path(str(local_default), local_root, remote_root)
 
     if value.startswith(("~/", "$HOME/")):
         local_output = local_default
-        remote_output = value
     else:
         local_path = Path(value).expanduser()
         if not local_path.is_absolute():
             local_path = Path(host_cwd) / local_path
         local_output = local_path.resolve()
+
+    if not artifact_phase:
         mapped = _translate_repo_bound_path(str(local_output), local_root, remote_root)
-        if mapped != str(local_output):
-            remote_output = mapped
-        elif not os.path.isabs(os.path.expanduser(value)):
-            remote_output = _remote_join(remote_cwd, value)
-        else:
-            # An absolute output path outside the local repo has no remote
-            # counterpart. Use session staging and pull it back to the requested
-            # local destination rather than assuming that path exists remotely.
-            remote_output = _remote_join(config.stage_dir, session, "outputs")
+        remote_output = mapped if mapped != str(local_output) else (
+            _remote_join(remote_cwd, value) if not os.path.isabs(os.path.expanduser(value)) else value
+        )
+    else:
+        # Artifact-producing phases must never reuse an output directory from a
+        # prior invocation, even when the caller explicitly reuses a tmux name.
+        remote_output = _remote_join(_operation_stage_root(config, session), "outputs")
 
     index = 0
     while index < len(rewritten):
         token = rewritten[index]
-        if token == "--output-dir" or token == "-o":
+        if token in output_flags:
             if index + 1 < len(rewritten):
                 rewritten[index + 1] = remote_output
             break
-        if token.startswith("--output-dir="):
-            rewritten[index] = "--output-dir=" + remote_output
+        matched = next((flag for flag in output_flags if flag.startswith("--") and token.startswith(flag + "=")), None)
+        if matched:
+            rewritten[index] = matched + "=" + remote_output
             break
         index += 1
     return rewritten, local_output, remote_output
@@ -794,8 +949,11 @@ def wrap_specs_for_ssh_commands(
         raise ValueError(
             "--ssh-mode commands requires --ssh-cwd (or [ssh].cwd) as the explicit remote repository root"
         )
-    base_session = _sanitize_session(config.session or f"devtool-{local_root.name}-commands")
+    base_session = _sanitize_session(config.session or _default_session(config, ["commands"]))
     wrapped: list[Any] = []
+    if not dry_run:
+        _preflight_local_transport(config)
+        _remote_tmux_preflight(config)
 
     for ordinal, spec in enumerate(specs, 1):
         metadata = dict(getattr(spec, "metadata", {}) or {})
@@ -806,6 +964,8 @@ def wrap_specs_for_ssh_commands(
             continue
         original_argv = list(getattr(spec, "argv", []) or [])
         remote_base_argv = _drop_host_owned_toolchain_paths(original_argv, local_root)
+        if remote_base_argv:
+            remote_base_argv[0] = _remote_resolve_tool_executable(remote_base_argv[0], local_root)
         phase_name = _sanitize_session(str(getattr(spec, "name", "phase") or "phase"))
         session = _sanitize_session(f"{base_session}-{ordinal:02d}-{phase_name}")
         host_cwd = str(getattr(spec, "cwd", "") or local_root)
@@ -814,6 +974,8 @@ def wrap_specs_for_ssh_commands(
             # A cwd outside the repository has no declared SSH mapping. Use the
             # explicit remote repo root rather than inventing a remote path.
             remote_cwd = remote_root
+        artifact_phase = bool(metadata.get("collect_artifacts") or metadata.get("verify_artifacts"))
+        explicit_artifact_output = bool(_find_value(remote_base_argv, {"--output-dir", "-o", "--out-dir", "--outdir"}).strip())
         remote_base_argv, local_artifact_dir, remote_artifact_dir = _rewrite_artifact_output_for_remote(
             remote_base_argv,
             config_obj=project_config,
@@ -823,6 +985,7 @@ def wrap_specs_for_ssh_commands(
             remote_cwd=remote_cwd,
             remote_root=remote_root,
             session=session,
+            artifact_phase=artifact_phase,
         )
         translated_argv, staged = _stage_support_files_for_spec(
             config,
@@ -831,24 +994,58 @@ def wrap_specs_for_ssh_commands(
             remote_root=remote_root,
             session=session,
             dry_run=dry_run,
+            metadata=metadata,
         )
         translated_env = _translate_env_for_repo(getattr(spec, "env", {}) or {}, local_root, remote_root)
         assignments = [f"{key}={value}" for key, value in sorted(translated_env.items())]
         env_prefix = "env " + " ".join(shlex.quote(item) for item in assignments) + " " if assignments else ""
-        command = "cd " + _remote_shell_path(remote_cwd) + " && exec " + env_prefix + _shell_join_remote(translated_argv)
+        actual_command = env_prefix + _shell_join_remote(translated_argv)
+        if artifact_phase and not explicit_artifact_output:
+            native_output = _translate_repo_bound_path(str(local_artifact_dir), local_root, remote_root)
+            if native_output == str(local_artifact_dir) and os.path.isabs(str(local_artifact_dir)):
+                raise ValueError("SSH artifact output without an explicit tool output flag must map inside the declared remote repository")
+            if native_output.rstrip("/") == remote_root.rstrip("/"):
+                raise ValueError("SSH artifact output directory cannot be the repository root")
+            inner = (
+                "cd " + _remote_shell_path(remote_cwd)
+                + " && rm -rf -- " + _remote_shell_path(native_output)
+                + " && mkdir -p -- " + _remote_shell_path(native_output)
+                + " && " + actual_command
+                + '; rc=$?; if [ "$rc" -eq 0 ]; then '
+                + "rm -rf -- " + _remote_shell_path(remote_artifact_dir)
+                + " && mkdir -p -- " + _remote_shell_path(remote_artifact_dir)
+                + " && cp -a -- " + _remote_shell_path(native_output).rstrip("/") + "/. " + _remote_shell_path(remote_artifact_dir)
+                + ' || rc=$?; fi; exit "$rc"'
+            )
+            # Keep the tmux wrapper shell alive so _build_remote_phase_script
+            # can persist the nested command's real exit status. Using `exec`
+            # here would bypass its status-file finalizer entirely.
+            command = "sh -c " + shlex.quote(inner)
+        else:
+            command = "cd " + _remote_shell_path(remote_cwd) + " && " + actual_command
         remote_script = _build_remote_phase_script(config, session=session, command=command)
         ssh_command = _build_ssh_remote_sh_argv(config, remote_script, tty=True)
 
         local_script = shlex.join(ssh_command) + "; rc=$?"
         if bool(metadata.get("collect_artifacts") or metadata.get("verify_artifacts")) and config.copy_artifacts:
-            # Pull before the outer runner performs its normal local artifact
-            # discovery/verification.
+            # Pull before local verification and clear the destination first so
+            # a previous invocation cannot contaminate current artifact truth.
             source = f"{config.destination}:{_remote_scp_path(remote_artifact_dir).rstrip('/')}/."
             scp = [*build_scp_base_argv(config), "-r", source, str(local_artifact_dir)]
             local_script += (
-                "; if [ \"$rc\" -eq 0 ]; then mkdir -p " + shlex.quote(str(local_artifact_dir))
+                "; if [ \"$rc\" -eq 0 ]; then rm -rf -- " + shlex.quote(str(local_artifact_dir))
+                + " && mkdir -p " + shlex.quote(str(local_artifact_dir))
                 + " && " + shlex.join(scp) + " || rc=$?; fi"
             )
+        # Inputs and copied artifact outputs are operation-owned. Delete them
+        # only after the command and any requested artifact retrieval succeed;
+        # retain them on failure so recovery/retrieval remains possible.
+        cleanup_operation = bool(staged) or (artifact_phase and config.copy_artifacts)
+        if cleanup_operation:
+            cleanup_remote = _build_ssh_remote_sh_argv(
+                config, f"rm -rf -- {_remote_shell_path(_operation_stage_root(config, session))}", tty=False
+            )
+            local_script += "; if [ \"$rc\" -eq 0 ]; then " + shlex.join(cleanup_remote) + " || rc=$?; fi"
         local_script += '; exit "$rc"'
         metadata["execution_mode"] = "ssh-command"
         metadata["ssh_mode"] = "commands"
@@ -870,9 +1067,12 @@ def build_remote_tmux_script(config: SSHRunnerConfig, forwarded: list[str]) -> s
     inner_status_path = f'${{XDG_STATE_HOME:-$HOME/.local/state}}/devtool/ssh-tmux/{session}.status'
     devtool_argv = [config.tool, *forwarded]
 
+    run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+    run_assignment = (" DEVTOOL_RUN_ID=" + shlex.quote(run_id)) if run_id else ""
     command = (
         "env DEVTOOL_EXECUTION_CONTEXT=ssh DEVTOOL_INSIDE_SSH=1 DEVTOOL_SSH_CONTEXT="
         + shlex.quote(config.destination)
+        + run_assignment
         + " " + _shell_join_remote(devtool_argv)
     )
     if config.cwd:
@@ -944,6 +1144,8 @@ def run_ssh_tmux(
         raise ValueError("run_ssh_tmux is the whole-process devtool transport; use command wrapping for ssh.mode=commands")
     forwarded = _forwarded_argv(argv)
     _ensure_session(config, forwarded)
+    _preflight_local_transport(config)
+    _remote_tmux_preflight(config)
     forwarded, staged = stage_forwarded_artifacts(config, forwarded, cwd=local_cwd)
     remote_script = build_remote_tmux_script(config, forwarded)
     command = _build_ssh_remote_sh_argv(config, remote_script, tty=not config.detached)
@@ -957,4 +1159,6 @@ def run_ssh_tmux(
     print(f"tmux session: {config.session} (detach with Ctrl-b then d)")
     print("Reattach: " + shlex.join(reattach_command(config)))
     completed = subprocess.run(command, check=False)
+    if staged and not _session_active(config, config.session):
+        _remove_remote_tree(config, _operation_stage_root(config, config.session))
     return int(completed.returncode)

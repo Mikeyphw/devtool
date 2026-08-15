@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Iterable
+from urllib.parse import unquote, urlparse
 import xml.etree.ElementTree as ET
 
 from .diagnostics import relativize
@@ -34,9 +35,34 @@ def _recent(path: Path, started_at: float | None) -> bool:
     if started_at is None:
         return True
     try:
-        return path.stat().st_mtime + 2.0 >= started_at
-    except OSError:
+        # Report truth is invocation-bound. A report that predates task start
+        # is stale even if it is only a fraction of a second old.
+        return path.stat().st_mtime_ns >= int(float(started_at) * 1_000_000_000)
+    except (OSError, TypeError, ValueError):
         return False
+
+
+def _task_module_leaf(task: str) -> tuple[str, str]:
+    text = str(task or "").strip()
+    parts = [part for part in text.split(":") if part]
+    if not parts:
+        return "", ""
+    leaf = parts[-1]
+    module = "/".join(parts[:-1])
+    return module, leaf
+
+
+def _matches_task_report(path: Path, task: str, marker: str) -> bool:
+    module, leaf = _task_module_leaf(task)
+    if not leaf:
+        return False
+    normalized = "/" + path.resolve().as_posix().lstrip("/")
+    needle = f"/{marker}/{leaf}/"
+    if needle not in normalized:
+        return False
+    if not module:
+        return True
+    return f"/{module}/build/{marker}/{leaf}/" in normalized
 
 
 def _choose_task_reports(
@@ -47,20 +73,17 @@ def _choose_task_reports(
     started_at: float | None,
 ) -> list[Path]:
     candidates = sorted({path.resolve() for path in files if path.is_file()})
-    leaves = {_task_leaf(task) for task in tasks if _task_leaf(task)}
-    matching: list[Path] = []
-    if leaves:
-        for path in candidates:
-            normalized = path.as_posix()
-            if any(f"/{marker}/{leaf}/" in normalized for leaf in leaves):
-                matching.append(path)
-    if matching:
-        return matching
-
-    recent = [path for path in candidates if _recent(path, started_at)]
-    if recent:
-        return recent
-    return candidates
+    requested = [str(task).strip() for task in tasks if str(task).strip()]
+    if requested:
+        # When task identity is known, both identity and invocation freshness are
+        # mandatory. Falling back to another module's report (or a stale report
+        # with the right leaf name) can convert a successful current task into a
+        # false failure.
+        return [
+            path for path in candidates
+            if _recent(path, started_at) and any(_matches_task_report(path, task, marker) for task in requested)
+        ]
+    return [path for path in candidates if _recent(path, started_at)] if started_at is not None else candidates
 
 
 def _float(value: object) -> float:
@@ -82,8 +105,10 @@ def _testcase_location(repo_root: Path, case: ET.Element) -> tuple[str, int | No
     line = _int(case.attrib.get("line")) or None
     if file_text:
         return relativize(repo_root, file_text), line
-    class_name = str(case.attrib.get("classname") or "").strip()
-    return (class_name or "-"), line
+    # A JUnit classname is test identity, not a filesystem path. Keep it in the
+    # diagnostic message and leave source unknown unless the report declares a
+    # real file attribute.
+    return "-", line
 
 
 def parse_junit_reports(
@@ -122,6 +147,11 @@ def parse_junit_reports(
             suites += 1
             cases = [node for node in suite if node.tag.rsplit("}", 1)[-1] == "testcase"]
             if not cases:
+                # Parent suites often repeat aggregate counters for nested suites.
+                # Counting the parent and each child double-counts the same tests.
+                has_nested_suites = any(child.tag.rsplit("}", 1)[-1] == "testsuite" for child in suite)
+                if has_nested_suites:
+                    continue
                 suite_total = _int(suite.attrib.get("tests"))
                 suite_failed = _int(suite.attrib.get("failures")) + _int(suite.attrib.get("errors"))
                 suite_skipped = _int(suite.attrib.get("skipped"))
@@ -190,6 +220,16 @@ def parse_junit_reports(
     return ReportCollection(metadata, issues)
 
 
+def _report_module(project_root: Path, path: Path) -> str:
+    try:
+        parts = path.resolve().relative_to(project_root.resolve()).parts
+    except (OSError, ValueError):
+        parts = path.parts
+    if "build" not in parts:
+        return ""
+    return "/".join(parts[:parts.index("build")])
+
+
 def collect_gradle_test_reports(
     project_root: Path,
     *,
@@ -204,9 +244,35 @@ def collect_gradle_test_reports(
         marker="test-results",
         started_at=started_at,
     )
-    collection = parse_junit_reports(repo_root or project_root, files, command_name=command_name)
-    collection.metadata["tasks"] = [str(task) for task in tasks]
-    return collection
+    source_root = repo_root or project_root
+    totals: dict[str, int | float] = {
+        "suites": 0, "discovered": 0, "selected": 0, "executed": 0,
+        "passed": 0, "failed": 0, "skipped": 0, "total": 0,
+        "duration_seconds": 0.0,
+    }
+    parsed_files: list[str] = []
+    issues: list[Issue] = []
+    report_modules: dict[str, str] = {}
+    for path in files:
+        module = _report_module(project_root, path)
+        qualified_command = f"{command_name}[{module}]" if module else command_name
+        parsed = parse_junit_reports(source_root, [path], command_name=qualified_command)
+        parsed_files.extend(str(item) for item in parsed.metadata.get("report_files", []))
+        for key in ("suites", "discovered", "selected", "executed", "passed", "failed", "skipped", "total"):
+            totals[key] = int(totals[key]) + int(parsed.metadata.get(key) or 0)
+        totals["duration_seconds"] = float(totals["duration_seconds"]) + float(parsed.metadata.get("duration_seconds") or 0.0)
+        issues.extend(parsed.issues)
+        for report_file in parsed.metadata.get("report_files", []):
+            report_modules[str(report_file)] = module
+    metadata: dict[str, Any] = {
+        "framework": "gradle-junit",
+        "report_files": parsed_files,
+        **totals,
+        "duration_seconds": round(float(totals["duration_seconds"]), 6),
+        "tasks": [str(task) for task in tasks],
+        "report_modules": report_modules,
+    }
+    return ReportCollection(metadata, issues)
 
 
 def _lint_severity(value: str) -> str | None:
@@ -279,8 +345,11 @@ def _sarif_location(repo_root: Path, result: dict[str, Any]) -> tuple[str, int |
     region = physical.get("region") if isinstance(physical, dict) else {}
     region = region if isinstance(region, dict) else {}
     uri = str(artifact.get("uri") or "-")
-    if uri.startswith("file://"):
-        uri = uri[7:]
+    if uri != "-":
+        parsed = urlparse(uri)
+        if parsed.scheme == "file":
+            uri = parsed.path
+        uri = unquote(uri)
     return relativize(repo_root, uri), (_int(region.get("startLine")) or None)
 
 
@@ -350,32 +419,57 @@ def collect_android_lint_reports(
         *project_root.glob("**/build/reports/lint-results*.sarif"),
         *project_root.glob("**/build/reports/lint-results*.json"),
     })
-    variants = _lint_variant_tokens(tasks)
+    requested_tasks = [str(task).strip() for task in tasks if str(task).strip()]
+
+    def lint_task_matches(path: Path) -> bool:
+        if not requested_tasks:
+            return True
+        normalized = "/" + path.resolve().as_posix().lstrip("/")
+        name = path.name.lower()
+        for task in requested_tasks:
+            module, leaf = _task_module_leaf(task)
+            if module and f"/{module}/build/reports/" not in normalized:
+                continue
+            match = re.match(r"lint(.+)$", leaf, re.IGNORECASE)
+            variant = match.group(1).lower() if match else ""
+            if variant and variant not in name:
+                continue
+            return True
+        return False
+
     selected = [
         path for path in candidates
-        if not variants or any(token in path.name.lower() for token in variants)
-    ]
-    if not selected:
-        selected = [path for path in candidates if _recent(path, started_at)] or candidates
+        if lint_task_matches(path) and _recent(path, started_at)
+    ] if (requested_tasks or started_at is not None) else [path for path in candidates if lint_task_matches(path)]
 
-    issues: list[Issue] = []
+    issues_with_module: list[tuple[str, Issue]] = []
     parsed_files: list[str] = []
     source_root = repo_root or project_root
     for path in selected:
         parsed_files.append(relativize(source_root, str(path)))
+        try:
+            relative_parts = path.resolve().relative_to(project_root.resolve()).parts
+        except ValueError:
+            relative_parts = path.parts
+        module = ""
+        if "build" in relative_parts:
+            build_index = relative_parts.index("build")
+            module = "/".join(relative_parts[:build_index])
         suffix = path.suffix.lower()
-        if suffix == ".xml":
-            issues.extend(parse_android_lint_xml(source_root, path, command_name=command_name))
-        else:
-            issues.extend(parse_android_lint_sarif(source_root, path, command_name=command_name))
+        parsed = (
+            parse_android_lint_xml(source_root, path, command_name=command_name)
+            if suffix == ".xml"
+            else parse_android_lint_sarif(source_root, path, command_name=command_name)
+        )
+        issues_with_module.extend((module, issue) for issue in parsed)
 
-    # Preserve one finding per source/rule/location. Android Lint can emit both
-    # XML and SARIF for the same task, and their messages are not always byte
-    # identical for the same finding.
+    # Module identity is part of lint finding identity: two modules may report
+    # the same rule/location/message independently. Only exact duplicates from
+    # multiple formats within the same module collapse.
     unique: list[Issue] = []
-    seen: set[tuple[str, str, str, int | None]] = set()
-    for issue in issues:
-        key = (issue.severity, issue.file, issue.code, issue.line)
+    seen: set[tuple[str, str, str, str, int | None, str]] = set()
+    for module, issue in issues_with_module:
+        key = (module, issue.severity, issue.file, issue.code, issue.line, issue.message)
         if key in seen:
             continue
         seen.add(key)

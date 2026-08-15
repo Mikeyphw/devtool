@@ -212,7 +212,7 @@ class RunnersTermuxTests(unittest.TestCase):
 
 
 class RunnersQuietModeTests(unittest.TestCase):
-    def test_non_verbose_captures_process_output_without_streaming(self) -> None:
+    def test_non_verbose_non_tty_keeps_process_output_visible(self) -> None:
         import io
         import sys
         from contextlib import redirect_stdout
@@ -229,7 +229,7 @@ class RunnersQuietModeTests(unittest.TestCase):
             self.assertEqual(results[0].returncode, 0)
             self.assertIn("Determining projects to restore...", results[0].output)
             self.assertIn("Determining projects to restore...", raw)
-            self.assertNotIn("Determining projects to restore...", stream.getvalue())
+            self.assertIn("Determining projects to restore...", stream.getvalue())
 
     def test_generic_progress_uses_command_specific_phase_label(self) -> None:
         from io import StringIO

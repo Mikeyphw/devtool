@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import xml.etree.ElementTree as ET
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,6 +84,7 @@ class DotnetProgressTracker:
     tests_skipped: int = field(init=False, default=0)
     tests_total: int = field(init=False, default=0)
     seen_test_results: set[str] = field(init=False, default_factory=set)
+    current_test_assembly: str = field(init=False, default="")
     _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
 
@@ -121,6 +123,9 @@ class DotnetProgressTracker:
         if not text:
             return
 
+        assembly_match = _TEST_RUN_FOR_RE.search(text)
+        if assembly_match:
+            self.current_test_assembly = _repo_relative(assembly_match.group(1), self.cwd)
         self._update_issue_counts(text)
 
         event = self._event_for_line(text)
@@ -208,7 +213,7 @@ class DotnetProgressTracker:
         if test_match:
             # Use the complete normalized result line as the identity. The same
             # assembly name may legitimately run once per target framework.
-            result_key = " ".join(text.split())
+            result_key = f"{self.current_test_assembly}|{' '.join(text.split())}"
             if result_key not in self.seen_test_results:
                 self.seen_test_results.add(result_key)
                 passed = int(test_match.group("passed"))
@@ -444,7 +449,12 @@ def _find_dotnet_command_index(argv: list[str]) -> int | None:
 
 def _first_dotnet_target(args: Iterable[str]) -> str:
     skip_next = False
-    value_options = {"--framework", "-f", "--runtime", "-r", "--configuration", "-c", "--output", "-o", "--logger", "-l", "--verbosity", "-v"}
+    value_options = {
+        "--framework", "-f", "--runtime", "-r", "--configuration", "-c",
+        "--output", "-o", "--logger", "-l", "--verbosity", "-v",
+        "--filter", "--settings", "-s", "--test-adapter-path",
+        "--results-directory", "--collect", "--arch", "-a", "--os",
+    }
     for arg in args:
         if skip_next:
             skip_next = False
@@ -502,7 +512,32 @@ def _is_under_build_output(path: Path) -> bool:
     return "bin" in lowered or "obj" in lowered
 
 
+def _declared_bool_property(path: Path, property_name: str) -> bool | None:
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    declared: bool | None = None
+    for node in root.iter():
+        if node.tag.rsplit("}", 1)[-1].lower() != property_name.lower():
+            continue
+        text = str(node.text or "").strip().lower()
+        if text in {"true", "false"}:
+            # MSBuild properties can be reassigned; the later declaration is
+            # the best static approximation when conditions are not evaluated.
+            declared = text == "true"
+    return declared
+
+
 def _looks_like_test_project(path: Path) -> bool:
+    # Project properties are authoritative when present; naming is only a
+    # fallback for older projects that do not declare test intent.
+    declared = _declared_bool_property(path, "IsTestProject")
+    if declared is not None:
+        return declared
+    testing_platform = _declared_bool_property(path, "IsTestingPlatformApplication")
+    if testing_platform is not None:
+        return testing_platform
     lowered_name = path.stem.lower()
     if "test" in lowered_name or "spec" in lowered_name:
         return True

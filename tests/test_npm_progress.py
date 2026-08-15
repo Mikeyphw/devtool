@@ -44,10 +44,12 @@ class NpmProgressTests(unittest.TestCase):
             tracker.update_from_line("> one")
             snapshot = tracker.snapshot()
 
-            self.assertEqual(snapshot["completed"], 2)
+            # Banners mark starts. The second banner proves only the first
+            # script finished, so completion must lag the active script.
+            self.assertEqual(snapshot["completed"], 1)
             self.assertEqual(snapshot["total"], 3)
             self.assertEqual(snapshot["unit_label"], "scripts")
-            self.assertAlmostEqual(snapshot["percent"], 2 * 100 / 3)
+            self.assertAlmostEqual(snapshot["percent"], 100 / 3)
 
     def test_tracker_finishes_to_total_on_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -65,7 +65,7 @@ _GCC_CLANG = re.compile(
     re.IGNORECASE,
 )
 _PYTEST_FAILURE = re.compile(r"^FAILED\s+(?P<file>[^:]+)(?:::(?P<node>.+))?\s+-\s+(?P<message>.+)$")
-_UNITTEST_FAILURE = re.compile(r"^(FAIL|ERROR):\s+.+?\((?P<file>[^)]+)\)$")
+_UNITTEST_FAILURE = re.compile(r"^(?P<kind>FAIL|ERROR):\s+(?P<label>.+?)\s+\((?P<test_id>[^)]+)\)$")
 _XUNIT_FAILED = re.compile(r"^\s*Failed\s+(?P<test_name>.+?)\s+\[(?P<duration_ms>\d+)\s+ms\]\s*$")
 _XUNIT_ERROR_MESSAGE = re.compile(r"^\s*Error Message:\s*$", re.IGNORECASE)
 _XUNIT_STACK_TRACE = re.compile(r"^\s*Stack Trace:\s*$", re.IGNORECASE)
@@ -394,7 +394,12 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
 
         match = _UNITTEST_FAILURE.match(stripped)
         if match:
-            issues.append(Issue("error", command_name, relative_path(match.group("file")), "UNITTEST", stripped))
+            test_id = match.group("test_id").strip()
+            label = match.group("label").strip()
+            issues.append(Issue(
+                "error", command_name, "-", "UNITTEST",
+                f"{test_id}: {label}" if label else test_id,
+            ))
             index += 1
             continue
 
@@ -689,7 +694,7 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return "restore_failure"
     if "build" in name or compile_signal:
         return "compile_failure"
-    if "test" in name or "failed!" in text or "failed " in text:
+    if "test" in name or "test run failed" in text or re.search(r"\bfailed:\s*[1-9]\d*\b", text):
         return "test_failure"
     if "lint" in name:
         return "lint_failure"

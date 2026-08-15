@@ -174,9 +174,15 @@ class GenericProgressTracker:
         if match and self.unit_label != "tests":
             value = max(0, min(100, int(match.group("percent"))))
             self.percent = float(value)
-            self.completed = value
-            self.total = 100
-            self.unit_label = "percent"
+            if self.total is not None and self.unit_label != "percent":
+                # Keep the established determinate unit. A later percentage is
+                # another representation of the same work, not a new 0..100
+                # unit system.
+                self.completed = min(self.total, int(round(self.total * value / 100.0)))
+            else:
+                self.completed = value
+                self.total = 100
+                self.unit_label = "percent"
 
     def _publish(self, *, force: bool = False) -> None:
         if self.live is not None:

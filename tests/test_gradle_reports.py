@@ -122,10 +122,10 @@ class GradleReportTests(unittest.TestCase):
 
             result = collect_android_lint_reports(root, tasks=["lintDebug"])
 
-        self.assertEqual(result.metadata["errors"], 1)
+        self.assertEqual(result.metadata["errors"], 2)
         self.assertEqual(result.metadata["warnings"], 0)
-        self.assertEqual(result.metadata["total"], 1)
-        self.assertEqual(len(result.issues), 1)
+        self.assertEqual(result.metadata["total"], 2)
+        self.assertEqual(len(result.issues), 2)
 
     def test_run_specs_attaches_junit_metadata_and_fails_on_report_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

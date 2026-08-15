@@ -328,6 +328,9 @@ def _guest_env(
     project_env: Mapping[str, str] | None = None, dry_run: bool = False, helper_pythonpath: bool = False,
 ) -> list[str]:
     values: list[str] = ["DEVTOOL_EXECUTION_CONTEXT=proot-distro", f"DEVTOOL_PROOT_DISTRO={config.distro}"]
+    run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
+    if run_id:
+        values.append(f"DEVTOOL_RUN_ID={run_id}")
     cache = config.cache_mount.rstrip("/")
     values.extend([
         f"GRADLE_USER_HOME={cache}/gradle",

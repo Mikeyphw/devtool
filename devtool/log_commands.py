@@ -122,7 +122,7 @@ def _all_log_paths() -> list[Path]:
             if path not in seen:
                 seen.add(path)
                 paths.append(path)
-    return sorted(paths, key=lambda item: _safe_mtime(item))
+    return sorted(paths, key=lambda item: (_safe_mtime(item), str(item)))
 
 
 def list_log_entries() -> list[LogEntry]:
@@ -377,8 +377,11 @@ def choose_active_log(*, use_fzf: bool = True) -> Path | None:
     lines: list[str] = []
     log_by_index: dict[int, Path | None] = {}
     for index, run in enumerate(runs, start=1):
-        fallback = recent_logs[-index] if index <= len(recent_logs) else (recent_logs[-1] if recent_logs else None)
-        resolved = _accessible_log_path(run.log_path, recent_logs) or fallback
+        # The active-run record is the authority for run identity. Never pair a
+        # run that lacks log_path evidence with an arbitrary recent log merely
+        # because timestamps happen to be close; concurrent operations can make
+        # that association wrong.
+        resolved = _accessible_log_path(run.log_path, recent_logs)
         log_by_index[index] = resolved
         lines.append(_format_run(run, index, resolved))
     selected = choose_index(lines, use_fzf=use_fzf)

@@ -21,6 +21,7 @@ import time
 from typing import Callable
 
 from rich.console import Console, ConsoleOptions, RenderResult
+from rich.cells import cell_len, set_cell_size
 from rich.measure import Measurement
 from rich.text import Text
 
@@ -190,11 +191,17 @@ def _left_truncate(value: str, width: int) -> str:
     clean = " ".join(str(value or "").split())
     if width <= 0:
         return ""
-    if len(clean) <= width:
+    if cell_len(clean) <= width:
         return clean
     if width == 1:
         return "…"
-    return "…" + clean[-(width - 1):]
+    tail = set_cell_size(clean, width - 1)
+    # set_cell_size truncates from the right. Preserve the newest/right-most
+    # detail by trimming codepoints from the left until it fits in cells.
+    tail = clean
+    while tail and cell_len(tail) > width - 1:
+        tail = tail[1:]
+    return "…" + tail
 
 
 def _phase_percent(state: ThreeLineProgressState) -> float | None:
@@ -264,7 +271,7 @@ def _status_line(state: ThreeLineProgressState, width: int, now: float) -> str:
     candidates.append(f"{indicator}{count} {timer}")
 
     for candidate in candidates:
-        if len(candidate) <= width:
+        if cell_len(candidate) <= width:
             return candidate
     return _left_truncate(candidates[-1], width)
 
@@ -324,7 +331,7 @@ def render_three_line_progress(
         prefix = state.detail_prefix_compact
     raw_detail = compact_detail_text(state.detail or "Working", cwd=state.detail_root)
     if prefix:
-        available = max(1, safe_width - len(prefix) - 1)
+        available = max(1, safe_width - cell_len(prefix) - 1)
         detail = f"{prefix} {_left_truncate(raw_detail, available)}"
     else:
         detail = _left_truncate(raw_detail, safe_width)
@@ -347,9 +354,9 @@ def _overall_header(state: ThreeLineProgressState, percent: float, width: int) -
         f"{state.phase_index}/{state.phase_total} · {percent:.0f}% overall",
     ]
     for candidate in candidates:
-        if len(candidate) <= width:
+        if cell_len(candidate) <= width:
             return candidate
-    return candidates[-1][:width]
+    return set_cell_size(candidates[-1], width)
 
 
 def active_panel_title(command: str, target: str, *, icon: str, width: int) -> Text:
@@ -363,9 +370,9 @@ def active_panel_title(command: str, target: str, *, icon: str, width: int) -> T
         candidates.append(f"{icon} {label} · {target}")
         candidates.append(f"{icon} {compact} · {target}")
     candidates.extend((f"{icon} {label}", f"{icon} {compact}"))
-    chosen = next((item for item in candidates if len(item) <= available), candidates[-1])
-    if len(chosen) > available:
-        chosen = chosen[: max(1, available - 1)].rstrip() + "…"
+    chosen = next((item for item in candidates if cell_len(item) <= available), candidates[-1])
+    if cell_len(chosen) > available:
+        chosen = set_cell_size(chosen, max(1, available - 1)).rstrip() + "…"
     style = "bold"
     text = Text(" ")
     text.append(chosen, style=style)

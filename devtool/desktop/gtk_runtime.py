@@ -11,13 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+"), r"\1<redacted>"),
-    (re.compile(r"(?i)\b((?:api[_-]?key|access[_-]?token|auth[_-]?token|github[_-]?token|token|secret|password|passwd|pwd)\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;]+)"), r"\1<redacted>"),
-    (re.compile(r"\bgh[opsur]_[A-Za-z0-9_]{16,}\b"), "<redacted-github-token>"),
-    (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"), "<redacted-api-key>"),
-)
-
 
 def state_home() -> Path:
     from ..xdg import state_dir
@@ -33,11 +26,13 @@ def gtk_log_path(app_slug: str) -> Path:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(app_slug or "gtk")).strip("-.") or "gtk"
     return gtk_log_dir() / f"{safe}.log"
 
+
 def redact_text(value: object) -> str:
-    text = str(value)
-    for pattern, replacement in _SECRET_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
+    # Keep desktop exception/log redaction on the same bounded scanner used by
+    # run logs so alternate frontends cannot bypass MR-068 limits.
+    from ..logstore import redact_sensitive_text
+
+    return redact_sensitive_text(str(value))
 
 
 def format_exception(exc: BaseException) -> str:
