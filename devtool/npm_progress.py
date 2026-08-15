@@ -24,7 +24,13 @@ from rich.panel import Panel
 from rich.progress import ProgressColumn, Task
 from rich.text import Text
 
-from .rich_progress import ThreeLineProgressBody, ThreeLineProgressState
+from .rich_progress import (
+    active_panel_title,
+    ThreeLineProgressBody,
+    ThreeLineProgressState,
+    compact_display_target,
+    completion_line,
+)
 
 
 _NODE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
@@ -101,6 +107,7 @@ class NpmProgressTracker:
     current_script: str = field(init=False, default="")
     plan: NpmProgressPlan | None = field(init=False, default=None)
     _started_count: int = field(init=False, default=0)
+    _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
@@ -117,8 +124,8 @@ class NpmProgressTracker:
             self._renderable(),
             console=self.console,
             refresh_per_second=8,
-            transient=False,
-            vertical_overflow="visible",
+            transient=True,
+            vertical_overflow="ellipsis",
         )
         try:
             self.live.start()
@@ -156,6 +163,7 @@ class NpmProgressTracker:
         else:
             self.detail = status
         self._publish(force=True)
+        self._print_completion_once()
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -173,6 +181,19 @@ class NpmProgressTracker:
             "last_line": self.last_line,
             "current_task": self.current_script or None,
         }
+
+    def _print_completion_once(self) -> None:
+        if not self.enabled or self._completion_printed or self.returncode is None:
+            return
+        self._completion_printed = True
+        self.console.print(
+            completion_line(
+                command=self.command_name or "npm",
+                returncode=self.returncode,
+                started_at=self._started_at,
+                snapshot=self.snapshot(),
+            )
+        )
 
     def _script_started(self, banner: tuple[str, str | None]) -> None:
         script, package_name = banner
@@ -220,12 +241,16 @@ class NpmProgressTracker:
             unit_label="scripts",
             unit_short="scripts",
             detail=self.current_script or self.detail or "Starting npm script",
+            detail_root=self.cwd,
             started_at=self._started_at,
             returncode=self.returncode,
+            phase_index=self.phase_index,
+            phase_total=self.phase_total,
+            phase_label=self.command_name,
         )
 
     def _renderable(self) -> Panel:
-        target = self.display_target or self.cwd or "npm"
+        target = compact_display_target(self.display_target or self.cwd or "npm", cwd=self.cwd)
         if self.returncode is None:
             border = "cyan"
             title_style = "bold cyan"
@@ -238,11 +263,13 @@ class NpmProgressTracker:
             border = "red"
             title_style = "bold red"
             icon = "✗"
-        title = Text()
-        title.append(f" {icon} ", style=title_style)
-        title.append(self.command_name or "npm", style="bold")
-        title.append(" • ", style="dim")
-        title.append(str(target), style="bold white")
+        title = active_panel_title(
+            self.command_name or "npm",
+            f"npm · {target}",
+            icon=icon,
+            width=self.console.width,
+        )
+        title.stylize(title_style)
         body = self.progress_body or ThreeLineProgressBody(self._progress_state)
         return Panel(body, title=title, border_style=border, padding=(0, 1))
 

@@ -91,7 +91,7 @@ from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
-from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
+from .summary import artifact_confirmation_text, build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
 from .termux_toolchains import (
@@ -5307,6 +5307,7 @@ def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict
     if console.is_interactive and sys.stdin.isatty():
         if not Confirm.ask("Continue with this artifact?", default=True, console=console):
             raise SystemExit(1)
+        console.print(artifact_confirmation_text(manifest))
         return
     raise SystemExit("Artifact manifest confirmation requires --yes in non-interactive mode.")
 

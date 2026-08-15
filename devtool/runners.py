@@ -1464,6 +1464,14 @@ def run_specs(
             progress_cwd = str(spec.metadata.get("progress_cwd") or cwd)
             progress_parser = str(spec.metadata.get("progress_parser") or "")
             requested_gradle_tasks = _requested_gradle_tasks_for_spec(spec, progress_argv)
+            try:
+                overall_phase_index = int(spec.metadata.get("validation_phase_index") or spec_index)
+            except (TypeError, ValueError):
+                overall_phase_index = spec_index
+            try:
+                overall_phase_total = int(spec.metadata.get("validation_phase_total") or len(specs))
+            except (TypeError, ValueError):
+                overall_phase_total = len(specs)
             memory_guard_mb = int(
                 spec.metadata.get("validation_memory_guard_mb")
                 or spec.metadata.get("memory_guard_mb")
@@ -1483,8 +1491,8 @@ def run_specs(
                     verbose=True,
                     command_name=spec.name,
                     tasker_progress=tasker_progress,
-                    phase_index=spec_index,
-                    phase_total=len(specs),
+                    phase_index=overall_phase_index,
+                    phase_total=overall_phase_total,
                     progress_argv=progress_argv,
                     progress_cwd=progress_cwd,
                     display_target=display_target,
@@ -1508,8 +1516,8 @@ def run_specs(
                         verbose=False,
                         command_name=spec.name,
                         tasker_progress=tasker_progress,
-                        phase_index=spec_index,
-                        phase_total=len(specs),
+                        phase_index=overall_phase_index,
+                        phase_total=overall_phase_total,
                         progress_argv=progress_argv,
                         progress_cwd=progress_cwd,
                         display_target=display_target,
@@ -1525,27 +1533,35 @@ def run_specs(
                         progress_callback=progress_callback,
                     )
                 else:
-                    with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
-                        returncode, output = _run_process_live(
-                            effective_argv,
-                            cwd=cwd,
-                            env=env,
-                            verbose=False,
-                            command_name=spec.name,
-                            tasker_progress=tasker_progress,
-                            phase_index=spec_index,
-                            phase_total=len(specs),
-                            progress_argv=progress_argv,
-                            progress_cwd=progress_cwd,
-                            progress_parser=progress_parser,
-                            requested_gradle_tasks=requested_gradle_tasks,
-                            live_log_path=log_path,
-                            live_log_header=command_line + "\n" if log_path is not None else "",
-                            memory_guard_mb=memory_guard_mb,
-                            supervisor_probe=supervisor_probe,
-                            heartbeat_callback=heartbeat_callback,
-                            progress_callback=progress_callback,
-                        )
+                    returncode, output = _run_process_live(
+                        effective_argv,
+                        cwd=cwd,
+                        env=env,
+                        verbose=False,
+                        command_name=spec.name,
+                        tasker_progress=tasker_progress,
+                        phase_index=overall_phase_index,
+                        phase_total=overall_phase_total,
+                        progress_argv=progress_argv,
+                        progress_cwd=progress_cwd,
+                        display_target=str(
+                            spec.metadata.get("bundle_target")
+                            or spec.metadata.get("project_root")
+                            or spec.metadata.get("workspace_root")
+                            or spec.metadata.get("validation_scope")
+                            or progress_cwd
+                        ),
+                        target_phase_index=target_phase_index,
+                        target_phase_total=target_phase_total,
+                        progress_parser=progress_parser,
+                        requested_gradle_tasks=requested_gradle_tasks,
+                        live_log_path=log_path,
+                        live_log_header=command_line + "\n" if log_path is not None else "",
+                        memory_guard_mb=memory_guard_mb,
+                        supervisor_probe=supervisor_probe,
+                        heartbeat_callback=heartbeat_callback,
+                        progress_callback=progress_callback,
+                    )
         finally:
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)

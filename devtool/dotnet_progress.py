@@ -13,7 +13,13 @@ from rich.errors import LiveError
 from rich.panel import Panel
 from rich.text import Text
 
-from .rich_progress import ThreeLineProgressBody, ThreeLineProgressState
+from .rich_progress import (
+    active_panel_title,
+    ThreeLineProgressBody,
+    ThreeLineProgressState,
+    compact_display_target,
+    completion_line,
+)
 
 _DOTNET_COMMANDS = {"restore", "build", "test", "publish", "pack"}
 _PROJECT_EXTENSIONS = {".csproj", ".fsproj", ".vbproj"}
@@ -77,6 +83,7 @@ class DotnetProgressTracker:
     tests_skipped: int = field(init=False, default=0)
     tests_total: int = field(init=False, default=0)
     seen_test_results: set[str] = field(init=False, default_factory=set)
+    _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
@@ -93,8 +100,8 @@ class DotnetProgressTracker:
             self._renderable(),
             console=self.console,
             refresh_per_second=8,
-            transient=False,
-            vertical_overflow="visible",
+            transient=True,
+            vertical_overflow="ellipsis",
         )
         try:
             self.live.start()
@@ -173,6 +180,20 @@ class DotnetProgressTracker:
             if self.detail and self.detail != status:
                 final_detail = f"{status} • {self.detail}"
         self._set_progress(detail=final_detail, force_callback=True)
+        self._print_completion_once()
+
+    def _print_completion_once(self) -> None:
+        if not self.enabled or self._completion_printed or self.returncode is None:
+            return
+        self._completion_printed = True
+        self.console.print(
+            completion_line(
+                command=self.command_name or (self.plan.command if self.plan else "dotnet"),
+                returncode=self.returncode,
+                started_at=self._started_at,
+                snapshot=self.snapshot(),
+            )
+        )
 
     def _update_issue_counts(self, text: str) -> None:
         warning_summary = _MSBUILD_WARNING_SUMMARY_RE.match(text)
@@ -269,14 +290,25 @@ class DotnetProgressTracker:
             unit_label=label,
             unit_short=short,
             detail=self.detail or self._format_initial_detail() or "Starting .NET",
+            detail_root=self.cwd,
             started_at=self._started_at,
             returncode=self.returncode,
+            phase_index=self.phase_index,
+            phase_total=self.phase_total,
+            phase_label=self.command_name or (self.plan.command if self.plan else "dotnet"),
+            tests_passed=self.tests_passed,
+            tests_failed=self.tests_failed,
+            tests_skipped=self.tests_skipped,
+            tests_total=self.tests_total,
+            warnings=self.warnings,
+            errors=self.errors,
         )
 
     def _renderable(self) -> Panel:
         target = (self.display_target or (self.plan.target if self.plan else "") or "repository").strip()
         if self.plan is not None and not self.display_target:
             target = _repo_relative(target, self.cwd)
+        target = compact_display_target(target, cwd=self.cwd)
         if self.returncode is None:
             icon = "◆"
             border_style = "cyan"
@@ -290,16 +322,16 @@ class DotnetProgressTracker:
             border_style = "red"
             status_style = "bold red"
 
-        title = Text()
-        title.append(f" {icon} ", style=status_style)
-        title.append(".NET ", style="bold")
-        title.append("• ", style="dim")
-        title.append(target, style="bold white")
+        title = active_panel_title(
+            self.command_name or (self.plan.command if self.plan else ".NET"),
+            f".NET · {target}",
+            icon=icon,
+            width=self.console.width,
+        )
+        title.stylize(status_style)
         phase_bits: list[str] = []
         if self.target_phase_index is not None and self.target_phase_total:
             phase_bits.append(f"target phase {self.target_phase_index}/{self.target_phase_total}")
-        if self.phase_index is not None and self.phase_total:
-            phase_bits.append(f"overall {self.phase_index}/{self.phase_total}")
         subtitle = Text(" • ".join(phase_bits), style="dim") if phase_bits else None
         body = self.progress_body or ThreeLineProgressBody(self._progress_state)
         return Panel(

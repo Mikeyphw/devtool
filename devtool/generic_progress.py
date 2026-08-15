@@ -12,12 +12,21 @@ from rich.panel import Panel
 from rich.progress import ProgressColumn, Task
 from rich.text import Text
 
-from .rich_progress import ThreeLineProgressBody, ThreeLineProgressState
+from .rich_progress import (
+    ThreeLineProgressBody,
+    ThreeLineProgressState,
+    active_panel_title,
+    compact_display_target,
+    completion_line,
+)
 
 
 _FRACTION_RE = re.compile(r"(?:^|[\[(\s])(?P<completed>\d+)\s*/\s*(?P<total>\d+)(?:[\])\s]|$)")
 _PERCENT_RE = re.compile(r"(?<!\d)(?P<percent>\d{1,3})%")
 _MAVEN_REACTOR_RE = re.compile(r"\bBuilding\s+.+?\s+(?P<completed>\d+)\s*/\s*(?P<total>\d+)\b", re.IGNORECASE)
+_PYTEST_COLLECTED_RE = re.compile(r"\bcollected\s+(?P<total>\d+)\s+items?\b", re.IGNORECASE)
+_PYTEST_PROGRESS_RE = re.compile(r"(?P<body>.*?)\[\s*(?P<percent>\d{1,3})%\]\s*$")
+_PYTEST_MARKS_RE = re.compile(r"(?P<marks>[.FfEsxX]+)\s*$")
 
 
 class GenericCountColumn(ProgressColumn):
@@ -49,6 +58,11 @@ class GenericProgressTracker:
     total: int | None = field(init=False, default=None)
     percent: float | None = field(init=False, default=None)
     unit_label: str = field(init=False, default="tasks")
+    tests_passed: int = field(init=False, default=0)
+    tests_failed: int = field(init=False, default=0)
+    tests_skipped: int = field(init=False, default=0)
+    tests_total: int = field(init=False, default=0)
+    _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
@@ -63,8 +77,8 @@ class GenericProgressTracker:
             self._renderable(),
             console=self.console,
             refresh_per_second=8,
-            transient=False,
-            vertical_overflow="visible",
+            transient=True,
+            vertical_overflow="ellipsis",
         )
         try:
             self.live.start()
@@ -83,6 +97,7 @@ class GenericProgressTracker:
             return
         self.last_line = text
         self.detail = text
+        self._update_pytest_counters(text)
         self._update_counters(text)
         self._publish()
 
@@ -94,6 +109,7 @@ class GenericProgressTracker:
         else:
             self.detail = status
         self._publish(force=True)
+        self._print_completion_once()
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -109,7 +125,40 @@ class GenericProgressTracker:
             "unit_label": self.unit_label,
             "returncode": self.returncode,
             "last_line": self.last_line,
+            "tests_passed": self.tests_passed,
+            "tests_failed": self.tests_failed,
+            "tests_skipped": self.tests_skipped,
+            "tests_total": self.tests_total,
         }
+
+    def _update_pytest_counters(self, text: str) -> None:
+        collected = _PYTEST_COLLECTED_RE.search(text)
+        if collected:
+            self.tests_total = max(self.tests_total, int(collected.group("total")))
+            self.total = self.tests_total
+            self.unit_label = "tests"
+
+        progress = _PYTEST_PROGRESS_RE.search(text)
+        if not progress:
+            return
+        marks_match = _PYTEST_MARKS_RE.search(progress.group("body"))
+        if marks_match:
+            marks = marks_match.group("marks")
+            self.tests_passed += marks.count(".") + marks.count("X")
+            self.tests_failed += marks.count("F") + marks.count("f") + marks.count("E")
+            self.tests_skipped += marks.count("s") + marks.count("x")
+        completed = self.tests_passed + self.tests_failed + self.tests_skipped
+        if self.tests_total:
+            self.completed = min(self.tests_total, completed)
+            self.total = self.tests_total
+            self.percent = min(100.0, self.completed * 100.0 / self.tests_total)
+            self.unit_label = "tests"
+        else:
+            value = max(0, min(100, int(progress.group("percent"))))
+            self.percent = float(value)
+            self.completed = value
+            self.total = 100
+            self.unit_label = "percent"
 
     def _update_counters(self, text: str) -> None:
         match = _MAVEN_REACTOR_RE.search(text) or _FRACTION_RE.search(text)
@@ -122,7 +171,7 @@ class GenericProgressTracker:
                 self.percent = min(100.0, completed * 100.0 / total)
                 return
         match = _PERCENT_RE.search(text)
-        if match:
+        if match and self.unit_label != "tests":
             value = max(0, min(100, int(match.group("percent"))))
             self.percent = float(value)
             self.completed = value
@@ -134,6 +183,19 @@ class GenericProgressTracker:
             self.live.update(self._renderable())
         if self.update_callback is not None:
             self.update_callback(self.snapshot())
+
+    def _print_completion_once(self) -> None:
+        if not self.enabled or self._completion_printed or self.returncode is None:
+            return
+        self._completion_printed = True
+        self.console.print(
+            completion_line(
+                command=self.command_name,
+                returncode=self.returncode,
+                started_at=self._started_at,
+                snapshot=self.snapshot(),
+            )
+        )
 
     def _description(self) -> str:
         if self.phase_index is not None and self.phase_total:
@@ -162,12 +224,20 @@ class GenericProgressTracker:
             unit_label=unit,
             unit_short=short,
             detail=self.detail or "Starting",
+            detail_root=self.cwd,
             started_at=self._started_at,
             returncode=self.returncode,
+            phase_index=self.phase_index,
+            phase_total=self.phase_total,
+            phase_label=self.command_name,
+            tests_passed=self.tests_passed,
+            tests_failed=self.tests_failed,
+            tests_skipped=self.tests_skipped,
+            tests_total=self.tests_total,
         )
 
     def _renderable(self) -> Panel:
-        target = self.display_target or self.cwd or "command"
+        target = compact_display_target(self.display_target or self.cwd or "command", cwd=self.cwd)
         if self.returncode is None:
             border = "cyan"
             title_style = "bold cyan"
@@ -180,10 +250,12 @@ class GenericProgressTracker:
             border = "red"
             title_style = "bold red"
             icon = "✗"
-        title = Text()
-        title.append(f" {icon} ", style=title_style)
-        title.append(self.command_name or "command", style="bold")
-        title.append(" • ", style="dim")
-        title.append(str(target), style="bold white")
+        title = active_panel_title(
+            self.command_name,
+            str(target),
+            icon=icon,
+            width=self.console.width,
+        )
+        title.stylize(title_style)
         body = self.progress_body or ThreeLineProgressBody(self._progress_state)
         return Panel(body, title=title, border_style=border, padding=(0, 1))

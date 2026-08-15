@@ -17,6 +17,7 @@ from rich.pretty import Pretty
 
 from .console_utils import create_console, is_narrow_console
 from .models import Issue, OperationResult
+from .rich_progress import compact_display_target
 from .repair_policy import build_repair_report, repair_summary_lines_from_results, applied_repair_findings_from_results
 
 console = create_console()
@@ -345,7 +346,14 @@ def _render_outcome_panel(results: list[OperationResult], totals: dict[str, int]
     metrics = Table.grid(padding=(0, 2))
     metrics.add_column(style="dim", no_wrap=True)
     metrics.add_column(no_wrap=False)
-    metrics.add_row("Actions", f"{sum(not result.skipped for result in results)} completed, {totals['skipped']} skipped")
+    passed_stages = sum(not result.skipped and result.returncode == 0 for result in results)
+    failed_stages = sum(not result.skipped and result.returncode != 0 for result in results)
+    stage_text = Text()
+    stage_text.append(f"{passed_stages} passed", style="green")
+    stage_text.append(f", {failed_stages} failed", style="bold red" if failed_stages else "dim")
+    if totals["skipped"]:
+        stage_text.append(f", {totals['skipped']} skipped", style="yellow")
+    metrics.add_row("Stages", stage_text)
     metrics.add_row("Duration", _human_duration(duration))
     if tests is not None:
         passed, failed, skipped, total = tests
@@ -356,14 +364,44 @@ def _render_outcome_panel(results: list[OperationResult], totals: dict[str, int]
         test_text.append(f" ({total} total)", style="dim")
         metrics.add_row("Tests", test_text)
     metrics.add_row(
-        "Diagnostics",
-        Text.assemble(
-            (str(totals["warnings"]), "bold yellow" if totals["warnings"] else "dim"),
-            (" warnings, ", "dim"),
-            (str(totals["errors"]), "bold red" if totals["errors"] else "dim"),
-            (" errors", "dim"),
-        ),
+        "Warnings",
+        Text(f"⚠ {totals['warnings']}" if totals["warnings"] else "0", style="bold yellow" if totals["warnings"] else "dim"),
     )
+    metrics.add_row(
+        "Errors",
+        Text(f"✗ {totals['errors']}" if totals["errors"] else "0", style="bold red" if totals["errors"] else "dim"),
+    )
+
+    package_valid = package_invalid = 0
+    artifact_valid = artifact_invalid = 0
+    report_paths: list[str] = []
+    log_paths: list[str] = []
+    for result in results:
+        metadata = result.metadata or {}
+        packages = metadata.get("packages") if isinstance(metadata.get("packages"), dict) else {}
+        package_valid += int(packages.get("valid") or 0)
+        package_invalid += int(packages.get("invalid") or 0)
+        artifacts = metadata.get("artifacts") if isinstance(metadata.get("artifacts"), dict) else {}
+        artifact_valid += int(artifacts.get("valid") or 0)
+        artifact_invalid += int(artifacts.get("invalid") or 0)
+        for key in ("test_report", "package_report", "coverage_report"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                report_paths.append(value)
+        tests_meta = metadata.get("tests") if isinstance(metadata.get("tests"), dict) else {}
+        for value in tests_meta.get("report_files") or []:
+            if str(value).strip():
+                report_paths.append(str(value))
+        if result.log_path:
+            log_paths.append(str(result.log_path))
+    if package_valid or package_invalid:
+        metrics.add_row("Packages", Text(f"{package_valid} valid · {package_invalid} invalid", style="green" if not package_invalid else "red"))
+    if artifact_valid or artifact_invalid:
+        metrics.add_row("Artifacts", Text(f"{artifact_valid} valid · {artifact_invalid} invalid", style="green" if not artifact_invalid else "red"))
+    if report_paths:
+        metrics.add_row("Report", Text(compact_display_target(report_paths[-1]), style="cyan", overflow="ellipsis"))
+    elif log_paths:
+        metrics.add_row("Log", Text(compact_display_target(log_paths[-1]), style="cyan", overflow="ellipsis"))
     if commit_hash:
         metrics.add_row("Commit", Text(commit_hash[:12], style="bold cyan"))
 
@@ -371,7 +409,7 @@ def _render_outcome_panel(results: list[OperationResult], totals: dict[str, int]
         Panel(
             Group(headline, Text(""), metrics),
             border_style=style,
-            padding=(1, 2),
+            padding=(0, 1) if (is_narrow_console(target_console) or target_console.width <= 60) else (1, 2),
             expand=not (is_narrow_console(target_console) or target_console.width <= 60),
         )
     )
@@ -633,7 +671,7 @@ def _render_compact_results(results: list[OperationResult], target_console: Cons
             label,
             Text(_human_duration(result.duration_seconds), style="dim"),
         )
-    target_console.print(Panel(table, title="Actions", border_style="dim", expand=True))
+    target_console.print(Group(Text("Stages", style="bold dim"), table))
 
 
 def _render_wide_issues(issues: list[Issue], target_console: Console) -> None:
@@ -657,16 +695,36 @@ def _render_wide_issues(issues: list[Issue], target_console: Console) -> None:
 
 
 def _render_compact_issues(issues: list[Issue], target_console: Console) -> None:
-    for issue in issues:
-        grid = Table.grid(expand=False)
-        grid.add_column(style="bold", no_wrap=True)
-        grid.add_column(overflow="fold")
-        grid.add_row(_cell("level"), _severity_text(issue))
-        grid.add_row(_cell("command"), _cell(issue.command))
-        grid.add_row(_cell("location"), _cell(_format_issue_location(issue)))
-        grid.add_row(_cell("code"), _cell(issue.code or "-"))
-        grid.add_row(_cell("message"), _cell(issue.message))
-        target_console.print(Panel(grid, title="Issue", expand=False))
+    if not issues:
+        return
+    warnings = sum(issue.severity == "warning" for issue in issues)
+    errors = sum(issue.severity == "error" for issue in issues)
+    table = Table.grid(expand=True, padding=(0, 1))
+    table.add_column(width=1, no_wrap=True)
+    table.add_column(ratio=1, overflow="fold")
+    for issue in issues[:10]:
+        is_warning = issue.severity == "warning"
+        mark = "!" if is_warning else "✗"
+        style = "yellow" if is_warning else "bold red"
+        location = _format_issue_location(issue)
+        prefix = issue.command
+        if issue.code:
+            prefix += f" · {issue.code}"
+        if location != "-":
+            prefix += f" · {compact_display_target(location)}"
+        text = Text(prefix, style="bold")
+        text.append("\n")
+        text.append(issue.message, style=style)
+        table.add_row(Text(mark, style=style), text)
+    if len(issues) > 10:
+        table.add_row(Text("…", style="dim"), Text(f"{len(issues) - 10} more · see validation log", style="dim"))
+    title = Text()
+    title.append("Issues", style="bold")
+    if warnings:
+        title.append(f" · ⚠ {warnings}", style="yellow")
+    if errors:
+        title.append(f" · ✗ {errors}", style="red")
+    target_console.print(Panel(table, title=title, border_style="red" if errors else "yellow", padding=(0, 1), expand=True))
 
 
 def render_status_table(rows: list[tuple[str, str]], *, console_obj: Console | None = None) -> None:
@@ -1203,11 +1261,71 @@ def _repository_layout_panel(manifest: dict) -> Panel | None:
         expand=True,
     )
 
+def _compact_artifact_manifest_panel(manifest: dict) -> Panel:
+    repository = manifest.get("repository") if isinstance(manifest.get("repository"), dict) else {}
+    inventory = manifest.get("inventory") if isinstance(manifest.get("inventory"), dict) else {}
+    entries = inventory.get("entries") if isinstance(inventory.get("entries"), list) else []
+    validation = manifest.get("validation") if isinstance(manifest.get("validation"), dict) else {}
+    apply = manifest.get("apply") if isinstance(manifest.get("apply"), dict) else {}
+
+    repo_name = str(repository.get("name") or manifest.get("repo_name") or manifest.get("name") or "artifact")
+    branch = str(repository.get("branch") or "").strip()
+    target = str(manifest.get("target") or "").strip()
+    artifact_type = str(manifest.get("type") or "artifact").replace("_", " ")
+
+    grid = Table.grid(expand=True, padding=(0, 1))
+    grid.add_column(style="bold dim", no_wrap=True, width=10)
+    grid.add_column(ratio=1, overflow="ellipsis")
+    identity = repo_name + (f" · {branch}" if branch else "")
+    grid.add_row("Artifact", Text(f"{artifact_type} · {identity}", style="bold"))
+    if target and target != repo_name:
+        grid.add_row("Target", Text(target, style="cyan"))
+    if entries:
+        changes = {str(item.get("action") or "change") for item in entries if isinstance(item, dict)}
+        file_word = "file" if len(entries) == 1 else "files"
+        grid.add_row("Changes", f"{len(entries)} {file_word} · {', '.join(sorted(changes))}")
+    if validation:
+        required = bool(validation.get("required", False))
+        grid.add_row("Validate", Text("required" if required else "optional", style="green" if required else "yellow"))
+    policy_bits: list[str] = []
+    if apply:
+        if "atomic" in apply:
+            policy_bits.append("atomic" if bool(apply.get("atomic")) else "non-atomic")
+        conflict = str(apply.get("conflict_policy") or "").strip()
+        if conflict:
+            policy_bits.append(conflict)
+        if bool(apply.get("requires_clean_worktree")):
+            policy_bits.append("clean tree")
+        if bool(apply.get("commit")):
+            policy_bits.append("commit")
+    if policy_bits:
+        grid.add_row("Apply", " · ".join(policy_bits))
+    return Panel(grid, title="[bold]Artifact review[/]", border_style="cyan", padding=(0, 1), expand=True)
+
+
+def artifact_confirmation_text(manifest: dict) -> Text:
+    repository = manifest.get("repository") if isinstance(manifest.get("repository"), dict) else {}
+    repo_name = str(repository.get("name") or manifest.get("repo_name") or manifest.get("name") or "artifact")
+    branch = str(repository.get("branch") or "").strip()
+    target = str(manifest.get("target") or "").strip()
+    text = Text("✓ ", style="bold green")
+    text.append("Artifact confirmed", style="bold green")
+    text.append(f" · {repo_name}", style="bold")
+    if branch:
+        text.append(f" · {branch}", style="dim")
+    if target and target != repo_name:
+        text.append(f" · {target}", style="cyan")
+    return text
+
+
 def render_artifact_manifest(manifest: dict, *, console_obj: Console | None = None) -> None:
-    """Render an artifact or bundle as one cohesive, card-based inspection report."""
+    """Render an artifact review with a phone-first compact layout on Termux."""
     if not manifest:
         return
     target_console = console_obj or console
+    if is_narrow_console(target_console) or target_console.width <= 72:
+        target_console.print(_compact_artifact_manifest_panel(manifest))
+        return
     renderables: list[object] = [_artifact_headline_panel(manifest, target_console)]
 
     bundle_panel = _bundle_table(manifest)

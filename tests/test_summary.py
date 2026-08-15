@@ -4,7 +4,15 @@ import unittest
 from io import StringIO
 
 from devtool.models import Issue, OperationResult
-from devtool.summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
+from devtool.summary import (
+    artifact_confirmation_text,
+    build_json_summary,
+    build_runner_json,
+    render_artifact_manifest,
+    render_status_table,
+    render_summary,
+    summarize_failure_output,
+)
 from rich.console import Console
 
 
@@ -416,3 +424,80 @@ class FailureDetailRenderingTests(unittest.TestCase):
         )
         data = build_json_summary([result], repo_root="/tmp/repo")
         self.assertEqual(data["results"][0]["output"], '{"error":"boom"}')
+
+
+class MobileSummaryUxTests(unittest.TestCase):
+    def test_narrow_artifact_review_is_one_compact_panel(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=60)
+        manifest = {
+            "type": "overlay",
+            "target": "devtool",
+            "repository": {"name": "devtool", "branch": "feature/termux-native-proot"},
+            "inventory": {"entries": [{"action": "modify", "path": "devtool/summary.py"}]},
+            "validation": {"required": True},
+            "apply": {
+                "atomic": True,
+                "conflict_policy": "abort",
+                "requires_clean_worktree": True,
+                "commit": True,
+            },
+        }
+        render_artifact_manifest(manifest, console_obj=console)
+        output = stream.getvalue()
+        self.assertIn("Artifact review", output)
+        self.assertIn("feature/termux-native-proot", output)
+        self.assertIn("devtool", output)
+        self.assertIn("1 file", output)
+        self.assertNotIn("Target     devtool", output)
+        self.assertNotIn("Execution contract", output)
+        self.assertNotIn("Repository layout", output)
+
+    def test_artifact_confirmation_becomes_one_compact_status_row(self) -> None:
+        text = artifact_confirmation_text(
+            {
+                "target": "devtool",
+                "repository": {"name": "devtool", "branch": "feature/termux-native-proot"},
+            }
+        )
+        self.assertEqual(
+            text.plain,
+            "✓ Artifact confirmed · devtool · feature/termux-native-proot",
+        )
+
+    def test_compact_summary_groups_issues_and_shows_final_metrics(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, force_terminal=False, width=60)
+        results = [
+            OperationResult(
+                name="test",
+                argv=["pytest"],
+                returncode=0,
+                duration_seconds=4.2,
+                output="1327 passed in 4.2s",
+                issues=[],
+                metadata={
+                    "tests": {"passed": 1327, "failed": 0, "skipped": 0, "total": 1327, "report_files": ["/tmp/pytest.xml"]},
+                },
+            ),
+            OperationResult(
+                name="package-check",
+                argv=["python", "-m", "devtool.python_support"],
+                returncode=0,
+                duration_seconds=1.0,
+                output="ok",
+                issues=[Issue("warning", "package-check", "dist/demo.whl", "PKG1", "example warning")],
+                metadata={"packages": {"valid": 2, "invalid": 0}, "artifacts": {"valid": 1, "invalid": 0}},
+            ),
+        ]
+        render_summary(results, console_obj=console)
+        output = stream.getvalue()
+        self.assertIn("Stages", output)
+        self.assertIn("1327 passed", output)
+        self.assertIn("Warnings", output)
+        self.assertIn("Packages", output)
+        self.assertIn("2 valid", output)
+        self.assertIn("Artifacts", output)
+        self.assertIn("Report", output)
+        self.assertIn("Issues · ⚠ 1", output)
+        self.assertEqual(output.count("example warning"), 1)
