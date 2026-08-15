@@ -349,24 +349,28 @@ class PythonSupportTests(unittest.TestCase):
 
     def test_hatch_environment_create_is_idempotent_when_default_exists(self) -> None:
         completed = mock.Mock(returncode=1, stdout="Environment `default` already exists\n")
-        find = mock.Mock(returncode=1, stdout="")
+        find = mock.Mock(returncode=0, stdout="/tmp/hatch-env\n")
         with (
             tempfile.TemporaryDirectory() as tmp,
             mock.patch("devtool.python_support.shutil.which", return_value="/usr/bin/hatch"),
-            mock.patch("devtool.python_support.subprocess.run", side_effect=[completed, find]),
+            mock.patch("devtool.python_support.subprocess.run", side_effect=[completed, find, mock.Mock(returncode=0, stdout="installed project\n")]),
+            mock.patch("devtool.python_support.Path.is_file", return_value=True),
         ):
+            Path(tmp, "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
             rc = ensure_hatch_environment(Path(tmp))
         self.assertEqual(rc, 0)
 
     def test_hatch_environment_installs_hatch_when_command_is_missing(self) -> None:
         install = mock.Mock(returncode=0, stdout="installed hatch\n")
         create = mock.Mock(returncode=0, stdout="created\n")
-        find = mock.Mock(returncode=1, stdout="")
+        find = mock.Mock(returncode=0, stdout="/tmp/hatch-env\n")
         with (
             tempfile.TemporaryDirectory() as tmp,
             mock.patch("devtool.python_support.shutil.which", return_value=None),
-            mock.patch("devtool.python_support.subprocess.run", side_effect=[install, create, find]) as run,
+            mock.patch("devtool.python_support.subprocess.run", side_effect=[install, create, find, mock.Mock(returncode=0, stdout="installed project\n")]) as run,
+            mock.patch("devtool.python_support.Path.is_file", return_value=True),
         ):
+            Path(tmp, "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
             rc = ensure_hatch_environment(Path(tmp))
         self.assertEqual(rc, 0)
         self.assertEqual(run.call_args_list[0].args[0], [sys.executable, "-m", "pip", "install", "hatch"])

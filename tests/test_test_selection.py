@@ -85,11 +85,8 @@ class TestCatalogTests(unittest.TestCase):
                     "test_selection": {"selectors": ["parser"], "tags": ["fast"]},
                 },
             )
-            spec = build_specs(config, "test")[0]
-        self.assertIn("tox", spec.argv)
-        self.assertNotIn("-k", spec.argv)
-        self.assertNotIn("parser", spec.argv)
-        self.assertNotIn("fast", spec.argv)
+            with self.assertRaisesRegex(SystemExit, "tox supports Devtool selection only"):
+                build_specs(config, "test")
 
     def test_custom_python_test_command_needs_explicit_pytest_adapter(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -102,8 +99,8 @@ class TestCatalogTests(unittest.TestCase):
                 test_command="tox -e py312",
                 runner_options={"test_selection": {"selectors": ["parser"]}},
             )
-            spec = build_specs(config, "test")[0]
-        self.assertEqual(spec.argv, ["tox", "-e", "py312"])
+            with self.assertRaisesRegex(SystemExit, "custom Python adapter"):
+                build_specs(config, "test")
 
 class ValidationTestSelectionCliAndRunnerTests(unittest.TestCase):
     def test_android_validation_task_selection_accepts_multiple_tasks(self) -> None:

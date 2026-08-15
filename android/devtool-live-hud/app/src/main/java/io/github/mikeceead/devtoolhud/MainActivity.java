@@ -1670,7 +1670,7 @@ public final class MainActivity extends Activity {
         String configured = config.workdir == null ? "" : config.workdir.trim();
         if (config.useChroot) {
             // Termux RUN_COMMAND validates its work directory before the shell
-            // starts, so a chroot-only path such as /home/mike/Code/project is
+            // starts, so a chroot-only path such as /home/<user>/Code/project is
             // invalid here even though it exists after entering the chroot.
             // Keep the repository path in the devtool command and launch from
             // the Termux home unless the user supplied a Termux-visible path.

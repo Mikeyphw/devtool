@@ -64,9 +64,9 @@ Termux host path.
 Set the guest identity when it differs from the default:
 
 ```bash
-export DEVTOOL_TERMUX_CHROOT_USER=mike
+export DEVTOOL_TERMUX_CHROOT_USER=<chroot-user>
 # or
-export DEVTOOL_TERMUX_CHROOT_HOME=/home/mike
+export DEVTOOL_TERMUX_CHROOT_HOME=/home/<chroot-user>
 ```
 
 ### Android-safe validation

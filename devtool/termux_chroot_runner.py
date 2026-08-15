@@ -85,6 +85,8 @@ TOTALS_ERRORS_RE = re.compile(r"errors\s*=\s*([1-9]\d*)", re.I)
 @dataclass(slots=True)
 class RunnerConfig:
     chroot_name: str = "androidos"
+    linux_user: str = ""
+    linux_home: str = ""
     tool: str = "devtool"
     chrootctl: str = "chrootctl"
     sudo: str = "sudo"
@@ -96,6 +98,13 @@ class RunnerConfig:
     copy_via: str = "auto"
     no_clipboard: bool = False
     path_map: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class ChrootIdentity:
+    user: str
+    home: str
+    shell: str
 
 
 def _split_path_map(raw: str) -> list[tuple[str, str]]:
@@ -185,6 +194,8 @@ def _consume_value(argv: list[str], index: int) -> tuple[str, str | None, int]:
 def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerConfig, list[str]]:
     config = RunnerConfig(
         chroot_name=env.get("DEVTOOL_TERMUX_CHROOT", "androidos").strip() or "androidos",
+        linux_user=env.get("DEVTOOL_TERMUX_CHROOT_USER", "").strip(),
+        linux_home=env.get("DEVTOOL_TERMUX_CHROOT_HOME", "").strip(),
         tool=env.get("DEVTOOL_TERMUX_CHROOT_TOOL", "~/.local/bin/devtool").strip() or "~/.local/bin/devtool",
         chrootctl=env.get("DEVTOOL_CHROOTCTL", "chrootctl").strip() or "chrootctl",
         sudo=env.get("DEVTOOL_CHROOT_SUDO", "sudo"),
@@ -249,7 +260,7 @@ def translate_devtool_args(argv: list[str], *, env: Mapping[str, str] | None = N
     # When the whole devtool process is delegated into the chroot, start from
     # the requested repository rather than from Termux's current directory.
     # The repository can exist only in the chroot namespace (for example
-    # /home/mike/Code/project), while the Termux host cwd cannot see it.
+    # /home/<user>/Code/project), while the Termux host cwd cannot see it.
     start_directory = explicit_repo or cwd
     config.cwd = _translate_path(start_directory, config.path_map, cwd=cwd) if config.translate_paths else start_directory
     if not config.translate_paths:
@@ -308,7 +319,49 @@ def _shell_join_tool_argv(argv: list[str]) -> str:
     return " ".join(_quote_shell_token(part) for part in argv)
 
 
-def build_inner_command(config: RunnerConfig, forwarded: list[str]) -> str:
+def _identity_switch_command(identity: ChrootIdentity, payload: str) -> str:
+    user = identity.user.strip()
+    home = identity.home.strip()
+    shell_path = identity.shell.strip() or "/bin/sh"
+    if not user or not home.startswith("/") or not shell_path.startswith("/"):
+        raise ValueError("Chroot executor identity is incomplete")
+    user_env = " ".join(
+        shlex.quote(item)
+        for item in (f"HOME={home}", f"USER={user}", f"LOGNAME={user}")
+    )
+    if user == "root":
+        return "exec env " + user_env + " " + shlex.quote(shell_path) + " -lc " + shlex.quote(payload)
+    runuser_probe = (
+        "command -v runuser >/dev/null 2>&1 && "
+        "runuser -u " + shlex.quote(user) + " -- " + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
+    )
+    su_probe = (
+        "command -v su >/dev/null 2>&1 && "
+        "su - " + shlex.quote(user) + " -s " + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
+    )
+    runuser_exec = (
+        "exec runuser -u " + shlex.quote(user) + " -- env " + user_env + " "
+        + shlex.quote(shell_path) + " -lc " + shlex.quote(payload)
+    )
+    su_exec = (
+        "exec su - " + shlex.quote(user) + " -s " + shlex.quote(shell_path)
+        + " -c " + shlex.quote(payload)
+    )
+    return (
+        "if " + runuser_probe + "; then " + runuser_exec
+        + "; elif " + su_probe + "; then " + su_exec
+        + "; else printf '%s\\n' "
+        + shlex.quote(f"Unable to switch chroot execution to requested user {user}")
+        + " >&2; exit 69; fi"
+    )
+
+
+def build_inner_command(
+    config: RunnerConfig,
+    forwarded: list[str],
+    *,
+    identity: ChrootIdentity | None = None,
+) -> str:
     devtool_argv = [config.tool, *forwarded]
     env_prefix = [
         "env",
@@ -319,7 +372,10 @@ def build_inner_command(config: RunnerConfig, forwarded: list[str]) -> str:
     run_id = os.environ.get("DEVTOOL_RUN_ID", "").strip()
     if run_id:
         env_prefix.append(f"DEVTOOL_RUN_ID={run_id}")
-    return "cd " + shlex.quote(config.cwd or "/") + " && exec " + _shell_join_tool_argv([*env_prefix, *devtool_argv])
+    payload = "cd " + shlex.quote(config.cwd or "/") + " && exec " + _shell_join_tool_argv([*env_prefix, *devtool_argv])
+    if identity is None:
+        raise ValueError("Chroot executor identity must be resolved before full-process delegation")
+    return _identity_switch_command(identity, payload)
 
 
 def build_runner_command(config: RunnerConfig, forwarded: list[str]) -> list[str]:
@@ -328,7 +384,16 @@ def build_runner_command(config: RunnerConfig, forwarded: list[str]) -> list[str
     try:
         os.environ["DEVTOOL_CHROOTCTL"] = config.chrootctl
         os.environ["DEVTOOL_CHROOT_SUDO"] = config.sudo
-        return build_chroot_exec_argv(build_inner_command(config, forwarded), config.chroot_name)
+        identity_env = dict(os.environ)
+        if config.linux_user:
+            identity_env["DEVTOOL_TERMUX_CHROOT_USER"] = config.linux_user
+        if config.linux_home:
+            identity_env["DEVTOOL_TERMUX_CHROOT_HOME"] = config.linux_home
+        identity = resolve_chroot_identity(config.chroot_name, config.path_map, env=identity_env)
+        return build_chroot_exec_argv(
+            build_inner_command(config, forwarded, identity=identity),
+            config.chroot_name,
+        )
     finally:
         if old_chrootctl is None:
             os.environ.pop("DEVTOOL_CHROOTCTL", None)
@@ -408,6 +473,103 @@ def chroot_directory_exists(path: str, chroot_name: str, *, env: Mapping[str, st
             os.environ.pop("DEVTOOL_CHROOT_SUDO", None)
         else:
             os.environ["DEVTOOL_CHROOT_SUDO"] = old_sudo
+
+
+def _mapped_chroot_home(
+    mappings: Iterable[tuple[str, str]],
+    *,
+    env: Mapping[str, str],
+) -> str:
+    host_home = os.path.expanduser(str(env.get("HOME", "") or "")).rstrip("/")
+    if not host_home:
+        return ""
+    for host, guest in mappings:
+        if os.path.expanduser(str(host)).rstrip("/") == host_home:
+            value = str(guest).rstrip("/") or "/"
+            return value if value.startswith("/") else ""
+    return ""
+
+
+def resolve_chroot_identity(
+    chroot_name: str,
+    mappings: Iterable[tuple[str, str]],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> ChrootIdentity:
+    """Prove the requested Linux user/home inside the selected chroot.
+
+    A Termux username or a guessed ``/home/termux`` path is not a Linux chroot
+    identity.  Resolve the user/home pair from explicit configuration or from
+    the host-home mapping that was verified by ``repair_termux_home_mapping``,
+    then confirm it against the guest's passwd database.  Failure is fatal so
+    execution can never silently continue as root.
+    """
+
+    env = env or os.environ
+    requested_user = str(env.get("DEVTOOL_TERMUX_CHROOT_USER", "") or "").strip()
+    requested_home = str(env.get("DEVTOOL_TERMUX_CHROOT_HOME", "") or "").strip()
+    if requested_home and not requested_home.startswith("/"):
+        raise ValueError("DEVTOOL_TERMUX_CHROOT_HOME must be absolute")
+    if not requested_home:
+        requested_home = _mapped_chroot_home(mappings, env=env)
+    if not requested_user and not requested_home:
+        raise ValueError(
+            "Chroot user/home identity is unknown; configure DEVTOOL_TERMUX_CHROOT_USER/HOME "
+            "or use a repository path that Devtool can map and verify inside the chroot"
+        )
+
+    predicate = (
+        "-v u=" + shlex.quote(requested_user) + " '$1==u {print $1 \"\\t\" $6 \"\\t\" $7; exit}'"
+        if requested_user
+        else "-v h=" + shlex.quote(requested_home) + " '$6==h {print $1 \"\\t\" $6 \"\\t\" $7; exit}'"
+    )
+    command = (
+        "line=$(awk -F: " + predicate + " /etc/passwd 2>/dev/null); "
+        "[ -n \"$line\" ] || { printf '%s\\n' 'requested chroot identity is absent from /etc/passwd' >&2; exit 69; }; "
+        "printf '%s\\n' \"$line\""
+    )
+    old_chrootctl = os.environ.get("DEVTOOL_CHROOTCTL")
+    old_sudo = os.environ.get("DEVTOOL_CHROOT_SUDO")
+    try:
+        if "DEVTOOL_CHROOTCTL" in env:
+            os.environ["DEVTOOL_CHROOTCTL"] = str(env["DEVTOOL_CHROOTCTL"])
+        if "DEVTOOL_CHROOT_SUDO" in env:
+            os.environ["DEVTOOL_CHROOT_SUDO"] = str(env["DEVTOOL_CHROOT_SUDO"])
+        completed = subprocess.run(
+            build_chroot_exec_argv(command, chroot_name),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"Unable to query chroot user/home identity: {exc}") from exc
+    finally:
+        if old_chrootctl is None:
+            os.environ.pop("DEVTOOL_CHROOTCTL", None)
+        else:
+            os.environ["DEVTOOL_CHROOTCTL"] = old_chrootctl
+        if old_sudo is None:
+            os.environ.pop("DEVTOOL_CHROOT_SUDO", None)
+        else:
+            os.environ["DEVTOOL_CHROOT_SUDO"] = old_sudo
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
+        raise ValueError(f"Unable to prove requested chroot identity: {detail}")
+    fields = completed.stdout.strip().split("\t")
+    if len(fields) != 3:
+        raise ValueError("Unable to prove requested chroot identity: malformed passwd response")
+    user, home, shell_path = (field.strip() for field in fields)
+    if requested_user and user != requested_user:
+        raise ValueError(f"Requested chroot user {requested_user!r} resolved as {user!r}")
+    if requested_home and home != requested_home:
+        raise ValueError(f"Requested chroot home {requested_home!r} belongs to {home!r}")
+    if not user or not home.startswith("/"):
+        raise ValueError("Unable to prove requested chroot identity: incomplete passwd entry")
+    if not shell_path.startswith("/"):
+        shell_path = "/bin/sh"
+    return ChrootIdentity(user=user, home=home, shell=shell_path)
 
 
 def discover_chroot_home_for_termux_path(
@@ -715,6 +877,7 @@ def wrap_specs_for_termux_host_chroot(
     env = env or os.environ
     mappings = list(path_map or default_path_map(env))
     host_repo = Path(repo_root).expanduser() if repo_root is not None else None
+    identity = resolve_chroot_identity(chroot_name, mappings, env=env)
     wrapped: list[CommandSpec] = []
     for spec in specs:
         host_cwd = str(spec.cwd or host_repo or os.getcwd())
@@ -745,13 +908,22 @@ def wrap_specs_for_termux_host_chroot(
                 continue
             if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(key)):
                 assignment_values.append(f"{key}={value}")
+        assignment_values.extend([
+            f"HOME={identity.home}",
+            f"USER={identity.user}",
+            f"LOGNAME={identity.user}",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        ])
         assignments = " ".join(shlex.quote(item) for item in assignment_values)
-        command = "cd " + shlex.quote(chroot_cwd or "/") + " && exec env " + assignments + " " + shlex.join(argv)
+        payload = "cd " + shlex.quote(chroot_cwd or "/") + " && exec env -i " + assignments + " " + shlex.join(argv)
+        command = _identity_switch_command(identity, payload)
         metadata = dict(spec.metadata)
         metadata["execution_mode"] = "termux-host-chroot"
         metadata["chroot"] = chroot_name
         metadata["chroot_runner"] = "termux-host-toolchain"
         metadata["chroot_cwd"] = chroot_cwd
+        metadata["chroot_linux_user"] = identity.user
+        metadata["chroot_linux_home"] = identity.home
         if translated_env_keys:
             metadata["chroot_translated_env"] = list(translated_env_keys)
         # Execute the translated command in the chroot, but plan/render dotnet
@@ -759,7 +931,7 @@ def wrap_specs_for_termux_host_chroot(
         # inspect the real solution/project path and estimate project totals.
         metadata.setdefault("progress_argv", list(spec.argv))
         metadata.setdefault("progress_cwd", host_cwd)
-        wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, chroot_name), cwd=None, metadata=metadata))
+        wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, chroot_name), cwd=None, env={}, metadata=metadata))
     return wrapped
 
 
@@ -1177,7 +1349,10 @@ def run_auto_chroot(argv: list[str], *, env: Mapping[str, str] | None = None, cw
     if _apply_command_from_argv(forwarded)[0] and _apply_notification_enabled_for_argv(forwarded, env):
         child_env["DEVTOOL_APPLY_NOTIFICATION"] = "0"
     if meta.get("needs_android_bridge") == "1" and meta.get("hud_disabled") != "1":
-        bridge_dir = child_env.get("DEVTOOL_HUD_BRIDGE_DIR", "/home/termux/.local/state/devtool-android-hud")
+        bridge_dir = child_env.get("DEVTOOL_HUD_BRIDGE_DIR", "").strip()
+        if not bridge_dir:
+            identity = resolve_chroot_identity(config.chroot_name, config.mappings, env=child_env)
+            bridge_dir = str(Path(identity.home) / ".local" / "state" / "devtool-android-hud")
         child_env["DEVTOOL_HUD_BRIDGE_DIR"] = bridge_dir
         child_env.setdefault("DEVTOOL_HUD_SINGLETON", "kill")
         host_bridge_dir = Path(env.get("DEVTOOL_ANDROID_HUD_STATE_DIR", str(state_dir().parent / "devtool-android-hud"))).expanduser()

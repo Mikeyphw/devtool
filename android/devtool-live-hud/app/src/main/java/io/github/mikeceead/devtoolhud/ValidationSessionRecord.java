@@ -21,7 +21,7 @@ final class ValidationSessionRecord {
     String executorName = "";
     String executorTransport = "termux";
     String executorWorkdir = "";
-    String executorLinuxUser = "termux";
+    String executorLinuxUser = "";
     String failureAction = "pause";
     String resourceProfile = "automatic";
     String requiredCheckpointName = "finalize";

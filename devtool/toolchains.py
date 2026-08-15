@@ -67,7 +67,10 @@ def should_use_mise(
     manager = configured_toolchain_manager(config, env)
     if manager == "none":
         return False
-    if shutil.which("mise", path=str(env.get("PATH", ""))) is None:
+    mise = shutil.which("mise", path=str(env.get("PATH", "")))
+    if manager == "mise" and mise is None:
+        raise SystemExit("Toolchain manager 'mise' was explicitly requested, but the mise executable is unavailable.")
+    if mise is None:
         return False
     if manager == "mise":
         return True
@@ -78,7 +81,7 @@ def should_use_mise(
 
 
 def should_wrap_spec_with_mise(spec: CommandSpec) -> bool:
-    if not spec.argv or spec.destructive:
+    if not spec.argv:
         return False
     if spec.name in _SKIP_NAMES:
         return False
@@ -114,6 +117,46 @@ def apply_toolchain_wrapper(
             continue
         metadata = dict(spec.metadata)
         metadata.setdefault("toolchain_manager", configured_toolchain_manager(config, env))
+        wrapped.append(replace(spec, metadata=metadata))
+    return wrapped
+
+
+def apply_destination_toolchain_wrapper(
+    config: ProjectConfig,
+    specs: list[CommandSpec],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> list[CommandSpec]:
+    """Apply the selected toolchain envelope for a destination backend.
+
+    Host-side ``shutil.which('mise')`` is not evidence about a chroot, SSH
+    host, or PRoot distro.  Selection is therefore resolved from the project
+    configuration/markers on the host, while executable availability is left
+    to the destination command itself.  An explicit ``mise`` choice is never
+    silently dropped merely because the host process cannot see the guest
+    executable.
+    """
+
+    env = env or os.environ
+    manager = configured_toolchain_manager(config, env)
+    wrapped: list[CommandSpec] = []
+    for spec in specs:
+        cwd = spec.cwd or config.project_root or str(config.repo_root)
+        use_mise = manager == "mise"
+        if manager == "auto":
+            root = Path(cwd).expanduser()
+            if not root.is_absolute():
+                root = config.repo_root / root
+            use_mise = has_mise_marker(root.resolve(strict=False), stop_at=config.repo_root)
+        if use_mise and should_wrap_spec_with_mise(spec):
+            item = wrap_spec_with_mise(spec)
+            metadata = dict(item.metadata)
+            metadata["toolchain_resolution"] = "destination"
+            wrapped.append(replace(item, metadata=metadata))
+            continue
+        metadata = dict(spec.metadata)
+        metadata.setdefault("toolchain_manager", manager)
+        metadata.setdefault("toolchain_resolution", "destination")
         wrapped.append(replace(spec, metadata=metadata))
     return wrapped
 

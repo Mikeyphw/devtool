@@ -179,15 +179,11 @@ def default_termux_chroot_path_map(env: Mapping[str, str] | None = None) -> tupl
     # HOME, because that can make ordinary PC paths look chroot-compatible.
     termux_home = str(env.get("HOME", "")).strip() if is_termux_host(env) else ""
     chroot_home = str(env.get("DEVTOOL_TERMUX_CHROOT_HOME", "")).strip()
-    if not chroot_home:
-        explicit_user = str(env.get("DEVTOOL_TERMUX_CHROOT_USER", "")).strip()
-        if explicit_user:
-            chroot_home = f"/home/{explicit_user}"
-        elif termux_home.startswith("/data/data/com.termux/files/home"):
-            chroot_home = "/home/termux"
-        else:
-            chroot_user = str(env.get("DEVTOOL_TERMUX_CHROOT_USER", "mike")).strip() or "mike"
-            chroot_home = f"/home/{chroot_user}"
+    if chroot_home and not Path(chroot_home).is_absolute():
+        raise ValueError("DEVTOOL_TERMUX_CHROOT_HOME must be absolute")
+    # Never synthesize /home/<user> (or /home/termux) from host identity.  The
+    # Termux wrapper repairs this mapping by probing the selected chroot and
+    # then resolves the matching passwd identity before command launch.
     if termux_home and chroot_home:
         mappings.append(PathMapping(os.path.expanduser(termux_home).rstrip("/"), chroot_home.rstrip("/")))
 
@@ -305,6 +301,7 @@ def preflight_execution(
     plan: ExecutionPlan,
     *,
     expected_paths: Iterable[str] = (),
+    require_expected_paths: bool = False,
 ) -> ExecutionPreflight:
     checks: list[PreflightCheck] = []
     repo = Path(repo_root).expanduser()
@@ -319,9 +316,8 @@ def preflight_execution(
         if identity in seen_targets:
             continue
         seen_targets.add(identity)
-        # Targets may intentionally be introduced by an overlay, so missing
-        # paths are diagnostic rather than fatal at this shared layer.
-        checks.append(PreflightCheck("target", "ready" if path.exists() else "optional", str(path)))
+        status = "ready" if path.exists() else ("missing" if require_expected_paths else "optional")
+        checks.append(PreflightCheck("target", status, str(path)))
 
     if plan.effective == CHROOT:
         if plan.current == CHROOT:
@@ -344,6 +340,17 @@ def preflight_execution(
                 mapping_status = "incompatible"
                 mapping_detail = f"no Termux-to-chroot mapping for {repo.resolve()}"
             checks.append(PreflightCheck("path-map", mapping_status, mapping_detail))
+            for raw in expected_paths:
+                if not raw:
+                    continue
+                target = Path(raw).expanduser()
+                if not target.is_absolute():
+                    target = repo / target
+                translated = translate_host_path(str(target.resolve(strict=False)), plan.path_map, cwd=str(repo))
+                if translated == str(target.resolve(strict=False)) and not str(target).startswith(("/sdcard", "/storage", "/mnt", "/tmp")):
+                    checks.append(PreflightCheck("target-path-map", "incompatible", f"no Termux-to-chroot mapping for {target}"))
+                else:
+                    checks.append(PreflightCheck("target-path-map", "ready", f"{target} -> {translated}"))
     elif plan.effective == NATIVE_TERMUX:
         checks.append(PreflightCheck("termux", "ready" if plan.current == NATIVE_TERMUX else "incompatible", plan.current))
     elif plan.effective == DESKTOP_LINUX:

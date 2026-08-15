@@ -8,7 +8,7 @@ from unittest.mock import patch
 from devtool.clipboard import ClipboardResult
 from devtool.execution import build_chroot_exec_argv, wrap_specs_for_chroot
 from devtool.models import CommandSpec, ProjectConfig
-from devtool.termux_chroot_runner import _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, repair_termux_home_mapping, run_auto_chroot, should_delegate_full_for_chroot_only_repo, translate_devtool_args, wrap_specs_for_termux_host_chroot
+from devtool.termux_chroot_runner import ChrootIdentity, _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, repair_termux_home_mapping, run_auto_chroot, should_delegate_full_for_chroot_only_repo, translate_devtool_args, wrap_specs_for_termux_host_chroot
 from devtool.runners import run_specs
 
 
@@ -37,10 +37,15 @@ class ChrootExecutionWrapperTests(unittest.TestCase):
 
 
 class TermuxChrootRunnerTests(unittest.TestCase):
+    @staticmethod
+    def identity(user: str = "mike", home: str = "/home/mike") -> ChrootIdentity:
+        return ChrootIdentity(user=user, home=home, shell="/bin/zsh")
+
     def test_translates_core_path_flags_and_consumes_chroot_flag(self) -> None:
         env = {
             "HOME": "/data/data/com.termux/files/home",
             "DEVTOOL_TERMUX_CHROOT_USER": "mike",
+            "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike",
             "DEVTOOL_CHROOTCTL": "chrootctl",
             "DEVTOOL_CHROOT_SUDO": "sudo",
         }
@@ -72,7 +77,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         )
         self.assertEqual(config.cwd, "/home/mike/Code/chroot-only")
         self.assertIn("/home/mike/Code/chroot-only", forwarded)
-        self.assertIn("cd /home/mike/Code/chroot-only &&", build_inner_command(config, forwarded))
+        self.assertIn("cd /home/mike/Code/chroot-only &&", build_inner_command(config, forwarded, identity=self.identity()))
 
     def test_repairs_default_home_mapping_when_repo_is_under_another_chroot_user(self) -> None:
         env = {"HOME": "/data/data/com.termux/files/home"}
@@ -170,18 +175,17 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             env=env,
             cwd="/data/data/com.termux/files/home/Code/demo",
         )
-        outer = build_runner_command(config, forwarded)
+        with patch("devtool.termux_chroot_runner.resolve_chroot_identity", return_value=self.identity()):
+            outer = build_runner_command(config, forwarded)
         self.assertEqual(outer[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
-        self.assertEqual(
-            outer[8],
-            'export PATH=/home/linuxbrew/.linuxbrew/bin:"$PATH"; cd /home/mike/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos ~/.local/bin/devtool validate --skip-test',
-        )
+        self.assertIn("runuser -u mike", outer[8])
+        self.assertIn("HOME=/home/mike", outer[8])
+        self.assertIn("cd /home/mike/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot", outer[8])
         self.assertNotIn("/sdcard", outer[8])
         self.assertNotIn("/storage/emulated", outer[8])
-        self.assertEqual(
-            build_inner_command(config, forwarded),
-            'cd /home/mike/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos ~/.local/bin/devtool validate --skip-test',
-        )
+        inner = build_inner_command(config, forwarded, identity=self.identity())
+        self.assertIn("runuser -u mike", inner)
+        self.assertIn("cd /home/mike/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot", inner)
 
     def test_plain_log_path_drops_ansi_suffix(self) -> None:
         path = Path("/tmp/devtool-chroot-20260706-235754.ansi.log")
@@ -190,7 +194,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
     def test_inner_command_uses_exec_env_assignments(self) -> None:
         env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike"}
         config, forwarded = translate_devtool_args(["validate"], env=env, cwd="/data/data/com.termux/files/home/Code/demo")
-        inner = build_inner_command(config, forwarded)
+        inner = build_inner_command(config, forwarded, identity=self.identity())
         self.assertIn("exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
         self.assertNotIn("exec DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
 
@@ -199,33 +203,37 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/termux"}
         config, forwarded = translate_devtool_args(["validate"], env=env, cwd="/data/data/com.termux/files/home/Code/demo")
         with patch.dict("os.environ", {"DEVTOOL_RUN_ID": "shared-run"}, clear=False):
-            inner = build_inner_command(config, forwarded)
+            inner = build_inner_command(config, forwarded, identity=self.identity(home="/home/termux", user="termux"))
         self.assertIn("DEVTOOL_RUN_ID=shared-run", inner)
 
-    def test_default_termux_home_maps_to_home_termux(self) -> None:
+    def test_default_termux_home_is_not_guessed_before_probe_repair(self) -> None:
         env = {"HOME": "/data/data/com.termux/files/home"}
         config, forwarded = translate_devtool_args(
             ["--repo", "/data/data/com.termux/files/home/Code/sims3tools", "validate"],
             env=env,
             cwd="/data/data/com.termux/files/home/Code/sims3tools",
         )
-        self.assertEqual(config.cwd, "/home/termux/Code/sims3tools")
-        self.assertIn("/home/termux/Code/sims3tools", forwarded)
+        self.assertEqual(config.cwd, "/data/data/com.termux/files/home/Code/sims3tools")
+        self.assertIn("/data/data/com.termux/files/home/Code/sims3tools", forwarded)
 
     def test_host_chroot_wrapper_cd_and_translates_absolute_paths(self) -> None:
-        env = {"HOME": "/data/data/com.termux/files/home"}
+        env = {"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/termux", "DEVTOOL_TERMUX_CHROOT_USER": "termux"}
         spec = CommandSpec("build", ["dotnet", "build", "/data/data/com.termux/files/home/Code/demo/Demo.sln"])
-        wrapped = wrap_specs_for_termux_host_chroot(
-            [spec],
-            "androidos",
-            repo_root="/data/data/com.termux/files/home/Code/demo",
-            env=env,
-        )
+        with patch("devtool.termux_chroot_runner.resolve_chroot_identity", return_value=self.identity(user="termux", home="/home/termux")):
+            wrapped = wrap_specs_for_termux_host_chroot(
+                [spec],
+                "androidos",
+                repo_root="/data/data/com.termux/files/home/Code/demo",
+                env=env,
+            )
         self.assertEqual(wrapped[0].argv[:8], ["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh", "-lc"])
-        self.assertEqual(
-            wrapped[0].argv[8],
-            'export PATH=/home/linuxbrew/.linuxbrew/bin:"$PATH"; cd /home/termux/Code/demo && exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1 DEVTOOL_CHROOT_CONTEXT=androidos dotnet build /home/termux/Code/demo/Demo.sln',
-        )
+        command = wrapped[0].argv[8]
+        self.assertIn('exec env -i', command)
+        self.assertIn('HOME=/home/termux', command)
+        self.assertIn('PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', command)
+        self.assertIn('DEVTOOL_EXECUTION_CONTEXT=chroot', command)
+        self.assertIn('dotnet build /home/termux/Code/demo/Demo.sln', command)
+        self.assertEqual(wrapped[0].env, {})
         self.assertEqual(wrapped[0].metadata["execution_mode"], "termux-host-chroot")
         self.assertEqual(wrapped[0].metadata["chroot_cwd"], "/home/termux/Code/demo")
         self.assertEqual(wrapped[0].metadata["progress_argv"], spec.argv)
@@ -243,16 +251,19 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             },
             cwd="/data/data/com.termux/files/home/Code/demo",
         )
-        wrapped = wrap_specs_for_termux_host_chroot(
-            [spec],
-            "androidos",
-            repo_root="/data/data/com.termux/files/home/Code/demo",
-            env={
-                "HOME": "/data/data/com.termux/files/home",
-                "PREFIX": "/data/data/com.termux/files/usr",
-                "TERMUX_VERSION": "0.119",
-            },
-        )[0]
+        with patch("devtool.termux_chroot_runner.resolve_chroot_identity", return_value=self.identity(user="termux", home="/home/termux")):
+            wrapped = wrap_specs_for_termux_host_chroot(
+                [spec],
+                "androidos",
+                repo_root="/data/data/com.termux/files/home/Code/demo",
+                env={
+                    "HOME": "/data/data/com.termux/files/home",
+                    "PREFIX": "/data/data/com.termux/files/usr",
+                    "TERMUX_VERSION": "0.119",
+                    "DEVTOOL_TERMUX_CHROOT_HOME": "/home/termux",
+                    "DEVTOOL_TERMUX_CHROOT_USER": "termux",
+                },
+            )[0]
         command = wrapped.argv[-1]
         self.assertIn("env python3 -V", command)
         self.assertIn("PATH=/usr/bin", command)
@@ -277,15 +288,18 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             cwd="/data/data/com.termux/files/home/Code/demo",
             metadata={"progress_parser": "gradle"},
         )
-        wrapped = wrap_specs_for_termux_host_chroot(
-            [spec],
-            "androidos",
-            repo_root="/data/data/com.termux/files/home/Code/demo",
-            env={
-                "HOME": "/data/data/com.termux/files/home",
-                "DEVTOOL_RUN_ID": "shared-gradle-run",
-            },
-        )[0]
+        with patch("devtool.termux_chroot_runner.resolve_chroot_identity", return_value=self.identity(user="termux", home="/home/termux")):
+            wrapped = wrap_specs_for_termux_host_chroot(
+                [spec],
+                "androidos",
+                repo_root="/data/data/com.termux/files/home/Code/demo",
+                env={
+                    "HOME": "/data/data/com.termux/files/home",
+                    "DEVTOOL_TERMUX_CHROOT_HOME": "/home/termux",
+                    "DEVTOOL_TERMUX_CHROOT_USER": "termux",
+                    "DEVTOOL_RUN_ID": "shared-gradle-run",
+                },
+            )[0]
 
         command = wrapped.argv[-1]
         self.assertIn("DEVTOOL_RUN_ID=shared-gradle-run", command)
@@ -305,13 +319,14 @@ class TermuxChrootRunnerTests(unittest.TestCase):
             solution = repo / "Demo.sln"
             solution.write_text("", encoding="utf-8")
             original = CommandSpec("build", ["dotnet", "build", str(solution)])
-            wrapped = wrap_specs_for_termux_host_chroot(
-                [original],
-                "androidos",
-                repo_root=repo,
-                env={"HOME": "/data/data/com.termux/files/home"},
-                path_map=[(str(repo), "/home/termux/Code/demo")],
-            )
+            with patch("devtool.termux_chroot_runner.resolve_chroot_identity", return_value=self.identity(user="termux", home="/home/termux")):
+                wrapped = wrap_specs_for_termux_host_chroot(
+                    [original],
+                    "androidos",
+                    repo_root=repo,
+                    env={"HOME": "/data/data/com.termux/files/home", "DEVTOOL_TERMUX_CHROOT_HOME": "/home/termux", "DEVTOOL_TERMUX_CHROOT_USER": "termux"},
+                    path_map=[(str(repo), "/home/termux/Code/demo")],
+                )
             config = ProjectConfig(repo_root=repo, kind="dotnet")
 
             with (

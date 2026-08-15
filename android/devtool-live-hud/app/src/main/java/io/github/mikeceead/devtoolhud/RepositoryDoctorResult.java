@@ -110,6 +110,12 @@ final class RepositoryDoctorResult {
                     "Verify chrootctl, the configured chroot name and root permissions.");
             return;
         }
+        if (environment.equals("chroot") && linuxUser.isEmpty()) {
+            fail("repo_chroot_user_missing", "Chroot Linux user is not configured",
+                    "The selected chroot repository has no proven Linux executor identity.",
+                    "Configure the repository Linux user explicitly before running Git or validation commands.");
+            return;
+        }
         if (environment.equals("chroot") && canonicalPath.startsWith(RepositoryLocation.TERMUX_HOME)) {
             fail("repo_path_wrong_namespace", "Repository path uses the wrong namespace",
                     "This repository is configured as chroot, but its path looks like a Termux host path.",
@@ -160,9 +166,9 @@ final class RepositoryDoctorResult {
                 return;
             }
             if (!runuserAvailable && !suWorks) {
-                warn("repo_user_switch_fallback_missing", "No user-switch method worked",
-                        "The path and Git look usable, but neither runuser nor su switched to the configured user.",
-                        "Run Git as root for this chroot or install/fix runuser or su.");
+                fail("repo_user_switch_fallback_missing", "No user-switch method worked",
+                        "Neither runuser nor su could switch to the configured Linux user.",
+                        "Install or fix runuser/su, or configure a different Linux user. Devtool will not fall back to root.");
                 return;
             }
         }

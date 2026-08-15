@@ -2,8 +2,11 @@ from __future__ import annotations
 
 """Cleanup helpers for devtool-managed caches and transient state."""
 
+import hashlib
+import re
 from pathlib import Path
 import shutil
+from typing import Iterable
 
 from .xdg import cache_dir, data_dir, state_dir
 
@@ -18,6 +21,25 @@ def default_state_root() -> Path:
 
 def default_share_root() -> Path:
     return data_dir()
+
+
+def repository_cache_key(repo_root: str | Path) -> str:
+    """Return the stable repository identity used by disposable caches.
+
+    Cache cleanup is repository-scoped.  A basename alone is not sufficient
+    because two checkouts with the same directory name must not share a clean
+    boundary, so include a short digest of the canonical repository path.
+    """
+
+    root = Path(repo_root).expanduser().resolve(strict=False)
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", root.name or "repo").strip(".-") or "repo"
+    digest = hashlib.sha256(str(root).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    return f"{slug}-{digest}"
+
+
+def _safe_component(value: str, default: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip()).strip(".-")
+    return normalized or default
 
 
 def _remove_path(path: Path, *, dry_run: bool) -> bool:
@@ -37,27 +59,62 @@ def cleanup_devtool_caches(
     cache_root: Path | None = None,
     state_root: Path | None = None,
     share_root: Path | None = None,
+    repo_root: str | Path | None = None,
+    backend: str = "",
+    extra_cache_paths: Iterable[str | Path] = (),
     dry_run: bool = False,
 ) -> list[str]:
-    """Remove devtool-owned caches and transient state.
+    """Remove only disposable Devtool cache state.
 
-    The cleanup stays scoped to devtool-managed directories so it is safe to
-    run without repo-specific knowledge. Project-local build outputs remain
-    handled by the normal ``clean`` task for each runner.
+    Durable logs, transaction journals/archives, and active-operation markers
+    are recovery evidence and are intentionally never removed by cache cleanup.
+    ``state_root``/``share_root`` remain accepted for API compatibility but do
+    not widen the deletion boundary.  Cleanup always requires a repository
+    identity and removes only disposable cache paths owned by that repository
+    and execution backend; there is no broad global-cache deletion mode.
     """
 
-    cache_root = cache_root or default_cache_root()
-    state_root = state_root or default_state_root()
-    share_root = share_root or default_share_root()
-
-    targets = [
-        cache_root,
-        state_root / "logs",
-        share_root / "transactions",
-        share_root / "performance-latest.json",
-    ]
+    cache_root = (cache_root or default_cache_root()).expanduser().resolve(strict=False)
+    _ = state_root, share_root
     removed: list[str] = []
-    for target in targets:
-        if _remove_path(target, dry_run=dry_run):
-            removed.append(str(target))
+    if repo_root is None:
+        raise ValueError("Repository-scoped cache cleanup requires repo_root")
+
+    key = repository_cache_key(repo_root)
+    safe_backend = _safe_component(backend, "host")
+    candidates: list[Path] = [
+        cache_root / "build" / key / safe_backend,
+        cache_root / "host-termux" / "build" / key / safe_backend,
+        cache_root / "python" / key / safe_backend,
+        cache_root / "repos" / key / safe_backend,
+    ]
+    # Older Python plans used the neutral name ``host``.  Removing that path is
+    # still repository-scoped and avoids leaving pre-OV-03 disposable state
+    # behind when a desktop/native cleanup is requested.
+    if safe_backend in {"desktop-linux", "native-termux"}:
+        candidates.append(cache_root / "python" / key / "host")
+
+    for raw in extra_cache_paths:
+        path = Path(raw).expanduser().resolve(strict=False)
+        # Extra paths come from Devtool's resolved build policy.  Refuse broad
+        # roots defensively: cleanup may delete a leaf/subtree but never the
+        # repository itself, its parent, or the global Devtool cache root.
+        repo = Path(repo_root).expanduser().resolve(strict=False)
+        if path in {repo, repo.parent, cache_root, cache_root.parent}:
+            raise ValueError(f"Refusing unsafe cache cleanup root: {path}")
+        # Resolved build-policy cache roots include both the canonical repo key
+        # and execution backend.  Refuse a custom/global path that would erase
+        # another repository or backend's disposable state.
+        if key not in path.parts or safe_backend not in path.parts:
+            raise ValueError(f"Refusing unscoped cache cleanup path: {path}")
+        candidates.append(path)
+
+    seen: set[Path] = set()
+    for path in candidates:
+        path = path.resolve(strict=False)
+        if path in seen:
+            continue
+        seen.add(path)
+        if _remove_path(path, dry_run=dry_run):
+            removed.append(str(path))
     return removed

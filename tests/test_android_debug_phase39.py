@@ -42,13 +42,15 @@ def test_phase39_broker_uses_planner_instead_of_assuming_zsh_runuser() -> None:
         "RootExecutionPlan.markerPrefix()",
         "runuser -u",
         "METHOD_SU",
-        "METHOD_DIRECT_ROOT",
         "rejected_user_switch_candidates",
     ):
         assert symbol in broker
     old_assumption = "exec -- zsh -lc"
     assert old_assumption not in broker
     assert "for candidate in zsh bash sh" in broker
+    assert "METHOD_DIRECT_ROOT" not in broker
+    assert "kv user_switch_method unavailable" in broker
+    assert "exit 69" in broker
     assert "exec -- " in broker and " -c " in broker
 
 

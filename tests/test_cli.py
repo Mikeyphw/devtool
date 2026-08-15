@@ -249,7 +249,12 @@ class CliTests(unittest.TestCase):
                 rc = main(["--repo", str(root), "clean", "--caches"])
 
         self.assertEqual(rc, 0)
-        cleanup_mock.assert_called_once_with(dry_run=False)
+        cleanup_mock.assert_called_once()
+        cleanup_kwargs = cleanup_mock.call_args.kwargs
+        self.assertEqual(cleanup_kwargs["repo_root"], root)
+        self.assertEqual(cleanup_kwargs["backend"], "desktop-linux")
+        self.assertFalse(cleanup_kwargs["dry_run"])
+        self.assertTrue(cleanup_kwargs["extra_cache_paths"])
         run_specs.assert_called_once()
 
     def test_logstore_honors_devtool_xdg_dir(self) -> None:

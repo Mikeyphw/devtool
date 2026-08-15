@@ -20,17 +20,18 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 
 def state_home() -> Path:
-    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state").expanduser()
+    from ..xdg import state_dir
+    return state_dir().parent
 
 
 def gtk_log_dir() -> Path:
-    return state_home() / "devtool"
+    from ..xdg import state_dir
+    return state_dir()
 
 
 def gtk_log_path(app_slug: str) -> Path:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(app_slug or "gtk")).strip("-.") or "gtk"
     return gtk_log_dir() / f"{safe}.log"
-
 
 def redact_text(value: object) -> str:
     text = str(value)

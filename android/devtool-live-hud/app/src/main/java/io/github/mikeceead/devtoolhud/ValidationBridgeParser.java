@@ -122,13 +122,12 @@ final class ValidationBridgeParser {
         value.executorTransport = first(execution == null ? "" : execution.optString("transport", ""),
                 value.executorKind.contains("root") ? "root-bridge" : "termux");
         value.executorWorkdir = first(execution == null ? "" : execution.optString("workdir", ""), value.projectRoot);
-        value.executorLinuxUser = first(execution == null ? "" : execution.optString("linux_user", ""),
-                value.executorKind.contains("root") ? "root" : "termux");
+        value.executorLinuxUser = execution == null ? "" : execution.optString("linux_user", "").trim();
         JSONObject repository = data.optJSONObject("repository_identity");
         if (repository != null) {
             value.repositoryId = first(repository.optString("repository_id", ""), data.optString("repository_id", ""));
             if (value.executorName.isEmpty()) value.executorName = repository.optString("chroot_name", "");
-            if (value.executorLinuxUser.isEmpty()) value.executorLinuxUser = repository.optString("linux_user", "");
+            if (value.executorLinuxUser.isEmpty()) value.executorLinuxUser = repository.optString("linux_user", "").trim();
             if (value.repoRoot.isEmpty()) value.repoRoot = repository.optString("canonical_path", "");
         } else value.repositoryId = data.optString("repository_id", "");
         if (!value.repoRoot.isEmpty()) value.repositoryId = value.computedRepositoryId();

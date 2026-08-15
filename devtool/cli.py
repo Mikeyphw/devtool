@@ -95,7 +95,7 @@ from .repair_policy import repair_summary_lines_from_payload, repair_summary_lin
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
 from .summary import artifact_confirmation_text, build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
-from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
+from .toolchains import apply_destination_toolchain_wrapper, apply_toolchain_wrapper, toolchain_doctor_rows
 from .termux_toolchains import (
     VALID_GRADLE_PROVIDERS, VALID_JAVA_PROVIDERS, VALID_NATIVE_PROVIDERS,
     VALID_NATIVE_CACHE_PROVIDERS, VALID_ANDROID_BUILD_TOOLS_PROVIDERS,
@@ -700,7 +700,7 @@ def build_parser() -> argparse.ArgumentParser:
     hud_presentation_cmd.add_argument("--no-overlay", action="store_true", help="Do not open the floating overlay")
 
     android_bridge_cmd = subparsers.add_parser("android-hud-bridge", aliases=["termux-hud-bridge"], help="Display chroot/proot Android HUD bridge state from the Termux host")
-    android_bridge_cmd.add_argument("--state-dir", default="", help="Shared bridge state directory; defaults to ~/.local/state/devtool-android-hud on Termux or /home/termux/.local/state/devtool-android-hud in a chroot")
+    android_bridge_cmd.add_argument("--state-dir", default="", help="Shared bridge state directory; defaults to ~/.local/state/devtool-android-hud on Termux; delegated backends receive an explicit shared bridge path")
     android_bridge_cmd.add_argument("--poll-interval", type=float, default=0.1, help="Seconds between HUD refreshes")
     android_bridge_cmd.add_argument("--recent-events", type=int, default=8, help="Recent events to show")
     android_bridge_cmd.add_argument("--once", action="store_true", help="Render/update once and exit")
@@ -2785,7 +2785,7 @@ def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
     elif explicit_chroot:
         requested = EXECUTION_CHROOT
     elif requested == EXECUTION_AUTO and configured_environment == EXECUTION_AUTO:
-        if current_environment == EXECUTION_NATIVE_TERMUX:
+        if current_environment == EXECUTION_NATIVE_TERMUX and not bool(getattr(args, "no_auto_chroot", False)):
             from .android_integration import should_prefer_android_chroot
             if should_prefer_android_chroot(config):
                 requested = EXECUTION_CHROOT
@@ -2797,31 +2797,6 @@ def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
         or config.chroot_name
         or "androidos"
     ).strip()
-    policy_requested_chroot = (
-        not explicit_chroot
-        and current_environment not in {EXECUTION_NATIVE_TERMUX, EXECUTION_CHROOT}
-        and (
-            requested == EXECUTION_CHROOT
-            or (requested == EXECUTION_AUTO and configured_environment == EXECUTION_CHROOT)
-        )
-    )
-    if policy_requested_chroot:
-        fallback = resolve_execution_plan(
-            requested=current_environment,
-            configured=current_environment,
-            chroot_name=chroot_name,
-            device_serial=config.device_serial,
-            path_map=getattr(args, "_devtool_chroot_path_map", None),
-        )
-        return replace(
-            fallback,
-            requested=EXECUTION_CHROOT if requested == EXECUTION_CHROOT else EXECUTION_AUTO,
-            reason=(
-                "configured chroot ignored because the current environment is "
-                f"{current_environment}; chroot execution is available only from native Termux"
-            ),
-        )
-
     plan = resolve_execution_plan(
         requested=requested,
         configured=configured_environment,
@@ -2913,14 +2888,19 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
     from .android_integration import refresh_android_builders_for_specs
     refresh_android_builders_for_specs(specs)
 
-    # Toolchain discovery occurs in the current host process. Do not inject a
-    # host-only mise wrapper into commands that will execute inside a chroot.
-    if not ((plan.uses_chroot and plan.current != EXECUTION_CHROOT) or plan.effective in {EXECUTION_SSH, EXECUTION_PROOT_DISTRO}):
+    destination_backend = (
+        (plan.uses_chroot and plan.current != EXECUTION_CHROOT)
+        or plan.effective in {EXECUTION_SSH, EXECUTION_PROOT_DISTRO}
+    )
+    if destination_backend:
+        specs = apply_destination_toolchain_wrapper(config, specs)
+    else:
         specs = apply_toolchain_wrapper(config, specs)
     preflight = preflight_execution(
         config.repo_root,
         plan,
-        expected_paths=(config.restore_target, config.build_target, config.test_target),
+        expected_paths=(config.restore_target, config.build_target, config.test_target, config.project_root),
+        require_expected_paths=True,
     )
     failures = preflight.failures()
     if failures and not bool(getattr(args, "dry_run", False)):
@@ -7225,11 +7205,15 @@ def _apply_global_cli_defaults(args: argparse.Namespace, raw_argv: list[str]) ->
 
 
 def _resolve_config_editor(requested: str = "") -> list[str]:
+    global_config, _ = load_global_config()
+    terminal = global_config.get("terminal", {}) if isinstance(global_config.get("terminal", {}), dict) else {}
+    preferred = str(terminal.get("preferred", "") or "").strip()
     candidates = [
         requested,
         os.environ.get("DEVTOOL_EDITOR", ""),
         os.environ.get("VISUAL", ""),
         os.environ.get("EDITOR", ""),
+        preferred,
         "micro",
         "nano",
         "vim",
@@ -7244,7 +7228,7 @@ def _resolve_config_editor(requested: str = "") -> list[str]:
             continue
         if shutil.which(argv[0]) or os.path.isabs(argv[0]) or "/" in argv[0]:
             return argv
-    raise SystemExit("No editor found. Install micro or set DEVTOOL_EDITOR, VISUAL, or EDITOR.")
+    raise SystemExit("No editor found. Set [terminal].preferred or DEVTOOL_EDITOR/VISUAL/EDITOR.")
 
 def _config_command(args: argparse.Namespace) -> int:
     if args.config_command == "path":
@@ -7319,6 +7303,7 @@ def _config_command(args: argparse.Namespace) -> int:
             ("build_target", config.build_target or "-"),
             ("run_target", config.run_target or "-"),
         ]
+        rows.extend((f"provenance.{key}", value) for key, value in sorted(config.config_provenance.items()))
         render_status_table(rows)
         return 0
     return 1
@@ -7474,9 +7459,30 @@ def _print_chroot_indicator_once(args: argparse.Namespace) -> None:
         console.print(f"[magenta]Android chroot[/magenta] [dim]{chroot_name}[/dim]")
 
 
-def _build_cache_cleanup_result(*, dry_run: bool) -> OperationResult:
+def _build_cache_cleanup_result(config: ProjectConfig, args: argparse.Namespace, *, dry_run: bool) -> OperationResult:
     started = datetime.now(timezone.utc)
-    removed = cleanup_devtool_caches(dry_run=dry_run)
+    active_transaction = find_active_transaction(config.repo_root)
+    if active_transaction is not None:
+        raise SystemExit(
+            "Refusing cache cleanup while this repository has an active artifact transaction: "
+            f"{active_transaction}"
+        )
+    plan = _execution_plan_for_args(config, args)
+    extra_paths: list[Path] = []
+    try:
+        from .build_optimization import _cache_root as resolved_build_cache_root
+        extra_paths.append(resolved_build_cache_root(config, config.kind, plan.effective))
+    except (OSError, ValueError):
+        # The generic repository/backend-scoped roots below are still safe to
+        # clean.  A custom/guest cache path that cannot be resolved must not be
+        # guessed from host identity.
+        pass
+    removed = cleanup_devtool_caches(
+        repo_root=config.repo_root,
+        backend=plan.effective,
+        extra_cache_paths=extra_paths,
+        dry_run=dry_run,
+    )
     duration = max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
     if removed:
         verb = "Would remove" if dry_run else "Removed"
@@ -7999,7 +8005,7 @@ def _main_after_parse(
 
     cache_cleanup_result: OperationResult | None = None
     if args.command in {"clean", "cl"} and bool(getattr(args, "caches", False)):
-        cache_cleanup_result = _build_cache_cleanup_result(dry_run=bool(getattr(args, "dry_run", False)))
+        cache_cleanup_result = _build_cache_cleanup_result(config, args, dry_run=bool(getattr(args, "dry_run", False)))
 
     stale_transaction = find_active_transaction(config.repo_root)
     stale_recovery_results: list[OperationResult] = []

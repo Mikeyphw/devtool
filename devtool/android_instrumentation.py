@@ -153,6 +153,27 @@ def _parse_counts(text: str) -> dict[str, int]:
     }
 
 
+def _parse_failed_ids(output: str) -> list[str]:
+    current_class = ""
+    current_test = ""
+    failed: list[str] = []
+    for raw in (output or "").splitlines():
+        line = raw.strip()
+        if line.startswith("INSTRUMENTATION_STATUS: class="):
+            current_class = line.split("=", 1)[1].strip()
+        elif line.startswith("INSTRUMENTATION_STATUS: test="):
+            current_test = line.split("=", 1)[1].strip()
+        elif line.startswith("INSTRUMENTATION_STATUS_CODE:"):
+            try:
+                code = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                continue
+            if code < 0 and current_test:
+                value = f"{current_class}.{current_test}" if current_class else current_test
+                failed.append(value)
+    return list(dict.fromkeys(failed))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build, install, and run Android instrumentation tests")
     parser.add_argument("project", type=Path)
@@ -229,6 +250,7 @@ def main(raw_args: Sequence[str] | None = None) -> int:
             "app_apk": str(app_apk),
             "test_apk": str(test_apk),
             **counts,
+            "failed_ids": _parse_failed_ids(output),
             "returncode": result.returncode,
         }
         report = args.report or (project / ".devtool" / "reports" / "android-instrumentation.json")

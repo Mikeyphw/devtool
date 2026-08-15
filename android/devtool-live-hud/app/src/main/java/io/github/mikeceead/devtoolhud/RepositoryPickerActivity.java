@@ -84,7 +84,7 @@ public final class RepositoryPickerActivity extends Activity {
         location.addView(label("Environment"));
         location.addView(environment);
         chroot = ui.input(value(EXTRA_CHROOT, "androidos"), "Chroot name", false);
-        user = ui.input(value(EXTRA_USER, "mike"), "Linux user", false);
+        user = ui.input(value(EXTRA_USER, ""), "Linux user", false);
         path = ui.input(initialPath(), "Directory path", false);
         location.addView(chroot);
         location.addView(user);
@@ -196,7 +196,7 @@ public final class RepositoryPickerActivity extends Activity {
     private String initialPath() {
         String existing = value(EXTRA_PATH, "");
         if (!existing.isEmpty()) return existing;
-        return displayEnvironment().equals("Chroot") ? "/home/mike" : (displayEnvironment().equals("Root") ? "/" : "~/Code");
+        return displayEnvironment().equals("Chroot") ? "/home" : (displayEnvironment().equals("Root") ? "/" : "~/Code");
     }
 
     private String value(String key, String fallback) {

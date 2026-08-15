@@ -314,7 +314,13 @@ def _nearest_project(path: Path, root: Path) -> str:
     return root.name
 
 
-_JAVA_TEST = re.compile(r"@Test(?:\([^)]*\))?\s*(?:public\s+|protected\s+|private\s+|internal\s+|suspend\s+)*fun\s+(\w+)|@Test(?:\([^)]*\))?\s*(?:public\s+|protected\s+|private\s+)?(?:void|[\w<>?]+)\s+(\w+)\s*\(", re.S)
+_JAVA_TEST_METHOD = re.compile(
+    r"(?P<annotations>(?:@[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\s*\([^)]*\))?\s*)+)"
+    r"(?:(?:public|protected|private|internal|suspend|static|final|open|override|abstract)\s+)*"
+    r"(?:fun\s+(?P<kotlin>[A-Za-z_]\w*)\s*\(|"
+    r"(?:void|[A-Za-z_]\w*(?:[.<>,?\[\]\s]+[A-Za-z0-9_?\[\]]+)?)\s+(?P<java>[A-Za-z_]\w*)\s*\()",
+    re.S,
+)
 _JAVA_CLASS = re.compile(r"\b(?:class|object)\s+(\w+)")
 _JAVA_PACKAGE = re.compile(r"\bpackage\s+([\w.]+)")
 _JAVA_TAG = re.compile(r"@(?:Tag|Category)\s*\(\s*(?:\"([^\"]+)\"|([A-Za-z_]\w*)\.class)")
@@ -331,26 +337,36 @@ def discover_gradle_tests(root: Path, *, android: bool) -> list[TestDescriptor]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        package = (_JAVA_PACKAGE.search(text).group(1) if _JAVA_PACKAGE.search(text) else "")
-        class_name = (_JAVA_CLASS.search(text).group(1) if _JAVA_CLASS.search(text) else path.stem)
+        package_match = _JAVA_PACKAGE.search(text)
+        package = package_match.group(1) if package_match else ""
+        class_match = _JAVA_CLASS.search(text)
+        class_name = class_match.group(1) if class_match else path.stem
         suite = ".".join(item for item in (package, class_name) if item)
-        tags = tuple(dict.fromkeys(next(item for item in match.groups() if item) for match in _JAVA_TAG.finditer(text)))
+        class_prefix = text[: class_match.start()] if class_match else ""
+        class_tags = tuple(dict.fromkeys(
+            next(item for item in match.groups() if item) for match in _JAVA_TAG.finditer(class_prefix)
+        ))
         instrumentation = "/androidTest/" in path.as_posix()
         framework = "android-instrumentation" if instrumentation else "gradle-junit"
         rel = _relative(root, path)
-        for match in _JAVA_TEST.finditer(text):
-            name = next(item for item in match.groups() if item)
+        for match in _JAVA_TEST_METHOD.finditer(text):
+            annotation_region = match.group("annotations") or ""
+            if not re.search(r"@Test\b", annotation_region):
+                continue
+            name = match.group("kotlin") or match.group("java") or ""
+            if not name:
+                continue
+            method_tags = tuple(dict.fromkeys(
+                next(item for item in tag.groups() if item) for tag in _JAVA_TAG.finditer(annotation_region)
+            ))
+            tags = tuple(dict.fromkeys((*class_tags, *method_tags)))
             line = text.count("\n", 0, match.start()) + 1
             tests.append(TestDescriptor(
                 id=f"{suite}.{name}" if suite else name,
-                name=name,
-                suite=suite,
-                project=_gradle_module(path, root),
+                name=name, suite=suite, project=_gradle_module(path, root),
                 framework=framework,
                 test_type="instrumentation" if instrumentation else _python_test_type(tags, path),
-                tags=tags,
-                file=rel,
-                line=line,
+                tags=tags, file=rel, line=line,
                 environment="android-device" if instrumentation else "host",
             ))
     return tests
@@ -487,37 +503,63 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
         if native:
             argv.extend(["--filter", native])
     elif config.kind in {"android", "gradle"} and not selection.instrumented:
-        patterns: list[str] = []
-        patterns.extend(selection.ids)
-        patterns.extend(selection.classes)
-        patterns.extend(selection.methods)
-        patterns.extend(value for value in selection.selectors if value.lower() not in {"unit", "integration", "smoke", "ui"})
-        if selected_catalog and not patterns and (selection.paths or selection.tags or selection.exclude_tags):
+        if catalog and selection.active() and not selected_catalog:
+            raise SystemExit("Gradle test selection matched zero discovered tests; refusing to run the full suite.")
+        patterns: list[str] = list(selection.ids)
+        catalog_driven = bool(
+            selection.classes or selection.methods or selection.paths or selection.tags
+            or selection.exclude_tags or selection.selectors
+        )
+        if selected_catalog and catalog_driven:
             patterns.extend(item.id for item in selected_catalog)
+        elif not catalog:
+            patterns.extend(selection.classes)
+            patterns.extend(selection.methods)
+            patterns.extend(value for value in selection.selectors if value.lower() not in {"unit", "integration", "smoke", "ui"})
         for value in dict.fromkeys(patterns):
-            _append_gradle_arg(argv, "--tests", value)
+            if bool(metadata.get("gradle_direct")):
+                argv.extend(["--tests", value])
+            else:
+                _append_gradle_arg(argv, "--tests", value)
         if selection.native_filter:
-            _append_gradle_arg(argv, *selection.native_filter.split())
+            if bool(metadata.get("gradle_direct")):
+                argv.extend(shlex.split(selection.native_filter))
+            else:
+                _append_gradle_arg(argv, *shlex.split(selection.native_filter))
     elif config.kind == "python":
         framework = str(metadata.get("test_framework") or "pytest").strip().lower()
         # Selection syntax is framework-specific. Never append pytest's -k/-m
         # switches to tox, nox, unittest, or an arbitrary custom command.
         if framework == "pytest":
-            direct = [*selection.ids, *selection.paths]
-            if selected_catalog and not direct and (selection.classes or selection.methods):
+            direct = [*selection.ids]
+            if selection.paths:
+                if catalog and not selected_catalog:
+                    raise SystemExit("Python test selection matched zero discovered tests; refusing to run the full suite.")
+                if selected_catalog:
+                    direct.extend(item.id for item in selected_catalog)
+                elif not catalog:
+                    direct.extend(selection.paths)
+            if selected_catalog and (selection.classes or selection.methods):
                 direct.extend(item.id for item in selected_catalog)
             argv.extend(dict.fromkeys(direct))
             expressions = [*selection.selectors, *selection.classes, *selection.methods]
             if selection.native_filter:
                 expressions.append(selection.native_filter)
             if expressions:
-                argv.extend(["-k", " and ".join(f"({value})" for value in expressions)])
-            marker_parts = [*selection.tags, *(f"not {value}" for value in selection.exclude_tags)]
+                argv.extend(["-k", " or ".join(f"({value})" for value in expressions)])
+            positive_markers = [value for value in selection.tags if value]
+            negative_markers = [value for value in selection.exclude_tags if value]
+            marker_parts: list[str] = []
+            if positive_markers:
+                marker_parts.append("(" + " or ".join(positive_markers) + ")")
+            marker_parts.extend(f"not {value}" for value in negative_markers)
             if marker_parts:
                 argv.extend(["-m", " and ".join(marker_parts)])
         else:
-            metadata["test_selection_adapter"] = framework
-            metadata["test_selection_native_only"] = True
+            raise SystemExit(
+                f"Test selection is not implemented safely for Python framework '{framework}'; "
+                "refusing to broaden the request to the full suite."
+            )
     elif config.kind == "node":
         values = _native_test_values(selection)
         if values:
@@ -571,18 +613,22 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
 
 
 def changed_paths(repo_root: Path, base: str) -> list[str]:
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repo_root), "diff", "--name-only", base, "--"],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
-        return []
-    if result.returncode != 0:
-        return []
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    root = repo_root.expanduser().resolve()
+    commands = (
+        ["git", "-C", str(root), "diff", "--name-only", base, "--"],
+        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
+    )
+    values: list[str] = []
+    for argv in commands:
+        try:
+            result = subprocess.run(argv, text=True, capture_output=True, check=False)
+        except OSError as exc:
+            raise SystemExit(f"Git is required for changed-test selection but could not be executed: {exc}") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "git command failed").strip()
+            raise SystemExit(f"Changed-test selection could not query Git: {detail}")
+        values.extend(line.strip() for line in result.stdout.splitlines() if line.strip())
+    return list(dict.fromkeys(values))
 
 
 def _history_path(repo_root: Path) -> Path:

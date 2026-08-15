@@ -81,10 +81,12 @@ class ResourcePolicyTests(unittest.TestCase):
                 "PREFIX": "/data/data/com.termux/files/usr",
                 "TERMUX_VERSION": "0.119",
                 "DEVTOOL_TERMUX_CHROOT_USER": "mike",
+                "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike",
             }, clear=True),
         ):
             policy = resolve_build_policy(config, "node")
-        self.assertEqual(str(policy.cache_root), "/home/mike/.cache/devtool/build/chroot/node")
+        self.assertTrue(str(policy.cache_root).startswith("/home/mike/.cache/devtool/build/repo-"))
+        self.assertTrue(str(policy.cache_root).endswith("/chroot/node"))
 
     def test_chroot_wrapper_exports_runner_resource_environment(self) -> None:
         spec = CommandSpec(

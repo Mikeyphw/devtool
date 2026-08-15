@@ -64,6 +64,10 @@ class DotnetTarget:
     device_serial: str = ""
     options: dict[str, Any] = field(default_factory=dict)
     variants: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Fields explicitly present in the target TOML table.  This preserves the
+    # semantic difference between an absent setting and an explicit empty
+    # value used to clear a lower-precedence value.
+    declared_fields: frozenset[str] = field(default_factory=frozenset)
 
     def effective_restore_target(self) -> str:
         return self.restore_target or self.solution or self.build_target
@@ -82,6 +86,9 @@ class DotnetTarget:
 class ProjectConfig:
     repo_root: Path
     kind: str
+    project_family: str = ""
+    build_system: str = ""
+    project_subtype: str = ""
     build_target: str = ""
     run_target: str = ""
     restore_target: str = ""
@@ -105,6 +112,7 @@ class ProjectConfig:
     toolchain_manager: str = "auto"
     runner_options: dict[str, Any] = field(default_factory=dict)
     global_config_path: Path | None = None
+    config_provenance: dict[str, str] = field(default_factory=dict)
 
     def resolve_repo_relative(self, value: str) -> str:
         if not value:

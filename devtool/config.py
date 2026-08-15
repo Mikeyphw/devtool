@@ -11,6 +11,7 @@ from typing import Any
 
 from .models import DotnetTarget, ProjectConfig
 from .toolchains import normalize_toolchain_manager
+from .execution_environments import normalize_execution_environment
 
 CONFIG_NAME = ".devtool.toml"
 
@@ -38,7 +39,8 @@ def global_config_path() -> Path:
     if raw:
         return Path(raw).expanduser()
     xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
-    root = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    candidate = Path(xdg).expanduser() if xdg else None
+    root = candidate.resolve(strict=False) if candidate is not None and candidate.is_absolute() else Path.home() / ".config"
     return root / "devtool" / GLOBAL_CONFIG_NAME
 
 
@@ -56,16 +58,63 @@ def load_global_config(path: str | Path | None = None) -> tuple[dict[str, Any], 
 
 
 def _deep_merge_defaults(defaults: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
+    """Merge defaults while preserving explicit empty values as overrides."""
     merged = dict(defaults)
     for key, value in values.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+        if isinstance(value, dict) and isinstance(merged.get(key), dict) and value:
             merged[key] = _deep_merge_defaults(dict(merged[key]), value)
-        elif value not in (None, "", [], {}):
-            merged[key] = value
-        elif key not in merged:
+        else:
             merged[key] = value
     return merged
 
+
+def _require_table(data: dict[str, Any], key: str, *, source: Path) -> dict[str, Any]:
+    value = data.get(key, {})
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise SystemExit(f"Invalid config {source}: [{key}] must be a TOML table, got {type(value).__name__}.")
+    return value
+
+
+_EXPLICIT_EMPTY = object()
+
+
+def _declared_value(mapping: dict[str, Any], *keys: str) -> Any:
+    """Return a config value while preserving an explicitly declared empty string."""
+    for key in keys:
+        if key not in mapping:
+            continue
+        value = mapping[key]
+        if isinstance(value, str) and value.strip() == "":
+            return _EXPLICIT_EMPTY
+        return value
+    return None
+
+
+def _target_declared_value(target: DotnetTarget | None, field: str, value: Any) -> Any:
+    if target is None or field not in target.declared_fields:
+        return None
+    if isinstance(value, str) and value.strip() == "":
+        return _EXPLICIT_EMPTY
+    return value
+
+
+def _resolve_with_provenance(
+    *candidates: tuple[str, Any],
+    default: Any = "",
+    clear_value: Any | None = None,
+) -> tuple[Any, str]:
+    for source, value in candidates:
+        if value is _EXPLICIT_EMPTY:
+            return clear_value, source
+        if value is not None:
+            if isinstance(value, str):
+                if value.strip() == "":
+                    continue
+                return value, source
+            return value, source
+    return default, "default"
 
 def _global_project_defaults(global_config: dict[str, Any]) -> dict[str, Any]:
     defaults: dict[str, Any] = {}
@@ -247,14 +296,19 @@ _IGNORED_DOTNET_DIRS = {
 def find_config(repo_root: Path, config_path_arg: str | None) -> Path | None:
     if config_path_arg:
         path = Path(config_path_arg).expanduser().resolve()
-        return path if path.exists() else None
+        if not path.exists():
+            raise SystemExit(f"Explicit config file does not exist: {path}")
+        if not path.is_file():
+            raise SystemExit(f"Explicit config path is not a file: {path}")
+        return path
 
     for parent in [repo_root, *repo_root.parents]:
         candidate = parent / CONFIG_NAME
         if candidate.exists():
+            if not candidate.is_file():
+                raise SystemExit(f"Config path is not a file: {candidate}")
             return candidate
     return None
-
 
 def resolve_repository_root(
     repo_root_arg: str | None,
@@ -364,16 +418,25 @@ def load_project_config(
             loaded = tomllib.loads(config_path.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError as exc:
             raise SystemExit(f"Invalid TOML in {config_path}: {exc}") from exc
+    repo_loaded = dict(loaded)
 
     global_loaded, global_path = load_global_config()
     global_defaults = _global_project_defaults(global_loaded)
     if global_defaults:
         loaded = _deep_merge_defaults(global_defaults, loaded)
 
-    project_section = _apply_project_env_overrides(dict(loaded.get("project", {})))
-    env_section = _apply_runtime_env_overrides({str(k): str(v) for k, v in loaded.get("env", {}).items()})
-    execution_section = loaded.get("execution", {}) if isinstance(loaded.get("execution", {}), dict) else {}
-    toolchain_section = loaded.get("toolchain", {}) if isinstance(loaded.get("toolchain", {}), dict) else {}
+    source_label = config_path or global_path
+    repo_source_label = config_path or repo_root / CONFIG_NAME
+    repo_project_raw = _require_table(repo_loaded, "project", source=repo_source_label)
+    repo_execution_section = _require_table(repo_loaded, "execution", source=repo_source_label)
+    project_raw = _require_table(loaded, "project", source=source_label)
+    env_raw = _require_table(loaded, "env", source=source_label)
+    execution_section = _require_table(loaded, "execution", source=source_label)
+    toolchain_section = _require_table(loaded, "toolchain", source=source_label)
+    targets_raw = _require_table(loaded, "targets", source=source_label)
+    project_section = _apply_project_env_overrides(dict(project_raw))
+    env_section = _apply_runtime_env_overrides({str(k): str(v) for k, v in env_raw.items()})
+    python_env_override = os.environ.get("DEVTOOL_PROJECT_PYTHON")
 
     override_kind = str(kind_override or "").strip().lower()
     config_kind = str(project_section.get("kind", "auto")).strip().lower() or "auto"
@@ -399,7 +462,7 @@ def load_project_config(
     else:
         detected_kind = kind
 
-    targets = _load_named_targets(config_root, loaded.get("targets", {}), env_section)
+    targets = _load_named_targets(config_root, targets_raw, env_section)
     selected_target_name = _default_target_name(
         project_section,
         targets,
@@ -445,27 +508,54 @@ def load_project_config(
     if selected_target is not None:
         effective_env.update(selected_target.env)
 
-    execution_environment = str(
-        (selected_target.execution_environment if selected_target and selected_target.execution_environment else "")
-        or execution_section.get("environment", "")
-        or execution_section.get("mode", "")
-        or project_section.get("execution_environment", "")
-        or "auto"
-    ).strip().lower()
-    termux_chroot_section = loaded.get("termux_chroot", {}) if isinstance(loaded.get("termux_chroot", {}), dict) else {}
-    chroot_name = str(
-        (selected_target.chroot_name if selected_target and selected_target.chroot_name else "")
-        or execution_section.get("chroot_name", "")
-        or project_section.get("chroot_name", "")
-        or termux_chroot_section.get("default_chroot", "")
-        or os.environ.get("DEVTOOL_TERMUX_CHROOT", "androidos")
-        or "androidos"
-    ).strip()
-    device_serial = str(
-        (selected_target.device_serial if selected_target and selected_target.device_serial else "")
-        or execution_section.get("device_serial", "")
-        or project_section.get("device_serial", "")
-    ).strip()
+    provenance: dict[str, str] = {}
+    env_execution = os.environ.get("DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT")
+    target_execution_field = "execution_environment"
+    if selected_target is not None and "execution_environment" not in selected_target.declared_fields and "environment" in selected_target.declared_fields:
+        target_execution_field = "environment"
+    execution_raw, provenance["execution_environment"] = _resolve_with_provenance(
+        ("target", _target_declared_value(selected_target, target_execution_field, selected_target.execution_environment if selected_target else None)),
+        ("execution", _declared_value(repo_execution_section, "environment", "mode")),
+        ("environment", env_execution),
+        ("project", _declared_value(repo_project_raw, "execution_environment")),
+        default="auto",
+        clear_value="auto",
+    )
+    try:
+        execution_environment = normalize_execution_environment(str(execution_raw or "auto"))
+    except ValueError as exc:
+        raise SystemExit(f"Invalid execution environment in {source_label}: {exc}") from exc
+    if env_execution is not None and provenance["execution_environment"] == "environment":
+        try:
+            execution_environment = normalize_execution_environment(str(env_execution))
+        except ValueError as exc:
+            raise SystemExit(f"Invalid DEVTOOL_PROJECT_EXECUTION_ENVIRONMENT: {exc}") from exc
+
+    termux_chroot_section = _require_table(loaded, "termux_chroot", source=source_label)
+    global_termux_section = _require_table(global_loaded, "termux_chroot", source=global_path or Path("<global>"))
+    global_environment_section = _require_table(global_loaded, "environment", source=global_path or Path("<global>"))
+    global_chroot_default = (
+        global_termux_section.get("default_chroot")
+        or global_environment_section.get("default_chroot")
+    )
+    chroot_raw, provenance["chroot_name"] = _resolve_with_provenance(
+        ("target", _target_declared_value(selected_target, "chroot_name", selected_target.chroot_name if selected_target else None)),
+        ("execution", _declared_value(repo_execution_section, "chroot_name")),
+        ("project", _declared_value(repo_project_raw, "chroot_name")),
+        ("environment", os.environ.get("DEVTOOL_TERMUX_CHROOT")),
+        ("global", global_chroot_default),
+        default="androidos",
+        clear_value="androidos",
+    )
+    chroot_name = str(chroot_raw or "androidos").strip()
+    device_raw, provenance["device_serial"] = _resolve_with_provenance(
+        ("target", _target_declared_value(selected_target, "device_serial", selected_target.device_serial if selected_target else None)),
+        ("execution", _declared_value(repo_execution_section, "device_serial")),
+        ("project", _declared_value(repo_project_raw, "device_serial")),
+        default="",
+        clear_value="",
+    )
+    device_serial = str(device_raw or "").strip()
     try:
         toolchain_manager = normalize_toolchain_manager(
             str(
@@ -539,17 +629,32 @@ def load_project_config(
             # Keep repo_root at the repository boundary while sending Gradle to
             # the discovered project root.
             project_root = resolved["build_target"]
+        elif detected_kind == "python" and resolved["build_target"]:
+            candidate = Path(resolved["build_target"])
+            project_root = str(candidate.parent if candidate.is_file() or candidate.name in {"pyproject.toml", "setup.py", "setup.cfg"} else candidate)
         else:
             project_root = str(config_root)
 
+    python_executable = str(project_section.get("python", sys.executable)).strip() or sys.executable
+    if python_env_override is not None:
+        provenance["python_executable"] = "environment"
+    elif "python" in project_raw:
+        provenance["python_executable"] = "project"
+    else:
+        provenance["python_executable"] = "default"
+
+    family, build_system, subtype = project_identity(detected_kind)
     return ProjectConfig(
         repo_root=repo_root,
         kind=detected_kind,
+        project_family=family,
+        build_system=build_system,
+        project_subtype=subtype,
         build_target=resolved["build_target"],
         run_target=resolved["run_target"],
         restore_target=resolved["restore_target"],
         test_target=resolved["test_target"],
-        python_executable=str(project_section.get("python", sys.executable)).strip() or sys.executable,
+        python_executable=python_executable,
         run_module=str(project_section.get("run_module", "")).strip(),
         restore_command=(
             selected_target.restore_command
@@ -588,8 +693,29 @@ def load_project_config(
         toolchain_manager=toolchain_manager,
         runner_options=runner_options,
         global_config_path=global_path if global_loaded else None,
+        config_provenance=provenance,
     )
 
+
+
+def project_identity(kind: str) -> tuple[str, str, str]:
+    """Return execution family, build system, and capability subtype."""
+    normalized = str(kind or "unknown").strip().lower()
+    mapping = {
+        "android": ("jvm", "gradle", "android"),
+        "gradle": ("jvm", "gradle", "jvm"),
+        "maven": ("jvm", "maven", "jvm"),
+        "dotnet": ("dotnet", "dotnet", "managed"),
+        "python": ("python", "python", "python"),
+        "node": ("node", "node", "javascript"),
+        "rust": ("native", "cargo", "rust"),
+        "go": ("native", "go", "go"),
+        "cmake": ("native", "cmake", "native"),
+        "meson": ("native", "meson", "native"),
+        "make": ("native", "make", "native"),
+        "command": ("command", "custom", "custom"),
+    }
+    return mapping.get(normalized, (normalized or "unknown", normalized or "unknown", normalized or "unknown"))
 
 def detect_project_kind_details(repo_root: Path) -> dict[str, Any]:
     """Resolve a safe default kind, preferring exactly one root-local marker.
@@ -603,12 +729,14 @@ def detect_project_kind_details(repo_root: Path) -> dict[str, Any]:
     dotnet_candidates = discover_dotnet_candidates(repo_root)
     android_markers = discover_gradle_roots(repo_root, android_only=True)
     gradle_markers = discover_gradle_roots(repo_root, android_only=False)
+    android_marker_set = set(android_markers)
+    plain_gradle_markers = [root for root in gradle_markers if root not in android_marker_set]
     from .python_support import discover_python_roots
     python_roots = discover_python_roots(repo_root)
     markers = {
         "dotnet": bool(dotnet_candidates),
         "android": bool(android_markers),
-        "gradle": bool(gradle_markers and not android_markers),
+        "gradle": bool(plain_gradle_markers),
         "python": bool(python_roots),
         "node": (repo_root / "package.json").is_file(),
         "rust": (repo_root / "Cargo.toml").is_file(),
@@ -621,7 +749,7 @@ def detect_project_kind_details(repo_root: Path) -> dict[str, Any]:
     root_markers = {
         "dotnet": any(path.parent.resolve() == repo_root for path in dotnet_candidates),
         "android": repo_root in android_markers,
-        "gradle": repo_root in gradle_markers and repo_root not in android_markers,
+        "gradle": repo_root in plain_gradle_markers,
         "python": repo_root in python_roots,
         "node": markers["node"],
         "rust": markers["rust"],
@@ -652,8 +780,12 @@ def detect_project_kind_details(repo_root: Path) -> dict[str, Any]:
     else:
         kind = "unknown"
         reason = "no supported project markers"
+    family, build_system, subtype = project_identity(kind)
     return {
         "kind": kind,
+        "family": family,
+        "build_system": build_system,
+        "subtype": subtype,
         "candidates": candidates,
         "root_candidates": root_candidates,
         "reason": reason,
@@ -681,11 +813,11 @@ def detect_project_kind(repo_root: Path) -> str:
 
 
 def _gradle_root_is_android(root: Path) -> bool:
-    """Return whether a Gradle root contains an Android plugin or manifest.
+    """Return whether *this Gradle root itself* declares Android capability.
 
-    Discovery deliberately ignores generated/vendor directories.  It can find
-    Android modules below a repository-level settings file without mistaking
-    their individual ``build.gradle`` files for separate project roots.
+    A nested Android build must not turn an unrelated repository-root JVM
+    Gradle project into Android.  Module/build discovery is handled separately
+    and selected targets can still declare ``type = "android"`` explicitly.
     """
 
     scripts = (
@@ -703,30 +835,7 @@ def _gradle_root_is_android(root: Path) -> bool:
             continue
         if "com.android.application" in text or "com.android.library" in text:
             return True
-
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
-            name for name in dirnames
-            if name.lower() not in _IGNORED_DOTNET_DIRS
-        ]
-        base = Path(dirpath)
-        if (
-            "AndroidManifest.xml" in filenames
-            and base.name == "main"
-            and base.parent.name == "src"
-        ):
-            return True
-        for filename in ("build.gradle", "build.gradle.kts"):
-            if filename not in filenames:
-                continue
-            try:
-                text = (base / filename).read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            if "com.android.application" in text or "com.android.library" in text:
-                return True
-    return False
-
+    return (root / "src" / "main" / "AndroidManifest.xml").is_file()
 
 def discover_gradle_roots(repo_root: Path, *, android_only: bool = False) -> list[Path]:
     """Discover top-level Gradle builds anywhere below ``repo_root``.
@@ -767,10 +876,18 @@ def discover_gradle_roots(repo_root: Path, *, android_only: bool = False) -> lis
 
 
 def discover_dotnet_candidates(repo_root: Path) -> list[Path]:
-    solutions = _collect_paths_with_suffixes(repo_root, (".sln",))
-    if solutions:
-        return solutions
-    return _collect_paths_with_suffixes(repo_root, (".csproj",))
+    """Discover .NET entry points without letting nested files steal root identity."""
+    root = repo_root.expanduser().resolve()
+    root_solutions = sorted(root.glob("*.sln"))
+    if root_solutions:
+        return [path.resolve() for path in root_solutions]
+    root_projects = sorted(root.glob("*.csproj"))
+    if root_projects:
+        return [path.resolve() for path in root_projects]
+    nested_solutions = _collect_paths_with_suffixes(root, (".sln",))
+    if nested_solutions:
+        return nested_solutions
+    return _collect_paths_with_suffixes(root, (".csproj",))
 
 
 def _default_build_target(repo_root: Path, kind: str, section: dict[str, Any]) -> str:
@@ -791,10 +908,15 @@ def _default_build_target(repo_root: Path, kind: str, section: dict[str, Any]) -
             return str(repo_root.resolve())
         return ""
     if kind == "python":
-        if (repo_root / "pyproject.toml").exists():
-            return str((repo_root / "pyproject.toml").resolve())
-        if (repo_root / "setup.py").exists():
-            return str((repo_root / "setup.py").resolve())
+        from .python_support import discover_python_roots
+        roots = discover_python_roots(repo_root)
+        if len(roots) == 1:
+            root = roots[0]
+            if (root / "pyproject.toml").exists():
+                return str((root / "pyproject.toml").resolve())
+            if (root / "setup.py").exists():
+                return str((root / "setup.py").resolve())
+            return str(root.resolve())
     marker_by_kind = {
         "node": "package.json",
         "rust": "Cargo.toml",
@@ -839,14 +961,24 @@ def _load_target_variants(raw_value: dict[str, Any]) -> dict[str, dict[str, Any]
     return variants
 
 
+def _normalize_target_execution(value: Any, target_name: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return normalize_execution_environment(text)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid execution environment for target {target_name!r}: {exc}") from exc
+
+
 def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str]) -> dict[str, DotnetTarget]:
     if not isinstance(section, dict):
-        return {}
+        raise SystemExit("[targets] must be a TOML table")
 
     targets: dict[str, DotnetTarget] = {}
     for raw_name, raw_value in section.items():
         if not isinstance(raw_name, str) or not isinstance(raw_value, dict):
-            continue
+            raise SystemExit(f"Target {raw_name!r} must be a TOML table")
         name = raw_name.strip()
         if not name:
             continue
@@ -887,11 +1019,12 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             package_command=package_command,
             run_command=run_command,
             env=target_env,
-            execution_environment=str(raw_value.get("execution_environment", raw_value.get("environment", ""))).strip().lower(),
+            execution_environment=_normalize_target_execution(raw_value.get("execution_environment", raw_value.get("environment", "")), name),
             chroot_name=str(raw_value.get("chroot_name", "")).strip(),
             device_serial=str(raw_value.get("device_serial", "")).strip(),
             options=options,
             variants=_load_target_variants(raw_value),
+            declared_fields=frozenset(str(key) for key in raw_value),
         )
     return targets
 
@@ -1660,4 +1793,5 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
             for name, target in sorted(config.targets.items())
         },
         "env": dict(sorted(config.env.items())),
+        "provenance": dict(sorted(config.config_provenance.items())),
     }

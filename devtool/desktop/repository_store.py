@@ -9,13 +9,14 @@ from typing import Any
 
 
 def _desktop_state_dir() -> Path:
-    override = os.environ.get("DEVTOOL_DESKTOP_STATE_DIR") or os.environ.get("XDG_STATE_HOME")
-    if override and override == os.environ.get("XDG_STATE_HOME"):
-        return Path(override).expanduser() / "devtool"
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / ".local" / "state" / "devtool"
-
+    explicit = str(os.environ.get("DEVTOOL_DESKTOP_STATE_DIR", "") or "").strip()
+    if explicit:
+        path = Path(explicit).expanduser()
+        if not path.is_absolute():
+            raise ValueError("DEVTOOL_DESKTOP_STATE_DIR must be an absolute path")
+        return path.resolve(strict=False)
+    from ..xdg import state_dir
+    return state_dir() / "desktop"
 
 @dataclass(slots=True)
 class RepositorySummary:

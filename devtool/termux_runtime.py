@@ -196,10 +196,13 @@ def termux_cache_root(env: Mapping[str, str] | None = None) -> Path:
     env = env or os.environ
     raw = str(env.get("DEVTOOL_TERMUX_CACHE_ROOT", "") or "").strip()
     if raw:
-        return Path(raw).expanduser()
-    xdg = str(env.get("XDG_CACHE_HOME", "") or "").strip()
+        explicit = Path(raw).expanduser()
+        if not explicit.is_absolute():
+            raise ValueError("DEVTOOL_TERMUX_CACHE_ROOT must be an absolute path")
+        return explicit.resolve(strict=False)
+    from .xdg import cache_home
     home_cache = Path(str(env.get("HOME", "~"))).expanduser() / ".cache"
-    base = Path(xdg).expanduser() if xdg else home_cache
+    base = cache_home(env)
     # Android shared storage is unsuitable for executable/build caches. Honor
     # XDG only while it remains on a private filesystem; an explicit
     # DEVTOOL_TERMUX_CACHE_ROOT remains the deliberate escape hatch.

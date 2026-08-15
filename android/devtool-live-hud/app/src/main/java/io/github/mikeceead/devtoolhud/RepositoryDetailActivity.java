@@ -1240,19 +1240,28 @@ public final class RepositoryDetailActivity extends Activity {
         String command;
         String workdir;
         if (location.environment.equals("chroot")) {
-            String userCommand = "cd " + RootCommandBroker.shellQuote(location.path) + " && exec zsh -l";
-            String inside;
-            if (location.linuxUser.isEmpty() || location.linuxUser.equals("root")) {
-                inside = userCommand;
-            } else {
-                inside = "if command -v runuser >/dev/null 2>&1; then runuser -u "
-                        + RootCommandBroker.shellQuote(location.linuxUser) + " -- zsh -lc "
-                        + RootCommandBroker.shellQuote(userCommand)
-                        + "; else su - " + RootCommandBroker.shellQuote(location.linuxUser)
-                        + " -s /bin/zsh -c " + RootCommandBroker.shellQuote(userCommand) + "; fi";
+            String linuxUser = RepositoryLocation.clean(location.linuxUser);
+            if (linuxUser.isEmpty()) {
+                Toast.makeText(this, "Chroot Linux user is unavailable; refresh the repository identity first", Toast.LENGTH_LONG).show();
+                return;
             }
+            String payload = "cd " + RootCommandBroker.shellQuote(location.path) + " && exec \"$SHELL\" -l";
+            String inside = "user=" + RootCommandBroker.shellQuote(linuxUser) + "; "
+                    + "home=$(awk -F: -v u=\"$user\" '$1==u {print $6; exit}' /etc/passwd 2>/dev/null); "
+                    + "login_shell=$(awk -F: -v u=\"$user\" '$1==u {print $7; exit}' /etc/passwd 2>/dev/null); "
+                    + "[ -n \"$home\" ] || { echo 'Requested chroot user is unavailable' >&2; exit 69; }; "
+                    + "[ -x \"$login_shell\" ] || login_shell=$(command -v zsh 2>/dev/null || command -v bash 2>/dev/null || command -v sh 2>/dev/null || true); "
+                    + "[ -n \"$login_shell\" ] || { echo 'No usable chroot shell is available' >&2; exit 69; }; "
+                    + "if [ \"$user\" = root ]; then export HOME=\"$home\" USER=\"$user\" LOGNAME=\"$user\" SHELL=\"$login_shell\"; " + payload + "; "
+                    + "elif command -v runuser >/dev/null 2>&1 && runuser -u \"$user\" -- \"$login_shell\" -c ':' >/dev/null 2>&1; then "
+                    + "exec runuser -u \"$user\" -- env HOME=\"$home\" USER=\"$user\" LOGNAME=\"$user\" SHELL=\"$login_shell\" \"$login_shell\" -lc "
+                    + RootCommandBroker.shellQuote(payload) + "; "
+                    + "elif command -v su >/dev/null 2>&1 && su - \"$user\" -s \"$login_shell\" -c ':' >/dev/null 2>&1; then "
+                    + "exec su - \"$user\" -s \"$login_shell\" -c "
+                    + RootCommandBroker.shellQuote(payload) + "; "
+                    + "else echo 'Unable to switch to requested chroot Linux user' >&2; exit 69; fi";
             command = "sudo chrootctl --name " + RootCommandBroker.shellQuote(location.chrootName)
-                    + " exec -- zsh -lc " + RootCommandBroker.shellQuote(inside);
+                    + " exec -- /bin/sh -c " + RootCommandBroker.shellQuote(inside);
             workdir = "~/";
         } else if (location.environment.equals("root")) {
             String rootShell = "cd " + RootCommandBroker.shellQuote(location.path)

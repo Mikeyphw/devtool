@@ -85,7 +85,7 @@ final class RootLogIndexer {
             for (String name : broker.discoverChrootNames()) {
                 sources.add(new Source("chroot-" + safeId(name), name + " Devtool", "chroot",
                         RepositoryLocation.chroot(name, "root", "/"),
-                        new String[]{"/home", "/root/.local/state/devtool", "/home/termux/.local/state/devtool-android-hud"}, false));
+                        new String[]{"/home", "/root/.local/state/devtool", "/root/.local/state/devtool-android-hud"}, false));
             }
             sources.add(new Source("root-bridge", "Android root bridge", "bridge", RepositoryLocation.root("/"),
                     new String[]{"/data/adb/devtool", "/data/local/tmp/devtool", "/data/data/io.github.mikeceead.devtoolhud/files"}, false));

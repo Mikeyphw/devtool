@@ -20,6 +20,7 @@ final class RootExecutionPlan {
     String environment = "root";
     String chrootName = "";
     String linuxUser = "root";
+    String linuxHome = "/root";
     String selectedShell = "/bin/sh";
     String shellName = "sh";
     String userSwitchMethod = METHOD_ROOT;
@@ -88,13 +89,16 @@ final class RootExecutionPlan {
         plan.suAvailable = bool(values.get("su_available"));
         plan.suWorks = bool(values.get("su_works"));
         plan.selectedShell = first(values.get("selected_shell"), "/bin/sh");
+        plan.linuxHome = first(values.get("linux_home"), plan.linuxUser.equals("root") ? "/root" : "");
         plan.shellName = first(values.get("selected_shell_name"), nameOf(plan.selectedShell));
         plan.userSwitchMethod = first(values.get("user_switch_method"), METHOD_DIRECT_ROOT);
         plan.rejectedShellCandidates = clean(values.get("rejected_shell_candidates"));
         plan.rejectedUserSwitchCandidates = clean(values.get("rejected_user_switch_candidates"));
         plan.directRootFallback = plan.userSwitchMethod.equals(METHOD_DIRECT_ROOT)
                 && !plan.linuxUser.isEmpty() && !plan.linuxUser.equals("root");
-        plan.usable = !timedOut && exitCode == 0 && bool(values.get("planner_started"));
+        plan.usable = !timedOut && exitCode == 0 && bool(values.get("planner_started"))
+                && !plan.linuxUser.isEmpty() && plan.userExists && !plan.directRootFallback
+                && (plan.linuxUser.equals("root") || !plan.linuxHome.isEmpty());
         if (timedOut) {
             plan.issueKey = "root_execution_plan_timeout";
             plan.summary = "The chroot execution planner timed out.";
@@ -122,6 +126,7 @@ final class RootExecutionPlan {
         value.put("environment", environment);
         value.put("chroot", chrootName);
         value.put("linux_user", linuxUser);
+        value.put("linux_home", linuxHome);
         value.put("selected_shell", selectedShell);
         value.put("selected_shell_name", shellName);
         value.put("user_switch_method", userSwitchMethod);
@@ -145,6 +150,7 @@ final class RootExecutionPlan {
     String plainText() {
         return "Executor plan: " + environment + (chrootName.isEmpty() ? "" : " / " + chrootName)
                 + (linuxUser.isEmpty() ? "" : " / " + linuxUser)
+                + "\nHome: " + linuxHome
                 + "\nShell: " + selectedShell
                 + "\nUser switch: " + userSwitchMethod
                 + "\nRejected shells: " + rejectedShellCandidates

@@ -4,11 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from devtool.cache_cleanup import cleanup_devtool_caches
+from devtool.cache_cleanup import cleanup_devtool_caches, repository_cache_key
 
 
 class CacheCleanupTests(unittest.TestCase):
-    def test_cleanup_removes_devtool_managed_cache_state(self) -> None:
+    def test_cleanup_removes_only_disposable_cache_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             cache_root = root / ".cache" / "devtool"
@@ -17,7 +17,11 @@ class CacheCleanupTests(unittest.TestCase):
             logs_dir = state_root / "logs"
             transactions_dir = share_root / "transactions"
             performance_file = share_root / "performance-latest.json"
-            for path in (cache_root / "android-sdk", logs_dir, transactions_dir):
+            repo = root / "repo"
+            repo.mkdir()
+            key = repository_cache_key(repo)
+            disposable = cache_root / "build" / key / "chroot" / "android"
+            for path in (disposable, logs_dir, transactions_dir):
                 path.mkdir(parents=True, exist_ok=True)
                 (path / "marker").write_text("x", encoding="utf-8")
             performance_file.parent.mkdir(parents=True, exist_ok=True)
@@ -27,13 +31,16 @@ class CacheCleanupTests(unittest.TestCase):
                 cache_root=cache_root,
                 state_root=state_root,
                 share_root=share_root,
+                repo_root=repo,
+                backend="chroot",
             )
 
-        self.assertIn(str(cache_root), removed)
-        self.assertIn(str(logs_dir), removed)
-        self.assertIn(str(transactions_dir), removed)
-        self.assertIn(str(performance_file), removed)
-        self.assertFalse(cache_root.exists())
-        self.assertFalse(logs_dir.exists())
-        self.assertFalse(transactions_dir.exists())
-        self.assertFalse(performance_file.exists())
+            self.assertIn(str(cache_root / "build" / key / "chroot"), removed)
+            self.assertNotIn(str(logs_dir), removed)
+            self.assertNotIn(str(transactions_dir), removed)
+            self.assertNotIn(str(performance_file), removed)
+            self.assertFalse(disposable.exists())
+            self.assertTrue(cache_root.exists())
+            self.assertTrue(logs_dir.exists())
+            self.assertTrue(transactions_dir.exists())
+            self.assertTrue(performance_file.exists())

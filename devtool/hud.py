@@ -139,18 +139,20 @@ def _is_termux_android() -> bool:
 def default_android_bridge_dir() -> Path:
     """Return the shared HUD bridge directory visible to Termux and chroots.
 
-    Direct Termux runs use the Termux home. Ubuntu chroots that expose the
-    Termux home as /home/termux use that path. DEVTOOL_HUD_BRIDGE_DIR wins for
-    custom bind mounts.
+    Direct Termux runs use the Termux home. Chroot/PRoot runs must receive an
+    explicit DEVTOOL_HUD_BRIDGE_DIR (or DEVTOOL_TERMUX_HOME for compatibility)
+    from their execution planner; no guest home path is guessed.
     """
     override = os.environ.get("DEVTOOL_HUD_BRIDGE_DIR", "").strip()
     if override:
         return Path(override).expanduser()
     if _is_termux_android():
         return Path.home() / ".local" / "state" / "devtool-android-hud"
-    termux_home = Path(os.environ.get("DEVTOOL_TERMUX_HOME", "/home/termux")).expanduser()
-    if termux_home.exists():
-        return termux_home / ".local" / "state" / "devtool-android-hud"
+    termux_home_raw = os.environ.get("DEVTOOL_TERMUX_HOME", "").strip()
+    if termux_home_raw:
+        termux_home = Path(termux_home_raw).expanduser()
+        if termux_home.exists():
+            return termux_home / ".local" / "state" / "devtool-android-hud"
     return Path.home() / ".local" / "state" / "devtool-android-hud"
 
 
@@ -162,7 +164,8 @@ def _is_termux_chroot_bridge() -> bool:
         return False
     if os.environ.get("DEVTOOL_HUD_BRIDGE_DIR", "").strip():
         return True
-    return Path(os.environ.get("DEVTOOL_TERMUX_HOME", "/home/termux")).expanduser().exists()
+    termux_home_raw = os.environ.get("DEVTOOL_TERMUX_HOME", "").strip()
+    return bool(termux_home_raw and Path(termux_home_raw).expanduser().exists())
 
 
 def _atomic_write_bridge_json(path: Path, payload: dict[str, Any]) -> None:
@@ -2043,7 +2046,7 @@ class AndroidBridgeHud:
     """Chroot/proot-safe Android HUD bridge writer.
 
     This backend does not import Termux:GUI. It mirrors the current HUD state
-    into a shared directory, normally /home/termux/.local/state/devtool-android-hud
+    into the shared directory explicitly selected by the execution planner
     inside an Ubuntu chroot. A Termux host helper forwards the state only to the
     Devtool Android app bridge.
     """
@@ -2158,8 +2161,8 @@ class DesktopNotificationHud:
 
 
 def _xdg_data_home() -> Path:
-    raw = os.environ.get("XDG_DATA_HOME", "").strip()
-    return Path(raw).expanduser() if raw else Path.home() / ".local" / "share"
+    from .xdg import data_home
+    return data_home()
 
 
 def _desktop_hud_exec_argv() -> list[str]:

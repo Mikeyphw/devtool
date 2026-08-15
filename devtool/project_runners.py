@@ -1225,30 +1225,73 @@ class AndroidGradleRunner(ProjectRunner):
 
 
 
-class JvmGradleRunner(AndroidGradleRunner):
+class JvmGradleRunner(ProjectRunner):
+    """Plain JVM Gradle runner with no Android capability inheritance."""
+
     kind = "gradle"
     display_name = "Gradle/JVM"
     capabilities = RunnerCapabilities(
-        restore=True,
-        build=True,
-        test=True,
-        selective_tests=True,
-        validate=True,
-        lint=True,
-        clean=True,
-        inspect=True,
-        doctor=True,
-        collect_artifacts=True,
-        verify_artifacts=True,
-        instrumentation=False,
+        restore=True, build=True, test=True, selective_tests=True, validate=True,
+        lint=True, clean=True, collect_artifacts=True, verify_artifacts=True,
     )
 
+    def _root(self, config: ProjectConfig) -> Path:
+        target = Path(config.build_target).expanduser() if config.build_target else Path(config.project_root or config.repo_root)
+        if target.is_file():
+            target = target.parent
+        return target.resolve()
+
+    def _tasks(self, config: ProjectConfig, action: str) -> list[str]:
+        options = config.runner_options.get("tasks", {})
+        options = dict(options) if isinstance(options, dict) else {}
+        raw = options.get(action)
+        if isinstance(raw, str):
+            values = [item for item in re.split(r"[\s,]+", raw.strip()) if item]
+        elif isinstance(raw, (list, tuple)):
+            values = [str(item).strip() for item in raw if str(item).strip()]
+        else:
+            values = []
+        if values:
+            return values
+        defaults = {"restore": ["help"], "build": ["build"], "test": ["test"], "clean": ["clean"]}
+        return list(defaults.get(action, []))
+
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
-        specs = super().build_specs(config, action)
+        from .test_selection import apply_test_selection
+        explicit = {
+            "restore": config.restore_command, "build": config.build_command, "test": config.test_command,
+        }.get(action, "")
+        env = _optimized_env(config, self.kind)
+        if explicit:
+            specs = _maybe_explicit(action, explicit, env)
+        else:
+            if action not in {"restore", "build", "test", "lint", "clean"}:
+                raise SystemExit(f"Unsupported JVM/Gradle action: {action}")
+            tasks = self._tasks(config, action)
+            if not tasks:
+                raise SystemExit(f"No Gradle {action} task is configured for this JVM project.")
+            root = self._root(config)
+            wrapper = root / ("gradlew.bat" if os.name == "nt" else "gradlew")
+            gradle = str(wrapper) if wrapper.is_file() else (shutil.which("gradle") or "gradle")
+            specs = [CommandSpec(
+                action, [gradle, *tasks], env=env, cwd=str(root),
+                metadata=_tool_metadata(
+                    self.kind, root, gradle_tasks=list(tasks), gradle_direct=True,
+                    report_parser="gradle-junit" if action == "test" else "",
+                    collect_artifacts=action == "build", verify_artifacts=action == "build",
+                ),
+            )]
         for spec in specs:
-            spec.metadata["runner"] = self.kind
-            spec.metadata["project_type"] = "gradle"
-        return specs
+            spec.metadata.update({"runner": self.kind, "project_type": "gradle", "gradle_direct": True})
+        return [apply_test_selection(config, spec) for spec in specs] if action == "test" else specs
+
+    def build_validation_specs(
+        self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False,
+        skip_build: bool = False, skip_test: bool = False,
+    ) -> list[CommandSpec]:
+        return ProjectRunner.build_validation_specs(
+            self, config, wine=wine, skip_restore=skip_restore, skip_build=skip_build, skip_test=skip_test
+        )
 
 
 class PythonRunner(ProjectRunner):
@@ -1331,12 +1374,21 @@ class PythonRunner(ProjectRunner):
             path = self._root(config) / path
         return str(path.resolve())
 
+    def _configured_python(self, config: ProjectConfig) -> tuple[str, bool]:
+        options = self._options(config)
+        for key in ("executable", "interpreter", "python"):
+            if key in options and str(options.get(key) or "").strip():
+                return str(options[key]).strip(), True
+        explicit = config.config_provenance.get("python_executable", "default") != "default"
+        return str(config.python_executable or "python3").strip() or "python3", explicit
+
     def _plan(self, config: ProjectConfig):
         from .python_support import resolve_environment
         info = self._info(config)
         environment = self._environment_path(config) if info.manager == "venv" else str(self._options(config).get("environment") or "")
+        configured_python, strict_python = self._configured_python(config)
         key = (
-            str(info.root), info.manager, config.python_executable, environment,
+            str(info.root), info.manager, configured_python, environment,
             tuple(self._list_option(config, "groups")), tuple(self._list_option(config, "extras")),
             config.execution_environment, info.requires_python, info.dependency_files,
         )
@@ -1345,11 +1397,12 @@ class PythonRunner(ProjectRunner):
             return cache[key]
         plan = resolve_environment(
             info,
-            configured_python=config.python_executable,
+            configured_python=configured_python,
             environment=environment,
             groups=key[4],
             extras=key[5],
             execution_environment=config.execution_environment,
+            strict_configured_python=strict_python,
         )
         if not plan.compatible:
             raise SystemExit(plan.compatibility_detail)
@@ -1566,8 +1619,16 @@ class PythonRunner(ProjectRunner):
         if info.framework == "pytest":
             return [self._pytest_spec(config, targets=targets)]
         if info.framework == "unittest":
+            from .test_selection import resolve_test_selection
+            if resolve_test_selection(config).active():
+                raise SystemExit("Test selection is not implemented safely for unittest; refusing to run the full suite.")
             return [self._unittest_spec(config, targets=targets)]
         if info.framework == "tox":
+            from .test_selection import resolve_test_selection
+            resolved_selection = resolve_test_selection(config)
+            unsupported = any((resolved_selection.selectors, resolved_selection.ids, resolved_selection.tags, resolved_selection.exclude_tags, resolved_selection.paths, resolved_selection.classes, resolved_selection.methods, resolved_selection.native_filter, resolved_selection.instrumented))
+            if unsupported:
+                raise SystemExit("tox supports Devtool selection only by environment/task; refusing unsupported selectors.")
             selection = config.runner_options.get("test_selection", {})
             selection = dict(selection) if isinstance(selection, dict) else {}
             environments = selection.get("tasks") or selection.get("task") or self._list_option(config, "tox_environments")
@@ -1578,6 +1639,11 @@ class PythonRunner(ProjectRunner):
             argv = self._network_wrap(config, argv)
             return [CommandSpec("test", argv, env=self._env(config, isolated=True), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), test_framework="tox"))]
         if info.framework == "nox":
+            from .test_selection import resolve_test_selection
+            resolved_selection = resolve_test_selection(config)
+            unsupported = any((resolved_selection.selectors, resolved_selection.ids, resolved_selection.tags, resolved_selection.exclude_tags, resolved_selection.paths, resolved_selection.classes, resolved_selection.methods, resolved_selection.native_filter, resolved_selection.instrumented))
+            if unsupported:
+                raise SystemExit("nox supports Devtool selection only by session/task; refusing unsupported selectors.")
             selection = config.runner_options.get("test_selection", {})
             selection = dict(selection) if isinstance(selection, dict) else {}
             sessions = selection.get("tasks") or selection.get("task") or self._list_option(config, "nox_sessions")
@@ -1612,17 +1678,32 @@ class PythonRunner(ProjectRunner):
 
     def _python_support_prefix(self, config: ProjectConfig) -> list[str]:
         normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
-        if normalized_environment in {"proot", "proot-distro"}:
+        if normalized_environment in {"chroot", "proot", "proot-distro"}:
             plan = self._plan(config)
             return [plan.bootstrap_python or "python3", "-m", "devtool.python_support"]
         return [sys.executable, "-m", "devtool.python_support"]
 
     def _python_support_python_arg(self, config: ProjectConfig) -> str:
         normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
-        if normalized_environment in {"proot", "proot-distro"}:
+        if normalized_environment in {"chroot", "proot", "proot-distro"}:
             plan = self._plan(config)
             return plan.bootstrap_python or "python3"
-        return config.python_executable
+        return self._configured_python(config)[0]
+
+    def _runtime_python_compatibility_spec(self, config: ProjectConfig) -> CommandSpec | None:
+        from .python_support import runtime_requires_python_argv
+        info = self._info(config)
+        if not info.requires_python:
+            return None
+        execution = str(config.execution_environment or "").strip().lower().replace("_", "-")
+        if execution not in {"chroot", "proot", "proot-distro"}:
+            return None
+        plan = self._plan(config)
+        argv = runtime_requires_python_argv(plan.bootstrap_python or plan.python or "python3", info.requires_python)
+        return CommandSpec(
+            "python-runtime-compatibility", argv, env=self._env(config), cwd=str(self._root(config)),
+            metadata=_tool_metadata(self.kind, self._root(config), validation_component="python-runtime-compatibility", requires_python=info.requires_python),
+        )
 
     def _lint_specs(self, config: ProjectConfig, *, targets: Iterable[str] = ()) -> list[CommandSpec]:
         root = self._root(config)
@@ -1700,24 +1781,29 @@ class PythonRunner(ProjectRunner):
         return "restore"
 
     def _restore_specs(self, config: ProjectConfig) -> list[CommandSpec]:
-        from .python_support import build_sync_command
+        from .python_support import build_sync_command, PythonProjectError
+        compatibility = self._runtime_python_compatibility_spec(config)
+        prefix = [compatibility] if compatibility is not None else []
         if config.restore_command:
-            return [CommandSpec("restore", shlex.split(config.restore_command), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), explicit=True))]
+            return [*prefix, CommandSpec("restore", shlex.split(config.restore_command), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), explicit=True))]
         info = self._info(config)
         plan = self._plan(config)
         options = self._options(config)
         groups = self._list_option(config, "groups")
         extras = self._list_option(config, "extras")
-        commands = build_sync_command(
-            info, plan,
-            groups=groups,
-            extras=extras,
-            locked=bool(options.get("locked", True)),
-            offline=bool(options.get("offline", False)),
-            install_project=bool(options.get("install_project", True)),
-            constraints=str(options.get("constraints") or ""),
-        )
-        specs: list[CommandSpec] = []
+        try:
+            commands = build_sync_command(
+                info, plan,
+                groups=groups,
+                extras=extras,
+                locked=bool(options.get("locked", True)),
+                offline=bool(options.get("offline", False)),
+                install_project=bool(options.get("install_project", True)),
+                constraints=str(options.get("constraints") or ""),
+            )
+        except PythonProjectError as exc:
+            raise SystemExit(str(exc)) from exc
+        specs: list[CommandSpec] = list(prefix)
         for command in commands:
             name = self._restore_phase_name(command)
             specs.append(CommandSpec(
@@ -1943,17 +2029,17 @@ class PythonRunner(ProjectRunner):
         for version in values:
             version_text = str(version).removeprefix("python")
             if info.manager == "uv" and shutil.which("uv"):
-                argv = ["uv", "run", "--python", version_text, "python", "-m", "pytest"]
+                argv = ["uv", "run", "--no-python-downloads"]
+                if bool(options.get("offline", False)):
+                    argv.append("--offline")
+                argv.extend(["--python", version_text, "python", "-m", "pytest"])
             else:
                 executable = shutil.which(f"python{version_text}")
                 if not executable:
-                    specs.append(CommandSpec(
-                        f"test:python-{version_text}:skipped",
-                        [sys.executable, "-c", f"print('Python {version_text} is unavailable; matrix entry skipped')"],
-                        env=self._env(config, isolated=True), cwd=str(self._root(config)),
-                        metadata=_tool_metadata(self.kind, self._root(config), validation_component="python-matrix", python_version=version_text, skipped=True),
-                    ))
-                    continue
+                    raise SystemExit(
+                        f"Requested Python matrix runtime {version_text} is unavailable; "
+                        "full matrix execution cannot silently skip requested runtimes."
+                    )
                 argv = [executable, "-m", info.framework if info.framework in {"pytest", "unittest"} else "pytest"]
                 if info.framework == "unittest":
                     argv.append("discover")
@@ -2001,10 +2087,17 @@ class PythonRunner(ProjectRunner):
         if action in {"test", "wine-test"}:
             if config.test_command:
                 custom_argv = self._network_wrap(config, shlex.split(config.test_command))
-                spec = CommandSpec("test", custom_argv, env=self._env(config, isolated=True), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True, test_framework=str(options.get("test_adapter") or "custom")))
-                if str(options.get("test_adapter") or "").lower() == "pytest":
-                    from .test_selection import apply_test_selection
+                adapter = str(options.get("test_adapter") or "custom").lower()
+                spec = CommandSpec("test", custom_argv, env=self._env(config, isolated=True), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True, test_framework=adapter))
+                from .test_selection import apply_test_selection, resolve_test_selection
+                selection = resolve_test_selection(config)
+                if adapter == "pytest":
                     spec = apply_test_selection(config, spec)
+                elif selection.active():
+                    raise SystemExit(
+                        f"Test selection is not implemented safely for custom Python adapter '{adapter}'; "
+                        "configure test_adapter='pytest' or remove the selection request."
+                    )
                 return [spec]
             return self._framework_test_specs(config)
         if action == "lint":
@@ -2069,6 +2162,10 @@ class PythonRunner(ProjectRunner):
     ) -> list[CommandSpec]:
         scope = self._validation_scope(config)
         specs: list[CommandSpec] = []
+        if skip_restore:
+            compatibility = self._runtime_python_compatibility_spec(config)
+            if compatibility is not None:
+                specs.append(compatibility)
         if scope.scope in {"python-docs-only", "python-unaffected", "python-non-code"}:
             message = "; ".join(scope.reasons) or scope.scope
             specs.append(CommandSpec("python-validation-scope", [sys.executable, "-c", f"print({message!r})"], env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="scope")))
@@ -2901,7 +2998,13 @@ class RunnerRegistry:
         self._runners[key] = runner
 
     def resolve(self, config_or_kind: ProjectConfig | str) -> ProjectRunner:
-        kind = config_or_kind.kind if isinstance(config_or_kind, ProjectConfig) else str(config_or_kind)
+        if isinstance(config_or_kind, ProjectConfig):
+            if str(config_or_kind.build_system).lower() == "gradle":
+                kind = "android" if str(config_or_kind.project_subtype).lower() == "android" else "gradle"
+            else:
+                kind = config_or_kind.kind
+        else:
+            kind = str(config_or_kind)
         return self._runners.get(kind.strip().lower(), self._fallback)
 
     def registered_kinds(self) -> tuple[str, ...]:

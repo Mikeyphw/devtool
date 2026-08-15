@@ -225,20 +225,19 @@ chroot-toolchain execution.
 
 Termux/chroot path translation is implemented once in
 `devtool.execution_environments` and reused by the legacy Termux frontend.
-Default mappings are created only on native Termux and include:
+Default mappings are created only for shared paths that have the same verified meaning on both sides:
 
 ```text
-/data/data/com.termux/files/home -> /home/termux
-/sdcard                         -> /sdcard
-/storage                        -> /storage
-/mnt                            -> /mnt
-/tmp                            -> /tmp
+/sdcard  -> /sdcard
+/storage -> /storage
+/mnt     -> /mnt
+/tmp     -> /tmp
 ```
 
-Override mappings with:
+Devtool does not invent a guest home for the Termux home. Configure the verified mapping explicitly with `DEVTOOL_TERMUX_CHROOT_HOME` or the general path map:
 
 ```bash
-export DEVTOOL_TERMUX_CHROOT_PATH_MAP="$HOME=/home/mike,/sdcard=/sdcard"
+export DEVTOOL_TERMUX_CHROOT_PATH_MAP="$HOME=/home/<chroot-user>,/sdcard=/sdcard"
 ```
 
 `devtool doctor` and `devtool status` report the current, requested, and

@@ -365,9 +365,13 @@ def _shell_join_remote(argv: list[str]) -> str:
 
 
 _REMOTE_OWNED_ENV_PATH_KEYS = {
-    "HOME", "PREFIX", "TMPDIR", "JAVA_HOME", "ANDROID_HOME",
-    "ANDROID_SDK_ROOT", "GRADLE_USER_HOME", "VIRTUAL_ENV",
-    "DEVTOOL_BUILD_CACHE_ROOT",
+    "HOME", "PREFIX", "PATH", "PWD", "TMPDIR", "JAVA_HOME", "ANDROID_HOME",
+    "ANDROID_SDK_ROOT", "GRADLE_USER_HOME", "VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH",
+    "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "XDG_CACHE_HOME", "CCACHE_DIR",
+    "PIP_CACHE_DIR", "UV_CACHE_DIR", "PDM_CACHE_DIR", "POETRY_CACHE_DIR",
+    "RUFF_CACHE_DIR", "MYPY_CACHE_DIR", "TOX_WORK_DIR", "CARGO_TARGET_DIR",
+    "PYTHONPYCACHEPREFIX", "SKBUILD_BUILD_DIR", "npm_config_cache",
+    "YARN_CACHE_FOLDER", "BUN_INSTALL_CACHE_DIR", "DEVTOOL_BUILD_CACHE_ROOT",
 }
 _HOST_EXECUTION_ENV_KEYS = {
     "DEVTOOL_BUILD_ENVIRONMENT", "DEVTOOL_CHROOT_CONTEXT",
@@ -855,7 +859,7 @@ def wrap_specs_for_ssh_commands(
         metadata["ssh_staged_files"] = [str(local) for local, _remote in staged]
         metadata.setdefault("progress_argv", original_argv)
         metadata.setdefault("progress_cwd", host_cwd)
-        wrapped.append(replace(spec, argv=["sh", "-lc", local_script], cwd=None, metadata=metadata))
+        wrapped.append(replace(spec, argv=["sh", "-lc", local_script], cwd=None, env={}, metadata=metadata))
     return wrapped
 
 def build_remote_tmux_script(config: SSHRunnerConfig, forwarded: list[str]) -> str:

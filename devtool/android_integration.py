@@ -58,20 +58,18 @@ def android_project_root(config: ProjectConfig) -> Path:
 
 
 def _android_runtime_dir() -> Path:
-    """Runtime assets stored in a host path that can be mapped into chroot."""
-    explicit = os.environ.get("DEVTOOL_ANDROID_RUNTIME_DIR", "").strip()
+    """Runtime assets stored in the canonical Devtool XDG data root."""
+    explicit = str(os.environ.get("DEVTOOL_ANDROID_RUNTIME_DIR", "") or "").strip()
     if explicit:
-        return Path(explicit).expanduser().resolve()
-    if os.environ.get("DEVTOOL_XDG_DIR", "").strip():
-        return data_dir().resolve()
-    return (
-        Path.home()
-        / ".local"
-        / "share"
-        / "devtool"
-        / "runtime"
-    ).resolve()
-
+        path = Path(explicit).expanduser()
+        if not path.is_absolute():
+            raise ValueError("DEVTOOL_ANDROID_RUNTIME_DIR must be an absolute path")
+        return path.resolve(strict=False)
+    from .xdg import override_root
+    override = override_root()
+    if override is not None:
+        return override
+    return (data_dir() / "runtime").resolve(strict=False)
 
 def _state_builder_path() -> Path:
     explicit = os.environ.get("DEVTOOL_ANDROID_BUILDER", "").strip()

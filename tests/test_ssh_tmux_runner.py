@@ -274,6 +274,39 @@ def test_commands_mode_rejects_detached_outer_orchestration(tmp_path: Path) -> N
         )
 
 
+def test_commands_mode_drops_host_runtime_and_cache_paths(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from devtool.models import CommandSpec
+    from devtool.ssh_tmux_runner import wrap_specs_for_ssh_commands
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = resolve_ssh_config(
+        ["--ssh", "buildbox", "--ssh-mode", "commands", "--ssh-cwd", "/srv/repo", "test"],
+        cwd=str(repo), env={},
+    )
+    spec = CommandSpec(
+        "test", ["python3", "-V"], cwd=str(repo),
+        env={
+            "PATH": "/data/data/com.termux/files/usr/bin",
+            "PYTHONHOME": "/data/data/com.termux/files/usr",
+            "PIP_CACHE_DIR": "/data/data/com.termux/files/home/.cache/pip",
+            "XDG_CACHE_HOME": "/data/data/com.termux/files/home/.cache",
+            "KEEP_REMOTE_SAFE": "yes",
+        },
+    )
+    wrapped = wrap_specs_for_ssh_commands(
+        [spec], config, project_config=SimpleNamespace(runner_options={}), repo_root=repo, dry_run=True,
+    )[0]
+    shell = wrapped.argv[-1]
+    assert "data/data/com.termux" not in shell
+    assert "PYTHONHOME=" not in shell
+    assert "PIP_CACHE_DIR=" not in shell
+    assert "XDG_CACHE_HOME=" not in shell
+    assert "KEEP_REMOTE_SAFE=yes" in shell
+    assert wrapped.env == {}
+
+
 def test_commands_mode_drops_host_chroot_env_and_maps_android_artifact_output(tmp_path: Path) -> None:
     from types import SimpleNamespace
     from devtool.models import CommandSpec

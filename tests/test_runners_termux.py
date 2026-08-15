@@ -9,7 +9,7 @@ from unittest.mock import patch
 from devtool.models import CommandSpec, ProjectConfig
 from devtool.tasker import TaskerProgressSink
 from devtool.runners import run_specs
-from devtool.termux_chroot_runner import wrap_specs_for_termux_host_chroot
+from devtool.termux_chroot_runner import ChrootIdentity, wrap_specs_for_termux_host_chroot
 
 
 class TermuxHostChrootEnvironmentTests(unittest.TestCase):
@@ -23,15 +23,20 @@ class TermuxHostChrootEnvironmentTests(unittest.TestCase):
                 "GRADLE_USER_HOME": "/home/mike/.gradle",
             },
         )
-        wrapped = wrap_specs_for_termux_host_chroot(
-            [spec],
-            "androidos",
-            repo_root="/data/data/com.termux/files/home/Code/demo",
-            env={
-                "HOME": "/data/data/com.termux/files/home",
-                "DEVTOOL_TERMUX_CHROOT_USER": "mike",
-            },
-        )[0]
+        with patch(
+            "devtool.termux_chroot_runner.resolve_chroot_identity",
+            return_value=ChrootIdentity("mike", "/home/mike", "/bin/zsh"),
+        ):
+            wrapped = wrap_specs_for_termux_host_chroot(
+                [spec],
+                "androidos",
+                repo_root="/data/data/com.termux/files/home/Code/demo",
+                env={
+                    "HOME": "/data/data/com.termux/files/home",
+                    "DEVTOOL_TERMUX_CHROOT_USER": "mike",
+                    "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike",
+                },
+            )[0]
         command = wrapped.argv[-1]
         self.assertIn("DEVTOOL_MAX_WORKERS=1", command)
         self.assertIn("GRADLE_USER_HOME=/home/mike/.gradle", command)
@@ -51,20 +56,28 @@ class TermuxHostChrootEnvironmentTests(unittest.TestCase):
             },
         )
 
-        wrapped = wrap_specs_for_termux_host_chroot(
-            [spec],
-            "androidos",
-            repo_root=f"{termux_home}/Code/demo",
-            env={"HOME": termux_home},
-        )[0]
+        with patch(
+            "devtool.termux_chroot_runner.resolve_chroot_identity",
+            return_value=ChrootIdentity("mike", "/home/mike", "/bin/zsh"),
+        ):
+            wrapped = wrap_specs_for_termux_host_chroot(
+                [spec],
+                "androidos",
+                repo_root=f"{termux_home}/Code/demo",
+                env={
+                    "HOME": termux_home,
+                    "DEVTOOL_TERMUX_CHROOT_USER": "mike",
+                    "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike",
+                },
+            )[0]
         command = wrapped.argv[-1]
 
         self.assertIn("DEVTOOL_BUILD_ENVIRONMENT=chroot", command)
         self.assertIn(
-            "DEVTOOL_BUILD_CACHE_ROOT=/home/termux/.cache/devtool/build/chroot/android",
+            "DEVTOOL_BUILD_CACHE_ROOT=/home/mike/.cache/devtool/build/chroot/android",
             command,
         )
-        self.assertIn("GRADLE_USER_HOME=/home/termux/.gradle", command)
+        self.assertIn("GRADLE_USER_HOME=/home/mike/.gradle", command)
         self.assertNotIn(termux_home, command)
         self.assertEqual(
             wrapped.metadata["chroot_translated_env"],

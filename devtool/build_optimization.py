@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import shutil
+import shlex
 from typing import Mapping
 
 from .execution_environments import (
@@ -255,14 +256,38 @@ def resolve_android_validation_phase_policy(
 
     return replace(
         base,
-        max_workers=max(1, max_workers),
-        cpu_limit=max(1, cpu_limit),
-        gradle_heap_mb=max(256, heap),
+        max_workers=max(1, min(base.max_workers, max_workers)),
+        cpu_limit=max(1, min(base.cpu_limit, cpu_limit)),
+        gradle_heap_mb=max(256, min(base.gradle_heap_mb, heap)),
         memory_guard_mb=base.memory_guard_mb if guard is None else max(0, guard),
         no_daemon=no_daemon,
         low_priority=low_priority,
         split_gradle=split_gradle,
     )
+
+def _bounded_makeflags(existing: str, workers: int) -> str:
+    """Replace only job-count tokens while preserving user make flags."""
+    try:
+        tokens = shlex.split(str(existing or ""))
+    except ValueError:
+        tokens = str(existing or "").split()
+    kept: list[str] = []
+    skip = False
+    for token in tokens:
+        if skip:
+            skip = False
+            continue
+        if token in {"-j", "--jobs"}:
+            skip = True
+            continue
+        if token.startswith("-j") and token[2:].isdigit():
+            continue
+        if token.startswith("--jobs="):
+            continue
+        kept.append(token)
+    kept.append(f"-j{max(1, int(workers))}")
+    return " ".join(shlex.quote(token) for token in kept)
+
 
 def optimized_validation_env(config: ProjectConfig, kind: str) -> dict[str, str]:
     env = optimized_build_env(config, kind, config.env)
@@ -288,7 +313,7 @@ def optimized_validation_env(config: ProjectConfig, kind: str) -> dict[str, str]
             if processor_cap not in java_options:
                 env["JAVA_TOOL_OPTIONS"] = f"{java_options} {processor_cap}".strip()
             env["CMAKE_BUILD_PARALLEL_LEVEL"] = str(policy.max_workers)
-            env["MAKEFLAGS"] = f"-j{policy.max_workers}"
+            env["MAKEFLAGS"] = _bounded_makeflags(env.get("MAKEFLAGS", ""), policy.max_workers)
     return env
 
 
@@ -297,34 +322,45 @@ def _home_for_environment(environment: str, env: Mapping[str, str] | None = None
     if environment == CHROOT and detect_current_environment(env) != CHROOT:
         chroot_home = str(env.get("DEVTOOL_TERMUX_CHROOT_HOME") or "").strip()
         if chroot_home:
-            return Path(chroot_home)
-        user = str(env.get("DEVTOOL_TERMUX_CHROOT_USER") or "mike").strip() or "mike"
-        return Path(f"/home/{user}")
+            path = Path(chroot_home)
+            if not path.is_absolute():
+                raise ValueError("DEVTOOL_TERMUX_CHROOT_HOME must be absolute")
+            return path
+        raise ValueError(
+            "Chroot home is unknown; set DEVTOOL_TERMUX_CHROOT_HOME or allow execution preflight to probe the selected chroot"
+        )
     return Path(str(env.get("HOME") or "~")).expanduser()
 
 
 def _cache_root(config: ProjectConfig, kind: str, environment: str, env: Mapping[str, str] | None = None) -> Path:
     env = env or os.environ
+    from .cache_cleanup import repository_cache_key
+    repo_key = repository_cache_key(config.repo_root)
     configured = str(_option_dict(config, "build").get("cache_root") or "").strip()
     if configured:
         base = Path(configured).expanduser()
+        if not base.is_absolute():
+            base = Path(config.project_root or config.repo_root) / base
+        base = base.resolve(strict=False)
     elif environment == NATIVE_TERMUX:
         from .termux_runtime import termux_cache_root
-        return termux_cache_root(env) / "build" / kind
+        return termux_cache_root(env) / "build" / repo_key / environment / kind
     elif environment == CHROOT and detect_current_environment(env) != CHROOT:
-        chroot_home = str(env.get("DEVTOOL_TERMUX_CHROOT_HOME") or "").strip()
-        if not chroot_home:
-            user = str(env.get("DEVTOOL_TERMUX_CHROOT_USER") or "mike").strip() or "mike"
-            chroot_home = f"/home/{user}"
-        base = Path(chroot_home) / ".cache"
+        try:
+            base = _home_for_environment(environment, env) / ".cache"
+        except ValueError:
+            # Cache placement must not invent a Linux identity.  When the host
+            # cannot prove the guest home, use a neutral guest-local scratch
+            # root; execution preflight/root operations still enforce identity.
+            base = Path("/tmp/devtool-cache")
     else:
-        xdg = str(env.get("XDG_CACHE_HOME") or "").strip()
-        if xdg:
-            base = Path(xdg).expanduser()
+        raw = str(env.get("XDG_CACHE_HOME") or "").strip()
+        candidate = Path(raw).expanduser() if raw else None
+        if candidate is not None and candidate.is_absolute():
+            base = candidate.resolve(strict=False)
         else:
             base = Path(str(env.get("HOME") or "~")).expanduser() / ".cache"
-    return base / "devtool" / "build" / environment / kind
-
+    return base / "devtool" / "build" / repo_key / environment / kind
 
 def resolve_build_policy(config: ProjectConfig, kind: str) -> BuildResourcePolicy:
     environment = _effective_environment(config)
@@ -383,7 +419,11 @@ def optimized_build_env(
         env.setdefault("NUGET_XMLDOC_MODE", "skip")
         env.setdefault("DOTNET_PROCESSOR_COUNT", str(policy.max_workers))
     elif kind in {"android", "gradle"}:
-        env.setdefault("GRADLE_USER_HOME", str(_home_for_environment(policy.environment) / ".gradle"))
+        try:
+            gradle_home = _home_for_environment(policy.environment) / ".gradle"
+        except ValueError:
+            gradle_home = policy.cache_root / "gradle-user-home"
+        env.setdefault("GRADLE_USER_HOME", str(gradle_home))
     elif kind == "python":
         env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
         env.setdefault("PIP_NO_INPUT", "1")

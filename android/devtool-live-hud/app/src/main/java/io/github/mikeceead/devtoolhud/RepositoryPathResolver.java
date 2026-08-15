@@ -47,7 +47,8 @@ final class RepositoryPathResolver {
                     "This repository is configured as chroot, but the stored path is visible to Termux/root rather than inside the chroot.",
                     "Reclassify this repository as Termux or replace the path with the chroot-visible path.");
             addReclassifyTermux(resolution, repository.canonicalPath);
-            addUpdateChrootPath(resolution, termuxHostToChrootGuess(repository.canonicalPath, location.linuxUser));
+            String guessedChrootPath = termuxHostToChrootGuess(repository.canonicalPath, location.linuxUser);
+            if (!guessedChrootPath.isEmpty()) addUpdateChrootPath(resolution, guessedChrootPath);
             return resolution;
         }
         if (location.environment.equals("root") && termuxHostPath(repository.canonicalPath)) {
@@ -94,7 +95,10 @@ final class RepositoryPathResolver {
                     "The stored path uses a home alias that does not match the selected execution namespace.",
                     "Repair the path to the namespace-visible absolute path before retrying Git actions.");
             addUpdateTermuxPath(resolution, RepositoryLocation.normalizeTermuxPath(repository.canonicalPath));
-            addReclassifyChroot(resolution, defaultChroot(location), location.linuxUser, expandChrootHome(repository.canonicalPath, location.linuxUser));
+            String expandedChrootPath = expandChrootHome(repository.canonicalPath, location.linuxUser);
+            if (!expandedChrootPath.isEmpty()) {
+                addReclassifyChroot(resolution, defaultChroot(location), location.linuxUser, expandedChrootPath);
+            }
             return resolution;
         }
         if (!repository.gitRoot.isEmpty() && !repository.gitRoot.equals(repository.canonicalPath)) {
@@ -287,14 +291,21 @@ final class RepositoryPathResolver {
         String suffix = termuxHostPath(clean) ? clean.substring(RepositoryLocation.TERMUX_HOME.length()) : clean;
         if (suffix.startsWith("/")) suffix = suffix.substring(1);
         String linuxUser = clean(user);
-        if (linuxUser.isEmpty() || linuxUser.equals("termux") || linuxUser.equals("root")) linuxUser = "mike";
+        if (linuxUser.isEmpty() || linuxUser.equals("termux") || linuxUser.equals("root")) return "";
         return "/home/" + linuxUser + (suffix.isEmpty() ? "" : "/" + suffix);
     }
 
     private static String expandChrootHome(String path, String user) {
         String clean = clean(path);
         String linuxUser = clean(user);
-        if (linuxUser.isEmpty() || linuxUser.equals("termux")) linuxUser = "mike";
+        if (linuxUser.isEmpty() || linuxUser.equals("termux")) return "";
+        if (linuxUser.equals("root")) {
+            if (clean.equals("~") || clean.equals("~/")) return "/root";
+            if (clean.startsWith("~/")) return "/root/" + clean.substring(2);
+            if (clean.startsWith("$HOME/")) return "/root/" + clean.substring(6);
+            if (clean.startsWith("${HOME}/")) return "/root/" + clean.substring(8);
+            return clean;
+        }
         if (clean.equals("~") || clean.equals("~/")) return "/home/" + linuxUser;
         if (clean.startsWith("~/")) return "/home/" + linuxUser + "/" + clean.substring(2);
         if (clean.startsWith("$HOME/")) return "/home/" + linuxUser + "/" + clean.substring(6);

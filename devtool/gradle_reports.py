@@ -408,6 +408,36 @@ def collect_pytest_report(
     files = [path] if path.is_file() else list(project_root.glob("**/pytest*.xml"))
     collection = parse_junit_reports(repo_root or project_root, files, command_name=command_name)
     collection.metadata["framework"] = "pytest-junit"
+    failed_ids: list[str] = []
+    for file in files:
+        try:
+            tree = ET.parse(file)
+        except (OSError, ET.ParseError):
+            continue
+        for case in tree.iter():
+            if case.tag.rsplit("}", 1)[-1] != "testcase":
+                continue
+            if not any(child.tag.rsplit("}", 1)[-1] in {"failure", "error"} for child in case):
+                continue
+            name = str(case.attrib.get("name") or "").strip()
+            classname = str(case.attrib.get("classname") or "").strip()
+            file_name = str(case.attrib.get("file") or "").strip().replace("\\", "/")
+            class_part = ""
+            if file_name:
+                module_stem = Path(file_name).stem
+                class_tokens = classname.split(".") if classname else []
+                if class_tokens and class_tokens[-1] != module_stem and class_tokens[-1][:1].isupper():
+                    class_part = class_tokens[-1]
+            elif classname:
+                tokens = classname.split(".")
+                if tokens and tokens[-1][:1].isupper():
+                    class_part = tokens.pop()
+                file_name = "/".join(tokens) + ".py"
+            parts = [file_name, class_part, name]
+            node_id = "::".join(item for item in parts if item)
+            if node_id:
+                failed_ids.append(node_id)
+    collection.metadata["failed_ids"] = list(dict.fromkeys(failed_ids))
     return collection
 
 

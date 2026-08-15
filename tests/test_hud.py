@@ -439,6 +439,12 @@ class AndroidBridgeHudTests(unittest.TestCase):
             with patch.dict("os.environ", {"DEVTOOL_HUD_BRIDGE_DIR": tmp}, clear=False):
                 self.assertEqual(default_android_bridge_dir(), Path(tmp))
 
+    def test_chroot_bridge_does_not_guess_termux_guest_home(self) -> None:
+        from devtool.hud import _is_termux_chroot_bridge
+        with patch.dict("os.environ", {"DEVTOOL_HUD_BRIDGE_DIR": "", "DEVTOOL_TERMUX_HOME": ""}, clear=False), \
+             patch("devtool.hud._is_termux_android", return_value=False):
+            self.assertFalse(_is_termux_chroot_bridge())
+
     def test_android_bridge_hud_mirrors_state(self) -> None:
         from devtool.hud import AndroidBridgeHud
         with tempfile.TemporaryDirectory() as source_tmp, tempfile.TemporaryDirectory() as bridge_tmp:

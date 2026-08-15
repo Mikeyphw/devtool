@@ -34,6 +34,7 @@ devtool config doctor --global
 DEVTOOL_EDITOR
 VISUAL
 EDITOR
+[terminal].preferred
 micro
 nano
 vim
@@ -111,6 +112,11 @@ project_kinds = ["all"]
 ```
 
 Explicit CLI choices still win. `--host`, `--execution-environment native-termux`, and `--no-auto-chroot` opt out. `--chroot NAME` explicitly opts in.
+
+`DEVTOOL_TERMUX_CHROOT` is an environment override for the global/default
+chroot name. Repository/target-specific chroot declarations remain
+authoritative over that environment preference, while the environment value
+must not be masked by a global `default_chroot` setting.
 
 ## Keep these repo-local
 

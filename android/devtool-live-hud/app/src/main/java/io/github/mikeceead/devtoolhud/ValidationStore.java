@@ -270,7 +270,8 @@ final class ValidationStore {
         value.executorName = text(cursor, "executor_name");
         value.executorTransport = first(text(cursor, "executor_transport"), "termux");
         value.executorWorkdir = first(text(cursor, "executor_workdir"), value.projectRoot);
-        value.executorLinuxUser = first(text(cursor, "executor_linux_user"), "termux");
+        value.executorLinuxUser = first(text(cursor, "executor_linux_user"),
+                value.executionEnvironment.equals("native-termux") ? "termux" : "");
         value.failureAction = text(cursor, "failure_action");
         value.resourceProfile = text(cursor, "resource_profile");
         value.requiredCheckpointName = text(cursor, "required_checkpoint_name");

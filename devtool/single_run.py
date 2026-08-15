@@ -15,13 +15,9 @@ from .xdg import state_dir
 
 
 def _state_home() -> Path:
-    if os.environ.get("DEVTOOL_XDG_DIR", "").strip():
-        return state_dir()
-    runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
-    if runtime:
-        return Path(runtime).expanduser() / "devtool"
+    # Repository locks must live under one stable Devtool state root.
+    # XDG_RUNTIME_DIR is session-scoped and may differ between processes.
     return state_dir()
-
 
 def _repo_key(repo_root: Path) -> str:
     resolved = str(repo_root.resolve())

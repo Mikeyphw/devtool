@@ -482,54 +482,111 @@ def _interpreter_version(executable: str) -> tuple[tuple[int, int, int], str]:
 
 
 def _specifier_satisfied(version: tuple[int, int, int], specifier: str) -> bool:
-    if not specifier.strip():
+    """Evaluate the release-version subset of PEP 440 used by requires-python.
+
+    Python runtime compatibility is release-number based here. Unsupported or
+    malformed specifiers fail closed instead of being silently ignored.
+    """
+    text = str(specifier or "").strip()
+    if not text:
         return True
     if version == (0, 0, 0):
         return False
     try:
         from packaging.specifiers import SpecifierSet  # type: ignore
         from packaging.version import Version  # type: ignore
-        return Version(".".join(map(str, version))) in SpecifierSet(specifier)
-    except Exception:
-        pass
-    for part in (item.strip() for item in specifier.split(",") if item.strip()):
-        poetry = re.match(r"([~^])\s*(\d+(?:\.\d+){0,2})", part)
-        if poetry:
-            operator, raw = poetry.groups()
-            wanted = _version_tuple(raw)
-            components = len(raw.split("."))
-            if version < wanted:
-                return False
-            if operator == "^":
-                if wanted[0] > 0 and version[0] != wanted[0]:
-                    return False
-                if wanted[0] == 0 and wanted[1] > 0 and version[:2] != wanted[:2]:
-                    return False
-                if wanted[:2] == (0, 0) and version != wanted:
-                    return False
-            elif components >= 2 and version[:2] != wanted[:2]:
-                return False
-            continue
-        match = re.match(r"(>=|<=|==|!=|>|<|~=)\s*(\d+(?:\.\d+){0,2})", part)
+    except ImportError:
+        SpecifierSet = None  # type: ignore[assignment]
+    if SpecifierSet is not None:
+        try:
+            return Version(".".join(map(str, version))) in SpecifierSet(text)
+        except Exception:
+            return False
+
+    def release(raw: str) -> tuple[int, ...] | None:
+        value = raw.strip()
+        if not re.fullmatch(r"\d+(?:\.\d+){0,2}", value):
+            return None
+        return tuple(int(item) for item in value.split("."))
+
+    current = tuple(version)
+    for part in (item.strip() for item in text.split(",") if item.strip()):
+        match = re.fullmatch(r"(~=|==|!=|<=|>=|<|>)\s*(\d+(?:\.\d+){0,2})(\.\*)?", part)
         if not match:
+            return False
+        op, raw, wildcard = match.groups()
+        wanted_release = release(raw)
+        if wanted_release is None:
+            return False
+        wanted = tuple((*wanted_release, 0, 0)[:3])
+        if wildcard:
+            if op not in {"==", "!="}:
+                return False
+            prefix = current[: len(wanted_release)] == wanted_release
+            if (op == "==" and not prefix) or (op == "!=" and prefix):
+                return False
             continue
-        op, raw = match.groups()
-        wanted = _version_tuple(raw)
-        if op == ">=" and not version >= wanted:
+        if op == ">=" and not current >= wanted:
             return False
-        if op == "<=" and not version <= wanted:
+        if op == "<=" and not current <= wanted:
             return False
-        if op == ">" and not version > wanted:
+        if op == ">" and not current > wanted:
             return False
-        if op == "<" and not version < wanted:
+        if op == "<" and not current < wanted:
             return False
-        if op == "==" and not version[:len(raw.split("."))] == wanted[:len(raw.split("."))]:
+        if op == "==" and not current == wanted:
             return False
-        if op == "!=" and version[:len(raw.split("."))] == wanted[:len(raw.split("."))]:
+        if op == "!=" and current == wanted:
             return False
-        if op == "~=" and not (version >= wanted and version[0] == wanted[0]):
-            return False
+        if op == "~=":
+            if current < wanted:
+                return False
+            # PEP 440 compatible release: ~=X.Y means >=X.Y,<X+1;
+            # ~=X.Y.Z means >=X.Y.Z,<X.(Y+1).
+            if len(wanted_release) <= 2:
+                upper = (wanted[0] + 1, 0, 0)
+            else:
+                upper = (wanted[0], wanted[1] + 1, 0)
+            if current >= upper:
+                return False
     return True
+
+def runtime_requires_python_argv(python: str, specifier: str) -> list[str]:
+    """Build a backend-local Python compatibility check command."""
+    text = str(specifier or "").strip()
+    if not text:
+        return [python, "-c", "raise SystemExit(0)"]
+    expressions: list[str] = []
+    for part in (item.strip() for item in text.split(",") if item.strip()):
+        match = re.fullmatch(r"(~=|==|!=|<=|>=|<|>)\s*(\d+(?:\.\d+){0,2})(\.\*)?", part)
+        if not match:
+            raise PythonProjectError(f"Unsupported or malformed requires-python specifier: {part!r}")
+        op, raw, wildcard = match.groups()
+        release = tuple(int(item) for item in raw.split("."))
+        padded = tuple((*release, 0, 0)[:3])
+        if wildcard:
+            if op not in {"==", "!="}:
+                raise PythonProjectError(f"Wildcard requires-python is valid only with == or !=: {part!r}")
+            prefix = repr(release)
+            comparison = f"v[:{len(release)}] == {prefix}"
+            expressions.append(comparison if op == "==" else f"not ({comparison})")
+            continue
+        rhs = repr(padded)
+        if op in {">=", "<=", ">", "<", "==", "!="}:
+            expressions.append(f"v {op} {rhs}")
+            continue
+        if op == "~=":
+            upper = (padded[0] + 1, 0, 0) if len(release) <= 2 else (padded[0], padded[1] + 1, 0)
+            expressions.append(f"(v >= {rhs} and v < {upper!r})")
+            continue
+    predicate = " and ".join(expressions) or "True"
+    code = (
+        "import sys; v=tuple(sys.version_info[:3]); "
+        f"ok=bool({predicate}); "
+        f"msg='Python %d.%d.%d does not satisfy requires-python {text}' % v; "
+        "print(msg, file=sys.stderr) if not ok else None; raise SystemExit(0 if ok else 86)"
+    )
+    return [python, "-c", code]
 
 
 def _python_version_hint(root: Path) -> str:
@@ -542,7 +599,7 @@ def _python_version_hint(root: Path) -> str:
         return ""
 
 
-def resolve_python_executable(root: Path, configured: str, environment: str = "") -> str:
+def resolve_python_executable(root: Path, configured: str, environment: str = "", *, strict_configured: bool = False) -> str:
     candidates: list[str] = []
     if environment:
         env_root = Path(environment).expanduser()
@@ -566,6 +623,10 @@ def resolve_python_executable(root: Path, configured: str, environment: str = ""
             resolved = shutil.which(candidate)
             if resolved:
                 return resolved
+        if strict_configured and configured and candidate == configured:
+            raise PythonProjectError(f"Explicit Python interpreter is unavailable: {configured}")
+    if strict_configured and configured:
+        raise PythonProjectError(f"Explicit Python interpreter is unavailable: {configured}")
     return configured or "python3"
 
 
@@ -614,6 +675,7 @@ def resolve_bootstrap_python(
     environment: str = "",
     *,
     execution_environment: str = "",
+    strict_configured: bool = False,
 ) -> str:
     """Resolve the interpreter used to bootstrap project environments.
 
@@ -623,21 +685,19 @@ def resolve_bootstrap_python(
 
     guest = _is_guest_execution_environment(execution_environment)
     configured_value = str(configured or "python3").strip() or "python3"
-    if guest and _is_termux_host_python(configured_value):
-        # A versioned Termux executable name is not evidence that the guest has
-        # the same minor version installed. Resolve through the guest's normal
-        # python3 command instead of leaking host toolchain assumptions.
-        return "python3"
-    if _is_proot_execution_environment(execution_environment):
-        # PRoot tool discovery belongs to the guest. Do not resolve a simple
-        # command name through the host PATH or replace it with sys.executable.
+    if guest:
+        # Guest executable discovery belongs to the guest. An explicit path or
+        # command is kept authoritative so preflight/execution can reject it in
+        # the selected namespace; only an inherited Termux-host default is
+        # normalized to the guest's generic python3 command.
+        if strict_configured:
+            return configured_value
+        if _is_termux_host_python(configured_value):
+            return "python3"
         if not Path(configured_value).is_absolute() and "/" not in configured_value:
             return configured_value
         return configured_value
-    resolved = resolve_python_executable(root, configured_value, environment)
-    if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(resolved):
-        return "python3"
-    return resolved
+    return resolve_python_executable(root, configured_value, environment, strict_configured=strict_configured)
 
 
 @lru_cache(maxsize=32)
@@ -698,12 +758,14 @@ def resolve_environment(
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     execution_environment: str = "",
+    strict_configured_python: bool = False,
 ) -> PythonEnvironmentPlan:
     bootstrap_python = resolve_bootstrap_python(
         info.root,
         configured_python,
         "",
         execution_environment=execution_environment,
+        strict_configured=strict_configured_python,
     )
     requested_environment = ""
     if environment:
@@ -711,6 +773,7 @@ def resolve_environment(
         if not env_path.is_absolute():
             env_path = info.root / env_path
         requested_environment = str(env_path.resolve())
+    guest = _is_guest_execution_environment(execution_environment)
     proot_guest = _is_proot_execution_environment(execution_environment)
     proot_environment_root = str((info.root / ".devtool" / "proot" / "python" / python_repo_key(info.root)).resolve())
     if info.manager == "venv":
@@ -737,7 +800,7 @@ def resolve_environment(
     else:
         python = bootstrap_python
         if info.manager == "uv":
-            environment_root = proot_environment_root if proot_guest else str(default_python_environment_root(info.root).resolve())
+            environment_root = requested_environment or (proot_environment_root if proot_guest else str(default_python_environment_root(info.root).resolve()))
             prefix = ("uv", "run")
         elif info.manager == "poetry":
             environment_root = ""
@@ -757,14 +820,14 @@ def resolve_environment(
         version_probe = python
     fingerprint, inputs = environment_fingerprint(
         info, python=version_probe, groups=groups, extras=extras, execution_environment=execution_environment,
-        probe_runtime=not proot_guest,
+        probe_runtime=not guest,
     )
-    if proot_guest:
-        # The guest interpreter cannot be truthfully version-probed from the host.
-        # Compatibility is checked by the guest package manager/interpreter when
-        # commands execute rather than by accidentally probing the host Python.
+    if guest:
+        # The guest interpreter cannot be truthfully version-probed from the
+        # host. A dedicated runtime compatibility command is emitted by the
+        # Python runner and executes inside the selected backend.
         compatible = True
-        detail = f"Python compatibility for {info.requires_python or 'unspecified requirement'} will be verified inside PRoot-Distro"
+        detail = f"Python compatibility for {info.requires_python or 'unspecified requirement'} will be verified inside {execution_environment or 'guest'}"
     else:
         version, version_text = _interpreter_version(version_probe)
         compatible = _specifier_satisfied(version, info.requires_python)
@@ -893,6 +956,8 @@ def build_sync_command(
             commands.append([*uv_pip, "pexpect"])
         return commands
     if info.manager == "poetry":
+        if offline:
+            raise PythonProjectError("Offline restore for Poetry is not enforceable by Devtool; refusing network-ambiguous execution.")
         command = ["poetry", "install", "--sync"]
         if groups:
             command.extend(["--with", ",".join(groups)])
@@ -902,6 +967,8 @@ def build_sync_command(
             command.append("--no-root")
         return [command]
     if info.manager == "pdm":
+        if offline:
+            raise PythonProjectError("Offline restore for PDM is not enforceable by Devtool; refusing network-ambiguous execution.")
         command = ["pdm", "sync"]
         if locked and info.lock_file:
             command.append("--frozen-lockfile")
@@ -911,13 +978,15 @@ def build_sync_command(
             command.extend(["-G", group])
         return [command]
     if info.manager == "pipenv":
+        if offline:
+            raise PythonProjectError("Offline restore for Pipenv is not enforceable by Devtool; refusing network-ambiguous execution.")
         command = ["pipenv", "sync"]
         if groups or (info.root / "Pipfile").is_file():
             command.append("--dev")
-        if offline:
-            command.append("--pypi-mirror=none")
         return [command]
     if info.manager == "hatch":
+        if offline:
+            raise PythonProjectError("Offline restore for Hatch is not enforceable by Devtool; refusing network-ambiguous execution.")
         command = [sys.executable, "-m", "devtool.python_support", "ensure-hatch-env", str(info.root), "--framework", info.framework]
         for extra in extras:
             command.extend(["--extra", extra])
@@ -1055,7 +1124,8 @@ def ensure_hatch_environment(root: Path, *, framework: str = "auto", extras: Seq
 
     python = _hatch_environment_python(root)
     if python is None:
-        return 0
+        print("Hatch reported environment creation success but no environment Python was found.", file=sys.stderr)
+        return 86
     try:
         data = load_pyproject(root)
     except PythonProjectError as exc:

@@ -718,12 +718,13 @@ class AndroidProjectInspectionTests(unittest.TestCase):
                     {
                         "HOME": str(termux_home),
                         "PREFIX": "/data/data/com.termux/files/usr",
+                        "GRADLE_BUILD_CHROOT_TERMUX_HOME": "/home/alice",
                     },
                     clear=False,
                 ),
                 patch("devtool.android_build.running_under_termux_python", return_value=True),
                 patch("devtool.android_build.chroot_is_available", return_value=(True, "")),
-                patch("devtool.android_build.stage_builder_for_chroot", return_value=(chroot_script, Path("/home/termux/.cache/gradle-build/chroot/gradle-build.py"))),
+                patch("devtool.android_build.stage_builder_for_chroot", return_value=(chroot_script, Path("/home/alice/.cache/gradle-build/chroot/gradle-build.py"))),
                 patch("devtool.android_build.Path.cwd", return_value=termux_home / "Code" / "demo"),
                 patch("devtool.android_build.subprocess.run", side_effect=fake_run),
             ):
@@ -734,7 +735,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         self.assertEqual(command[6], "zsh")
         self.assertEqual(command[7], "-ilc")
         self.assertIn("GRADLE_BUILD_CHROOT_ACTIVE=1", command[8])
-        self.assertIn("/home/termux/Code/demo", command[8])
+        self.assertIn("/home/alice/Code/demo", command[8])
 
     def test_gradle_aapt2_notice_is_not_misclassified_as_rust(self) -> None:
         issues = parse_issues(

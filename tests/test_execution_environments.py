@@ -49,7 +49,7 @@ class ExecutionEnvironmentDetectionTests(unittest.TestCase):
 
 class ExecutionPlanTests(unittest.TestCase):
     def test_auto_keeps_current_environment(self) -> None:
-        env = {"HOME": "/home/mike"}
+        env = {"HOME": "/home/example"}
         plan = resolve_execution_plan(env=env)
         self.assertEqual(plan.current, DESKTOP_LINUX)
         self.assertEqual(plan.effective, DESKTOP_LINUX)
@@ -75,12 +75,23 @@ class ExecutionPlanTests(unittest.TestCase):
 
 
 class SharedPathMappingTests(unittest.TestCase):
-    def test_default_termux_home_mapping_and_round_trip(self) -> None:
+    def test_default_termux_home_is_not_invented_without_guest_identity(self) -> None:
         env = {"HOME": "/data/data/com.termux/files/home"}
         mappings = default_termux_chroot_path_map(env)
         host = "/data/data/com.termux/files/home/Code/demo"
         guest = translate_host_path(host, mappings)
-        self.assertEqual(guest, "/home/termux/Code/demo")
+        self.assertEqual(guest, host)
+        self.assertNotIn((env["HOME"], "/home/termux"), [item.as_tuple() for item in mappings])
+
+    def test_explicit_chroot_home_mapping_round_trips(self) -> None:
+        env = {
+            "HOME": "/data/data/com.termux/files/home",
+            "DEVTOOL_TERMUX_CHROOT_HOME": "/home/alice",
+        }
+        mappings = default_termux_chroot_path_map(env)
+        host = "/data/data/com.termux/files/home/Code/demo"
+        guest = translate_host_path(host, mappings)
+        self.assertEqual(guest, "/home/alice/Code/demo")
         self.assertEqual(translate_guest_path(guest, mappings), host)
 
 
@@ -137,7 +148,7 @@ class CliExecutionIntegrationTests(unittest.TestCase):
         defaults.update(values)
         return argparse.Namespace(**defaults)
 
-    def test_configured_chroot_falls_back_to_desktop_outside_termux(self) -> None:
+    def test_configured_chroot_remains_authoritative_outside_termux(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = ProjectConfig(
                 repo_root=Path(tmp),
@@ -145,14 +156,13 @@ class CliExecutionIntegrationTests(unittest.TestCase):
                 execution_environment="chroot",
                 chroot_name="ubuntu",
             )
-            with patch.dict("os.environ", {"HOME": "/home/mike"}, clear=True):
+            with patch.dict("os.environ", {"HOME": "/home/example"}, clear=True):
                 plan = _execution_plan_for_args(config, self._args())
-        self.assertEqual(plan.requested, AUTO)
-        self.assertEqual(plan.effective, DESKTOP_LINUX)
-        self.assertEqual(plan.chroot_name, "")
-        self.assertIn("configured chroot ignored", plan.reason)
+        self.assertEqual(plan.requested, CHROOT)
+        self.assertEqual(plan.effective, CHROOT)
+        self.assertEqual(plan.chroot_name, "ubuntu")
 
-    def test_artifact_chroot_default_falls_back_to_desktop_outside_termux(self) -> None:
+    def test_artifact_chroot_request_remains_authoritative_outside_termux(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = ProjectConfig(
                 repo_root=Path(tmp),
@@ -161,11 +171,10 @@ class CliExecutionIntegrationTests(unittest.TestCase):
                 chroot_name="androidos",
             )
             args = self._args(execution_environment="chroot")
-            with patch.dict("os.environ", {"HOME": "/home/mike"}, clear=True):
+            with patch.dict("os.environ", {"HOME": "/home/example"}, clear=True):
                 plan = _execution_plan_for_args(config, args)
         self.assertEqual(plan.requested, CHROOT)
-        self.assertEqual(plan.effective, DESKTOP_LINUX)
-        self.assertIn("configured chroot ignored", plan.reason)
+        self.assertEqual(plan.effective, CHROOT)
 
     def test_explicit_chroot_stays_strict_outside_termux(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -240,7 +249,7 @@ class CliExecutionIntegrationTests(unittest.TestCase):
         self.assertEqual(plan.effective, CHROOT)
         self.assertTrue(any(item.name == "path-map" and item.status == "incompatible" for item in preflight.checks))
 
-    def test_desktop_configured_chroot_runs_without_command_wrapping(self) -> None:
+    def test_desktop_configured_chroot_fails_before_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = ProjectConfig(
                 repo_root=Path(tmp),
@@ -249,11 +258,10 @@ class CliExecutionIntegrationTests(unittest.TestCase):
                 chroot_name="androidos",
             )
             spec = CommandSpec("test", ["python", "-m", "pytest"])
-            with patch.dict("os.environ", {"HOME": "/home/mike"}, clear=True), \
+            with patch.dict("os.environ", {"HOME": "/home/example"}, clear=True), \
                     patch("devtool.execution_environments.shutil.which", return_value="/usr/bin/chrootctl"):
-                prepared = _prepare_specs_for_execution(config, [spec], self._args())
-
-        self.assertEqual(prepared[0].argv, ["python", "-m", "pytest"])
+                with self.assertRaises(SystemExit):
+                    _prepare_specs_for_execution(config, [spec], self._args())
 
     def test_execution_preparation_refreshes_stale_android_builder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

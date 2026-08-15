@@ -764,7 +764,7 @@ def normalized_machine() -> str:
 class ChrootLaunchOptions:
     mode: str
     name: str
-    termux_home: Path
+    termux_home: Path | None
 
 
 def running_under_termux_python() -> bool:
@@ -1008,25 +1008,30 @@ def parse_chroot_launch_options(raw_args: Sequence[str]) -> ChrootLaunchOptions:
     parser.add_argument(
         "-H", "--chroot-termux-home",
         type=Path,
-        default=Path(os.environ.get("GRADLE_BUILD_CHROOT_TERMUX_HOME", "/home/termux")),
+        default=(Path(os.environ["GRADLE_BUILD_CHROOT_TERMUX_HOME"]) if os.environ.get("GRADLE_BUILD_CHROOT_TERMUX_HOME") else None),
     )
     options, _ = parser.parse_known_args(before_gradle)
     return ChrootLaunchOptions(
         mode=options.chroot,
         name=options.chroot_name,
-        termux_home=options.chroot_termux_home.expanduser(),
+        termux_home=options.chroot_termux_home.expanduser() if options.chroot_termux_home is not None else None,
     )
 
 
 def devtool_cache_dir() -> Path:
-    override = os.environ.get("DEVTOOL_XDG_DIR", "").strip()
+    override = str(os.environ.get("DEVTOOL_XDG_DIR", "") or "").strip()
     if override:
-        return Path(override).expanduser()
-    raw = os.environ.get("XDG_CACHE_HOME", "").strip()
+        path = Path(override).expanduser()
+        if not path.is_absolute():
+            raise ValueError("DEVTOOL_XDG_DIR must be an absolute path")
+        return path.resolve(strict=False)
+    raw = str(os.environ.get("XDG_CACHE_HOME", "") or "").strip()
     if raw:
-        return Path(raw).expanduser() / "devtool"
+        path = Path(raw).expanduser()
+        if path.is_absolute():
+            return path.resolve(strict=False) / "devtool"
+        # Relative XDG values are invalid and must not become cwd-relative.
     return Path.home() / ".cache" / "devtool"
-
 
 def map_termux_path(value: str, termux_home: Path, chroot_termux_home: Path) -> str:
     """Map a Termux-host path to the path exposed inside the chroot."""
@@ -1129,6 +1134,15 @@ def maybe_reexec_in_chroot(raw_args: Sequence[str]) -> int | None:
 
     termux_home = Path(os.environ.get("HOME", "/data/data/com.termux/files/home")).resolve(strict=False)
     chroot_termux_home = options.termux_home
+    if chroot_termux_home is None:
+        message = (
+            "Chroot Termux-home mapping is unknown. Set GRADLE_BUILD_CHROOT_TERMUX_HOME "
+            "or pass --chroot-termux-home with the verified mount path inside the selected chroot."
+        )
+        if options.mode == "always":
+            fail(message)
+        warn(message + " Continuing directly in Termux.")
+        return None
     _, chroot_script = stage_builder_for_chroot(termux_home, chroot_termux_home)
     mapped_cwd = map_termux_path(str(Path.cwd().resolve()), termux_home, chroot_termux_home)
     mapped_args = [
@@ -3995,8 +4009,8 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "-H", "--chroot-termux-home",
         type=Path,
-        default=Path(os.environ.get("GRADLE_BUILD_CHROOT_TERMUX_HOME", "/home/termux")),
-        help="Path where the Termux home is mounted inside the chroot",
+        default=(Path(os.environ["GRADLE_BUILD_CHROOT_TERMUX_HOME"]) if os.environ.get("GRADLE_BUILD_CHROOT_TERMUX_HOME") else None),
+        help="Verified path where the Termux home is mounted inside the chroot; no guest-home path is guessed",
     )
     parser.add_argument("-t", "--task", action="append", dest="tasks", help="Gradle task; repeat for multiple tasks")
     parser.add_argument("-c", "--clean", action="store_true", help="Run clean before requested/default tasks")

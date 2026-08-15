@@ -169,7 +169,8 @@ def _prefer_android_side() -> bool:
         return True
     if os.environ.get("DEVTOOL_HUD_BRIDGE_DIR"):
         return True
-    return Path(os.environ.get("DEVTOOL_TERMUX_HOME", "/home/termux")).expanduser().exists()
+    termux_home = os.environ.get("DEVTOOL_TERMUX_HOME", "").strip()
+    return bool(termux_home and Path(termux_home).expanduser().exists())
 
 
 def _run_quiet(argv: list[str], *, timeout: float = 3.0) -> bool:

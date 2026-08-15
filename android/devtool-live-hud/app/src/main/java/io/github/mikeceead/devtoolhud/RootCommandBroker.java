@@ -585,6 +585,9 @@ final class RootCommandBroker {
                             "direct_root_fallback", plan.directRootFallback,
                             "rejected_shell_candidates", plan.rejectedShellCandidates,
                             "rejected_user_switch_candidates", plan.rejectedUserSwitchCandidates));
+            if (!plan.usable || plan.directRootFallback) {
+                return CommandResult.error("Requested chroot identity is unavailable: " + plan.summary);
+            }
             if (!operationId.isEmpty()) {
                 GitOperationTrace.executionPlanBuilt(context, location, operationId, plan);
                 CommandResult preflight = executeRoot(chrootShell(location,
@@ -703,11 +706,12 @@ final class RootCommandBroker {
                 + "[ -n \"$selected_shell\" ] || { selected_shell=/bin/sh; selected_shell_name=sh; rejected_shells=\"${rejected_shells}${rejected_shells:+,}fallback:/bin/sh\"; }; "
                 + "kv selected_shell \"$selected_shell\"; kv selected_shell_name \"$selected_shell_name\"; kv rejected_shell_candidates \"$rejected_shells\"; "
                 + "linux_user=" + shellQuote(user) + "; kv linux_user \"$linux_user\"; rejected_switches=''; "
-                + "if [ -z \"$linux_user\" ] || [ \"$linux_user\" = root ]; then kv user_exists 1; kv runuser_available 0; kv runuser_works 0; kv su_available 0; kv su_works 0; kv user_switch_method root; "
-                + "else id \"$linux_user\" >/dev/null 2>&1 && kv user_exists 1 || kv user_exists 0; "
+                + "if [ -z \"$linux_user\" ]; then kv linux_home ''; kv user_exists 0; kv runuser_available 0; kv runuser_works 0; kv su_available 0; kv su_works 0; kv user_switch_method unavailable; kv rejected_user_switch_candidates 'linux-user:missing'; exit 69; "
+                + "elif [ \"$linux_user\" = root ]; then linux_home=/root; kv linux_home \"$linux_home\"; kv user_exists 1; kv runuser_available 0; kv runuser_works 0; kv su_available 0; kv su_works 0; kv user_switch_method root; "
+                + "else linux_home=$(awk -F: -v u=\"$linux_user\" '$1==u {print $6; exit}' /etc/passwd 2>/dev/null); kv linux_home \"$linux_home\"; id \"$linux_user\" >/dev/null 2>&1 && kv user_exists 1 || kv user_exists 0; "
                 + "if command -v runuser >/dev/null 2>&1; then kv runuser_available 1; if runuser -u \"$linux_user\" -- \"$selected_shell\" -c ':' >/dev/null 2>&1; then kv runuser_works 1; kv user_switch_method runuser; kv rejected_user_switch_candidates \"$rejected_switches\"; exit 0; else kv runuser_works 0; rejected_switches=\"runuser:failed\"; fi; else kv runuser_available 0; rejected_switches=\"runuser:missing\"; fi; "
                 + "if command -v su >/dev/null 2>&1; then kv su_available 1; if su - \"$linux_user\" -s \"$selected_shell\" -c ':' >/dev/null 2>&1; then kv su_works 1; kv user_switch_method su; kv rejected_user_switch_candidates \"$rejected_switches\"; exit 0; else kv su_works 0; rejected_switches=\"${rejected_switches}${rejected_switches:+,}su:failed\"; fi; else kv su_available 0; rejected_switches=\"${rejected_switches}${rejected_switches:+,}su:missing\"; fi; "
-                + "kv user_switch_method direct-root; kv rejected_user_switch_candidates \"$rejected_switches\"; fi";
+                + "kv user_switch_method direct-root; kv rejected_user_switch_candidates \"$rejected_switches\"; exit 69; fi";
         return "export HOME=" + shellQuote(TERMUX_HOME) + " PREFIX=" + shellQuote(TERMUX_PREFIX)
                 + " PATH=" + shellQuote(TERMUX_HOME + "/.local/bin:" + TERMUX_PREFIX + "/bin:/system/bin:/system/xbin") + "; "
                 + "ctl=$(command -v chrootctl 2>/dev/null || true); "
@@ -719,17 +723,24 @@ final class RootCommandBroker {
     private String chrootShell(RepositoryLocation location, String payload, RootExecutionPlan plan) {
         String user = RepositoryLocation.clean(location.linuxUser);
         String shell = RepositoryLocation.clean(plan.selectedShell).isEmpty() ? "/bin/sh" : plan.selectedShell;
-        String quotedPayload = shellQuote(payload);
+        String home = RepositoryLocation.clean(plan.linuxHome);
+        if (user.isEmpty()) {
+            return "echo " + shellQuote("Requested chroot Linux user is unavailable") + "; exit 69";
+        }
+        if (!user.equals("root") && (home.isEmpty() || plan.directRootFallback || !plan.usable)) {
+            return "echo " + shellQuote("Requested chroot identity could not be proven for " + user) + "; exit 69";
+        }
+        String userPayload = (home.isEmpty() ? "" : "export HOME=" + shellQuote(home) + "; ") + payload;
+        String quotedPayload = shellQuote(userPayload);
         String inside;
         if (!user.isEmpty() && !user.equals("root") && plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_RUNUSER)) {
-            inside = "runuser -u " + shellQuote(user) + " -- " + shellQuote(shell) + " -c " + quotedPayload;
+            inside = "runuser -u " + shellQuote(user) + " -- env HOME=" + shellQuote(home) + " " + shellQuote(shell) + " -c " + quotedPayload;
         } else if (!user.isEmpty() && !user.equals("root") && plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_SU)) {
             inside = "su - " + shellQuote(user) + " -s " + shellQuote(shell) + " -c " + quotedPayload;
-        } else if (plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_DIRECT_ROOT)
-                || plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_ROOT)) {
+        } else if (user.equals("root") && plan.userSwitchMethod.equals(RootExecutionPlan.METHOD_ROOT)) {
             inside = shellQuote(shell) + " -c " + quotedPayload;
         } else {
-            inside = shellQuote(shell) + " -c " + quotedPayload;
+            return "echo " + shellQuote("Refusing unproven chroot user switch for " + user) + "; exit 69";
         }
         return "export HOME=" + shellQuote(TERMUX_HOME) + " PREFIX=" + shellQuote(TERMUX_PREFIX)
                 + " PATH=" + shellQuote(TERMUX_HOME + "/.local/bin:" + TERMUX_PREFIX + "/bin:/system/bin:/system/xbin") + "; "

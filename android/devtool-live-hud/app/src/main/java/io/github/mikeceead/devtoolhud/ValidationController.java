@@ -100,8 +100,8 @@ final class ValidationController {
                         DebugRecorder.details("action", action));
                 return failed("Validation session is missing its chroot identity");
             }
-            String wrapped = "sudo chrootctl --name " + shell(session.executorName)
-                    + " exec -- zsh -ilc " + shell(command);
+            String wrapped = chrootValidationCommand(session, command);
+            if (wrapped.isEmpty()) return failed("Validation session is missing a provable chroot user/workdir identity");
             return TermuxCommandRunner.runUtilityCommand(context, wrapped, "~/", true, operation);
         }
         if (preferRoot || (session != null && session.cleanExecutorKind().equals("root"))) {
@@ -258,9 +258,38 @@ final class ValidationController {
         if (session.repositoryId.isEmpty()) return "Validation session repository identity is unavailable; refresh it before controlling the session";
         if (!session.identityMatches(session.repositoryId)) return "Validation session repository identity no longer matches its stored repository";
         String kind = session.cleanExecutorKind();
-        if (kind.equals("chroot") && session.executorName.isEmpty()) return "Validation session chroot name is unavailable";
+        if (kind.equals("chroot")) {
+            if (session.executorName.isEmpty()) return "Validation session chroot name is unavailable";
+            if (session.executorLinuxUser.trim().isEmpty()) return "Validation session chroot Linux user is unavailable";
+            String workdir = session.executorWorkdir.trim();
+            if (workdir.isEmpty() || !workdir.startsWith("/")) return "Validation session chroot workdir is unavailable or not absolute";
+        }
         if (kind.equals("root") && !RootBridgeManager.isReady(context)) return "Validation session requires the connected root bridge";
         return "";
+    }
+
+
+    private static String chrootValidationCommand(ValidationSessionRecord session, String command) {
+        String name = session.executorName == null ? "" : session.executorName.trim();
+        String user = session.executorLinuxUser == null ? "" : session.executorLinuxUser.trim();
+        String workdir = session.executorWorkdir == null ? "" : session.executorWorkdir.trim();
+        if (name.isEmpty() || user.isEmpty() || workdir.isEmpty() || !workdir.startsWith("/")) return "";
+
+        String payload = "cd " + shell(workdir) + " && " + command;
+        String inside = "user=" + shell(user) + "; workdir=" + shell(workdir) + "; "
+                + "[ -d \"$workdir\" ] || { echo 'Requested chroot workdir is unavailable' >&2; exit 69; }; "
+                + "home=$(awk -F: -v u=\"$user\" '$1==u {print $6; exit}' /etc/passwd 2>/dev/null); "
+                + "login_shell=$(awk -F: -v u=\"$user\" '$1==u {print $7; exit}' /etc/passwd 2>/dev/null); "
+                + "[ -n \"$home\" ] || { echo 'Requested chroot user is unavailable' >&2; exit 69; }; "
+                + "[ -x \"$login_shell\" ] || login_shell=$(command -v zsh 2>/dev/null || command -v bash 2>/dev/null || command -v sh 2>/dev/null || true); "
+                + "[ -n \"$login_shell\" ] || { echo 'No usable chroot shell is available' >&2; exit 69; }; "
+                + "if [ \"$user\" = root ]; then exec env HOME=\"$home\" USER=\"$user\" LOGNAME=\"$user\" \"$login_shell\" -lc " + shell(payload) + "; "
+                + "elif command -v runuser >/dev/null 2>&1 && runuser -u \"$user\" -- \"$login_shell\" -c ':' >/dev/null 2>&1; then "
+                + "exec runuser -u \"$user\" -- env HOME=\"$home\" USER=\"$user\" LOGNAME=\"$user\" \"$login_shell\" -lc " + shell(payload) + "; "
+                + "elif command -v su >/dev/null 2>&1 && su - \"$user\" -s \"$login_shell\" -c ':' >/dev/null 2>&1; then "
+                + "exec su - \"$user\" -s \"$login_shell\" -c " + shell(payload) + "; "
+                + "else echo 'Unable to switch to requested chroot Linux user' >&2; exit 69; fi";
+        return "sudo chrootctl --name " + shell(name) + " exec -- /bin/sh -c " + shell(inside);
     }
 
 

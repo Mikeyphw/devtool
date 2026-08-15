@@ -128,6 +128,7 @@ final class RepositoryDoctor {
     private static String probePayload(RepositoryLocation location) {
         String path = commandPath(location);
         String user = RepositoryLocation.clean(location.linuxUser);
+        String gitProbe = "git -C " + RootCommandBroker.shellQuote(path) + " status --short >/dev/null 2>&1";
         return "repo=" + RootCommandBroker.shellQuote(path) + "; "
                 + "linux_user=" + RootCommandBroker.shellQuote(user) + "; "
                 + "kv(){ printf '__DEVTOOL_REPO_DOCTOR__%s=%s\\n' \"$1\" \"$2\"; }; "
@@ -144,12 +145,18 @@ final class RepositoryDoctor {
                 + "kv selected_shell \"$selected_shell\"; kv selected_shell_name \"$selected_shell_name\"; kv rejected_shell_candidates \"$rejected_shells\"; "
                 + "command -v runuser >/dev/null 2>&1 && kv runuser_available 1 || kv runuser_available 0; "
                 + "command -v su >/dev/null 2>&1 && kv su_available 1 || kv su_available 0; rejected_switches=''; selected_method=''; "
-                + "if [ -z \"$linux_user\" ] || [ \"$linux_user\" = root ]; then kv user_exists 1; kv runuser_works 1; kv su_works 1; kv user_switch_method root; kv rejected_user_switch_candidates \"\"; "
+                + "if [ -z \"$linux_user\" ]; then kv user_exists 0; kv runuser_works 0; kv su_works 0; kv user_switch_method unavailable; kv rejected_user_switch_candidates \"linux-user:missing\"; "
+                + "elif [ \"$linux_user\" = root ]; then kv user_exists 1; kv runuser_works 1; kv su_works 1; kv user_switch_method root; kv rejected_user_switch_candidates \"\"; "
                 + "else id \"$linux_user\" >/dev/null 2>&1 && kv user_exists 1 || kv user_exists 0; "
                 + "if command -v runuser >/dev/null 2>&1; then if runuser -u \"$linux_user\" -- \"$selected_shell\" -c 'id -u >/dev/null' >/dev/null 2>&1; then kv runuser_works 1; selected_method=runuser; else kv runuser_works 0; rejected_switches=\"runuser:failed\"; fi; else kv runuser_works 0; rejected_switches=\"runuser:missing\"; fi; "
                 + "if [ -z \"$selected_method\" ]; then if command -v su >/dev/null 2>&1; then if su - \"$linux_user\" -s \"$selected_shell\" -c 'id -u >/dev/null' >/dev/null 2>&1; then kv su_works 1; selected_method=su; else kv su_works 0; rejected_switches=\"${rejected_switches}${rejected_switches:+,}su:failed\"; fi; else kv su_works 0; rejected_switches=\"${rejected_switches}${rejected_switches:+,}su:missing\"; fi; else kv su_works 0; fi; "
                 + "[ -n \"$selected_method\" ] || selected_method=direct-root; kv user_switch_method \"$selected_method\"; kv rejected_user_switch_candidates \"$rejected_switches\"; fi; "
-                + "if command -v git >/dev/null 2>&1 && [ -d \"$repo\" ]; then git -C \"$repo\" status --short >/dev/null 2>&1 && kv git_c_works 1 || kv git_c_works 0; else kv git_c_works 0; fi";
+                + "if command -v git >/dev/null 2>&1 && [ -d \"$repo\" ]; then "
+                + "if [ -z \"$linux_user\" ]; then kv git_c_works 0; "
+                + "elif [ \"$linux_user\" = root ]; then git -C \"$repo\" status --short >/dev/null 2>&1 && kv git_c_works 1 || kv git_c_works 0; "
+                + "elif [ \"$selected_method\" = runuser ]; then runuser -u \"$linux_user\" -- git -C \"$repo\" status --short >/dev/null 2>&1 && kv git_c_works 1 || kv git_c_works 0; "
+                + "elif [ \"$selected_method\" = su ]; then su - \"$linux_user\" -s \"$selected_shell\" -c " + RootCommandBroker.shellQuote(gitProbe) + " >/dev/null 2>&1 && kv git_c_works 1 || kv git_c_works 0; "
+                + "else kv git_c_works 0; fi; else kv git_c_works 0; fi";
     }
 
     private static Map<String, String> parse(String output) {

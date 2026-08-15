@@ -1628,8 +1628,13 @@ def run_specs(
                     )
                     try:
                         from .test_selection import save_failed_test_ids
-                        failed_ids = [issue.message.split(":", 1)[0] for issue in collection.issues if issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION"}]
+                        metadata_failed = collection.metadata.get("failed_ids") if isinstance(collection.metadata, dict) else None
+                        if isinstance(metadata_failed, (list, tuple)):
+                            failed_ids = [str(value).strip() for value in metadata_failed if str(value).strip()]
+                        else:
+                            failed_ids = [issue.message.split(":", 1)[0] for issue in collection.issues if issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION"}]
                         save_failed_test_ids(config.repo_root, failed_ids)
+                        result_metadata["failed_test_ids"] = failed_ids
                     except Exception:
                         pass
                 elif report_parser == "android-lint":
@@ -1724,6 +1729,19 @@ def run_specs(
                         output += f"- {issue.file} [{issue.code}]: {issue.message}\n"
                     if len(warnings) > 8:
                         output += f"- ... and {len(warnings) - 8} more notice(s).\n"
+        if _is_dotnet_test_command(spec.argv, spec.name):
+            try:
+                from .test_selection import save_failed_test_ids
+                failed_ids = list(dict.fromkeys(
+                    match.group(1).strip()
+                    for match in re.finditer(r"(?m)^\s*Failed\s+([^\s\[]+)", process_output or "")
+                    if match.group(1).strip()
+                ))
+                save_failed_test_ids(config.repo_root, failed_ids)
+                result_metadata["failed_test_ids"] = failed_ids
+            except OSError as exc:
+                result_metadata["failed_test_history_error"] = str(exc)
+
         nonfatal_issue_ids = {id(issue) for issue in nonfatal_report_issues}
         has_fatal_error_diagnostics = any(
             issue.severity == "error" and id(issue) not in nonfatal_issue_ids
