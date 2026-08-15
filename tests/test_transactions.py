@@ -42,14 +42,13 @@ class TransactionalApplyTests(unittest.TestCase):
         subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=root, check=True)
         return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 
-    def test_rollback_restores_exact_git_index_after_failed_commit_staging(self) -> None:
+    def test_rollback_refuses_unknown_live_index_change_after_transaction_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):
             root = Path(tmp) / "repo"
             root.mkdir()
             initial_head = self._init_git_repo(root)
             (root / "unrelated.txt").write_text("preexisting staged\n", encoding="utf-8")
             subprocess.run(["git", "add", "unrelated.txt"], cwd=root, check=True)
-            initial_cached = subprocess.check_output(["git", "diff", "--cached", "--binary"], cwd=root)
 
             artifact = Path(tmp) / "overlay.zip"
             with ZipFile(artifact, "w") as zf:
@@ -62,15 +61,27 @@ class TransactionalApplyTests(unittest.TestCase):
             )
             transaction_path = Path(tx["path"])
 
+            # OV-01 automatic commits no longer stage artifact paths in the live
+            # user index. If the index changes after the transaction checkpoint,
+            # provenance is unknown and rollback must refuse before overwriting it.
             (root / "file.txt").write_text("new\n", encoding="utf-8")
             subprocess.run(["git", "add", "file.txt"], cwd=root, check=True)
-            result = rollback_transaction(transaction_path, reason="failed commit staging rollback")
+            before_index = Path(subprocess.check_output(
+                ["git", "rev-parse", "--git-path", "index"], cwd=root, text=True
+            ).strip())
+            if not before_index.is_absolute():
+                before_index = root / before_index
+            before_index_bytes = before_index.read_bytes()
+            before_file = (root / "file.txt").read_bytes()
 
-            self.assertEqual(result.returncode, 0, result.output)
+            result = rollback_transaction(transaction_path, reason="unknown live-index mutation")
+
+            self.assertEqual(result.returncode, 1, result.output)
+            self.assertIn("repository index changed after the transaction checkpoint", result.output)
             self.assertEqual(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(), initial_head)
-            self.assertEqual((root / "file.txt").read_text(encoding="utf-8"), "old\n")
-            self.assertEqual(subprocess.check_output(["git", "diff", "--cached", "--binary"], cwd=root), initial_cached)
-            self.assertIn("git_state: restored", result.output)
+            self.assertEqual((root / "file.txt").read_bytes(), before_file)
+            self.assertEqual(before_index.read_bytes(), before_index_bytes)
+            self.assertTrue(transaction_path.exists())
 
     def test_rollback_rewinds_recorded_apply_commit_and_restores_exact_git_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}, clear=False):

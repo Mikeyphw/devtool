@@ -824,6 +824,7 @@ def _iter_process_output_lines(
                 break
 
             if idle_timeout is not None and idle_timeout > 0 and (time.monotonic() - last_output_at) >= idle_timeout:
+                setattr(proc, "_devtool_assumed_returncode", 124)
                 message = f"\nDevtool stopped a quiet child process after {idle_timeout:g}s without output.\n"
                 for line in emit_and_track(message):
                     yield line
@@ -863,10 +864,14 @@ def _wait_process_returncode(proc: subprocess.Popen, *, timeout: float = 5.0) ->
     assumed = getattr(proc, "_devtool_assumed_returncode", None)
     try:
         code = proc.wait(timeout=timeout)
-        if assumed is not None and code != 0:
-            return int(assumed)
-        return code
+        return int(assumed) if assumed is not None else code
     except subprocess.TimeoutExpired:
+        # Once Devtool itself decides the child exceeded the wait deadline, the
+        # supervisory timeout is authoritative even if the child traps TERM and
+        # exits zero. Record that status before sending any termination signal.
+        if assumed is None:
+            assumed = 124
+            setattr(proc, "_devtool_assumed_returncode", assumed)
         try:
             if os.name == "posix":
                 os.killpg(proc.pid, 15)
@@ -875,10 +880,8 @@ def _wait_process_returncode(proc: subprocess.Popen, *, timeout: float = 5.0) ->
         except Exception:
             pass
         try:
-            code = proc.wait(timeout=2.0)
-            if assumed is not None and code != 0:
-                return int(assumed)
-            return code
+            proc.wait(timeout=2.0)
+            return int(assumed)
         except Exception:
             try:
                 if os.name == "posix":
@@ -888,12 +891,10 @@ def _wait_process_returncode(proc: subprocess.Popen, *, timeout: float = 5.0) ->
             except Exception:
                 pass
             try:
-                code = proc.wait(timeout=1.0)
-                if assumed is not None and code != 0:
-                    return int(assumed)
-                return code
+                proc.wait(timeout=1.0)
             except Exception:
-                return int(assumed) if assumed is not None else 124
+                pass
+            return int(assumed)
 
 def _run_process_live(
     argv: list[str],
@@ -1795,7 +1796,10 @@ def run_specs(
             tasker_progress.phase_finished(result)
         raw_sections.append(raw_text)
 
-        if returncode != 0 and not continue_on_error:
+        # Cancellation/interruption is an orchestration terminal state, not an
+        # ordinary phase failure. Never advance to later phases merely because
+        # continue_on_error was requested.
+        if returncode == 130 or (returncode != 0 and not continue_on_error):
             break
 
     gradle_options = config.runner_options.get("gradle", {})
@@ -2230,6 +2234,35 @@ def _normalize_git_pathspecs(paths: list[str] | tuple[str, ...] | None) -> list[
     return normalized
 
 
+def _literal_git_pathspec(path: str) -> str:
+    """Treat artifact inventory paths as exact repository paths, never Git magic/globs."""
+    return f":(literal){path}"
+
+
+def _artifact_pathspec_was_staged(repo_root: Path, path: str, *, has_head: bool) -> tuple[bool, str]:
+    """Return whether the user's live index already staged this artifact path."""
+    literal = _literal_git_pathspec(path)
+    if has_head:
+        argv = ["git", "diff", "--cached", "--quiet", "HEAD", "--", literal]
+        proc = subprocess.run(
+            argv, cwd=repo_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        )
+        if proc.returncode == 0:
+            return False, ""
+        if proc.returncode == 1:
+            return True, ""
+    else:
+        argv = ["git", "ls-files", "--error-unmatch", "--", literal]
+        proc = subprocess.run(
+            argv, cwd=repo_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        )
+        if proc.returncode == 0:
+            return True, ""
+        if proc.returncode == 1:
+            return False, ""
+    return False, (proc.stdout or f"Git index preflight exited {proc.returncode}").strip()
+
+
 def git_commit(
     repo_root: Path,
     message: str,
@@ -2242,14 +2275,13 @@ def git_commit(
     pathspecs = _normalize_git_pathspecs(paths)
 
     if pathspecs is None:
-        add_argv = ["git", "add", "-A"]
-    elif pathspecs:
-        # Artifact-scoped commits must be able to add payload files that the
-        # repository normally ignores (for example generated bridge binaries).
-        # The caller supplies the exact artifact-owned path list, so force only
-        # those paths instead of widening the commit to the whole worktree.
-        add_argv = ["git", "add", "-f", "-A", "--", *pathspecs]
-    else:
+        specs = [
+            CommandSpec("git-add", ["git", "add", "-A"]),
+            CommandSpec("git-commit", ["git", "commit", "-m", message]),
+        ]
+        config = ProjectConfig(repo_root=repo_root, kind="unknown")
+        return run_specs(config, specs, verbose=verbose, dry_run=dry_run, log_path=log_path)
+    if not pathspecs:
         output = "No artifact paths changed; skipped git add and git commit."
         results = [
             OperationResult("git-add-skipped", ["git", "add", "-A", "--"], 0, 0.0, output, [], skipped=True),
@@ -2257,12 +2289,72 @@ def git_commit(
         ]
         return results, output
 
-    specs = [
-        CommandSpec("git-add", add_argv),
-        CommandSpec("git-commit", ["git", "commit", "-m", message]),
-    ]
-    config = ProjectConfig(repo_root=repo_root, kind="unknown")
-    return run_specs(config, specs, verbose=verbose, dry_run=dry_run, log_path=log_path)
+    # Artifact commits must never stage through the user's live index. Build a
+    # private index from HEAD, stage only literal artifact-owned paths there, and
+    # commit through GIT_INDEX_FILE. After HEAD advances, reconcile only artifact
+    # paths that were *not* already user-staged; otherwise the untouched old index
+    # entry would appear as a reverse staged change against the new HEAD.
+    with tempfile.TemporaryDirectory(prefix="devtool-artifact-index-") as tmp:
+        isolated_index = Path(tmp) / "index"
+        isolated_env = os.environ.copy()
+        isolated_env["GIT_INDEX_FILE"] = str(isolated_index)
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"], cwd=repo_root,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+        has_head = head.returncode == 0
+        protected_paths: set[str] = set()
+        if not dry_run:
+            for artifact_path in pathspecs:
+                was_staged, preflight_error = _artifact_pathspec_was_staged(
+                    repo_root, artifact_path, has_head=has_head
+                )
+                if preflight_error:
+                    result = OperationResult(
+                        "git-index-preflight", ["git", "diff", "--cached", "--", artifact_path], 1, 0.0,
+                        preflight_error, parse_issues(repo_root, "git-index-preflight", preflight_error),
+                        failure_kind="command_failure",
+                    )
+                    return [result], preflight_error
+                if was_staged:
+                    protected_paths.add(artifact_path)
+
+        init_argv = ["git", "read-tree", "HEAD"] if has_head else ["git", "read-tree", "--empty"]
+        if not dry_run:
+            started = time.perf_counter()
+            init = subprocess.run(
+                init_argv, cwd=repo_root, env=isolated_env, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+            )
+            if init.returncode != 0:
+                output = init.stdout or "Unable to initialize isolated Git index."
+                result = OperationResult(
+                    "git-index-init", init_argv, init.returncode, time.perf_counter() - started,
+                    output, parse_issues(repo_root, "git-index-init", output),
+                    failure_kind=classify_failure("git-index-init", output, init.returncode),
+                )
+                return [result], output
+        literal_pathspecs = [_literal_git_pathspec(path) for path in pathspecs]
+        specs = [
+            CommandSpec("git-add", ["git", "add", "-f", "-A", "--", *literal_pathspecs], env={"GIT_INDEX_FILE": str(isolated_index)}),
+            CommandSpec("git-commit", ["git", "commit", "-m", message], env={"GIT_INDEX_FILE": str(isolated_index)}),
+        ]
+        config = ProjectConfig(repo_root=repo_root, kind="unknown")
+        results, raw = run_specs(config, specs, verbose=verbose, dry_run=dry_run, log_path=log_path)
+        commit_succeeded = any(result.name == "git-commit" and result.returncode == 0 for result in results)
+        if commit_succeeded:
+            reconcile = [path for path in pathspecs if path not in protected_paths]
+            if reconcile:
+                reconcile_specs = [CommandSpec(
+                    "git-index-reconcile",
+                    ["git", "reset", "-q", "HEAD", "--", *[_literal_git_pathspec(path) for path in reconcile]],
+                )]
+                reconcile_results, reconcile_raw = run_specs(
+                    config, reconcile_specs, verbose=verbose, dry_run=dry_run, log_path=log_path
+                )
+                results.extend(reconcile_results)
+                raw = raw + ("\n\n" if raw and reconcile_raw else "") + reconcile_raw
+        return results, raw
 
 
 def write_template_config(repo_root: Path, *, force: bool = False) -> Path:

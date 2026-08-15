@@ -26,6 +26,8 @@ final class RootCommandBroker {
     private final CancellationToken cancellation;
     private final String operationId;
 
+    private enum OperationProcessState { ALIVE, ABSENT, UNKNOWN }
+
     RootCommandBroker(Context context) {
         this(context, null, "");
     }
@@ -499,28 +501,66 @@ final class RootCommandBroker {
         return new ArrayList<>(names);
     }
 
-    boolean operationProcessAlive(String requestedOperationId) {
+    private OperationProcessState operationProcessState(String requestedOperationId) {
         String marker = safeOperationId(requestedOperationId);
-        if (marker.isEmpty()) return false;
+        if (marker.isEmpty()) return OperationProcessState.ABSENT;
         String script = "marker=" + shellQuote(marker) + "; "
                 + "for env in /proc/[0-9]*/environ; do [ -r \"$env\" ] || continue; "
-                + "tr '\\0' '\\n' < \"$env\" 2>/dev/null | grep -Fqx \"DEVTOOL_ANDROID_OPERATION_ID=$marker\" "
-                + "&& exit 0; done; exit 1";
+                + "if tr '\\0' '\\n' < \"$env\" 2>/dev/null | grep -Fqx \"DEVTOOL_ANDROID_OPERATION_ID=$marker\"; then "
+                + "printf '__DEVTOOL_PROCESS_ALIVE__\\n'; exit 0; fi; done; "
+                + "printf '__DEVTOOL_PROCESS_ABSENT__\\n'; exit 0";
         CommandResult result = new RootCommandBroker(context).executeRoot(script, 8L);
-        return result.exitCode == 0 && !result.timedOut;
+        if (result.timedOut || result.exitCode != 0) return OperationProcessState.UNKNOWN;
+        String text = result.text();
+        if (text.contains("__DEVTOOL_PROCESS_ALIVE__")) return OperationProcessState.ALIVE;
+        if (text.contains("__DEVTOOL_PROCESS_ABSENT__")) return OperationProcessState.ABSENT;
+        return OperationProcessState.UNKNOWN;
+    }
+
+    boolean operationProcessAlive(String requestedOperationId) {
+        // UNKNOWN is deliberately treated as live. Queue ownership may only be
+        // released when a privileged scan positively proves the marker absent.
+        return operationProcessState(requestedOperationId) != OperationProcessState.ABSENT;
     }
 
     boolean terminateOperationProcess(String requestedOperationId) {
         String marker = safeOperationId(requestedOperationId);
         if (marker.isEmpty()) return false;
-        String script = "marker=" + shellQuote(marker) + "; pids=''; "
-                + "for env in /proc/[0-9]*/environ; do [ -r \"$env\" ] || continue; "
+        String script = "marker=" + shellQuote(marker) + "; "
+                + "marked_pids() { pids=''; for env in /proc/[0-9]*/environ; do [ -r \"$env\" ] || continue; "
                 + "if tr '\\0' '\\n' < \"$env\" 2>/dev/null | grep -Fqx \"DEVTOOL_ANDROID_OPERATION_ID=$marker\"; then "
-                + "pid=${env#/proc/}; pid=${pid%/environ}; [ \"$pid\" = 1 ] || pids=\"$pids $pid\"; fi; done; "
-                + "[ -n \"$pids\" ] || exit 1; kill -TERM $pids 2>/dev/null || true; sleep 1; "
-                + "for pid in $pids; do [ -d \"/proc/$pid\" ] && kill -KILL \"$pid\" 2>/dev/null || true; done; exit 0";
-        CommandResult result = new RootCommandBroker(context).executeRoot(script, 12L);
-        return result.exitCode == 0 && !result.timedOut;
+                + "pid=${env#/proc/}; pid=${pid%/environ}; [ \"$pid\" = 1 ] || pids=\"$pids $pid\"; fi; done; printf '%s' \"$pids\"; }; "
+                + "pids=$(marked_pids); [ -n \"$pids\" ] || exit 0; kill -TERM $pids 2>/dev/null || true; "
+                + "for attempt in 1 2 3; do sleep 1; pids=$(marked_pids); [ -z \"$pids\" ] && exit 0; done; "
+                + "kill -KILL $pids 2>/dev/null || true; sleep 1; remaining=$(marked_pids); [ -z \"$remaining\" ]";
+        CommandResult result = new RootCommandBroker(context).executeRoot(script, 16L);
+        if (result.exitCode != 0 || result.timedOut) return false;
+        return operationProcessState(marker) == OperationProcessState.ABSENT;
+    }
+
+    private boolean ensureOperationProcessTreeGone() {
+        if (operationId.isEmpty()) return true;
+        OperationProcessState state = operationProcessState(operationId);
+        if (state == OperationProcessState.ABSENT) return true;
+        return terminateOperationProcess(operationId);
+    }
+
+    private boolean stopExecutionTree(Process process) {
+        if (!operationId.isEmpty()) terminateOperationProcess(operationId);
+        boolean interrupted = false;
+        if (process != null) {
+            process.destroy();
+            try {
+                if (!process.waitFor(1L, TimeUnit.SECONDS)) process.destroyForcibly();
+            } catch (InterruptedException error) {
+                interrupted = true;
+                process.destroyForcibly();
+                try { process.waitFor(1L, TimeUnit.SECONDS); } catch (InterruptedException ignored) { interrupted = true; }
+            }
+        }
+        boolean cleared = operationId.isEmpty() || terminateOperationProcess(operationId);
+        if (interrupted) Thread.currentThread().interrupt();
+        return cleared;
     }
 
     CommandResult execute(RepositoryLocation location, String payload, long timeoutSeconds) {
@@ -754,7 +794,12 @@ final class RootCommandBroker {
 
     private CommandResult executeRoot(String shell, long timeoutSeconds, CancellationToken token) {
         if (!operationId.isEmpty()) {
-            shell = "export DEVTOOL_ANDROID_OPERATION_ID=" + shellQuote(operationId) + "; " + shell;
+            // Replace the root command shell with a fresh process whose *initial*
+            // environment carries the marker. /proc/<pid>/environ can then prove
+            // ownership for the operation root itself after Android process death,
+            // not merely for descendants spawned after an in-shell export.
+            shell = "export DEVTOOL_ANDROID_OPERATION_ID=" + shellQuote(operationId)
+                    + "; exec sh -c " + shellQuote(shell);
         }
         Process process = null;
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -779,16 +824,17 @@ final class RootCommandBroker {
                 }
             }
             if (!finished) {
-                if (cancelled && !operationId.isEmpty()) terminateOperationProcess(operationId);
-                process.destroy();
-                if (!process.waitFor(1L, TimeUnit.SECONDS)) process.destroyForcibly();
+                // Stop marked descendants, kill the wrapper, and only then perform
+                // the final absence proof. UNKNOWN is not success.
+                boolean processTreeCleared = stopExecutionTree(process);
                 if (reader != null) reader.join(1000L);
                 DebugRecorder.warning(context, "root", cancelled ? "ROOT_EXECUTION_CANCELLED" : "ROOT_EXECUTION_TIMEOUT",
                         "RootCommandBroker", "", "", operationId, "",
                         cancelled ? "Root command cancelled" : "Root command timed out",
-                        DebugRecorder.details("timeout_seconds", timeoutSeconds, "output_bytes", output.size()));
+                        DebugRecorder.details("timeout_seconds", timeoutSeconds, "output_bytes", output.size(),
+                                "process_tree_cleared", processTreeCleared));
                 return new CommandResult(cancelled ? 130 : 124, output.toByteArray(), !cancelled,
-                        truncated.get(), cancelled);
+                        truncated.get(), cancelled, processTreeCleared);
             }
             if (reader != null) reader.join(1500L);
             int exit = process.exitValue();
@@ -797,13 +843,18 @@ final class RootCommandBroker {
                         "", "", operationId, "", "Root command exited non-zero",
                         DebugRecorder.details("exit_code", exit, "output_preview", compact(new String(output.toByteArray(), StandardCharsets.UTF_8), "")));
             }
-            return new CommandResult(exit, output.toByteArray(), false, truncated.get(), false);
+            // A wrapper can exit while a background descendant remains. Repository
+            // queue ownership is released only after the marker is proven absent.
+            boolean processTreeCleared = ensureOperationProcessTreeGone();
+            return new CommandResult(exit, output.toByteArray(), false, truncated.get(), false, processTreeCleared);
         } catch (Exception error) {
             String message = String.valueOf(error.getMessage());
+            boolean processTreeCleared = process == null || stopExecutionTree(process);
             DebugRecorder.error(context, "root", "ROOT_EXECUTION_FAILED", "RootCommandBroker",
-                    "", "", operationId, "", message, DebugRecorder.details("exception", error.getClass().getSimpleName()));
+                    "", "", operationId, "", message, DebugRecorder.details("exception", error.getClass().getSimpleName(),
+                            "process_tree_cleared", processTreeCleared));
             return new CommandResult(127,
-                    message.getBytes(StandardCharsets.UTF_8), false, false);
+                    message.getBytes(StandardCharsets.UTF_8), false, false, false, processTreeCleared);
         } finally {
             if (process != null) process.destroy();
         }
@@ -977,21 +1028,28 @@ final class RootCommandBroker {
         final boolean timedOut;
         final boolean truncated;
         final boolean cancelled;
+        final boolean processTreeCleared;
 
         CommandResult(int exitCode, byte[] bytes, boolean timedOut) {
-            this(exitCode, bytes, timedOut, false, false);
+            this(exitCode, bytes, timedOut, false, false, true);
         }
 
         CommandResult(int exitCode, byte[] bytes, boolean timedOut, boolean truncated) {
-            this(exitCode, bytes, timedOut, truncated, false);
+            this(exitCode, bytes, timedOut, truncated, false, true);
         }
 
         CommandResult(int exitCode, byte[] bytes, boolean timedOut, boolean truncated, boolean cancelled) {
+            this(exitCode, bytes, timedOut, truncated, cancelled, true);
+        }
+
+        CommandResult(int exitCode, byte[] bytes, boolean timedOut, boolean truncated, boolean cancelled,
+                      boolean processTreeCleared) {
             this.exitCode = exitCode;
             this.bytes = bytes == null ? new byte[0] : bytes;
             this.timedOut = timedOut;
             this.truncated = truncated;
             this.cancelled = cancelled;
+            this.processTreeCleared = processTreeCleared;
         }
 
         String text() { return new String(bytes, StandardCharsets.UTF_8); }

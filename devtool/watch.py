@@ -23,14 +23,20 @@ def snapshot_mtimes(repo_root: Path) -> dict[str, float]:
 
 
 def watch_loop(repo_root: Path, run_once: Callable[[], int], *, interval: float = 1.5) -> int:
-    last_rc = run_once()
-    previous = snapshot_mtimes(repo_root)
     try:
+        last_rc = run_once()
+        if last_rc == 130:
+            return 130
+        previous = snapshot_mtimes(repo_root)
         while True:
             time.sleep(max(0.2, interval))
             current = snapshot_mtimes(repo_root)
             if current != previous:
                 previous = current
                 last_rc = run_once()
+                if last_rc == 130:
+                    return 130
     except KeyboardInterrupt:
-        return last_rc
+        # Ctrl-C is itself the final result of this watch invocation. Returning a
+        # previous successful run would falsely report an interrupted watch as OK.
+        return 130

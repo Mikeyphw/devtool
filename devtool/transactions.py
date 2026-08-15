@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -222,6 +223,169 @@ def _hash_path(path: Path) -> str:
     return digest.hexdigest()
 
 
+
+
+def _path_identity(path: Path) -> dict[str, Any]:
+    """Return content/type/mode identity suitable for rollback resume guards."""
+    kind = _path_kind(path)
+    identity: dict[str, Any] = {"kind": kind, "sha256": _hash_path(path), "mode": None, "tree_modes_sha256": ""}
+    if kind == "missing":
+        return identity
+    try:
+        identity["mode"] = stat.S_IMODE(path.lstat().st_mode)
+    except OSError:
+        identity["mode"] = None
+    if kind == "dir":
+        digest = hashlib.sha256()
+        for current_root, dirnames, filenames in os.walk(path, followlinks=False):
+            current = Path(current_root)
+            names = sorted([*dirnames, *filenames])
+            for name in names:
+                child = current / name
+                try:
+                    rel = child.relative_to(path).as_posix()
+                    mode = stat.S_IMODE(child.lstat().st_mode)
+                    child_kind = _path_kind(child)
+                except OSError:
+                    continue
+                digest.update(rel.encode("utf-8", errors="surrogateescape"))
+                digest.update(b"\0")
+                digest.update(child_kind.encode("ascii", errors="ignore"))
+                digest.update(b"\0")
+                digest.update(str(mode).encode("ascii"))
+                digest.update(b"\0")
+        identity["tree_modes_sha256"] = digest.hexdigest()
+    return identity
+
+
+def _resolve_git_index_path(repo_root: Path) -> Path:
+    rc, index_text = _git_capture(repo_root, ["rev-parse", "--git-path", "index"])
+    if rc != 0 or not index_text:
+        raise RuntimeError("Unable to resolve Git index path for apply transaction")
+    index_path = Path(index_text)
+    return index_path if index_path.is_absolute() else (repo_root / index_path).resolve()
+
+
+def _git_index_identity(index_path: Path) -> dict[str, Any]:
+    """Return the exact on-disk identity used to guard transactional Git rollback."""
+    if not index_path.exists():
+        return {"exists": False, "sha256": "", "mode": None}
+    try:
+        mode = stat.S_IMODE(index_path.stat().st_mode)
+        digest = hashlib.sha256(index_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise RuntimeError(f"Unable to inspect Git index before rollback: {index_path}: {exc}") from exc
+    return {"exists": True, "sha256": digest, "mode": mode}
+
+
+def _preflight_git_restore(repo_root: Path, tx: dict[str, Any]) -> str:
+    """Prove Git rollback eligibility without mutating HEAD, index, or worktree."""
+    git_state = tx.get("git_state")
+    if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
+        return "not-applicable"
+    if bool(git_state.get("restored")):
+        return "already-restored"
+
+    initial_head = str(git_state.get("initial_head") or "").strip()
+    applied_commit = str(git_state.get("applied_commit") or "").strip()
+    current_head = _current_git_head(repo_root)
+    if applied_commit:
+        if current_head != applied_commit:
+            raise RuntimeError(
+                "Refusing Git rollback because repository HEAD changed after the devtool apply commit: "
+                f"expected {applied_commit or '<none>'}, found {current_head or '<unborn>'}"
+            )
+    elif current_head != initial_head:
+        raise RuntimeError(
+            "Refusing Git index rollback because repository HEAD changed during the active transaction: "
+            f"expected {initial_head or '<unborn>'}, found {current_head or '<unborn>'}"
+        )
+
+    recorded_index_text = str(git_state.get("index_path") or "").strip()
+    if not recorded_index_text:
+        raise RuntimeError("Apply transaction is missing its Git index path")
+    recorded_index = Path(recorded_index_text)
+    current_index = _resolve_git_index_path(repo_root)
+    try:
+        same_index = current_index.resolve() == recorded_index.resolve()
+    except OSError:
+        same_index = current_index == recorded_index
+    if not same_index:
+        raise RuntimeError(
+            "Refusing Git rollback because the repository index path changed: "
+            f"expected {recorded_index}, found {current_index}"
+        )
+    if bool(git_state.get("index_existed")):
+        backup_path = Path(str(git_state.get("index_backup") or ""))
+        if not backup_path.exists():
+            raise RuntimeError(f"Apply transaction Git index backup is missing: {backup_path}")
+
+    expected_index = git_state.get("post_apply_index_identity") if applied_commit else git_state.get("initial_index_identity")
+    if not isinstance(expected_index, dict):
+        # Older transactions did not checkpoint the live index at the rollback
+        # boundary. Refuse rather than overwrite staging state we cannot prove
+        # still belongs to Devtool.
+        raise RuntimeError(
+            "Refusing Git rollback because the transaction lacks a current-index safety checkpoint"
+        )
+    current_index_identity = _git_index_identity(current_index)
+    if current_index_identity != expected_index:
+        raise RuntimeError(
+            "Refusing Git rollback because the repository index changed after the transaction checkpoint; "
+            "staged user work would otherwise be overwritten"
+        )
+    return "eligible"
+
+
+def _verify_git_state_restored(repo_root: Path, tx: dict[str, Any]) -> None:
+    git_state = tx.get("git_state")
+    if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
+        return
+    expected_head = str(git_state.get("initial_head") or "").strip()
+    current_head = _current_git_head(repo_root)
+    if current_head != expected_head:
+        raise RuntimeError(
+            "Git rollback verification failed for HEAD: "
+            f"expected {expected_head or '<unborn>'}, found {current_head or '<unborn>'}"
+        )
+    expected_ref = str(git_state.get("head_ref") or "").strip()
+    ref_rc, current_ref = _git_capture(repo_root, ["symbolic-ref", "-q", "HEAD"])
+    current_ref = current_ref if ref_rc == 0 else ""
+    if current_ref != expected_ref:
+        raise RuntimeError(
+            "Git rollback verification failed for HEAD reference: "
+            f"expected {expected_ref or '<detached>'}, found {current_ref or '<detached>'}"
+        )
+    index_path_text = str(git_state.get("index_path") or "").strip()
+    if not index_path_text:
+        raise RuntimeError("Git rollback verification failed because the transaction index path is missing")
+    index_path = Path(index_path_text)
+    expected_initial_index = git_state.get("initial_index_identity")
+    if not isinstance(expected_initial_index, dict):
+        raise RuntimeError("Git rollback verification failed because the initial index checkpoint is missing")
+    current_index_identity = _git_index_identity(index_path)
+    if current_index_identity != expected_initial_index:
+        raise RuntimeError("Git rollback verification failed because the index does not match its transaction backup")
+
+
+def _preflight_resume_guards(repo_root: Path, entries: list[dict[str, Any]]) -> None:
+    conflicts: list[str] = []
+    for entry in entries:
+        if bool(entry.get("verified")):
+            continue
+        expected = entry.get("resume_target_identity")
+        if not isinstance(expected, dict):
+            conflicts.append(str(_safe_rel(str(entry.get("path") or ""))) + " (missing rollback checkpoint)")
+            continue
+        rel = _safe_rel(str(entry.get("path") or ""))
+        current = _path_identity(repo_root / rel)
+        if current != expected:
+            conflicts.append(str(rel))
+    if conflicts:
+        raise RuntimeError(
+            "Refusing resumed rollback because target changed after the previous rollback attempt: "
+            + ", ".join(conflicts[:20])
+        )
 def _copy_path(source: Path, destination: Path) -> None:
     _delete_path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -287,15 +451,10 @@ def _capture_git_state(repo_root: Path, tx_dir: Path) -> dict[str, Any]:
 
     head_rc, initial_head = _git_capture(repo_root, ["rev-parse", "--verify", "HEAD"])
     ref_rc, head_ref = _git_capture(repo_root, ["symbolic-ref", "-q", "HEAD"])
-    index_rc, index_text = _git_capture(repo_root, ["rev-parse", "--git-path", "index"])
-    if index_rc != 0 or not index_text:
-        raise RuntimeError("Unable to resolve Git index path for apply transaction")
-
-    index_path = Path(index_text)
-    if not index_path.is_absolute():
-        index_path = (repo_root / index_path).resolve()
+    index_path = _resolve_git_index_path(repo_root)
     backup_path = tx_dir / "git-index.backup"
     index_existed = index_path.exists()
+    initial_index_identity = _git_index_identity(index_path)
     if index_existed:
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(index_path, backup_path)
@@ -307,6 +466,9 @@ def _capture_git_state(repo_root: Path, tx_dir: Path) -> dict[str, Any]:
         "index_path": str(index_path),
         "index_existed": index_existed,
         "index_backup": str(backup_path),
+        "index_backup_sha256": hashlib.sha256(backup_path.read_bytes()).hexdigest() if index_existed else "",
+        "initial_index_identity": initial_index_identity,
+        "post_apply_index_identity": None,
         "applied_commit": "",
         "restored": False,
     }
@@ -334,6 +496,10 @@ def record_transaction_git_commit(transaction_path: str | Path | None, commit_ha
     if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
         return
     git_state["applied_commit"] = str(commit_hash).strip()
+    index_path = Path(str(git_state.get("index_path") or ""))
+    if not str(index_path):
+        raise RuntimeError("Apply transaction is missing its Git index path")
+    git_state["post_apply_index_identity"] = _git_index_identity(index_path)
     git_state["recorded_at"] = _utc_now()
     tx["git_state"] = git_state
     tx["updated_at"] = _utc_now()
@@ -346,26 +512,29 @@ def _restore_git_state(repo_root: Path, tx: dict[str, Any]) -> str:
     if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
         return "not-applicable"
     if bool(git_state.get("restored")):
+        _verify_git_state_restored(repo_root, tx)
         return "already-restored"
 
+    _preflight_git_restore(repo_root, tx)
     initial_head = str(git_state.get("initial_head") or "").strip()
     applied_commit = str(git_state.get("applied_commit") or "").strip()
-    current_head = _current_git_head(repo_root)
+
+    # Restore the exact user index first. A later soft rewind changes only HEAD,
+    # so a rewind failure remains safely resumable without losing staged work.
+    index_path = Path(str(git_state.get("index_path") or ""))
+    index_existed = bool(git_state.get("index_existed"))
+    backup_path = Path(str(git_state.get("index_backup") or ""))
+    if index_existed:
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(backup_path, index_path)
+    else:
+        index_path.unlink(missing_ok=True)
 
     if applied_commit:
-        if current_head != applied_commit:
-            raise RuntimeError(
-                "Refusing Git rollback because repository HEAD changed after the devtool apply commit: "
-                f"expected {applied_commit or '<none>'}, found {current_head or '<unborn>'}"
-            )
         if initial_head:
             proc = subprocess.run(
                 ["git", "reset", "--soft", initial_head],
-                cwd=repo_root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
+                cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
             )
             if proc.returncode != 0:
                 raise RuntimeError("Unable to rewind devtool apply commit during rollback: " + (proc.stdout or "").strip())
@@ -375,33 +544,12 @@ def _restore_git_state(repo_root: Path, tx: dict[str, Any]) -> str:
                 raise RuntimeError("Cannot safely rewind first devtool commit from a detached unborn Git HEAD")
             proc = subprocess.run(
                 ["git", "update-ref", "-d", head_ref, applied_commit],
-                cwd=repo_root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
+                cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
             )
             if proc.returncode != 0:
                 raise RuntimeError("Unable to remove first devtool apply commit during rollback: " + (proc.stdout or "").strip())
-    elif current_head != initial_head:
-        raise RuntimeError(
-            "Refusing Git index rollback because repository HEAD changed during the active transaction: "
-            f"expected {initial_head or '<unborn>'}, found {current_head or '<unborn>'}"
-        )
 
-    index_path = Path(str(git_state.get("index_path") or ""))
-    if not str(index_path):
-        raise RuntimeError("Apply transaction is missing its Git index path")
-    index_existed = bool(git_state.get("index_existed"))
-    backup_path = Path(str(git_state.get("index_backup") or ""))
-    if index_existed:
-        if not backup_path.exists():
-            raise RuntimeError(f"Apply transaction Git index backup is missing: {backup_path}")
-        index_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(backup_path, index_path)
-    else:
-        index_path.unlink(missing_ok=True)
-
+    _verify_git_state_restored(repo_root, tx)
     git_state["restored"] = True
     git_state["restored_at"] = _utc_now()
     tx["git_state"] = git_state
@@ -672,6 +820,19 @@ def rollback_transaction(
         repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
         backup_dir = Path(str(tx.get("backup_dir") or path.parent / "backup")).resolve()
         entries = [item for item in tx.get("affected_paths", []) or [] if isinstance(item, dict)]
+        previous_status = str(tx.get("status") or "")
+
+        # All refusal checks happen before any target/index/HEAD mutation.
+        _preflight_git_restore(repo_root, tx)
+        if previous_status == "rollback-failed":
+            _preflight_resume_guards(repo_root, entries)
+        else:
+            for entry in entries:
+                if bool(entry.get("verified")):
+                    continue
+                rel = _safe_rel(str(entry.get("path") or ""))
+                entry["resume_target_identity"] = _path_identity(repo_root / rel)
+
         tx["schema_version"] = 2
         tx["status"] = "rollback-requested"
         tx["rollback_reason"] = reason
@@ -731,7 +892,11 @@ def rollback_transaction(
                 if not expected:
                     expected = _hash_path(source)
                     entry["backup_sha256"] = expected
-                    persist()
+                expected_identity = entry.get("backup_identity")
+                if not isinstance(expected_identity, dict):
+                    expected_identity = _path_identity(source)
+                    entry["backup_identity"] = expected_identity
+                persist()
 
                 if state in {"pending", "staging", "rollback-failed"}:
                     entry["restore_state"] = "staging"
@@ -739,9 +904,10 @@ def rollback_transaction(
                     _delete_path(stage)
                     _copy_path(source, stage)
                     actual_stage = _hash_path(stage)
-                    if actual_stage != expected:
+                    actual_stage_identity = _path_identity(stage)
+                    if actual_stage != expected or actual_stage_identity != expected_identity:
                         raise RuntimeError(
-                            f"Rollback staging verification failed for {rel}: expected {expected}, got {actual_stage}"
+                            f"Rollback staging verification failed for {rel}: backup identity did not match staged copy"
                         )
                     entry["restore_state"] = "staged"
                     state = "staged"
@@ -757,6 +923,7 @@ def rollback_transaction(
                             raise RuntimeError(f"Ambiguous rollback state for {rel}: target and displaced copy both exist")
                     elif target.exists() or target.is_symlink():
                         os.replace(target, displaced)
+                    entry["resume_target_identity"] = _path_identity(target)
                     entry["restore_state"] = "target-displaced"
                     state = "target-displaced"
                     persist()
@@ -769,16 +936,19 @@ def rollback_transaction(
                         if not (stage.exists() or stage.is_symlink()):
                             raise RuntimeError(f"Rollback staged copy disappeared for {rel}")
                         os.replace(stage, target)
+                    entry["resume_target_identity"] = _path_identity(target)
                     entry["restore_state"] = "restored"
                     state = "restored"
                     persist()
 
                 if state in {"restored", "verified"}:
                     actual = _hash_path(target)
+                    actual_identity = _path_identity(target)
                     entry["restored_sha256"] = actual
-                    if actual != expected:
+                    entry["restored_identity"] = actual_identity
+                    if actual != expected or actual_identity != expected_identity:
                         raise RuntimeError(
-                            f"Rollback verification failed for {rel}: expected {expected}, got {actual}"
+                            f"Rollback verification failed for {rel}: restored path identity differs from transaction backup"
                         )
                     entry["verified"] = True
                     entry["restore_state"] = "verified"
@@ -794,6 +964,7 @@ def rollback_transaction(
                             raise RuntimeError(f"Ambiguous removal state for {rel}: target and quarantine both exist")
                     elif target.exists() or target.is_symlink():
                         os.replace(target, displaced)
+                    entry["resume_target_identity"] = _path_identity(target)
                     entry["restore_state"] = "removed"
                     state = "removed"
                     persist()

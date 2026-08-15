@@ -111,6 +111,7 @@ final class RepositoryWorkspaceStore {
                     "interrupted", operation.summary, "");
             changed = true;
         }
+        if (changed) scheduleNext(app, clean(repositoryId));
         return changed ? database.repositoryOperations(repositoryId, 100) : values;
     }
 
@@ -147,19 +148,35 @@ final class RepositoryWorkspaceStore {
                     DebugRecorder.details("operation", orphaned.type));
             boolean terminated = new RootCommandBroker(app).terminateOperationProcess(orphaned.operationId);
             long now = System.currentTimeMillis();
-            orphaned.state = terminated ? "cancelled" : "interrupted";
+            if (!terminated) {
+                orphaned.state = "orphaned";
+                orphaned.finishedAt = 0L;
+                orphaned.exitCode = -1;
+                orphaned.cancellable = true;
+                orphaned.summary = "Root Git process tree could not be proven terminated; queue remains blocked";
+                database.upsertRepositoryOperation(orphaned);
+                database.addRepositoryEvent(orphaned.repositoryId, orphaned.runId,
+                        "GIT_" + orphaned.type + "_ORPHANED", orphaned.summary, now);
+                DebugRecorder.warning(app, "repo", "REPO_ORPHAN_TERMINATION_UNVERIFIED",
+                        "RepositoryWorkspaceStore", orphaned.runId, orphaned.repositoryId, orphaned.operationId, "",
+                        orphaned.summary, DebugRecorder.details("operation", orphaned.type));
+                broadcast(app, orphaned.repositoryId, orphaned.summary);
+                if (repository != null) new RepositoryNotificationController(app).show(repository, orphaned);
+                scheduleNext(app, id);
+                return false;
+            }
+            orphaned.state = "cancelled";
             orphaned.finishedAt = now;
             orphaned.exitCode = 130;
             orphaned.cancellable = false;
-            orphaned.summary = terminated ? "Orphaned root Git operation terminated"
-                    : "The orphaned root process was no longer running";
+            orphaned.summary = "Orphaned root Git operation terminated";
             database.upsertRepositoryOperation(orphaned);
             database.addRepositoryEvent(orphaned.repositoryId, orphaned.runId,
-                    "GIT_" + orphaned.type + "_" + orphaned.state.toUpperCase(java.util.Locale.ROOT),
-                    orphaned.summary, now);
+                    "GIT_" + orphaned.type + "_CANCELLED", orphaned.summary, now);
             finishSyntheticRun(app, orphaned, repository, orphaned.state, orphaned.summary, "");
             broadcast(app, orphaned.repositoryId, orphaned.summary);
             if (repository != null) new RepositoryNotificationController(app).show(repository, orphaned);
+            scheduleNext(app, id);
             return true;
         }
         completeCancelled(app, removed, "Cancelled before the operation started");
@@ -185,6 +202,7 @@ final class RepositoryWorkspaceStore {
         RepositoryOperationRecord operation = DevtoolDatabase.get(app).repositoryOperation(wanted);
         if (!RepoQueueRecovery.canMarkInterrupted(operation)) return false;
         if (activeInMemory(id, wanted)) return false;
+        if (new RootCommandBroker(app).operationProcessAlive(wanted)) return false;
         RepositoryRecord repository = DevtoolDatabase.get(app).repository(operation.repositoryId);
         long now = System.currentTimeMillis();
         String previousState = operation.state;
@@ -205,6 +223,7 @@ final class RepositoryWorkspaceStore {
         synchronized (LOCK) { ACTIVE.remove(operation.repositoryId); }
         broadcast(app, operation.repositoryId, operation.summary);
         if (repository != null) new RepositoryNotificationController(app).show(repository, operation);
+        scheduleNext(app, id);
         return true;
     }
 
@@ -406,7 +425,19 @@ final class RepositoryWorkspaceStore {
         scheduleNext(app, repository.repositoryId);
     }
 
+    private static boolean liveOrphanBlocksQueue(Context app, String repositoryId) {
+        DevtoolDatabase database = DevtoolDatabase.get(app);
+        RootCommandBroker broker = null;
+        for (RepositoryOperationRecord operation : database.repositoryOperations(clean(repositoryId), 100)) {
+            if (!operation.state.equals("orphaned")) continue;
+            if (broker == null) broker = new RootCommandBroker(app);
+            if (broker.operationProcessAlive(operation.operationId)) return true;
+        }
+        return false;
+    }
+
     private static void scheduleNext(Context app, String repositoryId) {
+        if (liveOrphanBlocksQueue(app, repositoryId)) return;
         QueuedOperation next;
         RootCommandBroker.CancellationToken token;
         synchronized (LOCK) {
@@ -474,6 +505,31 @@ final class RepositoryWorkspaceStore {
             message = state.equals("cancelled") ? queued.request.operation.cancelledLabel
                     : queued.request.operation.failureLabel + ": "
                         + compact(error.getMessage(), "Unexpected repository error");
+        }
+
+        if (!result.processTreeCleared) {
+            state = "orphaned";
+            message = "Root Git process tree is still alive after timeout/cancel; queue remains blocked";
+            operation.state = "orphaned";
+            operation.finishedAt = 0L;
+            operation.exitCode = -1;
+            operation.cancellable = true;
+            operation.summary = message;
+            database.upsertRepositoryOperation(operation);
+            database.addRepositoryEvent(operation.repositoryId, operation.runId,
+                    "GIT_" + operation.type + "_ORPHANED", message, System.currentTimeMillis());
+            DebugRecorder.warning(app, "repo", "REPO_OPERATION_ORPHANED", "RepositoryWorkspaceStore",
+                    operation.runId, operation.repositoryId, operation.operationId, "", message,
+                    DebugRecorder.details("operation", operation.type, "timed_out", result.timedOut,
+                            "cancelled", result.cancelled, "process_tree_cleared", false));
+            updateSyntheticRun(app, queued.repository, operation, "waiting", message,
+                    "Root process-tree termination could not be verified", "warning");
+            synchronized (LOCK) { ACTIVE.remove(operation.repositoryId); }
+            broadcast(app, operation.repositoryId, message);
+            app.sendBroadcast(new Intent(RepositoryStore.ACTION_UPDATED).setPackage(app.getPackageName()));
+            new RepositoryNotificationController(app).show(queued.repository, operation);
+            scheduleNext(app, operation.repositoryId);
+            return;
         }
 
         DebugRecorder.record(app, state.equals("ok") ? "success" : state.equals("cancelled") ? "warning" : "error",
