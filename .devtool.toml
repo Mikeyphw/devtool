@@ -1,7 +1,7 @@
 [project]
 kind = "python"
 run_module = "devtool"
-
+default_target = "devtool"
 [execution]
 environment = "auto"
 chroot_name = "androidos"
@@ -12,6 +12,11 @@ test_framework = "pytest"
 locked = true
 install_project = true
 isolation = true
+
+[targets.devtool]
+type = "python"
+root = "."
+execution_environment = "native-termux"
 
 [targets.android_hud]
 type = "android"

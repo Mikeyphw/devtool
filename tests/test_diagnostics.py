@@ -30,6 +30,27 @@ class DiagnosticTests(unittest.TestCase):
 
         self.assertEqual(classify_failure("android-validation-build", output, 2), "compile_failure")
 
+
+    def test_successful_python_build_noise_is_not_reported_as_generic_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = (
+                "warning: Failed to hardlink files; falling back to full copy. "
+                "This may lead to degraded performance.\n"
+                "warning: build_py: byte-compiling is disabled, skipping.\n"
+                "warning: install_lib: byte-compiling is disabled, skipping.\n"
+                "warning: a real actionable packaging warning\n"
+            )
+            issues = parse_issues(root, "build", output)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].severity, "warning")
+        self.assertEqual(issues[0].code, "GENERIC")
+        self.assertEqual(
+            issues[0].message,
+            "a real actionable packaging warning",
+        )
+
     def test_parse_dotnet_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -61,6 +61,7 @@ from .execution_environments import (
     CHROOT as EXECUTION_CHROOT,
     NATIVE_TERMUX as EXECUTION_NATIVE_TERMUX,
     SSH as EXECUTION_SSH,
+    PROOT_DISTRO as EXECUTION_PROOT_DISTRO,
     EXECUTION_ENVIRONMENTS,
     assert_chroot_path_safe,
     detect_current_environment,
@@ -90,9 +91,19 @@ from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
-from .summary import build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
+from .summary import artifact_confirmation_text, build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_toolchain_wrapper, toolchain_doctor_rows
+from .termux_toolchains import (
+    VALID_GRADLE_PROVIDERS, VALID_JAVA_PROVIDERS, VALID_NATIVE_PROVIDERS,
+    VALID_NATIVE_CACHE_PROVIDERS, VALID_ANDROID_BUILD_TOOLS_PROVIDERS,
+)
+from .termux_diagnostics import (
+    format_package_recommendations_json,
+    provider_explanation_rows,
+    termux_integration_doctor_rows,
+    termux_report_payload,
+)
 from .transactions import (
     abandon_transaction,
     devtool_xdg_dir,
@@ -103,6 +114,7 @@ from .transactions import (
     mark_transaction_validation_blocked,
     mark_transaction_validation_running,
     read_transaction,
+    record_transaction_git_commit,
     rollback_transaction,
     transaction_pending_validation,
     transaction_root,
@@ -366,11 +378,12 @@ def build_parser() -> argparse.ArgumentParser:
     exec_group.add_argument("--host", action="store_true", help="Force command phases to run in devtool's current host environment")
     exec_group.add_argument("--chroot", default="", help="Run command phases inside a named chroot via chrootctl exec")
     exec_group.add_argument("--ssh", "--ssh-host", dest="ssh", default="", metavar="HOST", help="Use HOST as the SSH execution target (whole devtool or command-phase mode)")
+    exec_group.add_argument("--proot-distro", dest="proot_distro", default="", metavar="DISTRO", help="Run command phases inside a PRoot-Distro container; guest does not need devtool")
     exec_group.add_argument(
         "--execution-environment",
         choices=EXECUTION_ENVIRONMENTS,
         default=EXECUTION_AUTO,
-        help="Execution backend: auto, native-termux, chroot, desktop-linux, ssh, android-device, or external-device",
+        help="Execution backend: auto, native-termux, chroot, proot-distro, desktop-linux, ssh, android-device, or external-device",
     )
     environment.add_argument("--ssh-port", type=int, default=0, metavar="PORT", help="SSH port (default: 22 or [ssh].port)")
     environment.add_argument("--ssh-user", default="", metavar="USER", help="SSH login user")
@@ -382,6 +395,25 @@ def build_parser() -> argparse.ArgumentParser:
     environment.add_argument("--ssh-stage-dir", default="", metavar="PATH", help="Remote staging root for copied overlays/helper files")
     environment.add_argument("--ssh-no-artifact-copy", action="store_true", help="Disable automatic SSH/SCP artifact transfer")
     environment.add_argument("--ssh-detached", action="store_true", help="Start/reuse the remote tmux session without attaching (whole-run devtool mode)")
+    environment.add_argument("--proot-user", default="", metavar="USER", help="PRoot-Distro guest user (default: root or [proot].user)")
+    environment.add_argument("--proot-cwd", default="", metavar="PATH", help="Initial absolute working directory inside the PRoot guest")
+    environment.add_argument("--proot-repo-mount", default="", metavar="PATH", help="Absolute guest mount point for the current repository")
+    environment.add_argument("--proot-bind", action="append", default=[], metavar="HOST:GUEST", help="Additional PRoot bind; repeatable, guest destination must be absolute")
+    environment.add_argument("--proot-env", action="append", default=[], metavar="NAME=VALUE", help="Explicit environment variable passed to the PRoot guest; repeatable")
+    environment.add_argument("--proot-no-auto-bind-repo", action="store_true", help="Do not automatically bind the repository into the PRoot guest")
+    environment.add_argument("--proot-shared-home", action="store_true", help="Ask PRoot-Distro to share the host home with the guest")
+    environment.add_argument("--proot-shared-tmp", action="store_true", help="Ask PRoot-Distro to share Termux tmp with the guest")
+    proot_isolation = environment.add_mutually_exclusive_group()
+    proot_isolation.add_argument("--proot-isolated", action="store_true", help="Use PRoot-Distro isolated mode (Termux hosts only)")
+    proot_isolation.add_argument("--proot-minimal", action="store_true", help="Use PRoot-Distro minimal mode (Termux hosts only)")
+    environment.add_argument("--proot-stage-dir", default="", metavar="PATH", help="Host staging directory bound into the PRoot guest")
+    environment.add_argument("--termux-resource-profile", choices=["auto", "automatic", "conservative", "balanced", "performance"], default="", help="Termux resource defaults for workers/JVM/native concurrency")
+    wake_lock_group = environment.add_mutually_exclusive_group()
+    wake_lock_group.add_argument("--termux-wake-lock", action="store_true", help="Acquire a Termux wake lock while command phases run")
+    wake_lock_group.add_argument("--no-termux-wake-lock", action="store_true", help="Disable Termux wake-lock integration for this run")
+    environment.add_argument("--shared-storage-policy", choices=["allow", "warn", "deny"], default="", help="Policy for repositories on Android shared storage")
+    environment.add_argument("--allow-shared-storage-build", action="store_true", help="Allow a build from Android shared storage for this run")
+    environment.add_argument("--artifact-export", default="", metavar="DIR", help="Copy verified artifacts to DIR after successful local verification")
     environment.add_argument("--no-auto-chroot", action="store_true", help="On Termux, do not auto-route command phases through chrootctl")
 
     bootstrap = parser.add_argument_group("Toolchain bootstrap")
@@ -391,8 +423,14 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--toolchain-profile", default="", help="Chroot/toolchain profile name from global or repo config")
     bootstrap.add_argument("--android-sdk-root", default="", help="Android SDK root for Android/Gradle projects")
     bootstrap.add_argument("--gradle-command", default="", help="Gradle or gradlew executable for Android/Gradle projects")
+    bootstrap.add_argument("--gradle-provider", choices=sorted(VALID_GRADLE_PROVIDERS), default="", help="Gradle provider for Android/Gradle projects: auto, wrapper, termux, system, or download")
     bootstrap.add_argument("--java-home", default="", help="JDK home for Android/Gradle projects")
+    bootstrap.add_argument("--java-provider", choices=sorted(VALID_JAVA_PROVIDERS), default="", help="Java provider for Android/Gradle projects: auto, termux, or system")
     bootstrap.add_argument("--gradle-user-home", default="", help="GRADLE_USER_HOME for Android/Gradle projects")
+    bootstrap.add_argument("--native-provider", choices=sorted(VALID_NATIVE_PROVIDERS), default="", help="Native provider for Android/native projects: auto, termux-sysroot, ndk, or system")
+    bootstrap.add_argument("--native-cache", choices=sorted(VALID_NATIVE_CACHE_PROVIDERS), default="", help="Native compiler cache provider: auto, ccache, or off")
+    bootstrap.add_argument("--android-build-tools-provider", choices=sorted(VALID_ANDROID_BUILD_TOOLS_PROVIDERS), default="", help="Android native build-tools provider: auto, termux, sdk, commit451, or none")
+    bootstrap.add_argument("--aapt2-provider", choices=["auto", "termux", "sdk", "revanced", "none"], default="", help="AAPT2 provider for Android builds")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -431,6 +469,7 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if name == "doctor":
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
+            cmd.add_argument("--explain", action="store_true", help="Explain Termux provider selection and rejection reasons")
         if name == "clean":
             cmd.add_argument("--caches", action="store_true", help="Also prune devtool-managed caches and transient state")
         if name == "test":
@@ -625,6 +664,17 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_sub.add_parser("resolve")
     cfg_doctor = cfg_sub.add_parser("doctor")
     cfg_doctor.add_argument("--global", dest="global_config", action="store_true", help="Diagnose the user global config")
+
+    termux_cmd = subparsers.add_parser("termux", help="Inspect native Termux providers, packages, and PRoot guests")
+    termux_sub = termux_cmd.add_subparsers(dest="termux_command", required=True)
+    termux_doctor = termux_sub.add_parser("doctor", help="Run the detailed Termux/provider doctor")
+    termux_doctor.add_argument("--distro", default="", help="Probe an installed PRoot-Distro guest by name")
+    termux_doctor.add_argument("--explain", action="store_true", help="Include provider selection and rejection reasons")
+    termux_doctor.add_argument("--format", choices=["text", "json"], default="text")
+    termux_packages = termux_sub.add_parser("packages", help="Show read-only Termux package recommendations")
+    termux_packages.add_argument("--format", choices=["text", "json"], default="text")
+    termux_explain = termux_sub.add_parser("explain", help="Explain Termux tool-provider decisions")
+    termux_explain.add_argument("--format", choices=["text", "json"], default="text")
 
     detect_cmd = subparsers.add_parser("detect")
     detect_cmd.add_argument("--format", choices=["text", "json"], default="text")
@@ -1544,8 +1594,14 @@ def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | No
 def _finish_live_progress(live_progress: TaskerProgressSink | None, *, totals: dict[str, int], results: list[OperationResult]) -> None:
     if live_progress is None:
         return
+    # Control/API responses intentionally use a compact totals payload that may
+    # omit diagnostic-only keys such as ``errors``.  Live progress is an output
+    # adapter and must tolerate those valid partial totals rather than turning a
+    # successful validation-control request into an internal KeyError.
+    failed = int(totals.get("failed", 0) or 0)
+    errors = int(totals.get("errors", 0) or 0)
     live_progress.finished(
-        ok=totals["failed"] == 0 and totals["errors"] == 0,
+        ok=failed == 0 and errors == 0,
         totals=totals,
         results=results,
         notification=None,
@@ -2307,6 +2363,37 @@ def _apply_validation_resource_overrides(config: ProjectConfig, args: argparse.N
 
 
 def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -> None:
+    if str(getattr(args, "proot_distro", "") or "").strip():
+        config.execution_environment = EXECUTION_PROOT_DISTRO
+    termux = config.runner_options.setdefault("termux", {})
+    if not isinstance(termux, dict):
+        termux = {}
+        config.runner_options["termux"] = termux
+    requested_profile = str(getattr(args, "termux_resource_profile", "") or termux.get("resource_profile") or "balanced")
+    if str(getattr(args, "termux_resource_profile", "") or ""):
+        termux["resource_profile"] = requested_profile
+    if bool(getattr(args, "termux_wake_lock", False)):
+        termux["wake_lock"] = "on"
+    elif bool(getattr(args, "no_termux_wake_lock", False)):
+        termux["wake_lock"] = "off"
+    if str(getattr(args, "shared_storage_policy", "") or ""):
+        storage = termux.setdefault("storage", {})
+        if isinstance(storage, dict):
+            storage["shared_storage_policy"] = args.shared_storage_policy
+    if str(getattr(args, "artifact_export", "") or ""):
+        artifacts = termux.setdefault("artifacts", {})
+        if isinstance(artifacts, dict):
+            artifacts["export_dir"] = args.artifact_export
+    from .termux_runtime import apply_termux_resource_defaults
+    requested_execution = str(getattr(args, "execution_environment", "") or config.execution_environment or "auto").strip().lower().replace("_", "-")
+    if str(getattr(args, "ssh", "") or "").strip():
+        requested_execution = "ssh"
+    # Termux resource limits describe work running on this Android device. Do
+    # not bake phone-sized Gradle/JVM limits into SSH command plans that will
+    # execute on an independent remote host. Chroot and PRoot still share the
+    # phone's CPU/RAM and therefore keep the Termux profile.
+    if requested_execution not in {"ssh", "desktop-linux", "android-device", "external-device"}:
+        apply_termux_resource_defaults(config.runner_options, profile_name=requested_profile)
     _apply_validation_resource_profile(config, args)
     _apply_validation_resource_overrides(config, args)
     def ensure_section(name: str) -> dict:
@@ -2354,16 +2441,49 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
     if java_home:
         android = ensure_section("android")
         android["java_home"] = java_home
+    java_provider = str(getattr(args, "java_provider", "") or "").strip()
+    if java_provider:
+        android = ensure_section("android")
+        java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
+        java_options = dict(java_options)
+        java_options["provider"] = java_provider
+        android["java"] = java_options
     gradle_command = str(getattr(args, "gradle_command", "") or "").strip()
     if gradle_command:
         gradle = ensure_section("gradle")
         gradle["command"] = gradle_command
+    gradle_provider = str(getattr(args, "gradle_provider", "") or "").strip()
+    if gradle_provider:
+        gradle = ensure_section("gradle")
+        gradle["provider"] = gradle_provider
     gradle_user_home = str(getattr(args, "gradle_user_home", "") or "").strip()
     if gradle_user_home:
         gradle = ensure_section("gradle")
         android = ensure_section("android")
         gradle["user_home"] = gradle_user_home
         android["gradle_user_home"] = gradle_user_home
+    native_provider = str(getattr(args, "native_provider", "") or "").strip()
+    native_cache = str(getattr(args, "native_cache", "") or "").strip()
+    if native_provider or native_cache:
+        android = ensure_section("android")
+        native_options = android.get("native", {}) if isinstance(android.get("native", {}), dict) else {}
+        native_options = dict(native_options)
+        if native_provider:
+            native_options["provider"] = native_provider
+        if native_cache:
+            native_options["cache"] = native_cache
+        android["native"] = native_options
+    build_tools_provider = str(getattr(args, "android_build_tools_provider", "") or "").strip()
+    aapt2_provider = str(getattr(args, "aapt2_provider", "") or "").strip()
+    if build_tools_provider or aapt2_provider:
+        android = ensure_section("android")
+        build_tools = android.get("build_tools", {}) if isinstance(android.get("build_tools", {}), dict) else {}
+        build_tools = dict(build_tools)
+        if build_tools_provider:
+            build_tools["provider"] = build_tools_provider
+        if aapt2_provider:
+            build_tools["aapt2_provider"] = aapt2_provider
+        android["build_tools"] = build_tools
     if args.command in {"build", "b"} and config.kind in {"android", "gradle"}:
         artifacts = config.runner_options.setdefault("artifacts", {})
         if not isinstance(artifacts, dict):
@@ -2620,6 +2740,8 @@ def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
         requested = current_environment
     if bool(getattr(args, "host", False)):
         requested = current_environment
+    elif str(getattr(args, "proot_distro", "") or "").strip():
+        requested = EXECUTION_PROOT_DISTRO
     elif explicit_chroot:
         requested = EXECUTION_CHROOT
     elif requested == EXECUTION_AUTO and configured_environment == EXECUTION_AUTO:
@@ -2704,6 +2826,47 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
 
     plan = _execution_plan_for_args(config, args)
 
+    if plan.current == EXECUTION_NATIVE_TERMUX:
+        from .termux_runtime import is_android_shared_storage, shared_storage_message
+        termux_options = config.runner_options.get("termux", {})
+        termux_options = dict(termux_options) if isinstance(termux_options, dict) else {}
+        storage = termux_options.get("storage", {}) if isinstance(termux_options.get("storage", {}), dict) else {}
+        policy = str(getattr(args, "shared_storage_policy", "") or storage.get("shared_storage_policy") or "warn").strip().lower()
+        if policy not in {"allow", "warn", "deny"}:
+            raise SystemExit(
+                f"Invalid Termux shared-storage policy {policy!r}; expected allow, warn, or deny."
+            )
+        if bool(getattr(args, "allow_shared_storage_build", False)):
+            policy = "allow"
+        if is_android_shared_storage(config.repo_root) and policy != "allow":
+            message = shared_storage_message(config.repo_root)
+            if policy == "deny":
+                raise SystemExit(message + " Override with --allow-shared-storage-build if intentional.")
+            create_console(stderr=True).print(f"[yellow]Warning:[/yellow] {message}")
+
+    if plan.current == EXECUTION_NATIVE_TERMUX and plan.effective == EXECUTION_NATIVE_TERMUX:
+        from .termux_runtime import adapt_termux_script_argv
+        for spec in specs:
+            original = list(spec.argv)
+            adapted, message = adapt_termux_script_argv(
+                original, cwd=spec.cwd or config.repo_root, env={**os.environ, **config.env, **spec.env}
+            )
+            if adapted != original:
+                metadata = dict(spec.metadata)
+                metadata.setdefault("progress_argv", original)
+                metadata["termux_shebang_adapted"] = message
+                spec.metadata = metadata
+                spec.argv = adapted
+            elif message:
+                create_console(stderr=True).print(f"[yellow]Warning:[/yellow] {message}")
+        from .termux_runtime import native_termux_executable_hint
+        for spec in specs:
+            hint = native_termux_executable_hint(
+                spec.argv, cwd=spec.cwd or config.repo_root, env={**os.environ, **config.env, **spec.env}
+            )
+            if hint is not None:
+                raise SystemExit(f"Native Termux executable preflight failed ({hint.kind}): {hint.detail}")
+
     # Validation sessions and retries may outlive the staged Android builder
     # that existed when their command specs were first planned. Refresh it at
     # the final execution boundary before any host-to-chroot path wrapping.
@@ -2712,7 +2875,7 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
 
     # Toolchain discovery occurs in the current host process. Do not inject a
     # host-only mise wrapper into commands that will execute inside a chroot.
-    if not ((plan.uses_chroot and plan.current != EXECUTION_CHROOT) or plan.effective == EXECUTION_SSH):
+    if not ((plan.uses_chroot and plan.current != EXECUTION_CHROOT) or plan.effective in {EXECUTION_SSH, EXECUTION_PROOT_DISTRO}):
         specs = apply_toolchain_wrapper(config, specs)
     preflight = preflight_execution(
         config.repo_root,
@@ -2755,6 +2918,30 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
                 [str(spec.cwd or ""), *spec.argv, *spec.env.values()],
                 context=f"{spec.name} execution plan",
             )
+    elif plan.effective == EXECUTION_PROOT_DISTRO:
+        from .proot_distro_runner import resolve_proot_config, wrap_specs_for_proot_distro
+        try:
+            proot_config = resolve_proot_config(config, args)
+            specs = wrap_specs_for_proot_distro(
+                specs, proot_config, repo_root=config.repo_root, dry_run=bool(getattr(args, "dry_run", False)),
+                project_env=config.env,
+            )
+            if specs and not bool(getattr(args, "json", False)) and not str(getattr(args, "machine", "") or ""):
+                first_metadata = specs[0].metadata
+                bindings = first_metadata.get("proot_bindings", [])
+                repo_host = str(config.repo_root.resolve())
+                repo_guest = ""
+                if isinstance(bindings, list):
+                    for binding in bindings:
+                        if isinstance(binding, dict) and str(binding.get("host") or "") == repo_host:
+                            repo_guest = str(binding.get("guest") or "")
+                            break
+                detail = f"PRoot-Distro {proot_config.distro}: cwd {first_metadata.get('proot_guest_cwd', proot_config.cwd)}"
+                if repo_guest:
+                    detail += f"; repository {repo_host} -> {repo_guest}"
+                create_console(stderr=True).print(f"[cyan]{detail}[/cyan]")
+        except ValueError as exc:
+            raise SystemExit(f"PRoot-Distro command execution unavailable: {exc}") from exc
     elif plan.effective == EXECUTION_SSH:
         from .ssh_tmux_runner import SSHRunnerConfig, wrap_specs_for_ssh_commands
 
@@ -2907,19 +3094,34 @@ def _run_specs_for_args(
     heartbeat_callback=None,
     progress_callback=None,
 ) -> tuple[list[OperationResult], str]:
-    return run_specs(
-        config,
-        _prepare_specs_for_execution(config, specs, args),
-        verbose=args.verbose,
-        dry_run=args.dry_run,
-        continue_on_error=continue_on_error,
-        log_path=log_path,
-        tasker_progress=tasker_progress,
-        shutdown_dotnet=shutdown_dotnet,
-        supervisor_probe=supervisor_probe,
-        heartbeat_callback=heartbeat_callback,
-        progress_callback=progress_callback,
-    )
+    prepared_specs = _prepare_specs_for_execution(config, specs, args)
+    termux_options = config.runner_options.get("termux", {})
+    termux_options = dict(termux_options) if isinstance(termux_options, dict) else {}
+    wake_mode = str(termux_options.get("wake_lock") or "auto")
+    if bool(getattr(args, "termux_wake_lock", False)):
+        wake_mode = "on"
+    elif bool(getattr(args, "no_termux_wake_lock", False)):
+        wake_mode = "off"
+    from .termux_runtime import termux_wake_lock
+    try:
+        with termux_wake_lock(wake_mode):
+            return run_specs(
+                config,
+                prepared_specs,
+                verbose=args.verbose,
+                dry_run=args.dry_run,
+                continue_on_error=continue_on_error,
+                log_path=log_path,
+                tasker_progress=tasker_progress,
+                shutdown_dotnet=shutdown_dotnet,
+                supervisor_probe=supervisor_probe,
+                heartbeat_callback=heartbeat_callback,
+                progress_callback=progress_callback,
+            )
+    finally:
+        if any(str(spec.metadata.get("execution_mode") or "") == "proot-distro" for spec in prepared_specs):
+            from .proot_distro_runner import cleanup_proot_staging
+            cleanup_proot_staging(prepared_specs)
 
 
 
@@ -3524,6 +3726,9 @@ def _finalize_validation_session(
         )
     commit_start = len(results)
     results, raw_output = _maybe_commit_after_apply(config, final_args, results, raw_output, log_path=log_path)
+    _record_transaction_commit_from_results(
+        session.transaction_path, config.repo_root, results, start_index=commit_start
+    )
     commit_failed = any(result.returncode != 0 for result in results[commit_start:])
     if commit_failed:
         mark_validation_validated_uncommitted(session, "post-validation commit failed")
@@ -4986,6 +5191,23 @@ def _maybe_commit_after_apply(
     return results, raw_output
 
 
+def _record_transaction_commit_from_results(
+    transaction_path: str | Path | None,
+    repo_root: Path,
+    results: list[OperationResult],
+    *,
+    start_index: int = 0,
+) -> None:
+    if not transaction_path:
+        return
+    committed = any(
+        result.name == "git-commit" and result.returncode == 0 and not result.skipped
+        for result in results[start_index:]
+    )
+    if committed:
+        record_transaction_git_commit(transaction_path, latest_commit_hash(repo_root))
+
+
 def _ensure_run_id(args: argparse.Namespace) -> str:
     run_id = str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")).strip()
     if not run_id:
@@ -5085,6 +5307,7 @@ def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict
     if console.is_interactive and sys.stdin.isatty():
         if not Confirm.ask("Continue with this artifact?", default=True, console=console):
             raise SystemExit(1)
+        console.print(artifact_confirmation_text(manifest))
         return
     raise SystemExit("Artifact manifest confirmation requires --yes in non-interactive mode.")
 
@@ -6143,12 +6366,16 @@ def _run_sequential_overlays(
 
         commit_args = argparse.Namespace(**vars(args))
         commit_args.artifact = str(source_bundle or apply_artifact)
+        commit_start = len(all_results)
         all_results, commit_raw = _maybe_commit_after_apply(
             config,
             commit_args,
             all_results,
             "\n\n".join(raw_sections),
             log_path=log_path,
+        )
+        _record_transaction_commit_from_results(
+            transaction_path, config.repo_root, all_results, start_index=commit_start
         )
         raw_sections = [commit_raw]
 
@@ -6587,6 +6814,11 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
         ("fixed", ", ".join(fixed) if fixed else "-"),
     ]
     rows.extend(toolchain_doctor_rows(config))
+    rows.extend(termux_integration_doctor_rows(
+        config,
+        explain=bool(getattr(args, "explain", False)) if args is not None else False,
+        proot_distro=str(getattr(args, "proot_distro", "") or "") if args is not None else "",
+    ))
     rows.extend(runner.doctor_rows(config))
     render_status_table(rows)
 
@@ -7274,6 +7506,41 @@ def _main_after_parse(
         console.print(f"[red]Unknown logs command: {logs_command}[/red]")
         return 2
 
+    if args.command == "termux":
+        repo = Path(args.repo or Path.cwd()).resolve()
+        config = load_project_config(
+            str(repo), args.config, variant_name=str(getattr(args, "variant", "") or ""),
+            kind_override=str(getattr(args, "project_type", "auto") or "auto"),
+        )
+        action = str(getattr(args, "termux_command", "") or "")
+        output_format = str(getattr(args, "format", "text") or "text")
+        if action == "doctor":
+            payload = termux_report_payload(
+                config,
+                explain=bool(getattr(args, "explain", False)),
+                proot_distro=str(getattr(args, "distro", "") or ""),
+            )
+            if output_format == "json":
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([(item["name"], item["value"]) for item in payload["rows"]])
+            return 0
+        if action == "packages":
+            if output_format == "json":
+                print(format_package_recommendations_json(config))
+            else:
+                from .termux_diagnostics import package_recommendation_rows
+                render_status_table(package_recommendation_rows(config))
+            return 0
+        if action == "explain":
+            rows = provider_explanation_rows(config)
+            if output_format == "json":
+                print(json.dumps([{"name": name, "value": value} for name, value in rows], indent=2, ensure_ascii=False))
+            else:
+                render_status_table(rows)
+            return 0
+        parser.error(f"Unknown termux command: {action}")
+
     if args.command in {"init-config", "init"}:
         target = write_template_config(Path(args.repo_root), force=args.force)
         console.print(f"[green]Wrote[/green] {target}")
@@ -7800,7 +8067,11 @@ def _main_after_parse(
                     )
                     results.append(rollback_result)
                     raw_output += "\n\n" + rollback_raw
+                commit_start = len(results)
                 results, raw_output = _maybe_commit_after_apply(config, args, results, raw_output, log_path=log_path)
+                _record_transaction_commit_from_results(
+                    transaction_path, config.repo_root, results, start_index=commit_start
+                )
                 if transaction_path and not any(result.returncode != 0 for result in results):
                     verification = _verify_applied_artifact_effects(config, args)
                     if verification is not None:

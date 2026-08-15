@@ -529,6 +529,8 @@ def _iter_process_output_lines(
     memory_guard_mb: int = 0,
     supervisor_probe: Callable[[], tuple[str, str] | dict | str | None] | None = None,
     heartbeat_callback: Callable[[], None] | None = None,
+    stall_warning_seconds: float | None = None,
+    stall_warning_message: str = "",
 ):
     """Yield child output without waiting forever for pipe EOF.
 
@@ -569,6 +571,7 @@ def _iter_process_output_lines(
     memory_guard_checked_at = 0.0
     supervisor_checked_at = 0.0
     heartbeat_checked_at = 0.0
+    stall_warning_emitted = False
     memory_guard_history: deque[int] = deque(maxlen=12)
     memory_guard_details = ""
     memory_guard_sustained_limit, memory_guard_hard_limit = _memory_guard_limits(memory_guard_mb)
@@ -648,6 +651,16 @@ def _iter_process_output_lines(
                 break
 
             now_monotonic = time.monotonic()
+            if (
+                stall_warning_seconds is not None
+                and stall_warning_seconds > 0
+                and not stall_warning_emitted
+                and (now_monotonic - last_output_at) >= stall_warning_seconds
+            ):
+                stall_warning_emitted = True
+                message = "\n" + (stall_warning_message or f"Devtool stall diagnostic: no child output for {stall_warning_seconds:g} seconds; process continues.") + "\n"
+                for line in emit_and_track(message):
+                    yield line
             if heartbeat_callback is not None and (now_monotonic - heartbeat_checked_at) >= 1.0:
                 heartbeat_checked_at = now_monotonic
                 try:
@@ -1099,6 +1112,17 @@ def _run_process_live(
     try:
         idle_timeout = _idle_timeout_for(parser_argv, command_name)
         completion_idle_grace = _test_completion_grace_for(parser_argv, command_name)
+        stall_warning_seconds = None
+        stall_warning_message = ""
+        if progress_parser == "gradle":
+            raw_stall = str(env.get("DEVTOOL_GRADLE_STALL_WARNING_SECONDS", "180") or "180").strip()
+            try:
+                stall_warning_seconds = max(0.0, float(raw_stall))
+            except ValueError:
+                stall_warning_seconds = 180.0
+            if stall_warning_seconds > 0:
+                from .termux_runtime import gradle_stall_message
+                stall_warning_message = gradle_stall_message(stall_warning_seconds)
         completion_detector = _dotnet_test_completion_status if completion_idle_grace is not None else None
         if tracker is None:
             for line in _iter_process_output_lines(
@@ -1109,6 +1133,8 @@ def _run_process_live(
                 memory_guard_mb=memory_guard_mb,
                 supervisor_probe=supervisor_probe,
                 heartbeat_callback=heartbeat_callback,
+                stall_warning_seconds=stall_warning_seconds,
+                stall_warning_message=stall_warning_message,
             ):
                 output_parts.append(line)
                 _append_live_log(line)
@@ -1127,6 +1153,8 @@ def _run_process_live(
                 memory_guard_mb=memory_guard_mb,
                 supervisor_probe=supervisor_probe,
                 heartbeat_callback=heartbeat_callback,
+                stall_warning_seconds=stall_warning_seconds,
+                stall_warning_message=stall_warning_message,
             ):
                 output_parts.append(line)
                 _append_live_log(line)
@@ -1415,8 +1443,14 @@ def run_specs(
             continue
 
         env = os.environ.copy()
-        env.update(config.env)
-        env.update(spec.env)
+        if str(spec.metadata.get("execution_mode") or "") != "proot-distro":
+            env.update(config.env)
+            env.update(spec.env)
+        else:
+            # Project/spec environment values have already been converted into
+            # explicit PRoot --env arguments. Do not leak them into the host
+            # proot-distro process as a second, backend-ambiguous channel.
+            env.update(spec.env)
 
         started = time.perf_counter()
         started_wall = time.time()
@@ -1430,6 +1464,14 @@ def run_specs(
             progress_cwd = str(spec.metadata.get("progress_cwd") or cwd)
             progress_parser = str(spec.metadata.get("progress_parser") or "")
             requested_gradle_tasks = _requested_gradle_tasks_for_spec(spec, progress_argv)
+            try:
+                overall_phase_index = int(spec.metadata.get("validation_phase_index") or spec_index)
+            except (TypeError, ValueError):
+                overall_phase_index = spec_index
+            try:
+                overall_phase_total = int(spec.metadata.get("validation_phase_total") or len(specs))
+            except (TypeError, ValueError):
+                overall_phase_total = len(specs)
             memory_guard_mb = int(
                 spec.metadata.get("validation_memory_guard_mb")
                 or spec.metadata.get("memory_guard_mb")
@@ -1449,8 +1491,8 @@ def run_specs(
                     verbose=True,
                     command_name=spec.name,
                     tasker_progress=tasker_progress,
-                    phase_index=spec_index,
-                    phase_total=len(specs),
+                    phase_index=overall_phase_index,
+                    phase_total=overall_phase_total,
                     progress_argv=progress_argv,
                     progress_cwd=progress_cwd,
                     display_target=display_target,
@@ -1474,8 +1516,8 @@ def run_specs(
                         verbose=False,
                         command_name=spec.name,
                         tasker_progress=tasker_progress,
-                        phase_index=spec_index,
-                        phase_total=len(specs),
+                        phase_index=overall_phase_index,
+                        phase_total=overall_phase_total,
                         progress_argv=progress_argv,
                         progress_cwd=progress_cwd,
                         display_target=display_target,
@@ -1491,27 +1533,35 @@ def run_specs(
                         progress_callback=progress_callback,
                     )
                 else:
-                    with console.status(f"[bold cyan]Running {spec.name}[/bold cyan]", spinner="dots"):
-                        returncode, output = _run_process_live(
-                            effective_argv,
-                            cwd=cwd,
-                            env=env,
-                            verbose=False,
-                            command_name=spec.name,
-                            tasker_progress=tasker_progress,
-                            phase_index=spec_index,
-                            phase_total=len(specs),
-                            progress_argv=progress_argv,
-                            progress_cwd=progress_cwd,
-                            progress_parser=progress_parser,
-                            requested_gradle_tasks=requested_gradle_tasks,
-                            live_log_path=log_path,
-                            live_log_header=command_line + "\n" if log_path is not None else "",
-                            memory_guard_mb=memory_guard_mb,
-                            supervisor_probe=supervisor_probe,
-                            heartbeat_callback=heartbeat_callback,
-                            progress_callback=progress_callback,
-                        )
+                    returncode, output = _run_process_live(
+                        effective_argv,
+                        cwd=cwd,
+                        env=env,
+                        verbose=False,
+                        command_name=spec.name,
+                        tasker_progress=tasker_progress,
+                        phase_index=overall_phase_index,
+                        phase_total=overall_phase_total,
+                        progress_argv=progress_argv,
+                        progress_cwd=progress_cwd,
+                        display_target=str(
+                            spec.metadata.get("bundle_target")
+                            or spec.metadata.get("project_root")
+                            or spec.metadata.get("workspace_root")
+                            or spec.metadata.get("validation_scope")
+                            or progress_cwd
+                        ),
+                        target_phase_index=target_phase_index,
+                        target_phase_total=target_phase_total,
+                        progress_parser=progress_parser,
+                        requested_gradle_tasks=requested_gradle_tasks,
+                        live_log_path=log_path,
+                        live_log_header=command_line + "\n" if log_path is not None else "",
+                        memory_guard_mb=memory_guard_mb,
+                        supervisor_probe=supervisor_probe,
+                        heartbeat_callback=heartbeat_callback,
+                        progress_callback=progress_callback,
+                    )
         finally:
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
@@ -1527,7 +1577,10 @@ def run_specs(
             report_parsers = [report_parser] if report_parser else []
         report_parsers = list(dict.fromkeys(report_parsers))
         nonfatal_report_issues: list[Issue] = []
-        if report_parsers:
+        report_interrupted = returncode == 130 or "Interrupted by user. Child process was terminated." in output
+        if report_parsers and report_interrupted:
+            result_metadata["report_parsing_skipped"] = "interrupted"
+        if report_parsers and not report_interrupted:
             report_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
             for report_parser in report_parsers:
                 collection = collect_report_metadata(
@@ -1626,6 +1679,27 @@ def run_specs(
                 started_at=started_wall,
                 tasks=result_metadata.get("gradle_tasks") or (),
             )
+            termux_options = config.runner_options.get("termux", {})
+            termux_options = dict(termux_options) if isinstance(termux_options, dict) else {}
+            termux_artifacts = termux_options.get("artifacts", {}) if isinstance(termux_options.get("artifacts", {}), dict) else {}
+            export_dir = str(termux_artifacts.get("export_dir") or "").strip()
+            artifact_errors = [issue for issue in artifact_issues if issue.severity == "error"]
+            if export_dir and returncode == 0 and not artifact_errors:
+                from .termux_runtime import export_artifacts
+                valid_paths = [
+                    item.get("path", "")
+                    for item in artifact_metadata.get("items", [])
+                    if isinstance(item, dict) and item.get("valid") and item.get("path")
+                ]
+                exported = export_artifacts(valid_paths, export_dir)
+                artifact_metadata["exported"] = [str(path) for path in exported]
+                artifact_metadata["export_directory"] = str(Path(export_dir).expanduser())
+            elif export_dir:
+                artifact_metadata["exported"] = []
+                artifact_metadata["export_skipped_reason"] = (
+                    "command failed before artifact export" if returncode != 0
+                    else "artifact verification reported errors"
+                )
             result_metadata["artifacts"] = artifact_metadata
             issues.extend(artifact_issues)
             output = (output.rstrip() + "\n" if output else "") + (
@@ -1674,6 +1748,19 @@ def run_specs(
             result_metadata["resource_guard_triggered"] = kind == "resource"
             result_metadata["timed_out"] = kind == "timeout"
         failure_kind = classify_failure(spec.name, output, returncode)
+        if returncode != 0:
+            from .execution_environments import NATIVE_TERMUX, detect_current_environment
+            from .termux_runtime import classify_runtime_failure
+            native_termux_command = (
+                detect_current_environment() == NATIVE_TERMUX
+                and str(spec.metadata.get("execution_mode") or "") not in {"proot-distro", "ssh", "chroot"}
+            )
+            runtime_hint = classify_runtime_failure(output, native_termux=native_termux_command)
+            if runtime_hint is not None:
+                result_metadata["runtime_failure_hint"] = {"kind": runtime_hint.kind, "detail": runtime_hint.detail}
+                output = (output.rstrip() + "\n" if output else "") + f"Devtool runtime diagnostic ({runtime_hint.kind}): {runtime_hint.detail}\n"
+                if failure_kind in {"command_failure", "unknown", ""}:
+                    failure_kind = "environment_failure"
         if any(
             issue.severity == "error"
             and issue.code in {"GRADLE_MEMORY_GUARD", "GRADLE_DAEMON_DISAPPEARED"}

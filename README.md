@@ -279,6 +279,33 @@ more important than the next build. See
 [`docs/PROJECT_RUNNERS.md`](docs/PROJECT_RUNNERS.md) and
 [`docs/EXECUTION_ENVIRONMENTS.md`](docs/EXECUTION_ENVIRONMENTS.md).
 
+## Termux runtime hardening and PRoot-Distro
+
+Native Termux runs now get phone-aware resource defaults, backend-isolated caches, optional wake-lock protection, shared-storage safety checks, proactive ELF architecture/libc preflight, conventional Linux shebang adaptation, and Gradle quiet-period diagnostics that warn without killing a still-running dependency resolution. Verified Android/Gradle artifacts can be copied to shared storage only after local verification, for example with `--artifact-export /sdcard/Download`. Explicit worker/JVM/resource settings always override the Termux profile, and phone-sized resource defaults are not injected into SSH jobs that execute on an independent remote host.
+
+PRoot-Distro is a first-class command execution backend. Devtool stays on the host and wraps only planned external commands, so the guest does not need devtool installed:
+
+```bash
+devtool --proot-distro ubuntu validate
+devtool --proot-distro ubuntu --proot-user dev --proot-cwd /workspace/project validate
+```
+
+By default the repository is explicitly bound to `/workspace/project`; customize it with `--proot-repo-mount` or repeatable `--proot-bind HOST:GUEST`. Helper files outside mapped roots are staged into a host cache bound at `/run/devtool`, and the staging directory is removed after execution. Python support helpers are staged rather than requiring devtool to be installed in the guest, while persistent guest caches are isolated under `~/.cache/devtool/proot/<distro>` and bound at `/var/cache/devtool`. Host-specific `HOME`, `PATH`, `JAVA_HOME`, Gradle home, Android SDK/NDK variables, and other execution-backend state are not blindly propagated; devtool-managed backend variables cannot be overridden through PRoot environment settings. Commands selected from the Termux package prefix are resolved again by name inside the guest instead of copying a Bionic binary or Termux launcher into the Linux container. Use normal foreground execution so devtool retains phase ordering, progress and exit codes; for detachable local orchestration, wrap the whole devtool process in tmux instead of using PRoot-Distro detach mode.
+
+### Termux provider and PRoot diagnostics
+
+Use the final integration doctor to see native Termux runtime identity, provider readiness, selection/rejection reasons, package suggestions, and an optional PRoot guest tool probe:
+
+```bash
+devtool --host termux doctor --explain
+devtool --host termux doctor --distro ubuntu --explain
+devtool --host termux packages
+devtool --host termux explain
+devtool --host doctor --explain
+```
+
+`termux packages` is deliberately read-only: it can print a suggested `pkg install ...` command, but devtool never installs or upgrades Termux packages automatically. OpenJDK advice first inspects installed/available Termux package names instead of permanently assuming one JDK generation. The PRoot guest probe uses `proot-distro login` to inspect the guest's own Python/Java/Gradle/CMake/Ninja/clang/Git commands; it does not require devtool in the guest and does not substitute host Termux providers for guest providers. `termux doctor` also reports each Termux Android-tool candidate separately, Android full-NDK/SDK readiness for Android projects, and local SSH/chrootctl/tmux/PRoot availability. Text and JSON output are available for the dedicated `termux` diagnostics.
+
 ## Termux chroot repository paths
 
 When a repository exists only inside a chroot, devtool now detects that the path is not visible to the Termux host and delegates the full process automatically. Repositories mirrored from Termux home are also probed so mounts under `/home/mike`, `/home/termux`, or another chroot home resolve without manual path-map flags. The Android frontend always launches chroot workflows from a Termux-visible work directory.
@@ -647,9 +674,79 @@ Sealed final reports use a content hash and a write-once `.final.json` path; lat
 
 See `docs/DESKTOP_GTK_MIGRATION.md` for the Phase 1/2 desktop GTK4 migration notes.
 
+## Termux Java and Gradle providers
+
+Native Termux runs now distinguish Termux-packaged Java/Gradle from ordinary
+Linux toolchains. A complete project Gradle Wrapper remains authoritative in
+`auto` mode; if wrapper metadata is present but `gradle-wrapper.jar` or another
+required wrapper file is missing, devtool reports the incomplete wrapper instead
+of silently switching Gradle versions. Use `--java-provider` (`auto`, `termux`,
+`system`) and `--gradle-provider` (`auto`, `wrapper`, `termux`, `system`,
+`download`) for explicit selection. An explicit `--java-home` or
+`--gradle-command` remains authoritative. For wrapperless Gradle projects, native
+Termux `gradle` is eligible in `auto` mode; Android projects additionally require
+a conservative AGP/Gradle major-generation match before an unpinned Termux
+Gradle is selected. `doctor` reports the detected Termux Gradle/OpenJDK provider
+paths and tool versions alongside read-only package metadata, without installing
+packages. Native Termux runtime reporting uses the Android API environment value
+when available and falls back to Android `getprop`; providers whose version probe
+fails are shown as detected but unusable rather than as compatible tools.
+
+Configuration can be stored as:
+
+```toml
+[android.java]
+provider = "auto"
+
+[gradle]
+provider = "auto"
+```
+
+## Termux native and Android build-tool providers
+
+Native Termux can use its packaged `clang`, `clang++`, `lld`, `llvm-ar`,
+`llvm-ranlib`, `ndk-sysroot`, `cmake`, `ninja`, and `ccache` as explicit
+providers. `ndk-sysroot` is treated only as a compiler/sysroot capability; an
+Android project using `externalNativeBuild`, CMake/ndk-build integration, or an
+NDK declaration still requires a complete Android NDK. This prevents native
+helper builds from triggering an unnecessary NDK bootstrap without weakening
+Android NDK reproducibility.
+
+Termux Android tools are also discovered as providers. In `auto` mode, a native
+Termux `aapt2` must pass a real compile/link capability probe against the selected
+`android.jar` before it can override AGP. On native Termux/Bionic, incompatible SDK
+`aidl`/`zipalign`/`split-select` binaries must be replaced by runnable Termux-native
+executables; Commit451 artifacts are deliberately rejected there because upstream
+publishes linux-glibc-arm64 binaries. On ARM64 glibc hosts/chroots, the verified
+Commit451 provider remains the fallback and release availability is resolved before
+asset URLs are downloaded.
+
+```toml
+[android.native]
+provider = "auto" # auto | termux-sysroot | ndk | system
+cache = "auto" # auto | ccache | off
+
+[android.build_tools]
+provider = "auto" # auto | termux | sdk | commit451 | none
+aapt2_provider = "auto" # auto | termux | sdk | revanced | none
+
+[cmake]
+provider = "auto" # auto | termux | system
+native_provider = "auto" # auto | termux-sysroot | system
+cache = "auto" # auto | ccache | off
+```
+
+Equivalent one-run options are `--native-provider`, `--native-cache`,
+`--android-build-tools-provider`, and `--aapt2-provider`. `doctor` reports the
+Termux native compiler, CMake, Ninja, ccache, and Android-tool capability states.
+Generic CMake projects may also set `[cmake].native_provider`; on native Termux, `auto` uses the complete clang/lld + `ndk-sysroot` provider when available and never treats it as a full Android NDK.
+
 ## Android NDK host fallback
 
 For ARM64 Termux/chroot validation of Android projects with native code, devtool
 can optionally use an unofficial ARM64-host NDK or wrap the official x86_64 NDK
 with QEMU plus an auto-provisioned amd64 sysroot. See
 `docs/ANDROID_NDK_HOST_FALLBACK.md`.
+
+
+Final Termux/PRoot acceptance audit: `docs/TERMUX_PROOT_PROMISE_AUDIT.md`.

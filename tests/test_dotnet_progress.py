@@ -198,18 +198,18 @@ class DotnetProgressSeparateCommandTests(unittest.TestCase):
             tracker.finish(0)
 
         output = buffer.getvalue()
-        self.assertIn("overall 1/3", output)
+        self.assertIn("Step 1 of 3 · Restore · 33% overall", output)
         self.assertIn(".NET", output)
         self.assertNotIn("dotnet restore", output)
         self.assertIn("restore ok", tracker.snapshot()["detail"])
 
-    def test_tracker_leaves_render_non_transient_for_separate_completed_bars(self) -> None:
+    def test_tracker_collapses_completed_panels_to_compact_rows(self) -> None:
         from io import StringIO
         from rich.console import Console
         from devtool.dotnet_progress import DotnetProgressTracker
 
         buffer = StringIO()
-        console = Console(file=buffer, force_terminal=True, width=90)
+        console = Console(file=buffer, force_terminal=True, color_system=None, width=90)
         restore = DotnetProgressTracker(["dotnet", "restore", "App.csproj"], "/tmp", "restore", console, phase_index=1, phase_total=2)
         build = DotnetProgressTracker(["dotnet", "build", "App.csproj"], "/tmp", "build", console, phase_index=2, phase_total=2)
 
@@ -221,9 +221,15 @@ class DotnetProgressSeparateCommandTests(unittest.TestCase):
             build.finish(0)
 
         output = buffer.getvalue()
-        self.assertIn("overall 1/2", output)
-        self.assertIn("overall 2/2", output)
-        self.assertEqual(output.count(".NET"), 2)
+        self.assertIn("Step 1 of 2", output)
+        self.assertIn("Step 2 of 2", output)
+        self.assertIn("✓ Restore", output)
+        self.assertIn("✓ Build", output)
+        self.assertIsNotNone(restore.live)
+        self.assertIsNotNone(build.live)
+        assert restore.live is not None and build.live is not None
+        self.assertTrue(restore.live.transient)
+        self.assertTrue(build.live.transient)
         self.assertNotIn("dotnet restore", output)
         self.assertNotIn("dotnet build", output)
 
@@ -343,7 +349,7 @@ class DotnetProgressStructuredUiTests(unittest.TestCase):
         snapshot = tracker.snapshot()
         self.assertIn("target-a", output)
         self.assertIn("target phase 3/3", output)
-        self.assertIn("overall 3/6", output)
+        self.assertIn("Step 3 of 6 · Test[target a] · 50% overall", output)
         self.assertIn("test assemblies", output)
         self.assertIn("225 passed", output)
         self.assertEqual(snapshot["completed"], 3)

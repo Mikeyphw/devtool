@@ -89,6 +89,15 @@ _CARGO_RUSTC = re.compile(
 )
 _CARGO_FILE = re.compile(r"^\s*-->\s+(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+)$")
 _GENERIC_WARN_ERR = re.compile(r"\b(?P<severity>warning|error)\b[: ]+(?P<message>.+)", re.IGNORECASE)
+
+# Successful Python package builds can emit these informational messages.
+# They are not actionable validation findings and should not become GENERIC
+# warning cards.
+_GENERIC_BUILD_NOISE_MESSAGES = {
+    "Failed to hardlink files; falling back to full copy. This may lead to degraded performance.",
+    "build_py: byte-compiling is disabled, skipping.",
+    "install_lib: byte-compiling is disabled, skipping.",
+}
 _GRADLE_INFRA_WARNING_PREFIXES = (
     "WARNING: The option setting 'android.aapt2FromMavenOverride=",
 )
@@ -524,7 +533,10 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
         match = _GENERIC_WARN_ERR.search(stripped)
         if match and command_name in {"build", "test", "restore", "package", "lint"}:
             message = match.group("message").strip()
-            if stripped.strip().lower() not in {"error message:", "warning message:", "stack trace:"}:
+            if (
+                message not in _GENERIC_BUILD_NOISE_MESSAGES
+                and stripped.strip().lower() not in {"error message:", "warning message:", "stack trace:"}
+            ):
                 issues.append(Issue(
                     match.group("severity").lower(),
                     command_name,
@@ -630,6 +642,13 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return ""
     text = output.lower()
     name = command_name.lower()
+    if returncode == 130 or any(marker in text for marker in (
+        "interrupted by user",
+        "cancelled from devtool control center",
+        "canceled from devtool control center",
+        "devtool validation supervisor stopped process: interrupted:",
+    )):
+        return "interrupted"
     compile_signal = (
         "compile" in name
         or "compile" in text

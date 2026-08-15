@@ -68,7 +68,7 @@ ANDROID_GUI_ALIASES = {"android-gui", "android-overlay", "termux-gui", "termuxgu
 ANDROID_BRIDGE_ALIASES = {"android-bridge", "termux-bridge", "android-chroot", "termux-chroot", "chroot-bridge", "android-notify", "notification"}
 HOST_ONLY_COMMANDS = {
     "hud", "android-hud-bridge", "termux-hud-bridge", "logs", "completion",
-    "ai-prompt", "ap", "bundle", "config", "init-config",
+    "ai-prompt", "ap", "bundle", "config", "init-config", "termux",
 }
 AUTO_CHROOT_COMMANDS = {
     "restore", "rs", "build", "b", "test", "t", "lint", "validate", "v", "wine-validate", "wv",

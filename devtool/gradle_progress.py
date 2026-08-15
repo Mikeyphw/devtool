@@ -17,7 +17,13 @@ from rich.panel import Panel
 from rich.progress import ProgressColumn, Task
 from rich.text import Text
 
-from .rich_progress import ThreeLineProgressBody, ThreeLineProgressState
+from .rich_progress import (
+    active_panel_title,
+    ThreeLineProgressBody,
+    ThreeLineProgressState,
+    compact_display_target,
+    completion_line,
+)
 
 _EVENT_PREFIX = "DEVTOOL_EVENT "
 _EVENT_KINDS = {
@@ -86,6 +92,7 @@ class GradleProgressTracker:
     observed_tasks: set[str] = field(init=False, default_factory=set)
     requested_task_count: int = field(init=False, default=0)
     dependency_task_count: int = field(init=False, default=0)
+    _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
@@ -104,8 +111,8 @@ class GradleProgressTracker:
             self._renderable(),
             console=self.console,
             refresh_per_second=8,
-            transient=False,
-            vertical_overflow="visible",
+            transient=True,
+            vertical_overflow="ellipsis",
         )
         try:
             self.live.start()
@@ -308,6 +315,7 @@ class GradleProgressTracker:
             )
         self.detail = status
         self._publish(force=True)
+        self._print_completion_once()
 
     def snapshot(self) -> dict[str, Any]:
         percent = None
@@ -348,6 +356,19 @@ class GradleProgressTracker:
             snapshot = self.snapshot()
             snapshot["force"] = force
             self.update_callback(snapshot)
+
+    def _print_completion_once(self) -> None:
+        if not self.enabled or self._completion_printed or self.returncode is None:
+            return
+        self._completion_printed = True
+        self.console.print(
+            completion_line(
+                command=self.command_name,
+                returncode=self.returncode,
+                started_at=self._started_at,
+                snapshot=self.snapshot(),
+            )
+        )
 
     def _merge_total(self, value: Any) -> None:
         try:
@@ -430,6 +451,7 @@ class GradleProgressTracker:
             unit_label="tasks",
             unit_short="tasks",
             detail=detail,
+            detail_root=self.cwd,
             detail_prefix_full=prefix_full,
             detail_prefix_compact=prefix_compact,
             extra_full=extra_full,
@@ -437,25 +459,40 @@ class GradleProgressTracker:
             extra_tiny=extra_tiny,
             started_at=self._started_at,
             returncode=self.returncode,
+            phase_index=self.phase_index,
+            phase_total=self.phase_total,
+            phase_label=self.command_name,
+            tests_passed=self.tests_passed,
+            tests_failed=self.tests_failed,
+            tests_skipped=self.tests_skipped,
+            tests_total=self.tests_total,
+            warnings=self.warnings,
+            errors=self.errors,
         )
 
     def _requested_tasks_renderable(self) -> Group:
+        if self.console.width <= 96:
+            first = self.requested_tasks[0] if self.requested_tasks else ""
+            suffix = f" (+{len(self.requested_tasks) - 1})" if len(self.requested_tasks) > 1 else ""
+            return Group(Text(f"Requested: {first}{suffix}", style="dim cyan", overflow="ellipsis", no_wrap=True))
         lines: list[Text] = [Text("Requested tasks:", style="bold")]
         lines.extend(Text(f"  {task}", style="cyan") for task in self.requested_tasks)
         return Group(*lines)
 
     def _renderable(self) -> Panel:
-        target = self.display_target or Path(self.cwd).name or "Gradle project"
+        target = compact_display_target(self.display_target or self.cwd or "Gradle project", cwd=self.cwd)
         if self.returncode is None:
             icon, border, style = "◆", "cyan", "bold cyan"
         elif self.returncode == 0:
             icon, border, style = "✓", "green", "bold green"
         else:
             icon, border, style = "✗", "red", "bold red"
-        title = Text()
-        title.append(f" {icon} ", style=style)
-        title.append("Gradle ", style="bold")
-        title.append("• ", style="dim")
-        title.append(str(target), style="bold white")
+        title = active_panel_title(
+            self.command_name or "Gradle",
+            f"Gradle · {target}",
+            icon=icon,
+            width=self.console.width,
+        )
+        title.stylize(style)
         body = self.progress_body or ThreeLineProgressBody(self._progress_state)
         return Panel(body, title=title, border_style=border, padding=(0, 1))

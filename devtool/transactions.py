@@ -245,11 +245,167 @@ def _archive_transaction_summary(path: Path, tx: dict[str, Any]) -> None:
     history.mkdir(parents=True, exist_ok=True)
     payload = json.loads(json.dumps(tx))
     payload.pop("backup_dir", None)
+    git_state = payload.get("git_state")
+    if isinstance(git_state, dict):
+        git_state.pop("index_backup", None)
     for item in payload.get("affected_paths", []) or []:
         if isinstance(item, dict):
             item.pop("staged_path", None)
             item.pop("displaced_path", None)
     _atomic_write_json(history / f"{tx.get('transaction_id') or path.parent.name}.json", payload)
+
+
+
+
+def _git_capture(repo_root: Path, argv: list[str]) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(
+            ["git", *argv],
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+    return int(proc.returncode), (proc.stdout or "").strip()
+
+
+def _capture_git_state(repo_root: Path, tx_dir: Path) -> dict[str, Any]:
+    """Snapshot repository HEAD/index state for exact transactional rollback.
+
+    Overlay transactions already preserve affected working-tree paths. Git staging
+    mutates the repository index independently of those files, so atomic rollback
+    must preserve the index too. This is deliberately best-effort for non-Git
+    repositories and exact for real Git worktrees, including linked worktrees.
+    """
+
+    rc, inside = _git_capture(repo_root, ["rev-parse", "--is-inside-work-tree"])
+    if rc != 0 or inside.lower() != "true":
+        return {"is_git_repo": False}
+
+    head_rc, initial_head = _git_capture(repo_root, ["rev-parse", "--verify", "HEAD"])
+    ref_rc, head_ref = _git_capture(repo_root, ["symbolic-ref", "-q", "HEAD"])
+    index_rc, index_text = _git_capture(repo_root, ["rev-parse", "--git-path", "index"])
+    if index_rc != 0 or not index_text:
+        raise RuntimeError("Unable to resolve Git index path for apply transaction")
+
+    index_path = Path(index_text)
+    if not index_path.is_absolute():
+        index_path = (repo_root / index_path).resolve()
+    backup_path = tx_dir / "git-index.backup"
+    index_existed = index_path.exists()
+    if index_existed:
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(index_path, backup_path)
+
+    return {
+        "is_git_repo": True,
+        "initial_head": initial_head if head_rc == 0 else "",
+        "head_ref": head_ref if ref_rc == 0 else "",
+        "index_path": str(index_path),
+        "index_existed": index_existed,
+        "index_backup": str(backup_path),
+        "applied_commit": "",
+        "restored": False,
+    }
+
+
+def _current_git_head(repo_root: Path) -> str:
+    rc, head = _git_capture(repo_root, ["rev-parse", "--verify", "HEAD"])
+    return head if rc == 0 else ""
+
+
+def record_transaction_git_commit(transaction_path: str | Path | None, commit_hash: str) -> None:
+    """Record the commit created by an active apply transaction.
+
+    This lets rollback safely rewind only the commit that devtool itself created;
+    an unexpected later user commit is never reset automatically.
+    """
+
+    if not transaction_path or not str(commit_hash).strip():
+        return
+    path = Path(transaction_path)
+    if not path.exists():
+        return
+    tx = _read_json(path)
+    git_state = tx.get("git_state")
+    if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
+        return
+    git_state["applied_commit"] = str(commit_hash).strip()
+    git_state["recorded_at"] = _utc_now()
+    tx["git_state"] = git_state
+    tx["updated_at"] = _utc_now()
+    _atomic_write_json(path, tx)
+    _write_transaction_active_marker(path, tx)
+
+
+def _restore_git_state(repo_root: Path, tx: dict[str, Any]) -> str:
+    git_state = tx.get("git_state")
+    if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
+        return "not-applicable"
+    if bool(git_state.get("restored")):
+        return "already-restored"
+
+    initial_head = str(git_state.get("initial_head") or "").strip()
+    applied_commit = str(git_state.get("applied_commit") or "").strip()
+    current_head = _current_git_head(repo_root)
+
+    if applied_commit:
+        if current_head != applied_commit:
+            raise RuntimeError(
+                "Refusing Git rollback because repository HEAD changed after the devtool apply commit: "
+                f"expected {applied_commit or '<none>'}, found {current_head or '<unborn>'}"
+            )
+        if initial_head:
+            proc = subprocess.run(
+                ["git", "reset", "--soft", initial_head],
+                cwd=repo_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError("Unable to rewind devtool apply commit during rollback: " + (proc.stdout or "").strip())
+        else:
+            head_ref = str(git_state.get("head_ref") or "").strip()
+            if not head_ref:
+                raise RuntimeError("Cannot safely rewind first devtool commit from a detached unborn Git HEAD")
+            proc = subprocess.run(
+                ["git", "update-ref", "-d", head_ref, applied_commit],
+                cwd=repo_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError("Unable to remove first devtool apply commit during rollback: " + (proc.stdout or "").strip())
+    elif current_head != initial_head:
+        raise RuntimeError(
+            "Refusing Git index rollback because repository HEAD changed during the active transaction: "
+            f"expected {initial_head or '<unborn>'}, found {current_head or '<unborn>'}"
+        )
+
+    index_path = Path(str(git_state.get("index_path") or ""))
+    if not str(index_path):
+        raise RuntimeError("Apply transaction is missing its Git index path")
+    index_existed = bool(git_state.get("index_existed"))
+    backup_path = Path(str(git_state.get("index_backup") or ""))
+    if index_existed:
+        if not backup_path.exists():
+            raise RuntimeError(f"Apply transaction Git index backup is missing: {backup_path}")
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(backup_path, index_path)
+    else:
+        index_path.unlink(missing_ok=True)
+
+    git_state["restored"] = True
+    git_state["restored_at"] = _utc_now()
+    tx["git_state"] = git_state
+    return "restored"
 
 
 def affected_paths_from_preview(preview: dict[str, Any]) -> list[str]:
@@ -344,6 +500,7 @@ def create_apply_transaction(
         "run_id": os.environ.get("DEVTOOL_RUN_ID", ""),
         "affected_paths": entries,
         "preview_counts": preview.get("counts", {}),
+        "git_state": _capture_git_state(repo_root, tx_dir),
     }
     _atomic_write_json(_transaction_file(tx_dir), tx)
 
@@ -526,6 +683,7 @@ def rollback_transaction(
         emit_progress("rollback-requested", total=len(entries))
 
         if not entries:
+            git_restore_status = _restore_git_state(repo_root, tx)
             tx.update({
                 "status": "rolled-back",
                 "rolled_back_at": _utc_now(),
@@ -542,6 +700,7 @@ def rollback_transaction(
                 f"transaction: {_relative_to_repo(repo_root, path)}\n"
                 "restored: 0\n"
                 "removed_added_paths: 0\n"
+                f"git_state: {git_restore_status}\n"
                 "note: transaction had no affected paths recorded."
             )
             _cleanup_transaction_dir(path)
@@ -661,6 +820,9 @@ def rollback_transaction(
         if unverified:
             raise RuntimeError("Rollback journal contains unverified paths: " + ", ".join(unverified[:20]))
 
+        git_restore_status = _restore_git_state(repo_root, tx)
+        persist()
+
         tx.update({
             "status": "rolled-back",
             "rolled_back_at": _utc_now(),
@@ -679,6 +841,7 @@ def rollback_transaction(
             f"restored: {len(restored)}\n"
             f"removed_added_paths: {len(removed)}\n"
             f"verified_paths: {len(entries)}\n"
+            f"git_state: {git_restore_status}\n"
             "backup_cleanup: removed"
         )
         if restored:

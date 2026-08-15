@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
-from devtool.models import ProjectConfig
+from devtool.models import CommandSpec, ProjectConfig
 from devtool.project_runners import (
     DEFAULT_RUNNER_REGISTRY,
     AndroidGradleRunner,
@@ -286,7 +287,12 @@ class ExistingRunnerCompatibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
-            config = ProjectConfig(repo_root=root, kind="python", python_executable="python3.12")
+            config = ProjectConfig(
+                repo_root=root,
+                kind="python",
+                python_executable="python3.12",
+                runner_options={"python": {"manager": "venv"}},
+            )
 
             build_argv = next(spec.argv for spec in build_specs(config, "build") if spec.name == "build")
             test_argv = build_specs(config, "test")[0].argv
@@ -345,6 +351,95 @@ class ExistingRunnerCompatibilityTests(unittest.TestCase):
         self.assertEqual(spec.argv, ["python3", "build.py"])
         self.assertEqual(spec.cwd, str(extension_root))
         self.assertEqual(spec.metadata["runner"], "command")
+
+
+    def test_python_uv_package_check_rebuild_uses_uv_frontend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "uv"}},
+            )
+            spec = build_specs(config, "package-check")[0]
+        self.assertIn("--rebuild-sdist", spec.argv)
+        self.assertEqual(spec.argv[spec.argv.index("--rebuild-frontend") + 1], "uv")
+
+    def test_interrupted_package_check_does_not_invent_missing_structured_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="python")
+            spec = CommandSpec(
+                "package-check",
+                ["python", "-c", "pass"],
+                cwd=str(root),
+                metadata={"report_parser": "python-package", "package_report": str(root / "missing.json")},
+            )
+            with mock.patch(
+                "devtool.runners._run_process_live",
+                return_value=(130, "Interrupted by user. Child process was terminated.\n"),
+            ):
+                results, _ = run_specs(config, [spec], verbose=True)
+        result = results[0]
+        self.assertEqual(result.returncode, 130)
+        self.assertEqual(result.failure_kind, "interrupted")
+        self.assertEqual(result.metadata.get("report_parsing_skipped"), "interrupted")
+        self.assertFalse(any(issue.code == "PYTHON_PACKAGE_RESULT" for issue in result.issues))
+
+    def test_python_uv_build_uses_copy_link_mode_on_native_termux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='demo'\nversion='1'\n",
+                encoding="utf-8",
+            )
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "uv"}},
+            )
+            with mock.patch(
+                "devtool.project_runners.detect_current_environment",
+                return_value="native-termux",
+            ):
+                spec = next(
+                    item for item in build_specs(config, "build")
+                    if item.name == "build"
+                )
+
+        self.assertEqual(spec.argv[:2], ["uv", "build"])
+        self.assertEqual(spec.env.get("UV_LINK_MODE"), "copy")
+
+    def test_python_uv_build_does_not_force_copy_link_mode_on_desktop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='demo'\nversion='1'\n",
+                encoding="utf-8",
+            )
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "uv"}},
+            )
+            with mock.patch(
+                "devtool.project_runners.detect_current_environment",
+                return_value="host",
+            ), mock.patch.dict(os.environ, {}, clear=False):
+                spec = next(
+                    item for item in build_specs(config, "build")
+                    if item.name == "build"
+                )
+
+        self.assertEqual(spec.argv[:2], ["uv", "build"])
+        self.assertNotEqual(spec.env.get("UV_LINK_MODE"), "copy")
 
 
 class DotnetBuildServerReuseTests(unittest.TestCase):

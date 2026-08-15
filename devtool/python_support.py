@@ -164,6 +164,7 @@ class PackageCheckOptions:
     console_scripts: list[str] = field(default_factory=list)
     reproducible: bool = False
     offline: bool = False
+    rebuild_frontend: str = "pip"
 
 
 def _list(value: Any) -> list[str]:
@@ -598,6 +599,15 @@ def _is_chroot_execution_environment(value: str) -> bool:
     return normalized == "chroot"
 
 
+def _is_proot_execution_environment(value: str) -> bool:
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    return normalized in {"proot", "proot-distro"}
+
+
+def _is_guest_execution_environment(value: str) -> bool:
+    return _is_chroot_execution_environment(value) or _is_proot_execution_environment(value)
+
+
 def resolve_bootstrap_python(
     root: Path,
     configured: str,
@@ -611,12 +621,20 @@ def resolve_bootstrap_python(
     /data/data/com.termux/files/usr/bin/python3.13 inside the Ubuntu guest.
     """
 
-    if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(configured):
+    guest = _is_guest_execution_environment(execution_environment)
+    configured_value = str(configured or "python3").strip() or "python3"
+    if guest and _is_termux_host_python(configured_value):
         # A versioned Termux executable name is not evidence that the guest has
         # the same minor version installed. Resolve through the guest's normal
         # python3 command instead of leaking host toolchain assumptions.
         return "python3"
-    resolved = resolve_python_executable(root, configured, environment)
+    if _is_proot_execution_environment(execution_environment):
+        # PRoot tool discovery belongs to the guest. Do not resolve a simple
+        # command name through the host PATH or replace it with sys.executable.
+        if not Path(configured_value).is_absolute() and "/" not in configured_value:
+            return configured_value
+        return configured_value
+    resolved = resolve_python_executable(root, configured_value, environment)
     if _is_chroot_execution_environment(execution_environment) and _is_termux_host_python(resolved):
         return "python3"
     return resolved
@@ -641,6 +659,7 @@ def environment_fingerprint(
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     execution_environment: str = "",
+    probe_runtime: bool = True,
 ) -> tuple[str, tuple[str, ...]]:
     inputs: list[str] = []
     files: dict[str, str] = {}
@@ -652,19 +671,19 @@ def environment_fingerprint(
             continue
         files[name] = digest
         inputs.append(name)
-    version, version_text = _interpreter_version(python)
+    version, version_text = _interpreter_version(python) if probe_runtime else ((), "guest")
     payload = {
         "manager": info.manager,
-        "manager_version": _manager_version(info.manager),
+        "manager_version": _manager_version(info.manager) if probe_runtime else "guest",
         "python": str(Path(python).expanduser()),
         "python_version": version_text,
         "requires_python": info.requires_python,
         "groups": sorted(groups),
         "extras": sorted(extras),
         "files": files,
-        "platform": platform.platform(),
-        "machine": platform.machine(),
-        "implementation": platform.python_implementation(),
+        "platform": platform.platform() if probe_runtime else f"guest:{execution_environment}",
+        "machine": platform.machine() if probe_runtime else "guest",
+        "implementation": platform.python_implementation() if probe_runtime else "guest",
         "execution_environment": execution_environment,
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -692,10 +711,14 @@ def resolve_environment(
         if not env_path.is_absolute():
             env_path = info.root / env_path
         requested_environment = str(env_path.resolve())
+    proot_guest = _is_proot_execution_environment(execution_environment)
+    proot_environment_root = str((info.root / ".devtool" / "proot" / "python" / python_repo_key(info.root)).resolve())
     if info.manager == "venv":
         existing_dotvenv = info.root / ".venv"
         if requested_environment:
             environment_root = requested_environment
+        elif proot_guest:
+            environment_root = proot_environment_root
         elif _venv_python(existing_dotvenv).is_file():
             environment_root = str(existing_dotvenv.resolve())
         elif info.dependency_files:
@@ -714,7 +737,7 @@ def resolve_environment(
     else:
         python = bootstrap_python
         if info.manager == "uv":
-            environment_root = str(default_python_environment_root(info.root).resolve())
+            environment_root = proot_environment_root if proot_guest else str(default_python_environment_root(info.root).resolve())
             prefix = ("uv", "run")
         elif info.manager == "poetry":
             environment_root = ""
@@ -733,14 +756,22 @@ def resolve_environment(
             prefix = (python,)
         version_probe = python
     fingerprint, inputs = environment_fingerprint(
-        info, python=version_probe, groups=groups, extras=extras, execution_environment=execution_environment
+        info, python=version_probe, groups=groups, extras=extras, execution_environment=execution_environment,
+        probe_runtime=not proot_guest,
     )
-    version, version_text = _interpreter_version(version_probe)
-    compatible = _specifier_satisfied(version, info.requires_python)
-    detail = (
-        f"Python {version_text or 'unknown'} satisfies {info.requires_python}"
-        if compatible else f"Python {version_text or 'unknown'} does not satisfy requires-python {info.requires_python}"
-    )
+    if proot_guest:
+        # The guest interpreter cannot be truthfully version-probed from the host.
+        # Compatibility is checked by the guest package manager/interpreter when
+        # commands execute rather than by accidentally probing the host Python.
+        compatible = True
+        detail = f"Python compatibility for {info.requires_python or 'unspecified requirement'} will be verified inside PRoot-Distro"
+    else:
+        version, version_text = _interpreter_version(version_probe)
+        compatible = _specifier_satisfied(version, info.requires_python)
+        detail = (
+            f"Python {version_text or 'unknown'} satisfies {info.requires_python}"
+            if compatible else f"Python {version_text or 'unknown'} does not satisfy requires-python {info.requires_python}"
+        )
     return PythonEnvironmentPlan(
         info.manager, python, prefix, environment_root, fingerprint, inputs,
         compatible, detail, bootstrap_python, execution_environment,
@@ -858,6 +889,8 @@ def build_sync_command(
             commands.append([*uv_pip, "pytest"])
         if info.framework == "pytest" and _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root):
             commands.append([*uv_pip, "pytest-asyncio"])
+        if info.framework == "pytest" and _uses_pexpect(info.root) and not _declares_requirement(info.root, "pexpect"):
+            commands.append([*uv_pip, "pexpect"])
         return commands
     if info.manager == "poetry":
         command = ["poetry", "install", "--sync"]
@@ -897,17 +930,31 @@ def build_sync_command(
     # Always emit an idempotent venv bootstrap for chroot plans so the check runs
     # in the same environment as the later pip/test commands.
     if (
-        _is_chroot_execution_environment(plan.execution_environment)
+        _is_guest_execution_environment(plan.execution_environment)
         or not venv_python.is_file()
         or (os.access(venv_python, os.X_OK) and not _can_import_with_python(str(venv_python), "pip"))
     ):
-        commands.append([
-            plan.bootstrap_python or plan.python,
-            "-m",
-            "devtool.python_support",
-            "ensure-venv",
-            str(venv_root),
-        ])
+        if _is_proot_execution_environment(plan.execution_environment):
+            # PRoot guests do not need devtool installed. Use only the guest's
+            # Python stdlib to create the environment idempotently.
+            commands.append([
+                plan.bootstrap_python or plan.python,
+                "-c",
+                (
+                    "import pathlib,subprocess,sys; "
+                    "p=pathlib.Path(sys.argv[1]); py=p/'bin'/'python'; "
+                    "raise SystemExit(0 if py.is_file() else subprocess.call([sys.executable,'-m','venv',str(p)]))"
+                ),
+                str(venv_root),
+            ])
+        else:
+            commands.append([
+                plan.bootstrap_python or plan.python,
+                "-m",
+                "devtool.python_support",
+                "ensure-venv",
+                str(venv_root),
+            ])
     pip_base = [str(venv_python), "-m", "pip", "install"]
     if offline:
         pip_base.append("--no-index")
@@ -924,6 +971,8 @@ def build_sync_command(
         commands.append([*pip_base, "pytest"])
     if info.framework == "pytest" and _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root):
         commands.append([*pip_base, "pytest-asyncio"])
+    if info.framework == "pytest" and _uses_pexpect(info.root) and not _declares_requirement(info.root, "pexpect"):
+        commands.append([*pip_base, "pexpect"])
     build_requires = list(build_system_requirements(info.root)) if (info.root / "pyproject.toml").is_file() else []
     if install_project and build_requires:
         commands.append([*pip_base, *build_requires])
@@ -1358,14 +1407,23 @@ def _verify_wheel_install(
         if options.verify_cli:
             bin_dir = python.parent
             for script in scripts:
-                executable = bin_dir / script
-                checks: dict[str, Any] = {}
-                for flag in ("--help", "--version"):
-                    proc = _run_capture([str(executable), flag], cwd=Path(temporary), timeout=60)
-                    checks[flag] = {"returncode": proc.returncode, "output": proc.stdout.strip()[:4000]}
-                passed = any(value["returncode"] == 0 for value in checks.values())
+                candidates = [bin_dir / script, bin_dir / f"{script}.exe", bin_dir / f"{script}-script.py"]
+                executable = next((candidate for candidate in candidates if candidate.is_file()), None)
+                exists = executable is not None
+                executable_ok = bool(executable and (os.name == "nt" or os.access(executable, os.X_OK)))
+                passed = exists and executable_ok
+                checks = {
+                    "installed": exists,
+                    "executable": executable_ok,
+                    "path": str(executable) if executable else "",
+                    "mode": "installed-wrapper",
+                }
                 result_payload["console_scripts"][script] = checks
-                item["checks"].append({"name": f"console_script:{script}", "status": "passed" if passed else "failed", "detail": "" if passed else json.dumps(checks)})
+                item["checks"].append({
+                    "name": f"console_script:{script}",
+                    "status": "passed" if passed else "failed",
+                    "detail": "" if passed else json.dumps(checks),
+                })
                 if not passed:
                     item["valid"] = False
     return result_payload
@@ -1375,10 +1433,15 @@ def _rebuild_sdist(item: dict[str, Any], *, options: PackageCheckOptions) -> dic
     with tempfile.TemporaryDirectory(prefix="devtool-python-sdist-") as temporary:
         output = Path(temporary) / "wheelhouse"
         output.mkdir()
-        command = [sys.executable, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(output)]
-        if options.offline:
-            command.append("--no-index")
-        command.append(str(item["path"]))
+        if options.rebuild_frontend == "uv":
+            command = ["uv", "build", "--wheel", str(item["path"]), "--out-dir", str(output)]
+            if options.offline:
+                command.append("--offline")
+        else:
+            command = [sys.executable, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(output)]
+            if options.offline:
+                command.append("--no-index")
+            command.append(str(item["path"]))
         proc = _run_capture(command, timeout=1200)
         wheels = sorted(output.glob("*.whl"))
         rebuilt: list[dict[str, Any]] = []
@@ -1646,6 +1709,22 @@ def _uses_pytest_asyncio(root: Path) -> bool:
     return False
 
 
+def _uses_pexpect(root: Path) -> bool:
+    tests_root = root / "tests"
+    candidates = tests_root.rglob("*.py") if tests_root.is_dir() else root.glob("test*.py")
+    pattern = re.compile(r"(?m)^\s*(?:import\s+pexpect\b|from\s+pexpect\b)")
+    for path in candidates:
+        if any(part in IGNORED_DIRECTORIES for part in path.relative_to(root).parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if pattern.search(text):
+            return True
+    return False
+
+
 def _declares_pytest_async_plugin(root: Path) -> bool:
     return any(_declares_requirement(root, name) for name in ("pytest-asyncio", "anyio", "pytest-trio", "pytest-tornasync", "pytest-twisted"))
 
@@ -1671,6 +1750,8 @@ def missing_auto_validator_dependencies(info: PythonProjectInfo, plan: PythonEnv
         missing.append("pytest")
     if _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root) and not _can_import_with_python(plan.python, "pytest_asyncio"):
         missing.append("pytest-asyncio")
+    if _uses_pexpect(info.root) and not _declares_requirement(info.root, "pexpect") and not _can_import_with_python(plan.python, "pexpect"):
+        missing.append("pexpect")
     return tuple(missing)
 
 
@@ -1815,6 +1896,7 @@ def _package_check(args: argparse.Namespace) -> int:
         console_scripts=args.console_script,
         reproducible=args.reproducible,
         offline=args.offline,
+        rebuild_frontend=args.rebuild_frontend,
     )
     payload, rc = verify_packages(args.root.resolve(), options=options)
     report = args.report or args.root.resolve() / ".devtool" / "reports" / "python-packages.json"
@@ -2227,6 +2309,7 @@ def main(raw_args: Sequence[str] | None = None) -> int:
     verify.add_argument("--console-script", action="append", default=[])
     verify.add_argument("--reproducible", action="store_true")
     verify.add_argument("--offline", action="store_true")
+    verify.add_argument("--rebuild-frontend", choices=("pip", "uv"), default="pip")
 
     clean = sub.add_parser("clean")
     clean.add_argument("root", type=Path)

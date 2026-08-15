@@ -244,14 +244,87 @@ ${DEVTOOL_XDG_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/devtool}/android/build-a
 
 The backend provides:
 
-- Gradle wrapper, compatible PATH Gradle, or managed Gradle selection.
-- JDK discovery and minimum-version inference from AGP and toolchain settings.
+- Complete Gradle Wrapper preference, explicit Termux/system provider selection, compatible PATH Gradle, or managed Gradle fallback.
+- JDK discovery with Termux/system provider identity and minimum-version inference from AGP and toolchain settings.
 - Android SDK/platform/Build Tools preparation.
 - NDK, CMake, and Ninja preparation for native projects.
 - Native ARM AAPT2 staging.
 - APK, AAB, AAR, JAR, WAR, ZIP, and TAR output discovery.
 - Stable artifact naming and optional output copying.
 - Gradle daemon/process cleanup in a `finally` path.
+
+### Termux Java/Gradle provider policy
+
+On native Termux, devtool recognizes JDKs under `$PREFIX/lib/jvm` and Gradle
+resolved from `$PREFIX` as Termux providers. Provider selection is explicit and
+capability-preserving:
+
+```toml
+[android.java]
+provider = "auto" # auto | termux | system
+
+[gradle]
+provider = "auto" # auto | wrapper | termux | system | download
+```
+
+A complete project Wrapper (`gradlew`, `gradle-wrapper.properties`, and
+`gradle-wrapper.jar`) wins in Gradle `auto` mode. If only part of the Wrapper is
+present, devtool stops with an actionable diagnostic rather than substituting a
+Termux/system Gradle that could violate the project's Gradle/AGP version
+contract. An explicit `--gradle-command` or `--java-home` remains authoritative.
+For a wrapperless non-Android Gradle project, the packaged Termux Gradle is
+eligible in `auto` mode without pretending devtool's managed fallback version is
+a project pin. For Android projects without a wrapper, auto-selection only uses
+an unpinned Termux Gradle when its major generation matches the detected AGP
+major (AGP 7+); otherwise devtool keeps the managed fallback path. Native
+Termux runtime detection also records the Android API level (environment first,
+then `getprop` fallback), and provider diagnostics distinguish missing tools from
+detected executables whose version probe is unusable. Use `--gradle-provider` or
+`--java-provider` when deliberately selecting a provider.
+
+### Termux native/sysroot and Android build-tools policy
+
+Termux `clang` depends on the NDK-derived `ndk-sysroot`, but devtool treats that
+combination as a native compiler capability rather than a complete Android NDK.
+Plain compiler/CMake work can use the native Termux provider; Android Gradle
+projects using external native integration continue through the complete NDK
+provider and existing NDK host-compatibility logic. Android Gradle Plugin uses
+CMake or ndk-build for `externalNativeBuild`, so those projects are never silently
+redirected to the Termux sysroot-only provider.
+
+```toml
+[android.native]
+provider = "auto" # auto | termux-sysroot | ndk | system
+cache = "auto" # auto | ccache | off
+
+[android.build_tools]
+provider = "auto" # auto | termux | sdk | commit451 | none
+aapt2_provider = "auto" # auto | termux | sdk | revanced | none
+
+[cmake]
+provider = "auto" # auto | termux | system
+native_provider = "auto" # auto | termux-sysroot | system
+cache = "auto" # auto | ccache | off
+```
+
+On native Termux, `auto` discovers CMake, Ninja, ccache, AAPT/AAPT2, apksigner,
+adb, and the native SDK helper names under `$PREFIX`. AAPT2 is selected only
+after a compile/link probe against the actual selected Android platform. ARM64
+SDK helper repair also executes a harmless probe for `aidl`, `zipalign`, and
+`split-select`, because matching AArch64 ELF architecture alone cannot distinguish
+Bionic from glibc compatibility. Native Termux therefore requires runnable
+Termux-native helpers. Commit451 publishes linux-glibc-arm64 build tools, so that
+provider is rejected under native Termux/Bionic and retained only for compatible
+ARM64 Linux/chroot hosts. Commit451 release availability is resolved before asset
+downloads, while the `35.0.0 -> 35.0.1` compatibility alias remains supported.
+The explicit `sdk` provider refuses an SDK whose native tools cannot execute on
+the host instead of quietly substituting another provider.
+
+A `CMakeLists.txt` that merely exists somewhere in an Android repository is not
+by itself treated as Android NDK integration. Devtool requires an explicit
+`externalNativeBuild`/`ndkVersion`/ndk-build signal (or Android.mk/Application.mk)
+before forcing the complete NDK provider, so host-side CMake helpers do not trigger
+unnecessary NDK provisioning.
 
 ## Exact Gradle progress
 
@@ -397,3 +470,24 @@ When Devtool selects a custom AAPT2 executable, it automatically passes:
 Existing comma-separated suppressions supplied through Gradle passthrough
 arguments are merged. No suppression property is added when Android Gradle
 Plugin uses its default AAPT2.
+
+
+## PRoot-Distro Android command execution
+
+When a Linux guest contains the Android toolchain you want to use, keep devtool on Termux and run only planned command phases inside that guest:
+
+```bash
+devtool --proot-distro ubuntu --proot-cwd /workspace/project validate
+```
+
+The guest does not need devtool. The repository is bound explicitly, host Termux Java/Gradle/CMake/NDK paths are not injected into the guest, and Android outputs written in the bound checkout remain immediately visible to local devtool artifact verification. If provider planning produced an absolute command under the Termux package prefix, the PRoot wrapper resolves that tool again by command name inside the guest instead of staging the Bionic host executable or launcher. Devtool-managed PRoot/backend environment variables are reserved and cannot be replaced by project or command environment. Do not use PRoot-Distro detached mode for normal validation because local devtool must retain progress, exit-code, and phase-order control.
+
+Before an Android build, inspect why native Termux providers were selected or rejected without running an Android Gradle task:
+
+```bash
+devtool --host termux doctor --explain
+devtool --host termux packages
+devtool --host termux doctor --distro ubuntu --explain
+```
+
+The package view is advisory only. It never changes Termux packages. A PRoot guest probe discovers the guest's own build tools rather than treating the host's Bionic Java/Gradle/CMake/NDK commands as guest tools.

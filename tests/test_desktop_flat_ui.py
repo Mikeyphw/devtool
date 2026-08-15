@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,7 +151,7 @@ def test_hud_graceful_cancel_uses_ipc_ack(tmp_path: Path) -> None:
 
     # AF_UNIX paths are commonly capped around 108 bytes. Devtool validates
     # overlays from deep transaction directories, so keep this fixture short.
-    socket_path = Path("/tmp") / f"dt-hud-cancel-{os.getpid()}.sock"
+    socket_path = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"dt-hud-cancel-{os.getpid()}.sock"
     socket_path.unlink(missing_ok=True)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(socket_path))

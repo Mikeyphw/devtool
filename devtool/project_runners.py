@@ -21,8 +21,9 @@ import sys
 from typing import Iterable
 
 from .build_optimization import optimized_build_env, optimized_validation_env, resolve_android_validation_phase_policy, resolve_android_validation_policy, resolve_build_policy
-from .execution_environments import detect_current_environment
+from .execution_environments import NATIVE_TERMUX, detect_current_environment
 from .models import CommandSpec, ProjectConfig
+from .termux_toolchains import detect_runtime_identity, normalize_native_cache_provider, normalize_native_provider, termux_cmake_probe, termux_ninja_probe, termux_ccache_probe, termux_native_provider
 
 
 @dataclass(frozen=True, slots=True)
@@ -1277,6 +1278,10 @@ class PythonRunner(ProjectRunner):
         options = self._options(config)
         value = str(options.get("environment") or "").strip()
         if not value:
+            normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+            if normalized_environment in {"proot", "proot-distro"}:
+                from .python_support import python_repo_key
+                return str((self._root(config) / ".devtool" / "proot" / "python" / python_repo_key(self._root(config))).resolve())
             name = config.selected_target or "python"
             return str(default_python_environment_root(self._root(config), name).resolve())
         path = Path(value).expanduser()
@@ -1314,7 +1319,7 @@ class PythonRunner(ProjectRunner):
         return plan
 
     def _env(self, config: ProjectConfig, *, isolated: bool = False) -> dict[str, str]:
-        from .python_support import python_cache_env
+        from .python_support import python_cache_env, python_repo_key
         env = _optimized_env(config, self.kind)
         env.update(python_cache_env(self._root(config), config.execution_environment))
         info = self._info(config)
@@ -1324,8 +1329,36 @@ class PythonRunner(ProjectRunner):
                 env.setdefault("UV_PROJECT_ENVIRONMENT", plan.environment_root)
         options = self._options(config)
         if isolated or bool(options.get("isolation", False)):
-            home = self._root(config) / ".devtool" / "tmp" / "python-home"
-            tmp = self._root(config) / ".devtool" / "tmp" / "python"
+            project_root = self._root(config)
+            execution = str(config.execution_environment or "auto").strip().lower().replace("_", "-")
+            current = detect_current_environment()
+
+            # Test/validator temp trees must not live under the repository.
+            # Otherwise nested TemporaryDirectory projects inherit the parent
+            # .devtool.toml/Git boundary and cease to be isolated. Native
+            # Termux also needs its private $PREFIX/tmp rather than Android's
+            # unwritable /tmp, and the shorter path keeps AF_UNIX fixtures safe.
+            use_host_temp = execution not in {"chroot", "proot", "proot-distro", "ssh"}
+            if current == NATIVE_TERMUX and use_host_temp:
+                prefix = Path(os.environ.get("PREFIX") or "/data/data/com.termux/files/usr").expanduser()
+                tmp = prefix / "tmp"
+                home = tmp / f"dt-home-{python_repo_key(project_root).rsplit('-', 1)[-1][:8]}"
+            elif use_host_temp:
+                tmp = Path(os.environ.get("TMPDIR") or "/tmp").expanduser()
+                try:
+                    tmp.relative_to(project_root)
+                except ValueError:
+                    pass
+                else:
+                    tmp = Path("/tmp")
+                home = tmp / f"devtool-home-{python_repo_key(project_root).rsplit('-', 1)[-1][:8]}"
+            else:
+                # Chroot/PRoot execution keeps the repository-mapped paths so
+                # the guest always sees a writable location without assuming
+                # host /tmp is mounted into the guest.
+                home = project_root / ".devtool" / "tmp" / "python-home"
+                tmp = project_root / ".devtool" / "tmp" / "python"
+
             home.mkdir(parents=True, exist_ok=True)
             tmp.mkdir(parents=True, exist_ok=True)
             for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
@@ -1416,6 +1449,12 @@ class PythonRunner(ProjectRunner):
         if info.manager != "venv":
             return False
         plan = self._plan(config)
+        normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+        if normalized_environment in {"proot", "proot-distro"}:
+            # The guest venv may contain glibc executables that must never be
+            # executed as host-side probes on native Termux. Let the guest-side
+            # idempotent bootstrap decide whether work is required.
+            return True
         if plan.environment_root and not Path(plan.python).is_file():
             return True
         from .python_support import missing_auto_validator_dependencies
@@ -1529,6 +1568,20 @@ class PythonRunner(ProjectRunner):
             ) if marker in data
         ]
 
+    def _python_support_prefix(self, config: ProjectConfig) -> list[str]:
+        normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+        if normalized_environment in {"proot", "proot-distro"}:
+            plan = self._plan(config)
+            return [plan.bootstrap_python or "python3", "-m", "devtool.python_support"]
+        return [sys.executable, "-m", "devtool.python_support"]
+
+    def _python_support_python_arg(self, config: ProjectConfig) -> str:
+        normalized_environment = str(config.execution_environment or "").strip().lower().replace("_", "-")
+        if normalized_environment in {"proot", "proot-distro"}:
+            plan = self._plan(config)
+            return plan.bootstrap_python or "python3"
+        return config.python_executable
+
     def _lint_specs(self, config: ProjectConfig, *, targets: Iterable[str] = ()) -> list[CommandSpec]:
         root = self._root(config)
         target_values = list(dict.fromkeys(str(item) for item in targets if str(item))) or ["."]
@@ -1549,10 +1602,10 @@ class PythonRunner(ProjectRunner):
             else:
                 tool_args = [*configured_args, *target_values]
             helper = [
-                sys.executable, "-m", "devtool.python_support", "run-tool",
+                *self._python_support_prefix(config), "run-tool",
                 "--manager", self._info(config).manager,
                 "--framework", self._info(config).framework,
-                "--python", config.python_executable,
+                "--python", self._python_support_python_arg(config),
                 "--environment", plan.environment_root,
                 str(root), tool, *tool_args,
             ]
@@ -1598,7 +1651,7 @@ class PythonRunner(ProjectRunner):
             filtered.append(text)
         packages = filtered
         normalized = {str(item).split("[", 1)[0].split("==", 1)[0].split(">=", 1)[0].split("<=", 1)[0].lower() for item in packages}
-        if normalized and normalized <= {"pytest", "pytest-asyncio"}:
+        if normalized and normalized <= {"pytest", "pytest-asyncio", "pexpect"}:
             return "restore:test-tools"
         if any(item.startswith("setuptools") or item in {"wheel", "build", "hatchling", "flit_core", "poetry-core"} for item in normalized):
             return "restore:build-system"
@@ -1633,9 +1686,9 @@ class PythonRunner(ProjectRunner):
         if validator_dependencies and info.manager == "venv":
             specs.append(CommandSpec("validator-dependencies", self._module(config, "pip", "install", *validator_dependencies), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config))))
         snapshot = [
-            sys.executable, "-m", "devtool.python_support", "environment-snapshot",
+            *self._python_support_prefix(config), "environment-snapshot",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
-            "--python", config.python_executable, "--environment", plan.environment_root,
+            "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
             "--execution-environment", config.execution_environment,
         ]
         for group in groups:
@@ -1685,7 +1738,7 @@ class PythonRunner(ProjectRunner):
     def _source_audit_spec(self, config: ProjectConfig) -> CommandSpec:
         info = self._info(config)
         argv = [
-            sys.executable, "-m", "devtool.python_support", "source-audit",
+            *self._python_support_prefix(config), "source-audit",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
         ]
         return CommandSpec(
@@ -1704,7 +1757,7 @@ class PythonRunner(ProjectRunner):
         base = str(selection.get("changed_from") or "HEAD")
         report = self._root(config) / ".devtool" / "reports" / "coverage.xml"
         argv = [
-            sys.executable, "-m", "devtool.python_support", "diff-coverage",
+            *self._python_support_prefix(config), "diff-coverage",
             str(self._root(config)), str(report), "--base", base, "--minimum", str(minimum),
         ]
         return CommandSpec(
@@ -1721,9 +1774,9 @@ class PythonRunner(ProjectRunner):
         info = self._info(config)
         plan = self._plan(config)
         argv = [
-            sys.executable, "-m", "devtool.python_support", "sbom",
+            *self._python_support_prefix(config), "sbom",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
-            "--python", config.python_executable, "--environment", plan.environment_root,
+            "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
         ]
         return CommandSpec("python-sbom", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="sbom"))
 
@@ -1735,9 +1788,9 @@ class PythonRunner(ProjectRunner):
         info = self._info(config)
         plan = self._plan(config)
         argv = [
-            sys.executable, "-m", "devtool.python_support", "reproducible-build",
+            *self._python_support_prefix(config), "reproducible-build",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
-            "--python", config.python_executable, "--environment", plan.environment_root,
+            "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
         ]
         return CommandSpec("python-reproducible-build", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), validation_component="reproducible-build"))
 
@@ -1749,9 +1802,9 @@ class PythonRunner(ProjectRunner):
             return None
         plan = self._plan(config)
         argv = [
-            sys.executable, "-m", "devtool.python_support", "notebook-check",
+            *self._python_support_prefix(config), "notebook-check",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
-            "--python", config.python_executable, "--environment", plan.environment_root,
+            "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
         ]
         for notebook in info.notebooks:
             argv.extend(["--notebook", notebook])
@@ -1766,7 +1819,7 @@ class PythonRunner(ProjectRunner):
         if not start or service.get("enabled", True) is False:
             return None
         argv = [
-            sys.executable, "-m", "devtool.python_support", "service-check",
+            *self._python_support_prefix(config), "service-check",
             str(self._root(config)), "--start", start,
             "--timeout", str(int(service.get("timeout") or 60)),
         ]
@@ -1827,9 +1880,9 @@ class PythonRunner(ProjectRunner):
         for tool in tools:
             args = ["-r", "."] if tool == "bandit" else []
             argv = [
-                sys.executable, "-m", "devtool.python_support", "run-tool",
+                *self._python_support_prefix(config), "run-tool",
                 "--manager", info.manager, "--framework", info.framework,
-                "--python", config.python_executable, "--environment", plan.environment_root,
+                "--python", self._python_support_python_arg(config), "--environment", plan.environment_root,
                 str(self._root(config)), tool, *args,
             ]
             specs.append(CommandSpec(f"security:{tool}", argv, env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config), report_parser="python-tool", validation_component="security")))
@@ -1879,12 +1932,29 @@ class PythonRunner(ProjectRunner):
             if bool(options.get("fresh_dist", True)):
                 specs.append(CommandSpec(
                     "prepare-dist",
-                    [sys.executable, "-m", "devtool.python_support", "prepare-dist", str(root)],
+                    [*self._python_support_prefix(config), "prepare-dist", str(root)],
                     env=self._env(config), cwd=str(root),
                     metadata=_tool_metadata(self.kind, root, validation_component="package-preparation"),
                 ))
-            argv = self._module(config, "build", "--outdir", str(outdir))
-            specs.append(CommandSpec("build", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, collect_artifacts=True, verify_artifacts=True)))
+            info = self._info(config)
+            build_env = self._env(config)
+            if info.manager == "uv" and detect_current_environment() == NATIVE_TERMUX:
+                # Termux commonly places uv's cache and the project/build
+                # destination on filesystems where hardlinks cannot cross.
+                # Select copy mode up front instead of letting uv emit its
+                # hardlink-fallback warning on every successful build.
+                build_env.setdefault("UV_LINK_MODE", "copy")
+            if info.manager == "uv":
+                # uv-managed projects should use uv's native PEP 517 build
+                # frontend. `uv run python -m build` requires the separate
+                # PyPA `build` package to be declared in the project
+                # environment, which is not a runtime/project dependency.
+                argv = ["uv", "build", "--out-dir", str(outdir)]
+                if bool(options.get("offline", False)):
+                    argv.append("--offline")
+            else:
+                argv = self._module(config, "build", "--outdir", str(outdir))
+            specs.append(CommandSpec("build", argv, env=build_env, cwd=str(root), metadata=_tool_metadata(self.kind, root, collect_artifacts=True, verify_artifacts=True)))
             return specs
         if action in {"test", "wine-test"}:
             if config.test_command:
@@ -1904,7 +1974,10 @@ class PythonRunner(ProjectRunner):
             report = root / ".devtool" / "reports" / "python-packages.json"
             package = options.get("package", {})
             package = dict(package) if isinstance(package, dict) else {}
-            argv = [sys.executable, "-m", "devtool.python_support", "package-check", str(root), "--report", str(report)]
+            argv = [*self._python_support_prefix(config), "package-check", str(root), "--report", str(report)]
+            info = self._info(config)
+            if info.manager == "uv":
+                argv.extend(["--rebuild-frontend", "uv"])
             flags = {
                 "import_smoke": ("--import-smoke", True),
                 "install_dependencies": ("--install-dependencies", False),
@@ -1925,7 +1998,7 @@ class PythonRunner(ProjectRunner):
             return [CommandSpec("package-check", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, report_parser="python-package", package_report=str(report)))]
         if action == "clean":
             categories = self._list_option(config, "clean_categories") or ["artifacts", "caches"]
-            argv = [sys.executable, "-m", "devtool.python_support", "clean", str(root)]
+            argv = [*self._python_support_prefix(config), "clean", str(root)]
             for category in categories:
                 argv.extend(["--category", category])
             return [CommandSpec("clean", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root))]
@@ -2444,20 +2517,71 @@ class CMakeRunner(ProjectRunner):
             path = Path(str(path).replace("{variant}", variant))
         return path.resolve()
 
+    def _native_termux_context(self, config: ProjectConfig) -> tuple[object | None, bool]:
+        policy = resolve_build_policy(config, self.kind)
+        native_tool_detection = policy.environment == detect_current_environment()
+        runtime = detect_runtime_identity() if native_tool_detection else None
+        return runtime, native_tool_detection
+
+    def _cmake_command(self, config: ProjectConfig, tool: str = "cmake") -> str:
+        options = self._options(config)
+        runtime, _ = self._native_termux_context(config)
+        provider = str(options.get("provider") or "auto").strip().lower()
+        if provider not in {"auto", "termux", "system"}:
+            raise SystemExit("Unsupported CMake provider: " + provider + ". Expected auto, termux, or system")
+        if runtime is not None and getattr(runtime, "is_termux", False) and provider in {"auto", "termux"}:
+            probe = termux_cmake_probe(runtime=runtime)
+            if provider == "termux" and not probe.compatible:
+                raise SystemExit(f"Termux CMake provider requested but unavailable: {probe.rejection_reason or probe.reason}")
+            if probe.compatible and probe.path:
+                if tool == "cmake":
+                    return str(probe.path)
+                sibling = probe.path.with_name(tool)
+                if sibling.is_file() and os.access(sibling, os.X_OK) and (runtime.prefix is None or sibling.resolve(strict=False).is_relative_to(runtime.prefix.resolve(strict=False))):
+                    return str(sibling)
+                if provider == "termux":
+                    raise SystemExit(f"Termux CMake provider requested but executable {tool} is unavailable next to {probe.path}")
+        return tool
+
     def _configure_spec(self, config: ProjectConfig) -> CommandSpec:
         root = self._root(config)
         build_dir = self._build_dir(config)
         options = self._options(config)
-        argv = ["cmake", "-S", str(root), "-B", str(build_dir)]
-        policy = resolve_build_policy(config, self.kind)
-        native_tool_detection = policy.environment == detect_current_environment()
-        generator = str(options.get("generator") or ("Ninja" if native_tool_detection and shutil.which("ninja") else "")).strip()
+        runtime, native_tool_detection = self._native_termux_context(config)
+        provider = str(options.get("provider") or "auto").strip().lower()
+        cmake_command = self._cmake_command(config)
+        ninja_available = bool(shutil.which("ninja"))
+        ccache_command = shutil.which("ccache")
+        native_compiler_provider = normalize_native_provider(str(options.get("native_provider") or "auto"))
+        native_probe = None
+        if runtime is not None and runtime.is_termux:
+            ninja_probe = termux_ninja_probe(runtime=runtime)
+            ccache_probe = termux_ccache_probe(runtime=runtime)
+            ninja_available = bool(ninja_probe.compatible and ninja_probe.path)
+            ccache_command = str(ccache_probe.path) if ccache_probe.compatible and ccache_probe.path else None
+            if native_compiler_provider in {"auto", "termux-sysroot"}:
+                native_probe = termux_native_provider(runtime=runtime)
+                if native_compiler_provider == "termux-sysroot" and not native_probe.compatible:
+                    raise SystemExit(f"Termux native compiler provider requested but unavailable: {native_probe.rejection_reason or native_probe.reason}")
+            elif native_compiler_provider == "ndk":
+                raise SystemExit("Generic CMake projects cannot select native_provider=ndk without an Android NDK toolchain file; use the Android runner for Android NDK builds")
+        elif native_compiler_provider == "termux-sysroot":
+            raise SystemExit("Termux native compiler provider requested outside native Termux execution")
+        argv = [cmake_command, "-S", str(root), "-B", str(build_dir)]
+        generator = str(options.get("generator") or ("Ninja" if native_tool_detection and ninja_available else "")).strip()
         if generator:
             argv.extend(["-G", generator])
         configuration = str(config.variant or options.get("configuration") or "Debug")
         argv.extend([f"-DCMAKE_BUILD_TYPE={configuration}", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"])
-        if bool(options.get("ccache", True)) and native_tool_detection and shutil.which("ccache"):
-            argv.extend(["-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"])
+        if native_probe is not None and native_probe.compatible and native_probe.path:
+            clang = native_probe.path
+            clangxx = clang.with_name("clang++")
+            argv.extend([f"-DCMAKE_C_COMPILER={clang}", f"-DCMAKE_CXX_COMPILER={clangxx}"])
+        cache_provider = normalize_native_cache_provider(str(options.get("cache") or ("auto" if bool(options.get("ccache", True)) else "off")))
+        if cache_provider == "ccache" and not ccache_command:
+            raise SystemExit("ccache provider requested but ccache is unavailable in the selected execution environment")
+        if cache_provider != "off" and native_tool_detection and ccache_command:
+            argv.extend([f"-DCMAKE_C_COMPILER_LAUNCHER={ccache_command}", f"-DCMAKE_CXX_COMPILER_LAUNCHER={ccache_command}"])
         extra = options.get("configure_args", [])
         if isinstance(extra, str):
             argv.extend(shlex.split(extra))
@@ -2478,20 +2602,20 @@ class CMakeRunner(ProjectRunner):
             return [self._configure_spec(config)]
         if action == "build":
             specs = [] if configured else [self._configure_spec(config)]
-            argv = ["cmake", "--build", str(build_dir), "--parallel", str(workers)]
+            argv = [self._cmake_command(config), "--build", str(build_dir), "--parallel", str(workers)]
             configuration = str(config.variant or self._options(config).get("configuration") or "Debug")
             argv.extend(["--config", configuration])
             specs.append(CommandSpec("build", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir))))
             return specs
         if action in {"test", "wine-test"}:
-            argv = ["ctest", "--test-dir", str(build_dir), "--parallel", str(workers), "--output-on-failure"]
+            argv = [self._cmake_command(config, "ctest"), "--test-dir", str(build_dir), "--parallel", str(workers), "--output-on-failure"]
             spec = CommandSpec("test", argv, env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))
             from .test_selection import apply_test_selection
             return [apply_test_selection(config, spec)]
         if action == "package":
-            return [CommandSpec("package", ["cpack", "--config", str(build_dir / "CPackConfig.cmake")], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            return [CommandSpec("package", [self._cmake_command(config, "cpack"), "--config", str(build_dir / "CPackConfig.cmake")], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
         if action == "clean":
-            return [CommandSpec("clean", ["cmake", "--build", str(build_dir), "--target", "clean", "--parallel", str(workers)], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            return [CommandSpec("clean", [self._cmake_command(config), "--build", str(build_dir), "--target", "clean", "--parallel", str(workers)], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
         raise SystemExit(f"Unsupported CMake action: {action}")
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:

@@ -342,6 +342,8 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
             output = io.StringIO()
             with patch("devtool.android_build.normalized_machine", return_value="arm64"), patch(
+                "devtool.android_build.running_under_termux_python", return_value=False
+            ), patch(
                 "devtool.android_build.download",
                 side_effect=fake_download,
             ), redirect_stdout(output):
@@ -408,6 +410,8 @@ class AndroidProjectInspectionTests(unittest.TestCase):
                 return destination
 
             with patch("devtool.android_build.normalized_machine", return_value="arm64"), patch(
+                "devtool.android_build.running_under_termux_python", return_value=False
+            ), patch(
                 "devtool.android_build.download",
                 side_effect=fake_download,
             ):

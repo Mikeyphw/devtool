@@ -159,7 +159,9 @@ Show resolved repository, target, runner, execution environment, and configurati
 .B doctor " | " dr
 Diagnose devtool and project prerequisites. Use
 .B --fix
-to create safe devtool state/cache directories where supported.
+to create safe devtool state/cache directories where supported. Use
+.B --explain
+on native Termux to include provider selection and rejection reasons.
 .SH ARTIFACT COMMANDS
 .TP
 .B apply-overlay " | " ao " ARTIFACT"
@@ -234,6 +236,17 @@ and
 .B doctor
 for the sparse user config at
 .IR ~/.config/devtool/config.toml .
+.TP
+.B termux doctor|packages|explain
+Inspect native Termux runtime and provider readiness, print read-only package recommendations, or explain provider selection/rejection decisions.
+.B termux doctor
+accepts
+.B --distro NAME
+to probe the installed PRoot guest's own Python/Java/Gradle/CMake/Ninja/clang/Git commands and
+.B --explain
+to include provider reasoning. The doctor reports per-tool Termux Android providers, Android SDK/full-NDK readiness when applicable, and local SSH/chrootctl/tmux/PRoot availability. The dedicated Termux diagnostics support
+.B --format text|json
+and never install or upgrade Termux packages; OpenJDK suggestions are resolved read-only from installed/available package names before using a conservative fallback.
 .TP
 .B detect
 Detect project type; use
@@ -409,6 +422,7 @@ Select
 .BR auto ,
 .BR native-termux ,
 .BR chroot ,
+.BR proot-distro ,
 .BR desktop-linux ,
 .BR android-device ,
 .BR external-device ,
@@ -439,6 +453,60 @@ Set the remote devtool executable.
 .B --ssh-detached
 Start or reuse the remote tmux session without attaching. An attached session may be detached with Ctrl-b followed by d.
 .TP
+.BR --proot-distro " DISTRO"
+Keep devtool orchestration on the host and run planned external command phases inside the named PRoot-Distro container. The guest does not need devtool installed. The current repository is automatically bound to /workspace/project unless disabled or overridden.
+.TP
+.BR --proot-user " USER"
+Select the guest user.
+.TP
+.BR --proot-cwd " PATH"
+Set the absolute initial working directory inside the guest.
+.TP
+.BR --proot-repo-mount " PATH"
+Set the absolute guest mount point used by automatic repository binding.
+.TP
+.BR --proot-bind " HOST:GUEST"
+Add a host-to-guest bind. Repeatable. Explicit guest destinations must be absolute.
+.TP
+.BR --proot-env " NAME=VALUE"
+Pass an explicit guest environment variable. Repeatable. Host HOME, PATH, JAVA_HOME, Gradle home, Android SDK/NDK homes, and backend-specific devtool variables are not blindly inherited; devtool-managed execution/backend variables are reserved and cannot be overridden.
+.TP
+.B --proot-no-auto-bind-repo
+Disable automatic binding of the current repository.
+.TP
+.B --proot-shared-home
+Request PRoot-Distro shared-home behavior.
+.TP
+.B --proot-shared-tmp
+Share Termux temporary storage with the guest. This option is Termux-only.
+.TP
+.B --proot-isolated
+Use PRoot-Distro isolated mode. Termux-only and mutually exclusive with --proot-minimal.
+.TP
+.B --proot-minimal
+Use PRoot-Distro minimal mode. Termux-only and mutually exclusive with --proot-isolated.
+.TP
+.BR --proot-stage-dir " PATH"
+Set the host helper staging directory bound into the guest. Staging is cleaned after the command plan finishes.
+.TP
+.BR --termux-resource-profile " PROFILE"
+Choose auto/automatic, conservative, balanced, or performance defaults for workers, JVM memory, memory guard, and native parallelism. Explicit user resource settings remain authoritative. Phone-local defaults are not injected into independent SSH/remote execution plans.
+.TP
+.B --termux-wake-lock
+Acquire a Termux wake lock while command phases run and release it on success, failure, or interruption.
+.TP
+.B --no-termux-wake-lock
+Disable wake-lock integration.
+.TP
+.BR --shared-storage-policy " POLICY"
+Set allow, warn, or deny behavior when a native Termux repository is located on Android shared storage.
+.TP
+.B --allow-shared-storage-build
+Override the shared-storage guard for one run.
+.TP
+.BR --artifact-export " DIR"
+Copy verified Android/Gradle artifacts to a final destination such as /sdcard/Download after private-storage verification.
+.TP
 .B --no-auto-chroot
 Do not automatically route incompatible Termux operations into a chroot.
 .TP
@@ -466,13 +534,31 @@ Set the Android SDK root for Android/Gradle runs.
 .BR --gradle-command " PATH"
 Set the Gradle or gradlew executable for Android/Gradle runs.
 .TP
+.BR --gradle-provider " PROVIDER"
+Select the Gradle provider for Android/Gradle runs: \fBauto\fR, \fBwrapper\fR, \fBtermux\fR, \fBsystem\fR, or \fBdownload\fR. A complete project Wrapper remains preferred in auto mode.
+.TP
 .BR --java-home " PATH"
 Set the JDK home for Android/Gradle runs.
+.TP
+.BR --java-provider " PROVIDER"
+Select the Java provider for Android/Gradle runs: \fBauto\fR, \fBtermux\fR, or \fBsystem\fR. An explicit \fB--java-home\fR remains authoritative.
 .TP
 .BR --gradle-user-home " PATH"
 Set
 .B GRADLE_USER_HOME
 for Android/Gradle runs.
+.TP
+.BR --native-provider " PROVIDER"
+Select native compiler capability provider: \fBauto\fR, \fBtermux-sysroot\fR, \fBndk\fR, or \fBsystem\fR. Android external native builds still require a complete NDK.
+.TP
+.BR --native-cache " PROVIDER"
+Select native compiler cache: \fBauto\fR, \fBccache\fR, or \fBoff\fR.
+.TP
+.BR --android-build-tools-provider " PROVIDER"
+Select native Android SDK build-tools provider: \fBauto\fR, \fBtermux\fR, \fBsdk\fR, \fBcommit451\fR, or \fBnone\fR. Native Termux/Bionic requires runnable Termux helpers; Commit451 linux-glibc-arm64 binaries are used only on compatible Linux/chroot hosts.
+.TP
+.BR --aapt2-provider " PROVIDER"
+Select AAPT2 provider: \fBauto\fR, \fBtermux\fR, \fBsdk\fR, \fBrevanced\fR, or \fBnone\fR. Native Termux AAPT2 is capability-probed against the selected Android platform before use.
 .PP
 Devtool records the selected environment in structured logs and HUD state. Chroot workers
 use a recursion guard, translate known Termux/chroot paths, and verify the mapped project
@@ -931,9 +1017,11 @@ for manual-only retry control.
 .SH ANDROID AND GRADLE
 The Android runner integrates the same backend used by the
 .B build-apk
-compatibility command. It supports JDK and SDK inspection/setup, Gradle wrapper or managed
-Gradle selection, ARM-compatible AAPT2 handling, Build Tools/platform/NDK/CMake discovery,
-Termux-native execution, and chroot fallback.
+compatibility command. It supports JDK and SDK inspection/setup, complete Gradle Wrapper
+preference, Termux/system/download Gradle providers, Termux/system Java providers,
+ARM-compatible AAPT2 handling, Build Tools/platform/NDK/CMake discovery, Termux-native
+execution, and chroot fallback. In auto mode an incomplete project Wrapper is reported as
+an error instead of silently changing Gradle versions.
 .PP
 Gradle is launched with a bundled init script that emits ordered run-scoped events. Terminal,
 desktop, and Android views consume the same task and test stream. Stale, wrong-run, invalid,

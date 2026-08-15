@@ -156,6 +156,7 @@ _devtool_commands() {
     'st:alias for status'
     'doctor:diagnose devtool and project prerequisites'
     'dr:alias for doctor'
+    'termux:inspect native Termux providers, packages, and PRoot guests'
     'apply-overlay:transactionally apply one overlay'
     'ao:alias for apply-overlay'
     'apply-overlays:transactionally apply a bundle or ordered overlays'
@@ -423,10 +424,11 @@ _devtool() {
     '--hud-mode[HUD backend]:mode:(desktop android-bridge desktop-window gtk4-window web studio terminal)' \
     '(--hud-overlay --hud-no-overlay)--hud-overlay[also show the run in the Android floating overlay]' \
     '(--hud-overlay --hud-no-overlay)--hud-no-overlay[keep the run in the app without opening the overlay]' \
-    '(--host --chroot --ssh --ssh-host --execution-environment)--host[force the current host environment]' \
-    '(--host --chroot --ssh --ssh-host --execution-environment)--chroot[run command phases in a named chroot]:name:' \
-    '(--host --chroot --ssh --ssh-host --execution-environment)'{--ssh,--ssh-host}'[use an SSH host for devtool or command-phase execution]:host:_hosts' \
-    '(--host --chroot --ssh --ssh-host --execution-environment)--execution-environment[execution backend]:backend:(auto native-termux chroot desktop-linux android-device external-device ssh)' \
+    '(--host --chroot --ssh --ssh-host --proot-distro --execution-environment)--host[force the current host environment]' \
+    '(--host --chroot --ssh --ssh-host --proot-distro --execution-environment)--chroot[run command phases in a named chroot]:name:' \
+    '(--host --chroot --ssh --ssh-host --proot-distro --execution-environment)'{--ssh,--ssh-host}'[use an SSH host for devtool or command-phase execution]:host:_hosts' \
+    '(--host --chroot --ssh --ssh-host --proot-distro --execution-environment)--proot-distro[run command phases in a PRoot-Distro container]:distro:' \
+    '(--host --chroot --ssh --ssh-host --proot-distro --execution-environment)--execution-environment[execution backend]:backend:(auto native-termux chroot proot-distro desktop-linux android-device external-device ssh)' \
     '--ssh-port[SSH port]:port:' \
     '--ssh-user[SSH login user]:user:' \
     '--ssh-identity[SSH private key]:file:_files' \
@@ -437,6 +439,23 @@ _devtool() {
     '--ssh-stage-dir[remote staging root for copied artifacts/helpers]:directory:' \
     '--ssh-no-artifact-copy[disable automatic SSH/SCP artifact transfer]' \
     '--ssh-detached[start or reuse the remote tmux session without attaching; devtool mode]' \
+    '--proot-user[PRoot-Distro guest user]:user:' \
+    '--proot-cwd[absolute working directory inside the PRoot guest]:directory:' \
+    '--proot-repo-mount[absolute guest mount point for the repository]:directory:' \
+    '--proot-bind[additional host-to-guest bind]:mapping:' \
+    '--proot-env[explicit guest environment NAME=VALUE]:env:' \
+    '--proot-no-auto-bind-repo[disable automatic repository bind]' \
+    '--proot-shared-home[share host home with PRoot guest]' \
+    '--proot-shared-tmp[share Termux tmp with PRoot guest]' \
+    '(--proot-minimal)--proot-isolated[use PRoot-Distro isolated mode on Termux]' \
+    '(--proot-isolated)--proot-minimal[use PRoot-Distro minimal mode on Termux]' \
+    '--proot-stage-dir[host staging directory bound into PRoot guest]:directory:' \
+    '--termux-resource-profile[Termux resource profile]:profile:(auto automatic conservative balanced performance)' \
+    '(--no-termux-wake-lock)--termux-wake-lock[acquire Termux wake lock during command phases]' \
+    '(--termux-wake-lock)--no-termux-wake-lock[disable Termux wake-lock integration]' \
+    '--shared-storage-policy[Android shared-storage build policy]:policy:(allow warn deny)' \
+    '--allow-shared-storage-build[allow repository builds from Android shared storage]' \
+    '--artifact-export[copy verified artifacts to directory]:directory:' \
     '--no-auto-chroot[disable automatic Termux-to-chroot routing]' \
     '--no-bootstrap-downloads[never download or install missing toolchain components]' \
     '--deny-network[deny Devtool-managed bootstrap network downloads]' \
@@ -444,8 +463,14 @@ _devtool() {
     '--toolchain-profile[chroot/toolchain profile]:profile:' \
     '--android-sdk-root[Android SDK root]:directory:_files -/' \
     '--gradle-command[Gradle or gradlew executable]:command:_command_names -e' \
+    '--gradle-provider[Gradle provider]:provider:(auto wrapper termux system download)' \
     '--java-home[JDK home]:directory:_files -/' \
+    '--java-provider[Java provider]:provider:(auto termux system)' \
     '--gradle-user-home[Gradle user home]:directory:_files -/' \
+    '--native-provider[Native provider]:provider:(auto termux-sysroot ndk system)' \
+    '--native-cache[Native compiler cache]:provider:(auto ccache off)' \
+    '--android-build-tools-provider[Android native build-tools provider]:provider:(auto termux sdk commit451 none)' \
+    '--aapt2-provider[AAPT2 provider]:provider:(auto termux sdk revanced none)' \
     '1:command:->command' \
     '*::argument:->args'
 
@@ -542,7 +567,24 @@ _devtool() {
             '(--daemon --no-daemon)--no-daemon[disable the Gradle daemon during validation]'
           ;;
         doctor|dr)
-          _arguments '--fix[create safe devtool state and cache directories]'
+          _arguments '--fix[create safe devtool state and cache directories]' '--explain[explain Termux provider selection and rejection reasons]'
+          ;;
+        termux)
+          if (( ${#line} < 2 )); then
+            _values 'termux action' doctor packages explain
+          else
+            case ${line[2]} in
+              doctor)
+                _arguments '--distro[probe an installed PRoot-Distro guest]:distro:' '--explain[include provider selection and rejection reasons]' '--format[output format]:format:(text json)'
+                ;;
+              packages)
+                _arguments '--format[output format]:format:(text json)'
+                ;;
+              explain)
+                _arguments '--format[output format]:format:(text json)'
+                ;;
+            esac
+          fi
           ;;
         clean|cl)
           _arguments '--caches[also prune devtool-managed caches and transient state]'

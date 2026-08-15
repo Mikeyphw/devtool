@@ -45,6 +45,7 @@ REVANCED_REPOSITORY = "ReVanced/aapt2"
 REVANCED_API = f"https://api.github.com/repos/{REVANCED_REPOSITORY}"
 ARM_BUILD_TOOLS_REPOSITORY = "Commit451/android-arm-build-tools"
 ARM_BUILD_TOOLS_RELEASE_ALIASES = {"35.0.0": "35.0.1"}
+ARM_BUILD_TOOLS_PUBLISHED_RELEASES = {"35.0.1", "36.0.0", "36.1.0", "37.0.0"}
 ARM_BUILD_TOOLS_NATIVE_NAMES = ("aidl", "zipalign", "split-select")
 NDK_HOST_PROVIDERS = {"auto", "google", "arm64", "qemu", "none"}
 QEMU_INSTALL_POLICIES = {"auto", "never"}
@@ -56,6 +57,11 @@ AAPT2_OVERRIDE_PROPERTY = "android.aapt2FromMavenOverride"
 UNSUPPORTED_OPTION_WARNINGS_PROPERTY = "android.suppressUnsupportedOptionWarnings"
 BOOTSTRAP_DOWNLOAD_POLICIES = {"never", "missing", "auto", "force"}
 BOOTSTRAP_NETWORK_POLICIES = {"deny", "allow"}
+JAVA_PROVIDERS = {"auto", "termux", "system"}
+GRADLE_PROVIDERS = {"auto", "wrapper", "termux", "system", "download"}
+NATIVE_PROVIDERS = {"auto", "termux-sysroot", "ndk", "system"}
+NATIVE_CACHE_PROVIDERS = {"auto", "ccache", "off"}
+ANDROID_BUILD_TOOLS_PROVIDERS = {"auto", "termux", "sdk", "commit451", "none"}
 
 
 class BuildError(RuntimeError):
@@ -672,7 +678,14 @@ def debian_package_installed(name: str) -> bool:
     return result.returncode == 0 and "install ok installed" in result.stdout
 
 
-def install_missing_system_dependencies(*, need_java: bool, need_certificates: bool, offline: bool, java_version: int = 17) -> None:
+def install_missing_system_dependencies(
+    *,
+    need_java: bool,
+    need_certificates: bool,
+    offline: bool,
+    java_version: int = 17,
+    java_provider: str = "auto",
+) -> None:
     if not need_java and not need_certificates:
         info("System dependencies are already ready")
         return
@@ -685,6 +698,13 @@ def install_missing_system_dependencies(*, need_java: bool, need_certificates: b
         fail("Missing system dependencies in --offline mode: " + ", ".join(missing))
 
     if running_under_termux_python():
+        provider = normalize_java_provider(java_provider)
+        if need_java and provider == "system":
+            fail(
+                "Java provider system was requested on native Termux, but automatic Termux package "
+                "installation only supplies Termux JDKs. Install/provide an external JDK with "
+                "--java-home, or use --java-provider termux/auto."
+            )
         packages: list[str] = []
         if need_java:
             packages.append(f"openjdk-{java_version}")
@@ -769,6 +789,203 @@ def running_under_termux_python() -> bool:
         except ValueError:
             continue
     return False
+
+
+def termux_prefix_path() -> Path:
+    raw = str(os.environ.get("PREFIX", "") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve(strict=False)
+    return Path("/data/data/com.termux/files/usr")
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def normalize_java_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    if normalized not in JAVA_PROVIDERS:
+        valid = ", ".join(sorted(JAVA_PROVIDERS))
+        fail(f"Unsupported Java provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def normalize_gradle_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    if normalized in {"managed", "downloaded"}:
+        normalized = "download"
+    if normalized not in GRADLE_PROVIDERS:
+        valid = ", ".join(sorted(GRADLE_PROVIDERS))
+        fail(f"Unsupported Gradle provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def executable_provider(path: Path) -> str:
+    if running_under_termux_python() and _path_is_within(path, termux_prefix_path()):
+        return "termux"
+    return "system"
+
+
+def normalize_native_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    aliases = {"termux": "termux-sysroot", "full-ndk": "ndk", "android-ndk": "ndk"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in NATIVE_PROVIDERS:
+        valid = ", ".join(sorted(NATIVE_PROVIDERS))
+        fail(f"Unsupported native provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def normalize_native_cache_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    if normalized in {"none", "false", "disabled"}:
+        normalized = "off"
+    if normalized not in NATIVE_CACHE_PROVIDERS:
+        valid = ", ".join(sorted(NATIVE_CACHE_PROVIDERS))
+        fail(f"Unsupported native cache provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def normalize_android_build_tools_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    aliases = {"download": "commit451", "downloaded": "commit451", "android-sdk": "sdk"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in ANDROID_BUILD_TOOLS_PROVIDERS:
+        valid = ", ".join(sorted(ANDROID_BUILD_TOOLS_PROVIDERS))
+        fail(f"Unsupported Android build-tools provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def termux_tool_path(name: str) -> Path | None:
+    if not running_under_termux_python():
+        return None
+    found = shutil.which(name)
+    if not found:
+        return None
+    resolved = Path(found).expanduser().resolve(strict=False)
+    return resolved if _path_is_within(resolved, termux_prefix_path()) else None
+
+
+def termux_ndk_sysroot_ready() -> tuple[bool, str]:
+    if not running_under_termux_python():
+        return False, "not running in native Termux"
+    version = termux_package_version("ndk-sysroot")
+    required = ("clang", "clang++", "ld.lld", "llvm-ar", "llvm-ranlib")
+    missing = [name for name in required if termux_tool_path(name) is None]
+    if not version:
+        return False, "ndk-sysroot package is not installed"
+    if missing:
+        return False, "missing Termux native tools: " + ", ".join(missing)
+    return True, f"ndk-sysroot {version} with Termux clang/lld"
+
+
+def native_requirement(project: "ProjectInfo") -> str:
+    if project.android and project.native_build:
+        return "android-ndk"
+    return "none"
+
+
+def select_native_provider(project: "ProjectInfo", requested: str) -> str:
+    provider = normalize_native_provider(requested)
+    requirement = native_requirement(project)
+    if requirement == "android-ndk":
+        if provider not in {"auto", "ndk"}:
+            fail("This Android native build requires a complete Android NDK; termux-sysroot/system compiler providers are insufficient")
+        return "ndk"
+    if provider in {"auto", "termux-sysroot"}:
+        ready, reason = termux_ndk_sysroot_ready()
+        if ready:
+            info(f"Native provider: Termux sysroot ({reason})")
+            return "termux-sysroot"
+        if provider == "termux-sysroot":
+            fail(f"Termux native provider requested but unavailable: {reason}")
+    return "system" if provider == "auto" else provider
+
+
+def configure_native_cache(env: MutableMapping[str, str], requested: str) -> str:
+    provider = normalize_native_cache_provider(requested)
+    ccache = termux_tool_path("ccache") if running_under_termux_python() else (Path(shutil.which("ccache")).resolve() if shutil.which("ccache") else None)
+    if provider == "ccache" and ccache is None:
+        fail("ccache provider requested but ccache is not available")
+    if provider != "off" and ccache is not None:
+        env.setdefault("CCACHE_DIR", str(Path.home() / ".cache" / "devtool" / "ccache"))
+        env.setdefault("CMAKE_C_COMPILER_LAUNCHER", str(ccache))
+        env.setdefault("CMAKE_CXX_COMPILER_LAUNCHER", str(ccache))
+        info(f"Native compiler cache: {ccache}")
+        return "ccache"
+    return "off"
+
+
+def termux_package_version(name: str) -> str | None:
+    if not running_under_termux_python():
+        return None
+    dpkg_query = shutil.which("dpkg-query")
+    if not dpkg_query:
+        return None
+    try:
+        result = subprocess.run(
+            [dpkg_query, "-W", "-f=${Status}\t${Version}", name],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    status, _, version = result.stdout.strip().partition("\t")
+    if result.returncode != 0 or "install ok installed" not in status:
+        return None
+    return version.strip() or None
+
+
+def termux_jvm_candidates() -> list[Path]:
+    if not running_under_termux_python():
+        return []
+    root = termux_prefix_path() / "lib" / "jvm"
+    if not root.is_dir():
+        return []
+    try:
+        return sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name)
+    except OSError:
+        return []
+
+
+@dataclass(frozen=True)
+class GradleWrapperState:
+    present: bool
+    complete: bool
+    missing: tuple[str, ...]
+
+
+def gradle_wrapper_state(project_root: Path) -> GradleWrapperState:
+    files = (
+        ("gradlew", project_root / "gradlew"),
+        ("gradle/wrapper/gradle-wrapper.properties", project_root / "gradle" / "wrapper" / "gradle-wrapper.properties"),
+        ("gradle/wrapper/gradle-wrapper.jar", project_root / "gradle" / "wrapper" / "gradle-wrapper.jar"),
+    )
+    present = any(path.exists() for _, path in files)
+    missing = tuple(label for label, path in files if not path.is_file())
+    return GradleWrapperState(present=present, complete=present and not missing, missing=missing)
+
+
+def broken_wrapper_message(project_root: Path, state: GradleWrapperState) -> str:
+    missing = "\n".join(f"- {item}" for item in state.missing) or "- unknown wrapper component"
+    termux_gradle = shutil.which("gradle") if running_under_termux_python() else None
+    fallback = ""
+    if termux_gradle:
+        fallback = (
+            f"\n\nTermux Gradle is available at {termux_gradle}, but it was not selected "
+            "automatically because replacing an incomplete project wrapper can violate the project's Gradle/AGP version contract."
+        )
+    return (
+        f"Project Gradle wrapper is incomplete in {project_root}.\n\nMissing:\n{missing}"
+        f"{fallback}\n\nRestore the wrapper files from version control, regenerate them with a compatible Gradle version, "
+        "or explicitly select another provider with --gradle-provider."
+    )
 
 
 def parse_chroot_launch_options(raw_args: Sequence[str]) -> ChrootLaunchOptions:
@@ -1074,6 +1291,67 @@ def obtain_revanced_aapt2(
     return validate_aapt2(target, dry_run=dry_run)
 
 
+def termux_aapt2_path() -> Path | None:
+    path = termux_tool_path("aapt2")
+    if path is None or not executable_runs(path, "version"):
+        return None
+    return path
+
+
+def termux_aapt2_supports_platform(
+    aapt2: Path,
+    sdk_root: Path,
+    platform_id: str | None,
+    *,
+    dry_run: bool = False,
+) -> bool:
+    if dry_run:
+        return True
+    if not platform_id:
+        return executable_runs(aapt2, "version")
+    android_jar = sdk_root / "platforms" / platform_id / "android.jar"
+    if not android_jar.is_file():
+        return False
+    try:
+        with tempfile.TemporaryDirectory(prefix="devtool-aapt2-probe-") as temporary_dir:
+            root = Path(temporary_dir)
+            values = root / "res" / "values"
+            values.mkdir(parents=True)
+            (values / "strings.xml").write_text('<resources><string name="app_name">probe</string></resources>\n', encoding="utf-8")
+            manifest = root / "AndroidManifest.xml"
+            manifest.write_text('<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="devtool.probe"><uses-sdk android:minSdkVersion="21"/><application android:label="@string/app_name"/></manifest>\n', encoding="utf-8")
+            compiled = root / "compiled.zip"
+            linked = root / "probe.apk"
+            compile_result = subprocess.run([str(aapt2), "compile", "--dir", str(root / "res"), "-o", str(compiled)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20, check=False)
+            if compile_result.returncode != 0:
+                return False
+            link_result = subprocess.run([str(aapt2), "link", "-I", str(android_jar), "--manifest", str(manifest), "-o", str(linked), str(compiled)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20, check=False)
+            return link_result.returncode == 0 and linked.is_file()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def select_termux_aapt2(
+    sdk_root: Path | None,
+    platform_id: str | None,
+    *,
+    required: bool,
+    dry_run: bool = False,
+) -> Path | None:
+    candidate = termux_aapt2_path()
+    if candidate is None:
+        if required:
+            fail("Termux AAPT2 provider requested but $PREFIX/bin/aapt2 is unavailable or cannot run")
+        return None
+    if sdk_root is None or not termux_aapt2_supports_platform(candidate, sdk_root, platform_id, dry_run=dry_run):
+        if required:
+            fail(f"Termux AAPT2 is not compatible with selected Android platform {platform_id or 'unknown'}: {candidate}")
+        warn(f"Termux AAPT2 failed capability probe for Android platform {platform_id or 'unknown'}; using another provider")
+        return None
+    info(f"AAPT2 provider: Termux ({candidate})")
+    return candidate
+
+
 def _checksum_from_manifest(text: str, asset_name: str) -> str | None:
     """Return the SHA-256 recorded for ``asset_name`` in SHA256SUMS text."""
 
@@ -1113,6 +1391,46 @@ def native_tool_matches_host(path: Path, machine: str | None = None) -> bool:
     detected = _elf_machine(header)
     return detected is None or detected == (machine or normalized_machine())
 
+
+
+def android_build_tool_executes(path: Path, tool_name: str, *, timeout: float = 5.0) -> bool:
+    """Return whether an Android build-tool executable can actually start here.
+
+    Matching ELF architecture is not enough on Android/Termux: an AArch64
+    glibc executable still cannot run under Bionic. Use a harmless probe and
+    accept any normal exit status; loader/exec failures and timeouts are not
+    compatible.
+    """
+
+    probes = {
+        "aidl": ("--version",),
+        "zipalign": ("-h",),
+        "split-select": ("--help",),
+        "aapt2": ("version",),
+    }
+    args = probes.get(tool_name, ("--help",))
+    try:
+        subprocess.run(
+            [str(path), *args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def native_android_build_tool_compatible(path: Path, tool_name: str, machine: str | None = None) -> bool:
+    if not native_tool_matches_host(path, machine):
+        return False
+    # Native Termux must also prove runtime/loader compatibility. Linux/chroot
+    # hosts retain the historical architecture-only fast path.
+    if running_under_termux_python():
+        return android_build_tool_executes(path, tool_name)
+    return True
 
 
 def native_tool_arch(path: Path) -> str | None:
@@ -1720,6 +2038,73 @@ def ensure_ndk_host_compatible(
     )
 
 
+def commit451_release_available(
+    cache_root: Path,
+    release_version: str,
+    *,
+    offline: bool,
+) -> bool:
+    """Resolve whether Commit451 publishes the requested build-tools release."""
+
+    tag = f"platform-tools-{release_version}"
+    release_dir = cache_root / "android-build-tools" / "commit451" / tag
+    if (release_dir / "SHA256SUMS").is_file() or release_version in ARM_BUILD_TOOLS_PUBLISHED_RELEASES:
+        return True
+    if offline:
+        return False
+    url = f"https://api.github.com/repos/{ARM_BUILD_TOOLS_REPOSITORY}/releases/tags/{urllib.parse.quote(tag, safe='')}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": f"{APP_NAME}/1.0",
+    }
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            if exc.code == 404:
+                return False
+            fail(f"Could not resolve Commit451 release availability: {url}\n{exc}")
+        finally:
+            # HTTPError owns the underlying response stream.  Close it even for
+            # the expected 404 probe path so repeated release checks do not leak
+            # descriptors or emit ResourceWarning under newer Python versions.
+            exc.close()
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        fail(f"Could not resolve Commit451 release availability: {url}\n{exc}")
+    return str(payload.get("tag_name") or "") == tag
+
+
+def resolve_commit451_release_version(
+    cache_root: Path,
+    build_tools_version: str,
+    *,
+    offline: bool,
+) -> str:
+    release_version = ARM_BUILD_TOOLS_RELEASE_ALIASES.get(build_tools_version, build_tools_version)
+    if release_version != build_tools_version:
+        warn(
+            "Commit451 does not publish ARM64 binaries for Android Build Tools "
+            f"{build_tools_version}; using the compatible {release_version} release."
+        )
+    if commit451_release_available(cache_root, release_version, offline=offline):
+        return release_version
+    if offline:
+        fail(
+            f"Commit451 release platform-tools-{release_version} is not cached and availability "
+            "cannot be resolved in --offline mode."
+        )
+    fail(
+        f"Commit451 does not publish ARM64 Android Build Tools release platform-tools-{release_version}. "
+        "Select a supported build-tools version, use the Termux-native provider, or use another execution backend."
+    )
+
+
 def obtain_commit451_arm64_tool(
     cache_root: Path,
     build_tools_version: str,
@@ -1729,21 +2114,21 @@ def obtain_commit451_arm64_tool(
     force: bool,
     dry_run: bool,
 ) -> Path:
-    """Download and verify one Commit451 linux-arm64 build-tools executable."""
+    """Download and verify one Commit451 linux-glibc-arm64 build-tools executable."""
 
     if tool_name not in ARM_BUILD_TOOLS_NATIVE_NAMES:
         fail(f"Unsupported ARM build-tools executable: {tool_name}")
     if normalized_machine() != "arm64":
         fail("Commit451 Android build-tools are only used on ARM64 Linux hosts")
-
-    release_version = ARM_BUILD_TOOLS_RELEASE_ALIASES.get(
-        build_tools_version, build_tools_version
-    )
-    if release_version != build_tools_version:
-        warn(
-            "Commit451 does not publish ARM64 binaries for Android Build Tools "
-            f"{build_tools_version}; using the compatible {release_version} release."
+    if running_under_termux_python():
+        fail(
+            "Commit451 Android build-tools target linux-glibc-arm64 and cannot run in native "
+            "Termux/Bionic. Use the Termux-native provider or a glibc chroot/PRoot/SSH backend."
         )
+
+    release_version = resolve_commit451_release_version(
+        cache_root, build_tools_version, offline=offline
+    )
     tag = f"platform-tools-{release_version}"
     base_url = (
         f"https://github.com/{ARM_BUILD_TOOLS_REPOSITORY}/releases/download/{tag}"
@@ -1817,7 +2202,7 @@ def arm64_build_tools_replacements_needed(
     return [
         name
         for name in ARM_BUILD_TOOLS_NATIVE_NAMES
-        if not native_tool_matches_host(directory / name, "arm64")
+        if not native_android_build_tool_compatible(directory / name, name, "arm64")
     ]
 
 
@@ -1835,10 +2220,9 @@ def ensure_arm64_build_tools_compatible(
 
     if normalized_machine() != "arm64" or not build_tools_version:
         return
+    provider = normalize_android_build_tools_provider(provider)
     if provider == "none":
         return
-    if provider not in {"auto", "commit451"}:
-        fail(f"Unsupported ARM build-tools provider: {provider}")
 
     directory = sdk_root / "build-tools" / build_tools_version
     if not directory.is_dir():
@@ -1859,17 +2243,41 @@ def ensure_arm64_build_tools_compatible(
             f"repaired because it is read-only: {sdk_root}"
         )
 
+    if provider == "sdk":
+        fail(
+            "Android SDK build-tools provider was requested, but the selected SDK contains "
+            "native tools that are incompatible with this ARM64 host: " + ", ".join(replacements)
+        )
+
     heading(f"Repairing Android Build Tools {build_tools_version} for ARM64")
     selected = list(ARM_BUILD_TOOLS_NATIVE_NAMES) if force else replacements
     for tool_name in selected:
-        source = obtain_commit451_arm64_tool(
-            cache_root,
-            build_tools_version,
-            tool_name,
-            offline=offline,
-            force=force,
-            dry_run=dry_run,
-        )
+        source: Path | None = None
+        if provider in {"auto", "termux"} and running_under_termux_python():
+            candidate = termux_tool_path(tool_name)
+            if candidate is not None and native_android_build_tool_compatible(candidate, tool_name, "arm64"):
+                source = candidate
+                info(f"Using Termux-native {tool_name}: {candidate}")
+            elif provider == "termux":
+                fail(f"Termux build-tools provider requested but compatible {tool_name} is unavailable under {termux_prefix_path()}")
+        if source is None:
+            if provider == "termux":
+                fail(f"Termux build-tools provider requested but no compatible {tool_name} was found")
+            if running_under_termux_python():
+                fail(
+                    f"No compatible Termux-native {tool_name} is available. Commit451 publishes "
+                    "linux-glibc-arm64 binaries, which cannot run in native Termux/Bionic. "
+                    "Install/update the Termux aapt package or run this Android build through "
+                    "a glibc chroot/PRoot/SSH backend."
+                )
+            source = obtain_commit451_arm64_tool(
+                cache_root,
+                build_tools_version,
+                tool_name,
+                offline=offline,
+                force=force,
+                dry_run=dry_run,
+            )
         target = directory / tool_name
         if dry_run:
             info(f"Would install ARM64 {tool_name}: {source} -> {target}")
@@ -1885,8 +2293,8 @@ def ensure_arm64_build_tools_compatible(
         shutil.copy2(source, temporary)
         temporary.chmod(temporary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         temporary.replace(target)
-        if not native_tool_matches_host(target, "arm64"):
-            fail(f"Installed ARM64 {tool_name} failed architecture validation: {target}")
+        if not native_android_build_tool_compatible(target, tool_name, "arm64"):
+            fail(f"Installed ARM64 {tool_name} failed host/runtime validation: {target}")
         info(f"Installed ARM64 {tool_name}: {target}")
 
 
@@ -2017,9 +2425,19 @@ def inspect_project(root: Path) -> ProjectInfo:
         ],
         text,
     )
-    native_build = "externalNativeBuild" in text or any(root.rglob("CMakeLists.txt"))
     ndk_match = re.search(r"\bndkVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", text)
     ndk_version = ndk_match.group(1).strip() if ndk_match else None
+    # Do not classify an Android repository as an NDK build merely because it
+    # contains an unrelated CMakeLists.txt. Require explicit Android native
+    # integration, an NDK declaration, or ndk-build makefiles.
+    native_build = (
+        "externalNativeBuild" in text
+        or "ndk-build" in text
+        or "android.toolchain.cmake" in text
+        or ndk_version is not None
+        or any(root.rglob("Android.mk"))
+        or any(root.rglob("Application.mk"))
+    )
     cmake_match = re.search(
         r"externalNativeBuild\s*\{.*?cmake\s*\{.*?\bversion\s*=\s*['\"]([^'\"]+)",
         text,
@@ -2098,7 +2516,8 @@ def inferred_min_java(project: ProjectInfo) -> int:
     return infer_java_requirement(project).minimum
 
 
-def java_home_candidates(explicit: Path | None) -> list[Path]:
+def java_home_candidates(explicit: Path | None, provider: str = "auto") -> list[Path]:
+    provider = normalize_java_provider(provider)
     candidates: list[Path] = []
     if explicit:
         candidates.append(explicit.expanduser())
@@ -2108,23 +2527,54 @@ def java_home_candidates(explicit: Path | None) -> list[Path]:
         found = shutil.which(executable)
         if found:
             candidates.append(Path(found).resolve().parent.parent)
+    candidates.extend(termux_jvm_candidates())
     jvm_root = Path("/usr/lib/jvm")
     if jvm_root.is_dir():
         candidates.extend(path for path in jvm_root.iterdir() if path.is_dir())
+
     unique: list[Path] = []
     seen: set[str] = set()
     for item in candidates:
         resolved = item.resolve(strict=False)
-        if str(resolved) not in seen:
-            seen.add(str(resolved))
-            unique.append(resolved)
+        if str(resolved) in seen:
+            continue
+        seen.add(str(resolved))
+        if explicit is None and provider != "auto":
+            candidate_provider = executable_provider(resolved / "bin" / "java")
+            if candidate_provider != provider:
+                continue
+        unique.append(resolved)
     return unique
 
 
-def find_java_home(explicit: Path | None, minimum: int, *, exact: int | None = None) -> Path:
+def find_java_home(
+    explicit: Path | None,
+    minimum: int,
+    *,
+    exact: int | None = None,
+    provider: str = "auto",
+) -> Path:
+    provider = normalize_java_provider(provider)
+    if explicit is not None:
+        home = explicit.expanduser().resolve(strict=False)
+        java = home / "bin" / "java"
+        javac = home / "bin" / "javac"
+        if not java.is_file() or not javac.is_file():
+            fail(f"Explicit Java home is incomplete: {home}. Expected bin/java and bin/javac.")
+        major = java_major(java)
+        if major is None:
+            fail(f"Could not determine Java version from explicit Java home: {home}")
+        if major < minimum:
+            fail(f"Explicit Java home {home} provides Java {major}, but Java {minimum}+ is required.")
+        if exact is not None and major != exact:
+            fail(f"Explicit Java home {home} provides Java {major}, but exact Java {exact} is required.")
+        info(f"Using explicit Java home: {home} (Java {major}); provider={executable_provider(java)}")
+        return home
+    if provider == "termux" and not running_under_termux_python():
+        fail("Java provider termux requires native Termux execution or an explicit --java-home.")
     rejected: list[str] = []
-    accepted: list[tuple[int, int, Path]] = []
-    for home in java_home_candidates(explicit):
+    accepted: list[tuple[int, int, int, Path]] = []
+    for home in java_home_candidates(None, provider):
         java = home / "bin" / "java"
         javac = home / "bin" / "javac"
         if not java.is_file() or not javac.is_file():
@@ -2139,21 +2589,26 @@ def find_java_home(explicit: Path | None, minimum: int, *, exact: int | None = N
         if exact is not None and major != exact:
             rejected.append(f"{home} (Java {major}, needs exact Java {exact})")
             continue
-        # Prefer the narrowest matching toolchain so we select Java 17 when the
-        # project requests an exact Java 17 toolchain and both 17 and 21 are
-        # installed.
-        accepted.append((0 if exact is not None and major == exact else 1, major, home))
+        # On native Termux, prefer a compatible JDK from PREFIX over a foreign
+        # system tree. Within the same provider, keep the narrowest compatible
+        # Java version; exact project toolchains still win first.
+        selected_provider = executable_provider(java)
+        provider_rank = 0 if provider == "auto" and running_under_termux_python() and selected_provider == "termux" else 1
+        accepted.append((0 if exact is not None and major == exact else 1, provider_rank, major, home))
 
     if accepted:
-        accepted.sort(key=lambda item: (item[0], item[1], str(item[2])))
-        return accepted[0][2]
+        accepted.sort(key=lambda item: (item[0], item[1], item[2], str(item[3])))
+        return accepted[0][3]
     details = f" Candidates checked: {', '.join(rejected)}." if rejected else ""
     if exact is not None:
         fail(
-            f"A JDK with Java {exact} is required for this project's declared toolchain.{details} "
-            "Use --java-home to select one."
+            f"A JDK with Java {exact} is required for this project's declared toolchain "
+            f"using Java provider {provider}.{details} Use --java-home or --java-provider to select one."
         )
-    fail(f"A JDK with Java {minimum}+ is required.{details} Use --java-home to select one.")
+    fail(
+        f"A JDK with Java {minimum}+ is required using Java provider {provider}.{details} "
+        "Use --java-home or --java-provider to select one."
+    )
 
 
 def _sdk_root_from_local_properties(project_root: Path | None) -> Path | None:
@@ -2578,33 +3033,37 @@ def run_sdkmanager_with_progress(
     last_progress_line = ""
     last_plain_line = ""
     assert process.stdout is not None
-    for raw_line in process.stdout:
-        # TextIO's universal-newline handling converts sdkmanager's carriage
-        # returns into iterable lines, which keeps progress visible in pipes,
-        # Devtool logs, notifications, and HUDs.
-        line = _ANSI_ESCAPE_RE.sub("", raw_line).strip()
-        if not line:
-            continue
-        captured.append(line)
-        match = _SDKMANAGER_PERCENT_RE.search(line)
-        if match:
-            percent = min(100, max(0, int(match.group(1))))
-            should_report = (
-                percent >= last_percent + 5
-                or percent in {0, 100}
-                or (line != last_progress_line and percent == last_percent)
-            )
-            if should_report:
-                detail = re.sub(r"^[\[\]=#>.\-\s]*\d{1,3}%\s*", "", line).strip(" []")
-                suffix = f" · {detail}" if detail and detail != line else ""
-                info(f"SDK installation progress: {percent:3d}%{suffix}")
-                last_percent = percent
-                last_progress_line = line
-            continue
+    stdout = process.stdout
+    try:
+        for raw_line in stdout:
+            # TextIO's universal-newline handling converts sdkmanager's carriage
+            # returns into iterable lines, which keeps progress visible in pipes,
+            # Devtool logs, notifications, and HUDs.
+            line = _ANSI_ESCAPE_RE.sub("", raw_line).strip()
+            if not line:
+                continue
+            captured.append(line)
+            match = _SDKMANAGER_PERCENT_RE.search(line)
+            if match:
+                percent = min(100, max(0, int(match.group(1))))
+                should_report = (
+                    percent >= last_percent + 5
+                    or percent in {0, 100}
+                    or (line != last_progress_line and percent == last_percent)
+                )
+                if should_report:
+                    detail = re.sub(r"^[\[\]=#>.\-\s]*\d{1,3}%\s*", "", line).strip(" []")
+                    suffix = f" · {detail}" if detail and detail != line else ""
+                    info(f"SDK installation progress: {percent:3d}%{suffix}")
+                    last_percent = percent
+                    last_progress_line = line
+                continue
 
-        if line != last_plain_line:
-            info(f"sdkmanager: {line}")
-            last_plain_line = line
+            if line != last_plain_line:
+                info(f"sdkmanager: {line}")
+                last_plain_line = line
+    finally:
+        stdout.close()
 
     returncode = int(process.wait())
     if returncode == 0 and last_percent < 100:
@@ -3068,6 +3527,31 @@ def gradle_wrapper_distribution_cached(
     return False
 
 
+def _auto_installed_gradle_compatible(
+    actual: str | None,
+    *,
+    selected_provider: str,
+    project: ProjectInfo | None,
+) -> bool:
+    """Return whether an unpinned installed Gradle is safe for auto selection.
+
+    Devtool's managed default is not a project version pin. On native Termux we
+    may prefer the packaged Gradle for wrapperless projects, but Android builds
+    still need a conservative AGP-generation check. Non-Termux/system behavior
+    remains on the historical managed-default compatibility path.
+    """
+    key = version_key(actual)
+    if not key:
+        return False
+    if selected_provider != "termux" or not running_under_termux_python():
+        return gradle_version_matches(actual, DEFAULT_GRADLE_VERSION)
+    if project is None or not project.android:
+        return True
+    if project.agp_major is not None and project.agp_major >= 7:
+        return key[0] == project.agp_major
+    return False
+
+
 def select_gradle(
     project_root: Path,
     *,
@@ -3079,9 +3563,18 @@ def select_gradle(
     bootstrap_downloads: str = "auto",
     bootstrap_network: str = "allow",
     gradle_user_home: Path | None = None,
+    provider: str = "auto",
+    project: ProjectInfo | None = None,
 ) -> Path:
+    provider = normalize_gradle_provider(provider)
+    if provider == "termux" and explicit is None and not running_under_termux_python():
+        fail("Gradle provider termux requires native Termux execution or an explicit --gradle-command.")
+
     wrapper = project_root / "gradlew"
-    requested = version or wrapper_distribution_version(project_root) or DEFAULT_GRADLE_VERSION
+    wrapper_state = gradle_wrapper_state(project_root)
+    wrapper_version = wrapper_distribution_version(project_root)
+    pinned_version = version or wrapper_version
+    requested = pinned_version or DEFAULT_GRADLE_VERSION
 
     if explicit:
         candidate = Path(explicit).expanduser()
@@ -3092,63 +3585,147 @@ def select_gradle(
             candidate = Path(found)
         candidate = ensure_executable(candidate.resolve(), "Gradle launcher")
         actual = gradle_version(candidate)
-        if not gradle_version_matches(actual, requested):
+        if actual is None:
+            fail(f"Could not determine Gradle version from explicit launcher: {candidate}")
+        if pinned_version and not gradle_version_matches(actual, pinned_version):
             fail(
                 f"Explicit Gradle launcher is incompatible: {candidate} reports "
-                f"{actual or 'an unknown version'}, but this build requires Gradle "
-                f"{requested}. Choose another launcher or pass --gradle-version."
+                f"{actual}, but this build requires Gradle {pinned_version}. "
+                "Choose another launcher or pass --gradle-version."
             )
-        info(f"Using explicit compatible Gradle: {candidate} ({actual})")
+        info(
+            f"Using explicit Gradle: {candidate} ({actual}); "
+            f"provider={executable_provider(candidate)}"
+        )
         return candidate
 
-    if wrapper.is_file() and not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
-        wrapper_version = wrapper_distribution_version(project_root)
-        if wrapper_version and gradle_wrapper_distribution_cached(project_root, wrapper_version, gradle_user_home=gradle_user_home):
-            info(f"Using project Gradle wrapper with cached distribution: {wrapper} ({wrapper_version})")
-            return ensure_executable(wrapper, "Gradle wrapper")
-        system = shutil.which("gradle")
-        if system:
-            system_path = ensure_executable(Path(system), "Gradle launcher")
-            actual = gradle_version(system_path)
-            if gradle_version_matches(actual, requested):
-                info(f"Using compatible Gradle from PATH: {system_path} ({actual})")
-                return system_path
-        fail_bootstrap_blocked(
-            "Gradle wrapper distribution",
-            downloads=bootstrap_downloads,
-            network=bootstrap_network,
-            checked=[
-                str(wrapper),
-                str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "wrapper" / "dists"),
-                str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "devtool-bootstrap"),
-                "gradle in PATH",
-            ],
-        )
-
-    if wrapper.is_file():
-        wrapper_version = wrapper_distribution_version(project_root)
-        if wrapper_version and not gradle_version_matches(wrapper_version, requested):
+    def _warn_wrapper_version_override() -> None:
+        if version and wrapper_version and not gradle_version_matches(wrapper_version, version):
             warn(
-                f"Project wrapper declares Gradle {wrapper_version}, while Gradle "
-                f"{requested} is requested. The wrapper remains authoritative."
+                f"Project wrapper declares Gradle {wrapper_version}, while Gradle {version} "
+                "was requested. The wrapper remains authoritative."
+            )
+
+    if provider == "wrapper":
+        if not wrapper_state.complete:
+            fail(broken_wrapper_message(project_root, wrapper_state))
+        _warn_wrapper_version_override()
+        if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+            if wrapper_version and gradle_wrapper_distribution_cached(
+                project_root, wrapper_version, gradle_user_home=gradle_user_home
+            ):
+                info(f"Using project Gradle wrapper with cached distribution: {wrapper} ({wrapper_version}); provider=wrapper")
+                return ensure_executable(wrapper, "Gradle wrapper")
+            fail_bootstrap_blocked(
+                "Gradle wrapper distribution",
+                downloads=bootstrap_downloads,
+                network=bootstrap_network,
+                checked=[
+                    str(wrapper),
+                    str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "wrapper" / "dists"),
+                    str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "devtool-bootstrap"),
+                ],
             )
         info(
             f"Using project Gradle wrapper: {wrapper}"
             + (f" ({wrapper_version})" if wrapper_version else "")
+            + "; provider=wrapper"
         )
         return ensure_executable(wrapper, "Gradle wrapper")
+
+    if provider == "auto" and wrapper_state.present and not wrapper_state.complete:
+        fail(broken_wrapper_message(project_root, wrapper_state))
+
+    if provider == "auto" and wrapper_state.complete:
+        _warn_wrapper_version_override()
+        if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+            if wrapper_version and gradle_wrapper_distribution_cached(
+                project_root, wrapper_version, gradle_user_home=gradle_user_home
+            ):
+                info(f"Using project Gradle wrapper with cached distribution: {wrapper} ({wrapper_version}); provider=wrapper")
+                return ensure_executable(wrapper, "Gradle wrapper")
+            system = shutil.which("gradle")
+            if system:
+                system_path = ensure_executable(Path(system), "Gradle launcher")
+                actual = gradle_version(system_path)
+                if wrapper_version and gradle_version_matches(actual, wrapper_version):
+                    selected_provider = executable_provider(system_path)
+                    info(
+                        f"Using compatible {selected_provider} Gradle because the wrapper distribution is not cached: "
+                        f"{system_path} ({actual}); wrapper version remains authoritative"
+                    )
+                    return system_path
+            fail_bootstrap_blocked(
+                "Gradle wrapper distribution",
+                downloads=bootstrap_downloads,
+                network=bootstrap_network,
+                checked=[
+                    str(wrapper),
+                    str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "wrapper" / "dists"),
+                    str((gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser() / "devtool-bootstrap"),
+                    "gradle in PATH",
+                ],
+            )
+        info(
+            f"Using project Gradle wrapper: {wrapper}"
+            + (f" ({wrapper_version})" if wrapper_version else "")
+            + "; provider=wrapper"
+        )
+        return ensure_executable(wrapper, "Gradle wrapper")
+
+    if provider == "download":
+        if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
+            fail_bootstrap_blocked(
+                "Gradle",
+                downloads=bootstrap_downloads,
+                network=bootstrap_network,
+                checked=[str(cache_root / "gradle" / f"gradle-{requested}" / "bin" / "gradle")],
+            )
+        info(f"Using managed Gradle {requested}; provider=download")
+        return managed_gradle(requested, cache_root, offline=offline, force=force)
 
     system = shutil.which("gradle")
     if system:
         system_path = ensure_executable(Path(system), "Gradle launcher")
-        actual = gradle_version(system_path)
-        if gradle_version_matches(actual, requested):
-            info(f"Using compatible Gradle from PATH: {system_path} ({actual})")
-            return system_path
-        warn(
-            f"Ignoring incompatible Gradle from PATH: {system_path} "
-            f"({actual or 'unknown'}); Gradle {requested} is required."
-        )
+        selected_provider = executable_provider(system_path)
+        provider_matches = provider == "auto" or provider == selected_provider
+        if provider_matches:
+            actual = gradle_version(system_path)
+            if pinned_version:
+                compatible = gradle_version_matches(actual, pinned_version)
+            elif provider in {"termux", "system"}:
+                compatible = actual is not None
+            else:
+                compatible = _auto_installed_gradle_compatible(
+                    actual,
+                    selected_provider=selected_provider,
+                    project=project,
+                )
+            if compatible:
+                info(
+                    f"Using compatible {selected_provider} Gradle: {system_path} "
+                    f"({actual or 'unknown'}); provider={selected_provider}"
+                )
+                return system_path
+            if provider in {"termux", "system"}:
+                requirement = pinned_version or "a project-compatible version"
+                fail(
+                    f"Requested Gradle provider {provider} is installed at {system_path} but reports "
+                    f"{actual or 'an unknown version'}; {requirement} is required. "
+                    "Use the project wrapper, select another provider, or pass --gradle-version if the project supports it."
+                )
+            warn(
+                f"Ignoring incompatible {selected_provider} Gradle from PATH: {system_path} "
+                f"({actual or 'unknown'}); managed Gradle {requested} will be considered instead."
+            )
+        elif provider in {"termux", "system"}:
+            fail(
+                f"Requested Gradle provider {provider}, but gradle on PATH resolves to the "
+                f"{selected_provider} provider at {system_path}."
+            )
+    elif provider in {"termux", "system"}:
+        detail = " Install the Termux gradle package with pkg install gradle." if provider == "termux" else ""
+        fail(f"Requested Gradle provider {provider}, but no gradle executable was found on PATH.{detail}")
 
     if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
         fail_bootstrap_blocked(
@@ -3161,9 +3738,8 @@ def select_gradle(
                 str(cache_root / "gradle" / f"gradle-{requested}" / "bin" / "gradle"),
             ],
         )
-    info(f"Using managed Gradle {requested}")
+    info(f"Using managed Gradle {requested}; provider=download")
     return managed_gradle(requested, cache_root, offline=offline, force=force)
-
 
 def default_tasks(project: ProjectInfo) -> list[str]:
     if project.android_application:
@@ -3431,18 +4007,18 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-a", "--aapt2", type=Path, help="Use this AAPT2 binary; shared-storage files are staged automatically")
     parser.add_argument(
         "-A", "--aapt2-provider",
-        choices=("auto", "revanced", "none"),
+        choices=("auto", "termux", "sdk", "revanced", "none"),
         default="auto",
-        help="AAPT2 source when --aapt2 is omitted; auto uses ReVanced on ARM Android builds",
+        help="AAPT2 source when --aapt2 is omitted; auto prefers a compatible Termux AAPT2 before managed fallbacks on native Termux",
     )
     parser.add_argument("-R", "--aapt2-release", default="latest", help="ReVanced AAPT2 tag or latest")
     parser.add_argument(
         "--arm-build-tools-provider",
-        choices=("auto", "commit451", "none"),
+        choices=("auto", "termux", "sdk", "commit451", "none"),
         default="auto",
         help=(
-            "ARM64 provider for SDK aidl/zipalign/split-select; auto repairs "
-            "incompatible Google binaries from Commit451 releases"
+            "ARM64 provider for SDK aidl/zipalign/split-select; auto prefers compatible "
+            "Termux-native tools before Commit451 on native Termux"
         ),
     )
 
@@ -3467,6 +4043,8 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--qemu-sysroot-sha256", default=os.environ.get("DEVTOOL_QEMU_SYSROOT_SHA256", ""), help="optional SHA256 for --qemu-sysroot-url; defaults to the built-in Ubuntu Base checksum")
     parser.add_argument("--qemu-install", choices=sorted(QEMU_INSTALL_POLICIES), default=os.environ.get("DEVTOOL_QEMU_INSTALL", "auto"), help="Whether devtool may install qemu-user when needed")
     parser.add_argument("--cmake-version", default="auto", help="CMake version, auto, or none")
+    parser.add_argument("--native-provider", choices=sorted(NATIVE_PROVIDERS), default="auto", help="Native compiler provider: auto, termux-sysroot, ndk, or system")
+    parser.add_argument("--native-cache", choices=sorted(NATIVE_CACHE_PROVIDERS), default="auto", help="Native compiler cache provider: auto, ccache, or off")
     parser.add_argument("-I", "--skip-sdk-install", action="store_true", help="Never install missing SDK packages")
     parser.add_argument("--auto-sdk", action="store_true", help="Explicitly allow automatic SDK package downloads and managed SDK creation")
     parser.add_argument(
@@ -3484,6 +4062,12 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
 
     parser.add_argument("-j", "--java-home", type=Path, help="JDK home")
     parser.add_argument(
+        "--java-provider",
+        choices=sorted(JAVA_PROVIDERS),
+        default=os.environ.get("DEVTOOL_JAVA_PROVIDER", "auto"),
+        help="Java provider: auto, termux, or system; an explicit --java-home remains authoritative",
+    )
+    parser.add_argument(
         "-D", "--system-deps",
         choices=("auto", "always", "never"),
         default="auto",
@@ -3492,6 +4076,12 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-K", "--skip-system-deps", dest="system_deps", action="store_const", const="never", help="Alias for --system-deps never")
     parser.add_argument("-J", "--min-java", type=int, help="Minimum Java version; inferred when omitted")
     parser.add_argument("-g", "--gradle-command", help="Explicit Gradle or gradlew executable")
+    parser.add_argument(
+        "--gradle-provider",
+        choices=sorted(GRADLE_PROVIDERS),
+        default=os.environ.get("DEVTOOL_GRADLE_PROVIDER", "auto"),
+        help="Gradle provider: auto, wrapper, termux, system, or download; an explicit --gradle-command remains authoritative",
+    )
     parser.add_argument("-G", "--gradle-version", help="Managed Gradle version when no wrapper is available")
     parser.add_argument("--gradle-user-home", type=Path, help="GRADLE_USER_HOME for this build")
     parser.add_argument("-k", "--cache-dir", type=Path, default=devtool_cache_dir() / APP_NAME)
@@ -3742,9 +4332,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     requirement = infer_java_requirement(project)
     minimum_java = args.min_java or requirement.minimum
+    if args.java_provider == "termux" and args.java_home is None and not running_under_termux_python():
+        fail("Java provider termux requires native Termux execution or an explicit --java-home.")
     java_home: Path | None = None
     try:
-        java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
+        java_home = find_java_home(
+            args.java_home,
+            minimum_java,
+            exact=requirement.exact if args.java_home is None else None,
+            provider=args.java_provider,
+        )
     except BuildError:
         java_home = None
     need_java = java_home is None
@@ -3762,8 +4359,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             need_certificates=need_certificates,
             offline=args.offline,
             java_version=minimum_java,
+            java_provider=args.java_provider,
         )
-        java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
+        java_home = find_java_home(
+            args.java_home,
+            minimum_java,
+            exact=requirement.exact if args.java_home is None else None,
+            provider=args.java_provider,
+        )
     elif args.system_deps == "auto" and (need_java or need_certificates):
         if not provisioning_allowed:
             missing = []
@@ -3782,8 +4385,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             need_certificates=need_certificates,
             offline=args.offline,
             java_version=minimum_java,
+            java_provider=args.java_provider,
         )
-        java_home = find_java_home(args.java_home, minimum_java, exact=requirement.exact if args.java_home is None else None)
+        java_home = find_java_home(
+            args.java_home,
+            minimum_java,
+            exact=requirement.exact if args.java_home is None else None,
+            provider=args.java_provider,
+        )
     elif need_java:
         if requirement.exact is not None:
             fail(
@@ -3798,15 +4407,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.gradle_user_home:
         env["GRADLE_USER_HOME"] = str(args.gradle_user_home.expanduser())
     heading("Java")
+    selected_java_provider = executable_provider(java_home / "bin" / "java")
     info(f"JAVA_HOME={java_home}")
+    info(f"Provider: {selected_java_provider}")
+    if selected_java_provider == "termux":
+        package_match = re.search(r"java-(\d+)-openjdk", java_home.name)
+        package_name = f"openjdk-{package_match.group(1)}" if package_match else ""
+        package_version = termux_package_version(package_name) if package_name else None
+        if package_version:
+            info(f"Termux package: {package_name} {package_version}")
     if requirement.exact is not None:
         info(f"Toolchain requirement: Java {requirement.exact}")
     elif minimum_java:
         info(f"Minimum Java: {minimum_java}+")
     run([java_home / "bin" / "java", "-version"], env=env, dry_run=args.dry_run)
 
+    selected_native_provider = "none"
+    if project.native_build or args.native_provider != "auto" or args.native_cache != "auto":
+        selected_native_provider = select_native_provider(project, args.native_provider)
+        configure_native_cache(env, args.native_cache)
+        if project.native_build:
+            info(f"Native provider: {selected_native_provider}")
+        else:
+            info(f"Native provider configured without detected native Android work: {selected_native_provider}")
+
     sdk_root: Path | None = None
     sdk_source: str | None = None
+    platform_id: str | None = None
     if project.android:
         sdk_root, sdk_source = discover_sdk_root_with_source(args.sdk_root, project.root)
         if sdk_root is None and not args.skip_sdk_install:
@@ -3835,7 +4462,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 info(f"SDK path source: {sdk_source}")
             if args.auto_sdk and not args.skip_sdk_install:
                 info("Auto SDK downloads: enabled")
-        sdk_root, _, _, _, _ = ensure_android_sdk(
+        sdk_root, platform_id, _, _, _ = ensure_android_sdk(
             project,
             sdk_root,
             cache_root,
@@ -3868,8 +4495,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if project.android:
         if args.aapt2:
             aapt2 = stage_aapt2(args.aapt2, cache_root, force=args.force_setup, dry_run=args.dry_run)
-        elif args.aapt2_provider == "revanced" or (
-            args.aapt2_provider == "auto" and normalized_machine() in {"arm64", "armv7"}
+        elif args.aapt2_provider in {"auto", "termux"} and running_under_termux_python():
+            aapt2 = select_termux_aapt2(
+                sdk_root,
+                platform_id,
+                required=args.aapt2_provider == "termux",
+                dry_run=args.dry_run,
+            )
+        if aapt2 is None and (
+            args.aapt2_provider == "revanced"
+            or (args.aapt2_provider == "auto" and normalized_machine() in {"arm64", "armv7"})
         ):
             if not provisioning_allowed:
                 cached_aapt2 = sorted(
@@ -3885,6 +4520,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         checked=[
                             "--aapt2 not set",
                             str(cache_root / "aapt2" / "revanced"),
+                            "Termux AAPT2 capability probe",
                             "Android Gradle Plugin default AAPT2",
                         ],
                     )
@@ -3895,7 +4531,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 force=args.force_setup,
                 dry_run=args.dry_run,
             )
-        elif args.aapt2_provider == "none":
+        elif aapt2 is None and args.aapt2_provider in {"sdk", "none"}:
             info("Using the AAPT2 selected by Android Gradle Plugin")
 
     gradle = select_gradle(
@@ -3908,6 +4544,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         bootstrap_downloads=args.toolchain_downloads,
         bootstrap_network=args.bootstrap_network,
         gradle_user_home=args.gradle_user_home,
+        provider=args.gradle_provider,
+        project=project,
     )
     heading("Gradle")
     info(f"Launcher: {gradle}")

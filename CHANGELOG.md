@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.1.0 Termux integration doctor and final seal
+
+- Added `devtool termux doctor`, `termux packages`, and `termux explain` with text/JSON output, detailed native Termux provider readiness, selection/rejection explanations, read-only package recommendations, and optional installed PRoot guest tool discovery.
+- Extended generic `doctor --explain` with the same provider-selection reasoning while keeping the dedicated Termux diagnostics host-only so auto-chroot cannot relocate them.
+- Finalized configuration, completion, manpage, and documentation contracts for Termux Java/Gradle/native/Android-tool providers, runtime hardening, PRoot execution, backend-scoped caches, and package recommendations.
+- Added final integration regression coverage proving guest probes do not require devtool, package advice never installs/upgrades packages, and the CLI/documentation/configuration surfaces stay synchronized.
+- Final promise audit closed remaining integration gaps: dynamic read-only OpenJDK package advice, per-tool Android/NDK and SSH/chroot backend doctor rows, validation-control live-progress totals compatibility, explicit-XDG log isolation, cleanup of SDK/HTTP probe streams, and exact Git HEAD/index restoration when an atomic apply rolls back after staging or committing.
+- Added `docs/TERMUX_PROOT_PROMISE_AUDIT.md`, a 38-item acceptance matrix tied to regression evidence; the complete non-Android-app Python suite is part of the final seal.
+- Hardened the final host validator against native Android leakage by scrubbing `ANDROID_*` markers, isolating Tasker/phone-log defaults when `DEVTOOL_XDG_DIR` is explicit, and placing full-suite temporary files under a short private root so AF_UNIX IPC tests cannot exceed Android socket-path limits.
+- Corrected normal native-Termux `devtool validate` isolation after the final seal: Python validator HOME/TMPDIR now live outside the repository (using private `$PREFIX/tmp` on native Termux), inherited Devtool test-state variables are scrubbed instead of forcing a phone-log mirror, PTY suites auto-restore `pexpect` when imported but undeclared, and AF_UNIX regression fixtures honor the configured temporary directory.
+
+## 1.1.0 Termux runtime hardening and PRoot-Distro backend
+
+- Added shared-storage safety policy, backend-isolated native Termux caches, resource profiles, optional wake-lock lifecycle, verified-artifact export, runtime/network failure classification, shebang adaptation, tmux visibility, and non-fatal Gradle quiet-period diagnostics.
+- Added first-class PRoot-Distro command-phase execution with explicit host/guest mappings, automatic repository binds, user/work-dir/bind/env controls, helper staging and cleanup, environment hygiene, progress preservation, and installed-container preflight.
+- Scoped provider discovery to the selected execution backend so host Termux tools are not embedded in PRoot guest command plans, including Termux package launcher scripts; reserved backend environment state cannot be overridden by guest configuration.
+- Added pre-execution ELF architecture/libc checks for native Termux, kept automatic caches off shared storage, and prevented phone-local resource defaults from leaking into SSH jobs that execute on independent remote hosts.
+- Re-rooted host-only Python/native/package cache variables into the bound `/var/cache/devtool` PRoot cache so guest commands never require explicit binds for host devtool cache paths.
+- Kept PRoot-Distro available on ordinary Linux hosts when installed.
+
+## 1.1.0 Termux native and Android tool providers
+
+- Added first-class Termux clang/lld/ndk-sysroot, CMake, Ninja, and ccache capability providers without pretending ndk-sysroot is a complete Android NDK.
+- Added capability classification so Android external native builds continue to require a real NDK while compiler-only native work can use Termux-native tooling.
+- Added Termux Android tool discovery, AAPT2 platform capability probing, and Termux-first ARM64 aidl/zipalign/split-select repair with runtime execution checks; native Termux/Bionic now rejects Commit451's glibc binaries while ARM64 glibc hosts retain the verified fallback.
+- Added Commit451 release-availability resolution and kept the 35.0.0 -> 35.0.1 compatibility alias so unavailable tags fail before asset downloads.
+- Tightened Android native classification so unrelated host-side CMakeLists.txt files do not trigger a full NDK, while ndkVersion and ndk-build makefiles do.
+- Added explicit native/cache/build-tools/AAPT2 provider controls across CLI, config, doctor output, completion, manpage, and the staged standalone Android builder.
+
+## 1.1.0 Termux provider foundation
+
+- Added first-class Termux runtime, OpenJDK, and Gradle provider discovery with wrapper-safe selection and explicit provider controls.
+- Added read-only Termux package metadata probing, Android/Bionic runtime capability reporting, and actionable provider diagnostics.
+- Preserved explicit host execution for devtool-side validation so repository tooling does not implicitly route through the Android chroot.
+
 ## Desktop launcher cleanup
 
 - Removed the obsolete `devtool-gtk-control-center` and `devtool-gtk-hud` compatibility executables.
@@ -79,3 +114,16 @@
 ## UI contract archival cleanup
 
 - Finalized the UI/UX contract gate without requiring historical PHASE_* Markdown files.
+
+## Post-seal validation build hotfix (2026-08-14)
+
+- Fixed uv-managed Python builds so Devtool uses `uv build --out-dir ...` instead of `uv run python -m build --outdir ...`.
+- This removes an accidental dependency on the separately-installed PyPA `build` frontend from ordinary `devtool validate` while preserving PEP 517 build-system isolation.
+- Python projects managed by other environment managers retain the existing `python -m build` path.
+- Native uv build planning preserves Devtool's Python `offline` option by forwarding `--offline`.
+
+## Post-seal package-check hotfix (2026-08-14)
+
+- Rebuilt uv-managed sdists with `uv build --wheel` during package verification instead of spawning a separate `pip wheel` build-isolation resolver.
+- Made `verify_cli` validate installed/executable console-script wrappers without launching application entry points from a deliberately no-dependency wheel-check environment.
+- Prevented interrupted package checks from being misreported as missing `DEVTOOL_PYTHON_PACKAGE_RESULT` payloads, and classified Ctrl-C results as interrupted control flow.
