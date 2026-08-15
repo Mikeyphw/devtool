@@ -12,8 +12,6 @@ from .artifacts import (
     artifact_target,
     artifact_validation_policy,
     artifact_workspaces,
-    BUNDLE_MANIFEST_NAMES,
-    MANIFEST_NAMES,
     diff_artifact,
     is_overlay_bundle,
     is_skipped_artifact_payload_member,
@@ -21,6 +19,7 @@ from .artifacts import (
     materialize_overlay_bundle_entries,
     preview_artifact,
     read_artifact_manifest,
+    resolve_artifact_manifest,
     resolve_artifact_path,
     validate_artifact,
     validate_overlay_bundle,
@@ -35,61 +34,19 @@ def _manifest_probe(path: Path) -> dict[str, Any]:
     missing manifest and malformed JSON.  The desktop Run page needs to
     distinguish those states before an apply starts.
     """
-    sidecars = [
-        path.with_name(path.name + ".devtool.json"),
-        path.with_name(path.name + ".manifest.json"),
-    ]
-    for candidate in sidecars:
-        if not candidate.exists():
-            continue
-        try:
-            value = json.loads(candidate.read_text(encoding="utf-8"))
-        except Exception as exc:
-            return {
-                "present": True,
-                "json_valid": False,
-                "source": str(candidate),
-                "error": f"Invalid JSON in {candidate.name}: {exc}",
-            }
-        if not isinstance(value, dict):
-            return {
-                "present": True,
-                "json_valid": False,
-                "source": str(candidate),
-                "error": f"{candidate.name} must contain a JSON object.",
-            }
-        return {"present": True, "json_valid": True, "source": str(candidate), "error": ""}
-
-    try:
-        names = BUNDLE_MANIFEST_NAMES | MANIFEST_NAMES
-        for member in list_archive_members(path, include_data=True):
-            if Path(member.name).name not in names or member.data is None:
-                continue
-            try:
-                value = json.loads(member.data.decode("utf-8"))
-            except Exception as exc:
-                return {
-                    "present": True,
-                    "json_valid": False,
-                    "source": member.name,
-                    "error": f"Invalid JSON in {member.name}: {exc}",
-                }
-            if not isinstance(value, dict):
-                return {
-                    "present": True,
-                    "json_valid": False,
-                    "source": member.name,
-                    "error": f"{member.name} must contain a JSON object.",
-                }
-            return {"present": True, "json_valid": True, "source": member.name, "error": ""}
-    except Exception as exc:
-        return {"present": False, "json_valid": False, "source": "", "error": str(exc)}
-
+    resolution = resolve_artifact_manifest(path)
+    if not resolution.present:
+        return {
+            "present": False,
+            "json_valid": False,
+            "source": "",
+            "error": resolution.error or "No embedded devtool-artifact.json or supported sidecar manifest was found.",
+        }
     return {
-        "present": False,
-        "json_valid": False,
-        "source": "",
-        "error": "No embedded devtool-artifact.json or supported sidecar manifest was found.",
+        "present": True,
+        "json_valid": bool(resolution.valid),
+        "source": resolution.source,
+        "error": resolution.error,
     }
 
 def _repository_info(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -234,7 +191,7 @@ def inspect_artifact(
         "filename": path.name,
         "size": path.stat().st_size,
         "kind": "overlay_bundle" if bundle else str(manifest.get("type") or "overlay"),
-        "schema_version": int(manifest.get("schema_version", manifest.get("version", 1)) or 1),
+        "schema_version": manifest.get("schema_version", manifest.get("version", 1)),
         "name": str(manifest.get("name") or path.stem),
         "description": str(manifest.get("description") or ""),
         "repository": repository,

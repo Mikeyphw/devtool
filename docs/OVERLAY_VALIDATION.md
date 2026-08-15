@@ -24,7 +24,7 @@ Schema-v2 artifacts may declare language-neutral validation defaults:
 Explicit CLI or frontend choices take precedence. The same defaults work on a
 single overlay, a bundle, and each bundle entry.
 
-Artifacts may also declare an exclusive Gradle task list:
+Artifacts may also declare an exclusive native task list for Android/Gradle targets:
 
 ```json
 {
@@ -39,12 +39,26 @@ Artifacts may also declare an exclusive Gradle task list:
 }
 ```
 
-`validation.tasks` is equivalent to passing repeated `--task` flags during
-validation: devtool runs exactly those native Android/Gradle tasks and does not
-append its built-in restore/build/test/lint/package phases. The aliases
+For Android/Gradle targets, `validation.tasks` is equivalent to passing repeated
+`--task` flags during validation: devtool runs exactly those native Gradle tasks
+and does not append its built-in restore/build/test/lint/package phases. An
+explicit empty list is distinct from an absent declaration and suppresses inherited
+bundle/default task declarations. The aliases
 `validation.gradle_tasks`, `validation.test_tasks`, `validation.test_task`, and
 `validation.task` are accepted for compatibility, but new artifacts should write
 `validation.tasks`.
+
+The bundle creator and CLI preserve this distinction too: omitting task options
+leaves `validation.tasks` absent, while an explicitly empty task option serializes
+`validation.tasks: []`. A required validation contract may use a non-empty
+explicit task list as its executable validation path even when restore/build/test
+are all disabled.
+
+Devtool resolves a single runner-aware validation plan before execution. Its final
+durable plan record includes the declaration source, whether tasks were explicitly
+empty, stable de-duplication, concrete runner steps, per-step outcomes, and
+expectation/warning-contract evidence. Artifact manifests are copied for overrides
+rather than mutated in place.
 
 CLI flags still win:
 
@@ -91,8 +105,10 @@ A validating apply follows this sequence:
    profile and runner capabilities;
 6. execute the artifact validator, when present;
 7. block and retain the applied tree when a required validation check fails;
-8. commit only after all required checks pass;
-9. roll back only when the user or artifact explicitly selects the rollback failure action.
+8. evaluate declared expected outcomes and maximum-warning limits against the executed plan;
+9. commit only after all required checks pass;
+10. record the final commit/rollback/child outcomes in durable history;
+11. roll back only when the user or artifact explicitly selects the rollback failure action.
 
 Generated caches and build outputs are not used as rollback source material.
 Runner cleanup happens on success, failure, and interruption according to the
@@ -187,3 +203,7 @@ Before rollback, devtool copies available logs and structured report files to:
 `evidence.json` records the copied source and destination paths. This keeps test,
 lint, and package diagnostics available even when the failed overlay added or
 modified report files inside the repository.
+
+## Automatic repair transaction boundary
+
+Automatic source repairs are repository-relative mutations. Diagnostic paths are canonicalized and rejected if absolute or escaping with `..`/symlink resolution. During artifact apply, a repair path is registered with the active apply transaction *before* its first write, so a later validation/commit/apply rollback restores both the artifact payload and any repaired source files atomically.

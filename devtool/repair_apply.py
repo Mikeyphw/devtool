@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Callable
 
 from .models import OperationResult
 from .repair_policy import RepairFinding, build_repair_report
@@ -10,7 +11,25 @@ from .repair_policy import RepairFinding, build_repair_report
 _CS_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
-def apply_auto_source_repairs(repo_root: Path, results: list[OperationResult]) -> tuple[list[RepairFinding], dict[Path, str]]:
+def _repair_path(repo_root: Path, raw: str) -> Path:
+    root = repo_root.resolve()
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        raise RuntimeError(f"Automatic repair path must be repository-relative: {raw}")
+    path = (root / candidate).resolve(strict=False)
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError(f"Automatic repair path escapes repository: {raw}") from exc
+    return path
+
+
+def apply_auto_source_repairs(
+    repo_root: Path,
+    results: list[OperationResult],
+    *,
+    before_write: Callable[[Path], None] | None = None,
+) -> tuple[list[RepairFinding], dict[Path, str]]:
     """Apply the narrow deterministic repairs that are safe to rewrite in place."""
     report = build_repair_report(results)
     backups: dict[Path, str] = {}
@@ -18,7 +37,7 @@ def apply_auto_source_repairs(repo_root: Path, results: list[OperationResult]) -
     cache: dict[Path, str] = {}
 
     for finding in report.auto_fix:
-        path = (repo_root / finding.file).resolve()
+        path = _repair_path(repo_root, finding.file)
         if not path.exists() or not path.is_file():
             continue
         current = cache.get(path)
@@ -33,6 +52,8 @@ def apply_auto_source_repairs(repo_root: Path, results: list[OperationResult]) -
             continue
         if path not in backups:
             backups[path] = current
+            if before_write is not None:
+                before_write(path)
         path.write_text(updated, encoding="utf-8")
         cache[path] = updated
         applied.append(finding)

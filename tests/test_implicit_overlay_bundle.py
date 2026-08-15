@@ -34,12 +34,12 @@ class ImplicitOverlayBundleTests(unittest.TestCase):
             self.assertTrue(manifest.get("implicit"))
             self.assertEqual(
                 [item["path"] for item in manifest["apply_order"]],
-                ["01_first_overlay.zip", "02_second_overlay.zip"],
+                ["02_second_overlay.zip", "01_first_overlay.zip"],
             )
 
             out = root / "out"
             _manifest, entries = materialize_overlay_bundle_entries(wrapper, out)
-            self.assertEqual([entry.bundle_path for entry in entries], ["01_first_overlay.zip", "02_second_overlay.zip"])
+            self.assertEqual([entry.bundle_path for entry in entries], ["02_second_overlay.zip", "01_first_overlay.zip"])
             self.assertTrue(all(entry.path.exists() for entry in entries))
 
     def test_archive_payload_plus_normal_file_is_not_implicit_bundle(self) -> None:

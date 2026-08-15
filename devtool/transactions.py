@@ -87,8 +87,21 @@ def _relative_to_repo(repo_root: Path, path: Path) -> str:
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        if os.name == "posix":
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_fd = os.open(path.parent, flags)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -419,6 +432,26 @@ def _archive_transaction_summary(path: Path, tx: dict[str, Any]) -> None:
     _atomic_write_json(history / f"{tx.get('transaction_id') or path.parent.name}.json", payload)
 
 
+def read_transaction_summary(repo_root: Path, transaction_id: str) -> dict[str, Any]:
+    """Read a durable completed/rollback transaction summary by identity.
+
+    Active transaction directories are intentionally removed after finalization,
+    so callers that persist operation history must resolve final transaction
+    identity/status from the archived summary rather than depending on the live
+    journal still existing.
+    """
+    identity = str(transaction_id or "").strip()
+    if not identity or Path(identity).name != identity:
+        return {}
+    path = _history_dir(Path(repo_root).resolve()) / f"{identity}.json"
+    if not path.is_file():
+        return {}
+    try:
+        return _read_json(path)
+    except Exception:
+        return {}
+
+
 
 
 def _git_capture(repo_root: Path, argv: list[str]) -> tuple[int, str]:
@@ -678,6 +711,74 @@ def create_apply_transaction(
     return tx
 
 
+def register_transaction_paths(
+    transaction_path: str | Path,
+    paths: list[str | Path],
+) -> dict[str, Any]:
+    """Extend an active apply transaction before an auxiliary mutation.
+
+    Auto-repair and other post-apply mutators must join the same rollback
+    boundary as the artifact.  This function snapshots each newly-owned path
+    before the caller writes it and checkpoints the journal/active marker.
+    """
+    path = Path(transaction_path)
+    tx = _read_json(path)
+    repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
+    backup_dir = Path(str(tx.get("backup_dir") or path.parent / "backup")).resolve()
+    status = str(tx.get("status") or "")
+    if status not in {"backup-ready", "pending-validation", "validation-running", "validation-blocked", "validated"}:
+        raise RuntimeError(f"Cannot extend apply transaction in state {status!r}.")
+    entries = [item for item in tx.get("affected_paths", []) or [] if isinstance(item, dict)]
+    known = {str(item.get("path") or "") for item in entries}
+    added: list[str] = []
+    for raw in paths:
+        candidate = Path(raw)
+        if candidate.is_absolute():
+            try:
+                candidate = candidate.resolve().relative_to(repo_root)
+            except ValueError as exc:
+                raise RuntimeError(f"Transaction path escapes repository: {raw}") from exc
+        rel = _safe_rel(str(candidate))
+        target = (repo_root / rel).resolve(strict=False)
+        try:
+            target.relative_to(repo_root)
+        except ValueError as exc:
+            raise RuntimeError(f"Transaction path escapes repository: {raw}") from exc
+        rel_text = str(rel)
+        if rel_text in known:
+            continue
+        existed = target.exists() or target.is_symlink()
+        entry = {
+            "path": rel_text,
+            "existed": existed,
+            "kind": _path_kind(target),
+            "restore_state": "pending",
+            "backup_sha256": "",
+            "restored_sha256": "",
+            "verified": False,
+            "staged_path": "",
+            "displaced_path": "",
+            "error": "",
+        }
+        if existed:
+            backup = backup_dir / rel
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            _delete_path(backup)
+            _copy_path(target, backup)
+            entry["backup_sha256"] = _hash_path(backup)
+            entry["backup_identity"] = _path_identity(backup)
+        entries.append(entry)
+        known.add(rel_text)
+        added.append(rel_text)
+    if added:
+        tx["affected_paths"] = entries
+        tx.setdefault("auxiliary_mutations", []).extend(added)
+        tx["updated_at"] = _utc_now()
+        _atomic_write_json(path, tx)
+        _write_transaction_active_marker(path, tx)
+    return tx
+
+
 def find_active_transactions(repo_root: Path, *, include_live: bool = False) -> list[Path]:
     repo_root = repo_root.resolve()
     markers: list[Path] = []
@@ -734,8 +835,8 @@ def mark_transaction_completed(transaction_path: str | Path | None) -> None:
     tx["updated_at"] = _utc_now()
     _atomic_write_json(path, tx)
     repo_root = Path(str(tx.get("repo_root") or "."))
-    _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
     _archive_transaction_summary(path, tx)
+    _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
     # Successful applies no longer leave backup payloads in the repository or XDG tree.
     _cleanup_transaction_dir(path)
 
@@ -764,8 +865,8 @@ def abandon_transaction(
     })
     _atomic_write_json(path, tx)
     repo_root = Path(str(tx.get("repo_root") or ".")).resolve()
-    _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
     _archive_transaction_summary(path, tx)
+    _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
     _cleanup_transaction_dir(path)
 
 def _delete_path(path: Path) -> None:
@@ -853,8 +954,8 @@ def rollback_transaction(
                 "run_id": "",
             })
             _atomic_write_json(path, tx)
-            _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
             _archive_transaction_summary(path, tx)
+            _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
             output = (
                 "Cleared stale devtool apply transaction.\n"
                 f"reason: {reason}\n"
@@ -1002,8 +1103,8 @@ def rollback_transaction(
             "run_id": "",
         })
         _atomic_write_json(path, tx)
-        _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
         _archive_transaction_summary(path, tx)
+        _remove_active_marker(repo_root, path, str(tx.get("transaction_id") or ""))
         emit_progress("rolled-back", completed=len(entries), total=len(entries))
         output = (
             "Rolled back devtool apply transaction.\n"

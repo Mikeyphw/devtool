@@ -44,6 +44,19 @@ def _safe_script_path(raw: str) -> Path:
     return path
 
 
+def _safe_repo_relative_path(repo_root: Path, raw: str, *, label: str) -> Path:
+    rel = Path(raw)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise RuntimeError(f"Unsafe {label} path: {raw}")
+    root = repo_root.resolve()
+    resolved = (root / rel).resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError(f"Unsafe {label} path: {raw}") from exc
+    return resolved
+
+
 def run_artifact_validation_script(
     repo_root: Path,
     artifact: str | Path,
@@ -70,9 +83,10 @@ def run_artifact_validation_script(
     expected_sha = str(spec.get("sha256") or "").strip().lower()
     if not ignore_checksum and not expected_sha:
         raise RuntimeError("validation.script.sha256 is required")
-    timeout_seconds = int(spec.get("timeout_seconds", 900) or 900)
-    if timeout_seconds <= 0:
-        raise RuntimeError("validation.script.timeout_seconds must be greater than zero")
+    timeout_raw = spec.get("timeout_seconds", 900)
+    if not isinstance(timeout_raw, int) or isinstance(timeout_raw, bool) or timeout_raw <= 0:
+        raise RuntimeError("validation.script.timeout_seconds must be a positive integer")
+    timeout_seconds = timeout_raw
 
     argv = [runner, str(script_rel)]
     if dry_run:
@@ -98,15 +112,22 @@ def run_artifact_validation_script(
         script_path.chmod(0o700)
 
         workspace_roots = artifact_workspace_roots(manifest)
-        workspace_root = repo_root / workspace_roots[0] if workspace_roots else repo_root
+        resolved_workspace_roots = [
+            _safe_repo_relative_path(repo_root, root, label="workspace")
+            for root in workspace_roots
+        ]
+        workspace_root = resolved_workspace_roots[0] if resolved_workspace_roots else repo_root.resolve()
+        declared_solution = solution or artifact_solution(manifest)
+        if declared_solution:
+            _safe_repo_relative_path(repo_root, declared_solution, label="solution")
         env = os.environ.copy()
         env.update(
             {
                 "DEVTOOL_REPO_ROOT": str(repo_root.resolve()),
                 "DEVTOOL_WORKSPACE_ROOT": str(workspace_root.resolve()),
-                "DEVTOOL_WORKSPACE_ROOTS": os.pathsep.join(str((repo_root / root).resolve()) for root in workspace_roots),
+                "DEVTOOL_WORKSPACE_ROOTS": os.pathsep.join(str(root) for root in resolved_workspace_roots),
                 "DEVTOOL_TARGET": target or artifact_target(manifest),
-                "DEVTOOL_SOLUTION": solution or artifact_solution(manifest),
+                "DEVTOOL_SOLUTION": declared_solution,
                 "DEVTOOL_ARTIFACT_PATH": str(artifact_path.resolve()),
                 "DEVTOOL_VALIDATION_TMPDIR": str(tmpdir.resolve()),
                 "DEVTOOL_RUN_ID": run_id,

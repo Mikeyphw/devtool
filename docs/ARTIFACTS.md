@@ -72,9 +72,9 @@ All payload and inventory paths are repository-relative. Artifact metadata under
     "expected": {
       "restore": "pass",
       "build": "pass",
-      "tests": "pass",
-      "maximum_warnings": 0
-    }
+      "tests": "pass"
+    },
+    "maximum_warnings": 0
   },
   "notes": [
     "Adds persistent force-close diagnostics.",
@@ -83,12 +83,16 @@ All payload and inventory paths are repository-relative. Artifact metadata under
 }
 ```
 
-`source_sha256` protects `modify` and `delete` actions from applying to an unexpected base file. `sha256` and `size` verify the archive payload. If an inventory is present, every payload file must be declared.
+`source_sha256` protects `modify` and `delete` actions from applying to an unexpected base file. `sha256` and `size` verify the archive payload. Source identity is computed from current file bytes; filesystem inode/size/mtime metadata is not accepted as integrity evidence. If a schema-v2 inventory is declared it must be structurally valid, and every payload file must be declared.
+
+Schema versions are positive integers. A declared-but-malformed manifest, ambiguous sidecar/embedded manifest pair, malformed v2 inventory, unknown Git identity required by policy, or unknown clean-worktree state fails closed instead of silently falling back to legacy behavior. Boolean manifest fields are real JSON booleans; strings such as `"false"` are rejected.
 
 `validation.expected.restore`, `validation.expected.build`, and
 `validation.expected.tests` accept common outcome names: `pass`, `passed`,
 `success`, `succeeded`, `skip`, `skipped`, `warn`, `warning`, `warnings`,
-`fail`, `failed`, `error`, and `errors`.
+`fail`, `failed`, `error`, and `errors`. `validation.maximum_warnings` is a
+non-negative integer and is enforced against the warnings emitted by the
+resolved validation plan.
 
 Use `--ignore-checksum` only for deliberate recovery or locally modified artifacts. It skips SHA-256 presence, format, and mismatch checks for payloads, source files, and embedded validation scripts, while retaining repository identity, path safety, inventory completeness, payload size, conflict, and validation-policy checks. Unlike `--no-manifest-check`, it does not disable the rest of artifact validation. Devtool prints a warning whenever the option is active.
 
@@ -115,13 +119,17 @@ Bundles apply all nested overlays inside one transaction and create one final co
       "id": "s3mo-diagnostics",
       "artifact": "overlays/s3mo.zip",
       "target": "s3mo_s3mo_s3mo",
-      "required": true
+      "required": true,
+      "sha256": "NESTED_OVERLAY_SHA256",
+      "size": 12345
     },
     {
       "id": "s3oc-diagnostics",
       "artifact": "overlays/s3oc.zip",
       "target": "s3oc",
       "required": true,
+      "sha256": "NESTED_OVERLAY_SHA256",
+      "size": 23456,
       "after": ["s3mo-diagnostics"],
       "requires": ["s3mo-diagnostics"]
     }
@@ -149,7 +157,7 @@ Bundles apply all nested overlays inside one transaction and create one final co
 }
 ```
 
-`after` controls stable topological ordering. `requires` additionally means the dependency must be present. Dependency cycles are rejected before changes are made. Missing entries are allowed only when `required` is false and no present overlay requires them.
+`after` controls stable topological ordering while preserving declared/archive order for independent entries. `requires` additionally means the dependency must be present. Dependency cycles are rejected before changes are made. Schema-v2 bundle entries carry `sha256` and `size`, so changing nested overlay bytes after bundle creation invalidates the bundle. Missing entries are allowed only when `required` is false and no present overlay requires them. Ordered overlays may intentionally transform the same file more than once when each next `source_sha256` matches the previous output hash.
 
 Validation strategies are `per-overlay`, `after-all`, and `both`. Atomic bundles only support a single final commit.
 
@@ -176,6 +184,10 @@ For `python3` validators, Devtool resolves the project interpreter and dependenc
 
 Exit code `0` passes. Any other exit code or timeout fails validation and triggers transaction rollback when `rollback_on_failure` is enabled.
 
+## Operation history
+
+Apply history uses an idempotent schema-v3 operation record keyed by the run/artifact identity. The durable runtime record is written atomically and captures artifact content identity, child/bundle outcomes, the resolved validation plan and contract evidence, commit outcome, and explicit rollback state. On POSIX, Devtool flushes and `fsync`s the replacement file before `os.replace()` and then `fsync`s its containing directory; transaction completion/rollback summaries use the same durable write path before active recovery markers are removed. Legacy repository-local history remains readable. Cached artifact SHA-256 **and size** are carried through deferred finalization so cleanup cannot erase the recorded content identity.
+
 ## Precedence and opt-outs
 
 The resolution order is:
@@ -188,6 +200,8 @@ The resolution order is:
 Use `--no-validate`, `--no-commit`, or `--no-artifact-script` to opt out of embedded behavior. Preview and non-interactive diff operations never run embedded validation or commits.
 
 ## Creating bundles
+
+Bundle creation is fail-closed: every generated schema-v2 child entry is pinned by byte size and SHA-256, and the completed bundle is strictly self-validated before the creator reports success. A child overlay whose own manifest/inventory checksum is invalid therefore cannot be packaged merely because the outer child hash is correct.
 
 ```bash
 devtool bundle overlays \

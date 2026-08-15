@@ -60,8 +60,50 @@ class RunnerCapabilities:
         return tuple(name for name, enabled in self.as_dict().items() if not enabled)
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedValidationPlan:
+    """Immutable record of how validation was resolved for this invocation."""
+
+    runner: str
+    source: str
+    tasks_declared: bool
+    explicit_empty: bool
+    declared_tasks: tuple[str, ...]
+    planned_steps: tuple[str, ...]
+    required: bool = False
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "validation_plan_runner": self.runner,
+            "validation_plan_source": self.source,
+            "validation_tasks_declared": self.tasks_declared,
+            "validation_tasks_explicit_empty": self.explicit_empty,
+            "validation_declared_tasks": list(self.declared_tasks),
+            "validation_planned_steps": list(self.planned_steps),
+            "validation_contract_required": self.required,
+        }
 
 
+def resolve_validation_plan(
+    config: ProjectConfig,
+    specs: list[CommandSpec],
+    *,
+    source: str = "runner-default",
+    tasks_declared: bool = False,
+    declared_tasks: Iterable[str] = (),
+    required: bool = False,
+) -> ResolvedValidationPlan:
+    tasks = tuple(dict.fromkeys(str(item).strip() for item in declared_tasks if str(item).strip()))
+    steps = tuple(spec.name for spec in specs)
+    return ResolvedValidationPlan(
+        runner=str(config.kind or "unknown"),
+        source=source or "runner-default",
+        tasks_declared=bool(tasks_declared),
+        explicit_empty=bool(tasks_declared and not tasks),
+        declared_tasks=tasks,
+        planned_steps=steps,
+        required=bool(required),
+    )
 def _optimized_env(config: ProjectConfig, kind: str) -> dict[str, str]:
     return optimized_build_env(config, kind, config.env)
 

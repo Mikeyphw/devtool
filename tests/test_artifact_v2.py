@@ -575,7 +575,31 @@ class ArtifactV2Tests(unittest.TestCase):
                 overlay,
                 {".devtool-artifact.json": json.dumps(manifest).encode(), "nested.txt": payload},
             )
-            bundle = create_overlay_bundle(root / "bundle.zip", [overlay])
+            # MR-081 requires the bundle creator itself to reject a corrupt
+            # nested overlay.  Build this intentionally-invalid bundle fixture
+            # manually so the validator's explicit ignore_checksum escape hatch
+            # remains covered without weakening creator self-validation.
+            nested_bytes = overlay.read_bytes()
+            bundle_manifest = {
+                "schema_version": 2,
+                "type": "overlay_bundle",
+                "kind": "devtool.overlay_bundle",
+                "apply_order": [{
+                    "id": "nested",
+                    "path": "overlays/001_nested.zip",
+                    "sha256": hashlib.sha256(nested_bytes).hexdigest(),
+                    "size": len(nested_bytes),
+                    "required": True,
+                }],
+                "validation": {"required": False, "strategy": "per-overlay"},
+            }
+            bundle = write_archive_entries(
+                root / "bundle.zip",
+                {
+                    "devtool-bundle.json": json.dumps(bundle_manifest).encode(),
+                    "overlays/001_nested.zip": nested_bytes,
+                },
+            )
 
             self.assertFalse(validate_artifact(repo, bundle).ok)
             ignored = validate_artifact(repo, bundle, ignore_checksum=True)

@@ -13,8 +13,6 @@ import tarfile
 import tempfile
 import zipfile
 import uuid
-import threading
-from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,6 +58,43 @@ _VALIDATION_EXPECTED_OUTCOMES = {
 _VALIDATION_TASK_KEYS = ("tasks", "gradle_tasks", "test_tasks", "test_task", "task")
 
 
+def _durable_atomic_write_text(path: Path, text: str) -> None:
+    """Atomically replace *path* and make the replacement durable on POSIX.
+
+    ``os.replace`` gives us atomic name replacement, but atomicity alone does
+    not satisfy the artifact-history durability contract.  Flush and fsync the
+    temporary file before the rename, then fsync the containing directory so a
+    completed operation record survives a crash after the rename.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        if os.name == "posix":
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_fd = os.open(path.parent, flags)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _explicit_artifact_type(manifest: dict[str, Any]) -> str:
+    """Return the first explicit artifact-type marker, if one is declared."""
+    for key in ("kind", "type", "artifact_type"):
+        if key in manifest:
+            value = str(manifest.get(key) or "").strip().lower()
+            if value:
+                return value
+    return ""
+
+
 def _normalize_validation_tasks(value: Any) -> list[str]:
     """Normalize overlay-declared validation tasks.
 
@@ -89,9 +124,20 @@ def _validation_tasks_from_mapping(mapping: dict[str, Any]) -> list[str]:
             return _normalize_validation_tasks(mapping.get(key))
     return []
 
-_HASH_CACHE_LIMIT = 2048
-_HASH_CACHE: "OrderedDict[tuple[str, int, int, int], str]" = OrderedDict()
-_HASH_CACHE_LOCK = threading.Lock()
+
+def validation_tasks_declaration(mapping: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Return task-field presence separately from its normalized value."""
+    for key in _VALIDATION_TASK_KEYS:
+        if key in mapping:
+            return True, _normalize_validation_tasks(mapping.get(key))
+    return False, []
+
+
+def artifact_validation_task_declaration(manifest: dict[str, Any]) -> tuple[bool, list[str]]:
+    raw = manifest.get("validation")
+    if not isinstance(raw, dict):
+        return False, []
+    return validation_tasks_declaration(raw)
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +359,9 @@ class BundleOverlaySpec:
     after: tuple[str, ...] = ()
     requires: tuple[str, ...] = ()
     validation_tasks: tuple[str, ...] = ()
+    validation_tasks_declared: bool = False
+    sha256: str = ""
+    size: int | None = None
     index: int = 0
 
 
@@ -325,34 +374,35 @@ class MaterializedBundleOverlay:
     label: str = ""
     required: bool = True
     validation_tasks: tuple[str, ...] = ()
+    validation_tasks_declared: bool = False
+    sha256: str = ""
+    size: int | None = None
     index: int = 0
 
 
-def sha256_file(path: Path) -> str:
-    resolved = path.resolve()
-    stat = resolved.stat()
-    key = (str(resolved), int(stat.st_size), int(stat.st_mtime_ns), int(getattr(stat, "st_ino", 0)))
-    with _HASH_CACHE_LOCK:
-        cached = _HASH_CACHE.get(key)
-        if cached is not None:
-            _HASH_CACHE.move_to_end(key)
-            return cached
+@dataclass(frozen=True, slots=True)
+class ArtifactManifestResolution:
+    manifest: dict[str, Any]
+    present: bool
+    valid: bool
+    source: str = ""
+    error: str = ""
+    candidates: tuple[str, ...] = ()
 
+
+def sha256_file(path: Path) -> str:
+    """Hash artifact/source bytes without metadata-based integrity caching.
+
+    Source and payload digests are used as security/integrity evidence.  A
+    caller can rewrite a file and restore size/mtime (and retain its inode), so
+    metadata is not a sound cache key for these checks.  Always hash the bytes.
+    """
+    resolved = path.resolve()
     h = hashlib.sha256()
     with resolved.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
-    digest = h.hexdigest()
-
-    with _HASH_CACHE_LOCK:
-        # Keep one current record per path and cap process-wide memory use.
-        for stale in [cache_key for cache_key in _HASH_CACHE if cache_key[0] == key[0] and cache_key != key]:
-            _HASH_CACHE.pop(stale, None)
-        _HASH_CACHE[key] = digest
-        _HASH_CACHE.move_to_end(key)
-        while len(_HASH_CACHE) > _HASH_CACHE_LIMIT:
-            _HASH_CACHE.popitem(last=False)
-    return digest
+    return h.hexdigest()
 
 
 def _is_sha256(value: str) -> bool:
@@ -388,7 +438,7 @@ def artifact_commit_policy(manifest: dict[str, Any]) -> tuple[bool, str, str]:
     """Return enabled, message, and strategy for artifact-driven commits."""
     apply = manifest.get("apply") if isinstance(manifest.get("apply"), dict) else {}
     commit = apply.get("commit") if isinstance(apply.get("commit"), dict) else {}
-    enabled = bool(commit.get("enabled", False))
+    enabled = commit.get("enabled", False) is True
     message = str(commit.get("message") or manifest.get("commit_message") or "").strip()
     strategy = str(commit.get("strategy") or "single").strip().lower() or "single"
     return enabled and bool(message), message, strategy
@@ -411,7 +461,7 @@ def artifact_validation_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     policy.setdefault("rollback_on_failure", True)
     if "failure_action" not in policy:
         policy["failure_action"] = (
-            "rollback" if "rollback_on_failure" in raw and bool(raw.get("rollback_on_failure")) else "pause"
+            "rollback" if raw.get("rollback_on_failure") is True else "pause"
         )
     policy.setdefault("allow_deferred", True)
     policy.setdefault("minimum_phase", "finalize")
@@ -486,6 +536,44 @@ def artifact_inventory_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]
     return [dict(item) for item in entries if isinstance(item, dict)] if isinstance(entries, list) else []
 
 
+def _validate_inventory_shape(manifest: dict[str, Any], messages: list[str]) -> bool:
+    """Validate declared inventory structure before consuming normalized entries."""
+    if "inventory" not in manifest:
+        return True
+    inventory = manifest.get("inventory")
+    if not isinstance(inventory, dict):
+        messages.append("inventory must be an object.")
+        return False
+    if "entries" not in inventory:
+        messages.append("inventory.entries is required when inventory is declared.")
+        return False
+    entries = inventory.get("entries")
+    if not isinstance(entries, list):
+        messages.append("inventory.entries must be a list.")
+        return False
+    bad = [index for index, item in enumerate(entries, 1) if not isinstance(item, dict)]
+    if bad:
+        messages.append("inventory.entries must contain only objects (invalid entries: " + ", ".join(map(str, bad[:10])) + ").")
+        return False
+    return True
+
+
+def _schema_version(manifest: dict[str, Any], messages: list[str], *, bundle: bool = False) -> int | None:
+    key_value = manifest.get("schema_version", manifest.get("version", 1) if bundle else 1)
+    if not isinstance(key_value, int) or isinstance(key_value, bool):
+        messages.append(("Bundle" if bundle else "Artifact") + " schema_version must be a positive integer.")
+        return None
+    if key_value <= 0:
+        messages.append(("Bundle" if bundle else "Artifact") + " schema_version must be greater than zero.")
+        return None
+    if key_value > 2:
+        messages.append(
+            f"Unsupported {'bundle' if bundle else 'artifact'} schema_version {key_value}; maximum supported version is 2."
+        )
+        return None
+    return key_value
+
+
 def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *, bundle: bool) -> bool:
     raw = manifest.get("validation")
     if raw is None:
@@ -494,13 +582,28 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
         messages.append("validation must be an object.")
         return False
     ok = True
-    script = raw.get("script") if isinstance(raw.get("script"), dict) else {}
-    mode = str(raw.get("mode") or "").strip().lower()
-    phases = [bool(raw.get(name, True)) for name in ("restore", "build", "test")]
-    required = mode == "required" if mode else bool(raw.get("required", False))
-    if required and not any(phases) and not script:
+    script_value = raw.get("script")
+    if script_value is not None and not isinstance(script_value, dict):
+        messages.append("validation.script must be an object.")
         ok = False
-        messages.append("Required validation must enable restore, build, test, or an artifact script.")
+    script = script_value if isinstance(script_value, dict) else {}
+    mode = str(raw.get("mode") or "").strip().lower()
+    for boolean_key in ("required", "restore", "build", "test", "rollback_on_failure", "allow_deferred"):
+        if boolean_key in raw and not isinstance(raw.get(boolean_key), bool):
+            messages.append(f"validation.{boolean_key} must be a boolean.")
+            ok = False
+    tasks_declared = False
+    declared_tasks: list[str] = []
+    try:
+        tasks_declared, declared_tasks = validation_tasks_declaration(raw)
+    except ValueError:
+        # The detailed task-shape error is emitted by the validation loop below.
+        pass
+    phases = [raw.get(name, True) if isinstance(raw.get(name, True), bool) else False for name in ("restore", "build", "test")]
+    required = mode == "required" if mode else (raw.get("required", False) if isinstance(raw.get("required", False), bool) else False)
+    if required and not any(phases) and not script and not (tasks_declared and declared_tasks):
+        ok = False
+        messages.append("Required validation must enable restore, build, test, explicit validation tasks, or an artifact script.")
     expected = raw.get("expected")
     if expected is not None and not isinstance(expected, dict):
         ok = False
@@ -518,9 +621,6 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
         if mode not in {"required", "optional", "normal", "disabled"}:
             ok = False
             messages.append("validation.mode must be one of: required, optional, normal, disabled.")
-    if "allow_deferred" in raw and not isinstance(raw.get("allow_deferred"), bool):
-        ok = False
-        messages.append("validation.allow_deferred must be a boolean.")
     if "minimum_phase" in raw:
         minimum_phase = str(raw.get("minimum_phase") or "").strip().lower().replace("_", "-")
         allowed_phases = {
@@ -530,9 +630,11 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
         if minimum_phase not in allowed_phases:
             ok = False
             messages.append(f"Unsupported validation.minimum_phase: {minimum_phase!r}.")
-    if "rollback_on_failure" in raw and not isinstance(raw.get("rollback_on_failure"), bool):
-        ok = False
-        messages.append("validation.rollback_on_failure must be a boolean.")
+    if "maximum_warnings" in raw:
+        maximum_warnings = raw.get("maximum_warnings")
+        if not isinstance(maximum_warnings, int) or isinstance(maximum_warnings, bool) or maximum_warnings < 0:
+            ok = False
+            messages.append("validation.maximum_warnings must be a non-negative integer.")
     if "failure_action" in raw:
         action = str(raw.get("failure_action") or "").strip().lower()
         if action not in {"pause", "rollback", "keep", "prompt"}:
@@ -708,6 +810,52 @@ def _archive_file_data(artifact: str | Path) -> dict[str, bytes]:
     return data
 
 
+def resolve_artifact_manifest(artifact: str | Path) -> ArtifactManifestResolution:
+    """Resolve exactly one declared manifest, failing closed on ambiguity/malformed data.
+
+    Sidecars and embedded manifests are intentionally treated as one namespace.
+    A producer must not be able to make inspection see one declaration while
+    apply/validation sees another.
+    """
+    artifact_path = resolve_artifact_path(artifact)
+    candidates: list[tuple[str, bytes]] = []
+    for sidecar in (
+        artifact_path.with_name(artifact_path.name + ".devtool.json"),
+        artifact_path.with_name(artifact_path.name + ".manifest.json"),
+    ):
+        if sidecar.exists():
+            try:
+                candidates.append((str(sidecar), sidecar.read_bytes()))
+            except OSError as exc:
+                return ArtifactManifestResolution({}, True, False, str(sidecar), f"Cannot read artifact manifest {sidecar}: {exc}", (str(sidecar),))
+    try:
+        for member in list_archive_members(artifact_path, include_data=True):
+            if member.data is None:
+                continue
+            basename = Path(member.name).name
+            if basename in (MANIFEST_NAMES | BUNDLE_MANIFEST_NAMES):
+                candidates.append((member.name, member.data))
+    except Exception as exc:
+        return ArtifactManifestResolution({}, False, False, error=str(exc))
+
+    names = tuple(name for name, _data in candidates)
+    if not candidates:
+        return ArtifactManifestResolution({}, False, True)
+    if len(candidates) != 1:
+        return ArtifactManifestResolution(
+            {}, True, False, candidates=names,
+            error="Artifact declares multiple manifests; exactly one sidecar or embedded manifest is allowed: " + ", ".join(names),
+        )
+    source, raw = candidates[0]
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        return ArtifactManifestResolution({}, True, False, source, f"Invalid JSON in artifact manifest {source}: {exc}", names)
+    if not isinstance(data, dict):
+        return ArtifactManifestResolution({}, True, False, source, f"Artifact manifest {source} must contain a JSON object.", names)
+    return ArtifactManifestResolution(dict(data), True, True, source, candidates=names)
+
+
 def _implicit_overlay_bundle_manifest(artifact: str | Path) -> dict[str, Any]:
     """Recognize legacy wrapper archives that contain only nested overlays.
 
@@ -726,7 +874,9 @@ def _implicit_overlay_bundle_manifest(artifact: str | Path) -> dict[str, Any]:
         return {}
     if not members or any(not archive_suffix(member.name) for member in members):
         return {}
-    ordered = sorted((member.name for member in members), key=lambda value: value.casefold())
+    # Archive member order is the only declaration legacy wrappers possess;
+    # preserve it rather than re-sorting names and changing execution order.
+    ordered = [member.name for member in members]
     return {
         "kind": "devtool.overlay_bundle",
         "version": 1,
@@ -742,18 +892,19 @@ def _implicit_overlay_bundle_manifest(artifact: str | Path) -> dict[str, Any]:
 
 def read_overlay_bundle_manifest(artifact: str | Path) -> dict[str, Any]:
     """Read an explicit bundle manifest or synthesize one for legacy wrappers."""
-    try:
-        for member in list_archive_members(artifact, include_data=True):
-            basename = Path(member.name).name
-            if basename not in (BUNDLE_MANIFEST_NAMES | MANIFEST_NAMES) or member.data is None:
-                continue
-            data = json.loads(member.data.decode("utf-8"))
-            if not isinstance(data, dict):
-                continue
-            kind = str(data.get("kind") or data.get("type") or "").strip().lower()
-            if basename in BUNDLE_MANIFEST_NAMES or kind in BUNDLE_KINDS or isinstance(data.get("apply_order"), list) or isinstance(data.get("overlays"), list):
-                return data
-    except Exception:
+    resolution = resolve_artifact_manifest(artifact)
+    if not resolution.valid:
+        return {}
+    if resolution.present:
+        data = resolution.manifest
+        kind = _explicit_artifact_type(data)
+        source_basename = Path(resolution.source.split("!/")[-1]).name
+        if kind:
+            return data if kind in BUNDLE_KINDS else {}
+        if source_basename in BUNDLE_MANIFEST_NAMES or isinstance(data.get("apply_order"), list) or isinstance(data.get("overlays"), list):
+            return data
+        # An explicit non-bundle manifest is authoritative.  Do not reclassify
+        # an overlay merely because its payload happens to contain archives.
         return {}
     return _implicit_overlay_bundle_manifest(artifact)
 
@@ -782,16 +933,31 @@ def _bundle_overlay_spec_from_item(item: Any, index: int) -> BundleOverlaySpec:
         after: tuple[str, ...] = ()
         requires: tuple[str, ...] = ()
         validation_tasks: tuple[str, ...] = ()
+        validation_tasks_declared = False
+        expected_sha = ""
+        expected_size = None
     elif isinstance(item, dict):
         name = str(item.get("path") or item.get("artifact") or item.get("overlay") or "").strip()
         overlay_id = str(item.get("id") or Path(name).stem).strip()
         target = str(item.get("target") or item.get("validate_target") or "").strip()
         label = str(item.get("label") or item.get("name") or item.get("description") or "").strip()
-        required = bool(item.get("required", True))
+        required_value = item.get("required", True)
+        if not isinstance(required_value, bool):
+            raise RuntimeError(f"Overlay bundle item #{index} required must be a boolean.")
+        required = required_value
         after = tuple(str(value).strip() for value in item.get("after", []) if str(value).strip()) if isinstance(item.get("after"), list) else ()
         requires = tuple(str(value).strip() for value in item.get("requires", []) if str(value).strip()) if isinstance(item.get("requires", []), list) else ()
         entry_validation = item.get("validation") if isinstance(item.get("validation"), dict) else {}
-        validation_tasks = tuple(_validation_tasks_from_mapping(item) or _validation_tasks_from_mapping(entry_validation))
+        validation_tasks_declared, declared_tasks = validation_tasks_declaration(item)
+        if not validation_tasks_declared:
+            validation_tasks_declared, declared_tasks = validation_tasks_declaration(entry_validation)
+        validation_tasks = tuple(declared_tasks)
+        expected_sha = str(item.get("sha256") or "").strip().lower()
+        expected_size = item.get("size")
+        if expected_sha and not _is_sha256(expected_sha):
+            raise RuntimeError(f"Overlay bundle item #{index} sha256 is not a valid SHA-256.")
+        if expected_size is not None and (not isinstance(expected_size, int) or isinstance(expected_size, bool) or expected_size < 0):
+            raise RuntimeError(f"Overlay bundle item #{index} size must be a non-negative integer.")
     else:
         raise RuntimeError(f"Overlay bundle apply_order item #{index} must be a string path or object.")
     if not name:
@@ -810,6 +976,9 @@ def _bundle_overlay_spec_from_item(item: Any, index: int) -> BundleOverlaySpec:
         after=after,
         requires=requires,
         validation_tasks=validation_tasks,
+        validation_tasks_declared=validation_tasks_declared,
+        sha256=expected_sha,
+        size=expected_size,
         index=index,
     )
 
@@ -856,6 +1025,9 @@ def _bundle_overlay_specs(bundle: str | Path, manifest: dict[str, Any] | None = 
         after=spec.after,
         requires=spec.requires,
         validation_tasks=spec.validation_tasks,
+        validation_tasks_declared=spec.validation_tasks_declared,
+        sha256=spec.sha256,
+        size=spec.size,
         index=index,
     ) for index, spec in enumerate(ordered, 1)]
 
@@ -899,6 +1071,10 @@ def materialize_overlay_bundle_entries(bundle: str | Path, target_dir: str | Pat
                 raise RuntimeError(f"Overlay bundle lists missing required member: {spec.path}")
             missing_optional.add(spec.id)
             continue
+        if spec.size is not None and len(data) != spec.size:
+            raise RuntimeError(f"Overlay bundle member size mismatch: {spec.path}")
+        if spec.sha256 and hashlib.sha256(data).hexdigest().lower() != spec.sha256:
+            raise RuntimeError(f"Overlay bundle member SHA-256 mismatch: {spec.path}")
         out = target / spec.path
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(data)
@@ -912,6 +1088,9 @@ def materialize_overlay_bundle_entries(bundle: str | Path, target_dir: str | Pat
                 label=spec.label,
                 required=spec.required,
                 validation_tasks=spec.validation_tasks,
+                validation_tasks_declared=spec.validation_tasks_declared,
+                sha256=spec.sha256,
+                size=spec.size,
                 index=spec.index,
             )
         )
@@ -940,23 +1119,96 @@ def overlay_bundle_targets(bundle: str | Path) -> list[str]:
     return targets
 
 def overlay_bundle_conflicts(bundle: str | Path) -> dict[str, list[str]]:
-    """Return payload files written by more than one nested overlay in apply order."""
+    """Return unsafe duplicate writers, excluding integrity-linked transforms.
+
+    A later inventory ``modify`` whose ``source_sha256`` equals the previous
+    writer's output SHA is an intentional sequential transform, not a conflict.
+    """
     writers: dict[str, list[str]] = {}
+    previous_output: dict[str, str] = {}
+    unsafe: set[str] = set()
     with tempfile.TemporaryDirectory(prefix="devtool-bundle-conflicts-") as tmp:
         _manifest, entries = materialize_overlay_bundle_entries(bundle, tmp)
         for entry in entries:
+            name = entry.label or Path(entry.bundle_path).name
+            if entry.target:
+                name = f"{name} [{entry.target}]"
+            manifest = read_artifact_manifest(entry.path)
+            inventory = artifact_inventory_entries(manifest)
+            if inventory:
+                for item in inventory:
+                    path = str(item.get("path") or "").strip()
+                    action = str(item.get("action") or "").strip().lower()
+                    if not path:
+                        continue
+                    prior = previous_output.get(path, "")
+                    source = str(item.get("source_sha256") or "").strip().lower()
+                    if path in writers and not (action == "modify" and prior and source == prior):
+                        unsafe.add(path)
+                    writers.setdefault(path, []).append(name)
+                    previous_output[path] = "" if action == "delete" else str(item.get("sha256") or "").strip().lower()
+                continue
             try:
                 members = list_archive_members(entry.path, include_data=False)
             except Exception:
                 continue
-            name = entry.label or Path(entry.bundle_path).name
-            if entry.target:
-                name = f"{name} [{entry.target}]"
             for member in members:
                 if member.is_dir or is_skipped_artifact_payload_member(member.name):
                     continue
+                if member.name in writers:
+                    unsafe.add(member.name)
                 writers.setdefault(member.name, []).append(name)
-    return {path: names for path, names in writers.items() if len(names) > 1}
+                previous_output[member.name] = ""
+    return {path: writers[path] for path in sorted(unsafe)}
+
+
+def _validate_bundle_inventory_chain(
+    repo_root: Path,
+    entries: list[MaterializedBundleOverlay],
+    messages: list[str],
+    *,
+    ignore_checksum: bool,
+) -> bool:
+    """Validate nested inventory source identities in declared execution order."""
+    ok = True
+    state: dict[str, str | None] = {}
+    for entry in entries:
+        nested = read_artifact_manifest(entry.path)
+        for item in artifact_inventory_entries(nested):
+            path = str(item.get("path") or "").strip()
+            action = str(item.get("action") or "").strip().lower()
+            if not path:
+                continue
+            try:
+                rel = _safe_rel(path)
+            except RuntimeError as exc:
+                messages.append(f"[{entry.id}] {exc}")
+                ok = False
+                continue
+            if path not in state:
+                target = repo_root / rel
+                if target.is_file():
+                    state[path] = sha256_file(target).lower()
+                elif target.exists():
+                    state[path] = "<non-file>"
+                else:
+                    state[path] = None
+            current = state[path]
+            source = str(item.get("source_sha256") or "").strip().lower()
+            if action in {"modify", "delete"}:
+                if current is None or current == "<non-file>":
+                    messages.append(f"[{entry.id}] Inventory expects existing file for {action}: {path}")
+                    ok = False
+                elif not ignore_checksum and source and source != current:
+                    messages.append(f"[{entry.id}] Source SHA-256 mismatch for {path} in bundle execution order.")
+                    ok = False
+            elif action == "add" and current is not None:
+                conflict_policy = str((nested.get("apply") if isinstance(nested.get("apply"), dict) else {}).get("conflict_policy") or "fail").lower()
+                if conflict_policy == "fail":
+                    messages.append(f"[{entry.id}] Inventory add conflicts with existing path: {path}")
+                    ok = False
+            state[path] = None if action == "delete" else str(item.get("sha256") or "").strip().lower()
+    return ok
 
 
 def validate_overlay_bundle(
@@ -965,7 +1217,12 @@ def validate_overlay_bundle(
     *,
     fail_on_conflict: bool = False,
     ignore_checksum: bool = False,
+    check_source_state: bool = True,
+    check_repository_identity: bool = True,
 ) -> ArtifactValidation:
+    resolution = resolve_artifact_manifest(bundle)
+    if resolution.present and not resolution.valid:
+        return ArtifactValidation(False, [resolution.error], {})
     manifest = read_overlay_bundle_manifest(bundle)
     messages: list[str] = []
     ok = True
@@ -975,16 +1232,10 @@ def validate_overlay_bundle(
     if kind and kind not in BUNDLE_KINDS:
         ok = False
         messages.append(f"Bundle manifest kind/type is {kind!r}, expected 'devtool.overlay_bundle'.")
-    try:
-        schema_version = int(manifest.get("schema_version", manifest.get("version", 1)) or 1)
-    except (TypeError, ValueError):
-        schema_version = 0
+    schema_version = _schema_version(manifest, messages, bundle=True)
+    if schema_version is None:
         ok = False
-        messages.append("Bundle schema_version must be an integer.")
-    if schema_version > 2:
-        ok = False
-        messages.append(f"Unsupported bundle schema_version {schema_version}; maximum supported version is 2.")
-    if not _validate_repository_identity(repo_root, manifest, messages):
+    if check_repository_identity and not _validate_repository_identity(repo_root, manifest, messages):
         ok = False
     if not _validate_validation_policy(manifest, messages, bundle=True):
         ok = False
@@ -1002,6 +1253,14 @@ def validate_overlay_bundle(
     if missing:
         ok = False
         messages.append("Bundle apply_order lists missing overlays: " + ", ".join(missing[:10]))
+    if schema_version == 2 and not bool(manifest.get("implicit", False)):
+        for spec in specs:
+            if not spec.sha256:
+                ok = False
+                messages.append(f"Bundle schema v2 overlay entry requires sha256: {spec.path}")
+            if spec.size is None:
+                ok = False
+                messages.append(f"Bundle schema v2 overlay entry requires size: {spec.path}")
     with tempfile.TemporaryDirectory(prefix="devtool-bundle-validate-") as tmp:
         try:
             _manifest, entries = materialize_overlay_bundle_entries(bundle, tmp)
@@ -1014,6 +1273,7 @@ def validate_overlay_bundle(
                 artifact_type="overlay",
                 check_source_state=False,
                 ignore_checksum=ignore_checksum,
+                check_repository_identity=check_repository_identity,
             )
             label = entry.label or Path(entry.bundle_path).name
             target_note = f" target={entry.target}" if entry.target else ""
@@ -1024,6 +1284,8 @@ def validate_overlay_bundle(
                 ok = False
                 messages.append(f"{prefix}: invalid")
                 messages.extend(f"  {msg}" for msg in validation.messages)
+        if check_source_state and not _validate_bundle_inventory_chain(repo_root, entries, messages, ignore_checksum=ignore_checksum):
+            ok = False
     conflicts = overlay_bundle_conflicts(bundle)
     if conflicts:
         lines = []
@@ -1044,9 +1306,18 @@ def validate_overlay_bundle(
     if str(apply.get("path_policy") or "repository-relative") != "repository-relative":
         ok = False
         messages.append("Only apply.path_policy='repository-relative' is supported.")
-    if bool(apply.get("requires_clean_worktree", False)) and _git_text(repo_root, "status", "--porcelain"):
+    requires_clean = apply.get("requires_clean_worktree", False)
+    if not isinstance(requires_clean, bool):
         ok = False
-        messages.append("Bundle requires a clean Git worktree.")
+        messages.append("apply.requires_clean_worktree must be a boolean.")
+    elif requires_clean:
+        clean_known, status = _git_text_status(repo_root, "status", "--porcelain")
+        if not clean_known:
+            ok = False
+            messages.append("Bundle requires a clean Git worktree, but Git cleanliness could not be determined.")
+        elif status:
+            ok = False
+            messages.append("Bundle requires a clean Git worktree.")
     commit_enabled, commit_message, commit_strategy = artifact_commit_policy(manifest)
     if commit_strategy not in {"single", "per-overlay"}:
         ok = False
@@ -1054,7 +1325,11 @@ def validate_overlay_bundle(
     if bool(apply.get("atomic", True)) and commit_strategy == "per-overlay" and commit_enabled:
         ok = False
         messages.append("Atomic bundles must use apply.commit.strategy='single'.")
-    if isinstance(apply.get("commit"), dict) and bool(apply["commit"].get("enabled", False)) and not commit_message:
+    commit_block = apply.get("commit") if isinstance(apply.get("commit"), dict) else None
+    if commit_block is not None and "enabled" in commit_block and not isinstance(commit_block.get("enabled"), bool):
+        ok = False
+        messages.append("apply.commit.enabled must be a boolean.")
+    if commit_block is not None and commit_block.get("enabled") is True and not commit_message:
         ok = False
         messages.append("Enabled bundle commits require a non-empty message.")
     script = artifact_validation_script(manifest)
@@ -1184,13 +1459,16 @@ def create_overlay_bundle(
         while arcname in used_names:
             arcname = f"overlays/{index:03d}_{len(used_names)}_{path.name}"
         used_names.add(arcname)
-        entries[arcname] = path.read_bytes()
+        nested_bytes = path.read_bytes()
+        entries[arcname] = nested_bytes
         nested_manifest = read_artifact_manifest(path)
         item: dict[str, Any] = {
             "id": str(nested_manifest.get("artifact_id") or path.stem),
             "path": arcname,
             "label": str(nested_manifest.get("name") or path.stem),
             "required": True,
+            "sha256": hashlib.sha256(nested_bytes).hexdigest(),
+            "size": len(nested_bytes),
         }
         if normalized_targets:
             target = normalized_targets[index - 1].strip()
@@ -1205,7 +1483,15 @@ def create_overlay_bundle(
         raise RuntimeError(f"Unsupported bundle validation strategy: {validation_strategy}")
     if validation_runner not in {"bash", "sh", "python3"}:
         raise RuntimeError(f"Unsupported validation script runner: {validation_runner}")
-    clean_validation_tasks = _normalize_validation_tasks(validation_tasks) if validation_tasks else []
+    validation_tasks_declared = validation_tasks is not None
+    clean_validation_tasks = _normalize_validation_tasks(validation_tasks) if validation_tasks_declared else []
+    if validation_script:
+        if (
+            not isinstance(validation_timeout_seconds, int)
+            or isinstance(validation_timeout_seconds, bool)
+            or validation_timeout_seconds <= 0
+        ):
+            raise RuntimeError("validation_timeout_seconds must be a positive integer.")
 
     bundle_manifest: dict[str, Any] = {
         "schema_version": 2,
@@ -1233,7 +1519,7 @@ def create_overlay_bundle(
             "failure_action": "pause",
         },
     }
-    if clean_validation_tasks:
+    if validation_tasks_declared:
         bundle_manifest["validation"]["tasks"] = clean_validation_tasks
     clean_repository = {str(key): str(value).strip() for key, value in (repository or {}).items() if str(value).strip()}
     if clean_repository:
@@ -1250,40 +1536,38 @@ def create_overlay_bundle(
             "path": archive_script_path,
             "runner": validation_runner,
             "sha256": hashlib.sha256(script_data).hexdigest(),
-            "timeout_seconds": int(validation_timeout_seconds),
+            "timeout_seconds": validation_timeout_seconds,
         }
     entries["devtool-bundle.json"] = (json.dumps(bundle_manifest, indent=2) + "\n").encode("utf-8")
-    return write_archive_entries(output, entries)
+    created = write_archive_entries(output, entries)
+    validation = validate_overlay_bundle(
+        Path.cwd(),
+        created,
+        ignore_checksum=False,
+        check_source_state=False,
+        check_repository_identity=False,
+    )
+    if not validation.ok:
+        created.unlink(missing_ok=True)
+        raise RuntimeError("Generated overlay bundle failed self-validation: " + "; ".join(validation.messages))
+    return created
 
 def read_artifact_manifest(artifact: str | Path) -> dict[str, Any]:
-    bundle_manifest = read_overlay_bundle_manifest(artifact)
-    if bundle_manifest and (str(bundle_manifest.get("kind") or bundle_manifest.get("type") or "").strip().lower() in BUNDLE_KINDS or isinstance(bundle_manifest.get("apply_order"), list)):
-        data = dict(bundle_manifest)
-        data.setdefault("type", "overlay_bundle")
-        data.setdefault("artifact_type", "overlay_bundle")
+    resolution = resolve_artifact_manifest(artifact)
+    if resolution.valid and resolution.present:
+        data = dict(resolution.manifest)
+        kind = _explicit_artifact_type(data)
+        if kind in BUNDLE_KINDS or (not kind and (isinstance(data.get("apply_order"), list) or isinstance(data.get("overlays"), list))):
+            data.setdefault("type", "overlay_bundle")
+            data.setdefault("artifact_type", "overlay_bundle")
         return data
-    artifact_path = resolve_artifact_path(artifact)
-    sidecars = [
-        artifact_path.with_name(artifact_path.name + ".devtool.json"),
-        artifact_path.with_name(artifact_path.name + ".manifest.json"),
-    ]
-    for candidate in sidecars:
-        if not candidate.exists():
-            continue
-        try:
-            data = json.loads(candidate.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
-
-    try:
-        for member in list_archive_members(artifact_path, include_data=True):
-            if Path(member.name).name not in MANIFEST_NAMES or member.data is None:
-                continue
-            data = json.loads(member.data.decode("utf-8"))
-            return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    if not resolution.present and resolution.valid:
+        bundle_manifest = _implicit_overlay_bundle_manifest(artifact)
+        if bundle_manifest:
+            data = dict(bundle_manifest)
+            data.setdefault("type", "overlay_bundle")
+            data.setdefault("artifact_type", "overlay_bundle")
+            return data
     return {}
 
 
@@ -1299,6 +1583,11 @@ def _normalized_remote(value: str) -> str:
 
 
 def _git_text(repo_root: Path, *args: str) -> str:
+    known, text = _git_text_status(repo_root, *args)
+    return text if known else ""
+
+
+def _git_text_status(repo_root: Path, *args: str) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
             ["git", *args],
@@ -1309,8 +1598,8 @@ def _git_text(repo_root: Path, *args: str) -> str:
             timeout=10,
         )
     except Exception:
-        return ""
-    return proc.stdout.strip() if proc.returncode == 0 else ""
+        return False, ""
+    return (True, proc.stdout.strip()) if proc.returncode == 0 else (False, "")
 
 
 def _validate_repository_identity(repo_root: Path, manifest: dict[str, Any], messages: list[str]) -> bool:
@@ -1324,18 +1613,34 @@ def _validate_repository_identity(repo_root: Path, manifest: dict[str, Any], mes
         messages.append(f"Manifest expects repository {expected_name!r}, current repository is {repo_root.name!r}.")
 
     expected_remote = str(repository.get("remote") or "").strip()
-    current_remote = _git_text(repo_root, "remote", "get-url", "origin") if expected_remote else ""
-    if expected_remote and current_remote and _normalized_remote(expected_remote) != _normalized_remote(current_remote):
-        if bool(repository.get("enforce_remote", False)):
+    enforce_remote = repository.get("enforce_remote", False)
+    if not isinstance(enforce_remote, bool):
+        ok = False
+        messages.append("repository.enforce_remote must be a boolean.")
+        enforce_remote = False
+    remote_known, current_remote = _git_text_status(repo_root, "remote", "get-url", "origin") if expected_remote else (True, "")
+    if expected_remote and enforce_remote and not remote_known:
+        ok = False
+        messages.append("Repository remote identity could not be determined while enforce_remote=true.")
+    elif expected_remote and current_remote and _normalized_remote(expected_remote) != _normalized_remote(current_remote):
+        if enforce_remote:
             ok = False
             messages.append(f"Repository remote mismatch: expected {expected_remote!r}, found {current_remote!r}.")
         else:
             messages.append(f"Warning: repository remote differs from artifact metadata ({current_remote!r}).")
 
     expected_branch = str(repository.get("branch") or "").strip()
-    current_branch = _git_text(repo_root, "branch", "--show-current") if expected_branch else ""
-    if expected_branch and current_branch and expected_branch != current_branch:
-        if bool(repository.get("enforce_branch", False)):
+    enforce_branch = repository.get("enforce_branch", False)
+    if not isinstance(enforce_branch, bool):
+        ok = False
+        messages.append("repository.enforce_branch must be a boolean.")
+        enforce_branch = False
+    branch_known, current_branch = _git_text_status(repo_root, "branch", "--show-current") if expected_branch else (True, "")
+    if expected_branch and enforce_branch and (not branch_known or not current_branch):
+        ok = False
+        messages.append("Repository branch identity could not be determined while enforce_branch=true.")
+    elif expected_branch and current_branch and expected_branch != current_branch:
+        if enforce_branch:
             ok = False
             messages.append(f"Repository branch mismatch: expected {expected_branch!r}, found {current_branch!r}.")
         else:
@@ -1471,9 +1776,19 @@ def validate_artifact(
     artifact_type: str = "overlay",
     check_source_state: bool = True,
     ignore_checksum: bool = False,
+    check_repository_identity: bool = True,
 ) -> ArtifactValidation:
+    resolution = resolve_artifact_manifest(artifact)
+    if not resolution.valid:
+        return ArtifactValidation(False, [resolution.error or "Artifact manifest could not be resolved."], {})
     if artifact_type in {"overlay", "overlay_bundle"} and is_overlay_bundle(artifact):
-        return validate_overlay_bundle(repo_root, artifact, ignore_checksum=ignore_checksum)
+        return validate_overlay_bundle(
+            repo_root,
+            artifact,
+            ignore_checksum=ignore_checksum,
+            check_source_state=check_source_state,
+            check_repository_identity=check_repository_identity,
+        )
     manifest = read_artifact_manifest(artifact)
     messages: list[str] = []
     ok = True
@@ -1489,17 +1804,12 @@ def validate_artifact(
     if not members:
         return ArtifactValidation(False, ["Artifact archive is empty."], manifest)
 
-    try:
-        schema_version = int(manifest.get("schema_version", 1) or 1) if manifest else 1
-    except (TypeError, ValueError):
-        schema_version = 0
+    if manifest and _schema_version(manifest, messages) is None:
         ok = False
-        messages.append("Artifact schema_version must be an integer.")
-    if schema_version > 2:
+    if not _validate_inventory_shape(manifest, messages):
         ok = False
-        messages.append(f"Unsupported artifact schema_version {schema_version}; maximum supported version is 2.")
 
-    if not _validate_repository_identity(repo_root, manifest, messages):
+    if check_repository_identity and not _validate_repository_identity(repo_root, manifest, messages):
         ok = False
     if not _validate_validation_policy(manifest, messages, bundle=False):
         ok = False
@@ -1511,9 +1821,15 @@ def validate_artifact(
 
     expected_solution = artifact_solution(manifest)
     if expected_solution:
-        solution_path = repo_root / expected_solution
+        try:
+            solution_rel = _safe_rel(expected_solution)
+        except RuntimeError as exc:
+            ok = False
+            messages.append(str(exc))
+            solution_rel = None
+        solution_path = repo_root / solution_rel if solution_rel is not None else repo_root / "__invalid_solution__"
         names = {m.name for m in members}
-        if not solution_path.exists() and expected_solution not in names:
+        if solution_rel is not None and not solution_path.exists() and expected_solution not in names:
             messages.append(f"Manifest references solution {expected_solution!r}; it is not present before apply and is not included in the artifact.")
 
     declared_files = manifest.get("files")
@@ -1549,12 +1865,23 @@ def validate_artifact(
     if commit_strategy not in {"single"}:
         ok = False
         messages.append("Single overlay artifacts only support apply.commit.strategy='single'.")
-    if isinstance(apply.get("commit"), dict) and bool(apply["commit"].get("enabled", False)) and not commit_message:
+    commit_block = apply.get("commit") if isinstance(apply.get("commit"), dict) else None
+    if commit_block is not None and "enabled" in commit_block and not isinstance(commit_block.get("enabled"), bool):
+        ok = False
+        messages.append("apply.commit.enabled must be a boolean.")
+    if commit_block is not None and commit_block.get("enabled") is True and not commit_message:
         ok = False
         messages.append("Enabled artifact commits require a non-empty message.")
-    if bool(apply.get("requires_clean_worktree", False)):
-        status = _git_text(repo_root, "status", "--porcelain")
-        if status:
+    requires_clean = apply.get("requires_clean_worktree", False)
+    if not isinstance(requires_clean, bool):
+        ok = False
+        messages.append("apply.requires_clean_worktree must be a boolean.")
+    elif requires_clean:
+        clean_known, status = _git_text_status(repo_root, "status", "--porcelain")
+        if not clean_known:
+            ok = False
+            messages.append("Artifact requires a clean Git worktree, but Git cleanliness could not be determined.")
+        elif status:
             ok = False
             messages.append("Artifact requires a clean Git worktree.")
 
@@ -1834,15 +2161,42 @@ def history_entries_dir(repo_root: Path) -> Path:
     return repo_root / HISTORY_ENTRIES_PATH
 
 
+def operation_history_entries_dir(repo_root: Path) -> Path:
+    """Return authoritative runtime history outside the repository worktree."""
+    identity = hashlib.sha256(str(repo_root.expanduser().resolve()).encode("utf-8")).hexdigest()[:24]
+    return state_dir() / "artifact-history" / identity / "entries"
+
+
 def _history_entry_files(repo_root: Path) -> list[Path]:
     directory = history_entries_dir(repo_root)
+    return sorted(directory.glob("*.json")) if directory.exists() else []
+
+
+def _operation_history_entry_files(repo_root: Path) -> list[Path]:
+    directory = operation_history_entries_dir(repo_root)
     return sorted(directory.glob("*.json")) if directory.exists() else []
 
 
 def load_history(repo_root: Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     seen: set[str] = set()
-    # New append-only records are authoritative and safe for interrupted or repeated runs.
+    # Runtime operation records are authoritative and are written only after
+    # commit/rollback outcome is known.  Repository-local v1/v2 history remains
+    # readable below for backward compatibility.
+    for entry_path in _operation_history_entry_files(repo_root):
+        try:
+            item = json.loads(entry_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("history_id") or item.get("operation_id") or item.get("sha256") or entry_path.name)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(item)
+
+    # Repository-local append records from older/current opted-in repositories.
     for entry_path in _history_entry_files(repo_root):
         try:
             item = json.loads(entry_path.read_text(encoding="utf-8"))
@@ -1879,10 +2233,7 @@ def load_history(repo_root: Path) -> list[dict[str, Any]]:
 
 def save_history(repo_root: Path, entries: list[dict[str, Any]]) -> Path:
     path = history_file(repo_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(json.dumps({"schema_version": 2, "artifacts": entries}, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    _durable_atomic_write_text(path, json.dumps({"schema_version": 3, "artifacts": entries}, indent=2) + "\n")
     return path
 
 
@@ -1919,9 +2270,15 @@ def _cleanup_legacy_history_lock(repo_root: Path) -> None:
         legacy.unlink(missing_ok=True)
 
 
-def append_history(repo_root: Path, entry: dict[str, Any]) -> Path:
-    directory = history_entries_dir(repo_root)
-    directory.mkdir(parents=True, exist_ok=True)
+def append_history(repo_root: Path, entry: dict[str, Any], *, repo_local: bool = True) -> Path:
+    """Atomically upsert one idempotent operation history record.
+
+    The XDG/state copy is authoritative and always written.  Repository-local
+    history is optional compatibility metadata and may be omitted for automatic
+    commit flows so history finalization cannot dirty or distort the commit.
+    """
+    runtime_directory = operation_history_entries_dir(repo_root)
+    runtime_directory.mkdir(parents=True, exist_ok=True)
     lock_path = history_lock_file(repo_root)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+") as lock:
@@ -1930,12 +2287,18 @@ def append_history(repo_root: Path, entry: dict[str, Any]) -> Path:
             history_id = str(entry.get("history_id") or uuid.uuid4().hex)
             entry = dict(entry)
             entry["history_id"] = history_id
-            stamp = re.sub(r"[^0-9A-Za-z]+", "", str(entry.get("applied_at") or ""))[:20] or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-            path = directory / f"{stamp}-{history_id}.json"
-            tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-            tmp.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            os.replace(tmp, path)
-            save_history(repo_root, load_history(repo_root))
+            entry.setdefault("schema_version", 3)
+            runtime_path = runtime_directory / f"{history_id}.json"
+            _durable_atomic_write_text(runtime_path, json.dumps(entry, ensure_ascii=False, indent=2) + "\n")
+
+            path = runtime_path
+            if repo_local:
+                directory = history_entries_dir(repo_root)
+                directory.mkdir(parents=True, exist_ok=True)
+                stamp = re.sub(r"[^0-9A-Za-z]+", "", str(entry.get("applied_at") or ""))[:20] or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                path = directory / f"{stamp}-{history_id}.json"
+                _durable_atomic_write_text(path, json.dumps(entry, ensure_ascii=False, indent=2) + "\n")
+                save_history(repo_root, load_history(repo_root))
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     _cleanup_legacy_history_lock(repo_root)
@@ -1957,11 +2320,16 @@ def make_history_entry(
     path = resolve_artifact_path(artifact)
     digest = sha256_file(path) if path.exists() else ""
     return {
+        "schema_version": 3,
         "applied_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "artifact": str(path),
         "artifact_name": path.name,
         "type": artifact_type,
         "sha256": digest,
+        "content_identity": {
+            "sha256": digest,
+            "size": path.stat().st_size if path.exists() and path.is_file() else None,
+        },
         "status": status,
         "validation_status": validation_status,
         "commit_message": commit_message,

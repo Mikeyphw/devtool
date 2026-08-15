@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -1123,6 +1124,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli._run_specs_for_args", side_effect=[(validation_failure, "validation raw"), (validation_success, "repaired raw")]),
                 patch("devtool.cli._artifact_script_result", return_value=(None, "")),
                 patch("devtool.cli._validation_expectation_result", return_value=None),
+                patch("devtool.cli.register_transaction_paths") as journal_repair,
                 patch("devtool.cli._maybe_commit_after_apply", side_effect=lambda config, args, results, raw_output, log_path=None: (results, raw_output)),
                 patch("devtool.cli._record_apply_history"),
                 patch("devtool.cli._run_transaction_rollback", side_effect=AssertionError("rollback should not run after repair")),
@@ -2011,7 +2013,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             self.assertNotIn(".devtool/artifacts.json", paths)
             self.assertNotIn(".devtool/artifacts.d", paths)
 
-    def test_artifact_commit_paths_include_existing_unignored_history_registry(self) -> None:
+    def test_artifact_commit_paths_exclude_existing_unignored_history_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             repo.mkdir()
@@ -2023,9 +2025,9 @@ artifact-cleanup: ok exit=0 time=0.10s
 
             paths = _artifact_commit_paths(args, repo)
 
-            self.assertEqual(paths, [".devtool/artifacts.json"])
+            self.assertEqual(paths, [])
 
-    def test_artifact_commit_paths_include_deleted_tracked_history_registry(self) -> None:
+    def test_artifact_commit_paths_exclude_deleted_tracked_history_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             repo.mkdir()
@@ -2042,9 +2044,9 @@ artifact-cleanup: ok exit=0 time=0.10s
 
             paths = _artifact_commit_paths(args, repo)
 
-            self.assertEqual(paths, [".devtool/artifacts.json"])
+            self.assertEqual(paths, [])
 
-    def test_auto_commit_reconciles_complete_artifact_history_registry(self) -> None:
+    def test_auto_commit_preserves_preexisting_artifact_history_registry_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo = root / "repo"
@@ -2099,7 +2101,8 @@ artifact-cleanup: ok exit=0 time=0.10s
                 text=True,
                 stdout=subprocess.PIPE,
             ).stdout
-            self.assertEqual(status, "")
+            self.assertIn(".devtool/artifacts.json", status)
+            self.assertIn(".devtool/artifacts.d/", status)
             committed = subprocess.run(
                 ["git", "show", "--pretty=", "--name-only", "HEAD"],
                 cwd=repo,
@@ -2107,8 +2110,8 @@ artifact-cleanup: ok exit=0 time=0.10s
                 text=True,
                 stdout=subprocess.PIPE,
             ).stdout.splitlines()
-            self.assertIn(".devtool/artifacts.json", committed)
-            self.assertIn(".devtool/artifacts.d/old-failure.json", committed)
+            self.assertNotIn(".devtool/artifacts.json", committed)
+            self.assertNotIn(".devtool/artifacts.d/old-failure.json", committed)
             self.assertIn("new.txt", committed)
 
     def test_auto_commit_force_adds_declared_ignored_payload_without_runtime_history(self) -> None:
@@ -2642,6 +2645,7 @@ class BundleEntryValidationTaskApplyTests(unittest.TestCase):
             archive.writestr("android/app/lint.xml", "<lint/>\n")
 
         bundle = root / "bundle.zip"
+        overlay_bytes = overlay.read_bytes()
         bundle_manifest = {
             "schema_version": 2,
             "type": "overlay_bundle",
@@ -2652,6 +2656,8 @@ class BundleEntryValidationTaskApplyTests(unittest.TestCase):
                     "id": "android",
                     "path": "overlays/android.zip",
                     "target": "chrootctl_android",
+                    "sha256": hashlib.sha256(overlay_bytes).hexdigest(),
+                    "size": len(overlay_bytes),
                     "validation": {
                         "tasks": [":app:compileDebugKotlin", ":app:testDebugUnitTest", ":app:lintDebug"],
                     },
@@ -2660,7 +2666,7 @@ class BundleEntryValidationTaskApplyTests(unittest.TestCase):
         }
         with ZipFile(bundle, "w") as archive:
             archive.writestr("devtool-bundle.json", json.dumps(bundle_manifest))
-            archive.writestr("overlays/android.zip", overlay.read_bytes())
+            archive.writestr("overlays/android.zip", overlay_bytes)
         return bundle
 
     def test_bundle_entry_validation_tasks_drive_apply_overlays_validation(self) -> None:

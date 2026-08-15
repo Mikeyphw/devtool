@@ -32,6 +32,7 @@ from .artifacts import (
     artifact_solution,
     artifact_target,
     artifact_validation_policy,
+    artifact_validation_task_declaration,
     artifact_validation_tasks,
     artifact_workspaces,
     create_overlay_bundle,
@@ -88,6 +89,7 @@ from .config import (
 from .log_commands import choose_active_log, format_log_entries, list_log_entries, open_log, resolve_log_path, tail_log
 from .logstore import latest_log, new_log_path
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
+from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
@@ -114,6 +116,8 @@ from .transactions import (
     mark_transaction_validation_blocked,
     mark_transaction_validation_running,
     read_transaction,
+    read_transaction_summary,
+    register_transaction_paths,
     record_transaction_git_commit,
     rollback_transaction,
     transaction_pending_validation,
@@ -605,8 +609,8 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_overlays.add_argument("--validation-script", default="", help="Embed a disposable bundle validation script")
     bundle_overlays.add_argument("--validation-runner", choices=["bash", "sh", "python3"], default="bash")
     bundle_overlays.add_argument("--validation-timeout", type=int, default=900, help="Embedded validation script timeout in seconds")
-    bundle_overlays.add_argument("--validation-task", "--task", dest="validation_tasks", action="append", default=[], help="Gradle task to write into bundle validation.tasks; repeatable")
-    bundle_overlays.add_argument("--validation-tasks", dest="validation_tasks_csv", default="", help="Comma-separated Gradle tasks to write into bundle validation.tasks")
+    bundle_overlays.add_argument("--validation-task", "--task", dest="validation_tasks", action="append", default=None, help="Gradle task to write into bundle validation.tasks; repeatable")
+    bundle_overlays.add_argument("--validation-tasks", dest="validation_tasks_csv", default=None, help="Comma-separated Gradle tasks to write into bundle validation.tasks; pass an empty value to declare an explicit empty task list")
     bundle_overlays.add_argument("-o", "--out", required=True, help="Output bundle archive; extension selects format")
 
     batch = subparsers.add_parser("batch")
@@ -1866,11 +1870,13 @@ def _validation_is_requested_by_args(args: argparse.Namespace) -> bool:
 def _apply_declared_validation_tasks(args: argparse.Namespace, manifest: dict, *, active: bool) -> None:
     if not active or getattr(args, "_devtool_cli_test_task_explicit", False):
         return
-    tasks = artifact_validation_tasks(manifest)
-    if not tasks:
+    declared, tasks = artifact_validation_task_declaration(manifest)
+    if not declared:
         return
     args.test_task = list(tasks)
     args._devtool_manifest_validation_tasks = list(tasks)
+    args._devtool_validation_tasks_declared = True
+    args._devtool_validation_task_source = "artifact-manifest"
 
 
 def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
@@ -2705,22 +2711,56 @@ def _exclusive_android_validation_specs(
     return [spec]
 
 
+def _annotate_resolved_validation_plan(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    specs: list[CommandSpec],
+) -> list[CommandSpec]:
+    cli_declared = bool(getattr(args, "_devtool_cli_test_task_explicit", False))
+    manifest_declared = bool(getattr(args, "_devtool_validation_tasks_declared", False))
+    tasks_declared = cli_declared or manifest_declared
+    source = "cli" if cli_declared else str(getattr(args, "_devtool_validation_task_source", "") or "runner-default")
+    declared_tasks = _exclusive_validation_task_values(args) if tasks_declared else []
+    manifest = getattr(args, "_devtool_declared_manifest", None)
+    if not isinstance(manifest, dict):
+        manifest = getattr(args, "_devtool_artifact_manifest", None)
+    required = bool(artifact_validation_policy(manifest or {}).get("required", False))
+    plan = resolve_validation_plan(
+        config,
+        specs,
+        source=source,
+        tasks_declared=tasks_declared,
+        declared_tasks=declared_tasks,
+        required=required,
+    )
+    args._devtool_resolved_validation_plan = plan.metadata()
+    for index, spec in enumerate(specs, 1):
+        metadata = dict(spec.metadata or {})
+        metadata.update(plan.metadata())
+        metadata["validation_contract_step"] = spec.name
+        metadata["validation_contract_step_index"] = index
+        metadata["validation_contract_step_total"] = len(specs)
+        spec.metadata = metadata
+    return specs
+
+
 def _validation_specs(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
     _apply_runner_cli_options(config, args)
     planning_config = _config_for_validation_planning(config, args)
     explicit_specs = _exclusive_android_validation_specs(planning_config, args, parser)
     if explicit_specs is not None:
-        return explicit_specs
+        return _annotate_resolved_validation_plan(planning_config, args, explicit_specs)
     skip_restore, skip_build, skip_test = _validation_skip_values(args)
     if skip_restore and skip_build and skip_test:
         parser.error("Validation would run no commands. Clear at least one skip flag.")
-    return build_validation_specs(
+    specs = build_validation_specs(
         planning_config,
         wine=args.command in {"wine-validate", "wv"},
         skip_restore=skip_restore,
         skip_build=skip_build,
         skip_test=skip_test,
     )
+    return _annotate_resolved_validation_plan(planning_config, args, specs)
 
 
 
@@ -3315,6 +3355,7 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "artifact": artifact_values[0] if len(artifact_values) == 1 else artifact_values,
         "artifact_type": str(getattr(args, "_devtool_artifact_type", "") or ""),
         "artifact_sha": str(getattr(args, "_devtool_artifact_sha", "") or ""),
+        "artifact_size": getattr(args, "_devtool_artifact_size", None),
         "manifest": manifest,
         "preview": dict(getattr(args, "_devtool_artifact_preview", {}) or {}),
         "commit": str(getattr(args, "commit", "") or ""),
@@ -3610,6 +3651,7 @@ def _finalize_validation_session(
     final_args.validate_only = bool(context.get("validate_only", False))
     final_args._devtool_artifact_type = str(context.get("artifact_type") or "")
     final_args._devtool_artifact_sha = str(context.get("artifact_sha") or "")
+    final_args._devtool_artifact_size = context.get("artifact_size")
     final_args._devtool_artifact_preview = dict(context.get("preview") or {})
     final_args._devtool_artifact_manifest = dict(context.get("manifest") or {})
 
@@ -4918,8 +4960,6 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
     artifact = getattr(args, "artifact", "")
     if not artifact:
         return
-    if not _repo_local_artifact_history_enabled(config.repo_root):
-        return
     apply_result = next(
         (
             result for result in results
@@ -4927,15 +4967,29 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         ),
         None,
     )
-    status = "ok" if apply_result and apply_result.returncode == 0 else "failed"
-    if any(
+    rolled_back = any(
         r.name == "apply-rollback"
         and r.returncode == 0
         and r.failure_kind != "stale_apply_rolled_back"
         for r in results
-    ):
+    )
+    rollback_failed = any(r.name == "apply-rollback" and r.returncode != 0 for r in results)
+    if rolled_back:
         status = "rolled-back"
-    validation_results = [r for r in results[1:] if r.name not in {"git-add", "git-commit", "apply-rollback"}]
+    elif any(r.returncode != 0 for r in results):
+        status = "failed"
+    else:
+        status = "ok" if apply_result and apply_result.returncode == 0 else "failed"
+
+    validation_results = [
+        r for r in results
+        if r.name not in {"git-add", "git-commit", "apply-rollback"}
+        and (
+            bool((r.metadata or {}).get("validation_pipeline"))
+            or r.name.startswith("artifact-valid")
+            or r.name == "validation-contract"
+        )
+    ]
     if not (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
         validation_status = "not-run"
     elif validation_results and any(r.returncode != 0 for r in validation_results):
@@ -4959,12 +5013,84 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         )
         if getattr(args, "_devtool_artifact_sha", ""):
             entry["sha256"] = args._devtool_artifact_sha
+            if isinstance(entry.get("content_identity"), dict):
+                entry["content_identity"]["sha256"] = args._devtool_artifact_sha
+        artifact_size = getattr(args, "_devtool_artifact_size", None)
+        if isinstance(artifact_size, int) and not isinstance(artifact_size, bool) and artifact_size >= 0:
+            if isinstance(entry.get("content_identity"), dict):
+                entry["content_identity"]["size"] = artifact_size
+        run_id = str(getattr(args, "_devtool_run_id", "") or "")
+        artifact_sha = str(entry.get("sha256") or "")
+        operation_identity = f"{run_id}\0{artifact_sha}\0{getattr(args, 'command', '')}"
+        entry["operation_id"] = run_id or hashlib.sha256(operation_identity.encode("utf-8")).hexdigest()[:24]
+        entry["history_id"] = hashlib.sha256(operation_identity.encode("utf-8")).hexdigest()[:32]
+        entry["rollback_status"] = "rolled-back" if rolled_back else ("failed" if rollback_failed else "not-needed")
+        entry["child_outcomes"] = [
+            {
+                "name": result.name,
+                "returncode": result.returncode,
+                "skipped": bool(result.skipped),
+                "failure_kind": result.failure_kind or "",
+                "overlay_id": str((result.metadata or {}).get("overlay_id") or ""),
+                "overlay_index": (result.metadata or {}).get("overlay_index"),
+                "target": str((result.metadata or {}).get("target") or (result.metadata or {}).get("validation_target") or ""),
+            }
+            for result in results
+        ]
+        transaction_path = _apply_transaction_path(results)
+        if transaction_path:
+            transaction_id = Path(transaction_path).parent.name
+            try:
+                transaction = read_transaction(transaction_path)
+            except Exception:
+                transaction = read_transaction_summary(config.repo_root, transaction_id)
+            entry["transaction"] = {
+                "id": str(transaction.get("transaction_id") or transaction_id),
+                "status": str(transaction.get("status") or entry["rollback_status"]),
+            }
+        static_plan = dict(getattr(args, "_devtool_resolved_validation_plan", {}) or {})
+        step_outcomes = []
+        for result in validation_results:
+            metadata = dict(result.metadata or {})
+            warnings = sum(1 for issue in result.issues if str(issue.severity).lower() == "warning")
+            if result.skipped:
+                outcome = "skipped"
+            elif result.returncode != 0:
+                outcome = "failed"
+            elif warnings:
+                outcome = "warning"
+            else:
+                outcome = "passed"
+            step_outcomes.append({
+                "name": result.name,
+                "outcome": outcome,
+                "returncode": result.returncode,
+                "skipped": bool(result.skipped),
+                "warnings": warnings,
+                "failure_kind": result.failure_kind or "",
+                "step_index": metadata.get("validation_contract_step_index") or metadata.get("validation_phase_index"),
+                "step_total": metadata.get("validation_contract_step_total") or metadata.get("validation_phase_total"),
+            })
+        if step_outcomes:
+            static_plan["validation_step_outcomes"] = step_outcomes
+        contract_results = [r for r in results if r.name == "validation-contract"]
+        if contract_results:
+            contract_metadata = dict(contract_results[-1].metadata or {})
+            entry["validation_contract"] = contract_metadata
+            static_plan["validation_contract_satisfied"] = bool(contract_metadata.get("validation_contract_satisfied", False))
+            static_plan["validation_contract_evidence"] = dict(contract_metadata.get("validation_contract_evidence") or {})
+        entry["validation_plan"] = static_plan
         validation_session_id = str(getattr(args, "_devtool_validation_session_id", "") or "")
         if validation_session_id:
             entry["validation_session_id"] = validation_session_id
             entry["validation_report_path"] = str(getattr(args, "_devtool_validation_report_path", "") or "")
             entry["validation_final_verdict"] = str(getattr(args, "_devtool_validation_final_verdict", "") or "validated")
-        history_entry_path = append_history(config.repo_root, entry)
+        committed = bool(commit_hash)
+        history_entry_path = append_history(
+            config.repo_root,
+            entry,
+            repo_local=_repo_local_artifact_history_enabled(config.repo_root) and not committed,
+        )
         try:
             args._devtool_history_paths = [
                 str(history_entry_path.relative_to(config.repo_root)).replace("\\", "/"),
@@ -5075,48 +5201,6 @@ def _artifact_commit_paths(args: argparse.Namespace, repo_root: Path | None = No
                         for value in values:
                             add_path(value)
 
-    def add_history_path(value: str) -> None:
-        # Artifact history is optional repository metadata. Only pass a history
-        # path to path-scoped Git staging when it currently exists or Git already
-        # tracks it (including a tracked path that was deleted). Otherwise
-        # ``git add -- <missing-path>`` fails with pathspec rc=128 after every
-        # validation phase has already passed.
-        #
-        # Most repositories intentionally ignore Devtool runtime state. Ignored
-        # and untracked history remains local, while tracked history continues to
-        # be reconciled, including deletions.
-        if repo_root is not None:
-            candidate = repo_root / value
-            tracked = subprocess.run(
-                ["git", "ls-files", "--error-unmatch", "--", value],
-                cwd=repo_root,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            ).returncode == 0
-            exists = candidate.exists() or candidate.is_symlink()
-            if not exists and not tracked:
-                return
-
-            ignored = subprocess.run(
-                ["git", "check-ignore", "-q", "--", value],
-                cwd=repo_root,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            ).returncode == 0
-            if ignored and not tracked:
-                return
-        add_path(value)
-
-    # Artifact history is devtool-owned repository metadata. Stage the complete
-    # registry when the repository tracks it, rather than only this run's record,
-    # so earlier failed/manual runs cannot leave it dirty after a later automatic
-    # commit. Ignored runtime history remains local.
-    add_history_path(".devtool/artifacts.json")
-    if repo_root is None or (repo_root / ".devtool" / "artifacts.d").exists():
-        add_history_path(".devtool/artifacts.d")
-
     return paths
 
 
@@ -5168,11 +5252,6 @@ def _maybe_commit_after_apply(
     # Failed applies or failed validation are never committed.
     if not results or any(result.returncode != 0 for result in results):
         return results, raw_output
-
-    # The whole devtool operation already owns the repository's single-run lock.
-    if not getattr(args, "_devtool_history_recorded", False):
-        _record_apply_history(config, args, results)
-        args._devtool_history_recorded = True
 
     commit_paths = _artifact_commit_paths(args, config.repo_root)
     commit_results, commit_raw = _git_commit_with_optional_log(
@@ -5372,6 +5451,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         args._devtool_artifact_type = artifact_type
         args._devtool_artifact_path = str(artifact_path)
         args._devtool_artifact_sha = sha256_file(artifact_path) if artifact_path.exists() else ""
+        args._devtool_artifact_size = artifact_path.stat().st_size if artifact_path.exists() and artifact_path.is_file() else None
         validation = validate_artifact(
             config.repo_root,
             artifact_path,
@@ -5738,12 +5818,22 @@ def _attempt_auto_repair(
     log_path: Path | str | None,
     tasker_progress: TaskerProgressSink | None,
     parser: argparse.ArgumentParser,
+    transaction_path: str = "",
     shutdown_dotnet: bool | None = None,
 ) -> tuple[list[OperationResult], str, OperationResult | None]:
     if _repair_failure_count(validation_results) == 0:
         return validation_results, "", None
 
-    applied, backups = apply_auto_source_repairs(config.repo_root, validation_results)
+    def _journal_repair_path(path: Path) -> None:
+        if not transaction_path:
+            return
+        register_transaction_paths(transaction_path, [path])
+
+    applied, backups = apply_auto_source_repairs(
+        config.repo_root,
+        validation_results,
+        before_write=_journal_repair_path,
+    )
     if not applied:
         return validation_results, "", None
 
@@ -5829,7 +5919,7 @@ def _tag_overlay_results(
         result.metadata = metadata
 
 
-def _manifest_with_validation_tasks(manifest: dict, tasks: list[str] | tuple[str, ...]) -> dict:
+def _manifest_with_validation_tasks(manifest: dict, tasks: list[str] | tuple[str, ...], *, declared: bool) -> dict:
     """Return a manifest copy whose validation policy carries explicit tasks.
 
     Bundle apply_order entries can intentionally override the nested overlay
@@ -5839,7 +5929,7 @@ def _manifest_with_validation_tasks(manifest: dict, tasks: list[str] | tuple[str
     """
 
     clean_tasks = list(dict.fromkeys(str(item).strip() for item in tasks if str(item).strip()))
-    if not clean_tasks:
+    if not declared:
         return manifest
     updated = dict(manifest)
     validation = dict(updated.get("validation") if isinstance(updated.get("validation"), dict) else {})
@@ -5848,7 +5938,7 @@ def _manifest_with_validation_tasks(manifest: dict, tasks: list[str] | tuple[str
     return updated
 
 
-def _bundle_entry_validation_tasks(entry: dict[str, object], entry_manifest: dict, bundle_manifest: dict) -> list[str]:
+def _bundle_entry_validation_tasks(entry: dict[str, object], entry_manifest: dict, bundle_manifest: dict) -> tuple[bool, list[str], str]:
     """Resolve validation tasks for a materialized bundle entry.
 
     Precedence is intentionally narrower than CLI precedence, which is enforced
@@ -5859,13 +5949,17 @@ def _bundle_entry_validation_tasks(entry: dict[str, object], entry_manifest: dic
     3. bundle-level ``validation.tasks`` as a default for bundle validation
     """
 
+    entry_declared = bool(entry.get("validation_tasks_declared", False))
     entry_tasks = [str(item).strip() for item in (entry.get("validation_tasks") or []) if str(item).strip()]
-    if entry_tasks:
-        return list(dict.fromkeys(entry_tasks))
-    nested_tasks = artifact_validation_tasks(entry_manifest)
-    if nested_tasks:
-        return nested_tasks
-    return artifact_validation_tasks(bundle_manifest)
+    if entry_declared:
+        return True, list(dict.fromkeys(entry_tasks)), "bundle-entry"
+    nested_declared, nested_tasks = artifact_validation_task_declaration(entry_manifest)
+    if nested_declared:
+        return True, nested_tasks, "nested-artifact"
+    bundle_declared, bundle_tasks = artifact_validation_task_declaration(bundle_manifest)
+    if bundle_declared:
+        return True, bundle_tasks, "bundle-default"
+    return False, [], "runner-default"
 
 
 def _overlay_sequence_entries(args: argparse.Namespace):
@@ -5897,6 +5991,7 @@ def _overlay_sequence_entries(args: argparse.Namespace):
                     "label": label,
                     "target": item.target.strip(),
                     "validation_tasks": list(item.validation_tasks),
+                    "validation_tasks_declared": item.validation_tasks_declared,
                     "index": item.index,
                     "total": total,
                     "materialized": True,
@@ -5916,6 +6011,7 @@ def _overlay_sequence_entries(args: argparse.Namespace):
                     "label": label,
                     "target": target,
                     "validation_tasks": [],
+                    "validation_tasks_declared": False,
                     "index": index,
                     "total": total,
                     "materialized": False,
@@ -5985,8 +6081,88 @@ def _artifact_script_result(
 
 
 def _validation_expectation_result(manifest: dict, results: list[OperationResult]) -> OperationResult | None:
-    _ = manifest, results
-    return None
+    policy = artifact_validation_policy(manifest)
+    expected = policy.get("expected") if isinstance(policy.get("expected"), dict) else {}
+    maximum_warnings = policy.get("maximum_warnings")
+    has_warning_limit = isinstance(maximum_warnings, int) and not isinstance(maximum_warnings, bool)
+    if not expected and not has_warning_limit:
+        return None
+
+    def _phase(result: OperationResult) -> str:
+        metadata = dict(result.metadata or {})
+        phase = str(metadata.get("validation_phase_name") or metadata.get("validation_scope") or "").lower()
+        name = str(result.name or "").lower()
+        text = f"{phase} {name}"
+        if "restore" in text or "dependenc" in text:
+            return "restore"
+        if "test" in text or bool(metadata.get("contains_tests")):
+            return "tests"
+        if any(token in text for token in ("build", "compile", "package", "lint", "resource", "finalize")):
+            return "build"
+        return "other"
+
+    def _outcome(items: list[OperationResult]) -> str:
+        if not items or all(item.skipped for item in items):
+            return "skipped"
+        if any(item.returncode != 0 for item in items):
+            return "failed"
+        warnings = sum(1 for item in items for issue in item.issues if str(issue.severity).lower() == "warning")
+        return "warning" if warnings else "passed"
+
+    aliases = {
+        "pass": "passed", "success": "passed", "succeeded": "passed",
+        "skip": "skipped", "warn": "warning", "warnings": "warning",
+        "fail": "failed", "error": "failed", "errors": "failed",
+    }
+    grouped = {key: [item for item in results if _phase(item) == key] for key in ("restore", "build", "tests")}
+    mismatches: list[str] = []
+    evidence: dict[str, object] = {}
+    for key, wanted in expected.items():
+        if key not in grouped:
+            continue
+        wanted_normalized = aliases.get(str(wanted).strip().lower(), str(wanted).strip().lower())
+        actual = _outcome(grouped[key])
+        evidence[key] = {
+            "expected": wanted_normalized,
+            "actual": actual,
+            "steps": [item.name for item in grouped[key]],
+        }
+        if actual != wanted_normalized:
+            mismatches.append(f"{key}: expected {wanted_normalized}, got {actual}")
+
+    warning_count = sum(
+        1 for item in results for issue in item.issues
+        if str(issue.severity).lower() == "warning"
+    )
+    if has_warning_limit:
+        evidence["warnings"] = {"maximum": int(maximum_warnings), "actual": warning_count}
+        if warning_count > int(maximum_warnings):
+            mismatches.append(f"warnings: maximum {maximum_warnings}, got {warning_count}")
+
+    plan_meta = next(
+        (dict(item.metadata or {}) for item in results if (item.metadata or {}).get("validation_plan_source")),
+        {},
+    )
+    output_lines = ["Validation contract " + ("failed:" if mismatches else "satisfied.")]
+    output_lines.extend(f"- {item}" for item in mismatches)
+    if not mismatches:
+        for key, value in evidence.items():
+            output_lines.append(f"- {key}: {value}")
+    return OperationResult(
+        "validation-contract",
+        ["devtool", "validation-contract"],
+        1 if mismatches else 0,
+        0.0,
+        "\n".join(output_lines),
+        [Issue("error", "validation-contract", "", "ExpectationMismatch", item) for item in mismatches],
+        failure_kind="validation_failure" if mismatches else "",
+        metadata={
+            "validation_contract_satisfied": not mismatches,
+            "validation_contract_evidence": evidence,
+            "validation_warning_count": warning_count,
+            **{key: value for key, value in plan_meta.items() if key.startswith("validation_plan_") or key.startswith("validation_tasks_") or key == "validation_declared_tasks"},
+        },
+    )
 
 
 def _artifact_declared_paths(manifest: dict) -> set[str]:
@@ -6083,8 +6259,8 @@ def _run_sequential_overlays(
                 path = Path(entry["path"])
                 label = str(entry["label"])
                 raw_entry_manifest = read_artifact_manifest(path)
-                selected_entry_tasks = _bundle_entry_validation_tasks(entry, raw_entry_manifest, bundle_manifest)
-                entry_manifest = _manifest_with_validation_tasks(raw_entry_manifest, selected_entry_tasks)
+                tasks_declared, selected_entry_tasks, task_source = _bundle_entry_validation_tasks(entry, raw_entry_manifest, bundle_manifest)
+                entry_manifest = _manifest_with_validation_tasks(raw_entry_manifest, selected_entry_tasks, declared=tasks_declared)
                 entry_policy = artifact_validation_policy(entry_manifest)
                 should_validate = not getattr(args, "no_validate", False) and bool(
                     getattr(args, "validate", False)
@@ -6108,6 +6284,8 @@ def _run_sequential_overlays(
                     kind_override=str(getattr(args, "project_type", "auto") or "auto"),
                 )
                 entry_args = argparse.Namespace(**vars(args))
+                entry_args._devtool_validation_tasks_declared = tasks_declared
+                entry_args._devtool_validation_task_source = task_source
                 entry_args.command = "apply-overlay"
                 entry_args.artifact = str(path)
                 if selected_entry_tasks and not getattr(entry_args, "_devtool_cli_test_task_explicit", False):
@@ -6220,6 +6398,7 @@ def _run_sequential_overlays(
                         log_path=log_path,
                         tasker_progress=tasker_progress,
                         parser=parser,
+                        transaction_path=transaction_path,
                         shutdown_dotnet=False,
                     )
                     if repair_raw:
@@ -6309,6 +6488,7 @@ def _run_sequential_overlays(
                             log_path=log_path,
                             tasker_progress=tasker_progress,
                             parser=parser,
+                            transaction_path=transaction_path,
                             shutdown_dotnet=False,
                         )
                         if repair_raw:
@@ -6929,6 +7109,13 @@ def _run_bundle_command(args: argparse.Namespace) -> int:
         "remote": str(getattr(args, "repository_remote", "") or "").strip(),
         "branch": str(getattr(args, "repository_branch", "") or "").strip(),
     }
+    raw_validation_tasks = getattr(args, "validation_tasks", None)
+    raw_validation_tasks_csv = getattr(args, "validation_tasks_csv", None)
+    validation_tasks_declared = raw_validation_tasks is not None or raw_validation_tasks_csv is not None
+    resolved_validation_tasks = [
+        *(_cli_string_list(raw_validation_tasks)),
+        *(_cli_string_list(raw_validation_tasks_csv)),
+    ]
     out = create_overlay_bundle(
         args.out,
         list(args.overlays),
@@ -6941,11 +7128,8 @@ def _run_bundle_command(args: argparse.Namespace) -> int:
         validation_strategy=str(getattr(args, "validation_strategy", "per-overlay") or "per-overlay"),
         validation_script=str(getattr(args, "validation_script", "") or "") or None,
         validation_runner=str(getattr(args, "validation_runner", "bash") or "bash"),
-        validation_timeout_seconds=int(getattr(args, "validation_timeout", 900) or 900),
-        validation_tasks=[
-            *(_cli_string_list(getattr(args, "validation_tasks", []))),
-            *(_cli_string_list(getattr(args, "validation_tasks_csv", ""))),
-        ],
+        validation_timeout_seconds=int(getattr(args, "validation_timeout", 900)),
+        validation_tasks=resolved_validation_tasks if validation_tasks_declared else None,
     )
     console.print(f"[green]Created overlay bundle[/green] {out}")
     return 0
@@ -8007,6 +8191,7 @@ def _main_after_parse(
                             log_path=log_path,
                             tasker_progress=tasker_progress,
                             parser=parser,
+                            transaction_path=transaction_path,
                         )
                         if repair_raw:
                             validation_raw = repair_raw
