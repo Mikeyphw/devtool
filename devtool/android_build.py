@@ -870,17 +870,17 @@ def termux_tool_path(name: str) -> Path | None:
     return resolved if _path_is_within(resolved, termux_prefix_path()) else None
 
 
-def termux_ndk_sysroot_ready() -> tuple[bool, str]:
+def termux_ndk_sysroot_ready(provider_evidence=None) -> tuple[bool, str]:
     if not running_under_termux_python():
         return False, "not running in native Termux"
-    version = termux_package_version("ndk-sysroot")
-    required = ("clang", "clang++", "ld.lld", "llvm-ar", "llvm-ranlib")
-    missing = [name for name in required if termux_tool_path(name) is None]
-    if not version:
-        return False, "ndk-sysroot package is not installed"
-    if missing:
-        return False, "missing Termux native tools: " + ", ".join(missing)
-    return True, f"ndk-sysroot {version} with Termux clang/lld"
+    if provider_evidence is not None:
+        provider = provider_evidence.native
+    else:
+        from .termux_toolchains import termux_native_provider
+        provider = termux_native_provider(env=os.environ)
+    if not provider.compatible:
+        return False, provider.rejection_reason or provider.reason or "Termux native provider is not ready"
+    return True, provider.selection_reason or provider.reason or "runtime-verified Termux native provider"
 
 
 def native_requirement(project: "ProjectInfo") -> str:
@@ -889,15 +889,19 @@ def native_requirement(project: "ProjectInfo") -> str:
     return "none"
 
 
-def select_native_provider(project: "ProjectInfo", requested: str) -> str:
+def select_native_provider(project: "ProjectInfo", requested: str, *, provider_evidence=None) -> str:
     provider = normalize_native_provider(requested)
-    requirement = native_requirement(project)
+    requirement = (
+        provider_evidence.native_requirement.capability
+        if provider_evidence is not None and getattr(provider_evidence, "native_requirement", None) is not None
+        else native_requirement(project)
+    )
     if requirement == "android-ndk":
         if provider not in {"auto", "ndk"}:
             fail("This Android native build requires a complete Android NDK; termux-sysroot/system compiler providers are insufficient")
         return "ndk"
     if provider in {"auto", "termux-sysroot"}:
-        ready, reason = termux_ndk_sysroot_ready()
+        ready, reason = termux_ndk_sysroot_ready(provider_evidence)
         if ready:
             info(f"Native provider: Termux sysroot ({reason})")
             return "termux-sysroot"
@@ -906,15 +910,33 @@ def select_native_provider(project: "ProjectInfo", requested: str) -> str:
     return "system" if provider == "auto" else provider
 
 
-def configure_native_cache(env: MutableMapping[str, str], requested: str) -> str:
+def configure_native_cache(env: MutableMapping[str, str], requested: str, *, provider_evidence=None) -> str:
     provider = normalize_native_cache_provider(requested)
-    ccache = termux_tool_path("ccache") if running_under_termux_python() else (Path(shutil.which("ccache")).resolve() if shutil.which("ccache") else None)
+    if running_under_termux_python():
+        if provider_evidence is not None:
+            ccache_probe = provider_evidence.ccache
+        else:
+            from .termux_toolchains import termux_ccache_probe
+            ccache_probe = termux_ccache_probe(env=os.environ)
+        ccache = ccache_probe.path if ccache_probe.compatible else None
+    else:
+        ccache = Path(shutil.which("ccache")).resolve() if shutil.which("ccache") else None
     if provider == "ccache" and ccache is None:
         fail("ccache provider requested but ccache is not available")
     if provider != "off" and ccache is not None:
+        selected = str(ccache)
+        owners = {
+            key: str(env.get(key) or "").strip()
+            for key in ("CMAKE_C_COMPILER_LAUNCHER", "CMAKE_CXX_COMPILER_LAUNCHER")
+        }
+        conflicts = [f"{key}={value}" for key, value in owners.items() if value and Path(value).expanduser() != ccache]
+        if conflicts:
+            if provider == "ccache":
+                fail("Explicit ccache cannot own compiler launchers because they are already configured: " + ", ".join(conflicts))
+            return "off"
         env.setdefault("CCACHE_DIR", str(Path.home() / ".cache" / "devtool" / "ccache"))
-        env.setdefault("CMAKE_C_COMPILER_LAUNCHER", str(ccache))
-        env.setdefault("CMAKE_CXX_COMPILER_LAUNCHER", str(ccache))
+        env["CMAKE_C_COMPILER_LAUNCHER"] = selected
+        env["CMAKE_CXX_COMPILER_LAUNCHER"] = selected
         info(f"Native compiler cache: {ccache}")
         return "ccache"
     return "off"
@@ -1263,15 +1285,55 @@ def obtain_revanced_aapt2(
     metadata_dir = cache_root / "aapt2" / "revanced"
     metadata_dir.mkdir(parents=True, exist_ok=True)
 
-    # In offline mode, prefer the newest already staged binary.
-    if offline and release_name == "latest":
-        cached = sorted(metadata_dir.glob("*/aapt2"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if cached:
-            info(f"Using cached ReVanced AAPT2: {cached[0]}")
-            return validate_aapt2(cached[0], dry_run=dry_run)
+    def provenance_path(release_dir: Path) -> Path:
+        return release_dir / "provenance.json"
+
+    def verified_cached(release_dir: Path) -> Path | None:
+        target = release_dir / "aapt2"
+        meta = provenance_path(release_dir)
+        if not target.is_file() or not meta.is_file():
+            return None
+        try:
+            data = json.loads(meta.read_text(encoding="utf-8"))
+            recorded = str(data.get("binary_sha256") or "").lower()
+            archive_recorded = str(data.get("archive_sha256") or "").lower()
+            asset_name = str(data.get("asset_name") or "").strip()
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not re.fullmatch(r"[0-9a-f]{64}", recorded) or not re.fullmatch(r"[0-9a-f]{64}", archive_recorded) or not asset_name:
+            return None
+        archive = release_dir / asset_name
+        if not archive.is_file():
+            return None
+        try:
+            if sha256(target) != recorded or sha256(archive) != archive_recorded:
+                return None
+        except OSError:
+            return None
+        return validate_aapt2(target, dry_run=dry_run)
+
+    if offline:
+        if release_name != "latest":
+            cached = verified_cached(metadata_dir / release_name)
+            if cached is not None:
+                info(f"Using cached ReVanced AAPT2 {release_name}: {cached}")
+                return cached
+            fail(f"Cached ReVanced AAPT2 tag {release_name!r} is unavailable or failed digest verification in offline mode")
+        candidates: list[Path] = []
+        for release_dir in metadata_dir.iterdir() if metadata_dir.is_dir() else ():
+            if not release_dir.is_dir():
+                continue
+            candidate = verified_cached(release_dir)
+            if candidate is not None:
+                candidates.append(candidate)
+        if candidates:
+            candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+            info(f"Using verified cached ReVanced AAPT2: {candidates[0]}")
+            return candidates[0]
+        fail("No verified cached ReVanced AAPT2 release is available in offline mode")
 
     endpoint = f"{REVANCED_API}/releases/latest" if release_name == "latest" else f"{REVANCED_API}/releases/tags/{release_name}"
-    release = github_json(endpoint, offline=offline)
+    release = github_json(endpoint, offline=False)
     tag = str(release.get("tag_name") or release_name)
     asset = select_revanced_asset(release, machine)
     asset_name = str(asset["name"])
@@ -1279,30 +1341,45 @@ def obtain_revanced_aapt2(
     release_dir = metadata_dir / tag
     target = release_dir / "aapt2"
     if target.is_file() and not force:
-        info(f"Using cached ReVanced AAPT2 {tag}: {target}")
-        return validate_aapt2(target, dry_run=dry_run)
+        cached = verified_cached(release_dir)
+        if cached is not None:
+            info(f"Using verified cached ReVanced AAPT2 {tag}: {target}")
+            return cached
 
     archive = release_dir / asset_name
-    download(asset_url, archive, offline=offline, force=force)
+    download(asset_url, archive, offline=False, force=force)
     release_dir.mkdir(parents=True, exist_ok=True)
+    archive_digest = sha256(archive)
     if dry_run:
         return target
 
+    temporary_target = release_dir / "aapt2.devtool.tmp"
+    temporary_target.unlink(missing_ok=True)
     if zipfile.is_zipfile(archive):
         with tempfile.TemporaryDirectory(prefix="gradle-build-aapt2-") as temporary_dir:
             temporary = Path(temporary_dir)
             extract_zip(archive, temporary)
-            candidates = [
-                path for path in temporary.rglob("*")
-                if path.is_file() and "aapt2" in path.name.lower()
-            ]
+            candidates = [path for path in temporary.rglob("*") if path.is_file() and "aapt2" in path.name.lower()]
             if not candidates:
                 fail(f"ReVanced asset contained no AAPT2 executable: {archive}")
             candidates.sort(key=lambda path: (path.name.lower() != "aapt2", len(path.parts)))
-            shutil.copy2(candidates[0], target)
+            shutil.copy2(candidates[0], temporary_target)
     else:
-        shutil.copy2(archive, target)
-    return validate_aapt2(target, dry_run=dry_run)
+        shutil.copy2(archive, temporary_target)
+    validate_aapt2(temporary_target, dry_run=False)
+    binary_digest = sha256(temporary_target)
+    temporary_target.replace(target)
+    payload = {
+        "tag": tag,
+        "asset_name": asset_name,
+        "asset_url": asset_url,
+        "archive_sha256": archive_digest,
+        "binary_sha256": binary_digest,
+    }
+    meta_tmp = provenance_path(release_dir).with_suffix(".json.tmp")
+    meta_tmp.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    meta_tmp.replace(provenance_path(release_dir))
+    return validate_aapt2(target, dry_run=False)
 
 
 def termux_aapt2_path() -> Path | None:
@@ -1351,8 +1428,15 @@ def select_termux_aapt2(
     *,
     required: bool,
     dry_run: bool = False,
+    provider_evidence=None,
 ) -> Path | None:
-    candidate = termux_aapt2_path()
+    candidate = None
+    if provider_evidence is not None:
+        provider = next((item for item in provider_evidence.android_tools if item.capability == "aapt2"), None)
+        if provider is not None and provider.compatible and provider.path is not None:
+            candidate = provider.path
+    else:
+        candidate = termux_aapt2_path()
     if candidate is None:
         if required:
             fail("Termux AAPT2 provider requested but $PREFIX/bin/aapt2 is unavailable or cannot run")
@@ -1440,11 +1524,9 @@ def android_build_tool_executes(path: Path, tool_name: str, *, timeout: float = 
 def native_android_build_tool_compatible(path: Path, tool_name: str, machine: str | None = None) -> bool:
     if not native_tool_matches_host(path, machine):
         return False
-    # Native Termux must also prove runtime/loader compatibility. Linux/chroot
-    # hosts retain the historical architecture-only fast path.
-    if running_under_termux_python():
-        return android_build_tool_executes(path, tool_name)
-    return True
+    # Architecture is only a static hint. Every execution host must prove that
+    # the selected helper can actually start under its current loader/runtime.
+    return android_build_tool_executes(path, tool_name)
 
 
 def native_tool_arch(path: Path) -> str | None:
@@ -2229,6 +2311,7 @@ def ensure_arm64_build_tools_compatible(
     offline: bool,
     force: bool,
     dry_run: bool,
+    provider_evidence=None,
 ) -> None:
     """Repair x86-only AIDL/zipalign/split-select in an ARM64 Android SDK."""
 
@@ -2265,10 +2348,15 @@ def ensure_arm64_build_tools_compatible(
 
     heading(f"Repairing Android Build Tools {build_tools_version} for ARM64")
     selected = list(ARM_BUILD_TOOLS_NATIVE_NAMES) if force else replacements
+    sources: dict[str, Path] = {}
     for tool_name in selected:
         source: Path | None = None
         if provider in {"auto", "termux"} and running_under_termux_python():
-            candidate = termux_tool_path(tool_name)
+            if provider_evidence is not None:
+                decision = next((item for item in provider_evidence.android_tools if item.capability == tool_name), None)
+                candidate = decision.path if decision is not None and decision.compatible else None
+            else:
+                candidate = termux_tool_path(tool_name)
             if candidate is not None and native_android_build_tool_compatible(candidate, tool_name, "arm64"):
                 source = candidate
                 info(f"Using Termux-native {tool_name}: {candidate}")
@@ -2279,37 +2367,87 @@ def ensure_arm64_build_tools_compatible(
                 fail(f"Termux build-tools provider requested but no compatible {tool_name} was found")
             if running_under_termux_python():
                 fail(
-                    f"No compatible Termux-native {tool_name} is available. Commit451 publishes "
-                    "linux-glibc-arm64 binaries, which cannot run in native Termux/Bionic. "
-                    "Install/update the Termux aapt package or run this Android build through "
-                    "a glibc chroot/PRoot/SSH backend."
+                    f"No compatible Termux-native {tool_name} is available. Commit451 linux-glibc-arm64 helpers "
+                    "cannot run under native Termux/Bionic; install/update the Termux aapt package or use a compatible Linux backend."
                 )
             source = obtain_commit451_arm64_tool(
-                cache_root,
-                build_tools_version,
-                tool_name,
-                offline=offline,
-                force=force,
-                dry_run=dry_run,
+                cache_root, build_tools_version, tool_name, offline=offline, force=force, dry_run=dry_run,
             )
-        target = directory / tool_name
-        if dry_run:
-            info(f"Would install ARM64 {tool_name}: {source} -> {target}")
-            continue
+        sources[tool_name] = source
 
-        backup = target.with_name(target.name + ".google-x86_64")
-        if target.exists() or target.is_symlink():
-            if not backup.exists() and not target.is_symlink():
-                target.replace(backup)
-            else:
-                target.unlink(missing_ok=True)
-        temporary = target.with_name(target.name + ".devtool.tmp")
-        shutil.copy2(source, temporary)
-        temporary.chmod(temporary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        temporary.replace(target)
-        if not native_android_build_tool_compatible(target, tool_name, "arm64"):
-            fail(f"Installed ARM64 {tool_name} failed host/runtime validation: {target}")
-        info(f"Installed ARM64 {tool_name}: {target}")
+    if dry_run:
+        for tool_name, source in sources.items():
+            info(f"Would install ARM64 {tool_name}: {source} -> {directory / tool_name}")
+        return
+
+    # Stage and validate every replacement before touching the SDK. A broken
+    # second helper therefore cannot leave the first helper half-installed.
+    stage_dir = directory / f".devtool-build-tools-stage-{os.getpid()}"
+    backup_dir = directory / f".devtool-build-tools-backup-{os.getpid()}"
+    shutil.rmtree(stage_dir, ignore_errors=True)
+    shutil.rmtree(backup_dir, ignore_errors=True)
+    stage_dir.mkdir(parents=True, exist_ok=False)
+    backup_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        for tool_name, source in sources.items():
+            staged = stage_dir / tool_name
+            shutil.copy2(source, staged)
+            staged.chmod(staged.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            if not native_android_build_tool_compatible(staged, tool_name, "arm64"):
+                fail(f"Staged ARM64 {tool_name} failed host/runtime validation: {staged}")
+
+        installed: set[str] = set()
+        originally_present: set[str] = set()
+        try:
+            for tool_name in selected:
+                target = directory / tool_name
+                backup = backup_dir / tool_name
+                if target.exists() or target.is_symlink():
+                    target.replace(backup)
+                    # Record the backup move immediately.  If the following
+                    # stage->target replace fails, this tool still requires
+                    # rollback even though it was never fully installed.
+                    originally_present.add(tool_name)
+                (stage_dir / tool_name).replace(target)
+                installed.add(tool_name)
+            for tool_name in selected:
+                target = directory / tool_name
+                if not native_android_build_tool_compatible(target, tool_name, "arm64"):
+                    fail(f"Installed ARM64 {tool_name} failed host/runtime validation: {target}")
+                info(f"Installed ARM64 {tool_name}: {target}")
+        except BaseException:
+            # Restore every selected helper from the transaction's observable
+            # state, not only helpers that reached the final installed list.
+            for tool_name in reversed(selected):
+                target = directory / tool_name
+                backup = backup_dir / tool_name
+                if tool_name in installed and (target.exists() or target.is_symlink()):
+                    target.unlink()
+                if tool_name in originally_present and (backup.exists() or backup.is_symlink()):
+                    if target.exists() or target.is_symlink():
+                        target.unlink()
+                    backup.replace(target)
+                elif tool_name in installed and tool_name not in originally_present:
+                    target.unlink(missing_ok=True)
+            raise
+        else:
+            # Persistent recovery copies are ancillary. Create them only after
+            # the whole helper set is installed and verified; a backup-copy
+            # failure must neither corrupt nor roll back a known-good SDK set.
+            for tool_name in selected:
+                transient_backup = backup_dir / tool_name
+                persistent_backup = (directory / tool_name).with_name(tool_name + ".google-x86_64")
+                if transient_backup.exists() and not persistent_backup.exists():
+                    try:
+                        if transient_backup.is_symlink():
+                            persistent_backup.symlink_to(os.readlink(transient_backup))
+                        else:
+                            shutil.copy2(transient_backup, persistent_backup)
+                    except OSError as exc:
+                        warn(f"Could not preserve original {tool_name} helper backup at {persistent_backup}: {exc}")
+    finally:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -2324,6 +2462,7 @@ class ProjectInfo:
     native_build: bool
     ndk_version: str | None
     cmake_version: str | None
+    agp_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2430,31 +2569,31 @@ def inspect_project(root: Path) -> ProjectInfo:
     )
     build_tools_match = re.search(r"\bbuildToolsVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", text)
     build_tools = build_tools_match.group(1) if build_tools_match else None
-    agp_major = first_int(
-        [
-            r"com\.android\.tools\.build:gradle:([0-9]+)",
-            r"com\.android\.(?:application|library)[^\n]*?version\s*(?:=\s*)?['\"]([0-9]+)",
-            r"agp\s*=\s*['\"]([0-9]+)",
-            r"androidGradlePlugin\s*=\s*['\"]([0-9]+)",
-        ],
-        text,
+    agp_version = None
+    for pattern in (
+        r"com\.android\.tools\.build:gradle:([0-9]+(?:\.[0-9]+){1,2})",
+        r"com\.android\.(?:application|library)[^\n]*?version\s*(?:=\s*)?['\"]([0-9]+(?:\.[0-9]+){1,2})",
+        r"\bagp\s*=\s*['\"]([0-9]+(?:\.[0-9]+){1,2})",
+        r"androidGradlePlugin\s*=\s*['\"]([0-9]+(?:\.[0-9]+){1,2})",
+    ):
+        match = re.search(pattern, text)
+        if match:
+            agp_version = match.group(1)
+            break
+    agp_major = int(agp_version.split(".", 1)[0]) if agp_version else first_int(
+        [r"com\.android\.tools\.build:gradle:([0-9]+)"], text
     )
-    ndk_match = re.search(r"\bndkVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", text)
+    # Build-time NDK/CMake classification must use the exact same active
+    # Gradle view as provider diagnostics; commented declarations are not
+    # executable configuration.
+    from .termux_toolchains import active_gradle_config_text, classify_native_requirement
+    active_gradle_text = active_gradle_config_text(root)
+    ndk_match = re.search(r"\bndkVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", active_gradle_text)
     ndk_version = ndk_match.group(1).strip() if ndk_match else None
-    # Do not classify an Android repository as an NDK build merely because it
-    # contains an unrelated CMakeLists.txt. Require explicit Android native
-    # integration, an NDK declaration, or ndk-build makefiles.
-    native_build = (
-        "externalNativeBuild" in text
-        or "ndk-build" in text
-        or "android.toolchain.cmake" in text
-        or ndk_version is not None
-        or any(root.rglob("Android.mk"))
-        or any(root.rglob("Application.mk"))
-    )
+    native_build = classify_native_requirement(root, android=android).capability == "android-ndk"
     cmake_match = re.search(
         r"externalNativeBuild\s*\{.*?cmake\s*\{.*?\bversion\s*=\s*['\"]([^'\"]+)",
-        text,
+        active_gradle_text,
         re.DOTALL,
     )
     cmake_version = cmake_match.group(1).strip() if cmake_match else None
@@ -2469,6 +2608,7 @@ def inspect_project(root: Path) -> ProjectInfo:
         native_build,
         ndk_version,
         cmake_version,
+        agp_version,
     )
 
 
@@ -2530,7 +2670,7 @@ def inferred_min_java(project: ProjectInfo) -> int:
     return infer_java_requirement(project).minimum
 
 
-def java_home_candidates(explicit: Path | None, provider: str = "auto") -> list[Path]:
+def java_home_candidates(explicit: Path | None, provider: str = "auto", *, provider_evidence=None) -> list[Path]:
     provider = normalize_java_provider(provider)
     candidates: list[Path] = []
     if explicit:
@@ -2541,7 +2681,13 @@ def java_home_candidates(explicit: Path | None, provider: str = "auto") -> list[
         found = shutil.which(executable)
         if found:
             candidates.append(Path(found).resolve().parent.parent)
-    candidates.extend(termux_jvm_candidates())
+    if provider_evidence is not None and running_under_termux_python():
+        candidates.extend(
+            item.path for item in provider_evidence.java
+            if item.compatible and item.path is not None
+        )
+    else:
+        candidates.extend(termux_jvm_candidates())
     jvm_root = Path("/usr/lib/jvm")
     if jvm_root.is_dir():
         candidates.extend(path for path in jvm_root.iterdir() if path.is_dir())
@@ -2567,6 +2713,7 @@ def find_java_home(
     *,
     exact: int | None = None,
     provider: str = "auto",
+    provider_evidence=None,
 ) -> Path:
     provider = normalize_java_provider(provider)
     if explicit is not None:
@@ -2588,7 +2735,7 @@ def find_java_home(
         fail("Java provider termux requires native Termux execution or an explicit --java-home.")
     rejected: list[str] = []
     accepted: list[tuple[int, int, int, Path]] = []
-    for home in java_home_candidates(None, provider):
+    for home in java_home_candidates(None, provider, provider_evidence=provider_evidence):
         java = home / "bin" / "java"
         javac = home / "bin" / "javac"
         if not java.is_file() or not javac.is_file():
@@ -3193,6 +3340,7 @@ def ensure_android_sdk(
     allow_managed_fallback: bool = True,
     bootstrap_downloads: str = "auto",
     bootstrap_network: str = "allow",
+    provider_evidence=None,
 ) -> tuple[Path, str | None, str | None, str | None, str | None]:
     if not project.android:
         fail("Internal error: ensure_android_sdk called for a non-Android project")
@@ -3422,6 +3570,7 @@ def ensure_android_sdk(
         offline=offline or not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network),
         force=force_setup,
         dry_run=dry_run,
+        provider_evidence=provider_evidence,
     )
     ensure_ndk_host_compatible(
         sdk_root,
@@ -3451,8 +3600,13 @@ def wrapper_distribution_version(project_root: Path) -> str | None:
     return match.group(1) if match else None
 
 
-def gradle_version(command: Path) -> str | None:
-    result = subprocess.run([str(command), "--version"], text=True, capture_output=True, check=False)
+def gradle_version(command: Path, *, timeout: float = 10.0) -> str | None:
+    try:
+        result = subprocess.run(
+            [str(command), "--version"], text=True, capture_output=True, check=False, timeout=timeout
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     match = re.search(r"^Gradle\s+([^\s]+)", f"{result.stdout}\n{result.stderr}", re.MULTILINE)
     return match.group(1) if match else None
 
@@ -3466,17 +3620,51 @@ def managed_gradle(
 ) -> Path:
     home = cache_root / "gradle" / f"gradle-{version}"
     launcher = home / "bin" / "gradle"
-    if launcher.is_file() and not force:
-        return ensure_executable(launcher, "Gradle launcher")
+    provenance = home / ".devtool-gradle.json"
     archive = cache_root / "downloads" / f"gradle-{version}-bin.zip"
+    checksum_file = cache_root / "downloads" / f"gradle-{version}-bin.zip.sha256"
+
+    def expected_checksum() -> str:
+        download(
+            f"https://services.gradle.org/distributions/gradle-{version}-bin.zip.sha256",
+            checksum_file, offline=offline, force=force,
+        )
+        try:
+            value = checksum_file.read_text(encoding="utf-8").strip().split()[0].lower()
+        except (OSError, IndexError):
+            value = ""
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            fail(f"Gradle checksum metadata is invalid for {version}: {checksum_file}")
+        return value
+
+    if launcher.is_file() and provenance.is_file() and not force:
+        try:
+            data = json.loads(provenance.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        actual = gradle_version(launcher)
+        if str(data.get("version") or "") == version and gradle_version_matches(actual, version):
+            recorded = str(data.get("archive_sha256") or "").lower()
+            if re.fullmatch(r"[0-9a-f]{64}", recorded) and archive.is_file():
+                actual_archive = sha256(archive)
+                official = expected_checksum()
+                if actual_archive != recorded or actual_archive != official:
+                    fail(
+                        f"Cached Gradle archive digest verification failed for {version}: "
+                        f"provenance={recorded}, official={official}, actual={actual_archive}"
+                    )
+                return ensure_executable(launcher, "Gradle launcher")
+        if offline:
+            fail(f"Cached Gradle {version} failed version/provenance verification: {launcher}")
+
+    expected = expected_checksum()
     download(
         f"https://services.gradle.org/distributions/gradle-{version}-bin.zip",
-        archive,
-        offline=offline,
-        force=force,
+        archive, offline=offline, force=force,
     )
-    if home.exists():
-        shutil.rmtree(home)
+    actual_digest = sha256(archive)
+    if actual_digest != expected:
+        fail(f"Gradle distribution SHA-256 mismatch for {version}: expected {expected}, got {actual_digest}")
     home.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="gradle-build-gradle-") as temporary_dir:
         temporary = Path(temporary_dir)
@@ -3484,8 +3672,36 @@ def managed_gradle(
         extracted = temporary / f"gradle-{version}"
         if not extracted.is_dir():
             fail(f"Unexpected Gradle archive layout: {archive}")
-        shutil.copytree(extracted, home)
-    return ensure_executable(launcher, "Gradle launcher")
+        staged_launcher = ensure_executable(extracted / "bin" / "gradle", "Gradle launcher")
+        staged_actual = gradle_version(staged_launcher)
+        if not gradle_version_matches(staged_actual, version):
+            fail(
+                f"Downloaded Gradle launcher identity mismatch before install: requested {version}, "
+                f"launcher reports {staged_actual or 'unknown'}"
+            )
+        staged_home = home.parent / f".{home.name}.devtool-stage-{os.getpid()}"
+        shutil.rmtree(staged_home, ignore_errors=True)
+        shutil.copytree(extracted, staged_home)
+        staged_copy_launcher = ensure_executable(staged_home / "bin" / "gradle", "Gradle launcher")
+        copied_actual = gradle_version(staged_copy_launcher)
+        if not gradle_version_matches(copied_actual, version):
+            shutil.rmtree(staged_home, ignore_errors=True)
+            fail(
+                f"Staged Gradle launcher identity mismatch before install: requested {version}, "
+                f"launcher reports {copied_actual or 'unknown'}"
+            )
+        if home.exists():
+            shutil.rmtree(home)
+        staged_home.replace(home)
+    launcher = ensure_executable(launcher, "Gradle launcher")
+    actual = gradle_version(launcher)
+    if not gradle_version_matches(actual, version):
+        shutil.rmtree(home, ignore_errors=True)
+        fail(f"Installed Gradle launcher identity mismatch: requested {version}, launcher reports {actual or 'unknown'}")
+    provenance.write_text(
+        json.dumps({"version": version, "archive_sha256": actual_digest}, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return launcher
 
 
 def version_key(value: str | None) -> tuple[int, ...]:
@@ -3496,6 +3712,45 @@ def version_key(value: str | None) -> tuple[int, ...]:
     if not match:
         return ()
     return tuple(int(part) for part in match.group(1).split("."))
+
+
+def minimum_gradle_for_agp(agp_version: str | None) -> str | None:
+    """Return the documented minimum Gradle version for known AGP lines.
+
+    Unknown newer lines fail closed rather than being guessed from the AGP
+    major number. Patch releases inherit their minor-line requirement.
+    """
+    key = version_key(agp_version)
+    if len(key) < 2:
+        return None
+    major, minor = key[:2]
+    current = {
+        (9, 4): "9.6.0", (9, 3): "9.5.0", (9, 2): "9.4.1", (9, 1): "9.3.1", (9, 0): "9.1.0",
+        (8, 13): "8.13", (8, 12): "8.13", (8, 11): "8.13", (8, 10): "8.11.1", (8, 9): "8.11.1",
+        (8, 8): "8.10.2", (8, 7): "8.9", (8, 6): "8.7", (8, 5): "8.7", (8, 4): "8.6",
+        (8, 3): "8.4", (8, 2): "8.2", (8, 1): "8.0", (8, 0): "8.0",
+        (7, 4): "7.5", (7, 3): "7.4", (7, 2): "7.3.3", (7, 1): "7.2", (7, 0): "7.0.2",
+    }
+    return current.get((major, minor))
+
+
+def gradle_meets_agp_minimum(actual: str | None, project: ProjectInfo | None) -> bool:
+    if project is None or not project.android or project.agp_major is None:
+        return True
+    if project.agp_version is None:
+        # Compatibility shim for legacy callers constructing ProjectInfo by
+        # hand. Real project inspection records the full AGP version; without
+        # it, preserve the older conservative same-generation rule rather than
+        # pretending a minor-specific compatibility mapping is known.
+        actual_key = version_key(actual)
+        return bool(actual_key) and actual_key[0] == project.agp_major
+    minimum = minimum_gradle_for_agp(project.agp_version)
+    if minimum is None:
+        return False
+    actual_key = version_key(actual)
+    minimum_key = version_key(minimum)
+    width = max(len(actual_key), len(minimum_key))
+    return actual_key + (0,) * (width - len(actual_key)) >= minimum_key + (0,) * (width - len(minimum_key))
 
 
 def gradle_version_matches(actual: str | None, requested: str) -> bool:
@@ -3520,13 +3775,13 @@ def gradle_wrapper_distribution_cached(
 ) -> bool:
     gradle_user_home = (gradle_user_home or Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")).expanduser()
     custom = gradle_user_home / "devtool-bootstrap" / f"gradle-{version}" / "bin" / "gradle"
-    if custom.is_file():
+    if custom.is_file() and gradle_version_matches(gradle_version(custom), version):
         return True
     wrapper_root = gradle_user_home / "wrapper" / "dists"
     if wrapper_root.is_dir():
         pattern = f"gradle-{version}-*"
         for candidate in wrapper_root.glob(f"{pattern}/*/gradle-{version}/bin/gradle"):
-            if candidate.is_file():
+            if candidate.is_file() and gradle_version_matches(gradle_version(candidate), version):
                 return True
     properties = project_root / "gradle" / "wrapper" / "gradle-wrapper.properties"
     if properties.is_file():
@@ -3561,9 +3816,7 @@ def _auto_installed_gradle_compatible(
         return gradle_version_matches(actual, DEFAULT_GRADLE_VERSION)
     if project is None or not project.android:
         return True
-    if project.agp_major is not None and project.agp_major >= 7:
-        return key[0] == project.agp_major
-    return False
+    return gradle_meets_agp_minimum(actual, project)
 
 
 def select_gradle(
@@ -3579,6 +3832,7 @@ def select_gradle(
     gradle_user_home: Path | None = None,
     provider: str = "auto",
     project: ProjectInfo | None = None,
+    provider_evidence=None,
 ) -> Path:
     provider = normalize_gradle_provider(provider)
     if provider == "termux" and explicit is None and not running_under_termux_python():
@@ -3589,6 +3843,18 @@ def select_gradle(
     wrapper_version = wrapper_distribution_version(project_root)
     pinned_version = version or wrapper_version
     requested = pinned_version or DEFAULT_GRADLE_VERSION
+    if pinned_version and not gradle_meets_agp_minimum(pinned_version, project):
+        minimum = minimum_gradle_for_agp(project.agp_version if project else None)
+        fail(
+            f"Gradle {pinned_version} is incompatible with Android Gradle Plugin "
+            f"{project.agp_version if project else 'unknown'}; documented minimum is {minimum or 'unknown/fail-closed'}."
+        )
+    if not pinned_version and project is not None and project.android and project.agp_major is not None:
+        minimum = minimum_gradle_for_agp(project.agp_version) or {9: "9.1.0", 8: "8.0", 7: "7.0.2"}.get(project.agp_major)
+        if minimum is None:
+            fail(f"Android Gradle Plugin {project.agp_version or project.agp_major} has no verified Gradle compatibility mapping")
+        if not gradle_meets_agp_minimum(requested, project):
+            requested = minimum
 
     if explicit:
         candidate = Path(explicit).expanduser()
@@ -3606,6 +3872,12 @@ def select_gradle(
                 f"Explicit Gradle launcher is incompatible: {candidate} reports "
                 f"{actual}, but this build requires Gradle {pinned_version}. "
                 "Choose another launcher or pass --gradle-version."
+            )
+        if not gradle_meets_agp_minimum(actual, project):
+            minimum = minimum_gradle_for_agp(project.agp_version if project else None)
+            fail(
+                f"Gradle {actual} is incompatible with Android Gradle Plugin "
+                f"{project.agp_version if project else 'unknown'}; documented minimum is {minimum or 'unknown/fail-closed'}."
             )
         info(
             f"Using explicit Gradle: {candidate} ({actual}); "
@@ -3708,12 +3980,23 @@ def select_gradle(
             if pinned_version:
                 compatible = gradle_version_matches(actual, pinned_version)
             elif provider in {"termux", "system"}:
-                compatible = actual is not None
+                compatible = actual is not None and gradle_meets_agp_minimum(actual, project)
             else:
                 compatible = _auto_installed_gradle_compatible(
                     actual,
                     selected_provider=selected_provider,
                     project=project,
+                )
+            if compatible and selected_provider == "termux" and running_under_termux_python():
+                if provider_evidence is not None:
+                    gradle_evidence = provider_evidence.gradle
+                else:
+                    from .termux_toolchains import termux_gradle_probe
+                    gradle_evidence = termux_gradle_probe(env=os.environ)
+                compatible = bool(
+                    gradle_evidence.compatible
+                    and gradle_evidence.path is not None
+                    and gradle_evidence.path.resolve(strict=False) == system_path.resolve(strict=False)
                 )
             if compatible:
                 info(
@@ -4335,14 +4618,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     info(f"Type: {'Android application' if project.android_application else 'Android Gradle project' if project.android else 'Gradle/JVM project'}")
     if project.compile_sdk:
         info(f"compileSdk: {project.compile_sdk}")
-    if project.agp_major:
-        info(f"Android Gradle Plugin major: {project.agp_major}")
+    if project.agp_version:
+        info(f"Android Gradle Plugin: {project.agp_version}")
+    elif project.agp_major:
+        info(f"Android Gradle Plugin major (legacy/partial detection): {project.agp_major}")
     if project.native_build:
         info("Native build: yes")
     if project.ndk_version:
         info(f"Declared NDK: {project.ndk_version}")
     if project.cmake_version:
         info(f"Declared CMake: {project.cmake_version}")
+
+    provider_evidence = None
+    if running_under_termux_python():
+        from .termux_toolchains import resolve_provider_decisions
+        provider_evidence = resolve_provider_decisions(project_root, android=project.android, env=os.environ)
 
     requirement = infer_java_requirement(project)
     minimum_java = args.min_java or requirement.minimum
@@ -4355,6 +4645,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             minimum_java,
             exact=requirement.exact if args.java_home is None else None,
             provider=args.java_provider,
+            provider_evidence=provider_evidence,
         )
     except BuildError:
         java_home = None
@@ -4380,6 +4671,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             minimum_java,
             exact=requirement.exact if args.java_home is None else None,
             provider=args.java_provider,
+            provider_evidence=provider_evidence,
         )
     elif args.system_deps == "auto" and (need_java or need_certificates):
         if not provisioning_allowed:
@@ -4406,6 +4698,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             minimum_java,
             exact=requirement.exact if args.java_home is None else None,
             provider=args.java_provider,
+            provider_evidence=provider_evidence,
         )
     elif need_java:
         if requirement.exact is not None:
@@ -4438,8 +4731,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     selected_native_provider = "none"
     if project.native_build or args.native_provider != "auto" or args.native_cache != "auto":
-        selected_native_provider = select_native_provider(project, args.native_provider)
-        configure_native_cache(env, args.native_cache)
+        selected_native_provider = select_native_provider(project, args.native_provider, provider_evidence=provider_evidence)
+        configure_native_cache(env, args.native_cache, provider_evidence=provider_evidence)
         if project.native_build:
             info(f"Native provider: {selected_native_provider}")
         else:
@@ -4500,6 +4793,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_managed_fallback=args.sdk_root is None,
             bootstrap_downloads=args.toolchain_downloads,
             bootstrap_network=args.bootstrap_network,
+            provider_evidence=provider_evidence,
         )
 
         if project.native_build and normalized_machine() in {"arm64", "armv7"} and args.ndk_host_provider in {"auto", "arm64", "qemu"}:
@@ -4515,6 +4809,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 platform_id,
                 required=args.aapt2_provider == "termux",
                 dry_run=args.dry_run,
+                provider_evidence=provider_evidence,
             )
         if aapt2 is None and (
             args.aapt2_provider == "revanced"
@@ -4560,6 +4855,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         gradle_user_home=args.gradle_user_home,
         provider=args.gradle_provider,
         project=project,
+        provider_evidence=provider_evidence,
     )
     heading("Gradle")
     info(f"Launcher: {gradle}")

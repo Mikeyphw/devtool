@@ -12,6 +12,10 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import platform
+import re
+import hashlib
+import shlex
+import warnings
 import shutil
 import struct
 import subprocess
@@ -186,7 +190,7 @@ def is_android_shared_storage(path: str | Path) -> bool:
 
 def shared_storage_message(path: str | Path) -> str:
     return (
-        f"Repository is on Android shared storage: {Path(path).expanduser()}. "
+        f"Build/runtime path is on Android shared storage: {Path(path).expanduser()}. "
         "Shared storage is normally noexec and lacks normal symlink/case-sensitive semantics; "
         "keep source/build trees under Termux $HOME and export only finalized artifacts."
     )
@@ -365,21 +369,48 @@ def adapt_termux_script_argv(
         return values, ""
     if not first.startswith("#!"):
         return values, ""
-    words = first[2:].strip().split()
+    try:
+        words = shlex.split(first[2:].strip(), posix=True)
+    except ValueError:
+        return values, termux_shebang_warning(command, env=env)
     if not words:
         return values, ""
     interpreter = words[0]
     if not (interpreter.startswith("/bin/") or interpreter.startswith("/usr/bin/")):
         return values, ""
-    if Path(interpreter).exists():
-        return values, ""
+    # On native Termux, conventional /usr/bin and /bin are not authoritative
+    # interpreter locations even if a host/test namespace happens to expose
+    # them. Resolve the requested tool from Termux PATH instead.
     tool = ""
     extra: list[str] = []
     if interpreter == "/usr/bin/env" and len(words) > 1:
-        # Common portable form: #!/usr/bin/env python3. Keep any interpreter
-        # arguments after the selected tool.
-        tool = words[1]
-        extra = words[2:]
+        env_words = words[1:]
+        # GNU/coreutils env -S exists specifically so a shebang can carry a
+        # split command string. Parse that command without treating -S itself
+        # as the interpreter name. Also skip the portable env flags/assignments
+        # that do not select an executable.
+        if env_words and env_words[0] in {"-S", "--split-string"}:
+            split_source = " ".join(env_words[1:])
+            try:
+                env_words = shlex.split(split_source, posix=True)
+            except ValueError:
+                return values, termux_shebang_warning(command, env=env)
+        index = 0
+        while index < len(env_words):
+            item = env_words[index]
+            if item in {"-i", "--ignore-environment"}:
+                index += 1
+                continue
+            if item in {"-u", "--unset"}:
+                index += 2
+                continue
+            if item.startswith("--unset=") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", item):
+                index += 1
+                continue
+            break
+        if index < len(env_words):
+            tool = env_words[index]
+            extra = env_words[index + 1:]
     else:
         tool = Path(interpreter).name
         extra = words[1:]
@@ -396,17 +427,51 @@ def tmux_available() -> bool:
     return bool(shutil.which("tmux"))
 
 
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 def export_artifacts(paths: Iterable[str | Path], destination: str | Path) -> list[Path]:
+    """Export verified files without clobbering a different artifact.
+
+    Basenames are convenient on shared storage, but two modules can emit the
+    same filename. Preserve that convenience only while identity is unambiguous;
+    otherwise suffix the name with the source content digest.
+    """
     dest = Path(destination).expanduser()
     dest.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []
+    claimed: dict[str, str] = {}
     for raw in paths:
         source = Path(raw).expanduser()
         if not source.is_file():
             continue
+        digest = _sha256_file(source)
         target = dest / source.name
+        existing_digest = None
+        if target.is_file():
+            try:
+                existing_digest = _sha256_file(target)
+            except OSError:
+                existing_digest = None
+        prior = claimed.get(source.name)
+        if (prior is not None and prior != digest) or (existing_digest is not None and existing_digest != digest):
+            suffix = "".join(source.suffixes)
+            stem = source.name[:-len(suffix)] if suffix else source.name
+            target = dest / f"{stem}-{digest}{suffix}"
+            counter = 1
+            while target.exists() and (not target.is_file() or _sha256_file(target) != digest):
+                target = dest / f"{stem}-{digest}-{counter}{suffix}"
+                counter += 1
+        claimed[source.name] = digest
         if source.resolve() != target.resolve():
-            shutil.copy2(source, target)
+            if not target.is_file() or _sha256_file(target) != digest:
+                shutil.copy2(source, target)
         copied.append(target)
     return copied
 
@@ -475,11 +540,16 @@ def termux_wake_lock(mode: str = "auto", *, env: Mapping[str, str] | None = None
     finally:
         if acquired:
             try:
-                subprocess.run(
+                result = subprocess.run(
                     [unlock], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10
                 )
-            except (OSError, subprocess.TimeoutExpired):
-                # Cleanup is best-effort. The Termux process exit also releases
-                # its held wake lock, and a cleanup timeout must not mask the
-                # original build result.
-                pass
+                if result.returncode != 0:
+                    warnings.warn(
+                        f"termux-wake-unlock exited with status {result.returncode}; wake-lock cleanup could not be verified.",
+                        RuntimeWarning, stacklevel=2,
+                    )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                warnings.warn(
+                    f"termux-wake-unlock failed; wake-lock cleanup could not be verified: {exc}",
+                    RuntimeWarning, stacklevel=2,
+                )

@@ -122,8 +122,10 @@ class TermuxFinalDiagnosticsTests(unittest.TestCase):
         by_name = {item.package: item for item in recommendations}
         self.assertTrue(by_name["gradle"].required)
         self.assertTrue(by_name["openjdk-21"].required)
-        self.assertTrue(by_name["clang"].required)
-        self.assertTrue(by_name["ndk-sysroot"].required)
+        # Native provider remains auto here, so missing Termux clang/sysroot
+        # are optional suggestions; the real build may select the system provider.
+        self.assertFalse(by_name["clang"].required)
+        self.assertFalse(by_name["ndk-sysroot"].required)
         self.assertIn("cmake", by_name)
         self.assertIn("ninja", by_name)
 

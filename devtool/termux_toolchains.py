@@ -33,6 +33,20 @@ class RuntimeIdentity:
 
 
 @dataclass(frozen=True)
+class ProviderDecisionEvidence:
+    runtime: RuntimeIdentity
+    wrapper: object
+    gradle: "ToolProvider"
+    java: tuple["ToolProvider", ...]
+    native: "ToolProvider"
+    native_requirement: "NativeRequirement"
+    cmake: "ToolProvider"
+    ninja: "ToolProvider"
+    ccache: "ToolProvider"
+    android_tools: tuple["ToolProvider", ...]
+
+
+@dataclass(frozen=True)
 class PackageProbe:
     name: str
     installed: bool
@@ -400,8 +414,20 @@ def _termux_binary_probe(
         return ToolProvider(capability, 'termux', False, path=resolved, package=package, runtime=runtime, compatible=False, rejection_reason=reason, reason=reason)
     package_probe = termux_package_probe(package, env=env, runtime=runtime) if package else PackageProbe('', False)
     version = _tool_version([str(resolved), *version_args], version_pattern, env=env) if version_args else ''
-    if not version and not require_version:
-        version = package_probe.version
+    if not require_version:
+        probe_args = tuple(version_args) or ('--help',)
+        try:
+            probe = subprocess.run(
+                [str(resolved), *probe_args], text=True, capture_output=True, check=False, timeout=5, env=dict(env),
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            reason = f'Termux {capability} runtime probe failed: {exc}'
+            return ToolProvider(capability, 'termux', True, path=resolved, package=package, package_version=package_probe.version, package_manager=package_probe.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=(capability,), reason=reason)
+        if probe.returncode in {126, 127}:
+            reason = f'Termux {capability} runtime probe exited {probe.returncode}'
+            return ToolProvider(capability, 'termux', True, path=resolved, package=package, package_version=package_probe.version, package_manager=package_probe.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=(capability,), reason=reason)
+        if not version:
+            version = package_probe.version
     if not version and require_version:
         reason = f'Termux {capability} detected at {resolved}, but version probe could not be parsed'
         return ToolProvider(capability, 'termux', True, path=resolved, package=package, package_version=package_probe.version, package_manager=package_probe.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=(capability,), reason=reason)
@@ -455,6 +481,20 @@ def termux_native_provider(*, env: Mapping[str, str] | None = None, runtime: Run
     if not version:
         reason = 'Termux clang --version could not be parsed'
         return ToolProvider('native-compiler', 'termux-sysroot', True, path=paths['clang'], package='ndk-sysroot', package_version=sysroot.version, package_manager=sysroot.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=required, reason=reason)
+    unusable: list[str] = []
+    for name in required:
+        try:
+            result = subprocess.run(
+                [str(paths[name]), '--version'], text=True, capture_output=True, check=False, timeout=5, env=dict(env),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            unusable.append(name)
+            continue
+        if result.returncode != 0:
+            unusable.append(name)
+    if unusable:
+        reason = 'Termux native tools failed runtime probes: ' + ', '.join(unusable)
+        return ToolProvider('native-compiler', 'termux-sysroot', True, path=paths['clang'], version=version, package='ndk-sysroot', package_version=sysroot.version, package_manager=sysroot.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=required, reason=reason)
     return ToolProvider('native-compiler', 'termux-sysroot', True, path=paths['clang'], version=version, package='ndk-sysroot', package_version=sysroot.version, package_manager=sysroot.manager, runtime=runtime, compatible=True, selection_reason='Termux clang/lld with ndk-sysroot is complete', capabilities=required, reason='Termux clang/lld with ndk-sysroot is complete')
 
 
@@ -478,7 +518,8 @@ def termux_android_tool_probe(name: str, *, env: Mapping[str, str] | None = None
         'adb': r'Version\s+([^\s]+)',
     }
     versioned = name in {'adb', 'aapt', 'aapt2', 'apksigner'}
-    args = ('version',) if name in {'adb', 'aapt', 'aapt2'} else ('--version',) if versioned else ()
+    helper_args = {'aidl': ('--version',), 'zipalign': ('-h',), 'split-select': ('--help',)}
+    args = ('version',) if name in {'adb', 'aapt', 'aapt2'} else ('--version',) if versioned else helper_args.get(name, ('--help',))
     return _termux_binary_probe(
         name,
         (name,),
@@ -495,16 +536,34 @@ def termux_android_tool_providers(*, env: Mapping[str, str] | None = None, runti
     return tuple(termux_android_tool_probe(name, env=env, runtime=runtime) for name in ('aapt', 'aapt2', 'apksigner', 'adb', 'aidl', 'zipalign', 'split-select'))
 
 
-def classify_native_requirement(project_root: Path, *, android: bool = False) -> NativeRequirement:
+def active_gradle_config_text(project_root: Path) -> str:
+    """Return Gradle/properties text with non-active comments removed.
+
+    Provider classification and the Android build inspector must consume the
+    same view; otherwise diagnostics can say "no NDK" while the real build
+    provisions one because a marker only existed in a comment.
+    """
+
     root = Path(project_root).expanduser()
     chunks: list[str] = []
     for pattern in ('*.gradle', '*.gradle.kts', 'gradle.properties'):
         for path in root.rglob(pattern):
             try:
-                chunks.append(path.read_text(encoding='utf-8', errors='replace'))
+                text = path.read_text(encoding='utf-8', errors='replace')
             except OSError:
-                pass
-    text = '\n'.join(chunks)
+                continue
+            if path.name == 'gradle.properties':
+                text = re.sub(r'(?m)^[ \t]*[#!].*$', '', text)
+            else:
+                text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+                text = re.sub(r'(?m)//.*$', '', text)
+            chunks.append(text)
+    return '\n'.join(chunks)
+
+
+def classify_native_requirement(project_root: Path, *, android: bool = False) -> NativeRequirement:
+    root = Path(project_root).expanduser()
+    text = active_gradle_config_text(root)
     # A CMakeLists.txt by itself is not enough to prove Android NDK integration:
     # repositories often contain host-side helpers or third-party CMake projects.
     # Require an Android/Gradle NDK declaration or an ndk-build makefile instead.
@@ -515,6 +574,46 @@ def classify_native_requirement(project_root: Path, *, android: bool = False) ->
     if any(root.rglob('CMakeLists.txt')) or any(root.rglob('*.c')) or any(root.rglob('*.cc')) or any(root.rglob('*.cpp')):
         return NativeRequirement('compiler', 'project contains native compiler inputs without Android NDK integration')
     return NativeRequirement('none', 'no native compiler requirement detected')
+
+def resolve_provider_decisions(
+    project_root: Path,
+    *,
+    android: bool = False,
+    env: Mapping[str, str] | None = None,
+    probes: Mapping[str, object] | None = None,
+) -> ProviderDecisionEvidence:
+    """Resolve one immutable provider-decision snapshot.
+
+    ``probes`` exists for deterministic tests/adapters; production callers use
+    the exact same resolver and default provider probes as real builds.
+    """
+    env = env or os.environ
+    probes = probes or {}
+    runtime_probe = probes.get("runtime") or detect_runtime_identity
+    wrapper_probe = probes.get("wrapper") or gradle_wrapper_probe
+    gradle_probe = probes.get("gradle") or termux_gradle_probe
+    java_probe = probes.get("java") or termux_java_providers
+    native_probe = probes.get("native") or termux_native_provider
+    requirement_probe = probes.get("native_requirement") or classify_native_requirement
+    cmake_probe = probes.get("cmake") or termux_cmake_probe
+    ninja_probe = probes.get("ninja") or termux_ninja_probe
+    ccache_probe = probes.get("ccache") or termux_ccache_probe
+    android_probe = probes.get("android_tools") or termux_android_tool_providers
+    runtime = runtime_probe(env)
+    root = Path(project_root).expanduser()
+    return ProviderDecisionEvidence(
+        runtime=runtime,
+        wrapper=wrapper_probe(root),
+        gradle=gradle_probe(env=env, runtime=runtime),
+        java=java_probe(env=env, runtime=runtime),
+        native=native_probe(env=env, runtime=runtime),
+        native_requirement=requirement_probe(root, android=android),
+        cmake=cmake_probe(env=env, runtime=runtime),
+        ninja=ninja_probe(env=env, runtime=runtime),
+        ccache=ccache_probe(env=env, runtime=runtime),
+        android_tools=android_probe(env=env, runtime=runtime),
+    )
+
 
 @dataclass(frozen=True)
 class GradleWrapperProbe:

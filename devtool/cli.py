@@ -2853,8 +2853,36 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
             )
         if bool(getattr(args, "allow_shared_storage_build", False)):
             policy = "allow"
-        if is_android_shared_storage(config.repo_root) and policy != "allow":
-            message = shared_storage_message(config.repo_root)
+        protected_paths: list[Path] = [Path(config.repo_root)]
+        if config.project_root:
+            protected_paths.append(Path(config.project_root))
+        protected_paths.extend(Path(spec.cwd) for spec in specs if spec.cwd)
+        for spec in specs:
+            base = Path(spec.cwd or config.project_root or config.repo_root).expanduser()
+            def _output_path(raw: object) -> Path:
+                candidate = Path(str(raw)).expanduser()
+                return candidate if candidate.is_absolute() else base / candidate
+            metadata = spec.metadata if isinstance(spec.metadata, dict) else {}
+            for key, value in metadata.items():
+                if any(token in str(key).lower() for token in ("output", "artifact")) and isinstance(value, (str, Path)) and str(value).strip():
+                    protected_paths.append(_output_path(value))
+            argv = [str(item) for item in spec.argv]
+            for index, token in enumerate(argv):
+                if token in {"-o", "--output", "--output-dir", "--artifact-output"} and index + 1 < len(argv):
+                    protected_paths.append(_output_path(argv[index + 1]))
+                elif token.startswith(("--output=", "--output-dir=", "--artifact-output=")):
+                    protected_paths.append(_output_path(token.split("=", 1)[1]))
+        artifacts = termux_options.get("artifacts", {}) if isinstance(termux_options.get("artifacts", {}), dict) else {}
+        export_dir = str(artifacts.get("export_dir") or "").strip()
+        if export_dir:
+            protected_paths.append(Path(export_dir).expanduser())
+        seen_storage: set[str] = set()
+        for path in protected_paths:
+            canonical = str(path.expanduser().resolve(strict=False))
+            if canonical in seen_storage or not is_android_shared_storage(canonical) or policy == "allow":
+                continue
+            seen_storage.add(canonical)
+            message = shared_storage_message(canonical)
             if policy == "deny":
                 raise SystemExit(message + " Override with --allow-shared-storage-build if intentional.")
             create_console(stderr=True).print(f"[yellow]Warning:[/yellow] {message}")
@@ -3123,9 +3151,10 @@ def _run_specs_for_args(
     elif bool(getattr(args, "no_termux_wake_lock", False)):
         wake_mode = "off"
     from .termux_runtime import termux_wake_lock
+    completed_successfully = False
     try:
         with termux_wake_lock(wake_mode):
-            return run_specs(
+            results, raw = run_specs(
                 config,
                 prepared_specs,
                 verbose=args.verbose,
@@ -3138,10 +3167,13 @@ def _run_specs_for_args(
                 heartbeat_callback=heartbeat_callback,
                 progress_callback=progress_callback,
             )
+        completed_successfully = all(result.skipped or result.returncode == 0 for result in results)
+        return results, raw
     finally:
         if any(str(spec.metadata.get("execution_mode") or "") == "proot-distro" for spec in prepared_specs):
             from .proot_distro_runner import cleanup_proot_staging
-            cleanup_proot_staging(prepared_specs)
+            for warning in cleanup_proot_staging(prepared_specs, retain=not completed_successfully):
+                create_console(stderr=True).print(f"[yellow]Warning:[/yellow] {warning}")
 
 
 

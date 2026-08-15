@@ -17,6 +17,7 @@ from devtool.project_runners import CMakeRunner
 from devtool.toolchains import toolchain_doctor_rows
 from devtool.termux_toolchains import (
     PackageProbe,
+    ToolProvider,
     RuntimeIdentity,
     VALID_ANDROID_BUILD_TOOLS_PROVIDERS,
     VALID_NATIVE_CACHE_PROVIDERS,
@@ -188,8 +189,11 @@ class AndroidNativeProviderTests(unittest.TestCase):
 
     def test_native_cache_uses_ccache_when_available(self) -> None:
         env: dict[str, str] = {}
+        provider = ToolProvider(
+            "ccache", "termux", True, path=Path("/prefix/bin/ccache"), version="4.10", compatible=True
+        )
         with patch("devtool.android_build.running_under_termux_python", return_value=True), patch(
-            "devtool.android_build.termux_tool_path", return_value=Path("/prefix/bin/ccache")
+            "devtool.termux_toolchains.termux_ccache_probe", return_value=provider
         ):
             selected = android_build.configure_native_cache(env, "auto")
         self.assertEqual(selected, "ccache")

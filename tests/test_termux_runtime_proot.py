@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 import tempfile
@@ -347,7 +348,7 @@ class ProotRunnerTests(unittest.TestCase):
             helper = Path(hd) / "helper.py"
             helper.write_text("print(1)", encoding="utf-8")
             spec = CommandSpec("build", ["python3", str(helper)], cwd=str(root))
-            cfg = ProotRunnerConfig(distro="ubuntu", stage_dir=str(root / ".stage"))
+            cfg = ProotRunnerConfig(distro="ubuntu")
             with patch("devtool.proot_distro_runner.proot_distro_available", return_value="proot-distro"), patch("devtool.proot_distro_runner.installed_distros", return_value=("ubuntu",)):
                 wrapped = wrap_specs_for_proot_distro([spec], cfg, repo_root=root)[0]
             self.assertFalse(any(str(helper) == token for token in wrapped.argv))
@@ -457,7 +458,8 @@ class ProotRunnerTests(unittest.TestCase):
     def test_dry_run_does_not_create_stage_files(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            stage_base = root / "stage"
+            stage_base = root.parent / f"{root.name}-stage-dry-run"
+            shutil.rmtree(stage_base, ignore_errors=True)
             spec = CommandSpec("test", ["python3", "-V"], cwd=str(root))
             wrapped = wrap_specs_for_proot_distro(
                 [spec], ProotRunnerConfig(distro="ubuntu", stage_dir=str(stage_base)), repo_root=root, dry_run=True
@@ -568,9 +570,9 @@ class ProotRunnerTests(unittest.TestCase):
             self.assertIn({"host": str(root.resolve()), "guest": "/workspace/project"}, wrapped.metadata["proot_bindings"])
 
     def test_wrapping_failure_cleans_owned_stage(self):
-        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside_td:
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside_td, tempfile.TemporaryDirectory() as stage_td:
             root = Path(td)
-            stage_base = root / "stage"
+            stage_base = Path(stage_td) / "stage"
             outside = Path(outside_td)
             spec = CommandSpec("test", ["tool", str(outside)], cwd=str(root))
             with patch("devtool.proot_distro_runner.proot_distro_available", return_value="proot-distro"), patch(
@@ -619,7 +621,7 @@ class ProotRunnerTests(unittest.TestCase):
             self.assertIn("python3 -m devtool.python_support environment-snapshot", combined)
             self.assertIn(str(root / ".devtool" / "proot" / "python"), combined)
             wrapped = wrap_specs_for_proot_distro(
-                specs, ProotRunnerConfig(distro="ubuntu", stage_dir=str(root / ".stage")),
+                specs, ProotRunnerConfig(distro="ubuntu"),
                 repo_root=root, dry_run=True,
             )
             wrapped_text = " ".join(" ".join(spec.argv) for spec in wrapped)
@@ -650,7 +652,7 @@ class ProotRunnerTests(unittest.TestCase):
                 },
             )
             wrapped = wrap_specs_for_proot_distro(
-                [spec], ProotRunnerConfig(distro="ubuntu", stage_dir=str(root / ".stage")),
+                [spec], ProotRunnerConfig(distro="ubuntu"),
                 repo_root=root, dry_run=True,
             )[0]
             text = " ".join(wrapped.argv)
@@ -665,10 +667,11 @@ class ProotRunnerTests(unittest.TestCase):
             self.assertNotIn(str(host_cache), text)
 
     def test_python_helper_and_persistent_guest_cache_are_staged_without_guest_install(self):
-        with tempfile.TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as managed_td:
             root = Path(td)
-            stage_base = root / "stage"
-            cache_base = root / "cache"
+            managed_root = Path(managed_td)
+            stage_base = managed_root / "stage"
+            cache_base = managed_root / "cache"
             spec = CommandSpec(
                 "audit", ["python3", "-m", "devtool.python_support", "source-audit", str(root)], cwd=str(root)
             )

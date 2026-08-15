@@ -20,6 +20,7 @@ from .termux_runtime import (
 )
 from .termux_toolchains import (
     ToolProvider,
+    ProviderDecisionEvidence,
     classify_native_requirement,
     detect_runtime_identity,
     gradle_wrapper_probe,
@@ -31,6 +32,7 @@ from .termux_toolchains import (
     termux_java_providers,
     termux_native_provider,
     termux_ninja_probe,
+    resolve_provider_decisions as _resolve_provider_decisions_core,
 )
 
 
@@ -115,10 +117,14 @@ def _preferred_termux_openjdk_package(
     return "openjdk-21"
 
 
-def _android_termux_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
+def _android_termux_doctor_rows(config: ProjectConfig, *, evidence=None) -> list[tuple[str, str]]:
     """Report Android SDK/full-NDK readiness without installing or building."""
     project_root = Path(config.project_root or config.repo_root)
-    requirement = classify_native_requirement(project_root, android=config.kind == "android")
+    requirement = (
+        evidence.native_requirement
+        if evidence is not None and getattr(evidence, "native_requirement", None) is not None
+        else classify_native_requirement(project_root, android=config.kind == "android")
+    )
     rows: list[tuple[str, str]] = [
         ("native_requirement", f"{requirement.capability}: {requirement.reason}"),
     ]
@@ -193,6 +199,29 @@ def _java_status(providers: Sequence[ToolProvider]) -> str:
     return "; ".join(parts)
 
 
+def resolve_provider_decisions(
+    project_root: Path, *, android: bool = False, env: Mapping[str, str] | None = None
+) -> ProviderDecisionEvidence:
+    """Diagnostics adapter around the canonical toolchain resolver."""
+    return _resolve_provider_decisions_core(
+        project_root,
+        android=android,
+        env=env,
+        probes={
+            "runtime": detect_runtime_identity,
+            "wrapper": gradle_wrapper_probe,
+            "gradle": termux_gradle_probe,
+            "java": termux_java_providers,
+            "native": termux_native_provider,
+            "native_requirement": classify_native_requirement,
+            "cmake": termux_cmake_probe,
+            "ninja": termux_ninja_probe,
+            "ccache": termux_ccache_probe,
+            "android_tools": termux_android_tool_providers,
+        },
+    )
+
+
 def _configured_providers(config: ProjectConfig) -> dict[str, str]:
     android = _dict_option(config, "android")
     gradle = _dict_option(config, "gradle")
@@ -209,40 +238,59 @@ def _configured_providers(config: ProjectConfig) -> dict[str, str]:
     }
 
 
-def provider_explanation_rows(config: ProjectConfig, *, env: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
+def provider_explanation_rows(
+    config: ProjectConfig, *, env: Mapping[str, str] | None = None, _evidence=None
+) -> list[tuple[str, str]]:
     env = env or os.environ
-    runtime = detect_runtime_identity(env)
     configured = _configured_providers(config)
-    wrapper = gradle_wrapper_probe(Path(config.project_root or config.repo_root))
-    gradle = termux_gradle_probe(env=env, runtime=runtime)
-    java = termux_java_providers(env=env, runtime=runtime)
-    native = termux_native_provider(env=env, runtime=runtime)
-    native_requirement = classify_native_requirement(
-        Path(config.project_root or config.repo_root),
-        android=config.kind == "android",
+    evidence = _evidence or resolve_provider_decisions(
+        Path(config.project_root or config.repo_root), android=config.kind == "android", env=env
     )
+    runtime = evidence.runtime
+    wrapper = evidence.wrapper
+    gradle = evidence.gradle
+    java = evidence.java
+    native = evidence.native
+    native_requirement = evidence.native_requirement
 
-    if wrapper.complete:
-        gradle_reason = "wrapper selected/preferred: complete project Gradle Wrapper pins the project version"
-    elif wrapper.present:
-        gradle_reason = "wrapper blocked: incomplete Gradle Wrapper; missing " + ", ".join(wrapper.missing)
-    elif configured["gradle"] == "termux":
+    requested_gradle = configured["gradle"]
+    if requested_gradle == "wrapper":
+        gradle_reason = (
+            "Gradle Wrapper explicitly requested; complete project wrapper is ready"
+            if wrapper.complete
+            else "Gradle Wrapper explicitly requested but incomplete/missing"
+        )
+    elif requested_gradle == "termux":
         gradle_reason = "Termux Gradle explicitly requested; " + ("provider is ready" if gradle.compatible else _provider_status(gradle))
-    elif configured["gradle"] in {"system", "download"}:
-        gradle_reason = f"{configured['gradle']} Gradle explicitly requested; Termux Gradle is not auto-selected"
+    elif requested_gradle in {"system", "download"}:
+        gradle_reason = f"{requested_gradle} Gradle explicitly requested; wrapper/Termux providers are not selected"
+    elif wrapper.complete:
+        gradle_reason = "auto: wrapper selected/preferred: complete project Gradle Wrapper pins the project version"
+    elif wrapper.present:
+        gradle_reason = "auto: wrapper blocked as incomplete; missing " + ", ".join(wrapper.missing)
     elif gradle.compatible:
         gradle_reason = "auto: no complete wrapper detected; Termux Gradle is an eligible native fallback"
     else:
         gradle_reason = "auto: no complete wrapper and Termux Gradle is unavailable/unusable; managed/system fallback remains eligible"
 
-    if native_requirement.capability == "android-ndk":
-        native_reason = "full Android NDK required: Termux ndk-sysroot is compiler/sysroot capability only"
+    requested_native = configured["native"]
+    if requested_native == "ndk":
+        native_reason = "full Android NDK explicitly requested"
+    elif requested_native == "system":
+        native_reason = "system native provider explicitly requested; Termux native provider is not selected"
+    elif requested_native == "termux-sysroot":
+        if native_requirement.capability == "android-ndk":
+            native_reason = "Termux sysroot explicitly requested but incompatible: project requires a complete Android NDK"
+        else:
+            native_reason = "Termux sysroot explicitly requested; " + ("provider is ready" if native.compatible else _provider_status(native))
+    elif native_requirement.capability == "android-ndk":
+        native_reason = "auto: full Android NDK required; Termux ndk-sysroot is compiler/sysroot capability only"
     elif native_requirement.capability == "compiler" and native.compatible:
-        native_reason = "compiler-only native work can use Termux clang/lld + ndk-sysroot"
+        native_reason = "auto: compiler-only native work can use Termux clang/lld + ndk-sysroot"
     elif native_requirement.capability == "compiler":
-        native_reason = "compiler-only native work detected, but Termux native provider is unavailable/unusable"
+        native_reason = "auto: compiler-only native work detected, but Termux native provider is unavailable/unusable"
     else:
-        native_reason = "no native compiler work detected; no native provider is required"
+        native_reason = "auto: no native compiler work detected; no native provider is required"
 
     java_ready = [item for item in java if item.compatible]
     if configured["java"] == "termux":
@@ -261,9 +309,14 @@ def provider_explanation_rows(config: ProjectConfig, *, env: Mapping[str, str] |
     ]
 
 
-def termux_package_recommendations(config: ProjectConfig, *, env: Mapping[str, str] | None = None) -> tuple[PackageRecommendation, ...]:
+def termux_package_recommendations(
+    config: ProjectConfig, *, env: Mapping[str, str] | None = None, _evidence=None
+) -> tuple[PackageRecommendation, ...]:
     env = env or os.environ
-    runtime = detect_runtime_identity(env)
+    evidence = _evidence or resolve_provider_decisions(
+        Path(config.project_root or config.repo_root), android=config.kind == "android", env=env
+    )
+    runtime = evidence.runtime
     if not runtime.is_termux:
         return ()
 
@@ -275,13 +328,15 @@ def termux_package_recommendations(config: ProjectConfig, *, env: Mapping[str, s
         recommendations.append(PackageRecommendation("tmux", "tmux", "allows detaching whole local devtool orchestration"))
 
     project_root = Path(config.project_root or config.repo_root)
-    wrapper = gradle_wrapper_probe(project_root)
-    gradle = termux_gradle_probe(env=env, runtime=runtime)
+    wrapper = evidence.wrapper
+    gradle = evidence.gradle
     configured = _configured_providers(config)
-    if not wrapper.complete and configured["gradle"] in {"auto", "termux"} and not gradle.compatible:
-        recommendations.append(PackageRecommendation("gradle", "gradle", "wrapperless native Termux Gradle fallback is unavailable", configured["gradle"] == "termux"))
+    if configured["gradle"] == "termux" and not gradle.compatible:
+        recommendations.append(PackageRecommendation("gradle", "gradle", "Termux Gradle is explicitly requested but unavailable", True))
+    elif configured["gradle"] == "auto" and not wrapper.complete and not gradle.compatible:
+        recommendations.append(PackageRecommendation("gradle", "gradle", "wrapperless native Termux Gradle fallback is unavailable", False))
 
-    java = termux_java_providers(env=env, runtime=runtime)
+    java = evidence.java
     if configured["java"] == "termux" and not any(item.compatible for item in java):
         recommendations.append(PackageRecommendation(
             _preferred_termux_openjdk_package(env=env, runtime=runtime),
@@ -290,26 +345,31 @@ def termux_package_recommendations(config: ProjectConfig, *, env: Mapping[str, s
             True,
         ))
 
-    native_requirement = classify_native_requirement(project_root, android=config.kind == "android")
-    native = termux_native_provider(env=env, runtime=runtime)
-    if native_requirement.capability == "compiler" and not native.compatible:
+    native_requirement = evidence.native_requirement
+    native = evidence.native
+    if (
+        native_requirement.capability == "compiler"
+        and configured["native"] in {"auto", "termux-sysroot"}
+        and not native.compatible
+    ):
         recommendations.extend((
-            PackageRecommendation("clang", "native-compiler", "compiler-only native work needs a Termux-native compiler", True),
-            PackageRecommendation("ndk-sysroot", "native-sysroot", "compiler-only native work needs the Termux Android/Bionic sysroot", True),
+            PackageRecommendation("clang", "native-compiler", "compiler-only native work needs a Termux-native compiler", configured["native"] == "termux-sysroot"),
+            PackageRecommendation("ndk-sysroot", "native-sysroot", "compiler-only native work needs the Termux Android/Bionic sysroot", configured["native"] == "termux-sysroot"),
         ))
 
     has_cmake = any(project_root.rglob("CMakeLists.txt"))
-    if has_cmake and not termux_cmake_probe(env=env, runtime=runtime).compatible:
+    if has_cmake and not evidence.cmake.compatible:
         recommendations.append(PackageRecommendation("cmake", "cmake", "CMake project detected and Termux CMake is unavailable"))
-    if has_cmake and not termux_ninja_probe(env=env, runtime=runtime).compatible:
+    if has_cmake and not evidence.ninja.compatible:
         recommendations.append(PackageRecommendation("ninja", "ninja", "CMake project detected and Termux Ninja is unavailable"))
-    if native_requirement.capability != "none" and configured["native_cache"] in {"auto", "ccache"} and not termux_ccache_probe(env=env, runtime=runtime).compatible:
+    if native_requirement.capability != "none" and configured["native_cache"] in {"auto", "ccache"} and not evidence.ccache.compatible:
         recommendations.append(PackageRecommendation("ccache", "ccache", "optional native compiler cache is unavailable"))
 
     if config.kind == "android" and configured["android_build_tools"] == "termux":
-        tools = {item.capability: item for item in termux_android_tool_providers(env=env, runtime=runtime)}
-        if not tools.get("aapt2") or not tools["aapt2"].compatible:
-            recommendations.append(PackageRecommendation("aapt", "android-build-tools", "Termux Android Build Tools provider was explicitly requested", True))
+        tools = {item.capability: item for item in evidence.android_tools}
+        required_helpers = ("aapt2", "aidl", "zipalign", "split-select")
+        if any(not tools.get(name) or not tools[name].compatible for name in required_helpers):
+            recommendations.append(PackageRecommendation("aapt", "android-build-tools", "Termux Android Build Tools provider is missing one or more required helpers: aapt2/aidl/zipalign/split-select", True))
         if not tools.get("apksigner") or not tools["apksigner"].compatible:
             recommendations.append(PackageRecommendation("apksigner", "apk-signing", "Termux Android Build Tools provider was explicitly requested", True))
         if not tools.get("adb") or not tools["adb"].compatible:
@@ -327,8 +387,10 @@ def termux_package_recommendations(config: ProjectConfig, *, env: Mapping[str, s
     ))
 
 
-def package_recommendation_rows(config: ProjectConfig, *, env: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
-    items = termux_package_recommendations(config, env=env)
+def package_recommendation_rows(
+    config: ProjectConfig, *, env: Mapping[str, str] | None = None, _evidence=None
+) -> list[tuple[str, str]]:
+    items = termux_package_recommendations(config, env=env, _evidence=_evidence)
     if not items:
         return [("termux_packages", "no additional Termux package recommendations")]
     names = " ".join(item.package for item in items)
@@ -415,21 +477,25 @@ def termux_integration_doctor_rows(
     env: Mapping[str, str] | None = None,
     explain: bool = False,
     proot_distro: str = "",
+    _evidence=None,
 ) -> list[tuple[str, str]]:
     env = env or os.environ
-    runtime = detect_runtime_identity(env)
+    evidence = _evidence or resolve_provider_decisions(
+        Path(config.project_root or config.repo_root), android=config.kind == "android", env=env
+    )
+    runtime = evidence.runtime
     if not runtime.is_termux:
         return [("termux_runtime", f"not native Termux ({runtime.platform}/{runtime.environment}/{runtime.libc}/{runtime.arch})")]
 
     prefix = runtime.prefix or Path(str(env.get("PREFIX") or ""))
-    wrapper = gradle_wrapper_probe(Path(config.project_root or config.repo_root))
-    gradle = termux_gradle_probe(env=env, runtime=runtime)
-    java = termux_java_providers(env=env, runtime=runtime)
-    native = termux_native_provider(env=env, runtime=runtime)
-    cmake = termux_cmake_probe(env=env, runtime=runtime)
-    ninja = termux_ninja_probe(env=env, runtime=runtime)
-    ccache = termux_ccache_probe(env=env, runtime=runtime)
-    android_tools = termux_android_tool_providers(env=env, runtime=runtime)
+    wrapper = evidence.wrapper
+    gradle = evidence.gradle
+    java = evidence.java
+    native = evidence.native
+    cmake = evidence.cmake
+    ninja = evidence.ninja
+    ccache = evidence.ccache
+    android_tools = evidence.android_tools
     options = _dict_option(config, "termux")
     storage = options.get("storage", {}) if isinstance(options.get("storage"), dict) else {}
     artifacts = options.get("artifacts", {}) if isinstance(options.get("artifacts"), dict) else {}
@@ -467,14 +533,14 @@ def termux_integration_doctor_rows(
         ("chrootctl", f"READY: {shutil.which('chrootctl', path=str(env.get('PATH') or ''))}" if shutil.which('chrootctl', path=str(env.get('PATH') or '')) else "MISSING"),
         ("proot_distro", f"READY: {proot_distro_available()}" if proot_distro_available() else "MISSING"),
     ]
-    rows.extend(_android_termux_doctor_rows(config))
+    rows.extend(_android_termux_doctor_rows(config, evidence=evidence))
     distros = installed_distros(proot_distro_available()) if proot_distro_available() else ()
     rows.append(("proot_containers", "discovery failed" if distros is None else (", ".join(distros) if distros else "none")))
     if distro:
         rows.extend(proot_guest_doctor_rows(distro))
-    rows.extend(package_recommendation_rows(config, env=env))
+    rows.extend(package_recommendation_rows(config, env=env, _evidence=evidence))
     if explain:
-        rows.extend(provider_explanation_rows(config, env=env))
+        rows.extend(provider_explanation_rows(config, env=env, _evidence=evidence))
     return rows
 
 
@@ -485,8 +551,14 @@ def termux_report_payload(
     explain: bool = False,
     proot_distro: str = "",
 ) -> dict:
-    rows = termux_integration_doctor_rows(config, env=env, explain=explain, proot_distro=proot_distro)
-    recommendations = termux_package_recommendations(config, env=env)
+    env = env or os.environ
+    evidence = resolve_provider_decisions(
+        Path(config.project_root or config.repo_root), android=config.kind == "android", env=env
+    )
+    rows = termux_integration_doctor_rows(
+        config, env=env, explain=explain, proot_distro=proot_distro, _evidence=evidence
+    )
+    recommendations = termux_package_recommendations(config, env=env, _evidence=evidence)
     return {
         "rows": [{"name": name, "value": value} for name, value in rows],
         "package_recommendations": [asdict(item) for item in recommendations],

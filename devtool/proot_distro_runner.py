@@ -10,25 +10,27 @@ from dataclasses import dataclass, field, replace
 import hashlib
 import os
 from pathlib import Path
+import posixpath
 import re
 import shutil
 import subprocess
+import uuid
 from typing import Iterable, Mapping
 
 from .execution_environments import NATIVE_TERMUX, PathMapping, detect_current_environment, translate_host_path
 from .models import CommandSpec, ProjectConfig
 
 _SAFE_ENV = {"CI", "TERM", "COLORTERM", "LANG", "LC_ALL", "TZ"}
-_BLOCKED_PREFIXES = (
-    "ANDROID_", "DEVTOOL_BUILD_", "DEVTOOL_CHROOT_", "DEVTOOL_SSH_",
+_BLOCKED_ENV_EXACT = {
     "GRADLE_USER_HOME", "JAVA_HOME", "HOME", "PATH", "PWD", "TMPDIR",
     "UV_CACHE_DIR", "PIP_CACHE_DIR", "PDM_CACHE_DIR", "POETRY_CACHE_DIR",
-    "RUFF_CACHE_DIR", "MYPY_CACHE_DIR", "TOX_WORK_DIR", "CARGO_TARGET_DIR",
+    "RUFF_CACHE_DIR", "MYPY_CACHE_DIR", "TOX_WORK_DIR", "CARGO_HOME", "CARGO_TARGET_DIR",
     "PYTHONPYCACHEPREFIX", "SKBUILD_BUILD_DIR",
     "npm_config_cache", "YARN_CACHE_FOLDER", "BUN_INSTALL_CACHE_DIR",
     "XDG_CACHE_HOME", "CCACHE_DIR",
     "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV",
-)
+}
+_BLOCKED_ENV_PREFIXES = ("ANDROID_", "DEVTOOL_BUILD_", "DEVTOOL_CHROOT_", "DEVTOOL_SSH_")
 
 _DEFAULT_GUEST_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 _GUEST_EXEC_NAME = "devtool-guest-exec.sh"
@@ -36,6 +38,7 @@ _RESERVED_PROOT_ENV = {
     "DEVTOOL_EXECUTION_CONTEXT",
     "DEVTOOL_PROOT_DISTRO",
     "DEVTOOL_PROOT_CLEAN_PATH",
+    "DEVTOOL_RUN_ID",
 }
 
 
@@ -107,26 +110,66 @@ def resolve_proot_config(project_config: ProjectConfig, args) -> ProotRunnerConf
     return cfg
 
 
+def _normalize_guest_path(value: str, *, label: str = "PRoot guest path") -> str:
+    raw = str(value or "").strip()
+    if not raw or "\x00" in raw or not raw.startswith("/"):
+        raise ValueError(f"{label} destination must be absolute and non-empty: {value}")
+    # POSIX permits implementation-defined semantics for //foo. PRoot bind
+    # destinations must have one canonical spelling so overlap checks cannot
+    # be bypassed with repeated slashes, dot segments, or parent segments.
+    normalized = posixpath.normpath("/" + raw.lstrip("/"))
+    if not normalized.startswith("/"):
+        raise ValueError(f"{label} must be absolute: {value}")
+    return normalized
+
+
+def _guest_paths_overlap(left: str, right: str) -> bool:
+    a = _normalize_guest_path(left)
+    b = _normalize_guest_path(right)
+    return a == b or a == "/" or b == "/" or a.startswith(b.rstrip("/") + "/") or b.startswith(a.rstrip("/") + "/")
+
+
+def _managed_env_name(key: str) -> bool:
+    # The DEVTOOL_* namespace is owned by the host-side orchestrator.  Allowing
+    # arbitrary project/config values to populate it lets a guest spoof run,
+    # backend, cache, or recovery identity even when individual variables have
+    # not yet been enumerated here.
+    return (
+        key.startswith("DEVTOOL_")
+        or key in _BLOCKED_ENV_EXACT
+        or any(key.startswith(prefix) for prefix in _BLOCKED_ENV_PREFIXES)
+    )
+
+
 def validate_proot_config(config: ProotRunnerConfig) -> None:
     if not config.distro:
         raise ValueError("PRoot-Distro execution requires --proot-distro DISTRO or [proot].distro.")
     if config.isolated and config.minimal:
         raise ValueError("PRoot-Distro --isolated and --minimal are mutually exclusive.")
-    for value in (config.cwd, config.repo_mount, config.stage_mount, config.cache_mount):
-        if not value.startswith("/"):
-            raise ValueError(f"PRoot guest path must be absolute: {value}")
-    for bind in config.binds:
+    config.cwd = _normalize_guest_path(config.cwd)
+    config.repo_mount = _normalize_guest_path(config.repo_mount)
+    config.stage_mount = _normalize_guest_path(config.stage_mount)
+    config.cache_mount = _normalize_guest_path(config.cache_mount)
+    for index, bind in enumerate(list(config.binds)):
+        if not str(bind).strip():
+            raise ValueError("PRoot bind must have a non-empty source")
         if ":" in bind:
-            _src, dst = bind.rsplit(":", 1)
-            if dst and not dst.startswith("/"):
-                raise ValueError(f"PRoot bind destination must be absolute: {bind}")
+            src, dst = bind.rsplit(":", 1)
+            if not src.strip() or not dst.strip():
+                raise ValueError(f"PRoot bind must have non-empty source and destination: {bind}")
+            config.binds[index] = f"{src}:{_normalize_guest_path(dst, label='PRoot bind destination')}"
     for item in config.env:
         if "=" not in item or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", item):
             raise ValueError(f"PRoot environment entry must be NAME=VALUE: {item}")
         key = item.split("=", 1)[0]
-        if key in _RESERVED_PROOT_ENV or key.startswith((
-            "DEVTOOL_EXECUTION_", "DEVTOOL_PROOT_", "DEVTOOL_INSIDE_", "DEVTOOL_CHROOT_", "DEVTOOL_SSH_"
-        )):
+        controlled_guest_override = key in {"PATH", "PYTHONPATH"}
+        if (
+            (not controlled_guest_override and _managed_env_name(key))
+            or key in _RESERVED_PROOT_ENV
+            or key.startswith((
+                "DEVTOOL_EXECUTION_", "DEVTOOL_PROOT_", "DEVTOOL_INSIDE_", "DEVTOOL_CHROOT_", "DEVTOOL_SSH_"
+            ))
+        ):
             raise ValueError(f"PRoot environment entry overrides a devtool-managed backend variable: {key}")
 
 
@@ -153,9 +196,12 @@ def _parse_bind(value: str) -> tuple[str, str]:
     if ":" in value:
         source, guest = value.rsplit(":", 1)
         resolved = str(Path(source).expanduser().resolve())
-        return resolved, guest
+        return resolved, _normalize_guest_path(guest, label="PRoot bind destination")
     resolved = str(Path(value).expanduser().resolve())
-    return resolved, resolved
+    # A destination omitted by the user is meaningful only when the host path
+    # is itself a valid absolute POSIX path. Canonicalize it independently of
+    # pathlib so guest comparisons are lexical and deterministic.
+    return resolved, _normalize_guest_path(resolved, label="PRoot bind destination")
 
 
 def _is_elf(path: Path) -> bool:
@@ -178,34 +224,69 @@ def _is_termux_prefix_path(value: str) -> bool:
 
 
 def _validate_mapping_conflicts(mappings: list[PathMapping]) -> None:
-    seen: dict[str, str] = {}
+    canonical: list[tuple[str, str]] = []
     for mapping in mappings:
-        guest = mapping.guest.rstrip("/") or "/"
-        host = mapping.host.rstrip("/") or "/"
-        previous = seen.get(guest)
-        if previous is not None and previous != host:
-            raise ValueError(
-                f"PRoot guest destination {guest} is bound from both {previous} and {host}. "
-                "Disable automatic repository binding or choose a distinct --proot-bind destination."
-            )
-        seen[guest] = host
+        guest = _normalize_guest_path(mapping.guest)
+        host = str(Path(mapping.host).expanduser().resolve(strict=False))
+        for previous_guest, previous_host in canonical:
+            if guest == previous_guest and host == previous_host:
+                continue
+            if _guest_paths_overlap(guest, previous_guest):
+                raise ValueError(
+                    f"PRoot guest destinations overlap and would be bound from both {previous_host} and {host}: {previous_guest} / {guest}. "
+                    "Overlapping binds can shadow repository, cache, or stage content; choose disjoint destinations."
+                )
+        canonical.append((guest, host))
+
+
+def _host_paths_overlap(left: Path, right: Path) -> bool:
+    a = left.expanduser().resolve(strict=False)
+    b = right.expanduser().resolve(strict=False)
+    try:
+        a.relative_to(b)
+        return True
+    except ValueError:
+        pass
+    try:
+        b.relative_to(a)
+        return True
+    except ValueError:
+        return False
+
+
+def _mapping_covers_host_path(mapping: PathMapping, path: Path) -> bool:
+    host = Path(mapping.host).expanduser().resolve(strict=False)
+    target = path.expanduser().resolve(strict=False)
+    try:
+        target.relative_to(host)
+        return True
+    except ValueError:
+        return False
 
 
 def _base_mappings(config: ProotRunnerConfig, repo_root: Path) -> list[PathMapping]:
     result: list[PathMapping] = []
+    resolved_repo = repo_root.expanduser().resolve()
     if config.auto_bind_repo:
-        result.append(PathMapping(str(repo_root.resolve()), config.repo_mount))
+        result.append(PathMapping(str(resolved_repo), config.repo_mount))
     for item in config.binds:
         source, guest = _parse_bind(item)
         if not Path(source).exists():
             raise ValueError(f"PRoot bind source does not exist: {source}")
         result.append(PathMapping(source, guest))
     _validate_mapping_conflicts(result)
-    return sorted(result, key=lambda item: len(item.host), reverse=True)
+    if not any(_mapping_covers_host_path(mapping, resolved_repo) for mapping in result):
+        raise ValueError(
+            f"PRoot mappings do not cover the active repository {resolved_repo}. "
+            "Devtool does not support validating an unrelated independent guest checkout; "
+            "enable automatic repository binding or bind the repository explicitly."
+        )
+    return sorted(result, key=lambda item: len(Path(item.host).parts), reverse=True)
 
 
 def _stage_external_file(path: Path, stage: Path, stage_mount: str, *, dry_run: bool = False) -> str:
-    digest = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:12]
+    # Stage identity follows immutable content, not a mutable host pathname.
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
     target = stage / f"{digest}-{path.name}"
     if not dry_run:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -225,15 +306,30 @@ def _translate_path_value(
     expanded = os.path.expanduser(value)
     if not os.path.isabs(expanded):
         return value
-    translated = translate_host_path(expanded, mappings, cwd=cwd)
-    if translated != expanded:
-        return translated
-    candidate = Path(expanded)
+    # Canonicalize a host path before matching it against repository/bind
+    # mappings.  Otherwise /repo/../outside can prefix-match /repo and escape
+    # the guest repository after translation.  ``resolve(strict=False)`` also
+    # resolves existing symlink prefixes without requiring the final path to
+    # exist.
+    canonical = str(Path(expanded).resolve(strict=False))
+    translated = translate_host_path(canonical, mappings, cwd=cwd)
+    if translated != canonical:
+        return _normalize_guest_path(translated, label="translated PRoot guest path")
+    candidate = Path(canonical)
     if candidate.is_file():
+        try:
+            executable = bool(candidate.stat().st_mode & 0o111)
+        except OSError:
+            executable = False
+        if executable:
+            raise ValueError(
+                f"Executable host file is not a typed PRoot data input and will not be staged: {expanded}. "
+                "Install/select the tool inside the guest or bind a guest-compatible tool explicitly."
+            )
         return _stage_external_file(candidate, stage, stage_mount, dry_run=dry_run)
     if candidate.is_dir() or _is_termux_host_path(expanded):
         raise ValueError(
-            f"Absolute host path is not mapped into the PRoot guest: {expanded}. "
+            f"Absolute host path is not mapped into the PRoot guest: {canonical}. "
             "Add --proot-bind HOST:GUEST or use a guest-native path via --proot-env/configuration."
         )
     # A path such as /usr/bin/python3 may intentionally name a guest-only path
@@ -376,7 +472,7 @@ def _guest_env(
     merged_env.update(spec.env)
     for key, value in sorted(merged_env.items()):
         if (
-            any(key == prefix or key.startswith(prefix) for prefix in _BLOCKED_PREFIXES)
+            _managed_env_name(key)
             or key in _RESERVED_PROOT_ENV
             or key.startswith(("DEVTOOL_EXECUTION_", "DEVTOOL_PROOT_", "DEVTOOL_INSIDE_"))
         ):
@@ -411,19 +507,39 @@ def wrap_specs_for_proot_distro(
         if config.distro not in names:
             installed = ", ".join(names) if names else "none"
             raise ValueError(f"PRoot-Distro container '{config.distro}' is not installed (installed: {installed}).")
-    stage_root = Path(config.stage_dir).expanduser() / f"{config.distro}-{os.getpid()}"
+    stage_root = Path(config.stage_dir).expanduser() / f"{config.distro}-{os.getpid()}-{uuid.uuid4().hex[:12]}"
     created_stage = False
     try:
         cache_root = Path(config.cache_dir).expanduser() / config.distro
-        if not dry_run:
-            stage_root.mkdir(parents=True, exist_ok=True)
-            cache_root.mkdir(parents=True, exist_ok=True)
-            created_stage = True
+        # Validate every mapping/overlap boundary before creating a managed
+        # directory. Invalid isolation configuration is therefore zero-mutation.
         mappings = _base_mappings(config, repo_root)
-        stage_mapping = PathMapping(str(stage_root.resolve()), config.stage_mount)
-        cache_mapping = PathMapping(str(cache_root.resolve()), config.cache_mount)
+        resolved_stage = stage_root.resolve(strict=False)
+        resolved_cache = cache_root.resolve(strict=False)
+        if _host_paths_overlap(resolved_stage, resolved_cache):
+            raise ValueError("PRoot managed stage and cache directories must be disjoint")
+        # Managed stage/cache roots must not alias any ordinary bind, especially
+        # the repository bind.  If they overlap, the guest can reach the same
+        # managed bytes through two names and mutate/retain them outside the
+        # lifecycle Devtool controls.
+        for mapping in mappings:
+            mapped_host = Path(mapping.host).expanduser().resolve(strict=False)
+            if _host_paths_overlap(resolved_stage, mapped_host):
+                raise ValueError(
+                    f"PRoot managed stage directory overlaps a bound host path: {resolved_stage} / {mapped_host}"
+                )
+            if _host_paths_overlap(resolved_cache, mapped_host):
+                raise ValueError(
+                    f"PRoot managed cache directory overlaps a bound host path: {resolved_cache} / {mapped_host}"
+                )
+        stage_mapping = PathMapping(str(resolved_stage), config.stage_mount)
+        cache_mapping = PathMapping(str(resolved_cache), config.cache_mount)
         _validate_mapping_conflicts([*mappings, stage_mapping, cache_mapping])
         mappings.extend([stage_mapping, cache_mapping])
+        if not dry_run:
+            stage_root.mkdir(parents=True, exist_ok=True)
+            created_stage = True
+            cache_root.mkdir(parents=True, exist_ok=True)
         bind_pairs = [(item.host, item.guest) for item in mappings]
         helper_pythonpath = _needs_devtool_python_helper(specs)
         if helper_pythonpath:
@@ -479,16 +595,28 @@ def wrap_specs_for_proot_distro(
             })
             wrapped.append(replace(spec, argv=command, cwd=str(repo_root), env={}, metadata=metadata))
         return wrapped
-    except Exception:
+    except Exception as exc:
         if created_stage:
-            shutil.rmtree(stage_root, ignore_errors=True)
+            try:
+                shutil.rmtree(stage_root)
+            except FileNotFoundError:
+                pass
+            except OSError as cleanup_exc:
+                note = f"PRoot staging retained at {stage_root}: cleanup failed during setup: {cleanup_exc}"
+                if hasattr(exc, "add_note"):
+                    exc.add_note(note)
         raise
 
 
-def cleanup_proot_staging(specs: Iterable[CommandSpec]) -> None:
-    """Remove host-owned PRoot helper staging after the command plan completes."""
+def cleanup_proot_staging(specs: Iterable[CommandSpec], *, retain: bool = False) -> list[str]:
+    """Remove completed host-owned staging and report anything retained.
+
+    Cleanup is intentionally truthful: a failed removal is not presented as
+    success. The retained directory remains available for manual recovery.
+    """
 
     seen: set[str] = set()
+    warnings: list[str] = []
     for spec in specs:
         if not bool(spec.metadata.get("proot_stage_owned")):
             continue
@@ -496,4 +624,20 @@ def cleanup_proot_staging(specs: Iterable[CommandSpec]) -> None:
         if not raw or raw in seen:
             continue
         seen.add(raw)
-        shutil.rmtree(Path(raw), ignore_errors=True)
+        path = Path(raw)
+        if retain:
+            if path.exists():
+                warnings.append(
+                    f"PRoot staging retained at {path}: execution did not complete successfully"
+                )
+            continue
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            warnings.append(f"PRoot staging retained at {path}: cleanup failed: {exc}")
+            continue
+        if path.exists():
+            warnings.append(f"PRoot staging retained at {path}: cleanup could not be verified")
+    return warnings
