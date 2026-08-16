@@ -90,10 +90,15 @@ final class TaskerProtocol {
             String serviceClass = completion.getStringExtra(EXTRA_CALL_SERVICE);
             boolean foreground = completion.getBooleanExtra(EXTRA_CALL_SERVICE_FOREGROUND, false);
             if (servicePackage != null && serviceClass != null) {
+                if (!TaskerAuthorization.isTrustedPackage(servicePackage)) return false;
                 completion.setComponent(new ComponentName(servicePackage, serviceClass));
                 if (foreground) context.startForegroundService(completion);
                 else context.startService(completion);
             } else {
+                ComponentName component = completion.getComponent();
+                String packageName = component == null ? completion.getPackage() : component.getPackageName();
+                if (packageName != null && !TaskerAuthorization.isTrustedPackage(packageName)) return false;
+                if (packageName == null) completion.setPackage("net.dinglisch.android.taskerm");
                 context.sendBroadcast(completion);
             }
             return true;

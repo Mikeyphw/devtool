@@ -17,6 +17,7 @@ public final class TaskerPluginReceiver extends BroadcastReceiver {
             failImmediately("Tasker action bundle could not be read. Open and save it again in Tasker.");
             return;
         }
+        if (config != null) config.setClassLoader(TaskerPluginReceiver.class.getClassLoader());
         if (config == null || !TaskerAuthorization.matches(context,
                 config.getString(TaskerProtocol.KEY_AUTH_TOKEN, ""))) {
             failImmediately("Tasker action is not authorized. Open and save it again in Tasker.");

@@ -1,11 +1,13 @@
 package io.github.mikeceead.devtoolhud;
 
+import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.os.Build;
 import android.os.SystemClock;
@@ -53,10 +55,11 @@ final class NotificationController {
     NotificationController(Context context) {
         this.context = context.getApplicationContext();
         this.manager = context.getSystemService(NotificationManager.class);
-        ensureChannel();
+        if (manager != null) ensureChannel();
     }
 
     void post(HudUpdate update) {
+        if (manager == null || update == null || !notificationsAllowed()) return;
         boolean largeText = context.getResources().getConfiguration().fontScale >= 1.3f;
         RemoteViews compact = new RemoteViews(context.getPackageName(), R.layout.notification_devtool_compact);
         RemoteViews expanded = new RemoteViews(context.getPackageName(), largeText
@@ -104,9 +107,9 @@ final class NotificationController {
     }
 
     void cancel(String runId) {
-        if (runId == null || runId.trim().isEmpty()) return;
+        if (manager == null || runId == null || runId.trim().isEmpty()) return;
         manager.cancel(notificationId(runId));
-        refreshGroupSummary();
+        if (notificationsAllowed()) refreshGroupSummary();
     }
 
     private void bindHeader(RemoteViews views, HudUpdate update, boolean expanded) {
@@ -399,6 +402,7 @@ final class NotificationController {
     }
 
     private void refreshGroupSummary() {
+        if (manager == null || !notificationsAllowed()) return;
         List<RunRecord> active = RunStore.activeAll(context);
         ValidationSessionRecord validation = ValidationStore.active(context);
         boolean liveValidation = validation != null && !validation.terminal() && !validation.validated();
@@ -444,6 +448,11 @@ final class NotificationController {
 
     static int notificationId(String runId) {
         return RunIdentity.notificationId(runId);
+    }
+
+    private boolean notificationsAllowed() {
+        return Build.VERSION.SDK_INT < 33
+                || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
     }
 
     private void ensureChannel() {

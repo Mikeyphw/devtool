@@ -18,7 +18,10 @@ final class TaskerAuthorization {
 
     static boolean isTrustedEditor(ComponentName caller) {
         if (caller == null) return false;
-        String packageName = caller.getPackageName();
+        return isTrustedPackage(caller.getPackageName());
+    }
+
+    static boolean isTrustedPackage(String packageName) {
         return TASKER.equals(packageName) || TASKER_LEGACY.equals(packageName);
     }
 

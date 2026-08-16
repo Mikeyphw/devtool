@@ -125,6 +125,9 @@ final class RepositoryStore {
         DevtoolDatabase database = DevtoolDatabase.get(app);
         RepositoryRecord record = find(app, id);
         if (record == null) return null;
+        RepositoryPathResolution.RepairAction authorized = RepositoryPathResolver.findAction(record, action.actionId);
+        if (authorized == null || !authorized.kind.equals(action.kind)) return null;
+        action = authorized;
         RepositoryRecord repaired = copy(record);
         RepositoryLocation location = action.location();
         String oldId = repaired.repositoryId;
