@@ -3,7 +3,6 @@ package io.github.mikeceead.devtoolhud;
 import android.app.IntentService;
 import android.content.Intent;
 import android.os.Bundle;
-import android.util.Log;
 
 public final class TermuxResultService extends IntentService {
     static final String EXTRA_EXECUTION_ID = "execution_id";
@@ -105,7 +104,7 @@ public final class TermuxResultService extends IntentService {
                 "RunCommand result delivered",
                 DebugRecorder.details("execution_id", executionId, "exit_code", exitCode,
                         "stdout_chars", stdout.length(), "stderr_chars", stderr.length(), "error", error));
-        Log.i(TAG, "Execution " + executionId + " run=" + runId + " finished with exit code " + exitCode);
+        AndroidPrivacyLog.info(TAG, "Execution " + executionId + " run=" + runId + " finished with exit code " + exitCode);
         RunStore.appendDiagnostic(this, runId, "RunCommand result delivered: exit=" + exitCode
                 + " stdout=" + stdout.length() + " chars stderr=" + stderr.length() + " chars");
         HudUpdate completed = HudUpdate.commandFinished(runId, exitCode, stdout, stderr, error, overlay);

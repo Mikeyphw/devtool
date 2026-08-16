@@ -8,7 +8,6 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 
 import java.security.SecureRandom;
 
@@ -152,7 +151,7 @@ final class TermuxCommandRunner {
             RunCommandTrace.record(context, RunCommandTrace.TERMUX_RUNCOMMAND_ACCEPTED, "TermuxCommandRunner",
                     runId, "Termux RUN_COMMAND service accepted request",
                     DebugRecorder.details("workdir", normalizedWorkdir, "background", background, "shell", shell));
-            Log.i(TAG, "RunCommand accepted run=" + runId + " mode=" + (background ? "background" : "foreground")
+            AndroidPrivacyLog.info(TAG, "RunCommand accepted run=" + runId + " mode=" + (background ? "background" : "foreground")
                     + " shell=" + shell + " workdir=" + normalizedWorkdir);
             if (!background && (bridgeOperation == null || bridgeOperation.isEmpty()
                     || bridgeOperation.equals("repository-shell"))) {
@@ -174,7 +173,7 @@ final class TermuxCommandRunner {
             DebugRecorder.error(context, category, "TERMUX_INTENT_FAILED", "TermuxCommandRunner",
                     runId, "", "", "", message,
                     DebugRecorder.details("workdir", normalizedWorkdir, "background", background, "shell", shell));
-            Log.e(TAG, "Could not start RunCommand run=" + runId, error);
+            AndroidPrivacyLog.error(TAG, "Could not start RunCommand run=" + runId, error);
             return new LaunchResult(false, executionId, message);
         }
     }
@@ -192,7 +191,7 @@ final class TermuxCommandRunner {
             context.startActivity(launch);
             return true;
         } catch (RuntimeException error) {
-            Log.w(TAG, "Could not bring Termux to foreground", error);
+            AndroidPrivacyLog.warn(TAG, "Could not bring Termux to foreground", error);
             return false;
         }
     }

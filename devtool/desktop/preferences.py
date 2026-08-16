@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -9,6 +10,17 @@ from typing import Any, Mapping
 
 def config_home() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config").expanduser()
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 @dataclass(slots=True)
@@ -91,7 +103,27 @@ class DesktopPreferences:
     def save(self, app_slug: str) -> Path:
         path = preferences_path(app_slug)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.as_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        payload = json.dumps(self.as_dict(), ensure_ascii=False, indent=2) + "\n"
+        tmp_name = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=path.parent,
+                prefix=f".{path.name}.", suffix=".tmp", delete=False,
+            ) as handle:
+                tmp_name = handle.name
+                os.chmod(tmp_name, 0o600)
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, path)
+            os.chmod(path, 0o600)
+            _fsync_directory(path.parent)
+        finally:
+            if tmp_name:
+                try:
+                    Path(tmp_name).unlink(missing_ok=True)
+                except Exception:
+                    pass
         return path
 
 

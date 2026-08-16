@@ -3,10 +3,47 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_json_atomic(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    tmp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            tmp_name = handle.name
+            os.chmod(tmp_name, 0o600)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+        os.chmod(path, 0o600)
+        _fsync_directory(path.parent)
+    finally:
+        if tmp_name:
+            try:
+                Path(tmp_name).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 def _desktop_state_dir() -> Path:
     explicit = str(os.environ.get("DEVTOOL_DESKTOP_STATE_DIR", "") or "").strip()
@@ -60,7 +97,7 @@ class DesktopRepositoryStore:
             "dirty": summary.dirty,
             "remembered_at": _timestamp(),
         })
-        path.write_text(json.dumps(entries[:50], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _write_json_atomic(path, entries[:50])
         return path
 
     def git_status(self) -> str:

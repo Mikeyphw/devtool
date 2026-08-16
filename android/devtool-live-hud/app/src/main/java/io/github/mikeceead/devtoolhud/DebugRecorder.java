@@ -2,7 +2,6 @@ package io.github.mikeceead.devtoolhud;
 
 import android.content.Context;
 import android.content.Intent;
-import android.util.Log;
 
 import org.json.JSONObject;
 
@@ -68,7 +67,7 @@ final class DebugRecorder {
                     .putExtra("fingerprint", event.fingerprint)
                     .putExtra("category", event.category));
         } catch (RuntimeException failure) {
-            Log.w(TAG, "Unable to persist debug event " + event.eventType, failure);
+            AndroidPrivacyLog.warn(TAG, "Unable to persist debug event " + event.eventType, failure);
         }
     }
 

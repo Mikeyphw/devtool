@@ -6,6 +6,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -19,6 +20,42 @@ from .gtk_runtime import append_gtk_log, install_exception_hooks, install_gtk_th
 from .preferences import DesktopPreferences
 from .run_process import DesktopRunHandle, DesktopRunLauncher
 
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_write_json(path: Path, payload: object, *, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    tmp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            tmp_name = handle.name
+            os.chmod(tmp_name, mode)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+        os.chmod(path, mode)
+        _fsync_directory(path.parent)
+    finally:
+        if tmp_name:
+            try:
+                Path(tmp_name).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 def _has_display() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
@@ -2299,7 +2336,7 @@ def _write_desktop_run_hud_failure(payload: dict[str, Any], handle: DesktopRunHa
                 "log_path": str(handle.log_path),
             },
         }
-        (directory / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_json(directory / "state.json", state)
         with (directory / "events.jsonl").open("a", encoding="utf-8") as events:
             events.write(json.dumps({"run_id": handle.run_id, "event_type": "desktop-run-failed", "status": "failed", "message": state["text"], "diagnostics": diagnostics}, ensure_ascii=False) + "\n")
     except Exception as exc:

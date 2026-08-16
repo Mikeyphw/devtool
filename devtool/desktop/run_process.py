@@ -20,6 +20,21 @@ ExitCallback = Callable[["DesktopRunHandle"], None]
 _PHASE_RE = re.compile(r"\b(?:phase|stage|task)\s*[:=]\s*(?P<name>[^\r\n]{1,120})", re.IGNORECASE)
 _ERROR_RE = re.compile(r"\b(error|failed|failure|exception|traceback)\b", re.IGNORECASE)
 _WARNING_RE = re.compile(r"\b(warning|warn)\b", re.IGNORECASE)
+MAX_OUTPUT_LINES = 400
+MAX_CHANNEL_LINES = 200
+MAX_DIAGNOSTICS = 80
+MAX_LOG_LINE_CHARS = 2_000
+
+
+def _bounded_append(values: list[Any], value: Any, limit: int) -> None:
+    values.append(value)
+    overflow = len(values) - max(0, limit)
+    if overflow > 0:
+        del values[:overflow]
+
+
+def _trim_log_line(line: str) -> str:
+    return line if len(line) <= MAX_LOG_LINE_CHARS else line[:MAX_LOG_LINE_CHARS] + "…<truncated>"
 
 
 @dataclass(slots=True)
@@ -160,8 +175,9 @@ class DesktopRunLauncher:
                     finished_readers += 1
                     continue
                 channel, line = item
-                self._record_output(handle, channel, line)
-                self._notify_output(on_output, channel, line)
+                clean_line = _trim_log_line(line)
+                self._record_output(handle, channel, clean_line)
+                self._notify_output(on_output, channel, clean_line)
             handle.returncode = handle.process.wait()
             handle.ended_at = time.time()
             handle.status = "completed" if handle.returncode == 0 else "failed"
@@ -172,20 +188,21 @@ class DesktopRunLauncher:
                 on_exit(handle)
 
     def _record_output(self, handle: DesktopRunHandle, channel: str, line: str) -> None:
-        entry = f"[{channel}] {line}"
-        handle.output_lines.append(entry)
+        clean_line = _trim_log_line(line)
+        entry = f"[{channel}] {clean_line}"
+        _bounded_append(handle.output_lines, entry, MAX_OUTPUT_LINES)
         if channel == "stderr":
-            handle.stderr_lines.append(line)
+            _bounded_append(handle.stderr_lines, clean_line, MAX_CHANNEL_LINES)
         else:
-            handle.stdout_lines.append(line)
-        phase_match = _PHASE_RE.search(line)
+            _bounded_append(handle.stdout_lines, clean_line, MAX_CHANNEL_LINES)
+        phase_match = _PHASE_RE.search(clean_line)
         if phase_match:
             handle.current_phase = phase_match.group("name").strip()
-        severity = "error" if _ERROR_RE.search(line) else "warning" if _WARNING_RE.search(line) else ""
+        severity = "error" if _ERROR_RE.search(clean_line) else "warning" if _WARNING_RE.search(clean_line) else ""
         if severity:
-            diagnostic = {"severity": severity, "message": line[:500], "source": channel}
+            diagnostic = {"severity": severity, "message": clean_line[:500], "source": channel}
             if diagnostic not in handle.diagnostics:
-                handle.diagnostics.append(diagnostic)
+                _bounded_append(handle.diagnostics, diagnostic, MAX_DIAGNOSTICS)
         with handle.log_path.open("a", encoding="utf-8") as log:
             log.write(entry + "\n")
 

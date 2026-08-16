@@ -42,6 +42,13 @@ if "$delete_after_install" && ! "$install_after_build"; then
   exit 2
 fi
 
+valid_deb_version() { [[ "$1" =~ ^[A-Za-z0-9.+:~_-]+$ ]]; }
+valid_deb_arch() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]]; }
+
+valid_deb_version "$version" || { printf 'error: VERSION contains characters unsafe for Debian metadata: %s\n' "$version" >&2; exit 2; }
+valid_deb_arch "$arch" || { printf 'error: ARCH contains characters unsafe for Debian metadata: %s\n' "$arch" >&2; exit 2; }
+case "$version$arch" in *$'\n'*|*$'\r'*|*/*|*'\\'*) printf 'error: package metadata must not contain path or newline separators\n' >&2; exit 2 ;; esac
+
 stage=$(mktemp -d "${TMPDIR:-/tmp}/devtool-control-center-deb.XXXXXX")
 trap '"$rm_bin" -rf "$stage"' EXIT
 mkdir -p "$out"

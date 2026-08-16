@@ -5,7 +5,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
-import android.util.Log;
 
 import java.net.URISyntaxException;
 
@@ -103,7 +102,7 @@ final class TaskerProtocol {
             }
             return true;
         } catch (URISyntaxException | RuntimeException error) {
-            Log.e(TAG, "Unable to return Tasker plug-in result", error);
+            AndroidPrivacyLog.error(TAG, "Unable to return Tasker plug-in result", error);
             return false;
         }
     }

@@ -30,8 +30,11 @@ import java.util.Locale;
 
 /** Central cockpit for Phase 34-44 debug evidence and guided fixes. */
 public final class DebugWorkbenchActivity extends Activity {
+    private static final String STATE_SCROLL_Y = "debug_workbench_scroll_y";
     private UiKit ui;
     private boolean receiverRegistered;
+    private ScrollView activeScroll;
+    private int pendingScrollY;
 
     private final BroadcastReceiver updates = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { rebuildUi(); }
@@ -40,7 +43,14 @@ public final class DebugWorkbenchActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (state != null) pendingScrollY = Math.max(0, state.getInt(STATE_SCROLL_Y, 0));
         rebuildUi();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt(STATE_SCROLL_Y, activeScroll == null ? pendingScrollY : activeScroll.getScrollY());
     }
 
     @Override
@@ -74,10 +84,19 @@ public final class DebugWorkbenchActivity extends Activity {
     }
 
     private void rebuildUi() {
+        if (activeScroll != null) pendingScrollY = activeScroll.getScrollY();
         ui = new UiKit(this);
         getWindow().setStatusBarColor(ui.palette.background);
         getWindow().setNavigationBarColor(ui.palette.background);
-        setContentView(buildRoot());
+        activeScroll = (ScrollView) buildRoot();
+        setContentView(activeScroll);
+        restoreScrollPosition();
+    }
+
+    private void restoreScrollPosition() {
+        if (activeScroll == null || pendingScrollY <= 0) return;
+        final int scrollY = pendingScrollY;
+        activeScroll.post(() -> activeScroll.scrollTo(0, scrollY));
     }
 
     private View buildRoot() {

@@ -3,7 +3,6 @@ package io.github.mikeceead.devtoolhud;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.util.Log;
 import android.widget.Toast;
 
 public final class BridgeReceiver extends BroadcastReceiver {
@@ -20,7 +19,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
             DebugRecorder.warning(context, "bridge", "BRIDGE_TOKEN_REJECTED", "BridgeReceiver",
                     runId, "", "", "", "Rejected update with an invalid bridge token",
                     DebugRecorder.details("action", action));
-            Log.w(TAG, "Rejected update with an invalid bridge token");
+            AndroidPrivacyLog.warn(TAG, "Rejected update with an invalid bridge token");
             respond(BridgeProtocol.RESULT_TOKEN_REJECTED, "invalid-token");
             return;
         }
@@ -32,7 +31,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
             DebugRecorder.warning(context, "bridge", "BRIDGE_PROTOCOL_REJECTED", "BridgeReceiver",
                     runId, "", "", "", "Rejected unsupported bridge protocol",
                     DebugRecorder.details("action", action, "protocol_version", protocolVersion));
-            Log.w(TAG, "Rejected unsupported bridge protocol " + protocolVersion);
+            AndroidPrivacyLog.warn(TAG, "Rejected unsupported bridge protocol " + protocolVersion);
             respond(BridgeProtocol.RESULT_PROTOCOL_REJECTED, "unsupported-protocol");
             return;
         }
@@ -41,7 +40,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
             DebugRecorder.warning(context, "bridge", "BRIDGE_ACTION_REJECTED", "BridgeReceiver",
                     runId, "", "", "", "Rejected bridge update with unexpected action",
                     DebugRecorder.details("action", action));
-            Log.w(TAG, "Rejected bridge update with unexpected action " + action);
+            AndroidPrivacyLog.warn(TAG, "Rejected bridge update with unexpected action " + action);
             respond(BridgeProtocol.RESULT_ACTION_REJECTED, "unknown-action");
             return;
         }
@@ -54,7 +53,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
             DebugRecorder.warning(context, "bridge", "BRIDGE_RUN_ID_MISSING", "BridgeReceiver",
                     "", "", "", "", "Rejected bridge update without a run id",
                     DebugRecorder.details("action", action));
-            Log.w(TAG, "Rejected bridge update without a run id");
+            AndroidPrivacyLog.warn(TAG, "Rejected bridge update without a run id");
             respond(BridgeProtocol.RESULT_RUN_ID_MISSING, "missing-run-id");
             return;
         }
@@ -62,7 +61,7 @@ public final class BridgeReceiver extends BroadcastReceiver {
             DebugRecorder.info(context, "bridge", "BRIDGE_UPDATE_STALE", "BridgeReceiver",
                     runId, "", "", "", "Ignored stale or out-of-order update",
                     DebugRecorder.details("action", action, "sequence", intent.getLongExtra("sequence", 0L)));
-            Log.d(TAG, "Ignored stale or out-of-order update for run " + runId);
+            AndroidPrivacyLog.debug(TAG, "Ignored stale or out-of-order update for run " + runId);
             respond(BridgeProtocol.RESULT_IGNORED_STALE, "stale-update");
             return;
         }

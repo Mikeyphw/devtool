@@ -39,11 +39,15 @@ import java.util.Map;
 public final class RepositoryDetailActivity extends Activity {
     static final String EXTRA_REPOSITORY_ID = "repository_id";
     static final String EXTRA_TAB = "repository_tab";
+    private static final String STATE_TAB = "repository_detail_tab";
+    private static final String STATE_SCROLL_Y = "repository_detail_scroll_y";
     private UiKit ui;
     private String repositoryId = "";
     private int tab;
     private boolean registered;
     private long lastWorkspaceRefresh;
+    private ScrollView activeScroll;
+    private int pendingScrollY;
     private final Handler queueTickerHandler = new Handler(Looper.getMainLooper());
     private final Runnable queueTicker = new Runnable() {
         @Override public void run() {
@@ -72,9 +76,19 @@ public final class RepositoryDetailActivity extends Activity {
         repositoryId = getIntent().getStringExtra(EXTRA_REPOSITORY_ID);
         if (repositoryId == null) repositoryId = "";
         tab = Math.max(0, Math.min(7, getIntent().getIntExtra(EXTRA_TAB, 0)));
+        if (state != null) {
+            tab = Math.max(0, Math.min(7, state.getInt(STATE_TAB, tab)));
+            pendingScrollY = Math.max(0, state.getInt(STATE_SCROLL_Y, 0));
+        }
         RepositoryWorkspaceStore.initialize(this);
         rebuild();
         refreshWorkspace(false);
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt(STATE_TAB, tab);
+        outState.putInt(STATE_SCROLL_Y, activeScroll == null ? pendingScrollY : activeScroll.getScrollY());
     }
 
     @Override @SuppressLint("UnspecifiedRegisterReceiverFlag") protected void onStart() {
@@ -109,10 +123,19 @@ public final class RepositoryDetailActivity extends Activity {
     }
 
     private void rebuild() {
+        if (activeScroll != null) pendingScrollY = activeScroll.getScrollY();
         ui = new UiKit(this);
         getWindow().setStatusBarColor(ui.palette.background);
         getWindow().setNavigationBarColor(ui.palette.background);
+        activeScroll = null;
         setContentView(build(RepositoryStore.find(this, repositoryId)));
+        restoreScrollPosition();
+    }
+
+    private void restoreScrollPosition() {
+        if (activeScroll == null || pendingScrollY <= 0) return;
+        final int scrollY = pendingScrollY;
+        activeScroll.post(() -> activeScroll.scrollTo(0, scrollY));
     }
 
     private View build(RepositoryRecord repository) {
@@ -201,6 +224,7 @@ public final class RepositoryDetailActivity extends Activity {
         }
 
         ScrollView scroll = new ScrollView(this);
+        activeScroll = scroll;
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(ui.contentHorizontalPadding(), ui.dp(2), ui.contentHorizontalPadding(), ui.dp(26));
