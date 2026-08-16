@@ -474,6 +474,59 @@ def _is_dotnet_test_command(argv: list[str], command_name: str = "") -> bool:
     return False
 
 
+def _metadata_flag(metadata: dict, *names: str) -> bool:
+    for name in names:
+        value = metadata.get(name)
+        if isinstance(value, bool):
+            if value:
+                return True
+            continue
+        if isinstance(value, (int, float)) and value:
+            return True
+        if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "on"}:
+            return True
+    return False
+
+
+def _is_dotnet_test_command_sequence(argv: Sequence[str], command_name: str = "") -> bool:
+    return _is_dotnet_test_command([str(value) for value in argv], command_name)
+
+
+def _trust_successful_stdout_diagnostics(argv: Sequence[str], command_name: str, metadata: dict) -> bool:
+    """Return true when exit-0 stdout diagnostics may fail a command.
+
+    Process exit status is the authoritative boundary for generic commands.
+    Tests and build fixtures can intentionally print compiler, lint, Gradle,
+    xUnit, or generic error-looking examples while still succeeding. Devtool
+    should not turn captured text into a false failure unless the command
+    explicitly opts into fatal stdout diagnostics, or it is a known runner
+    whose stdout summary can be authoritative despite a hung or forced process
+    boundary. Structured report parsers are handled separately and remain
+    authoritative.
+    """
+
+    if _metadata_flag(metadata, "trust_stdout_diagnostics", "fail_on_stdout_diagnostics"):
+        return True
+    # Dotnet/vstest can emit a final failed summary before a hang/forced
+    # completion path; retain that narrow stdout contract.
+    if _is_dotnet_test_command_sequence(argv, command_name):
+        return True
+    return False
+
+
+def _filter_successful_stdout_diagnostics(issues: Sequence[Issue], *, trust_stdout_diagnostics: bool) -> tuple[list[Issue], int]:
+    if trust_stdout_diagnostics:
+        return list(issues), 0
+    kept: list[Issue] = []
+    suppressed = 0
+    for issue in issues:
+        if str(issue.severity or "").lower() in {"warning", "error"}:
+            suppressed += 1
+            continue
+        kept.append(issue)
+    return kept, suppressed
+
+
 def _test_completion_grace_for(argv: list[str], command_name: str) -> float | None:
     if not _is_dotnet_test_command(argv, command_name):
         return None
@@ -1591,8 +1644,22 @@ def run_specs(
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
         process_output = output
         duration = time.perf_counter() - started
-        issues = parse_issues(config.repo_root, spec.name, output)
         result_metadata = dict(spec.metadata)
+        command_issues = parse_issues(config.repo_root, spec.name, output)
+        suppressed_stdout_diagnostics = 0
+        if returncode == 0:
+            command_issues, suppressed_stdout_diagnostics = _filter_successful_stdout_diagnostics(
+                command_issues,
+                trust_stdout_diagnostics=_trust_successful_stdout_diagnostics(
+                    effective_argv,
+                    spec.name,
+                    result_metadata,
+                ),
+            )
+        issues = command_issues
+        if suppressed_stdout_diagnostics:
+            result_metadata["suppressed_stdout_diagnostics"] = suppressed_stdout_diagnostics
+            result_metadata["suppressed_stdout_diagnostics_reason"] = "successful process boundary captured non-authoritative stdout diagnostics"
         configured_report_parsers = result_metadata.get("report_parsers")
         if isinstance(configured_report_parsers, (list, tuple)):
             report_parsers = [str(value).strip() for value in configured_report_parsers if str(value).strip()]

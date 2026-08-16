@@ -121,8 +121,51 @@ def test_run_specs_promotes_parsed_error_diagnostics_to_failure(tmp_path: Path) 
         encoding="utf-8",
     )
     config = ProjectConfig(kind="generic", repo_root=tmp_path)
-    results, raw = run_specs(config, [CommandSpec("test", [sys.executable, str(script)])], verbose=False)
+    spec = CommandSpec(
+        "test",
+        [sys.executable, str(script)],
+        metadata={"trust_stdout_diagnostics": True},
+    )
+    results, raw = run_specs(config, [spec], verbose=False)
     assert results[0].returncode == 1
     assert results[0].failure_kind == "test_failure"
     assert results[0].issues[0].code == "XUNIT"
+    assert "detected error diagnostics" in raw
+
+
+def test_run_specs_does_not_promote_successful_captured_stdout_diagnostics_for_generic_commands(tmp_path: Path) -> None:
+    script = tmp_path / "emit_fixture_text.py"
+    script.write_text(
+        "print('x.py:1:1: F821 undefined name')\n"
+        "print('src/a.py:1:1: error: fixture text only')\n"
+        "print('e: file:///tmp/Demo.kt: (7, 12): Kotlin fixture text')\n"
+        "print('> Task :app:testDebugUnitTest FAILED')\n"
+        "print('  Failed Example.Tests.Case [3 ms]')\n"
+        "print('  Error Message:')\n"
+        "print('   Assert.Equal() Failure: fixture text only')\n",
+        encoding="utf-8",
+    )
+    config = ProjectConfig(kind="generic", repo_root=tmp_path)
+    results, raw = run_specs(config, [CommandSpec("build", [sys.executable, str(script)])], verbose=False)
+    assert results[0].returncode == 0
+    assert results[0].failure_kind == ""
+    assert not [issue for issue in results[0].issues if issue.severity in {"warning", "error"}]
+    assert results[0].metadata["suppressed_stdout_diagnostics"] >= 4
+    assert "successful process boundary" in results[0].metadata["suppressed_stdout_diagnostics_reason"]
+    assert "detected error diagnostics" not in raw
+
+
+def test_run_specs_can_opt_in_to_fatal_successful_stdout_diagnostics(tmp_path: Path) -> None:
+    script = tmp_path / "emit_real_diagnostic.py"
+    script.write_text("print('x.py:1:1: F821 undefined name')\n", encoding="utf-8")
+    config = ProjectConfig(kind="generic", repo_root=tmp_path)
+    spec = CommandSpec(
+        "build",
+        [sys.executable, str(script)],
+        metadata={"trust_stdout_diagnostics": True},
+    )
+    results, raw = run_specs(config, [spec], verbose=False)
+    assert results[0].returncode == 1
+    assert results[0].failure_kind in {"compile_failure", "unknown_failure"}
+    assert any(issue.code == "F821" for issue in results[0].issues)
     assert "detected error diagnostics" in raw

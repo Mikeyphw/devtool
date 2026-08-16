@@ -217,14 +217,20 @@ def test_successful_generic_error_text_does_not_override_exit_zero(tmp_path: Pat
     spec = CommandSpec("build", [sys.executable, "-c", "print('error: cache probe miss but recovered')"], cwd=str(tmp_path))
     results, _ = run_specs(config, [spec], verbose=False)
     assert results[0].returncode == 0
-    assert any(issue.code == "GENERIC" for issue in results[0].issues)
+    assert not [issue for issue in results[0].issues if issue.severity in {"warning", "error"}]
+    assert results[0].metadata["suppressed_stdout_diagnostics"] == 1
     assert "error: cache probe miss but recovered" in capsys.readouterr().out
 
 
 def test_postprocess_failure_and_partial_success_publish_authoritative_final_progress(tmp_path: Path) -> None:
     config = ProjectConfig(repo_root=tmp_path, kind="python")
     events: list[dict] = []
-    bad = CommandSpec("build", [sys.executable, "-c", "print('x.py:1:1: F821 undefined name')"], cwd=str(tmp_path))
+    bad = CommandSpec(
+        "build",
+        [sys.executable, "-c", "print('x.py:1:1: F821 undefined name')"],
+        cwd=str(tmp_path),
+        metadata={"trust_stdout_diagnostics": True},
+    )
     results, _ = run_specs(config, [bad], verbose=False, progress_callback=events.append)
     assert results[0].returncode == 1
     assert events[-1]["final"] is True and events[-1]["returncode"] == 1 and events[-1]["errors"] >= 1
@@ -243,6 +249,7 @@ def test_final_progress_publishes_typed_warning_and_error_counts(tmp_path: Path)
         "build",
         [sys.executable, "-c", "print('src/a.py:2:1: warning: fallback used [warn-code]'); print('src/a.py:1:1: error: boom')"],
         cwd=str(tmp_path),
+        metadata={"trust_stdout_diagnostics": True},
     )
     results, _ = run_specs(config, [spec], verbose=False, progress_callback=events.append)
     assert results[0].returncode == 1

@@ -1026,36 +1026,39 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
         return None
 
-    def _warning_details() -> tuple[list[str], int]:
-        """Extract useful, deduplicated warnings from structured issues or output."""
-
-        warning_lines: list[str] = []
+    def _dedupe_detail_lines(lines: list[str]) -> list[str]:
+        deduped: list[str] = []
         seen: set[str] = set()
-
-        def _add_warning(text: str) -> None:
-            cleaned = _re.sub(r"\s+", " ", str(text or "")).strip()
+        for line in lines:
+            cleaned = _re.sub(r"\s+", " ", str(line or "")).strip()
             if not cleaned:
-                return
+                continue
             key = cleaned.casefold()
             if key in seen:
-                return
+                continue
             seen.add(key)
-            warning_lines.append(cleaned)
+            deduped.append(cleaned)
+        return deduped
 
-        def _format_issue_warning(issue: dict) -> str:
-            code = str(issue.get("code") or "").strip()
-            message = str(issue.get("message") or "").strip()
-            file_text = str(issue.get("file") or "").strip()
-            line = issue.get("line")
-            location = ""
-            if file_text and file_text != "-":
-                location = file_text
-                if line not in {None, ""}:
-                    location += f":{line}"
-            prefix = f"{location}: " if location else ""
-            code_text = f"{code}: " if code else ""
-            return f"{prefix}{code_text}{message or 'Warning'}"
+    def _format_issue_detail(issue: dict, *, default: str) -> str:
+        code = str(issue.get("code") or "").strip()
+        message = str(issue.get("message") or "").strip()
+        file_text = str(issue.get("file") or "").strip()
+        line = issue.get("line")
+        if code in {"GRADLE_TASK", "GRADLE_TEST", "UNITTEST", "PYTEST", "VSTEST"}:
+            return message or code or default
+        location = ""
+        if file_text and file_text != "-":
+            location = file_text
+            if line not in {None, ""}:
+                location += f":{line}"
+        prefix = f"{location}: " if location else ""
+        code_text = f"{code}: " if code else ""
+        return f"{prefix}{code_text}{message or default}"
 
+    def _structured_issue_details(severity: str) -> list[str]:
+        lines: list[str] = []
+        default = "Warning" if severity == "warning" else "Error"
         for result in payload.get("results", []) if isinstance(payload.get("results"), list) else []:
             if not isinstance(result, dict):
                 continue
@@ -1065,14 +1068,12 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             for issue in issues:
                 if not isinstance(issue, dict):
                     continue
-                if str(issue.get("severity") or "").lower() != "warning":
+                if str(issue.get("severity") or "").lower() != severity:
                     continue
-                _add_warning(_format_issue_warning(issue))
+                lines.append(_format_issue_detail(issue, default=default))
+        return _dedupe_detail_lines(lines)
 
-        if warning_lines:
-            total_unique = len(warning_lines)
-            return warning_lines, total_unique
-
+    def _raw_warning_details(text: str) -> list[str]:
         warning_patterns = (
             # MSBuild/compiler warnings:
             # file.cs(1,2): warning CS1234: Message [project.csproj]
@@ -1087,35 +1088,77 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             # Common Python warning forms.
             r"^(.+Warning:\s*.+)$",
         )
-
         combined = _re.compile(
             "|".join(f"(?:{pattern})" for pattern in warning_patterns),
             _re.IGNORECASE,
         )
-
-        for raw_line in raw_output.splitlines():
+        lines: list[str] = []
+        for raw_line in text.splitlines():
             line = raw_line.strip()
             if not line or "0 Warning(s)" in line or "warnings=0" in line:
                 continue
             if not combined.search(line):
                 continue
-
-            # Remove repeated whitespace while preserving the useful message.
             cleaned = _re.sub(r"\s+", " ", line).strip()
-
-            # Omit redundant project suffixes when they make the copied summary
-            # excessively noisy, while retaining file, code, and message.
             cleaned = _re.sub(
                 r"\s+\[[^\[\]]+\.(?:csproj|fsproj|vbproj)\]\s*$",
                 "",
                 cleaned,
                 flags=_re.IGNORECASE,
             )
+            lines.append(cleaned)
+        return _dedupe_detail_lines(lines)
 
-            _add_warning(cleaned)
+    def _raw_error_details(text: str) -> list[str]:
+        """Extract concrete raw failure lines without using them for success/failure promotion."""
 
-        total_unique = len(warning_lines)
-        return warning_lines, total_unique
+        error_patterns = (
+            # Kotlin/Java/Android compiler diagnostics.
+            r"^(?:e|error):\s+file:///.+",
+            r"^.+?:\d+(?::\d+)?:\s*(?:error|fatal error)\b.+",
+
+            # Gradle/lint/build summaries.
+            r"^>\s*Task\s+.+\s+FAILED$",
+            r"^FAILURE:\s+Build failed with an exception\.",
+            r"^Execution failed for task .+",
+            r"^Gradle task failed:\s+.+",
+            r"^Lint found\s+[1-9]\d*\s+errors?.*",
+
+            # Python/process/runtime failures.
+            r"^Traceback \(most recent call last\):$",
+            r"^\w*(?:Error|Exception):\s+.+",
+            r"^(?:fatal|error):\s+.+",
+            r"^FAILED\s+.+",
+        )
+        combined = _re.compile(
+            "|".join(f"(?:{pattern})" for pattern in error_patterns),
+            _re.IGNORECASE,
+        )
+        lines: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            low = line.casefold()
+            if (
+                "0 error" in low
+                or "errors=0" in low
+                or "0 failed" in low
+                or "failed=0" in low
+                or low.startswith("warning:")
+            ):
+                continue
+            if not combined.search(line):
+                continue
+            lines.append(_re.sub(r"\s+", " ", line).strip())
+        return _dedupe_detail_lines(lines)
+
+    def _warning_details() -> tuple[list[str], int]:
+        """Extract all useful, deduplicated warnings from structured issues and output."""
+
+        lines = [*_structured_issue_details("warning"), *_raw_warning_details(raw_output)]
+        warning_lines = _dedupe_detail_lines(lines)
+        return warning_lines, len(warning_lines)
 
     def _commit_hash() -> str:
         patterns = (
@@ -1186,6 +1229,8 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
     test_totals = _test_totals()
     commit_hash = _commit_hash()
+    warning_details, unique_warning_count = _warning_details()
+    effective_warning_count = max(warnings, unique_warning_count)
 
     overlay_summaries = payload.get("overlays") if isinstance(payload, dict) else None
     success_lines = ["Devtool completed successfully.", ""]
@@ -1217,8 +1262,11 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                     f"{int(tests_data.get('skipped') or 0)} skipped "
                     f"({int(tests_data.get('total') or 0)} total)"
                 )
+            overlay_warning_count = int(overlay.get('warnings') or 0)
+            if len(valid_overlays) == 1:
+                overlay_warning_count = max(overlay_warning_count, unique_warning_count)
             success_lines.append(
-                f"- Diagnostics: {int(overlay.get('warnings') or 0)} warnings, "
+                f"- Diagnostics: {overlay_warning_count} warnings, "
                 f"{int(overlay.get('errors') or 0)} errors"
             )
             if overlay.get("commit_hash"):
@@ -1243,12 +1291,10 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         success_lines.append("Tests: completed successfully")
 
     success_lines.append(
-        f"Diagnostics: {warnings} warnings, {errors} errors"
+        f"Diagnostics: {effective_warning_count} warnings, {errors} errors"
     )
 
-    warning_details, unique_warning_count = _warning_details()
-
-    if warnings > 0 or warning_details:
+    if effective_warning_count > 0 or warning_details:
         success_lines.extend(("", "Warnings:"))
 
         if warning_details:
@@ -1313,52 +1359,33 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             if not any(step.startswith("artifact cleanup ") for step in recovery_steps):
                 recovery_steps.append("artifact cleanup succeeded")
 
-        def _error_details() -> tuple[list[str], int]:
-            error_lines: list[str] = []
-            seen: set[str] = set()
-
-            def _add_error(text: str) -> None:
-                cleaned = _re.sub(r"\s+", " ", str(text or "")).strip()
-                if not cleaned:
-                    return
-                key = cleaned.casefold()
-                if key in seen:
-                    return
-                seen.add(key)
-                error_lines.append(cleaned)
-
-            def _format_issue_error(issue: dict) -> str:
-                code = str(issue.get("code") or "").strip()
-                message = str(issue.get("message") or "").strip()
-                file_text = str(issue.get("file") or "").strip()
-                line = issue.get("line")
-                if code in {"GRADLE_TASK", "GRADLE_TEST", "UNITTEST", "PYTEST", "VSTEST"}:
-                    return message or code
-                location = ""
-                if file_text and file_text != "-":
-                    location = file_text
-                    if line not in {None, ""}:
-                        location += f":{line}"
-                prefix = f"{location}: " if location else ""
-                code_text = f"{code}: " if code else ""
-                return f"{prefix}{code_text}{message or 'Error'}"
-
+        def _failed_result_outputs() -> str:
+            chunks: list[str] = []
             for result in payload.get("results", []) if isinstance(payload.get("results"), list) else []:
                 if not isinstance(result, dict):
                     continue
-                issues = result.get("issues")
-                if not isinstance(issues, list):
+                try:
+                    returncode = int(result.get("returncode") or 0)
+                except (TypeError, ValueError):
+                    returncode = 0
+                if returncode == 0:
                     continue
-                for issue in issues:
-                    if not isinstance(issue, dict):
-                        continue
-                    if str(issue.get("severity") or "").lower() != "error":
-                        continue
-                    _add_error(_format_issue_error(issue))
+                output = str(result.get("output") or "").strip()
+                if output:
+                    chunks.append(output)
+            return "\n".join(chunks)
 
+        def _error_details() -> tuple[list[str], int]:
+            raw_error_source = "\n".join(
+                part for part in [failed_block, _failed_result_outputs(), raw_output]
+                if str(part or "").strip()
+            )
+            error_lines = _dedupe_detail_lines(
+                [*_structured_issue_details("error"), *_raw_error_details(raw_error_source)]
+            )
             return error_lines, len(error_lines)
 
-        def _overlay_failure_lines() -> list[str]:
+        def _overlay_failure_lines(*, detail_warnings: int = 0, detail_errors: int = 0) -> list[str]:
             overlays = payload.get("overlays") if isinstance(payload, dict) else None
             if not isinstance(overlays, list):
                 return []
@@ -1375,9 +1402,11 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 lines.append("Overlay: " + label_text + (f" [{target_text}]" if target_text else ""))
                 if artifact_text and artifact_text != label_text:
                     lines.append(f"- Artifact: {artifact_text}")
+                overlay_warning_count = max(int(overlay.get('warnings') or 0), int(detail_warnings or 0))
+                overlay_error_count = max(int(overlay.get('errors') or 0), int(detail_errors or 0))
                 lines.append(
-                    f"- Diagnostics: {int(overlay.get('warnings') or 0)} warnings, "
-                    f"{int(overlay.get('errors') or 0)} errors"
+                    f"- Diagnostics: {overlay_warning_count} warnings, "
+                    f"{overlay_error_count} errors"
                 )
                 lines.append(f"- Duration: {float(overlay.get('duration_seconds') or 0):.2f}s")
                 return lines
@@ -1437,20 +1466,64 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         else:
             failure_details = summarize_failure_output(raw_output, max_lines=80, max_chars=12000) or summary_text.strip() or json_text.strip()
 
+        error_details, unique_error_count = _error_details()
+        failure_warning_details, unique_failure_warning_count = warning_details, unique_warning_count
+
+        def _failed_result_reason_lines() -> list[str]:
+            reasons: list[str] = []
+            for result in payload.get("results", []) if isinstance(payload.get("results"), list) else []:
+                if not isinstance(result, dict):
+                    continue
+                try:
+                    returncode = int(result.get("returncode") or 0)
+                except (TypeError, ValueError):
+                    returncode = 0
+                if returncode == 0:
+                    continue
+                name = str(result.get("name") or "command").replace("-", " ").replace("_", " ").strip() or "command"
+                failure_kind = str(result.get("failure_kind") or "").replace("_", " ").strip()
+                issues = result.get("issues") if isinstance(result.get("issues"), list) else []
+                issue_message = ""
+                for issue in issues:
+                    if isinstance(issue, dict) and str(issue.get("severity") or "").lower() == "error":
+                        issue_message = _format_issue_detail(issue, default="Error")
+                        break
+                if issue_message:
+                    reason = f"{name} failed with exit {returncode}: {issue_message}"
+                elif failure_kind:
+                    reason = f"{name} failed with exit {returncode}: {failure_kind}"
+                else:
+                    reason = f"{name} failed with exit {returncode}"
+                reasons.append(reason)
+            if not reasons and error_details:
+                reasons.append(error_details[0])
+            if not reasons and failed_block:
+                failed_command = failed_block.splitlines()[0].strip() if failed_block.splitlines() else ""
+                if failed_command:
+                    reasons.append(f"Command failed: {failed_command}")
+            return _dedupe_detail_lines(reasons)
+
         completion = payload.get("completion") if isinstance(payload.get("completion"), dict) else {}
         headline = str(completion.get("headline") or "").strip()
         if not headline and failed_steps:
             headline = failed_steps[0].capitalize() + " failed"
         lines = [headline or "Devtool failed."]
-        overlay_lines = _overlay_failure_lines()
+        overlay_lines = _overlay_failure_lines(
+            detail_warnings=unique_failure_warning_count,
+            detail_errors=unique_error_count,
+        )
         if overlay_lines:
             lines.extend(("", *overlay_lines))
-        error_details, unique_error_count = _error_details()
+        failure_reasons = _failed_result_reason_lines()
+        if failure_reasons:
+            lines.extend(("", "Failure reason:"))
+            lines.extend(f"- {reason}" for reason in failure_reasons)
         if error_details:
             lines.extend(("", "Errors:"))
-            lines.extend(f"- {error}" for error in error_details[:12])
-            if unique_error_count > 12:
-                lines.append(f"- ... {unique_error_count - 12} more error(s)")
+            lines.extend(f"- {error}" for error in error_details)
+        if failure_warning_details:
+            lines.extend(("", "Warnings:"))
+            lines.extend(f"- {warning}" for warning in failure_warning_details)
         if successful_steps:
             lines.extend(("", "Succeeded: " + ", ".join(successful_steps)))
         if failed_steps:

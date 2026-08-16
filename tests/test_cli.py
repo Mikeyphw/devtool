@@ -901,12 +901,92 @@ artifact-cleanup: ok exit=0 time=0.10s
         text = copied[0]
         self.assertIn("Overlay: xdm_android_handoff_screenshot_audit_overlay.zip [xdm_android]", text)
         self.assertIn("- Artifact: /home/mike/Downloads/xdm_android_handoff_screenshot_audit_overlay.zip", text)
-        self.assertIn("- Diagnostics: 0 warnings, 2 errors", text)
+        self.assertIn("- Diagnostics: 0 warnings, 5 errors", text)
         self.assertIn("- Gradle task failed: :app:testDebugUnitTest", text)
         self.assertIn("- com.mikeyphw.xdm.android.ArchitectureContractTest.browserAndShareHandoffsOpenDownloadWorkflows: java.lang.AssertionError: ShareSheet intake must inspect shared text and clip data", text)
         self.assertIn("Failed: android validation build", text)
         self.assertIn("Recovery: rollback succeeded", text)
+        self.assertIn("Failure reason:", text)
+        self.assertIn("- Gradle task failed: :app:testDebugUnitTest", text)
+        self.assertIn("e: file:///repo/app/XDM.Android/app/src/main/kotlin/Screens.kt:2367:1 Modifier", text)
+        self.assertIn("e: file:///repo/app/XDM.Android/app/src/main/kotlin/Screens.kt:2377:12 Syntax error", text)
         self.assertIn("compileDebugKotlin FAILED", text)
+
+    def test_failure_copy_includes_all_structured_and_raw_warning_error_details(self) -> None:
+        raw_output = (
+            "$ ./gradlew lintDebug testDebugUnitTest\n"
+            "warning: SDK package fallback used for fixture device.\n"
+            "app/src/main/kotlin/Demo.kt:7:5: warning: Deprecated call.\n"
+            "e: file:///repo/app/src/main/kotlin/Demo.kt:9:2 Unresolved reference: missingSymbol.\n"
+            "> Task :app:testDebugUnitTest FAILED\n"
+            "FAILURE: Build failed with an exception.\n"
+        )
+        summary_text = "android-validation-build: failed exit=1 time=4.00s\n"
+        json_text = json.dumps(
+            {
+                "warnings": 1,
+                "errors": 1,
+                "failed": 1,
+                "skipped": 0,
+                "results": [
+                    {
+                        "name": "android-validation-build",
+                        "returncode": 1,
+                        "failure_kind": "validation_failure",
+                        "output": raw_output,
+                        "issues": [
+                            {
+                                "severity": "warning",
+                                "command": "lint",
+                                "file": "app/src/main/kotlin/StructuredWarning.kt",
+                                "line": 3,
+                                "code": "NewApi",
+                                "message": "Requires API 33.",
+                            },
+                            {
+                                "severity": "error",
+                                "command": "lint",
+                                "file": "app/src/main/kotlin/StructuredError.kt",
+                                "line": 4,
+                                "code": "FatalLint",
+                                "message": "Structured fatal lint error.",
+                            },
+                        ],
+                    }
+                ],
+                "overlays": [
+                    {
+                        "index": 1,
+                        "total": 1,
+                        "label": "demo.zip",
+                        "target": "devtool",
+                        "warnings": 1,
+                        "errors": 1,
+                        "duration_seconds": 4.0,
+                    }
+                ],
+            }
+        )
+        args = SimpleNamespace(no_clipboard=False, copy=True, copy_via="auto")
+        copied: list[str] = []
+        result = SimpleNamespace(success=True, backend="test", reason="")
+        with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
+            _maybe_copy(raw_output, summary_text, json_text, args)
+
+        self.assertEqual(len(copied), 1)
+        text = copied[0]
+        self.assertIn("- Diagnostics: 3 warnings, 4 errors", text)
+        self.assertIn("Failure reason:", text)
+        self.assertIn("android validation build failed with exit 1: app/src/main/kotlin/StructuredError.kt:4: FatalLint: Structured fatal lint error.", text)
+        self.assertIn("Errors:", text)
+        self.assertIn("app/src/main/kotlin/StructuredError.kt:4: FatalLint: Structured fatal lint error.", text)
+        self.assertIn("e: file:///repo/app/src/main/kotlin/Demo.kt:9:2 Unresolved reference: missingSymbol.", text)
+        self.assertIn("> Task :app:testDebugUnitTest FAILED", text)
+        self.assertIn("FAILURE: Build failed with an exception.", text)
+        self.assertIn("Warnings:", text)
+        self.assertIn("app/src/main/kotlin/StructuredWarning.kt:3: NewApi: Requires API 33.", text)
+        self.assertIn("warning: SDK package fallback used for fixture device.", text)
+        self.assertIn("app/src/main/kotlin/Demo.kt:7:5: warning: Deprecated call.", text)
 
     def test_success_copy_includes_structured_warning_details(self) -> None:
         raw_output = (
@@ -974,6 +1054,48 @@ artifact-cleanup: ok exit=0 time=0.10s
         self.assertIn("app/src/main/kotlin/Generated12.kt:12: GeneratedWarning: Generated warning 12.", copied[0])
         self.assertNotIn("more unique warning", copied[0])
         self.assertNotIn("individual warning text was not available", copied[0])
+
+    def test_success_copy_counts_raw_command_warning_details(self) -> None:
+        raw_output = (
+            "$ uv pip install pytest\n"
+            "warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.\n"
+        )
+        summary_text = "apply-overlay: ok exit=0 time=0.50s\ngit-commit: ok exit=0 time=0.10s\n"
+        json_text = json.dumps(
+            {
+                "warnings": 0,
+                "errors": 0,
+                "failed": 0,
+                "skipped": 0,
+                "overlays": [
+                    {
+                        "index": 1,
+                        "total": 1,
+                        "label": "devtool_overlay.zip",
+                        "target": "devtool",
+                        "warnings": 0,
+                        "errors": 0,
+                        "duration_seconds": 1.0,
+                    }
+                ],
+            }
+        )
+        args = SimpleNamespace(
+            no_clipboard=False,
+            copy=True,
+            copy_via="auto",
+        )
+        copied: list[str] = []
+        result = SimpleNamespace(success=True, backend="test", reason="")
+        with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
+            _maybe_copy(raw_output, summary_text, json_text, args)
+
+        self.assertEqual(len(copied), 1)
+        self.assertIn("- Diagnostics: 1 warnings, 0 errors", copied[0])
+        self.assertIn("Diagnostics: 1 warnings, 0 errors", copied[0])
+        self.assertIn("Warnings:", copied[0])
+        self.assertIn("warning: Failed to hardlink files; falling back to full copy.", copied[0])
+        self.assertNotIn("Diagnostics: 0 warnings, 0 errors", copied[0])
 
     def test_auto_repair_rewrites_and_revalidates_when_it_reduces_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

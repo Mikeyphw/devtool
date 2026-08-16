@@ -91,3 +91,19 @@ A single end-to-end `tools/release-qualify.py --core-only --final` run was also
 attempted in the sandbox. It exceeded the tool-call timeout after completing the
 first invoked split group; the same split groups passed individually as recorded
 above.
+
+
+## Post-final diagnostic truthfulness correction
+
+A post-apply log audit found two reporting-layer gaps after the final overlay:
+
+- Raw command warnings could be copied in the success summary while the displayed diagnostic count still said `0 warnings`.
+- Successful commands could print diagnostic-looking fixture/demo text, such as xUnit, lint, Kotlin, Gradle, Python, or generic error examples, and Devtool could promote that captured stdout into a false command failure even though the process exited `0`.
+
+The corrective seal now counts copied raw warning details in the success diagnostic total and applies a runner-agnostic success-boundary rule: command exit status is authoritative for generic successful commands, and captured stdout diagnostics are non-fatal unless the command explicitly sets `trust_stdout_diagnostics` / `fail_on_stdout_diagnostics`, or the command is a known dotnet/vstest boundary where stdout summaries remain authoritative after hang recovery. Structured report parsers and artifact validators remain authoritative when explicitly configured.
+
+## Post-final reporting truthfulness correction v5
+
+The copied summary now carries the complete deduplicated diagnostic detail set that Devtool knows about instead of only adjusting counts. Structured warnings are combined with raw command warnings, and failed-run summaries combine structured error issues with concrete raw failure lines from the failed command output. The failure summary no longer caps the `Errors:` section at twelve entries, so every unique copied error/warning detail is present in the clipboard payload.
+
+Failure summaries now include an explicit `Failure reason:` section before the detailed error list. The reason is derived from the failed operation result, its exit code/failure kind, and the first structured error when available; if structured issues are missing, Devtool falls back to the failed command boundary or the collected raw error detail. This keeps copied failures pointed at the actual failing action instead of merely saying that a validation phase failed.

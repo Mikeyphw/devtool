@@ -116,3 +116,33 @@ def test_ov16_ci_provisions_toolchains_signing_and_uploads_evidence() -> None:
         "actions/upload-artifact@v5",
     ):
         assert token in workflow
+
+
+def test_ov16_copied_summary_counts_raw_warning_details() -> None:
+    cli = read("devtool/cli.py")
+    report = read("DEVTOOL_OV15_OV16_FINAL_SEAL_REPORT.md")
+    assert "effective_warning_count = max(warnings, unique_warning_count)" in cli
+    assert "overlay_warning_count = max(overlay_warning_count, unique_warning_count)" in cli
+    assert '_structured_issue_details("warning")' in cli
+    assert "_raw_warning_details(raw_output)" in cli
+    assert "raw warning" in report
+
+
+def test_ov16_copied_summary_includes_all_errors_warnings_and_real_failure_reason() -> None:
+    cli = read("devtool/cli.py")
+    report = read("DEVTOOL_OV15_OV16_FINAL_SEAL_REPORT.md")
+    assert "Failure reason:" in cli
+    assert 'lines.extend(f"- {error}" for error in error_details)' in cli
+    assert "failure_warning_details" in cli
+    assert "_raw_error_details(raw_error_source)" in cli
+    assert "complete deduplicated diagnostic detail set" in report
+    assert "actual failing action" in report
+
+
+def test_ov16_successful_stdout_diagnostics_are_runner_agnostic_false_failure_guard() -> None:
+    runners = read("devtool/runners.py")
+    report = read("DEVTOOL_OV15_OV16_FINAL_SEAL_REPORT.md")
+    assert "def _trust_successful_stdout_diagnostics" in runners
+    assert "successful process boundary captured non-authoritative stdout diagnostics" in runners
+    assert "runner-agnostic" in report
+    assert "pytest-specific" not in report
