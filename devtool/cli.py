@@ -899,7 +899,17 @@ def _add_validation_test_selection_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--class", "--tests", dest="test_classes", action="append", default=[], help="Select a test class during validation; repeatable")
     cmd.add_argument("--method", dest="test_methods", action="append", default=[], help="Select a test method during validation; repeatable")
     cmd.add_argument("--filter", dest="test_filter", default="", help="Framework-native test filter used during validation")
-    cmd.add_argument("--task", "--test-task", dest="test_task", action="append", default=[], help="Exclusive native validation task list; when supplied, no built-in validation phases are added; repeatable (Android/Gradle)")
+    cmd.add_argument(
+        "--task", "--test-task",
+        dest="test_task",
+        action="append",
+        default=[],
+        help=(
+            "Exclusive native validation unit list; repeatable. Android/Gradle values are Gradle tasks; "
+            "Python/Node/Rust/etc. values are supported validation actions such as test, lint, build, "
+            "package-check, or Python test targets."
+        ),
+    )
     cmd.add_argument("--failed", action="store_true", help="Rerun tests that failed in the previous structured run during validation")
     cmd.add_argument("--changed", action="store_true", help="Select tests related to changed files during validation")
     cmd.add_argument("--changed-from", default="HEAD", help="Git base for --changed during validation")
@@ -2682,6 +2692,224 @@ def _exclusive_validation_task_values(args: argparse.Namespace) -> list[str]:
     return list(dict.fromkeys(_cli_string_list(getattr(args, "test_task", None))))
 
 
+_EXCLUSIVE_VALIDATION_ACTIONS: dict[str, str] = {
+    "restore": "restore",
+    "build": "build",
+    "test": "test",
+    "lint": "lint",
+    "check": "lint",
+    "package": "package",
+    "pack": "package",
+    "package-check": "package-check",
+    "package_check": "package-check",
+    "pkg-check": "package-check",
+    "clean": "clean",
+    "run": "run",
+}
+
+
+def _exclusive_validation_skip_flags(args: argparse.Namespace) -> list[str]:
+    return [
+        flag
+        for flag, enabled in (
+            ("--skip-restore", bool(getattr(args, "skip_restore", False))),
+            ("--skip-build", bool(getattr(args, "skip_build", False))),
+            ("--skip-test", bool(getattr(args, "skip_test", False))),
+        )
+        if enabled
+    ]
+
+
+def _validate_exclusive_task_common(args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[str]:
+    tasks = _exclusive_validation_task_values(args)
+    if not tasks:
+        return []
+    invalid_options = [task for task in tasks if task.startswith("-")]
+    if invalid_options:
+        parser.error(
+            "--task accepts validation units, not tool options: "
+            + ", ".join(invalid_options)
+            + ". Pass project-tool options after '--' or configure them explicitly."
+        )
+    skip_flags = _exclusive_validation_skip_flags(args)
+    if skip_flags:
+        parser.error(
+            "--task already defines the complete validation plan and cannot be combined with "
+            + ", ".join(skip_flags)
+            + "."
+        )
+    if bool(getattr(args, "instrumented", False)):
+        parser.error("--task cannot be combined with --instrumented; select the instrumentation validation task explicitly instead.")
+    return tasks
+
+
+def _config_with_test_selection_tasks(config: ProjectConfig, tasks: list[str]) -> ProjectConfig:
+    runner_options = copy.deepcopy(config.runner_options)
+    selection = runner_options.setdefault("test_selection", {})
+    if not isinstance(selection, dict):
+        selection = {}
+        runner_options["test_selection"] = selection
+    existing = _cli_string_list(selection.get("tasks") or selection.get("task"))
+    selection["tasks"] = list(dict.fromkeys([*existing, *tasks]))
+    return replace(config, runner_options=runner_options)
+
+
+
+
+def _config_with_exact_test_selection_tasks(config: ProjectConfig, tasks: list[str]) -> ProjectConfig:
+    runner_options = copy.deepcopy(config.runner_options)
+    selection = runner_options.setdefault("test_selection", {})
+    if not isinstance(selection, dict):
+        selection = {}
+    selection = dict(selection)
+    values = list(dict.fromkeys(tasks))
+    selection["tasks"] = values
+    if values:
+        selection["task"] = values[0]
+    else:
+        selection.pop("task", None)
+    runner_options["test_selection"] = selection
+    return replace(config, runner_options=runner_options)
+
+def _python_test_framework(config: ProjectConfig) -> str:
+    runner = get_project_runner(config)
+    info_fn = getattr(runner, "_info", None)
+    if callable(info_fn):
+        return str(info_fn(config).framework or "").strip().lower()
+    return ""
+
+
+def _python_validation_specs_for_action(
+    config: ProjectConfig,
+    action: str,
+    test_targets: list[str],
+) -> list[CommandSpec]:
+    if action != "test" or not test_targets:
+        return build_specs(config, action)
+    framework = _python_test_framework(config)
+    if framework in {"tox", "nox"}:
+        return build_specs(_config_with_exact_test_selection_tasks(config, test_targets), "test")
+    runner = get_project_runner(config)
+    framework_specs = getattr(runner, "_framework_test_specs", None)
+    if callable(framework_specs):
+        return framework_specs(config, targets=test_targets)
+    return build_specs(config, "test")
+
+
+def _annotate_exclusive_native_specs(
+    config: ProjectConfig,
+    specs: list[CommandSpec],
+    tasks: list[str],
+    *,
+    source: str,
+) -> list[CommandSpec]:
+    total = len(specs)
+    for index, spec in enumerate(specs, 1):
+        metadata = dict(spec.metadata or {})
+        components = metadata.get("validation_components")
+        if isinstance(components, list):
+            validation_components = [str(item) for item in components]
+        else:
+            validation_components = [str(metadata.get("validation_component") or spec.name)]
+        metadata.update({
+            "explicit_validation_tasks": list(tasks),
+            "native_validation_tasks": list(tasks),
+            "validation_components": validation_components,
+            "validation_phase_name": spec.name,
+            "validation_resumable": True,
+            "validation_pipeline": True,
+            "validation_phase_index": index,
+            "validation_phase_total": total,
+            "validation_scope": "explicit-tasks",
+            "validation_change_scope": "explicit",
+            "validation_plan_source": source,
+            "project_type": config.kind,
+            "runner": config.kind,
+        })
+        spec.metadata = metadata
+    return specs
+
+
+def _exclusive_cross_project_validation_specs(
+    config: ProjectConfig,
+    tasks: list[str],
+    parser: argparse.ArgumentParser,
+) -> list[CommandSpec]:
+    actions_in_order: list[str] = []
+    python_test_targets: list[str] = []
+    node_test_tasks: list[str] = []
+    first_python_test_index: int | None = None
+
+    for index, task in enumerate(tasks):
+        value = str(task).strip()
+        action = _EXCLUSIVE_VALIDATION_ACTIONS.get(value.lower())
+        if action:
+            if action not in actions_in_order:
+                actions_in_order.append(action)
+            continue
+        if config.kind == "python":
+            python_test_targets.append(value)
+            if first_python_test_index is None:
+                first_python_test_index = index
+            if "test" not in actions_in_order:
+                actions_in_order.append("test")
+            continue
+        if config.kind == "node":
+            # Node projects often expose validation units as package.json scripts
+            # (for example `unit`, `e2e`, or `typecheck`). Map non-action task
+            # names to the runner's native test-script selector instead of
+            # rejecting them as Gradle-only values.
+            if "test" not in actions_in_order:
+                actions_in_order.append("test")
+            node_test_tasks.append(value)
+            continue
+        available = ", ".join(sorted(set(_EXCLUSIVE_VALIDATION_ACTIONS)))
+        parser.error(
+            f"Validation --task value {value!r} is not supported for project type {config.kind!r}. "
+            f"Use one of: {available}. For framework-specific test paths, use --path/--class/--method."
+        )
+
+    if config.kind == "node":
+        config = _config_with_exact_test_selection_tasks(config, node_test_tasks)
+    elif config.kind == "python":
+        # _apply_runner_cli_options stores every --task value in test_selection
+        # for historical Gradle/test-task metadata. For non-Gradle explicit
+        # validation, action names such as `lint` or `package-check` are not
+        # framework test selectors and must not leak into tox/nox/npm test
+        # selection. Keep other selectors (--path/--class/--method) intact.
+        config = _config_with_exact_test_selection_tasks(config, [])
+
+    if first_python_test_index is not None:
+        ordered: list[str] = []
+        test_inserted = False
+        for task in tasks:
+            action = _EXCLUSIVE_VALIDATION_ACTIONS.get(str(task).strip().lower())
+            if action:
+                if action not in ordered:
+                    ordered.append(action)
+            elif not test_inserted:
+                if "test" not in ordered:
+                    ordered.append("test")
+                test_inserted = True
+        actions_in_order = ordered
+
+    specs: list[CommandSpec] = []
+    for action in actions_in_order:
+        try:
+            if config.kind == "python":
+                specs.extend(_python_validation_specs_for_action(config, action, python_test_targets))
+            else:
+                specs.extend(build_specs(config, action))
+        except SystemExit as exc:
+            detail = str(exc).strip() or f"unsupported action {action!r}"
+            parser.error(
+                f"Validation --task value {action!r} is not supported for project type {config.kind!r}: {detail}"
+            )
+    if not specs:
+        parser.error("Validation --task did not resolve to any executable validation units.")
+    return _annotate_exclusive_native_specs(config, specs, tasks, source="cli")
+
+
 def _exclusive_android_validation_specs(
     config: ProjectConfig,
     args: argparse.Namespace,
@@ -2695,31 +2923,11 @@ def _exclusive_android_validation_specs(
     dependencies of the requested tasks, which is native Gradle behavior.
     """
 
-    tasks = _exclusive_validation_task_values(args)
+    tasks = _validate_exclusive_task_common(args, parser)
     if not tasks:
         return None
     if config.kind not in {"android", "gradle"}:
-        parser.error(
-            "Validation --task is an exclusive Android/Gradle task selector. "
-            f"Project type {config.kind!r} does not provide native Gradle tasks."
-        )
-    skip_flags = [
-        flag
-        for flag, enabled in (
-            ("--skip-restore", bool(getattr(args, "skip_restore", False))),
-            ("--skip-build", bool(getattr(args, "skip_build", False))),
-            ("--skip-test", bool(getattr(args, "skip_test", False))),
-        )
-        if enabled
-    ]
-    if skip_flags:
-        parser.error(
-            "--task already defines the complete validation plan and cannot be combined with "
-            + ", ".join(skip_flags)
-            + "."
-        )
-    if bool(getattr(args, "instrumented", False)):
-        parser.error("--task cannot be combined with --instrumented; select the instrumentation Gradle task explicitly instead.")
+        return _exclusive_cross_project_validation_specs(config, tasks, parser)
 
     from .android_integration import android_builder_arguments_for_tasks, plan_android_command
     from .build_optimization import optimized_validation_env, resolve_android_validation_phase_policy

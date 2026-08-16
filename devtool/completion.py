@@ -248,7 +248,7 @@ _devtool_validation_args() {
     '*--tests[select a test class]:class:' \
     '*--method[select a test method]:method:' \
     '--filter[framework-native test filter]:filter:' \
-    '(--task --test-task)'{--task,--test-task}'[exclusive Android/Gradle validation task; repeat to run only those tasks]:task:' \
+    '(--task --test-task)'{--task,--test-task}'[exclusive validation unit; Gradle task for Android/Gradle or native action/test target elsewhere]:task:' \
     '--failed[rerun tests that failed in the previous structured run]' \
     '--changed[select tests related to changed files]' \
     '--changed-from[Git base for changed test selection]:revision:' \
@@ -332,7 +332,7 @@ _devtool_apply_args() {
     '*--tests[select a test class]:class:' \
     '*--method[select a test method]:method:' \
     '--filter[framework-native test filter]:filter:' \
-    '(--task --test-task)'{--task,--test-task}'[exclusive Android/Gradle validation task; repeat to run only those tasks]:task:' \
+    '(--task --test-task)'{--task,--test-task}'[exclusive validation unit; Gradle task for Android/Gradle or native action/test target elsewhere]:task:' \
     '--failed[rerun tests that failed in the previous structured run]' \
     '--changed[select tests related to changed files]' \
     '--changed-from[Git base for changed test selection]:revision:' \
@@ -546,7 +546,7 @@ _devtool() {
             '*--tests[select a test class]:class:' \
             '*--method[select a test method]:method:' \
             '--filter[framework-native test filter]:filter:' \
-            '(--task --test-task)'{--task,--test-task}'[exclusive Android/Gradle validation task; repeat to run only those tasks]:task:' \
+            '(--task --test-task)'{--task,--test-task}'[exclusive validation unit; Gradle task for Android/Gradle or native action/test target elsewhere]:task:' \
             '--failed[rerun tests that failed in the previous structured run]' \
             '--changed[select tests related to changed files]' \
             '--changed-from[Git base for changed test selection]:revision:' \

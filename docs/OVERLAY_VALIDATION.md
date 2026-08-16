@@ -39,11 +39,14 @@ Artifacts may also declare an exclusive native task list for Android/Gradle targ
 }
 ```
 
-For Android/Gradle targets, `validation.tasks` is equivalent to passing repeated
-`--task` flags during validation: devtool runs exactly those native Gradle tasks
-and does not append its built-in restore/build/test/lint/package phases. An
-explicit empty list is distinct from an absent declaration and suppresses inherited
-bundle/default task declarations. The aliases
+`validation.tasks` is equivalent to passing repeated `--task` flags during
+validation. For Android/Gradle targets, values are Gradle task names and devtool
+runs exactly those native Gradle tasks. For Python/Node/Rust and other
+non-Gradle runners, values are runner-native validation units such as `test`,
+`lint`, `build`, `package-check`, or framework-specific test targets. In either
+case, devtool does not append its built-in restore/build/test/lint/package phases.
+An explicit empty list is distinct from an absent declaration and suppresses
+inherited bundle/default task declarations. The aliases
 `validation.gradle_tasks`, `validation.test_tasks`, `validation.test_task`, and
 `validation.task` are accepted for compatibility, but new artifacts should write
 `validation.tasks`.

@@ -2679,15 +2679,194 @@ class ExclusiveValidationTaskTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 _validation_specs_for_args(config, args, parser)
 
-    def test_task_rejects_non_gradle_projects(self) -> None:
+    def _python_config(self, root: Path) -> ProjectConfig:
+        (root / "pyproject.toml").write_text(
+            "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"pytest\"]\n\n[tool.ruff]\nline-length = 100\n",
+            encoding="utf-8",
+        )
+        tests = root / "tests"
+        tests.mkdir()
+        (tests / "test_demo.py").write_text("def test_demo():\n    assert True\n", encoding="utf-8")
+        return ProjectConfig(
+            repo_root=root,
+            project_root=str(root),
+            kind="python",
+            runner_options={
+                "python": {
+                    "manager": "venv",
+                    "test_framework": "pytest",
+                    "environment": str(root / ".venv"),
+                }
+            },
+        )
+
+    def test_task_python_path_target_replaces_full_validation_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            config = self._python_config(root)
             parser = build_parser()
             args = parser.parse_args([
                 "--repo", str(root),
                 "validate", "--task", "tests",
             ])
-            config = ProjectConfig(repo_root=root, project_root=str(root), kind="python")
+
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].name, "test")
+        self.assertIn("tests", specs[0].argv)
+        self.assertEqual(specs[0].metadata["explicit_validation_tasks"], ["tests"])
+        self.assertEqual(specs[0].metadata["validation_scope"], "explicit-tasks")
+        self.assertEqual(specs[0].metadata["validation_phase_total"], 1)
+        self.assertNotIn("python-source-audit", [spec.name for spec in specs])
+        self.assertNotIn("build", [spec.name for spec in specs])
+
+    def test_task_python_named_actions_are_exclusive_validation_units(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._python_config(root)
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task", "lint", "--task", "package-check",
+            ])
+
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual([spec.name for spec in specs], ["lint:ruff", "package-check"])
+        for spec in specs:
+            self.assertEqual(spec.metadata["explicit_validation_tasks"], ["lint", "package-check"])
+            self.assertEqual(spec.metadata["validation_scope"], "explicit-tasks")
+        self.assertNotIn("test", [spec.name for spec in specs])
+        self.assertNotIn("python-source-audit", [spec.name for spec in specs])
+
+    def test_task_rejects_tool_options_for_every_project_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._python_config(root)
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task=-Pandroid.injected.version.code=1",
+            ])
+            with self.assertRaises(SystemExit):
+                _validation_specs_for_args(config, args, parser)
+
+    def test_task_node_script_selector_replaces_full_validation_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text(
+                json.dumps({"scripts": {"unit": "node unit.js", "lint": "eslint .", "build": "node build.js"}}),
+                encoding="utf-8",
+            )
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="node")
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task", "unit", "--task", "lint",
+            ])
+
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual([spec.name for spec in specs], ["test", "lint"])
+        self.assertEqual(specs[0].argv, ["npm", "run", "unit"])
+        self.assertEqual(specs[1].argv, ["npm", "run", "lint"])
+        for spec in specs:
+            self.assertEqual(spec.metadata["explicit_validation_tasks"], ["unit", "lint"])
+            self.assertEqual(spec.metadata["validation_scope"], "explicit-tasks")
+        self.assertNotIn("restore", [spec.name for spec in specs])
+        self.assertNotIn("build", [spec.name for spec in specs])
+
+
+    def test_task_node_actions_do_not_leak_into_test_script_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text(
+                json.dumps({"scripts": {"test": "node test.js", "lint": "eslint ."}}),
+                encoding="utf-8",
+            )
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="node")
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task", "test", "--task", "lint",
+            ])
+
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual([spec.name for spec in specs], ["test", "lint"])
+        self.assertEqual(specs[0].argv, ["npm", "run", "test"])
+        self.assertEqual(specs[1].argv, ["npm", "run", "lint"])
+
+    def test_task_python_test_and_lint_do_not_leak_action_names_into_pytest_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._python_config(root)
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task", "test", "--task", "lint",
+            ])
+
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual([spec.name for spec in specs], ["test", "lint:ruff"])
+        self.assertNotIn("lint", specs[0].argv)
+        self.assertEqual(specs[0].metadata["explicit_validation_tasks"], ["test", "lint"])
+        self.assertEqual(specs[1].metadata["explicit_validation_tasks"], ["test", "lint"])
+
+    def test_task_python_build_action_is_supported_exclusively(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._python_config(root)
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task", "build",
+            ])
+
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual([spec.name for spec in specs], ["prepare-dist", "build"])
+        for spec in specs:
+            self.assertEqual(spec.metadata["explicit_validation_tasks"], ["build"])
+            self.assertEqual(spec.metadata["validation_scope"], "explicit-tasks")
+        self.assertNotIn("test", [spec.name for spec in specs])
+        self.assertNotIn("lint:ruff", [spec.name for spec in specs])
+
+    def test_task_rust_native_action_is_supported_exclusively(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.toml").write_text(
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+                encoding="utf-8",
+            )
+            (root / "src").mkdir()
+            (root / "src" / "lib.rs").write_text("pub fn demo() -> bool { true }\n", encoding="utf-8")
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="rust")
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task", "test",
+            ])
+
+            specs = _validation_specs_for_args(config, args, parser)
+
+        self.assertEqual([spec.name for spec in specs], ["test"])
+        self.assertEqual(specs[0].argv[:3], ["cargo", "test", "--all-targets"])
+        self.assertEqual(specs[0].metadata["explicit_validation_tasks"], ["test"])
+        self.assertEqual(specs[0].metadata["validation_scope"], "explicit-tasks")
+        self.assertNotIn("cargo-validation", [spec.name for spec in specs])
+
+    def test_task_rejects_tool_options_before_android_gradle_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._android_config(root)
+            parser = build_parser()
+            args = parser.parse_args([
+                "--repo", str(root),
+                "validate", "--task=-Pandroid.injected.version.code=1",
+            ])
             with self.assertRaises(SystemExit):
                 _validation_specs_for_args(config, args, parser)
 

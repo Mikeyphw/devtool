@@ -577,9 +577,12 @@ and on
 .BR apply-overlay --validate .
 For validation commands, however,
 .B --task
-is an exclusive Android/Gradle task plan: only the named Gradle task or tasks are placed in
-the validation pipeline. Configured preflight, dependency, compile, package, lint, finalize,
-and embedded artifact-validator phases are not added.
+is an exclusive native validation-unit plan. Android/Gradle targets still treat values as
+Gradle task names, so only the named Gradle task or tasks are placed in the validation
+pipeline. For Python/Node/Rust and other non-Gradle runners, --task selects native
+validation units such as test, lint, build, package-check, or runner-specific test targets.
+Configured preflight, dependency, compile, package, lint, finalize, and embedded
+artifact-validator phases are not added unless selected explicitly.
 .TP
 .B --list-tests " | " --list
 Discover and list tests without executing them.
@@ -615,7 +618,7 @@ Pass a framework-native filter.
 On
 .BR test ,
 override the Gradle test task. On validation and artifact-apply validation, replace the
-entire built-in Android/Gradle validation pipeline with this task. Repeat to run multiple
+entire built-in validation pipeline with this task. Repeat to run multiple
 explicit tasks in one native Gradle invocation. Artifact manifests may declare the same
 exclusive task plan with
 .B validation.tasks
@@ -949,8 +952,9 @@ and
 .B --tag
 also apply to artifact validation. Supplying
 .B --task
-instead creates an exclusive Android/Gradle validation plan and suppresses all other
-validation phases, including embedded artifact validation scripts. Artifact manifest,
+instead creates an exclusive validation plan and suppresses all other validation phases,
+including embedded artifact validation scripts. Gradle targets use Gradle task names;
+non-Gradle targets use their native validation actions or test targets. Artifact manifest,
 checksum, inventory, and transactional apply safety checks still run before mutation.
 .SH TRANSACTIONAL APPLY AND EVIDENCE
 Before mutation, devtool backs up paths touched by the artifact. Immediate apply failures

@@ -54,7 +54,7 @@ class CompletionAndManpageTests(unittest.TestCase):
 
     def test_completion_documents_exclusive_validation_task_semantics(self) -> None:
         wording = (
-            "exclusive Android/Gradle validation task; repeat to run only those tasks"
+            "exclusive validation unit; Gradle task for Android/Gradle or native action/test target elsewhere"
         )
         self.assertGreaterEqual(ZSH_COMPLETION.count(wording), 3)
         self.assertIn(
@@ -75,12 +75,14 @@ class CompletionAndManpageTests(unittest.TestCase):
     def test_manpage_documents_exclusive_validation_task_semantics(self) -> None:
         man = MAN_PATH.read_text(encoding="utf-8")
         required = (
-            "only the named Gradle task or tasks are placed in\n"
-            "the validation pipeline",
+            "only the named Gradle task or tasks are placed in the validation\n"
+            "pipeline",
+            "For Python/Node/Rust and other non-Gradle runners, --task selects native\n"
+            "validation units",
             "replace the\n"
-            "entire built-in Android/Gradle validation pipeline with this task",
-            "suppresses all other\n"
-            "validation phases, including embedded artifact validation scripts",
+            "entire built-in validation pipeline with this task",
+            "suppress",
+            "embedded artifact validation scripts",
             "Artifact manifest,\n"
             "checksum, inventory, and transactional apply safety checks still run",
             "validation.tasks",
