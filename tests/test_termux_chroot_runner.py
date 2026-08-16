@@ -8,7 +8,7 @@ from unittest.mock import patch
 from devtool.clipboard import ClipboardResult
 from devtool.execution import build_chroot_exec_argv, wrap_specs_for_chroot
 from devtool.models import CommandSpec, ProjectConfig
-from devtool.termux_chroot_runner import ChrootIdentity, _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, repair_termux_home_mapping, run_auto_chroot, should_delegate_full_for_chroot_only_repo, translate_devtool_args, wrap_specs_for_termux_host_chroot
+from devtool.termux_chroot_runner import ChrootIdentity, _chroot_user_switch_probe_timeout, _emit_chroot_inactivity_hint, _identity_switch_command, _inactivity_hint_seconds, _plain_log_path_for, build_inner_command, build_runner_command, copy_from_machine_file, normalize_hud_mode_for_termux_host, prepare_host_clipboard_run, repair_termux_home_mapping, run_auto_chroot, should_delegate_full_for_chroot_only_repo, translate_devtool_args, wrap_specs_for_termux_host_chroot
 from devtool.runners import run_specs
 
 
@@ -197,6 +197,75 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         inner = build_inner_command(config, forwarded, identity=self.identity())
         self.assertIn("exec env DEVTOOL_EXECUTION_CONTEXT=chroot DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
         self.assertNotIn("exec DEVTOOL_INSIDE_TERMUX_CHROOT=1", inner)
+
+
+    def test_user_switch_probe_is_timeout_guarded_and_has_plain_su_fallback(self) -> None:
+        with patch.dict("os.environ", {"DEVTOOL_CHROOT_USER_SWITCH_TIMEOUT": "3"}, clear=False):
+            command = _identity_switch_command(self.identity(), "echo ok")
+        self.assertIn("devtool_user_switch_probe()", command)
+        self.assertIn("timeout -k 2s 3s", command)
+        self.assertIn("devtool_user_switch_probe runuser -u mike -- /bin/zsh -c ':'", command)
+        self.assertIn("devtool_user_switch_probe su mike -s /bin/zsh -c ':'", command)
+        self.assertIn("devtool_user_switch_probe su - mike -s /bin/zsh -c ':'", command)
+        self.assertIn("runuser/su probes failed or timed out after 3s", command)
+
+    def test_user_switch_probe_timeout_is_bounded(self) -> None:
+        self.assertEqual(_chroot_user_switch_probe_timeout({"DEVTOOL_CHROOT_USER_SWITCH_TIMEOUT": "0"}), 1)
+        self.assertEqual(_chroot_user_switch_probe_timeout({"DEVTOOL_CHROOT_USER_SWITCH_TIMEOUT": "9999"}), 300)
+        self.assertEqual(_chroot_user_switch_probe_timeout({"DEVTOOL_CHROOT_USER_SWITCH_TIMEOUT": "bad"}), 8)
+
+    def test_user_switch_probe_has_bounded_shell_fallback_without_timeout_binary(self) -> None:
+        with patch.dict("os.environ", {"DEVTOOL_CHROOT_USER_SWITCH_TIMEOUT": "4"}, clear=False):
+            command = _identity_switch_command(self.identity(), "echo ok")
+        self.assertIn("else \"$@\" & devtool_probe_pid=$!", command)
+        self.assertIn("devtool_probe_deadline=4", command)
+        self.assertIn("while kill -0 \"$devtool_probe_pid\"", command)
+        self.assertIn("kill -9 \"$devtool_probe_pid\"", command)
+        self.assertIn("return 124", command)
+        self.assertIn("wait \"$devtool_probe_pid\"", command)
+
+    def test_auto_chroot_android_bridge_resolves_identity_from_path_map(self) -> None:
+        env = {
+            "HOME": "/data/data/com.termux/files/home",
+            "PREFIX": "/data/data/com.termux/files/usr",
+            "TERMUX_VERSION": "0.119",
+            "DEVTOOL_TERMUX_CHROOT_HOME": "/home/mike",
+            "DEVTOOL_TERMUX_CHROOT_USER": "mike",
+            "DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS": "0",
+        }
+        calls: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+
+        def fake_resolve(chroot_name, mappings, *, env=None):
+            calls.append((chroot_name, tuple(mappings)))
+            return self.identity()
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("devtool.termux_chroot_runner.resolve_chroot_identity", side_effect=fake_resolve),
+            patch("devtool.termux_chroot_runner.build_runner_command", return_value=["/bin/sh", "-c", "printf ok"]),
+            patch("devtool.termux_chroot_runner._start_android_hud_bridge"),
+            patch("devtool.termux_chroot_runner._run_live_pty", return_value=0),
+            patch.dict("os.environ", {"DEVTOOL_XDG_DIR": tmp}, clear=False),
+        ):
+            rc = run_auto_chroot(["--repo", env["HOME"] + "/Code/demo", "--auto-hud", "validate"], env=env, cwd=env["HOME"] + "/Code/demo")
+        self.assertEqual(rc, 0)
+        self.assertTrue(calls)
+        self.assertEqual(calls[-1][0], "androidos")
+        self.assertIn(("/data/data/com.termux/files/home", "/home/mike"), calls[-1][1])
+
+    def test_inactivity_hint_seconds_is_configurable_and_bounded(self) -> None:
+        self.assertEqual(_inactivity_hint_seconds({"DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS": "0"}), 0)
+        self.assertEqual(_inactivity_hint_seconds({"DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS": "bad"}), 30)
+        self.assertEqual(_inactivity_hint_seconds({"DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS": "99999"}), 3600)
+
+    def test_inactivity_hint_mentions_log_and_verbose_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run.ansi.log"
+            _emit_chroot_inactivity_hint(path, pid=123, idle_seconds=45)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("Chroot command is still running after 45s", text)
+        self.assertIn("Use -v", text)
+        self.assertIn("pid 123", text)
 
 
     def test_inner_command_preserves_shared_run_id(self) -> None:

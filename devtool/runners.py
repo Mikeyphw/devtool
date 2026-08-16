@@ -14,7 +14,7 @@ import threading
 import time
 import zipfile
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 
 from .artifacts import (
@@ -570,6 +570,40 @@ def _idle_timeout_for(argv: list[str], command_name: str) -> float | None:
     # dotnet/vstest hang, opt in explicitly with DEVTOOL_TEST_IDLE_TIMEOUT or
     # DEVTOOL_COMMAND_IDLE_TIMEOUT.
     return None
+
+
+def _looks_like_chrootctl_exec(argv: Sequence[str]) -> bool:
+    tokens = [str(part) for part in argv]
+    for index, token in enumerate(tokens):
+        if Path(token).name != "chrootctl":
+            continue
+        tail = tokens[index + 1:]
+        return "exec" in tail
+    return False
+
+
+def _termux_chroot_stall_hint_seconds(env: Mapping[str, str] | dict[str, str]) -> float:
+    raw = str(env.get("DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS", "30") or "30").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return 30.0
+    return max(0.0, min(value, 3600.0))
+
+
+def _termux_chroot_stall_message(argv: Sequence[str], seconds: float) -> str:
+    chroot_name = ""
+    tokens = [str(part) for part in argv]
+    for index, token in enumerate(tokens):
+        if token == "--name" and index + 1 < len(tokens):
+            chroot_name = tokens[index + 1]
+            break
+    label = f"Android chroot executor {chroot_name}".strip() if chroot_name else "Android chroot executor"
+    return (
+        f"Devtool stall diagnostic: {label} is still running after {int(round(seconds))} seconds "
+        "with no child output. The process was not stopped. Use -v for the full executor command/output "
+        "or DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS=0 to disable this hint."
+    )
 
 
 def _iter_process_output_lines(
@@ -1186,6 +1220,11 @@ def _run_process_live(
             if stall_warning_seconds > 0:
                 from .termux_runtime import gradle_stall_message
                 stall_warning_message = gradle_stall_message(stall_warning_seconds)
+        if _looks_like_chrootctl_exec(argv):
+            chroot_stall_seconds = _termux_chroot_stall_hint_seconds(env)
+            if chroot_stall_seconds > 0 and (stall_warning_seconds is None or chroot_stall_seconds < stall_warning_seconds):
+                stall_warning_seconds = chroot_stall_seconds
+                stall_warning_message = _termux_chroot_stall_message(argv, chroot_stall_seconds)
         completion_detector = _dotnet_test_completion_status if completion_idle_grace is not None else None
         if tracker is None:
             for line in _iter_process_output_lines(

@@ -13,7 +13,7 @@ from devtool.cli import build_parser, _apply_runner_cli_options, _prepare_specs_
 from devtool.config import load_project_config
 from devtool.execution_environments import DESKTOP_LINUX, NATIVE_TERMUX, PROOT_DISTRO, normalize_execution_environment, preflight_execution, resolve_execution_plan
 from devtool.models import CommandSpec, Issue, ProjectConfig
-from devtool.runners import _run_process_live, run_specs
+from devtool.runners import _looks_like_chrootctl_exec, _run_process_live, _termux_chroot_stall_hint_seconds, _termux_chroot_stall_message, run_specs
 from devtool.proot_distro_runner import ProotRunnerConfig, cleanup_proot_staging, resolve_proot_config, validate_proot_config, wrap_specs_for_proot_distro
 from devtool.termux_runtime import (
     adapt_termux_script_argv,
@@ -177,6 +177,36 @@ class TermuxRuntimeTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Devtool stall diagnostic", output)
         self.assertIn("process was not stopped", output)
+
+    def test_chroot_exec_quiet_diagnostic_warns_without_stopping_process(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            chrootctl = root / "chrootctl"
+            chrootctl.write_text(
+                "#!/usr/bin/env python3\nimport time\ntime.sleep(0.18)\n",
+                encoding="utf-8",
+            )
+            chrootctl.chmod(0o755)
+            env = os.environ.copy()
+            env["DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS"] = "0.05"
+            argv = [str(chrootctl), "--name", "androidos", "exec", "--", "zsh", "-lc", ":"]
+            code, output = _run_process_live(
+                argv,
+                cwd=str(root),
+                env=env,
+                verbose=True,
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("Android chroot executor androidos is still running", output)
+        self.assertIn("process was not stopped", output)
+        self.assertIn("Use -v", output)
+
+    def test_chroot_stall_helpers_detect_exec_and_bound_seconds(self):
+        self.assertTrue(_looks_like_chrootctl_exec(["sudo", "chrootctl", "--name", "androidos", "exec", "--", "zsh"]))
+        self.assertFalse(_looks_like_chrootctl_exec(["chrootctl", "--name", "androidos", "start", "--login"]))
+        self.assertEqual(_termux_chroot_stall_hint_seconds({"DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS": "bad"}), 30.0)
+        self.assertEqual(_termux_chroot_stall_hint_seconds({"DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS": "99999"}), 3600.0)
+        self.assertIn("androidos", _termux_chroot_stall_message(["chrootctl", "--name", "androidos", "exec"], 7))
 
     def test_shared_storage_deny_policy_stops_before_execution(self):
         with tempfile.TemporaryDirectory() as td:

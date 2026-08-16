@@ -319,6 +319,16 @@ def _shell_join_tool_argv(argv: list[str]) -> str:
     return " ".join(_quote_shell_token(part) for part in argv)
 
 
+def _chroot_user_switch_probe_timeout(env: Mapping[str, str] | None = None) -> int:
+    env = env or os.environ
+    raw = str(env.get("DEVTOOL_CHROOT_USER_SWITCH_TIMEOUT", "8") or "8").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 8
+    return max(1, min(value, 300))
+
+
 def _identity_switch_command(identity: ChrootIdentity, payload: str) -> str:
     user = identity.user.strip()
     home = identity.home.strip()
@@ -331,28 +341,76 @@ def _identity_switch_command(identity: ChrootIdentity, payload: str) -> str:
     )
     if user == "root":
         return "exec env " + user_env + " " + shlex.quote(shell_path) + " -lc " + shlex.quote(payload)
+
+    timeout_seconds = _chroot_user_switch_probe_timeout()
+    # Non-interactive user switching can hang in Android chroot environments
+    # when PAM/login helpers wait for a password, TTY, or profile hook. Probe
+    # candidates through coreutils timeout when available, with a shell-level
+    # deadline fallback when timeout is not installed, so the host TUI never
+    # looks frozen before the real command starts. The actual exec path remains
+    # unwrapped so long builds are not killed by the probe timeout.
+    timeout_function = (
+        "devtool_user_switch_probe() { "
+        "if command -v timeout >/dev/null 2>&1; then "
+        "timeout -k 2s " + shlex.quote(str(timeout_seconds)) + "s \"$@\"; "
+        "else "
+        "\"$@\" & devtool_probe_pid=$!; "
+        "devtool_probe_deadline=" + shlex.quote(str(timeout_seconds)) + "; "
+        "while kill -0 \"$devtool_probe_pid\" >/dev/null 2>&1; do "
+        "if [ \"$devtool_probe_deadline\" -le 0 ]; then "
+        "kill \"$devtool_probe_pid\" >/dev/null 2>&1 || true; "
+        "sleep 2; "
+        "kill -9 \"$devtool_probe_pid\" >/dev/null 2>&1 || true; "
+        "wait \"$devtool_probe_pid\" >/dev/null 2>&1 || true; "
+        "return 124; "
+        "fi; "
+        "sleep 1; "
+        "devtool_probe_deadline=$((devtool_probe_deadline - 1)); "
+        "done; "
+        "wait \"$devtool_probe_pid\"; "
+        "fi; }; "
+    )
     runuser_probe = (
         "command -v runuser >/dev/null 2>&1 && "
-        "runuser -u " + shlex.quote(user) + " -- " + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
+        "devtool_user_switch_probe runuser -u " + shlex.quote(user) + " -- "
+        + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
     )
-    su_probe = (
+    su_plain_probe = (
         "command -v su >/dev/null 2>&1 && "
-        "su - " + shlex.quote(user) + " -s " + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
+        "devtool_user_switch_probe su " + shlex.quote(user)
+        + " -s " + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
+    )
+    su_login_probe = (
+        "command -v su >/dev/null 2>&1 && "
+        "devtool_user_switch_probe su - " + shlex.quote(user)
+        + " -s " + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
     )
     runuser_exec = (
         "exec runuser -u " + shlex.quote(user) + " -- env " + user_env + " "
         + shlex.quote(shell_path) + " -lc " + shlex.quote(payload)
     )
-    su_exec = (
+    su_plain_exec = (
+        "exec su " + shlex.quote(user) + " -s " + shlex.quote(shell_path)
+        + " -c " + shlex.quote(payload)
+    )
+    su_login_exec = (
         "exec su - " + shlex.quote(user) + " -s " + shlex.quote(shell_path)
         + " -c " + shlex.quote(payload)
     )
+    failure = (
+        "printf '%s\\n' "
+        + shlex.quote(
+            f"Unable to switch chroot execution to requested user {user}; "
+            f"runuser/su probes failed or timed out after {timeout_seconds}s"
+        )
+        + " >&2; exit 69"
+    )
     return (
-        "if " + runuser_probe + "; then " + runuser_exec
-        + "; elif " + su_probe + "; then " + su_exec
-        + "; else printf '%s\\n' "
-        + shlex.quote(f"Unable to switch chroot execution to requested user {user}")
-        + " >&2; exit 69; fi"
+        timeout_function
+        + "if " + runuser_probe + "; then " + runuser_exec
+        + "; elif " + su_plain_probe + "; then " + su_plain_exec
+        + "; elif " + su_login_probe + "; then " + su_login_exec
+        + "; else " + failure + "; fi"
     )
 
 
@@ -1243,10 +1301,34 @@ def _start_android_hud_bridge(raw_logfile: Path, state_dir: Path) -> None:
         _echo_log(raw_logfile, f"HUD bridge: could not start ({exc})")
 
 
+def _inactivity_hint_seconds(env: Mapping[str, str]) -> int:
+    raw = str(env.get("DEVTOOL_TERMUX_CHROOT_STALL_HINT_SECONDS", "30") or "30").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 30
+    return max(0, min(value, 3600))
+
+
+def _emit_chroot_inactivity_hint(raw_logfile: Path, *, pid: int, idle_seconds: int) -> None:
+    message = (
+        f"\n[devtool] Chroot command is still running after {idle_seconds}s with no output "
+        f"(pid {pid}). Log: {raw_logfile}. Use -v or DEVTOOL_TERMUX_CHROOT_VERBOSE=1 "
+        "to print the planned executor command.\n"
+    )
+    data = message.encode("utf-8", errors="replace")
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+    _append_bytes(raw_logfile, data)
+
+
 def _run_live_pty(argv: list[str], raw_logfile: Path, env: dict[str, str]) -> int:
     master_fd = None
     slave_fd = None
     proc: subprocess.Popen[bytes] | None = None
+    hint_after = _inactivity_hint_seconds(env)
+    last_output = time.monotonic()
+    last_hint = last_output
     try:
         master_fd, slave_fd = pty.openpty()
         proc = subprocess.Popen(argv, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, env=env, close_fds=True, start_new_session=True)
@@ -1278,6 +1360,12 @@ def _run_live_pty(argv: list[str], raw_logfile: Path, env: dict[str, str]) -> in
                         sys.stdout.buffer.write(data)
                         sys.stdout.buffer.flush()
                         _append_bytes(raw_logfile, data)
+                        last_output = time.monotonic()
+                elif hint_after:
+                    now = time.monotonic()
+                    if now - last_output >= hint_after and now - last_hint >= hint_after:
+                        _emit_chroot_inactivity_hint(raw_logfile, pid=proc.pid, idle_seconds=int(now - last_output))
+                        last_hint = now
             except OSError as exc:
                 if exc.errno == errno.EIO:
                     proc.wait(timeout=2)
@@ -1351,7 +1439,7 @@ def run_auto_chroot(argv: list[str], *, env: Mapping[str, str] | None = None, cw
     if meta.get("needs_android_bridge") == "1" and meta.get("hud_disabled") != "1":
         bridge_dir = child_env.get("DEVTOOL_HUD_BRIDGE_DIR", "").strip()
         if not bridge_dir:
-            identity = resolve_chroot_identity(config.chroot_name, config.mappings, env=child_env)
+            identity = resolve_chroot_identity(config.chroot_name, config.path_map, env=child_env)
             bridge_dir = str(Path(identity.home) / ".local" / "state" / "devtool-android-hud")
         child_env["DEVTOOL_HUD_BRIDGE_DIR"] = bridge_dir
         child_env.setdefault("DEVTOOL_HUD_SINGLETON", "kill")
