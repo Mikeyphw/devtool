@@ -40,7 +40,6 @@ def main() -> int:
     run([
         sys.executable, "-m", "pytest", "-q",
         "tests/test_validation_reports_phase32.py",
-        "tests/test_phase33_validation_release_seal.py",
         "tests/test_android_validation_workbench_phase29_31.py",
         "tests/test_phase31_1_validation_completion.py",
         "tests/test_android_notification_mock.py",

@@ -19,6 +19,7 @@ def main() -> int:
     parser.add_argument("--require-desktop", action="store_true", help="Require GTK4 desktop smoke/package gates")
     parser.add_argument("--require-android", action="store_true")
     parser.add_argument("--device-tests", action="store_true")
+    parser.add_argument("--final", action="store_true", help="Write a content-hashed, write-once .final.json evidence report")
     args = parser.parse_args()
 
     root = (args.root or repository_root()).resolve()
@@ -31,10 +32,11 @@ def main() -> int:
         require_android=args.require_android,
         run_device_tests=args.device_tests,
     )
-    write_report(report, output)
+    output = write_report(report, output, final=args.final)
     for result in report.results:
         print(f"{result.status.upper():7} {result.gate:24} {result.detail}")
     print(f"Report: {output}")
+    print(f"Evidence SHA-256: {report.release_evidence_hash}")
     return 0 if report.passed else 1
 
 

@@ -8,8 +8,8 @@
 - [ ] Android lint and local JVM tests pass.
 - [ ] Release APK is signed by the intended certificate and `apksigner verify` passes.
 - [ ] Emulator instrumentation installs and launches the debug application.
-- [ ] `tools/build-release.py --verify-reproducible` produces identical archives.
-- [ ] GitHub Actions release-qualification workflow is green.
+- [ ] `tools/build-release.py --verify-reproducible` produces identical archives and verified schema v2 artifact manifests.
+- [ ] GitHub Actions release-qualification workflow is green and uploads desktop, Android, emulator, and source evidence artifacts.
 
 ## Desktop manual matrix
 
@@ -41,7 +41,7 @@ automated matrix is green.
 - [ ] Review `CHANGELOG.md` and `docs/MIGRATION_1.1.md`.
 - [ ] Confirm `release/versions.json` matches every distributable.
 - [ ] Run `tools/make-release-candidate.sh --require-native --desktop --android`.
-- [ ] Verify `SHA256SUMS.all` from a second machine.
+- [ ] Verify `SHA256SUMS.all`, `release-artifacts.json`, and the `.final.json` release qualification evidence hash from a second machine.
 - [ ] Create an annotated `v1.1.0-rc.3` tag only after all automated and manual rows pass.
 
 ## Phase 32–33 validation seal

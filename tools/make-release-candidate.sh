@@ -14,7 +14,7 @@ Usage: tools/make-release-candidate.sh [options]
 
 Options:
   --core-only       Run only portable qualification gates.
-  --require-native  Fail when either Qt 6 or Android SDK gates cannot run.
+  --require-native  Fail when either GTK4/libadwaita or Android SDK gates cannot run.
   --desktop         Build and verify the Debian desktop package.
   --android         Build and verify the signed Android release APK.
   --out-dir PATH    Release-candidate output directory.
@@ -39,7 +39,7 @@ while (($#)); do
 done
 
 mkdir -p "$out_dir"
-qualify=(python3 "$root/tools/release-qualify.py" --root "$root" --output "$out_dir/qualification.json")
+qualify=(python3 "$root/tools/release-qualify.py" --root "$root" --output "$out_dir/qualification.json" --final)
 $core_only && qualify+=(--core-only)
 $require_native && qualify+=(--require-desktop --require-android)
 "${qualify[@]}"
@@ -65,6 +65,7 @@ fi
   cd "$out_dir"
   find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' -print0 \
     | sort -z \
-    | xargs -0 sha256sum > SHA256SUMS.all
+    | xargs -0 sha256sum > SHA256SUMS.all.tmp
+  mv -f SHA256SUMS.all.tmp SHA256SUMS.all
 )
 printf 'Release candidate ready: %s\n' "$out_dir"

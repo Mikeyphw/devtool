@@ -3,18 +3,38 @@ name: Release qualification
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   core:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+        group: [1, 2, 3, 4]
     steps:
-      - uses: actions/checkout@v4
-      - run: python3 -m compileall -q devtool tools
-      - run: python3 tools/run-pytest-split.py --groups 4 --group 1
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e . pytest
+      - run: python -m compileall -q devtool tools
+      - run: python tools/run-pytest-split.py --groups 4 --group ${{ matrix.group }} --group-timeout 300 --retries 1
 
   gtk-desktop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e . pytest
       - run: sudo apt-get update && sudo apt-get install -y xvfb python3-gi python3-rich gir1.2-gtk-4.0 gir1.2-adw-1 libgtk-4-1 libadwaita-1-0 dpkg-dev
       - run: python3 -m devtool control-center --backend gtk4 --once
       - run: xvfb-run -a python3 -m devtool control-center --backend gtk4 --startup-test
@@ -26,27 +46,102 @@ jobs:
       - run: rm -rf desktop/gtk-control-center/dist && desktop/gtk-control-center/package-deb.sh --verify
       - run: cp desktop/gtk-control-center/dist/devtool-control-center_*_all.deb dist/release/desktop-second.deb
       - run: tools/verify-identical.py dist/release/desktop-first.deb dist/release/desktop-second.deb
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: gtk-desktop-evidence
+          path: |
+            dist/release/*.deb
+            desktop/gtk-control-center/dist/*.sha256
+            .devtool/**/*.log
+          if-no-files-found: ignore
 
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: cd android/devtool-live-hud && ./gradlew lintRelease testReleaseUnitTest verifyReleaseApk
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - run: |
+          keytool -genkeypair -v \
+            -storetype JKS \
+            -keystore "$RUNNER_TEMP/devtool-ci-release.jks" \
+            -storepass devtool-ci-pass \
+            -keypass devtool-ci-pass \
+            -alias devtool-ci \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 7 \
+            -dname "CN=Devtool CI,O=Devtool,C=US"
+          {
+            echo "DEVTOOL_RELEASE_STORE_FILE=$RUNNER_TEMP/devtool-ci-release.jks"
+            echo "DEVTOOL_RELEASE_STORE_PASSWORD=devtool-ci-pass"
+            echo "DEVTOOL_RELEASE_KEY_ALIAS=devtool-ci"
+            echo "DEVTOOL_RELEASE_KEY_PASSWORD=devtool-ci-pass"
+          } >> "$GITHUB_ENV"
+      - run: cd android/devtool-live-hud && ./gradlew --no-daemon lintRelease testReleaseUnitTest verifyReleaseApk
       - run: cp android/devtool-live-hud/app/build/outputs/apk/release/app-release.apk app-release-first.apk
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: android-release-evidence
+          path: |
+            app-release-first.apk
+            android/devtool-live-hud/app/build/reports/**
+            android/devtool-live-hud/app/build/outputs/**/*.apk
+          if-no-files-found: ignore
 
   android-device:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
-          script: cd android/devtool-live-hud && ./gradlew connectedDebugAndroidTest
+          script: cd android/devtool-live-hud && ./gradlew --no-daemon connectedDebugAndroidTest
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: android-device-evidence
+          path: |
+            android/devtool-live-hud/app/build/reports/**
+            android/devtool-live-hud/app/build/outputs/androidTest-results/**
+          if-no-files-found: ignore
 
   source-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e . pytest
       - run: python3 tools/build-release.py --out-dir dist/release --verify-reproducible
+      - run: python3 tools/release-qualify.py --core-only --final --output dist/release-qualification.json
       - run: tools/verify-identical.py dist/release/SHA256SUMS dist/release/SHA256SUMS
+      - run: test -s dist/release/release-artifacts.json
+      - run: test -s dist/release-qualification.final.json
       - run: test -d tests/snapshots/ui
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: source-release-evidence
+          path: |
+            dist/release/**
+            dist/release-qualification.final.json
+            dist/qualification-logs/**
+          if-no-files-found: error

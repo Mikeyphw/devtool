@@ -7,7 +7,10 @@ Usage:
   pack_repo.sh [options] [subdir ...]
 
 Options:
-  -o, --output PATH   Write the tar.gz archive to PATH.
+  -o, --output PATH   Write the repository archive to PATH.
+  --compression zstd|gzip
+                      Compression format (default: zstd).
+  --manifest PATH     Write a SHA-256 manifest for archived files.
   -h, --help          Show this help text.
 
 Behavior:
@@ -18,8 +21,10 @@ EOF
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-default_output="/tmp/$(basename "$repo_root")-$(date +%Y%m%d-%H%M%S).tar.gz"
+compression="zstd"
+default_output="/tmp/$(basename "$repo_root")-$(date +%Y%m%d-%H%M%S).tar.zst"
 output_path="$default_output"
+manifest_path=""
 inputs=()
 
 while (($#)); do
@@ -36,8 +41,32 @@ while (($#)); do
       output_path="$2"
       shift 2
       ;;
+    --compression)
+      if (($# < 2)); then
+        echo "error: missing value for $1" >&2
+        exit 1
+      fi
+      compression="$2"
+      shift 2
+      ;;
+    --manifest)
+      if (($# < 2)); then
+        echo "error: missing value for $1" >&2
+        exit 1
+      fi
+      manifest_path="$2"
+      shift 2
+      ;;
     --output=*)
       output_path="${1#*=}"
+      shift
+      ;;
+    --compression=*)
+      compression="${1#*=}"
+      shift
+      ;;
+    --manifest=*)
+      manifest_path="${1#*=}"
       shift
       ;;
     --)
@@ -52,6 +81,24 @@ while (($#)); do
       shift
       ;;
   esac
+done
+
+case "$compression" in
+  zstd|gzip) ;;
+  *) echo "error: unsupported compression: $compression" >&2; exit 2 ;;
+esac
+
+validate_repo_relative_input() {
+  case "$1" in
+    ""|.|..|/*|*"/../"*|../*|*/..|*"//"*|*'\\'*)
+      echo "error: input path must be repository-relative and must not escape the repository: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+for input in "${inputs[@]}"; do
+  validate_repo_relative_input "$input"
 done
 
 mkdir -p "$(dirname "$output_path")"
@@ -101,6 +148,9 @@ should_skip() {
   esac
 }
 
+list_file=$(mktemp "${TMPDIR:-/tmp}/devtool-pack-list.XXXXXX")
+trap 'rm -f -- "$list_file"' EXIT
+
 {
   if ((${#inputs[@]})); then
     git -C "$repo_root" ls-files -z -co --exclude-standard -- "${inputs[@]}"
@@ -111,7 +161,41 @@ should_skip() {
   if should_skip "$path"; then
     continue
   fi
+  validate_repo_relative_input "$path"
   printf '%s\0' "$path"
-done | tar -C "$repo_root" --null -T - --zstd -cf "$output_path"
+done | LC_ALL=C sort -z > "$list_file"
 
+if [[ ! -s "$list_file" ]]; then
+  echo "error: no repository files matched the requested input" >&2
+  exit 1
+fi
+
+tar_args=(
+  -C "$repo_root"
+  --null -T "$list_file"
+  --sort=name
+  --mtime="@${SOURCE_DATE_EPOCH:-1784030400}"
+  --owner=0 --group=0 --numeric-owner
+  --mode=go-w
+  -cf "$output_path"
+)
+case "$compression" in
+  zstd) tar_args+=(--zstd) ;;
+  gzip) tar_args+=(-z) ;;
+esac
+tar "${tar_args[@]}"
+
+if [[ -n "$manifest_path" ]]; then
+  mkdir -p "$(dirname "$manifest_path")"
+  (
+    cd "$repo_root"
+    while IFS= read -r -d '' path; do
+      sha256sum -- "$path"
+    done < "$list_file"
+  ) > "$manifest_path"
+fi
+
+sha256sum "$output_path" > "$output_path.sha256"
 echo "created $output_path"
+echo "checksum $output_path.sha256"
+[[ -z "$manifest_path" ]] || echo "manifest $manifest_path"

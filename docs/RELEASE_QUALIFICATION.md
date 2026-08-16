@@ -93,7 +93,10 @@ python3 tools/build-release.py --verify-reproducible
 ```
 
 The builder fixes ZIP timestamps, ordering, permissions, compression, and root
-prefix. It writes `release-artifacts.json` and `SHA256SUMS` next to the archive.
+prefix. It writes `release-artifacts.json` schema v2 and `SHA256SUMS` next to the
+archive. The manifest records the source tree SHA-256, artifact SHA-256 values,
+release version inventory, hash algorithm, and Git HEAD when available; the
+manifest is verified against artifact bytes before it is published.
 
 ## CI matrix
 
@@ -123,5 +126,9 @@ python3 tools/validate-validation-release.py --require-android --device-tests
 ```
 
 The portable source gate cannot substitute for Android lint, unit tests, signed APK verification, or connected instrumentation. Missing Android SDK components are a release failure whenever `--require-android` is set.
+
+Use `--final` to write a content-hashed, write-once `.final.json` qualification
+evidence report. The report includes the release gate matrix, final verdict,
+release evidence SHA-256, and Git HEAD/tracked worktree invariants.
 
 - The complete Python regression inventory runs in four deterministic balanced pytest groups to isolate hangs while preserving complete coverage.

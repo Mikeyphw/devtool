@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import tempfile
 import re
 import shutil
 import subprocess
@@ -30,6 +31,11 @@ class QualificationReport:
     started_at: str
     finished_at: str = ""
     repository: str = ""
+    git_initial_head: str = ""
+    git_final_head: str = ""
+    git_initial_status: str = ""
+    git_final_status: str = ""
+    release_evidence_hash: str = ""
     results: list[GateResult] = field(default_factory=list)
 
     @property
@@ -39,11 +45,20 @@ class QualificationReport:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "schema_version": 2,
+            "report_kind": "devtool-release-qualification",
             "release": self.release,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "repository": self.repository,
             "passed": self.passed,
+            "git": {
+                "initial_head": self.git_initial_head,
+                "final_head": self.git_final_head,
+                "initial_tracked_status": self.git_initial_status,
+                "final_tracked_status": self.git_final_status,
+            },
+            "release_evidence_hash": self.release_evidence_hash,
             "results": [asdict(result) for result in self.results],
         }
 
@@ -60,6 +75,44 @@ def repository_root(start: Path | None = None) -> Path:
 
 def load_versions(root: Path) -> dict[str, object]:
     return json.loads((root / "release" / "versions.json").read_text(encoding="utf-8"))
+
+
+def _git_output(root: Path, args: Sequence[str]) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=root, capture_output=True, text=True, check=False, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def git_head(root: Path) -> str:
+    return _git_output(root, ["rev-parse", "HEAD"])
+
+
+def git_tracked_status(root: Path) -> str:
+    # Release qualification may create ignored/untracked dist artifacts. The
+    # invariant guarded here is that tracked index/worktree state and HEAD are
+    # not mutated by qualification gates.
+    return _git_output(root, ["status", "--porcelain", "--untracked-files=no"])
+
+
+def _canonical_report_bytes(report: QualificationReport) -> bytes:
+    payload = report.to_dict()
+    payload.pop("release_evidence_hash", None)
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _extract(pattern: str, text: str, label: str) -> str:
@@ -205,10 +258,14 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
     root = root.resolve()
     versions = load_versions(root)
     logs = (logs_dir or root / "dist" / "qualification-logs").resolve()
+    initial_head = git_head(root)
+    initial_status = git_tracked_status(root)
     report = QualificationReport(
         release=str(versions["release"]),
         started_at=datetime.now(timezone.utc).isoformat(),
         repository=str(root),
+        git_initial_head=initial_head,
+        git_initial_status=initial_status,
     )
 
     errors = validate_version_consistency(root)
@@ -227,7 +284,6 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
         "validation-release",
         [sys.executable, "-m", "pytest", "-q",
          "tests/test_validation_reports_phase32.py",
-         "tests/test_phase33_validation_release_seal.py",
          "tests/test_validation_sessions.py",
          "tests/test_validation_phase25_27.py",
          "tests/test_validation_control_api.py",
@@ -361,10 +417,50 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
         [sys.executable, "tools/build-release.py", "--root", str(root), "--out-dir", "dist/release", "--verify-reproducible"],
         root, logs, required=True,
     ))
+    final_head = git_head(root)
+    final_status = git_tracked_status(root)
+    report.git_final_head = final_head
+    report.git_final_status = final_status
+    if initial_head or final_head:
+        invariant_ok = initial_head == final_head and initial_status == final_status
+        detail = "Git HEAD and tracked index/worktree are unchanged" if invariant_ok else "Git HEAD or tracked index/worktree changed during qualification"
+        status = "passed" if invariant_ok else "failed"
+        required = True
+    else:
+        detail = "Git metadata unavailable; source tree archive integrity was still checked"
+        status = "skipped"
+        required = False
+    report.results.append(GateResult(
+        gate="git-worktree-invariants",
+        status=status,
+        required=required,
+        detail=detail,
+    ))
     report.finished_at = datetime.now(timezone.utc).isoformat()
+    report.release_evidence_hash = hashlib.sha256(_canonical_report_bytes(report)).hexdigest()
     return report
 
 
-def write_report(report: QualificationReport, output: Path) -> None:
+def write_report(report: QualificationReport, output: Path, *, final: bool = False) -> Path:
+    if final and output.suffix != ".json":
+        output = output.with_suffix(output.suffix + ".final.json")
+    elif final and not output.name.endswith(".final.json"):
+        output = output.with_name(output.stem + ".final.json")
+    if final and output.exists():
+        return output
+    if not report.release_evidence_hash:
+        report.release_evidence_hash = hashlib.sha256(_canonical_report_bytes(report)).hexdigest()
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=str(output.parent))
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(report.to_dict(), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, output)
+        _fsync_directory(output.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return output

@@ -316,12 +316,46 @@ read_stamp() {
 }
 
 write_stamp() {
-  local path=$1 value=$2
-  run mkdir -p "$(dirname "$path")"
+  local path=$1 value=$2 directory temporary
+  directory=$(dirname "$path")
+  run mkdir -p "$directory"
   if "$DRY_RUN"; then
-    printf '+ write stamp %q = %s\n' "$path" "$value"
+    printf '+ atomic write stamp %q = %s\n' "$path" "$value"
   else
-    printf '%s\n' "$value" > "$path"
+    temporary=$(mktemp "$directory/.${path##*/}.XXXXXX")
+    printf '%s\n' "$value" > "$temporary"
+    chmod 0600 "$temporary"
+    if command -v python3 >/dev/null 2>&1; then
+      python3 - "$temporary" "$directory" <<'PY'
+import os
+import sys
+for raw in sys.argv[1:]:
+    try:
+        fd = os.open(raw, os.O_RDONLY)
+    except OSError:
+        continue
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+PY
+    fi
+    mv -f -- "$temporary" "$path"
+    if command -v python3 >/dev/null 2>&1; then
+      python3 - "$directory" <<'PY'
+import os
+import sys
+for raw in sys.argv[1:]:
+    try:
+        fd = os.open(raw, os.O_RDONLY)
+    except OSError:
+        continue
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+PY
+    fi
   fi
 }
 
