@@ -205,9 +205,22 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         self.assertIn("devtool_user_switch_probe()", command)
         self.assertIn("timeout -k 2s 3s", command)
         self.assertIn("devtool_user_switch_probe runuser -u mike -- /bin/zsh -c ':'", command)
-        self.assertIn("devtool_user_switch_probe su mike -s /bin/zsh -c ':'", command)
-        self.assertIn("devtool_user_switch_probe su - mike -s /bin/zsh -c ':'", command)
-        self.assertIn("runuser/su probes failed or timed out after 3s", command)
+        self.assertIn("devtool_user_switch_probe sudo -H -u mike env HOME=/home/mike USER=mike LOGNAME=mike /bin/zsh -c ':'", command)
+        self.assertIn("devtool_user_switch_probe su -s /bin/zsh mike -c ':'", command)
+        self.assertIn("devtool_user_switch_probe su -l -s /bin/zsh mike -c ':'", command)
+        self.assertNotIn("devtool_user_switch_probe su mike -s /bin/zsh", command)
+        self.assertNotIn("devtool_user_switch_probe su - mike -s /bin/zsh", command)
+        self.assertIn("runuser/sudo/su probes failed or timed out after 3s", command)
+
+
+    def test_user_switch_su_exec_uses_util_linux_safe_option_order(self) -> None:
+        command = _identity_switch_command(self.identity(), "echo ok")
+        self.assertIn("elif command -v sudo", command)
+        self.assertIn("then exec sudo -H -u mike env HOME=/home/mike USER=mike LOGNAME=mike /bin/zsh -lc", command)
+        self.assertIn("then exec su -s /bin/zsh mike -c", command)
+        self.assertIn("then exec su -l -s /bin/zsh mike -c", command)
+        self.assertNotIn("exec su mike -s /bin/zsh", command)
+        self.assertNotIn("exec su - mike -s /bin/zsh", command)
 
     def test_user_switch_probe_timeout_is_bounded(self) -> None:
         self.assertEqual(_chroot_user_switch_probe_timeout({"DEVTOOL_CHROOT_USER_SWITCH_TIMEOUT": "0"}), 1)

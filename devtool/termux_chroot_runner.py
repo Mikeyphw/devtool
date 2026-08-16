@@ -375,39 +375,54 @@ def _identity_switch_command(identity: ChrootIdentity, payload: str) -> str:
         "devtool_user_switch_probe runuser -u " + shlex.quote(user) + " -- "
         + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
     )
+    # Keep su options before the user name.  util-linux su treats tokens after
+    # USER as arguments for the target shell, so ``su mike -s /bin/zsh -c`` can
+    # fail even though ``su -s /bin/zsh mike -c`` succeeds.  This showed up in
+    # Android chroot host-UI validation as a false exit 69 user-switch failure.
+    sudo_probe = (
+        "command -v sudo >/dev/null 2>&1 && "
+        "devtool_user_switch_probe sudo -H -u " + shlex.quote(user)
+        + " env " + user_env + " " + shlex.quote(shell_path)
+        + " -c ':' >/dev/null 2>&1"
+    )
     su_plain_probe = (
         "command -v su >/dev/null 2>&1 && "
-        "devtool_user_switch_probe su " + shlex.quote(user)
-        + " -s " + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
+        "devtool_user_switch_probe su -s " + shlex.quote(shell_path)
+        + " " + shlex.quote(user) + " -c ':' >/dev/null 2>&1"
     )
     su_login_probe = (
         "command -v su >/dev/null 2>&1 && "
-        "devtool_user_switch_probe su - " + shlex.quote(user)
-        + " -s " + shlex.quote(shell_path) + " -c ':' >/dev/null 2>&1"
+        "devtool_user_switch_probe su -l -s " + shlex.quote(shell_path)
+        + " " + shlex.quote(user) + " -c ':' >/dev/null 2>&1"
     )
     runuser_exec = (
         "exec runuser -u " + shlex.quote(user) + " -- env " + user_env + " "
         + shlex.quote(shell_path) + " -lc " + shlex.quote(payload)
     )
+    sudo_exec = (
+        "exec sudo -H -u " + shlex.quote(user) + " env " + user_env + " "
+        + shlex.quote(shell_path) + " -lc " + shlex.quote(payload)
+    )
     su_plain_exec = (
-        "exec su " + shlex.quote(user) + " -s " + shlex.quote(shell_path)
+        "exec su -s " + shlex.quote(shell_path) + " " + shlex.quote(user)
         + " -c " + shlex.quote(payload)
     )
     su_login_exec = (
-        "exec su - " + shlex.quote(user) + " -s " + shlex.quote(shell_path)
+        "exec su -l -s " + shlex.quote(shell_path) + " " + shlex.quote(user)
         + " -c " + shlex.quote(payload)
     )
     failure = (
         "printf '%s\\n' "
         + shlex.quote(
             f"Unable to switch chroot execution to requested user {user}; "
-            f"runuser/su probes failed or timed out after {timeout_seconds}s"
+            f"runuser/sudo/su probes failed or timed out after {timeout_seconds}s"
         )
         + " >&2; exit 69"
     )
     return (
         timeout_function
         + "if " + runuser_probe + "; then " + runuser_exec
+        + "; elif " + sudo_probe + "; then " + sudo_exec
         + "; elif " + su_plain_probe + "; then " + su_plain_exec
         + "; elif " + su_login_probe + "; then " + su_login_exec
         + "; else " + failure + "; fi"

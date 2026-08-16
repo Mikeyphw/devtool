@@ -48,3 +48,15 @@ Covered suites:
 The first packaged overlay still had a promise gap: if the chroot image did not provide a `timeout` binary, the fallback branch ran the probe command directly and could hang. v2 closes that gap with a bounded shell fallback and a regression test.
 
 The v2 audit also found that the first overlay only added the stall hint to the full-process auto-chroot path. Host-UI wrapped command phases use the generic runner, so v2 adds chroot-aware stall diagnostics there too.
+
+
+## v3 audit correction
+
+A real Android chroot validation run still failed with exit 69 after v2. The
+rendered command showed that the new plain/login `su` fallbacks used unsafe
+util-linux option ordering (`su mike -s /usr/bin/zsh -c ...` and
+`su - mike -s /usr/bin/zsh -c ...`). On util-linux `su`, options must be kept
+before the username; tokens after the username may be treated as arguments to
+the target shell. v3 changes the order to `su -s <shell> <user> -c ...` and
+`su -l -s <shell> <user> -c ...`, adds a `sudo -H -u <user>` fallback, and
+extends tests so the old broken order cannot regress.
