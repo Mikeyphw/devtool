@@ -47,6 +47,11 @@ Default SHA256:
 c1e67ef7b17a6300e136118bd1dc04725009cb376c1aad10abcf8cd453628d58
 ```
 
+Each managed QEMU sysroot cache entry is scoped to the selected URL and expected
+SHA-256. Devtool writes a `.devtool-qemu-sysroot.json` identity marker after
+extracting a verified sysroot and refuses to reuse unmarked or mismatched cache
+entries, even when the archive basename is the same.
+
 ## Config
 
 ```toml

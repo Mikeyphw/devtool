@@ -201,6 +201,9 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         print(f"Instrumentation project does not exist: {project}", file=sys.stderr)
         return 2
     variant_title = _variant_title(args.variant)
+    installed_test_package = ""
+    if args.runner and "/" in args.runner:
+        installed_test_package = args.runner.split("/", 1)[0].strip()
     try:
         if not args.skip_build:
             gradle = Path(args.gradle)
@@ -222,6 +225,7 @@ def main(raw_args: Sequence[str] | None = None) -> int:
             configured=args.runner,
             target_package=args.target_package,
         )
+        installed_test_package = runner.split("/", 1)[0]
         command = [*_instrument_command(args.device_serial, am_command=args.am_command), "-w", "-r"]
         selected_classes = list(args.classes)
         for method in args.methods:
@@ -257,14 +261,36 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f"DEVTOOL_INSTRUMENTATION_RESULT {json.dumps(payload, separators=(',', ':'))}")
-        if not args.keep_installed:
-            _uninstall_test_package(runner.split("/", 1)[0], serial=args.device_serial, install_command=args.install_command)
         if result.returncode != 0 or counts["failed"]:
             return result.returncode or 1
         return 0
     except InstrumentationError as exc:
         print(f"Instrumentation failed: {exc}", file=sys.stderr)
+        report = args.report or (project / ".devtool" / "reports" / "android-instrumentation.json")
+        payload = {
+            "framework": "android-instrumentation",
+            "error": str(exc),
+            "runner": args.runner,
+            "test_package": installed_test_package,
+            "returncode": 1,
+            "discovered": 0,
+            "selected": 0,
+            "executed": 0,
+            "passed": 0,
+            "failed": 1,
+            "skipped": 0,
+            "total": 0,
+            "failed_ids": [],
+        }
+        try:
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        except OSError as report_error:
+            print(f"Instrumentation report write failed: {report_error}", file=sys.stderr)
         return 1
+    finally:
+        if installed_test_package and not args.keep_installed:
+            _uninstall_test_package(installed_test_package, serial=args.device_serial, install_command=args.install_command)
 
 
 if __name__ == "__main__":

@@ -194,10 +194,13 @@ console_scripts = ["devtool"]
 The package gate clears stale `dist/` output at execution time, validates archive
 structure, wheel metadata, tags, and every hash and size declared by `RECORD`,
 installs every wheel in a clean virtual environment, understands namespace
-packages, verifies configured imports, verifies that declared/configured console-script
-wrappers are installed and executable without launching backend- or GUI-dependent
-applications, rebuilds wheels from sdists, revalidates and installs those rebuilt wheels,
-and checks name/version metadata parity. For uv-managed projects the sdist rebuild uses
+packages, verifies configured imports through `importlib.import_module()` without
+source-code interpolation, rejects invalid import names, verifies that declared/configured
+console-script wrappers are installed and executable without launching backend- or
+GUI-dependent applications, rejects console-script names that escape the virtual
+environment script directory, rebuilds wheels from sdists, revalidates and installs
+those rebuilt wheels, and checks name/version metadata parity. For uv-managed projects
+the sdist rebuild uses
 `uv build --wheel <sdist> --out-dir <dir>` so the package gate uses the same PEP 517
 frontend as the primary build instead of starting a second pip build-isolation resolver.
 Optional reproducibility builds occur from two clean source copies with

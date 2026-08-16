@@ -436,7 +436,10 @@ devtool test --instrumented --method com.example.EditorTest.opensFile
 
 The rooted-device path uses `sudo pm install -r -t` and `am instrument`. An
 explicit device serial uses ADB. Configure the runner or target package when
-more than one installed instrumentation runner is present.
+more than one installed instrumentation runner is present. Devtool writes a
+structured instrumentation report for setup failures as well as runner failures,
+and it uninstalls the test APK package in a `finally` cleanup path unless
+`keep_installed` / `--keep-installed` is set.
 
 ## Current capabilities
 

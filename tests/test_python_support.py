@@ -71,6 +71,115 @@ class PythonSupportTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(payload["valid"], 1)
 
+    def test_package_import_smoke_rejects_invalid_module_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dist = root / "dist"
+            dist.mkdir()
+            wheel = dist / "demo-1-py3-none-any.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("demo/__init__.py", "")
+                archive.writestr("demo-1.dist-info/METADATA", "Metadata-Version: 2.1\nName: demo\nVersion: 1\n")
+                archive.writestr("demo-1.dist-info/WHEEL", "Wheel-Version: 1.0\nGenerator: devtool-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+                archive.writestr(
+                    "demo-1.dist-info/RECORD",
+                    "demo/__init__.py,,\n"
+                    "demo-1.dist-info/METADATA,,\n"
+                    "demo-1.dist-info/WHEEL,,\n"
+                    "demo-1.dist-info/RECORD,,\n",
+                )
+            payload, rc = verify_packages(
+                root,
+                options=PackageCheckOptions(import_smoke=True, import_modules=["demo;raise SystemExit(99)"]),
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["invalid"], 1)
+        checks = payload["items"][0]["checks"]
+        self.assertTrue(any(check["name"].startswith("import:demo;raise") for check in checks))
+
+
+    def test_package_import_smoke_rejects_empty_dotted_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dist = root / "dist"
+            dist.mkdir()
+            wheel = dist / "demo-1-py3-none-any.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("demo/__init__.py", "")
+                archive.writestr("demo-1.dist-info/METADATA", "Metadata-Version: 2.1\nName: demo\nVersion: 1\n")
+                archive.writestr("demo-1.dist-info/WHEEL", "Wheel-Version: 1.0\nGenerator: devtool-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+                archive.writestr(
+                    "demo-1.dist-info/RECORD",
+                    "demo/__init__.py,,\n"
+                    "demo-1.dist-info/METADATA,,\n"
+                    "demo-1.dist-info/WHEEL,,\n"
+                    "demo-1.dist-info/RECORD,,\n",
+                )
+            for bad_name in (".demo", "demo.", "demo..sub"):
+                payload, rc = verify_packages(
+                    root,
+                    options=PackageCheckOptions(import_smoke=True, import_modules=[bad_name]),
+                )
+                self.assertEqual(rc, 1)
+                self.assertEqual(payload["invalid"], 1)
+                checks = payload["items"][0]["checks"]
+                self.assertTrue(any(check["name"] == f"import:{bad_name}" for check in checks))
+
+    def test_package_cli_verification_rejects_backslash_script_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dist = root / "dist"
+            dist.mkdir()
+            wheel = dist / "demo-1-py3-none-any.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("demo/__init__.py", "")
+                archive.writestr("demo-1.dist-info/METADATA", "Metadata-Version: 2.1\nName: demo\nVersion: 1\n")
+                archive.writestr("demo-1.dist-info/WHEEL", "Wheel-Version: 1.0\nGenerator: devtool-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+                archive.writestr(
+                    "demo-1.dist-info/RECORD",
+                    "demo/__init__.py,,\n"
+                    "demo-1.dist-info/METADATA,,\n"
+                    "demo-1.dist-info/WHEEL,,\n"
+                    "demo-1.dist-info/RECORD,,\n",
+                )
+            payload, rc = verify_packages(
+                root,
+                options=PackageCheckOptions(verify_cli=True, console_scripts=["nested\\tool"]),
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["invalid"], 1)
+        checks = payload["items"][0]["checks"]
+        self.assertTrue(any(check["name"] == "console_script:nested\\tool" for check in checks))
+
+    def test_package_cli_verification_rejects_path_escape_script_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dist = root / "dist"
+            dist.mkdir()
+            wheel = dist / "demo-1-py3-none-any.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("demo/__init__.py", "")
+                archive.writestr("demo-1.dist-info/METADATA", "Metadata-Version: 2.1\nName: demo\nVersion: 1\n")
+                archive.writestr("demo-1.dist-info/WHEEL", "Wheel-Version: 1.0\nGenerator: devtool-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+                archive.writestr(
+                    "demo-1.dist-info/RECORD",
+                    "demo/__init__.py,,\n"
+                    "demo-1.dist-info/METADATA,,\n"
+                    "demo-1.dist-info/WHEEL,,\n"
+                    "demo-1.dist-info/RECORD,,\n",
+                )
+            payload, rc = verify_packages(
+                root,
+                options=PackageCheckOptions(verify_cli=True, console_scripts=["../outside"]),
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["invalid"], 1)
+        checks = payload["items"][0]["checks"]
+        self.assertTrue(any(check["name"] == "console_script:../outside" for check in checks))
+
     def test_python_validation_runs_test_lint_build_and_package_check(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

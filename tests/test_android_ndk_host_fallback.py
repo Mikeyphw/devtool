@@ -258,6 +258,51 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
             self.assertFalse((root / "app" / ".cxx").exists())
             self.assertFalse((root / "app" / "build" / ".cxx").exists())
 
+    def test_qemu_sysroot_cache_identity_is_url_and_sha_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = android_build.qemu_sysroot_cache_dir(root, "https://one.example/rootfs.tar.gz", "a" * 64)
+            second = android_build.qemu_sysroot_cache_dir(root, "https://two.example/rootfs.tar.gz", "a" * 64)
+            third = android_build.qemu_sysroot_cache_dir(root, "https://one.example/rootfs.tar.gz", "b" * 64)
+
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(first, third)
+        self.assertIn("rootfs", first.name)
+
+    def test_qemu_sysroot_cache_requires_matching_identity_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = android_build.qemu_sysroot_cache_dir(root, "https://one.example/rootfs.tar.gz", "a" * 64)
+            (target / "lib64").mkdir(parents=True)
+            (target / "lib64" / "ld-linux-x86-64.so.2").write_bytes(b"loader")
+
+            self.assertFalse(
+                android_build._qemu_sysroot_identity_matches(
+                    target,
+                    url="https://one.example/rootfs.tar.gz",
+                    expected_sha256="a" * 64,
+                )
+            )
+            android_build._write_qemu_sysroot_identity(
+                target,
+                url="https://one.example/rootfs.tar.gz",
+                expected_sha256="a" * 64,
+            )
+
+            self.assertTrue(
+                android_build._qemu_sysroot_identity_matches(
+                    target,
+                    url="https://one.example/rootfs.tar.gz",
+                    expected_sha256="a" * 64,
+                )
+            )
+            self.assertFalse(
+                android_build._qemu_sysroot_identity_matches(
+                    target,
+                    url="https://one.example/rootfs.tar.gz",
+                    expected_sha256="b" * 64,
+                )
+            )
 
 
 if __name__ == "__main__":

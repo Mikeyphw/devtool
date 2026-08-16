@@ -1415,6 +1415,24 @@ def _venv_python(root: Path) -> Path:
     return root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+def _valid_import_module_name(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    parts = text.split(".")
+    return all(part and part.isidentifier() for part in parts)
+
+
+def _valid_console_script_name(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text or text in {".", ".."} or "/" in text or "\\" in text:
+        return False
+    path = Path(text)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        return False
+    return len(path.parts) == 1
+
+
 def ensure_venv_environment(env_root: Path) -> int:
     env_root = env_root.expanduser()
     venv_python = _venv_python(env_root)
@@ -1467,7 +1485,15 @@ def _verify_wheel_install(
         imports = options.import_modules or list(item.get("imports") or [])
         if options.import_smoke:
             for module in imports:
-                check = _run_capture([str(python), "-I", "-c", f"import {module}"], cwd=Path(temporary), timeout=60)
+                module = str(module or "").strip()
+                if not _valid_import_module_name(module):
+                    detail = "invalid import module name"
+                    result_payload["imports"][module] = {"status": "failed", "output": detail}
+                    item["checks"].append({"name": f"import:{module}", "status": "failed", "detail": detail})
+                    item["valid"] = False
+                    continue
+                code = "import importlib,sys; importlib.import_module(sys.argv[1])"
+                check = _run_capture([str(python), "-I", "-c", code, module], cwd=Path(temporary), timeout=60)
                 status = "passed" if check.returncode == 0 else "failed"
                 result_payload["imports"][module] = {"status": status, "output": check.stdout.strip()}
                 item["checks"].append({"name": f"import:{module}", "status": status, "detail": check.stdout.strip()})
@@ -1477,6 +1503,23 @@ def _verify_wheel_install(
         if options.verify_cli:
             bin_dir = python.parent
             for script in scripts:
+                script = str(script or "").strip()
+                if not _valid_console_script_name(script):
+                    checks = {
+                        "installed": False,
+                        "executable": False,
+                        "path": "",
+                        "mode": "installed-wrapper",
+                        "reason": "invalid console script name",
+                    }
+                    result_payload["console_scripts"][script] = checks
+                    item["checks"].append({
+                        "name": f"console_script:{script}",
+                        "status": "failed",
+                        "detail": json.dumps(checks),
+                    })
+                    item["valid"] = False
+                    continue
                 candidates = [bin_dir / script, bin_dir / f"{script}.exe", bin_dir / f"{script}-script.py"]
                 executable = next((candidate for candidate in candidates if candidate.is_file()), None)
                 exists = executable is not None

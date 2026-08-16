@@ -1751,10 +1751,40 @@ def verify_sha256(path: Path, expected: str | None, label: str) -> None:
         fail(f"{label} SHA256 mismatch for {path}\nexpected: {normalized}\nactual:   {actual}")
 
 
-def qemu_sysroot_cache_dir(cache_root: Path, url: str) -> Path:
+def qemu_sysroot_cache_dir(cache_root: Path, url: str, expected_sha256: str | None = None) -> Path:
     stem = Path(urllib.parse.urlparse(url).path).name or "qemu-x86_64-sysroot.tar.gz"
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", stem)
-    return cache_root / "qemu" / "x86_64-sysroot" / safe.replace(".tar.gz", "").replace(".tgz", "")
+    safe = safe.replace(".tar.gz", "").replace(".tgz", "")
+    identity = hashlib.sha256(f"{url}\n{expected_sha256 or ''}".encode("utf-8")).hexdigest()[:16]
+    return cache_root / "qemu" / "x86_64-sysroot" / f"{safe}-{identity}"
+
+
+def _qemu_sysroot_identity_file(prefix: Path) -> Path:
+    return prefix / ".devtool-qemu-sysroot.json"
+
+
+def _qemu_sysroot_identity_matches(prefix: Path, *, url: str, expected_sha256: str) -> bool:
+    marker = _qemu_sysroot_identity_file(prefix)
+    if not marker.is_file():
+        return False
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        str(payload.get("url") or "") == url
+        and str(payload.get("sha256") or "").lower() == expected_sha256.lower()
+    )
+
+
+def _write_qemu_sysroot_identity(prefix: Path, *, url: str, expected_sha256: str) -> None:
+    payload = {
+        "schema_version": 1,
+        "url": url,
+        "sha256": expected_sha256.lower(),
+        "purpose": "qemu-x86_64-loader-prefix",
+    }
+    _qemu_sysroot_identity_file(prefix).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def obtain_qemu_x86_64_sysroot(
@@ -1777,8 +1807,12 @@ def obtain_qemu_x86_64_sysroot(
 
     selected_url = str(url or os.environ.get("DEVTOOL_QEMU_SYSROOT_URL", "").strip() or DEFAULT_QEMU_X86_64_SYSROOT_URL)
     selected_sha = str(expected_sha256 or os.environ.get("DEVTOOL_QEMU_SYSROOT_SHA256", "").strip() or DEFAULT_QEMU_X86_64_SYSROOT_SHA256)
-    target = qemu_sysroot_cache_dir(cache_root, selected_url)
-    if qemu_prefix_has_x86_64_loader(target) and not force:
+    target = qemu_sysroot_cache_dir(cache_root, selected_url, selected_sha)
+    if (
+        qemu_prefix_has_x86_64_loader(target)
+        and _qemu_sysroot_identity_matches(target, url=selected_url, expected_sha256=selected_sha)
+        and not force
+    ):
         info(f"Using cached QEMU x86_64 sysroot: {target}")
         return target
     if dry_run:
@@ -1800,6 +1834,7 @@ def obtain_qemu_x86_64_sysroot(
             f"URL: {selected_url}\n"
             "Set --qemu-sysroot-url to a tar/zip rootfs containing an amd64 loader/libc."
         )
+    _write_qemu_sysroot_identity(staging, url=selected_url, expected_sha256=selected_sha)
     if target.exists():
         shutil.rmtree(target)
     staging.replace(target)
