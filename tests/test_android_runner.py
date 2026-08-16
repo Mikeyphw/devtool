@@ -1769,6 +1769,89 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             self.assertIn("def standalone_main", text)
             self.assertNotIn("from devtool", text)
 
+
+    def test_android_builder_omits_default_auto_provider_flags_for_stale_chroot_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                build_target=str(root),
+                restore_target=str(root),
+                runner_options={
+                    "android": {
+                        "variant": "debug",
+                        "java_provider": "auto",
+                        "ndk_host_provider": "auto",
+                        "qemu_ld_prefix": "auto",
+                        "qemu_install": "auto",
+                        "native_provider": "auto",
+                        "native_cache": "auto",
+                    },
+                    "gradle": {"provider": "auto"},
+                    "tasks": {},
+                },
+            )
+
+            args = android_builder_arguments_for_tasks(config, [":app:assembleDebug"], scan_artifacts=False)
+
+        omitted = {
+            "--java-provider",
+            "--ndk-host-provider",
+            "--qemu-ld-prefix",
+            "--qemu-install",
+            "--native-provider",
+            "--native-cache",
+            "--gradle-provider",
+        }
+        for flag in omitted:
+            self.assertNotIn(flag, args)
+        self.assertIn("--aapt2-provider", args)
+        self.assertIn("--android-platform", args)
+        self.assertIn("--build-tools", args)
+
+    def test_android_builder_preserves_explicit_non_default_provider_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                build_target=str(root),
+                restore_target=str(root),
+                runner_options={
+                    "android": {
+                        "variant": "debug",
+                        "java_provider": "system",
+                        "ndk_host_provider": "qemu",
+                        "qemu_ld_prefix": "none",
+                        "qemu_install": "never",
+                        "native_provider": "ndk",
+                        "native_cache": "ccache",
+                    },
+                    "gradle": {"provider": "wrapper"},
+                    "tasks": {},
+                },
+            )
+
+            args = android_builder_arguments_for_tasks(config, [":app:assembleDebug"], scan_artifacts=False)
+
+        expected = {
+            "--java-provider": "system",
+            "--ndk-host-provider": "qemu",
+            "--qemu-ld-prefix": "none",
+            "--qemu-install": "never",
+            "--native-provider": "ndk",
+            "--native-cache": "ccache",
+            "--gradle-provider": "wrapper",
+        }
+        for flag, value in expected.items():
+            self.assertIn(flag, args)
+            self.assertEqual(args[args.index(flag) + 1], value)
+
     def test_execution_boundary_refreshes_stale_android_builder_parser(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "build-apk"

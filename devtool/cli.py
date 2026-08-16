@@ -1137,6 +1137,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             # Python/process/runtime failures.
             r"^Traceback \(most recent call last\):$",
             r"^\w*(?:Error|Exception):\s+.+",
+            r"^[A-Za-z0-9_.-]+(?:\.py)?\s*:\s*error:\s+.+",
             r"^(?:fatal|error):\s+.+",
             r"^FAILED\s+.+",
         )
@@ -1498,10 +1499,17 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                     if isinstance(issue, dict) and str(issue.get("severity") or "").lower() == "error":
                         issue_message = _format_issue_detail(issue, default="Error")
                         break
+                raw_error_lines = _raw_error_details(str(result.get("output") or ""))
+                raw_error_message = raw_error_lines[0] if raw_error_lines else ""
+                normalized_failure_kind = failure_kind.casefold().replace("-", "_").replace(" ", "_")
                 if issue_message:
                     reason = f"{name} failed with exit {returncode}: {issue_message}"
+                elif raw_error_message and normalized_failure_kind in {"", "unknown", "unknown_failure"}:
+                    reason = f"{name} failed with exit {returncode}: {raw_error_message}"
                 elif failure_kind:
                     reason = f"{name} failed with exit {returncode}: {failure_kind}"
+                elif raw_error_message:
+                    reason = f"{name} failed with exit {returncode}: {raw_error_message}"
                 else:
                     reason = f"{name} failed with exit {returncode}"
                 reasons.append(reason)

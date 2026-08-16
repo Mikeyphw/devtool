@@ -988,6 +988,47 @@ artifact-cleanup: ok exit=0 time=0.10s
         self.assertIn("warning: SDK package fallback used for fixture device.", text)
         self.assertIn("app/src/main/kotlin/Demo.kt:7:5: warning: Deprecated call.", text)
 
+
+    def test_failure_reason_uses_raw_argparse_error_when_failure_kind_is_unknown(self) -> None:
+        raw_output = (
+            "$ python3 /home/mike/.local/share/devtool/runtime/android/build-apk /repo "
+            "--java-provider auto\n"
+            "usage: build-apk [-h] [-p PROJECT_DIR] [-x [{auto,always,never}]]\n"
+            "build-apk: error: unrecognized arguments: --java-provider auto --gradle-provider auto\n"
+        )
+        summary_text = "android-validation-explicit-tasks: failed exit=2 time=4.67s\n"
+        json_text = json.dumps(
+            {
+                "warnings": 0,
+                "errors": 0,
+                "failed": 1,
+                "results": [
+                    {
+                        "name": "android-validation-explicit-tasks",
+                        "returncode": 2,
+                        "failure_kind": "unknown_failure",
+                        "output": raw_output,
+                        "issues": [],
+                    }
+                ],
+            }
+        )
+        args = SimpleNamespace(no_clipboard=False, copy=True, copy_via="auto")
+        copied: list[str] = []
+        result = SimpleNamespace(success=True, backend="test", reason="")
+        with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
+            _maybe_copy(raw_output, summary_text, json_text, args)
+
+        self.assertEqual(len(copied), 1)
+        text = copied[0]
+        self.assertIn("Failure reason:", text)
+        self.assertIn(
+            "android validation explicit tasks failed with exit 2: build-apk: error: unrecognized arguments: --java-provider auto --gradle-provider auto",
+            text,
+        )
+        self.assertIn("Errors:", text)
+        self.assertIn("build-apk: error: unrecognized arguments: --java-provider auto --gradle-provider auto", text)
+
     def test_success_copy_includes_structured_warning_details(self) -> None:
         raw_output = (
             "$ ./gradlew lintDebug\n"

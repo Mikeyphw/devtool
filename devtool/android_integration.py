@@ -455,6 +455,25 @@ def _append_option(argv: list[str], flag: str, value: Any) -> None:
     argv.extend([flag, str(value)])
 
 
+def _append_non_default_option(argv: list[str], flag: str, value: Any, *, default: str = "auto") -> None:
+    """Append builder flags only when they intentionally override defaults.
+
+    Android builder helpers are staged into long-lived chroot-visible runtime
+    paths.  A stale staged ``build-apk`` parser may not know newer provider
+    selection flags, and passing ``--provider auto`` is semantically identical
+    to omitting that flag.  Keep explicit non-default selections strict while
+    omitting default ``auto`` provider knobs for compatibility with staged
+    helpers that are older than the host Devtool command generator.
+    """
+
+    if value is None or value == "":
+        return
+    normalized = str(value).strip()
+    if not normalized or normalized == default:
+        return
+    argv.extend([flag, normalized])
+
+
 def _positive_integer(value: Any) -> int | None:
     try:
         parsed = int(str(value).strip())
@@ -535,7 +554,7 @@ def android_builder_arguments_for_tasks(
         argv.extend(["--task", task])
 
     _append_option(argv, "--java-home", android.get("java_home") or java_options.get("home") or gradle.get("java_home"))
-    _append_option(argv, "--java-provider", java_options.get("provider") or android.get("java_provider", "auto"))
+    _append_non_default_option(argv, "--java-provider", java_options.get("provider") or android.get("java_provider", "auto"))
     _append_option(argv, "--sdk-root", android.get("sdk_root"))
     _append_option(argv, "--aapt2", android.get("aapt2"))
     _append_option(argv, "--aapt2-provider", build_tools_options.get("aapt2_provider") or android.get("aapt2_provider", "auto"))
@@ -544,18 +563,18 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--build-tools", build_tools_options.get("version") or (build_tools_value if not isinstance(build_tools_value, dict) else "auto"))
     _append_option(argv, "--arm-build-tools-provider", build_tools_options.get("provider") or android.get("build_tools_provider", "auto"))
     _append_option(argv, "--ndk-version", android.get("ndk_version", "auto"))
-    _append_option(argv, "--ndk-host-provider", android.get("ndk_host_provider", "auto"))
+    _append_non_default_option(argv, "--ndk-host-provider", android.get("ndk_host_provider", "auto"))
     _append_option(argv, "--arm64-ndk-url", android.get("arm64_ndk_url"))
     _append_option(argv, "--qemu-command", android.get("qemu_command"))
-    _append_option(argv, "--qemu-ld-prefix", android.get("qemu_ld_prefix", "auto"))
+    _append_non_default_option(argv, "--qemu-ld-prefix", android.get("qemu_ld_prefix", "auto"))
     _append_option(argv, "--qemu-sysroot-url", android.get("qemu_sysroot_url"))
     _append_option(argv, "--qemu-sysroot-sha256", android.get("qemu_sysroot_sha256"))
-    _append_option(argv, "--qemu-install", android.get("qemu_install", "auto"))
+    _append_non_default_option(argv, "--qemu-install", android.get("qemu_install", "auto"))
     _append_option(argv, "--cmake-version", android.get("cmake_version", "auto"))
-    _append_option(argv, "--native-provider", native_options.get("provider") or android.get("native_provider", "auto"))
-    _append_option(argv, "--native-cache", native_options.get("cache") or android.get("native_cache", "auto"))
+    _append_non_default_option(argv, "--native-provider", native_options.get("provider") or android.get("native_provider", "auto"))
+    _append_non_default_option(argv, "--native-cache", native_options.get("cache") or android.get("native_cache", "auto"))
     _append_option(argv, "--gradle-command", gradle.get("command") or nested_gradle.get("command") or (android.get("gradle") if not isinstance(android.get("gradle"), dict) else None))
-    _append_option(argv, "--gradle-provider", gradle.get("provider") or nested_gradle.get("provider") or "auto")
+    _append_non_default_option(argv, "--gradle-provider", gradle.get("provider") or nested_gradle.get("provider") or "auto")
     _append_option(argv, "--gradle-version", gradle.get("version"))
     _append_option(argv, "--gradle-user-home", gradle.get("user_home") or android.get("gradle_user_home"))
     downloads, network = _bootstrap_policy(config)
