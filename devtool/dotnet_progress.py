@@ -21,6 +21,7 @@ from .rich_progress import (
     compact_display_target,
     completion_line,
 )
+from .tui_icons import activity_icon
 
 _DOTNET_COMMANDS = {"restore", "build", "test", "publish", "pack"}
 _PROJECT_EXTENSIONS = {".csproj", ".fsproj", ".vbproj"}
@@ -315,7 +316,7 @@ class DotnetProgressTracker:
             target = _repo_relative(target, self.cwd)
         target = compact_display_target(target, cwd=self.cwd)
         if self.returncode is None:
-            icon = "◆"
+            icon = activity_icon(kind="dotnet", command=self.command_name or (self.plan.command if self.plan else ".NET"), target=str(target), cwd=self.cwd)
             border_style = "cyan"
             status_style = "bold cyan"
         elif self.returncode == 0:

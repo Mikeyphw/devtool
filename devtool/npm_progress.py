@@ -31,6 +31,7 @@ from .rich_progress import (
     compact_display_target,
     completion_line,
 )
+from .tui_icons import activity_icon
 
 
 _NODE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
@@ -255,7 +256,7 @@ class NpmProgressTracker:
         if self.returncode is None:
             border = "cyan"
             title_style = "bold cyan"
-            icon = "◆"
+            icon = activity_icon(kind="node", command=self.command_name or "npm", target=str(target), cwd=self.cwd)
         elif self.returncode == 0:
             border = "green"
             title_style = "bold green"

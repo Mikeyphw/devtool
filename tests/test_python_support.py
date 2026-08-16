@@ -16,6 +16,7 @@ from devtool.python_support import (
     audit_source_tree,
     check_notebooks,
     check_service_lifecycle,
+    build_sync_command,
     clean_python,
     declared_group_dependencies,
     default_python_cache_root,
@@ -507,6 +508,116 @@ class PythonSupportTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(run.call_args_list[2].args[0][-2:], ["hatchling>=1.27", "editables"])
         self.assertEqual(run.call_args_list[3].args[0][-1], ".[dev]")
+
+
+
+    def test_uv_sync_uses_local_sibling_source_for_selected_extra(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            code = Path(tmp) / "Code"
+            root = code / "bkx"
+            sibling = code / "mikomn"
+            root.mkdir(parents=True)
+            sibling.mkdir(parents=True)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='bkx'\nversion='1'\n"
+                "[project.optional-dependencies]\ninteractive=['mikomn[cli]>=0.1']\n"
+                "[tool.uv]\n",
+                encoding="utf-8",
+            )
+            (sibling / "pyproject.toml").write_text("[project]\nname='mikomn'\nversion='1'\n", encoding="utf-8")
+            info = inspect_python_project(root, "uv")
+            plan = resolve_environment(info, configured_python=sys.executable, environment=str(root / ".venv"), extras=["interactive"])
+            commands = build_sync_command(info, plan, extras=["interactive"])
+
+        self.assertEqual(plan.run_prefix, ("uv", "run", "--no-sync"))
+        flattened = [item for command in commands for item in command]
+        self.assertNotIn("sync", commands[0])
+        self.assertIn("uv", commands[-1][0])
+        self.assertIn("pip", commands[-1])
+        self.assertIn(str(sibling.resolve()) + "[cli]", flattened)
+        self.assertIn(".[interactive]", flattened)
+
+    def test_uv_sync_does_not_install_unselected_optional_local_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            code = Path(tmp) / "Code"
+            root = code / "bkx"
+            sibling = code / "mikomn"
+            root.mkdir(parents=True)
+            sibling.mkdir(parents=True)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='bkx'\nversion='1'\n"
+                "[project.optional-dependencies]\ninteractive=['mikomn[cli]>=0.1']\n"
+                "[tool.uv]\n",
+                encoding="utf-8",
+            )
+            (sibling / "pyproject.toml").write_text("[project]\nname='mikomn'\nversion='1'\n", encoding="utf-8")
+            info = inspect_python_project(root, "uv")
+            plan = resolve_environment(info, configured_python=sys.executable, environment=str(root / ".venv"))
+            commands = build_sync_command(info, plan)
+
+        self.assertEqual(plan.run_prefix, ("uv", "run"))
+        self.assertEqual(commands[0][:2], ["uv", "sync"])
+        self.assertNotIn(str(sibling.resolve()), " ".join(" ".join(command) for command in commands))
+
+    def test_uv_source_table_remains_authoritative_over_sibling_guess(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            code = Path(tmp) / "Code"
+            root = code / "bkx"
+            sibling = code / "mikomn"
+            root.mkdir(parents=True)
+            sibling.mkdir(parents=True)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='bkx'\nversion='1'\ndependencies=['mikomn[cli]>=0.1']\n"
+                "[tool.uv.sources]\nmikomn={ path='../vendor/mikomn' }\n",
+                encoding="utf-8",
+            )
+            (sibling / "pyproject.toml").write_text("[project]\nname='mikomn'\nversion='1'\n", encoding="utf-8")
+            info = inspect_python_project(root, "uv")
+            plan = resolve_environment(info, configured_python=sys.executable, environment=str(root / ".venv"))
+            commands = build_sync_command(info, plan)
+
+        self.assertEqual(info.local_dependency_sources, ())
+        self.assertEqual(commands[0][:2], ["uv", "sync"])
+
+    def test_local_sibling_source_requires_matching_project_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            code = Path(tmp) / "Code"
+            root = code / "bkx"
+            sibling = code / "mikomn"
+            root.mkdir(parents=True)
+            sibling.mkdir(parents=True)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='bkx'\nversion='1'\ndependencies=['mikomn[cli]>=0.1']\n[tool.uv]\n",
+                encoding="utf-8",
+            )
+            (sibling / "pyproject.toml").write_text("[project]\nname='different'\nversion='1'\n", encoding="utf-8")
+            info = inspect_python_project(root, "uv")
+            plan = resolve_environment(info, configured_python=sys.executable, environment=str(root / ".venv"))
+            commands = build_sync_command(info, plan)
+
+        self.assertEqual(info.local_dependency_sources, ())
+        self.assertEqual(commands[0][:2], ["uv", "sync"])
+
+
+
+    def test_local_sibling_source_requires_declared_project_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            code = Path(tmp) / "Code"
+            root = code / "bkx"
+            sibling = code / "mikomn"
+            root.mkdir(parents=True)
+            sibling.mkdir(parents=True)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='bkx'\nversion='1'\ndependencies=['mikomn[cli]>=0.1']\n[tool.uv]\n",
+                encoding="utf-8",
+            )
+            (sibling / "pyproject.toml").write_text("[build-system]\nrequires=[]\n", encoding="utf-8")
+            info = inspect_python_project(root, "uv")
+            plan = resolve_environment(info, configured_python=sys.executable, environment=str(root / ".venv"))
+            commands = build_sync_command(info, plan)
+
+        self.assertEqual(info.local_dependency_sources, ())
+        self.assertEqual(commands[0][:2], ["uv", "sync"])
 
     def test_hatch_ignores_stale_repo_local_environment_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

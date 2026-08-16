@@ -121,6 +121,7 @@ class PythonProjectInfo:
     service_frameworks: tuple[str, ...] = ()
     database_tools: tuple[str, ...] = ()
     notebooks: tuple[str, ...] = ()
+    local_dependency_sources: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
 
     @property
     def console_script_map(self) -> dict[str, str]:
@@ -262,6 +263,139 @@ def _project_dependencies(data: Mapping[str, Any]) -> list[str]:
 def _build_system_requires(data: Mapping[str, Any]) -> list[str]:
     build_system = data.get("build-system") if isinstance(data.get("build-system"), dict) else {}
     return _list(build_system.get("requires")) if isinstance(build_system, dict) else []
+
+
+
+_REQUIREMENT_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*(?:\[([^\]]*)\])?")
+
+
+def _normalized_distribution_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", str(value).strip().lower()).strip("-")
+
+
+def _requirement_name_and_extras(value: str) -> tuple[str, tuple[str, ...]]:
+    match = _REQUIREMENT_NAME_RE.match(str(value).strip())
+    if not match:
+        return "", ()
+    name = _normalized_distribution_name(match.group(1))
+    extras = tuple(
+        dict.fromkeys(
+            _normalized_distribution_name(item)
+            for item in (match.group(2) or "").split(",")
+            if _normalized_distribution_name(item)
+        )
+    )
+    return name, extras
+
+
+def _selected_project_dependencies(data: Mapping[str, Any], extras: Sequence[str] = ()) -> list[str]:
+    """Return dependencies needed for the base project plus selected extras.
+
+    ``_project_dependencies`` intentionally returns every optional dependency for
+    broad feature detection.  Environment synchronization needs the narrower set
+    so a local optional package is not installed merely because it is mentioned
+    in an unselected extra.
+    """
+
+    project = data.get("project") if isinstance(data.get("project"), dict) else {}
+    values = _list(project.get("dependencies")) if isinstance(project, dict) else []
+    optional = project.get("optional-dependencies") if isinstance(project, dict) else {}
+    selected = {_normalized_distribution_name(item) for item in extras if str(item).strip()}
+    if isinstance(optional, dict):
+        for name, group in optional.items():
+            if _normalized_distribution_name(str(name)) in selected:
+                values.extend(_list(group))
+    poetry = _tool_table(data, "poetry")
+    deps = poetry.get("dependencies")
+    if isinstance(deps, dict):
+        values.extend(str(key) for key in deps if str(key).lower() != "python")
+    groups = poetry.get("group")
+    if isinstance(groups, dict):
+        for group_name, group in groups.items():
+            if selected and _normalized_distribution_name(str(group_name)) not in selected:
+                continue
+            if isinstance(group, dict) and isinstance(group.get("dependencies"), dict):
+                values.extend(str(key) for key in group["dependencies"] if str(key).lower() != "python")
+    return list(dict.fromkeys(item for item in values if str(item).strip()))
+
+
+def _uv_source_names(data: Mapping[str, Any]) -> set[str]:
+    uv = _tool_table(data, "uv")
+    sources = uv.get("sources") if isinstance(uv, dict) else {}
+    return {_normalized_distribution_name(str(name)) for name in sources} if isinstance(sources, dict) else set()
+
+
+def _local_dependency_candidate_dirs(root: Path, name: str) -> tuple[Path, ...]:
+    normalized = _normalized_distribution_name(name)
+    if not normalized:
+        return ()
+    variants = tuple(dict.fromkeys((normalized, normalized.replace("-", "_"), normalized.replace("-", ""))))
+    bases: list[Path] = [root.parent]
+    try:
+        home = Path.home().expanduser().resolve()
+    except Exception:
+        home = Path.home().expanduser()
+    bases.extend([home / "Code", home / "code", home / "src", home / "Projects"])
+    candidates: list[Path] = []
+    for base in bases:
+        for variant in variants:
+            candidates.append((base / variant).expanduser())
+    return tuple(dict.fromkeys(path.resolve() for path in candidates))
+
+
+def _project_name_for_path(path: Path) -> str:
+    try:
+        data = load_pyproject(path, strict=True)
+    except Exception:
+        return ""
+    project = data.get("project") if isinstance(data.get("project"), dict) else {}
+    poetry = _tool_table(data, "poetry")
+    return _normalized_distribution_name(str(project.get("name") or poetry.get("name") or ""))
+
+
+def _discover_local_dependency_sources(root: Path, data: Mapping[str, Any]) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """Find sibling/local project sources for package names not sourced by uv.
+
+    This intentionally stays conservative: a candidate must be outside the
+    current project, contain ``pyproject.toml``, and declare a matching project
+    name.  uv supports local path sources through ``tool.uv.sources``; this
+    fallback handles local sibling repositories when the source table is absent
+    in machine-local development layouts.
+    """
+
+    sourced = _uv_source_names(data)
+    discovered: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for requirement in _project_dependencies(data):
+        name, extras = _requirement_name_and_extras(requirement)
+        if not name or name in sourced or name in discovered:
+            continue
+        for candidate in _local_dependency_candidate_dirs(root, name):
+            if candidate == root or root in candidate.parents or not (candidate / "pyproject.toml").is_file():
+                continue
+            if _project_name_for_path(candidate) != name:
+                continue
+            discovered[name] = (str(candidate), extras)
+            break
+    return tuple((name, path, extras) for name, (path, extras) in sorted(discovered.items()))
+
+
+def _selected_local_dependency_sources(info: PythonProjectInfo, extras: Sequence[str] = ()) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    if not info.local_dependency_sources:
+        return ()
+    try:
+        data = load_pyproject(info.root, strict=False)
+    except Exception:
+        data = {}
+    required = {_requirement_name_and_extras(item)[0] for item in _selected_project_dependencies(data, extras)}
+    required.discard("")
+    if not required:
+        return ()
+    return tuple(item for item in info.local_dependency_sources if item[0] in required)
+
+
+def _editable_requirement(path: str, extras: Sequence[str] = ()) -> str:
+    extra_text = f"[{','.join(extras)}]" if extras else ""
+    return f"{path}{extra_text}"
 
 
 def _detect_manager(root: Path, data: Mapping[str, Any], configured: str) -> tuple[str, str]:
@@ -460,6 +594,7 @@ def inspect_python_project(
         service_frameworks=services,
         database_tools=databases,
         notebooks=notebooks,
+        local_dependency_sources=_discover_local_dependency_sources(root, data),
     )
 
 
@@ -732,6 +867,14 @@ def environment_fingerprint(
         files[name] = digest
         inputs.append(name)
     version, version_text = _interpreter_version(python) if probe_runtime else ((), "guest")
+    local_sources = []
+    for name, source, source_extras in info.local_dependency_sources:
+        marker = Path(source) / "pyproject.toml"
+        try:
+            marker_hash = hashlib.sha256(marker.read_bytes()).hexdigest()
+        except OSError:
+            marker_hash = "missing"
+        local_sources.append({"name": name, "path": str(Path(source).expanduser()), "extras": list(source_extras), "pyproject": marker_hash})
     payload = {
         "manager": info.manager,
         "manager_version": _manager_version(info.manager) if probe_runtime else "guest",
@@ -745,6 +888,7 @@ def environment_fingerprint(
         "machine": platform.machine() if probe_runtime else "guest",
         "implementation": platform.python_implementation() if probe_runtime else "guest",
         "execution_environment": execution_environment,
+        "local_dependency_sources": local_sources,
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return digest, tuple(inputs)
@@ -801,7 +945,7 @@ def resolve_environment(
         python = bootstrap_python
         if info.manager == "uv":
             environment_root = requested_environment or (proot_environment_root if proot_guest else str(default_python_environment_root(info.root).resolve()))
-            prefix = ("uv", "run")
+            prefix = ("uv", "run", "--no-sync") if _selected_local_dependency_sources(info, extras) else ("uv", "run")
         elif info.manager == "poetry":
             environment_root = ""
             prefix = ("poetry", "run")
@@ -929,25 +1073,58 @@ def build_sync_command(
     extras = list(dict.fromkeys(extras))
     commands: list[list[str]] = []
     if info.manager == "uv":
-        command = ["uv", "sync"]
-        if locked and info.lock_file:
-            command.append("--frozen")
-        if offline:
-            command.append("--offline")
-        for group in groups:
-            command.extend(["--group", group])
-        for extra in extras:
-            command.extend(["--extra", extra])
-        if not install_project:
-            command.append("--no-install-project")
-        commands.append(command)
+        local_sources = _selected_local_dependency_sources(info, extras)
         uv_pip = ["uv", "pip", "install"]
         if plan.environment_root:
-            uv_pip.extend(["--python", str(_venv_python(Path(plan.environment_root)))])
+            venv_root = Path(plan.environment_root)
+            venv_python = _venv_python(venv_root)
+            if local_sources and not venv_python.is_file():
+                if _is_proot_execution_environment(plan.execution_environment):
+                    commands.append([
+                        plan.bootstrap_python or plan.python,
+                        "-c",
+                        (
+                            "import pathlib,subprocess,sys; "
+                            "p=pathlib.Path(sys.argv[1]); py=p/'bin'/'python'; "
+                            "raise SystemExit(0 if py.is_file() else subprocess.call([sys.executable,'-m','venv',str(p)]))"
+                        ),
+                        str(venv_root),
+                    ])
+                else:
+                    commands.append([
+                        plan.bootstrap_python or plan.python,
+                        "-m",
+                        "devtool.python_support",
+                        "ensure-venv",
+                        str(venv_root),
+                    ])
+            uv_pip.extend(["--python", str(venv_python)])
         if offline:
             uv_pip.append("--offline")
         if constraints:
             uv_pip.extend(["-c", constraints])
+        if local_sources:
+            install_items = [_editable_requirement(path, source_extras) for _name, path, source_extras in local_sources]
+            if install_project:
+                extra_text = f"[{','.join(extras)}]" if extras else ""
+                install_items.append(f".{extra_text}")
+            install_command = [*uv_pip]
+            for item in install_items:
+                install_command.extend(["-e", item])
+            commands.append(install_command)
+        else:
+            command = ["uv", "sync"]
+            if locked and info.lock_file:
+                command.append("--frozen")
+            if offline:
+                command.append("--offline")
+            for group in groups:
+                command.extend(["--group", group])
+            for extra in extras:
+                command.extend(["--extra", extra])
+            if not install_project:
+                command.append("--no-install-project")
+            commands.append(command)
         if info.framework == "pytest" and not _declares_requirement(info.root, "pytest"):
             commands.append([*uv_pip, "pytest"])
         if info.framework == "pytest" and _uses_pytest_asyncio(info.root) and not _declares_pytest_async_plugin(info.root):

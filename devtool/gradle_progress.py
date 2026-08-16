@@ -24,6 +24,7 @@ from .rich_progress import (
     compact_display_target,
     completion_line,
 )
+from .tui_icons import activity_icon
 
 _EVENT_PREFIX = "DEVTOOL_EVENT "
 _EVENT_KINDS = {
@@ -482,7 +483,7 @@ class GradleProgressTracker:
     def _renderable(self) -> Panel:
         target = compact_display_target(self.display_target or self.cwd or "Gradle project", cwd=self.cwd)
         if self.returncode is None:
-            icon, border, style = "◆", "cyan", "bold cyan"
+            icon, border, style = activity_icon(kind="gradle", command=self.command_name or "Gradle", target=f"Gradle · {target}", cwd=self.cwd), "cyan", "bold cyan"
         elif self.returncode == 0:
             icon, border, style = "✓", "green", "bold green"
         else:

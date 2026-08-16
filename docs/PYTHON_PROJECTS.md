@@ -81,6 +81,30 @@ cache identity also includes Python ABI and architecture.
 
 Devtool never uses global `sudo pip`.
 
+
+### Local sibling dependencies
+
+For uv-managed projects, Devtool keeps committed `pyproject.toml` metadata
+authoritative when `[tool.uv.sources]` already declares a dependency source. If a
+dependency is declared only as a registry requirement but a matching sibling
+project exists beside the current repository, Devtool can use that local source
+for validation instead of letting uv resolve the package from PyPI.
+
+Example layout:
+
+```text
+~/Code/bkx/pyproject.toml        # depends on mikomn[cli]
+~/Code/mikomn/pyproject.toml     # [project].name = "mikomn"
+```
+
+In this case, when the selected extra actually requires `mikomn[cli]`, Devtool
+creates/uses the project environment, installs `~/Code/mikomn[cli]` editable,
+installs the current project editable, and runs later commands through
+`uv run --no-sync` so uv does not re-resolve the missing registry dependency.
+The fallback is conservative: the sibling must contain a valid `pyproject.toml`
+with a matching project name, and unselected optional extras do not trigger the
+local install.
+
 ## Validation pipeline
 
 The full pipeline can include:
