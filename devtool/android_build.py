@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
+import importlib.util
 import json
 import os
 import platform
@@ -66,6 +68,58 @@ ANDROID_BUILD_TOOLS_PROVIDERS = {"auto", "termux", "sdk", "commit451", "none"}
 
 class BuildError(RuntimeError):
     """User-actionable build failure."""
+
+
+_TERMUX_TOOLCHAINS_RUNTIME_MODULE = None
+
+
+def _termux_toolchains_runtime_module():
+    """Load toolchain helpers in package or staged-standalone execution.
+
+    ``android_build.py`` is copied to a chroot-visible ``build-apk`` path and
+    executed directly. Direct script execution has no package context, so
+    explicit relative imports fail. The runtime stager places the canonical
+    ``termux_toolchains.py`` beside ``build-apk``; load that companion directly
+    when ``__package__`` is empty while retaining normal package imports when
+    Devtool itself imports this module.
+    """
+
+    global _TERMUX_TOOLCHAINS_RUNTIME_MODULE
+    if _TERMUX_TOOLCHAINS_RUNTIME_MODULE is not None:
+        return _TERMUX_TOOLCHAINS_RUNTIME_MODULE
+
+    if __package__:
+        module = importlib.import_module(f"{__package__}.termux_toolchains")
+    else:
+        companion = Path(__file__).resolve().with_name("termux_toolchains.py")
+        if not companion.is_file():
+            fail(
+                "Android builder runtime is incomplete: missing toolchain companion "
+                f"{companion}. Re-run Devtool so the Android runtime bundle is refreshed."
+            )
+
+        module_name = "_devtool_android_runtime_termux_toolchains"
+        module = sys.modules.get(module_name)
+
+        if module is None:
+            spec = importlib.util.spec_from_file_location(module_name, companion)
+
+            if spec is None or spec.loader is None:
+                fail(
+                    f"Could not load Android builder toolchain companion: {companion}"
+                )
+
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+
+            try:
+                spec.loader.exec_module(module)
+            except Exception:
+                sys.modules.pop(module_name, None)
+                raise
+
+    _TERMUX_TOOLCHAINS_RUNTIME_MODULE = module
+    return module
 
 
 def heading(message: str) -> None:
@@ -918,8 +972,7 @@ def termux_ndk_sysroot_ready(provider_evidence=None) -> tuple[bool, str]:
     if provider_evidence is not None:
         provider = provider_evidence.native
     else:
-        from .termux_toolchains import termux_native_provider
-        provider = termux_native_provider(env=os.environ)
+        provider = _termux_toolchains_runtime_module().termux_native_provider(env=os.environ)
     if not provider.compatible:
         return False, provider.rejection_reason or provider.reason or "Termux native provider is not ready"
     return True, provider.selection_reason or provider.reason or "runtime-verified Termux native provider"
@@ -958,8 +1011,7 @@ def configure_native_cache(env: MutableMapping[str, str], requested: str, *, pro
         if provider_evidence is not None:
             ccache_probe = provider_evidence.ccache
         else:
-            from .termux_toolchains import termux_ccache_probe
-            ccache_probe = termux_ccache_probe(env=os.environ)
+            ccache_probe = _termux_toolchains_runtime_module().termux_ccache_probe(env=os.environ)
         ccache = ccache_probe.path if ccache_probe.compatible else None
     else:
         ccache = Path(shutil.which("ccache")).resolve() if shutil.which("ccache") else None
@@ -2799,11 +2851,11 @@ def inspect_project(root: Path) -> ProjectInfo:
     # Build-time NDK/CMake classification must use the exact same active
     # Gradle view as provider diagnostics; commented declarations are not
     # executable configuration.
-    from .termux_toolchains import active_gradle_config_text, classify_native_requirement
-    active_gradle_text = active_gradle_config_text(root)
+    toolchains = _termux_toolchains_runtime_module()
+    active_gradle_text = toolchains.active_gradle_config_text(root)
     ndk_match = re.search(r"\bndkVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", active_gradle_text)
     ndk_version = ndk_match.group(1).strip() if ndk_match else None
-    native_build = classify_native_requirement(root, android=android).capability == "android-ndk"
+    native_build = toolchains.classify_native_requirement(root, android=android).capability == "android-ndk"
     cmake_match = re.search(
         r"externalNativeBuild\s*\{.*?cmake\s*\{.*?\bversion\s*=\s*['\"]([^'\"]+)",
         active_gradle_text,
@@ -4204,8 +4256,7 @@ def select_gradle(
                 if provider_evidence is not None:
                     gradle_evidence = provider_evidence.gradle
                 else:
-                    from .termux_toolchains import termux_gradle_probe
-                    gradle_evidence = termux_gradle_probe(env=os.environ)
+                    gradle_evidence = _termux_toolchains_runtime_module().termux_gradle_probe(env=os.environ)
                 compatible = bool(
                     gradle_evidence.compatible
                     and gradle_evidence.path is not None
@@ -4844,8 +4895,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     provider_evidence = None
     if running_under_termux_python():
-        from .termux_toolchains import resolve_provider_decisions
-        provider_evidence = resolve_provider_decisions(project_root, android=project.android, env=os.environ)
+        provider_evidence = _termux_toolchains_runtime_module().resolve_provider_decisions(
+            project_root, android=project.android, env=os.environ
+        )
 
     requirement = infer_java_requirement(project)
     minimum_java = args.min_java or requirement.minimum

@@ -80,16 +80,27 @@ def _state_builder_path() -> Path:
 
 
 def stage_android_builder(*, destination: Path | None = None) -> Path:
-    """Install the self-contained builder in a chroot-visible home path.
+    """Install the Android builder runtime bundle in a chroot-visible path.
 
-    A normal Python console-script under Termux's ``$PREFIX`` is not visible in
-    most chroots.  The staged copy lives under the devtool XDG data directory,
-    which should be inside the Termux home mapping for Android chroot use.
+    The executable builder is intentionally staged outside Termux's ``$PREFIX``
+    so an Android chroot can run it. Toolchain inspection lives in the canonical
+    sibling ``termux_toolchains.py`` module; stage both files atomically enough
+    that every refreshed builder has the companion required for direct-script
+    execution without Python package context.
     """
 
     source = Path(android_build.__file__).resolve()
+    companion_source = source.with_name("termux_toolchains.py")
+
     target = (destination or _state_builder_path()).expanduser().resolve()
+    companion_target = target.with_name("termux_toolchains.py")
+
     target.parent.mkdir(parents=True, exist_ok=True)
+
+    if not companion_source.is_file():
+        raise RuntimeError(
+            f"Bundled Android toolchain companion is missing: {companion_source}"
+        )
 
     def digest(path: Path) -> str:
         value = hashlib.sha256()
@@ -98,25 +109,56 @@ def stage_android_builder(*, destination: Path | None = None) -> Path:
                 value.update(chunk)
         return value.hexdigest()
 
-    source_digest = digest(source)
-    if not target.is_file() or digest(target) != source_digest:
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{target.name}.",
-            suffix=".tmp",
-            dir=target.parent,
-        )
-        os.close(descriptor)
-        temporary = Path(temporary_name)
-        try:
-            shutil.copy2(source, temporary)
-            temporary.chmod(0o755)
-            temporary.replace(target)
-        finally:
-            temporary.unlink(missing_ok=True)
-        if digest(target) != source_digest:
-            raise RuntimeError(f"Failed to refresh staged Android builder: {target}")
-    elif not os.access(target, os.X_OK):
-        target.chmod(target.stat().st_mode | 0o111)
+    def stage_file(
+        source_path: Path,
+        target_path: Path,
+        *,
+        executable: bool,
+    ) -> None:
+        source_digest = digest(source_path)
+
+        if not target_path.is_file() or digest(target_path) != source_digest:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target_path.name}.",
+                suffix=".tmp",
+                dir=target_path.parent,
+            )
+
+            os.close(descriptor)
+            temporary = Path(temporary_name)
+
+            try:
+                shutil.copy2(source_path, temporary)
+
+                if executable:
+                    temporary.chmod(temporary.stat().st_mode | 0o111)
+
+                temporary.replace(target_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+            if digest(target_path) != source_digest:
+                raise RuntimeError(
+                    f"Failed to refresh staged Android runtime file: {target_path}"
+                )
+
+        elif executable and not os.access(target_path, os.X_OK):
+            target_path.chmod(target_path.stat().st_mode | 0o111)
+
+    # Companion first, builder last. A freshly replaced build-apk therefore
+    # never observes a missing toolchain helper during a normal refresh.
+    stage_file(
+        companion_source,
+        companion_target,
+        executable=False,
+    )
+
+    stage_file(
+        source,
+        target,
+        executable=True,
+    )
+
     return target
 
 
