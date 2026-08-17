@@ -482,6 +482,35 @@ def _positive_integer(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _resolve_auto_android_platform(root: Path) -> str | None:
+    """Resolve ``--android-platform auto`` before invoking staged builders.
+
+    Long-lived chroot runtime helpers can lag behind the host Devtool package.
+    Passing a concrete platform derived from the Gradle project's declared
+    ``compileSdk`` avoids letting a stale helper guess and try to install a
+    newer/unavailable SDK platform.
+    """
+
+    try:
+        project = android_build.inspect_project(root)
+    except Exception:
+        return None
+    if not project.android or project.compile_sdk is None:
+        return None
+    if project.compile_sdk <= 0:
+        return None
+    return str(project.compile_sdk)
+
+
+def _android_platform_option(root: Path, android: dict[str, Any]) -> str:
+    configured = str(android.get("platform", "auto") or "auto").strip()
+    if not configured:
+        configured = "auto"
+    if configured != "auto":
+        return configured
+    return _resolve_auto_android_platform(root) or "auto"
+
+
 def _bool_setting(value: Any, default: bool) -> bool:
     if value is None or value == "":
         return default
@@ -559,7 +588,7 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--aapt2", android.get("aapt2"))
     _append_option(argv, "--aapt2-provider", build_tools_options.get("aapt2_provider") or android.get("aapt2_provider", "auto"))
     _append_option(argv, "--aapt2-release", android.get("aapt2_release"))
-    _append_option(argv, "--android-platform", android.get("platform", "auto"))
+    _append_option(argv, "--android-platform", _android_platform_option(root, android))
     _append_option(argv, "--build-tools", build_tools_options.get("version") or (build_tools_value if not isinstance(build_tools_value, dict) else "auto"))
     _append_option(argv, "--arm-build-tools-provider", build_tools_options.get("provider") or android.get("build_tools_provider", "auto"))
     _append_option(argv, "--ndk-version", android.get("ndk_version", "auto"))

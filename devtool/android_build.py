@@ -2567,6 +2567,65 @@ def first_int(patterns: Sequence[str], text: str) -> int | None:
     return None
 
 
+def _version_catalog_alias_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def version_catalog_versions(root: Path) -> dict[str, int]:
+    """Return integer version aliases from ``gradle/libs.versions.toml``.
+
+    Android projects commonly keep SDK levels in a Gradle version catalog and
+    reference them as ``libs.versions.android.compileSdk.get().toInt()``.  The
+    Android builder runs before Gradle, so it needs a conservative static view
+    of those aliases when deciding which SDK platform to provision.
+    """
+
+    catalog = root / "gradle" / "libs.versions.toml"
+    if not catalog.is_file():
+        return {}
+    try:
+        import tomllib
+        data = tomllib.loads(catalog.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {}
+    versions = data.get("versions") if isinstance(data, dict) else None
+    if not isinstance(versions, dict):
+        return {}
+    resolved: dict[str, int] = {}
+    for alias, raw_value in versions.items():
+        value: object = raw_value
+        if isinstance(raw_value, dict):
+            for key in ("strictly", "require", "prefer"):
+                candidate = raw_value.get(key)
+                if candidate is not None:
+                    value = candidate
+                    break
+        match = re.fullmatch(r"\s*(\d+)\s*", str(value))
+        if not match:
+            continue
+        resolved[_version_catalog_alias_key(str(alias))] = int(match.group(1))
+    return resolved
+
+
+def resolve_catalog_int_reference(root: Path, text: str, setting_name: str) -> int | None:
+    versions = version_catalog_versions(root)
+    if not versions:
+        return None
+    patterns = (
+        rf"\b{re.escape(setting_name)}(?:Version)?\s*(?:=|\s)\s*libs\.versions\.([A-Za-z0-9_.-]+)\.get\(\)\.toInt\(\)",
+        rf"\b{re.escape(setting_name)}(?:Version)?\s*(?:=|\s)\s*libs\.versions\.([A-Za-z0-9_.-]+)\.get\(\)\.toInteger\(\)",
+        rf"\b{re.escape(setting_name)}\s*\(\s*libs\.versions\.([A-Za-z0-9_.-]+)\.get\(\)\.toInt\(\)\s*\)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.MULTILINE)
+        if not match:
+            continue
+        key = _version_catalog_alias_key(match.group(1))
+        if key in versions:
+            return versions[key]
+    return None
+
+
 def project_display_name(root: Path, text: str) -> str:
     patterns = (
         r"rootProject\.name\s*=\s*['\"]([^'\"]+)['\"]",
@@ -2601,7 +2660,7 @@ def inspect_project(root: Path) -> ProjectInfo:
             r"\bcompileSdk\s*\(\s*(\d+)\s*\)",
         ],
         text,
-    )
+    ) or resolve_catalog_int_reference(root, text, "compileSdk")
     build_tools_match = re.search(r"\bbuildToolsVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", text)
     build_tools = build_tools_match.group(1) if build_tools_match else None
     agp_version = None

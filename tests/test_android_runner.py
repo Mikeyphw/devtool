@@ -106,6 +106,25 @@ class AndroidProjectInspectionTests(unittest.TestCase):
             self.assertEqual(default_tasks(project), ["assembleDebug"])
             self.assertEqual(wrapper_distribution_version(root), "8.10.2")
 
+    def test_detects_compile_sdk_from_version_catalog_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            (root / "gradle" / "libs.versions.toml").parent.mkdir(parents=True, exist_ok=True)
+            (root / "gradle" / "libs.versions.toml").write_text(
+                '[versions]\nandroid-compile-sdk = "36"\n',
+                encoding="utf-8",
+            )
+            (root / "app" / "build.gradle.kts").write_text(
+                'plugins { id("com.android.application") }\n'
+                'android { compileSdk = libs.versions.android.compile.sdk.get().toInt() }\n',
+                encoding="utf-8",
+            )
+
+            project = inspect_project(root)
+
+        self.assertEqual(project.compile_sdk, 36)
+
     def test_discovers_nested_android_root_without_reporting_modules(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -1263,6 +1282,62 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
         self.assertEqual(config.runner_options["gradle"]["max_workers"], 2)
         self.assertEqual(config.runner_options["tasks"]["build"], ["assembleRelease"])
         self.assertIsInstance(get_project_runner(config), AndroidGradleRunner)
+
+    def test_android_platform_auto_is_resolved_before_staged_builder_invocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            (root / "app" / "build.gradle.kts").write_text(
+                'plugins { id("com.android.application") }\nandroid { compileSdk = 36 }\n',
+                encoding="utf-8",
+            )
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={"android": {"platform": "auto"}},
+            )
+
+            args = android_builder_arguments_for_tasks(config, [":app:assembleDebug"], scan_artifacts=False)
+
+        self.assertIn("--android-platform", args)
+        self.assertEqual(args[args.index("--android-platform") + 1], "36")
+        self.assertNotEqual(args[args.index("--android-platform") + 1], "auto")
+
+    def test_android_platform_auto_resolves_version_catalog_compile_sdk_before_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            (root / "gradle" / "libs.versions.toml").parent.mkdir(parents=True, exist_ok=True)
+            (root / "gradle" / "libs.versions.toml").write_text(
+                '[versions]\nandroid-compile-sdk = { strictly = "36" }\n',
+                encoding="utf-8",
+            )
+            (root / "app" / "build.gradle.kts").write_text(
+                'plugins { id("com.android.application") }\n'
+                'android { compileSdk = libs.versions.android.compile.sdk.get().toInt() }\n',
+                encoding="utf-8",
+            )
+            config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
+
+            args = android_builder_arguments_for_tasks(config, [":app:assembleDebug"], scan_artifacts=False)
+
+        self.assertEqual(args[args.index("--android-platform") + 1], "36")
+
+    def test_explicit_android_platform_override_remains_authoritative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={"android": {"platform": "35"}},
+            )
+
+            args = android_builder_arguments_for_tasks(config, [":app:assembleDebug"], scan_artifacts=False)
+
+        self.assertEqual(args[args.index("--android-platform") + 1], "35")
 
     def test_android_build_and_validation_specs_use_staged_shared_builder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
