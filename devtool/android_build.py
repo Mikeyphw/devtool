@@ -887,6 +887,49 @@ def running_under_termux_python() -> bool:
     return False
 
 
+def _native_termux_sanitize_guest_path(
+    value: Path | None,
+    *,
+    label: str,
+    fallback: Path | None = None,
+) -> Path | None:
+    """Keep chroot-only /home and /root paths out of native Termux."""
+
+    if value is None:
+        return fallback
+
+    candidate = value.expanduser()
+
+    if not running_under_termux_python():
+        return candidate
+
+    text = str(candidate)
+    guest_only = (
+        text == "/home"
+        or text.startswith("/home/")
+        or text == "/root"
+        or text.startswith("/root/")
+    )
+
+    if not guest_only:
+        return candidate
+
+    replacement = fallback.expanduser() if fallback is not None else None
+
+    if replacement is None:
+        warn(
+            f"Ignoring chroot-only {label} during native Termux execution: "
+            f"{candidate}"
+        )
+    else:
+        warn(
+            f"Replacing chroot-only {label} during native Termux execution: "
+            f"{candidate} -> {replacement}"
+        )
+
+    return replacement
+
+
 def termux_prefix_path() -> Path:
     raw = str(os.environ.get("PREFIX", "") or "").strip()
     if raw:
@@ -4940,7 +4983,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             minimum_java,
             exact=requirement.exact if args.java_home is None else None,
             provider=args.java_provider,
-            provider_evidence=provider_evidence,
+            provider_evidence=None,
         )
     elif args.system_deps == "auto" and (need_java or need_certificates or need_node):
         if not provisioning_allowed:
@@ -4970,7 +5013,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             minimum_java,
             exact=requirement.exact if args.java_home is None else None,
             provider=args.java_provider,
-            provider_evidence=provider_evidence,
+            provider_evidence=None,
         )
     elif need_java:
         if requirement.exact is not None:
@@ -4998,8 +5041,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     env = os.environ.copy()
     env["JAVA_HOME"] = str(java_home)
     env["PATH"] = os.pathsep.join([str(java_home / "bin"), env.get("PATH", "")])
-    if args.gradle_user_home:
-        env["GRADLE_USER_HOME"] = str(args.gradle_user_home.expanduser())
+    effective_gradle_user_home = _native_termux_sanitize_guest_path(
+        args.gradle_user_home,
+        label="Gradle user home",
+        fallback=Path.home() / ".gradle" if args.gradle_user_home is not None else None,
+    )
+    if effective_gradle_user_home is not None:
+        env["GRADLE_USER_HOME"] = str(effective_gradle_user_home)
     heading("Java")
     selected_java_provider = executable_provider(java_home / "bin" / "java")
     info(f"JAVA_HOME={java_home}")
@@ -5029,7 +5077,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     sdk_source: str | None = None
     platform_id: str | None = None
     if project.android:
-        sdk_root, sdk_source = discover_sdk_root_with_source(args.sdk_root, project.root)
+        effective_sdk_root_arg = _native_termux_sanitize_guest_path(
+            args.sdk_root,
+            label="Android SDK root",
+        )
+        sdk_root, sdk_source = discover_sdk_root_with_source(
+            effective_sdk_root_arg,
+            project.root,
+        )
         if sdk_root is None and not args.skip_sdk_install:
             if not provisioning_allowed:
                 fail_bootstrap_blocked(
@@ -5077,7 +5132,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             qemu_sysroot_url=args.qemu_sysroot_url,
             qemu_sysroot_sha256=args.qemu_sysroot_sha256,
             qemu_install=args.qemu_install,
-            allow_managed_fallback=args.sdk_root is None,
+            allow_managed_fallback=effective_sdk_root_arg is None,
             bootstrap_downloads=args.toolchain_downloads,
             bootstrap_network=args.bootstrap_network,
             provider_evidence=provider_evidence,
