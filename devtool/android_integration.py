@@ -8,6 +8,7 @@ configuration translation, lightweight inspection/doctor data, and staging the
 script in a stable XDG data path.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import os
@@ -173,9 +174,37 @@ def stage_gradle_init_script(*, destination: Path | None = None) -> Path:
     return target
 
 
+_ANDROID_INSPECTION_CACHE_KEY = "_devtool_android_inspection_cache"
+
+
+@contextmanager
+def android_project_inspection_cache(config: ProjectConfig):
+    """Cache expensive Android inspection only while one command plan is built."""
+
+    had_previous = _ANDROID_INSPECTION_CACHE_KEY in config.runner_options
+    previous = config.runner_options.get(_ANDROID_INSPECTION_CACHE_KEY)
+    config.runner_options[_ANDROID_INSPECTION_CACHE_KEY] = {}
+    try:
+        yield
+    finally:
+        if had_previous:
+            config.runner_options[_ANDROID_INSPECTION_CACHE_KEY] = previous
+        else:
+            config.runner_options.pop(_ANDROID_INSPECTION_CACHE_KEY, None)
+
+
 def inspect_android_project(config: ProjectConfig) -> android_build.ProjectInfo:
-    root = android_project_root(config)
-    return android_build.inspect_project(android_build.resolve_project_root(root))
+    root = android_build.resolve_project_root(android_project_root(config))
+    cache = config.runner_options.get(_ANDROID_INSPECTION_CACHE_KEY)
+    key = str(root)
+    if isinstance(cache, dict):
+        cached = cache.get(key)
+        if isinstance(cached, android_build.ProjectInfo):
+            return cached
+    project = android_build.inspect_project(root)
+    if isinstance(cache, dict):
+        cache[key] = project
+    return project
 
 
 def _task_values(value: Any) -> list[str]:
@@ -482,7 +511,10 @@ def _positive_integer(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def _resolve_auto_android_platform(root: Path) -> str | None:
+def _resolve_auto_android_platform(
+    root: Path,
+    project: android_build.ProjectInfo | None = None,
+) -> str | None:
     """Resolve ``--android-platform auto`` before invoking staged builders.
 
     Long-lived chroot runtime helpers can lag behind the host Devtool package.
@@ -492,7 +524,7 @@ def _resolve_auto_android_platform(root: Path) -> str | None:
     """
 
     try:
-        project = android_build.inspect_project(root)
+        project = project or android_build.inspect_project(root)
     except Exception:
         return None
     if not project.android or project.compile_sdk is None:
@@ -502,13 +534,17 @@ def _resolve_auto_android_platform(root: Path) -> str | None:
     return str(project.compile_sdk)
 
 
-def _android_platform_option(root: Path, android: dict[str, Any]) -> str:
+def _android_platform_option(
+    root: Path,
+    android: dict[str, Any],
+    project: android_build.ProjectInfo | None = None,
+) -> str:
     configured = str(android.get("platform", "auto") or "auto").strip()
     if not configured:
         configured = "auto"
     if configured != "auto":
         return configured
-    return _resolve_auto_android_platform(root) or "auto"
+    return _resolve_auto_android_platform(root, project) or "auto"
 
 
 def _bool_setting(value: Any, default: bool) -> bool:
@@ -572,6 +608,12 @@ def android_builder_arguments_for_tasks(
     build_tools_value = android.get("build_tools", "auto")
     build_tools_options = build_tools_value if isinstance(build_tools_value, dict) else {}
     artifacts = _dict_option(config, "artifacts")
+    project_info = None
+    if isinstance(config.runner_options.get(_ANDROID_INSPECTION_CACHE_KEY), dict):
+        try:
+            project_info = inspect_android_project(config)
+        except Exception:
+            project_info = None
 
     argv = [str(root), "--no-chroot"]
     seen_tasks: set[str] = set()
@@ -588,7 +630,7 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--aapt2", android.get("aapt2"))
     _append_option(argv, "--aapt2-provider", build_tools_options.get("aapt2_provider") or android.get("aapt2_provider", "auto"))
     _append_option(argv, "--aapt2-release", android.get("aapt2_release"))
-    _append_option(argv, "--android-platform", _android_platform_option(root, android))
+    _append_option(argv, "--android-platform", _android_platform_option(root, android, project_info))
     _append_option(argv, "--build-tools", build_tools_options.get("version") or (build_tools_value if not isinstance(build_tools_value, dict) else "auto"))
     _append_option(argv, "--arm-build-tools-provider", build_tools_options.get("provider") or android.get("build_tools_provider", "auto"))
     _append_option(argv, "--ndk-version", android.get("ndk_version", "auto"))

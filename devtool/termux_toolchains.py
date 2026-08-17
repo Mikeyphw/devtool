@@ -17,33 +17,6 @@ VALID_NATIVE_PROVIDERS = {'auto', 'termux-sysroot', 'ndk', 'system'}
 VALID_NATIVE_CACHE_PROVIDERS = {'auto', 'ccache', 'off'}
 VALID_ANDROID_BUILD_TOOLS_PROVIDERS = {'auto', 'termux', 'sdk', 'commit451', 'none'}
 
-_GRADLE_SCAN_IGNORED_DIRS = frozenset({
-    '.git', '.gradle', '.idea', '.devtool', '.venv', 'venv',
-    'build', 'out', 'dist', 'node_modules', 'target', 'bin', 'obj',
-})
-
-
-def _iter_project_files(project_root: Path):
-    """Yield source/config files without descending into generated trees.
-
-    ``Path.rglob`` cannot prune directory recursion on Python 3.11, which made
-    Android project inspection walk Gradle caches and build outputs before the
-    validation HUD could render. ``os.walk`` lets us prune those directories
-    in-place and keeps devtool's Python 3.11 compatibility.
-    """
-
-    root = Path(project_root).expanduser()
-    if not root.is_dir():
-        return
-    for current, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
-        dirnames[:] = [
-            name for name in dirnames
-            if name.lower() not in _GRADLE_SCAN_IGNORED_DIRS
-        ]
-        base = Path(current)
-        for filename in filenames:
-            yield base / filename
-
 
 @dataclass(frozen=True)
 class RuntimeIdentity:
@@ -563,25 +536,65 @@ def termux_android_tool_providers(*, env: Mapping[str, str] | None = None, runti
     return tuple(termux_android_tool_probe(name, env=env, runtime=runtime) for name in ('aapt', 'aapt2', 'apksigner', 'adb', 'aidl', 'zipalign', 'split-select'))
 
 
+_GRADLE_CONFIG_SCAN_IGNORED_DIRS = {
+    ".git", ".gradle", ".devtool", ".idea", ".venv", "venv",
+    "build", "out", "dist", "target", "bin", "obj", "node_modules",
+}
+_GRADLE_CONFIG_FILENAMES = {"gradle.properties"}
+_GRADLE_CONFIG_SUFFIXES = (".gradle", ".gradle.kts")
+
+
+def _iter_project_files(project_root: Path):
+    """Yield project files while pruning generated/cache trees in-place."""
+
+    root = Path(project_root).expanduser()
+    if not root.is_dir():
+        return
+    for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
+        dirs[:] = sorted(
+            name for name in dirs
+            if name not in _GRADLE_CONFIG_SCAN_IGNORED_DIRS and not name.startswith(".tmp-")
+        )
+        base = Path(current)
+        for name in sorted(files):
+            yield base / name
+
+
+def _iter_active_gradle_config_files(project_root: Path):
+    """Yield source Gradle configuration files while pruning generated trees."""
+
+    root = Path(project_root).expanduser()
+    if not root.is_dir():
+        return
+    for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
+        # Prune before descending. Path.rglob() cannot prune matched directories,
+        # which made Android inspection walk build outputs, caches and node_modules.
+        dirs[:] = sorted(
+            name for name in dirs
+            if name not in _GRADLE_CONFIG_SCAN_IGNORED_DIRS and not name.startswith(".tmp-")
+        )
+        base = Path(current)
+        for name in sorted(files):
+            if name in _GRADLE_CONFIG_FILENAMES or name.endswith(_GRADLE_CONFIG_SUFFIXES):
+                yield base / name
+
+
 def active_gradle_config_text(project_root: Path) -> str:
-    """Return Gradle/properties text with non-active comments removed.
+    """Return active Gradle/properties text without recursively scanning outputs.
 
     Provider classification and the Android build inspector must consume the
     same view; otherwise diagnostics can say "no NDK" while the real build
-    provisions one because a marker only existed in a comment.
+    provisions one because a marker only existed in a comment. Generated and
+    cache directories are deliberately pruned so validation planning stays fast.
     """
 
-    root = Path(project_root).expanduser()
     chunks: list[str] = []
-    for path in _iter_project_files(root):
-        name = path.name
-        if name != 'gradle.properties' and not (name.endswith('.gradle') or name.endswith('.gradle.kts')):
-            continue
+    for path in _iter_active_gradle_config_files(Path(project_root)):
         try:
             text = path.read_text(encoding='utf-8', errors='replace')
         except OSError:
             continue
-        if name == 'gradle.properties':
+        if path.name == 'gradle.properties':
             text = re.sub(r'(?m)^[ \t]*[#!].*$', '', text)
         else:
             text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)

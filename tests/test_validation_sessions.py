@@ -258,7 +258,7 @@ class ResumableValidationTests(unittest.TestCase):
             first = load_active_session(root, required=True)
             self.assertEqual(first.phases[0].status, "passed")
             self.assertEqual(first.phases[1].status, "pending")
-            self.assertTrue(first.options.get("validation_spec_plan_v1"))
+            self.assertEqual(len(first.plan_specs), 8)
 
             # A session resume is intentionally pinned to the plan that started
             # it. Editing validation config must not force a fresh Android

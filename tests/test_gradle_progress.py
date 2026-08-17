@@ -208,14 +208,15 @@ class GradleProgressTests(unittest.TestCase):
     def test_build_heading_transitions_through_synthetic_startup_states(self) -> None:
         tracker = self.make_tracker()
         tracker.argv = ["./gradlew", "test"]
+        self.assertEqual(tracker._progress_state().detail, "Preparing Gradle environment")
         with patch("devtool.gradle_progress.time.monotonic", return_value=100.0):
             tracker.update_from_line("==> Build")
-        with patch("devtool.gradle_progress.time.monotonic", return_value=100.5):
-            self.assertEqual(tracker._progress_state().detail, "Preparing Gradle environment")
-        with patch("devtool.gradle_progress.time.monotonic", return_value=102.0):
-            self.assertEqual(tracker._progress_state().detail, "Starting Gradle daemon")
-        with patch("devtool.gradle_progress.time.monotonic", return_value=105.0):
-            self.assertEqual(tracker._progress_state().detail, "Configuring Gradle project")
+        self.assertFalse(tracker.real_progress_seen)
+        self.assertNotEqual(tracker._progress_state().detail, "Build")
+        self.assertEqual(tracker._synthetic_detail_for_elapsed(0.5), "Starting Gradle daemon")
+        self.assertEqual(tracker._synthetic_detail_for_elapsed(2.0), "Starting Gradle daemon")
+        tracker._set_synthetic_detail(tracker._synthetic_detail_for_elapsed(5.0))
+        self.assertEqual(tracker._progress_state().detail, "Configuring Gradle project")
 
     def test_no_daemon_startup_state_does_not_claim_a_daemon_is_starting(self) -> None:
         tracker = GradleProgressTracker(

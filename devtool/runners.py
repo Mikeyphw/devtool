@@ -1039,6 +1039,29 @@ def _run_process_live(
                 with contextlib.suppress(Exception):
                     finalize_log(live_log_path)
 
+    parser_argv = list(progress_argv or argv)
+    parser_cwd = progress_cwd or cwd
+    tracker = None
+    # Gradle/chroot startup can be quiet for several seconds. Start its Rich
+    # surface before spawning the child so users see progress immediately, not
+    # only after Popen and the first Gradle line complete.
+    if (not verbose or tasker_progress is not None) and progress_parser == "gradle":
+        tracker = GradleProgressTracker(
+            parser_argv,
+            parser_cwd,
+            command_name,
+            console,
+            phase_index=phase_index,
+            phase_total=phase_total,
+            display_target=display_target,
+            target_phase_index=target_phase_index,
+            target_phase_total=target_phase_total,
+            requested_tasks=tuple(requested_gradle_tasks or ()),
+        )
+        if verbose:
+            tracker.enabled = False
+        tracker.__enter__()
+
     try:
         proc = subprocess.Popen(
             argv,
@@ -1051,6 +1074,8 @@ def _run_process_live(
             start_new_session=(os.name == "posix"),
         )
     except OSError as exc:
+        if tracker is not None:
+            tracker.__exit__(None, None, None)
         # Keep live streaming as the normal path, but return a structured failure
         # instead of crashing when the executable is unavailable.  This also keeps
         # older tests/wrappers that monkeypatch subprocess.run working.
@@ -1078,23 +1103,24 @@ def _run_process_live(
 
     output_parts: list[str] = []
     assert proc.stdout is not None
-    parser_argv = list(progress_argv or argv)
-    parser_cwd = progress_cwd or cwd
-    tracker = None
+    if isinstance(tracker, GradleProgressTracker):
+        tracker.mark_process_started()
     if not verbose or tasker_progress is not None:
         if progress_parser == "gradle":
-            tracker = GradleProgressTracker(
-                parser_argv,
-                parser_cwd,
-                command_name,
-                console,
-                phase_index=phase_index,
-                phase_total=phase_total,
-                display_target=display_target,
-                target_phase_index=target_phase_index,
-                target_phase_total=target_phase_total,
-                requested_tasks=tuple(requested_gradle_tasks or ()),
-            )
+            if tracker is None:
+                tracker = GradleProgressTracker(
+                    parser_argv,
+                    parser_cwd,
+                    command_name,
+                    console,
+                    phase_index=phase_index,
+                    phase_total=phase_total,
+                    display_target=display_target,
+                    target_phase_index=target_phase_index,
+                    target_phase_total=target_phase_total,
+                    requested_tasks=tuple(requested_gradle_tasks or ()),
+                )
+                tracker.mark_process_started()
         elif dotnet_progress_plan(parser_argv, parser_cwd):
             tracker = DotnetProgressTracker(
                 parser_argv,

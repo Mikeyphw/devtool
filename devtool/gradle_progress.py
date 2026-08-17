@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Any, Callable, Sequence
 
@@ -71,7 +72,7 @@ class GradleProgressTracker:
     live: Live | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
-    detail: str = field(init=False, default="Preparing Gradle task graph")
+    detail: str = field(init=False, default="Preparing Gradle environment")
     completed: int | None = field(init=False, default=0)
     total: int | None = field(init=False, default=None)
     warnings: int = field(init=False, default=0)
@@ -88,6 +89,7 @@ class GradleProgressTracker:
     expected_run_id: str = field(init=False, default="")
     rejected_events: int = field(init=False, default=0)
     structured_events_seen: bool = field(init=False, default=False)
+    real_progress_seen: bool = field(init=False, default=False)
     fallback_lines: int = field(init=False, default=0)
     graph_tasks: tuple[str, ...] = field(init=False, default=())
     observed_tasks: set[str] = field(init=False, default_factory=set)
@@ -95,8 +97,9 @@ class GradleProgressTracker:
     dependency_task_count: int = field(init=False, default=0)
     _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
-    _gradle_launch_started_at: float = field(init=False, default=0.0)
-    _real_progress_seen: bool = field(init=False, default=False)
+    _process_started_at: float | None = field(init=False, default=None)
+    _synthetic_stop: threading.Event = field(init=False, default_factory=threading.Event)
+    _synthetic_thread: threading.Thread | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
@@ -104,9 +107,10 @@ class GradleProgressTracker:
         self.requested_tasks = tuple(dict.fromkeys(str(task).strip() for task in self.requested_tasks if str(task).strip()))
 
     def __enter__(self) -> "GradleProgressTracker":
-        if not self.enabled:
+        if not self.enabled or self.live is not None:
             return self
         self._started_at = time.monotonic()
+        self._synthetic_stop.clear()
         if self.requested_tasks:
             self.console.print(self._requested_tasks_renderable())
         self.progress_body = ThreeLineProgressBody(self._progress_state)
@@ -122,11 +126,56 @@ class GradleProgressTracker:
         except LiveError:
             self.live = None
             self.progress_body = None
+        if self.live is not None:
+            self._synthetic_thread = threading.Thread(
+                target=self._synthetic_progress_loop,
+                name="devtool-gradle-startup-progress",
+                daemon=True,
+            )
+            self._synthetic_thread.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+        self._synthetic_stop.set()
+        thread = self._synthetic_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=0.5)
+        self._synthetic_thread = None
         if self.live is not None:
             self.live.stop()
+            self.live = None
+
+    def mark_process_started(self) -> None:
+        """Advance startup feedback as soon as the Gradle/chroot child exists."""
+
+        if self._process_started_at is None:
+            self._process_started_at = time.monotonic()
+        if not self.real_progress_seen and self.returncode is None:
+            self._set_synthetic_detail(self._synthetic_detail_for_elapsed(0.0))
+
+    def _synthetic_detail_for_elapsed(self, process_elapsed: float | None) -> str:
+        if process_elapsed is None:
+            return "Preparing Gradle environment"
+        if process_elapsed < 2.5:
+            if "--no-daemon" in self.argv:
+                return "Starting Gradle process"
+            return "Starting Gradle daemon"
+        return "Configuring Gradle project"
+
+    def _set_synthetic_detail(self, detail: str) -> None:
+        if self.real_progress_seen or self.returncode is not None or self.detail == detail:
+            return
+        self.detail = detail
+        self._publish()
+
+    def _synthetic_progress_loop(self) -> None:
+        while not self._synthetic_stop.wait(0.25):
+            if self.real_progress_seen or self.returncode is not None:
+                return
+            process_elapsed = None
+            if self._process_started_at is not None:
+                process_elapsed = max(0.0, time.monotonic() - self._process_started_at)
+            self._set_synthetic_detail(self._synthetic_detail_for_elapsed(process_elapsed))
 
     @staticmethod
     def parse_event(line: str) -> dict[str, Any] | None:
@@ -172,7 +221,8 @@ class GradleProgressTracker:
             self.rejected_events += 1
             return
         self.structured_events_seen = True
-        self._real_progress_seen = True
+        self.real_progress_seen = True
+        self._synthetic_stop.set()
         sequence = int(event.get("sequence") or 0)
         if sequence and sequence <= self.last_sequence:
             return
@@ -244,7 +294,8 @@ class GradleProgressTracker:
             return
         match = _TASK_LINE_RE.match(text)
         if match:
-            self._real_progress_seen = True
+            self.real_progress_seen = True
+            self._synthetic_stop.set()
             task = match.group("task") or ""
             outcome = (match.group("outcome") or "").lower().replace("_", "-")
             self.current_task = task
@@ -269,7 +320,8 @@ class GradleProgressTracker:
 
         summary = _ACTIONABLE_TASKS_RE.match(text)
         if summary:
-            self._real_progress_seen = True
+            self.real_progress_seen = True
+            self._synthetic_stop.set()
             self._merge_total(max(0, int(summary.group("total") or 0)))
             self.completed = self.total
             self._update_requested_dependency_counts()
@@ -282,21 +334,24 @@ class GradleProgressTracker:
         if heading:
             heading_text = heading.group("heading")
             if heading_text.strip().lower() == "build":
-                # The nested Android builder emits this immediately before it
-                # launches Gradle. Treat it as a launch boundary rather than a
-                # useful progress detail so the TUI does not sit on just
-                # "Build" for daemon/configuration startup.
-                self._gradle_launch_started_at = time.monotonic()
-                self._real_progress_seen = False
-                self.detail = "Preparing Gradle environment"
+                # The nested Android builder prints this immediately before it
+                # launches Gradle. It is a launch boundary, not meaningful
+                # Gradle progress; keeping synthetic startup alive prevents the
+                # TUI from sitting on only "Build" during daemon/configuration.
+                if self._process_started_at is None:
+                    self._process_started_at = time.monotonic()
+                self.detail = self._synthetic_detail_for_elapsed(0.0)
             else:
+                self.real_progress_seen = True
+                self._synthetic_stop.set()
                 self.detail = heading_text
             self.fallback_lines += 1
             self._publish()
             return
 
         if any(text.startswith(prefix) for prefix in _LIFECYCLE_PREFIXES):
-            self._real_progress_seen = True
+            self.real_progress_seen = True
+            self._synthetic_stop.set()
             self.detail = text
             if text.startswith("BUILD FAILED"):
                 self.errors = max(1, self.errors)
@@ -311,6 +366,7 @@ class GradleProgressTracker:
         self.tests_total = int(event.get("total") or (self.tests_passed + self.tests_failed + self.tests_skipped))
 
     def finish(self, returncode: int) -> None:
+        self._synthetic_stop.set()
         self.returncode = returncode
         if self.total is None and returncode == 0:
             inferred_total = max(int(self.completed or 0), len(self.observed_tasks))
@@ -334,20 +390,6 @@ class GradleProgressTracker:
         self._publish(force=True)
         self._print_completion_once()
 
-    def _effective_detail(self, now: float | None = None) -> str:
-        if self.returncode is not None or self._real_progress_seen or self.current_task:
-            return self.detail or self.current_task or "Gradle"
-        current = time.monotonic() if now is None else now
-        started = self._gradle_launch_started_at or self._started_at
-        elapsed = max(0.0, current - started)
-        if elapsed < 1.5:
-            return "Preparing Gradle environment"
-        if elapsed < 4.0:
-            if "--no-daemon" in self.argv:
-                return "Starting Gradle process"
-            return "Starting Gradle daemon"
-        return "Configuring Gradle project"
-
     def snapshot(self) -> dict[str, Any]:
         percent = None
         if self.completed is not None and self.total:
@@ -355,7 +397,7 @@ class GradleProgressTracker:
         return {
             "command": self.command_name,
             "target": self.display_target or self.cwd,
-            "detail": self._effective_detail(),
+            "detail": self.detail,
             "completed": self.completed,
             "total": self.total,
             "percent": percent,
@@ -376,6 +418,8 @@ class GradleProgressTracker:
             "requested_task_count": self.requested_task_count,
             "dependency_task_count": self.dependency_task_count,
             "structured_events_seen": self.structured_events_seen,
+            "real_progress_seen": self.real_progress_seen,
+            "startup_state": "real" if self.real_progress_seen else self.detail,
             "fallback_lines": self.fallback_lines,
             "observed_tasks": sorted(self.observed_tasks),
         }
@@ -475,7 +519,7 @@ class GradleProgressTracker:
                 extra_compact = f"{self.requested_task_count} req + {self.dependency_task_count} deps"
                 extra_tiny = f"{self.requested_task_count}r+{self.dependency_task_count}d"
         prefix_full, prefix_compact = self._current_task_role()
-        detail = self._effective_detail()
+        detail = self.current_task or self.detail or "Preparing Gradle environment"
         return ThreeLineProgressState(
             completed=int(self.completed or 0),
             total=self.total,

@@ -166,8 +166,8 @@ from .validation_sessions import (
     spec_map as validation_spec_map,
     status_payload as validation_status_payload,
     status_text as validation_status_text,
+    stored_specs as stored_validation_specs,
     checkpoint_text as validation_checkpoint_text,
-    stored_specs as restore_validation_specs,
     sync_plan as sync_validation_plan,
     validation_session_target_hint,
 )
@@ -3794,20 +3794,12 @@ def _load_or_create_validation_session(
     script_only = bool(effective_context.get("artifact_script_in_plan", False)) and all(
         bool(getattr(args, name, False)) for name in ("skip_restore", "skip_build", "skip_test")
     )
-    restored_stored_plan = False
     if start_new:
+        # Planning is intentionally done once. Android planning may inspect a large
+        # Gradle tree and resolve chroot/toolchain details, so a sequential resume
+        # must not pay that cost again or accidentally drift the phase commands.
         specs = [] if script_only else _validation_specs_for_args(config, args, parser)
         specs = _with_artifact_validation_phase(specs, effective_context)
-    else:
-        specs = restore_validation_specs(active)
-        restored_stored_plan = bool(specs)
-        if not specs:
-            # Compatibility path for sessions created before durable CommandSpec
-            # plans were persisted. New sessions never need to re-inspect the
-            # Android project merely to decide which phase comes next.
-            specs = [] if script_only else _validation_specs_for_args(config, args, parser)
-            specs = _with_artifact_validation_phase(specs, effective_context)
-    if start_new:
         if active is not None and active.transaction_path:
             raise ValidationSessionError(
                 "The active validation session owns a pending apply transaction. Resume or abort it instead of replacing it."
@@ -3840,11 +3832,20 @@ def _load_or_create_validation_session(
         recovered = recover_interrupted_validation_phases(session, stale_after_seconds=5.0)
         if recovered and session.transaction_path:
             _mark_session_transaction_pending(session)
-        specs = sync_validation_plan(session, specs)
+
+        specs = stored_validation_specs(session)
+        durable_plan = bool(specs)
+        if not specs:
+            # Schema-v5 and older sessions did not persist executable specs. Do
+            # one compatibility replan, synchronize it, and backfill the durable
+            # plan so all following resumes are exact and cheap.
+            specs = [] if script_only else _validation_specs_for_args(config, args, parser)
+            specs = _with_artifact_validation_phase(specs, effective_context)
+            specs = sync_validation_plan(session, specs)
         reconcile_validation_inputs(
             session,
             config,
-            ignore_domains=("config",) if restored_stored_plan else (),
+            ignore_domains=("config",) if durable_plan else (),
         )
         if session.failed:
             if bool(getattr(args, "retry_failed", False)):

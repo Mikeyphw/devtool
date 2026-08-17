@@ -149,6 +149,6 @@ def test_schema_v4_session_migrates_to_report_capable_schema(tmp_path: Path) -> 
     state.write_text(json.dumps(payload), encoding="utf-8")
     from devtool.validation_sessions import load_session
     migrated = load_session(tmp_path, session.session_id)
-    assert SESSION_SCHEMA_VERSION == 5
+    assert SESSION_SCHEMA_VERSION == 6
     assert migrated.initial_git_head == migrated.git_head
     assert migrated.commit_status == "not-requested"

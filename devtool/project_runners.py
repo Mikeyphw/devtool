@@ -985,12 +985,14 @@ class AndroidGradleRunner(ProjectRunner):
         validation_options = config.runner_options.get("validation", {})
         validation_options = dict(validation_options) if isinstance(validation_options, dict) else {}
         if bool(validation_options.get("resumable", False)):
-            return self._build_resumable_validation_specs(
-                config,
-                skip_restore=skip_restore,
-                skip_build=skip_build,
-                skip_test=skip_test,
-            )
+            from .android_integration import android_project_inspection_cache
+            with android_project_inspection_cache(config):
+                return self._build_resumable_validation_specs(
+                    config,
+                    skip_restore=skip_restore,
+                    skip_build=skip_build,
+                    skip_test=skip_test,
+                )
 
         # Explicit shell commands may carry action-specific setup or side
         # effects, so preserve the legacy multi-command pipeline for them.
