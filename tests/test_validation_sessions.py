@@ -234,6 +234,53 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertEqual(resumed.session_id, active.session_id)
             self.assertEqual(resumed.phases[1].status, "passed")
 
+
+    def test_resume_uses_stored_plan_and_does_not_replay_passed_phase_after_config_edit(self) -> None:
+        def fake_run(_config, specs, _args, **_kwargs):
+            results = [
+                OperationResult(spec.name, list(spec.argv), 0, 0.01, "ok", [], metadata=dict(spec.metadata))
+                for spec in specs
+            ]
+            return results, "\n".join(result.name for result in results)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            make_android_project(root)
+            config_path = root / ".devtool.toml"
+            config_path.write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
+            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch(
+                "devtool.cli._run_specs_for_args", side_effect=fake_run
+            ):
+                self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "start", "--next"]), 0)
+
+            first = load_active_session(root, required=True)
+            self.assertEqual(first.phases[0].status, "passed")
+            self.assertEqual(first.phases[1].status, "pending")
+            self.assertTrue(first.options.get("validation_spec_plan_v1"))
+
+            # A session resume is intentionally pinned to the plan that started
+            # it. Editing validation config must not force a fresh Android
+            # inspection or replay an already-passed phase; restart-session is
+            # the explicit way to adopt a new plan.
+            config_path.write_text(
+                '[project]\nkind="android"\nproject="."\n# changed while validation is paused\n',
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch(
+                "devtool.cli._run_specs_for_args", side_effect=fake_run
+            ), patch(
+                "devtool.cli._validation_specs_for_args",
+                side_effect=AssertionError("resume regenerated the Android validation plan"),
+            ):
+                self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "resume", "--next"]), 0)
+
+            resumed = load_active_session(root, required=True)
+            self.assertEqual(resumed.session_id, first.session_id)
+            self.assertEqual(resumed.phases[0].status, "passed")
+            self.assertEqual(resumed.phases[1].status, "passed")
+
     def test_plain_sequential_recovers_missing_active_marker_and_keeps_session_progress(self) -> None:
         def fake_run(_config, specs, _args, **_kwargs):
             results = [

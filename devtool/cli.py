@@ -167,6 +167,7 @@ from .validation_sessions import (
     status_payload as validation_status_payload,
     status_text as validation_status_text,
     checkpoint_text as validation_checkpoint_text,
+    stored_specs as restore_validation_specs,
     sync_plan as sync_validation_plan,
     validation_session_target_hint,
 )
@@ -3793,8 +3794,19 @@ def _load_or_create_validation_session(
     script_only = bool(effective_context.get("artifact_script_in_plan", False)) and all(
         bool(getattr(args, name, False)) for name in ("skip_restore", "skip_build", "skip_test")
     )
-    specs = [] if script_only else _validation_specs_for_args(config, args, parser)
-    specs = _with_artifact_validation_phase(specs, effective_context)
+    restored_stored_plan = False
+    if start_new:
+        specs = [] if script_only else _validation_specs_for_args(config, args, parser)
+        specs = _with_artifact_validation_phase(specs, effective_context)
+    else:
+        specs = restore_validation_specs(active)
+        restored_stored_plan = bool(specs)
+        if not specs:
+            # Compatibility path for sessions created before durable CommandSpec
+            # plans were persisted. New sessions never need to re-inspect the
+            # Android project merely to decide which phase comes next.
+            specs = [] if script_only else _validation_specs_for_args(config, args, parser)
+            specs = _with_artifact_validation_phase(specs, effective_context)
     if start_new:
         if active is not None and active.transaction_path:
             raise ValidationSessionError(
@@ -3829,7 +3841,11 @@ def _load_or_create_validation_session(
         if recovered and session.transaction_path:
             _mark_session_transaction_pending(session)
         specs = sync_validation_plan(session, specs)
-        reconcile_validation_inputs(session, config)
+        reconcile_validation_inputs(
+            session,
+            config,
+            ignore_domains=("config",) if restored_stored_plan else (),
+        )
         if session.failed:
             if bool(getattr(args, "retry_failed", False)):
                 retry_failed_validation(session)

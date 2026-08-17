@@ -22,6 +22,7 @@ from devtool.termux_toolchains import (
     VALID_ANDROID_BUILD_TOOLS_PROVIDERS,
     VALID_NATIVE_CACHE_PROVIDERS,
     VALID_NATIVE_PROVIDERS,
+    active_gradle_config_text,
     classify_native_requirement,
     normalize_android_build_tools_provider,
     normalize_native_cache_provider,
@@ -40,6 +41,32 @@ def _exe(path: Path, output: str = "1.2.3") -> None:
 
 
 class TermuxNativeProviderTests(unittest.TestCase):
+
+    def test_gradle_config_scan_prunes_generated_and_cache_trees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app").mkdir()
+            (root / "app" / "build.gradle.kts").write_text(
+                'android { compileSdk = 35 }\n', encoding="utf-8"
+            )
+            for ignored in ("build", ".gradle", ".devtool", "node_modules", "out"):
+                nested = root / ignored / "deep"
+                nested.mkdir(parents=True)
+                (nested / "build.gradle.kts").write_text(
+                    'ndkVersion = "SHOULD_NOT_BE_SCANNED"\n', encoding="utf-8"
+                )
+            text = active_gradle_config_text(root)
+        self.assertIn("compileSdk = 35", text)
+        self.assertNotIn("SHOULD_NOT_BE_SCANNED", text)
+
+    def test_native_requirement_scan_ignores_generated_native_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "build" / "generated").mkdir(parents=True)
+            (root / "build" / "generated" / "generated.cpp").write_text("int x;", encoding="utf-8")
+            requirement = classify_native_requirement(root, android=False)
+        self.assertNotEqual(requirement.capability, "compiler")
+
     def test_standalone_and_shared_provider_choices_stay_in_sync(self) -> None:
         self.assertEqual(android_build.NATIVE_PROVIDERS, VALID_NATIVE_PROVIDERS)
         self.assertEqual(android_build.NATIVE_CACHE_PROVIDERS, VALID_NATIVE_CACHE_PROVIDERS)

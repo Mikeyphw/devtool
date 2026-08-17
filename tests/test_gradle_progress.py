@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
 from rich.console import Console
 
@@ -203,6 +204,40 @@ class GradleProgressTests(unittest.TestCase):
         self.assertEqual(column.render(task).plain, "3/? tasks")
         progress.update(task_id, total=8, completed=3)
         self.assertEqual(column.render(progress.tasks[task_id]).plain, "3/8 tasks")
+
+    def test_build_heading_transitions_through_synthetic_startup_states(self) -> None:
+        tracker = self.make_tracker()
+        tracker.argv = ["./gradlew", "test"]
+        with patch("devtool.gradle_progress.time.monotonic", return_value=100.0):
+            tracker.update_from_line("==> Build")
+        with patch("devtool.gradle_progress.time.monotonic", return_value=100.5):
+            self.assertEqual(tracker._progress_state().detail, "Preparing Gradle environment")
+        with patch("devtool.gradle_progress.time.monotonic", return_value=102.0):
+            self.assertEqual(tracker._progress_state().detail, "Starting Gradle daemon")
+        with patch("devtool.gradle_progress.time.monotonic", return_value=105.0):
+            self.assertEqual(tracker._progress_state().detail, "Configuring Gradle project")
+
+    def test_no_daemon_startup_state_does_not_claim_a_daemon_is_starting(self) -> None:
+        tracker = GradleProgressTracker(
+            ["./gradlew", "test", "--no-daemon"],
+            "/repo",
+            "test",
+            Console(force_terminal=False),
+        )
+        with patch("devtool.gradle_progress.time.monotonic", return_value=200.0):
+            tracker.update_from_line("==> Build")
+        with patch("devtool.gradle_progress.time.monotonic", return_value=202.0):
+            self.assertEqual(tracker._progress_state().detail, "Starting Gradle process")
+
+    def test_real_gradle_event_replaces_synthetic_startup_state(self) -> None:
+        tracker = self.make_tracker()
+        with patch("devtool.gradle_progress.time.monotonic", return_value=300.0):
+            tracker.update_from_line("==> Build")
+        tracker.update_from_line("> Task :app:compileDebugKotlin")
+        with patch("devtool.gradle_progress.time.monotonic", return_value=310.0):
+            self.assertEqual(tracker._progress_state().detail, ":app:compileDebugKotlin")
+            self.assertEqual(tracker.snapshot()["detail"], ":app:compileDebugKotlin")
+
 
 
 if __name__ == "__main__":

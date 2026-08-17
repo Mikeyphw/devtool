@@ -1313,6 +1313,66 @@ def required_checkpoint_satisfied(session: ValidationSession) -> bool:
     by_key = {item.key: item for item in session.phases if hasattr(item, "key")}
     return all(key in by_key and by_key[key].status in _TERMINAL_PHASE_STATES for key in keys)
 
+_STORED_SPEC_PLAN_OPTION = "validation_spec_plan_v1"
+
+
+def _stored_spec_payload(spec: CommandSpec, repo_root: Path) -> dict[str, Any]:
+    cwd = str(spec.cwd or "")
+    cwd_relative = ""
+    if cwd:
+        try:
+            cwd_relative = str(Path(cwd).expanduser().resolve().relative_to(repo_root.expanduser().resolve()))
+        except (OSError, ValueError):
+            cwd_relative = ""
+    # Keep the durable plan JSON-safe even if a runner stores a Path-like value
+    # in metadata. Validation session files are local state, not executable input
+    # accepted from an untrusted artifact.
+    metadata = json.loads(json.dumps(dict(spec.metadata), default=str))
+    return {
+        "name": str(spec.name),
+        "argv": [str(item) for item in spec.argv],
+        "env": {str(key): str(value) for key, value in spec.env.items()},
+        "cwd": cwd,
+        "cwd_relative": cwd_relative,
+        "destructive": bool(spec.destructive),
+        "metadata": metadata,
+    }
+
+
+def stored_specs(session: ValidationSession) -> list[CommandSpec]:
+    """Restore the exact command plan captured when a durable session began.
+
+    Resuming must not perform a fresh Android/Gradle project inspection before
+    deciding which phase is next. Apart from being expensive on Termux/chroot,
+    regenerating the plan can silently change phase identity after configuration
+    edits. Older sessions that predate stored plans return an empty list so the
+    caller can fall back to legacy regeneration.
+    """
+
+    raw_plan = session.options.get(_STORED_SPEC_PLAN_OPTION)
+    if not isinstance(raw_plan, list) or not raw_plan:
+        return []
+    repo_root = Path(session.repo_root).expanduser().resolve()
+    specs: list[CommandSpec] = []
+    for raw in raw_plan:
+        if not isinstance(raw, dict):
+            return []
+        cwd = str(raw.get("cwd") or "") or None
+        relative = str(raw.get("cwd_relative") or "").strip()
+        if relative:
+            cwd = str((repo_root / relative).resolve())
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        specs.append(CommandSpec(
+            str(raw.get("name") or "validation"),
+            [str(item) for item in raw.get("argv") or []],
+            env={str(key): str(value) for key, value in dict(raw.get("env") or {}).items()},
+            cwd=cwd,
+            destructive=bool(raw.get("destructive", False)),
+            metadata=dict(metadata),
+        ))
+    return annotate_specs(specs, session_id=session.session_id)
+
+
 def create_session(
     config: ProjectConfig,
     specs: Sequence[CommandSpec],
@@ -1340,6 +1400,10 @@ def create_session(
     annotated = annotate_specs(list(specs), session_id=session_id)
     session_context = dict(apply_context or {})
     session_options = dict(options or {})
+    session_options.setdefault(
+        _STORED_SPEC_PLAN_OPTION,
+        [_stored_spec_payload(spec, config.repo_root) for spec in annotated],
+    )
     failure_action = str(
         session_options.get("failure_action")
         or session_context.get("failure_action")
@@ -1676,7 +1740,12 @@ def reset_all(session: ValidationSession, reason: str = "explicit validation pro
     save_session(session, active=True)
     return keys
 
-def reconcile_inputs(session: ValidationSession, config: ProjectConfig) -> str:
+def reconcile_inputs(
+    session: ValidationSession,
+    config: ProjectConfig,
+    *,
+    ignore_domains: Iterable[str] = (),
+) -> str:
     repo = str(config.repo_root.resolve())
     project = str(Path(config.project_root or config.repo_root).expanduser().resolve())
     if repo != session.repo_root or project != session.project_root:
@@ -1693,15 +1762,22 @@ def reconcile_inputs(session: ValidationSession, config: ProjectConfig) -> str:
         save_session(session, active=True)
         return ""
 
+    ignored = {str(domain).strip() for domain in ignore_domains if str(domain).strip()}
+    invalidating_domains = [domain for domain in changed_domains if domain not in ignored]
     seeds = [
         item.key for item in session.phases
-        if any(domain in item.input_domains for domain in changed_domains)
+        if any(domain in item.input_domains for domain in invalidating_domains)
     ]
-    reason = "validation input domain(s) changed since the previous clean checkpoint: " + ", ".join(changed_domains)
     if seeds:
+        reason = (
+            "validation input domain(s) changed since the previous clean checkpoint: "
+            + ", ".join(invalidating_domains)
+        )
         _invalidate_keys(session, seeds, reason)
-    # The new repository snapshot becomes the baseline only at this explicit
-    # phase boundary. Individual failed/interrupted attempts never bless it.
+    # A resumed stored plan intentionally pins validation configuration to the
+    # session that created it. Config-only edits therefore become the new
+    # fingerprint baseline without replaying already-passed phases. Source,
+    # resource, and test edits still invalidate their dependent phases.
     session.fingerprints = current
     session.git_head = _git_head(config.repo_root)
     save_session(session, active=True)

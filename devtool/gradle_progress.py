@@ -95,6 +95,8 @@ class GradleProgressTracker:
     dependency_task_count: int = field(init=False, default=0)
     _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
+    _gradle_launch_started_at: float = field(init=False, default=0.0)
+    _real_progress_seen: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
@@ -170,6 +172,7 @@ class GradleProgressTracker:
             self.rejected_events += 1
             return
         self.structured_events_seen = True
+        self._real_progress_seen = True
         sequence = int(event.get("sequence") or 0)
         if sequence and sequence <= self.last_sequence:
             return
@@ -241,6 +244,7 @@ class GradleProgressTracker:
             return
         match = _TASK_LINE_RE.match(text)
         if match:
+            self._real_progress_seen = True
             task = match.group("task") or ""
             outcome = (match.group("outcome") or "").lower().replace("_", "-")
             self.current_task = task
@@ -265,6 +269,7 @@ class GradleProgressTracker:
 
         summary = _ACTIONABLE_TASKS_RE.match(text)
         if summary:
+            self._real_progress_seen = True
             self._merge_total(max(0, int(summary.group("total") or 0)))
             self.completed = self.total
             self._update_requested_dependency_counts()
@@ -275,12 +280,23 @@ class GradleProgressTracker:
 
         heading = _HEADING_RE.match(text)
         if heading:
-            self.detail = heading.group("heading")
+            heading_text = heading.group("heading")
+            if heading_text.strip().lower() == "build":
+                # The nested Android builder emits this immediately before it
+                # launches Gradle. Treat it as a launch boundary rather than a
+                # useful progress detail so the TUI does not sit on just
+                # "Build" for daemon/configuration startup.
+                self._gradle_launch_started_at = time.monotonic()
+                self._real_progress_seen = False
+                self.detail = "Preparing Gradle environment"
+            else:
+                self.detail = heading_text
             self.fallback_lines += 1
             self._publish()
             return
 
         if any(text.startswith(prefix) for prefix in _LIFECYCLE_PREFIXES):
+            self._real_progress_seen = True
             self.detail = text
             if text.startswith("BUILD FAILED"):
                 self.errors = max(1, self.errors)
@@ -318,6 +334,20 @@ class GradleProgressTracker:
         self._publish(force=True)
         self._print_completion_once()
 
+    def _effective_detail(self, now: float | None = None) -> str:
+        if self.returncode is not None or self._real_progress_seen or self.current_task:
+            return self.detail or self.current_task or "Gradle"
+        current = time.monotonic() if now is None else now
+        started = self._gradle_launch_started_at or self._started_at
+        elapsed = max(0.0, current - started)
+        if elapsed < 1.5:
+            return "Preparing Gradle environment"
+        if elapsed < 4.0:
+            if "--no-daemon" in self.argv:
+                return "Starting Gradle process"
+            return "Starting Gradle daemon"
+        return "Configuring Gradle project"
+
     def snapshot(self) -> dict[str, Any]:
         percent = None
         if self.completed is not None and self.total:
@@ -325,7 +355,7 @@ class GradleProgressTracker:
         return {
             "command": self.command_name,
             "target": self.display_target or self.cwd,
-            "detail": self.detail,
+            "detail": self._effective_detail(),
             "completed": self.completed,
             "total": self.total,
             "percent": percent,
@@ -445,7 +475,7 @@ class GradleProgressTracker:
                 extra_compact = f"{self.requested_task_count} req + {self.dependency_task_count} deps"
                 extra_tiny = f"{self.requested_task_count}r+{self.dependency_task_count}d"
         prefix_full, prefix_compact = self._current_task_role()
-        detail = self.current_task or self.detail or "Preparing Gradle task graph"
+        detail = self._effective_detail()
         return ThreeLineProgressState(
             completed=int(self.completed or 0),
             total=self.total,

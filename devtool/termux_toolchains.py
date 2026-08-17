@@ -17,6 +17,33 @@ VALID_NATIVE_PROVIDERS = {'auto', 'termux-sysroot', 'ndk', 'system'}
 VALID_NATIVE_CACHE_PROVIDERS = {'auto', 'ccache', 'off'}
 VALID_ANDROID_BUILD_TOOLS_PROVIDERS = {'auto', 'termux', 'sdk', 'commit451', 'none'}
 
+_GRADLE_SCAN_IGNORED_DIRS = frozenset({
+    '.git', '.gradle', '.idea', '.devtool', '.venv', 'venv',
+    'build', 'out', 'dist', 'node_modules', 'target', 'bin', 'obj',
+})
+
+
+def _iter_project_files(project_root: Path):
+    """Yield source/config files without descending into generated trees.
+
+    ``Path.rglob`` cannot prune directory recursion on Python 3.11, which made
+    Android project inspection walk Gradle caches and build outputs before the
+    validation HUD could render. ``os.walk`` lets us prune those directories
+    in-place and keeps devtool's Python 3.11 compatibility.
+    """
+
+    root = Path(project_root).expanduser()
+    if not root.is_dir():
+        return
+    for current, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        dirnames[:] = [
+            name for name in dirnames
+            if name.lower() not in _GRADLE_SCAN_IGNORED_DIRS
+        ]
+        base = Path(current)
+        for filename in filenames:
+            yield base / filename
+
 
 @dataclass(frozen=True)
 class RuntimeIdentity:
@@ -546,18 +573,20 @@ def active_gradle_config_text(project_root: Path) -> str:
 
     root = Path(project_root).expanduser()
     chunks: list[str] = []
-    for pattern in ('*.gradle', '*.gradle.kts', 'gradle.properties'):
-        for path in root.rglob(pattern):
-            try:
-                text = path.read_text(encoding='utf-8', errors='replace')
-            except OSError:
-                continue
-            if path.name == 'gradle.properties':
-                text = re.sub(r'(?m)^[ \t]*[#!].*$', '', text)
-            else:
-                text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
-                text = re.sub(r'(?m)//.*$', '', text)
-            chunks.append(text)
+    for path in _iter_project_files(root):
+        name = path.name
+        if name != 'gradle.properties' and not (name.endswith('.gradle') or name.endswith('.gradle.kts')):
+            continue
+        try:
+            text = path.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        if name == 'gradle.properties':
+            text = re.sub(r'(?m)^[ \t]*[#!].*$', '', text)
+        else:
+            text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+            text = re.sub(r'(?m)//.*$', '', text)
+        chunks.append(text)
     return '\n'.join(chunks)
 
 
@@ -568,10 +597,19 @@ def classify_native_requirement(project_root: Path, *, android: bool = False) ->
     # repositories often contain host-side helpers or third-party CMake projects.
     # Require an Android/Gradle NDK declaration or an ndk-build makefile instead.
     full_ndk_markers = ('externalNativeBuild', 'ndkVersion', 'ndk-build', 'android.toolchain.cmake')
-    has_ndk_makefiles = any(root.rglob('Android.mk')) or any(root.rglob('Application.mk'))
+    has_ndk_makefiles = False
+    has_compiler_inputs = False
+    for path in _iter_project_files(root):
+        name = path.name
+        if name in {'Android.mk', 'Application.mk'}:
+            has_ndk_makefiles = True
+        if name == 'CMakeLists.txt' or path.suffix.lower() in {'.c', '.cc', '.cpp'}:
+            has_compiler_inputs = True
+        if has_ndk_makefiles and has_compiler_inputs:
+            break
     if android and (any(marker in text for marker in full_ndk_markers) or has_ndk_makefiles):
         return NativeRequirement('android-ndk', 'Android native build integration requires a complete Android NDK')
-    if any(root.rglob('CMakeLists.txt')) or any(root.rglob('*.c')) or any(root.rglob('*.cc')) or any(root.rglob('*.cpp')):
+    if has_compiler_inputs:
         return NativeRequirement('compiler', 'project contains native compiler inputs without Android NDK integration')
     return NativeRequirement('none', 'no native compiler requirement detected')
 
