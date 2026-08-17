@@ -38,6 +38,8 @@ from devtool.android_build import (
     should_cleanup_gradle,
     planned_artifact_names,
     select_revanced_asset,
+    select_cached_revanced_aapt2,
+    select_sdk_build_tools_aapt2,
     maybe_reexec_in_chroot,
     wrapper_distribution_version,
     _critical_memory_pressure as android_critical_memory_pressure,
@@ -1130,6 +1132,137 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         self.assertIn("-Dorg.gradle.vfs.watch=false", build_command)
         self.assertIn("-Dorg.gradle.parallel=false", build_command)
         self.assertIn("-Pkotlin.compiler.execution.strategy=in-process", build_command)
+
+
+    def test_auto_aapt2_does_not_query_remote_revanced_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sdk = root / "sdk"
+            java_home = root / "jdk"
+            gradle = root / "gradle"
+            commands: list[list[str]] = []
+            project = ProjectInfo(
+                root=root,
+                name="demo",
+                android=True,
+                android_application=True,
+                compile_sdk="36",
+                build_tools="36.0.0",
+                agp_major=9,
+                native_build=False,
+                ndk_version=None,
+                cmake_version=None,
+            )
+
+            def fake_run(argv, *args, **kwargs):
+                commands.append([str(value) for value in argv])
+                return subprocess.CompletedProcess(commands[-1], 0, "", "")
+
+            with (
+                patch("devtool.android_build.maybe_reexec_in_chroot", return_value=None),
+                patch("devtool.android_build.resolve_project_root", return_value=root),
+                patch("devtool.android_build.inspect_project", return_value=project),
+                patch("devtool.android_build.infer_java_requirement", return_value=JavaRequirement(17)),
+                patch("devtool.android_build.find_java_home", return_value=java_home),
+                patch("devtool.android_build.ensure_android_sdk", return_value=(sdk, "android-36", "36.0.0", None, None)),
+                patch("devtool.android_build.running_under_termux_python", return_value=False),
+                patch("devtool.android_build.normalized_machine", return_value="arm64"),
+                patch("devtool.android_build.select_sdk_build_tools_aapt2", return_value=None),
+                patch("devtool.android_build.select_cached_revanced_aapt2", return_value=None),
+                patch("devtool.android_build.obtain_revanced_aapt2", side_effect=AssertionError("auto must not query ReVanced metadata")),
+                patch("devtool.android_build.select_gradle", return_value=gradle),
+                patch("devtool.android_build.run", side_effect=fake_run),
+                patch("devtool.android_build.gradle_process_pids", return_value=[]),
+            ):
+                rc = android_build_main([str(root), "--task", ":app:assembleDebug", "--no-artifact-scan"])
+
+        self.assertEqual(rc, 0)
+        build_command = commands[-1]
+        self.assertFalse(any("aapt2FromMavenOverride" in item for item in build_command))
+
+    def test_explicit_revanced_aapt2_provider_still_allows_remote_provisioning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sdk = root / "sdk"
+            java_home = root / "jdk"
+            gradle = root / "gradle"
+            aapt2 = root / "aapt2"
+            commands: list[list[str]] = []
+            project = ProjectInfo(
+                root=root,
+                name="demo",
+                android=True,
+                android_application=True,
+                compile_sdk="36",
+                build_tools="36.0.0",
+                agp_major=9,
+                native_build=False,
+                ndk_version=None,
+                cmake_version=None,
+            )
+
+            def fake_run(argv, *args, **kwargs):
+                commands.append([str(value) for value in argv])
+                return subprocess.CompletedProcess(commands[-1], 0, "", "")
+
+            with (
+                patch("devtool.android_build.maybe_reexec_in_chroot", return_value=None),
+                patch("devtool.android_build.resolve_project_root", return_value=root),
+                patch("devtool.android_build.inspect_project", return_value=project),
+                patch("devtool.android_build.infer_java_requirement", return_value=JavaRequirement(17)),
+                patch("devtool.android_build.find_java_home", return_value=java_home),
+                patch("devtool.android_build.ensure_android_sdk", return_value=(sdk, "android-36", "36.0.0", None, None)),
+                patch("devtool.android_build.running_under_termux_python", return_value=False),
+                patch("devtool.android_build.obtain_revanced_aapt2", return_value=aapt2) as obtain,
+                patch("devtool.android_build.select_gradle", return_value=gradle),
+                patch("devtool.android_build.run", side_effect=fake_run),
+                patch("devtool.android_build.gradle_process_pids", return_value=[]),
+            ):
+                rc = android_build_main([
+                    str(root),
+                    "--task",
+                    ":app:assembleDebug",
+                    "--aapt2-provider",
+                    "revanced",
+                    "--no-artifact-scan",
+                ])
+
+        self.assertEqual(rc, 0)
+        obtain.assert_called_once()
+        self.assertTrue(any(f"-Pandroid.aapt2FromMavenOverride={aapt2}" == item for item in commands[-1]))
+
+    def test_auto_aapt2_can_use_verified_cached_revanced_without_remote_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            release = root / "cache" / "aapt2" / "revanced" / "v1"
+            release.mkdir(parents=True)
+            aapt2 = release / "aapt2"
+            archive = release / "aapt2-arm64-v8a.zip"
+            aapt2.write_bytes(b"binary")
+            archive.write_bytes(b"archive")
+            metadata = {
+                "asset_name": archive.name,
+                "archive_sha256": hashlib.sha256(b"archive").hexdigest(),
+                "binary_sha256": hashlib.sha256(b"binary").hexdigest(),
+            }
+            (release / "provenance.json").write_text(__import__("json").dumps(metadata), encoding="utf-8")
+            with patch("devtool.android_build.validate_aapt2", return_value=aapt2) as validate:
+                selected = select_cached_revanced_aapt2(root / "cache")
+
+        self.assertEqual(selected, aapt2)
+        validate.assert_called_once_with(aapt2, dry_run=False)
+
+    def test_sdk_build_tools_aapt2_requires_capability_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            aapt2 = root / "sdk" / "build-tools" / "36.0.0" / "aapt2"
+            aapt2.parent.mkdir(parents=True)
+            aapt2.write_text("#!/bin/sh\n", encoding="utf-8")
+            with patch("devtool.android_build.termux_aapt2_supports_platform", return_value=True) as supports:
+                selected = select_sdk_build_tools_aapt2(root / "sdk", "36.0.0", "android-36")
+
+        self.assertEqual(selected, aapt2)
+        supports.assert_called_once_with(aapt2, root / "sdk", "android-36", dry_run=False)
 
     def test_custom_aapt2_suppresses_experimental_option_warning(self) -> None:
         arguments = gradle_arguments_with_aapt2_override([], Path("/opt/devtool/aapt2"))

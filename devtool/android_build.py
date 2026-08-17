@@ -1450,6 +1450,83 @@ def select_termux_aapt2(
     return candidate
 
 
+
+def select_sdk_build_tools_aapt2(
+    sdk_root: Path | None,
+    build_tools_version: str | None,
+    platform_id: str | None,
+    *,
+    dry_run: bool = False,
+) -> Path | None:
+    """Return a runnable SDK build-tools AAPT2 binary when one is installed.
+
+    The auto provider must be offline-first.  A local SDK AAPT2 is safe to use
+    only when it can execute on the current host and link against the selected
+    Android platform.  If either probe fails, callers can fall back to AGP's
+    default Maven/SDK resolution without contacting unrelated remote metadata
+    services.
+    """
+
+    if sdk_root is None or not build_tools_version:
+        return None
+    candidate = sdk_root / "build-tools" / build_tools_version / "aapt2"
+    if not candidate.is_file():
+        return None
+    if not termux_aapt2_supports_platform(candidate, sdk_root, platform_id, dry_run=dry_run):
+        warn(
+            "Installed Android SDK AAPT2 failed capability probe for "
+            f"platform {platform_id or 'unknown'}; using another provider"
+        )
+        return None
+    info(f"AAPT2 provider: Android SDK build-tools ({candidate})")
+    return candidate
+
+
+def select_cached_revanced_aapt2(cache_root: Path, *, dry_run: bool = False) -> Path | None:
+    """Return a verified cached ReVanced AAPT2 without any network access.
+
+    This intentionally does not query GitHub release metadata.  AAPT2 provider
+    ``auto`` may use a previously verified local cache entry, but a live remote
+    ReVanced lookup is reserved for the explicit ``revanced`` provider so
+    Android validation cannot fail merely because GitHub metadata is slow or
+    unavailable.
+    """
+
+    root = cache_root / "aapt2" / "revanced"
+    if not root.is_dir():
+        return None
+    candidates: list[Path] = []
+    for release_dir in root.iterdir():
+        if not release_dir.is_dir():
+            continue
+        target = release_dir / "aapt2"
+        meta = release_dir / "provenance.json"
+        if not target.is_file() or not meta.is_file():
+            continue
+        try:
+            data = json.loads(meta.read_text(encoding="utf-8"))
+            recorded = str(data.get("binary_sha256") or "").lower()
+            archive_recorded = str(data.get("archive_sha256") or "").lower()
+            asset_name = str(data.get("asset_name") or "").strip()
+            archive = release_dir / asset_name
+            if not re.fullmatch(r"[0-9a-f]{64}", recorded):
+                continue
+            if not re.fullmatch(r"[0-9a-f]{64}", archive_recorded):
+                continue
+            if not asset_name or not archive.is_file():
+                continue
+            if sha256(target) != recorded or sha256(archive) != archive_recorded:
+                continue
+        except (OSError, json.JSONDecodeError):
+            continue
+        candidates.append(target)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    selected = validate_aapt2(candidates[0], dry_run=dry_run)
+    info(f"AAPT2 provider: cached ReVanced ({selected})")
+    return selected
+
 def _checksum_from_manifest(text: str, asset_name: str) -> str | None:
     """Return the SHA-256 recorded for ``asset_name`` in SHA256SUMS text."""
 
@@ -4400,7 +4477,7 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
         "-A", "--aapt2-provider",
         choices=("auto", "termux", "sdk", "revanced", "none"),
         default="auto",
-        help="AAPT2 source when --aapt2 is omitted; auto prefers a compatible Termux AAPT2 before managed fallbacks on native Termux",
+        help="AAPT2 source when --aapt2 is omitted; auto is offline-first and never queries remote ReVanced metadata unless --aapt2-provider revanced is requested",
     )
     parser.add_argument("-R", "--aapt2-release", default="latest", help="ReVanced AAPT2 tag or latest")
     parser.add_argument(
@@ -4863,7 +4940,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 info(f"SDK path source: {sdk_source}")
             if args.auto_sdk and not args.skip_sdk_install:
                 info("Auto SDK downloads: enabled")
-        sdk_root, platform_id, _, _, _ = ensure_android_sdk(
+        sdk_root, platform_id, build_tools, _, _ = ensure_android_sdk(
             project,
             sdk_root,
             cache_root,
@@ -4905,17 +4982,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dry_run=args.dry_run,
                 provider_evidence=provider_evidence,
             )
-        if aapt2 is None and (
-            args.aapt2_provider == "revanced"
-            or (args.aapt2_provider == "auto" and normalized_machine() in {"arm64", "armv7"})
-        ):
+        if aapt2 is None and args.aapt2_provider == "auto":
+            aapt2 = select_sdk_build_tools_aapt2(
+                sdk_root,
+                build_tools,
+                platform_id,
+                dry_run=args.dry_run,
+            )
+        if aapt2 is None and args.aapt2_provider == "auto" and normalized_machine() in {"arm64", "armv7"}:
+            aapt2 = select_cached_revanced_aapt2(cache_root, dry_run=args.dry_run)
+        if aapt2 is None and args.aapt2_provider == "revanced":
             if not provisioning_allowed:
-                cached_aapt2 = sorted(
-                    (cache_root / "aapt2" / "revanced").glob("*/aapt2"),
-                    key=lambda p: p.stat().st_mtime,
-                    reverse=True,
-                )
-                if not cached_aapt2:
+                cached = select_cached_revanced_aapt2(cache_root, dry_run=args.dry_run)
+                if cached is None:
                     fail_bootstrap_blocked(
                         "AAPT2",
                         downloads=args.toolchain_downloads,
@@ -4924,18 +5003,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "--aapt2 not set",
                             str(cache_root / "aapt2" / "revanced"),
                             "Termux AAPT2 capability probe",
+                            "Android SDK build-tools AAPT2",
                             "Android Gradle Plugin default AAPT2",
                         ],
                     )
-            aapt2 = obtain_revanced_aapt2(
-                cache_root,
-                release_name=args.aapt2_release,
-                offline=args.offline or not provisioning_allowed,
-                force=args.force_setup,
-                dry_run=args.dry_run,
-            )
-        elif aapt2 is None and args.aapt2_provider in {"sdk", "none"}:
-            info("Using the AAPT2 selected by Android Gradle Plugin")
+                aapt2 = cached
+            else:
+                aapt2 = obtain_revanced_aapt2(
+                    cache_root,
+                    release_name=args.aapt2_release,
+                    offline=args.offline or not provisioning_allowed,
+                    force=args.force_setup,
+                    dry_run=args.dry_run,
+                )
+        elif aapt2 is None and args.aapt2_provider in {"auto", "sdk", "none"}:
+            if args.aapt2_provider == "auto":
+                info(
+                    "AAPT2 provider: Android Gradle Plugin default "
+                    "(auto does not query remote ReVanced metadata; use --aapt2-provider revanced to provision it)"
+                )
+            else:
+                info("Using the AAPT2 selected by Android Gradle Plugin")
 
     gradle = select_gradle(
         project_root,
