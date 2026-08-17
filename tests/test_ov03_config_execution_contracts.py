@@ -224,7 +224,7 @@ class Ov03ConfigExecutionContracts(unittest.TestCase):
         self.assertIn("exec env -i", command)
         self.assertIn("HOME=/home/alice", command)
         self.assertIn("runuser -u alice", command)
-        self.assertIn("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", command)
+        self.assertIn("PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", command)
         self.assertNotIn("/data/data/com.termux/files/usr/lib/jvm", command)
         self.assertIn("KEEP=yes", command)
 

@@ -981,11 +981,20 @@ def wrap_specs_for_termux_host_chroot(
                 continue
             if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(key)):
                 assignment_values.append(f"{key}={value}")
+        base_chroot_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        chroot_path_prefix = str(
+            env.get("DEVTOOL_CHROOT_PATH_PREFIX", "/home/linuxbrew/.linuxbrew/bin") or ""
+        ).strip().strip(":")
+        chroot_path = (
+            f"{chroot_path_prefix}:{base_chroot_path}"
+            if chroot_path_prefix
+            else base_chroot_path
+        )
         assignment_values.extend([
             f"HOME={identity.home}",
             f"USER={identity.user}",
             f"LOGNAME={identity.user}",
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            f"PATH={chroot_path}",
         ])
         assignments = " ".join(shlex.quote(item) for item in assignment_values)
         payload = "cd " + shlex.quote(chroot_cwd or "/") + " && exec env -i " + assignments + " " + shlex.join(argv)

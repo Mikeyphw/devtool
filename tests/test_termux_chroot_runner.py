@@ -312,7 +312,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         command = wrapped[0].argv[8]
         self.assertIn('exec env -i', command)
         self.assertIn('HOME=/home/termux', command)
-        self.assertIn('PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', command)
+        self.assertIn('PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', command)
         self.assertIn('DEVTOOL_EXECUTION_CONTEXT=chroot', command)
         self.assertIn('dotnet build /home/termux/Code/demo/Demo.sln', command)
         self.assertEqual(wrapped[0].env, {})
@@ -321,6 +321,33 @@ class TermuxChrootRunnerTests(unittest.TestCase):
         self.assertEqual(wrapped[0].metadata["progress_argv"], spec.argv)
         self.assertEqual(wrapped[0].metadata["progress_cwd"], "/data/data/com.termux/files/home/Code/demo")
 
+
+    def test_host_chroot_wrapper_honors_custom_inner_path_prefix(self) -> None:
+        env = {
+            "HOME": "/data/data/com.termux/files/home",
+            "DEVTOOL_TERMUX_CHROOT_HOME": "/home/termux",
+            "DEVTOOL_TERMUX_CHROOT_USER": "termux",
+            "DEVTOOL_CHROOT_PATH_PREFIX": "/opt/node/bin",
+        }
+        spec = CommandSpec("build", ["gradle", "help"])
+        with patch(
+            "devtool.termux_chroot_runner.resolve_chroot_identity",
+            return_value=self.identity(user="termux", home="/home/termux"),
+        ):
+            wrapped = wrap_specs_for_termux_host_chroot(
+                [spec],
+                "androidos",
+                repo_root="/data/data/com.termux/files/home/Code/demo",
+                env=env,
+            )
+
+        command = wrapped[0].argv[8]
+
+        self.assertIn(
+            "PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:"
+            "/usr/sbin:/usr/bin:/sbin:/bin",
+            command,
+        )
 
     def test_wrapper_strips_termux_toolchain_paths_before_chroot_execution(self) -> None:
         spec = CommandSpec(

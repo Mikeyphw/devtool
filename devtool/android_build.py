@@ -678,15 +678,51 @@ def debian_package_installed(name: str) -> bool:
     return result.returncode == 0 and "install ok installed" in result.stdout
 
 
+def node_runtime_path(env: Mapping[str, str] | None = None) -> Path | None:
+    """Return a Node.js runtime executable visible in the effective environment."""
+
+    env = env or os.environ
+    search_path = str(env.get("PATH", ""))
+
+    for name in ("node", "nodejs"):
+        resolved = shutil.which(name, path=search_path)
+        if resolved:
+            candidate = Path(resolved)
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+
+    # Linuxbrew versioned formulae are not necessarily linked into bin/.
+    for candidate in (
+        Path("/home/linuxbrew/.linuxbrew/opt/node@22/bin/node"),
+        Path("/home/linuxbrew/.linuxbrew/opt/node/bin/node"),
+    ):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+
+    return None
+
+
+def gradle_tasks_require_node(tasks: Sequence[str]) -> bool:
+    """Recognize requested Gradle tasks that explicitly execute JS/Node tests."""
+
+    for task in tasks:
+        leaf = str(task).strip().rsplit(":", 1)[-1].lower()
+        if leaf.startswith(("jstest", "nodetest", "nodejstest", "javascripttest")):
+            return True
+
+    return False
+
+
 def install_missing_system_dependencies(
     *,
     need_java: bool,
     need_certificates: bool,
+    need_node: bool = False,
     offline: bool,
     java_version: int = 17,
     java_provider: str = "auto",
 ) -> None:
-    if not need_java and not need_certificates:
+    if not need_java and not need_certificates and not need_node:
         info("System dependencies are already ready")
         return
     if offline:
@@ -695,6 +731,8 @@ def install_missing_system_dependencies(
             missing.append("JDK")
         if need_certificates:
             missing.append("CA certificates")
+        if need_node:
+            missing.append("Node.js")
         fail("Missing system dependencies in --offline mode: " + ", ".join(missing))
 
     if running_under_termux_python():
@@ -710,6 +748,8 @@ def install_missing_system_dependencies(
             packages.append(f"openjdk-{java_version}")
         if need_certificates:
             packages.append("ca-certificates")
+        if need_node:
+            packages.append("nodejs")
         package_manager = shutil.which("pkg")
         if package_manager:
             heading("Installing missing Termux dependencies")
@@ -733,6 +773,8 @@ def install_missing_system_dependencies(
         need_certificates = not certificate_store_available()
     if need_certificates:
         packages.append("ca-certificates")
+    if need_node:
+        packages.append("nodejs")
     if not packages:
         info("System dependencies are already ready")
         return
@@ -4539,7 +4581,7 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
         "-D", "--system-deps",
         choices=("auto", "always", "never"),
         default="auto",
-        help="Install missing Java/CA packages only when needed, always refresh them, or never install them",
+        help="Install missing Java/CA/Node packages only when needed, always refresh them, or never install them",
     )
     parser.add_argument("-K", "--skip-system-deps", dest="system_deps", action="store_const", const="never", help="Alias for --system-deps never")
     parser.add_argument("-J", "--min-java", type=int, help="Minimum Java version; inferred when omitted")
@@ -4822,6 +4864,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         java_home = None
     need_java = java_home is None
     need_certificates = not certificate_store_available()
+    requested_tasks = list(args.tasks or default_tasks(project))
+    node_required = gradle_tasks_require_node(requested_tasks)
+    need_node = node_required and node_runtime_path() is None
     if args.system_deps == "always":
         if not provisioning_allowed:
             fail_bootstrap_blocked(
@@ -4833,6 +4878,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         install_missing_system_dependencies(
             need_java=True,
             need_certificates=need_certificates,
+            need_node=need_node,
             offline=args.offline,
             java_version=minimum_java,
             java_provider=args.java_provider,
@@ -4844,13 +4890,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             provider=args.java_provider,
             provider_evidence=provider_evidence,
         )
-    elif args.system_deps == "auto" and (need_java or need_certificates):
+    elif args.system_deps == "auto" and (need_java or need_certificates or need_node):
         if not provisioning_allowed:
             missing = []
             if need_java:
                 missing.append(f"Java {requirement.exact or str(minimum_java) + '+'}")
             if need_certificates:
                 missing.append("CA certificates")
+            if need_node:
+                missing.append("Node.js")
             fail_bootstrap_blocked(
                 "System dependencies",
                 downloads=args.toolchain_downloads,
@@ -4860,6 +4908,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         install_missing_system_dependencies(
             need_java=need_java,
             need_certificates=need_certificates,
+            need_node=need_node,
             offline=args.offline,
             java_version=minimum_java,
             java_provider=args.java_provider,
@@ -4878,6 +4927,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "Use --java-home or install the matching JDK."
             )
         fail(f"A JDK with Java {minimum_java}+ is required and system dependency installation is disabled. Use --java-home or install a JDK.")
+    if node_required:
+        node_runtime = node_runtime_path()
+        if node_runtime is None:
+            if args.system_deps == "never":
+                fail(
+                    "Node.js is required by requested Gradle JavaScript tasks but was not found in "
+                    "the effective execution environment. Remove --system-deps never, install nodejs "
+                    "inside the selected chroot, or provide a chroot-native node/nodejs on PATH."
+                )
+            fail(
+                "Node.js provisioning completed but node/nodejs is still unavailable in the "
+                "effective execution environment."
+            )
+        info(f"Node.js runtime: {node_runtime}")
+
     assert java_home is not None
     env = os.environ.copy()
     env["JAVA_HOME"] = str(java_home)
@@ -5045,7 +5109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         stop_gradle_processes(gradle, project_root, env, dry_run=args.dry_run)
     run([gradle, "--version"], cwd=project_root, env=env, dry_run=args.dry_run)
 
-    tasks = list(args.tasks or default_tasks(project))
+    tasks = list(requested_tasks)
     if args.clean and "clean" not in tasks:
         tasks.insert(0, "clean")
     command: list[str | os.PathLike[str]] = [
