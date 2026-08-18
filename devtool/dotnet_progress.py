@@ -18,6 +18,7 @@ from .rich_progress import (
     active_panel_title,
     ThreeLineProgressBody,
     ThreeLineProgressState,
+    TuiInspectionController,
     compact_display_target,
     completion_line,
 )
@@ -70,6 +71,7 @@ class DotnetProgressTracker:
     target_phase_total: int | None = None
     plan: DotnetProgressPlan | None = field(init=False, default=None)
     progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
+    inspection: TuiInspectionController = field(init=False)
     live: Live | None = field(init=False, default=None)
     seen_units: set[str] = field(init=False, default_factory=set)
     errors: int = field(init=False, default=0)
@@ -93,12 +95,13 @@ class DotnetProgressTracker:
         self.plan = dotnet_progress_plan(self.argv, self.cwd)
         self.total = self.plan.total if self.plan else None
         self.enabled = bool(self.plan and (self.console.is_terminal or self.console.is_interactive))
+        self.inspection = TuiInspectionController(self.console)
 
     def __enter__(self) -> "DotnetProgressTracker":
         if not self.enabled or self.plan is None:
             return self
         self._started_at = time.monotonic()
-        self.progress_body = ThreeLineProgressBody(self._progress_state)
+        self.progress_body = ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
         self.live = Live(
             self._renderable(),
             console=self.console,
@@ -111,13 +114,22 @@ class DotnetProgressTracker:
         except LiveError:
             self.live = None
             self.progress_body = None
+        if self.live is not None:
+            self.inspection.bind_refresh(self.live.refresh)
+            self.inspection.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+        self.inspection.stop()
+        self.inspection.bind_refresh(None)
         if self.live is not None:
             self.live.stop()
 
+    def set_stop_callback(self, callback: Callable[[], None] | None) -> None:
+        self.inspection.set_stop_callback(callback)
+
     def update_from_line(self, line: str) -> None:
+        self.inspection.append_line(line)
         if self.plan is None or (not self.enabled and self.update_callback is None):
             return
         text = line.strip()
@@ -339,7 +351,7 @@ class DotnetProgressTracker:
         if self.target_phase_index is not None and self.target_phase_total:
             phase_bits.append(f"target phase {self.target_phase_index}/{self.target_phase_total}")
         subtitle = Text(" • ".join(phase_bits), style="dim") if phase_bits else None
-        body = self.progress_body or ThreeLineProgressBody(self._progress_state)
+        body = self.progress_body or ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
         return Panel(
             body,
             title=title,

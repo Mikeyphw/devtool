@@ -28,6 +28,7 @@ from .rich_progress import (
     active_panel_title,
     ThreeLineProgressBody,
     ThreeLineProgressState,
+    TuiInspectionController,
     compact_display_target,
     completion_line,
 )
@@ -95,6 +96,7 @@ class NpmProgressTracker:
     target_phase_index: int | None = None
     target_phase_total: int | None = None
     progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
+    inspection: TuiInspectionController = field(init=False)
     live: Live | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
@@ -115,12 +117,13 @@ class NpmProgressTracker:
         self.plan = npm_progress_plan(self.argv, self.cwd)
         self.total = len(self.plan.steps) if self.plan is not None else None
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
+        self.inspection = TuiInspectionController(self.console)
 
     def __enter__(self) -> "NpmProgressTracker":
         if not self.enabled:
             return self
         self._started_at = time.monotonic()
-        self.progress_body = ThreeLineProgressBody(self._progress_state)
+        self.progress_body = ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
         self.live = Live(
             self._renderable(),
             console=self.console,
@@ -133,13 +136,22 @@ class NpmProgressTracker:
         except LiveError:
             self.live = None
             self.progress_body = None
+        if self.live is not None:
+            self.inspection.bind_refresh(self.live.refresh)
+            self.inspection.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+        self.inspection.stop()
+        self.inspection.bind_refresh(None)
         if self.live is not None:
             self.live.stop()
 
+    def set_stop_callback(self, callback: Callable[[], None] | None) -> None:
+        self.inspection.set_stop_callback(callback)
+
     def update_from_line(self, line: str) -> None:
+        self.inspection.append_line(line)
         text = _strip_ansi(line.strip())
         if not text:
             return
@@ -272,7 +284,7 @@ class NpmProgressTracker:
             width=self.console.width,
         )
         title.stylize(title_style)
-        body = self.progress_body or ThreeLineProgressBody(self._progress_state)
+        body = self.progress_body or ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
         return Panel(body, title=title, border_style=border, padding=(0, 1))
 
 

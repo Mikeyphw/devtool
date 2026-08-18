@@ -954,6 +954,35 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         separator = args.index("--")
         self.assertEqual(args[separator + 1 :], ["-Pxdm.requireAria2Runtime=true"])
 
+    def test_android_validation_disables_configuration_cache_without_structured_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "gradle": {
+                        "structured_events": False,
+                        "args": ["--configuration-cache", "-Psample=true"],
+                    },
+                    "validation": {"android_safe": True},
+                },
+            )
+
+            args = android_builder_arguments_for_tasks(
+                config, [":app:testDebugUnitTest"], scan_artifacts=False, validation=True
+            )
+
+        self.assertIn("--", args)
+        separator = args.index("--")
+        gradle_args = args[separator + 1 :]
+        self.assertNotIn("--init-script", gradle_args)
+        self.assertNotIn("--configuration-cache", gradle_args)
+        self.assertEqual(gradle_args.count("--no-configuration-cache"), 1)
+        self.assertIn("-Psample=true", gradle_args)
+
     def test_android_validation_can_explicitly_collect_all_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

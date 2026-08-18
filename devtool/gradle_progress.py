@@ -22,6 +22,7 @@ from .rich_progress import (
     active_panel_title,
     ThreeLineProgressBody,
     ThreeLineProgressState,
+    TuiInspectionController,
     compact_display_target,
     completion_line,
 )
@@ -69,6 +70,7 @@ class GradleProgressTracker:
     target_phase_total: int | None = None
     requested_tasks: Sequence[str] = field(default_factory=tuple)
     progress_body: ThreeLineProgressBody | None = field(init=False, default=None)
+    inspection: TuiInspectionController = field(init=False)
     live: Live | None = field(init=False, default=None)
     enabled: bool = field(init=False, default=False)
     update_callback: Callable[[dict[str, Any]], None] | None = None
@@ -103,6 +105,7 @@ class GradleProgressTracker:
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
+        self.inspection = TuiInspectionController(self.console)
         self.expected_run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
         self.requested_tasks = tuple(dict.fromkeys(str(task).strip() for task in self.requested_tasks if str(task).strip()))
 
@@ -113,7 +116,7 @@ class GradleProgressTracker:
         self._synthetic_stop.clear()
         if self.requested_tasks:
             self.console.print(self._requested_tasks_renderable())
-        self.progress_body = ThreeLineProgressBody(self._progress_state)
+        self.progress_body = ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
         self.live = Live(
             self._renderable(),
             console=self.console,
@@ -127,6 +130,8 @@ class GradleProgressTracker:
             self.live = None
             self.progress_body = None
         if self.live is not None:
+            self.inspection.bind_refresh(self.live.refresh)
+            self.inspection.start()
             self._synthetic_thread = threading.Thread(
                 target=self._synthetic_progress_loop,
                 name="devtool-gradle-startup-progress",
@@ -141,6 +146,8 @@ class GradleProgressTracker:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=0.5)
         self._synthetic_thread = None
+        self.inspection.stop()
+        self.inspection.bind_refresh(None)
         if self.live is not None:
             self.live.stop()
             self.live = None
@@ -207,7 +214,11 @@ class GradleProgressTracker:
             return None
         return payload
 
+    def set_stop_callback(self, callback: Callable[[], None] | None) -> None:
+        self.inspection.set_stop_callback(callback)
+
     def update_from_line(self, line: str) -> None:
+        self.inspection.append_line(line)
         prefixed = line.strip().startswith(_EVENT_PREFIX)
         event = self.parse_event(line)
         if event is None:
@@ -569,5 +580,5 @@ class GradleProgressTracker:
             width=self.console.width,
         )
         title.stylize(style)
-        body = self.progress_body or ThreeLineProgressBody(self._progress_state)
+        body = self.progress_body or ThreeLineProgressBody(self._progress_state, inspection=self.inspection)
         return Panel(body, title=title, border_style=border, padding=(0, 1))

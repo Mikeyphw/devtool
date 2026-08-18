@@ -67,7 +67,12 @@ Each invocation may stop at a phase boundary and continue later. Overlay/archive
 under `.devtool/state/android-validation/<session-id>/state.json`; the active
 session marker is `.devtool/state/android-validation/active.json`. Gradle's
 project cache, `GRADLE_USER_HOME`, dependency cache, and build outputs are kept.
-Devtool never inserts `clean` between phases.
+Devtool never inserts `clean` between phases. Android validation also forces Gradle's
+configuration cache off, independently of structured progress events. The managed Android
+SDK may be provisioned or repaired immediately before a phase; treating that mutable SDK
+directory as a configuration-cache fingerprint can cause repeated cache misses unrelated to
+repository inputs. Gradle's dependency/build caches and Devtool's durable validation phase
+cache remain available.
 
 Common forms:
 

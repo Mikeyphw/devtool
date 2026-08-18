@@ -1,5 +1,25 @@
 # Native frontend accessibility and responsive-layout checks
 
+## Terminal TUI keyboard map
+
+During a normal interactive Rich progress run, Devtool keeps the compact TUI as
+the default and exposes single-key inspection shortcuts without restarting the
+child command:
+
+- `v`: toggle the verbose inspection view. The compact progress/status remains
+  visible above a bounded tail of captured command output.
+- `l`: switch directly to a logs-only live tail.
+- `c`: return directly to compact progress.
+- `?`: toggle the shortcut-help modal.
+- `Esc`: close help/confirmation or return to compact progress.
+- `q`, `q`: stop the running command. The first press opens an explicit
+  confirmation; only a second `q` invokes the runner's normal interrupt path.
+
+The shortcut reader is TTY-only, is disabled in CI and non-interactive output,
+and may be disabled explicitly with `DEVTOOL_TUI_SHORTCUTS=0`. The existing
+`--verbose` mode is unchanged: it continues to stream raw output and does not
+start a second Rich live display.
+
 ## Desktop keyboard map
 
 - `Alt+1` through `Alt+7`: open Overview, Run, Artifacts, Logs, History,

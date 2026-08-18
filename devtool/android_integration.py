@@ -817,13 +817,31 @@ def android_builder_arguments_for_tasks(
     # The staged init script emits the exact task/test lifecycle consumed by
     # terminal and native HUD progress, avoiding percentage guesses.
     gradle_args: list[str] = []
-    if bool(gradle.get("structured_events", True)):
+    structured_events = bool(gradle.get("structured_events", True))
+    if structured_events:
         gradle_args.extend([
             "--init-script",
             str(stage_gradle_init_script()),
-            "--no-configuration-cache",
         ])
-    gradle_args.extend(_list_option(gradle.get("args")))
+
+    configured_gradle_args = _list_option(gradle.get("args"))
+    disable_configuration_cache = bool(validation or structured_events)
+    if disable_configuration_cache:
+        # Android validation may provision or repair the managed SDK immediately
+        # before Gradle starts. A configuration-cache entry that fingerprints
+        # that mutable SDK can therefore be invalidated for reasons unrelated to
+        # repository inputs. Validation already has its own durable phase cache,
+        # so force Gradle configuration-cache off here. Keep this independent of
+        # structured events and make the explicit Devtool policy win over a
+        # user-provided --configuration-cache switch.
+        configured_gradle_args = [
+            item for item in configured_gradle_args
+            if item not in {"--configuration-cache", "--no-configuration-cache"}
+        ]
+
+    gradle_args.extend(configured_gradle_args)
+    if disable_configuration_cache:
+        gradle_args.append("--no-configuration-cache")
     if gradle_args:
         argv.append("--")
         argv.extend(gradle_args)

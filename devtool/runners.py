@@ -1219,6 +1219,11 @@ def _run_process_live(
             except Exception:
                 pass
 
+    if tracker is not None:
+        set_stop_callback = getattr(tracker, "set_stop_callback", None)
+        if callable(set_stop_callback):
+            set_stop_callback(_interrupt_process)
+
     cancel_watch_stop = threading.Event()
     cancel_watcher: threading.Thread | None = None
     if tasker_progress is not None:

@@ -13,21 +13,263 @@ phase metadata is present.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 import os
 import re
+import select
+import sys
+import threading
 import time
 from typing import Callable
 
-from rich.console import Console, ConsoleOptions, RenderResult
+from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.cells import cell_len, set_cell_size
 from rich.measure import Measurement
+from rich.panel import Panel
 from rich.text import Text
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
 _ABSOLUTE_PATH_RE = re.compile(r"(?<![\w:/])/(?:[^\s\[\]{}<>\"'`]+)")
+_ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+class TuiDisplayMode(str, Enum):
+    """Interactive views available while a command is running."""
+
+    COMPACT = "compact"
+    VERBOSE = "verbose"
+    LOGS = "logs"
+    HELP = "help"
+    CONFIRM_STOP = "confirm-stop"
+
+
+class TuiInspectionController:
+    """Own keyboard shortcuts and a bounded live-output buffer for Rich TUI runs.
+
+    The controller is deliberately presentation-only. Command execution remains
+    owned by the runner, and the optional stop callback is injected after the
+    child process exists. This keeps non-interactive/CI behavior unchanged.
+    """
+
+    def __init__(
+        self,
+        console: Console,
+        *,
+        max_lines: int = 400,
+        force_interactive: bool | None = None,
+    ) -> None:
+        self.console = console
+        self.max_lines = max(20, int(max_lines))
+        self.mode = TuiDisplayMode.COMPACT
+        self._previous_mode = TuiDisplayMode.COMPACT
+        self._lines: deque[str] = deque(maxlen=self.max_lines)
+        self._lock = threading.RLock()
+        self._stop_event = threading.Event()
+        self._reader_ready = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._on_change: Callable[[], None] | None = None
+        self._stop_callback: Callable[[], None] | None = None
+        self._stop_requested = False
+        self._force_interactive = force_interactive
+        self.enabled = self._detect_interactive() if force_interactive is None else bool(force_interactive)
+
+    def _detect_interactive(self) -> bool:
+        disabled = os.environ.get("DEVTOOL_TUI_SHORTCUTS", "").strip().lower() in {"0", "false", "no", "off"}
+        if disabled:
+            return False
+        if os.environ.get("CI", "").strip().lower() in {"1", "true", "yes", "on"}:
+            return False
+        if not bool(self.console.is_terminal or self.console.is_interactive):
+            return False
+        stdin = getattr(sys, "stdin", None)
+        if stdin is None:
+            return False
+        try:
+            return bool(stdin.isatty())
+        except (AttributeError, OSError, ValueError):
+            return False
+
+    @property
+    def listening(self) -> bool:
+        thread = self._thread
+        return bool(self.enabled and thread is not None and thread.is_alive())
+
+    def bind_refresh(self, callback: Callable[[], None] | None) -> None:
+        self._on_change = callback
+
+    def set_stop_callback(self, callback: Callable[[], None] | None) -> None:
+        pending = False
+        with self._lock:
+            self._stop_callback = callback
+            pending = bool(callback is not None and self._stop_requested)
+            if pending:
+                self._stop_requested = False
+        if pending and callback is not None:
+            callback()
+
+    def start(self) -> None:
+        if not self.enabled or self.listening:
+            return
+        self._stop_event.clear()
+        self._reader_ready.clear()
+        self._thread = threading.Thread(target=self._keyboard_loop, name="devtool-tui-keys", daemon=True)
+        self._thread.start()
+        # Avoid losing the first shortcut to tty.setcbreak(TCSAFLUSH). Wait for
+        # the reader to finish terminal setup before returning to the caller.
+        self._reader_ready.wait(timeout=0.5)
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=0.5)
+        self._thread = None
+
+    def append_line(self, line: str) -> None:
+        if not self.enabled:
+            return
+        clean = _ANSI_ESCAPE_RE.sub("", str(line or "")).replace("\r", "\n")
+        values = [part.rstrip() for part in clean.splitlines() if part.strip()]
+        if not values:
+            return
+        with self._lock:
+            self._lines.extend(values)
+        if self.mode in {TuiDisplayMode.VERBOSE, TuiDisplayMode.LOGS}:
+            self._notify_change()
+
+    def lines(self, *, limit: int | None = None) -> tuple[str, ...]:
+        with self._lock:
+            values = tuple(self._lines)
+        if limit is None or limit <= 0:
+            return values
+        return values[-limit:]
+
+    def handle_key(self, key: str) -> bool:
+        """Apply one shortcut. Returns True when the key was consumed."""
+
+        raw = str(key or "")
+        if not raw:
+            return False
+        normalized = raw.lower()
+        changed = False
+        callback: Callable[[], None] | None = None
+        with self._lock:
+            current = self.mode
+            if raw == "\x1b":
+                if current in {TuiDisplayMode.HELP, TuiDisplayMode.CONFIRM_STOP}:
+                    self.mode = self._previous_mode
+                else:
+                    self.mode = TuiDisplayMode.COMPACT
+                changed = self.mode != current
+            elif normalized == "c":
+                self.mode = TuiDisplayMode.COMPACT
+                changed = self.mode != current
+            elif normalized == "l":
+                self.mode = TuiDisplayMode.LOGS
+                changed = self.mode != current
+            elif normalized == "v":
+                self.mode = TuiDisplayMode.COMPACT if current == TuiDisplayMode.VERBOSE else TuiDisplayMode.VERBOSE
+                changed = self.mode != current
+            elif raw == "?":
+                if current == TuiDisplayMode.HELP:
+                    self.mode = self._previous_mode
+                else:
+                    self._previous_mode = current if current != TuiDisplayMode.CONFIRM_STOP else TuiDisplayMode.COMPACT
+                    self.mode = TuiDisplayMode.HELP
+                changed = self.mode != current
+            elif normalized == "q":
+                if current == TuiDisplayMode.CONFIRM_STOP:
+                    callback = self._stop_callback
+                    if callback is None:
+                        self._stop_requested = True
+                    self.mode = TuiDisplayMode.COMPACT
+                    changed = True
+                else:
+                    self._previous_mode = current
+                    self.mode = TuiDisplayMode.CONFIRM_STOP
+                    changed = True
+            else:
+                return False
+        if changed:
+            self._notify_change()
+        if callback is not None:
+            callback()
+        return True
+
+    def shortcut_footer(self) -> Text | None:
+        if not self.enabled:
+            return None
+        return Text("[v] verbose  [l] logs  [c] compact  [?] help  [q] stop", style="dim", no_wrap=True, overflow="ellipsis")
+
+    def _notify_change(self) -> None:
+        callback = self._on_change
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                pass
+
+    def _keyboard_loop(self) -> None:
+        if os.name == "nt":
+            self._windows_keyboard_loop()
+        else:
+            self._posix_keyboard_loop()
+
+    def _posix_keyboard_loop(self) -> None:
+        try:
+            import termios
+            import tty
+
+            fd = sys.stdin.fileno()
+            original = termios.tcgetattr(fd)
+        except (AttributeError, OSError, ValueError, termios.error):
+            self._reader_ready.set()
+            return
+        try:
+            # cbreak keeps signal processing (notably Ctrl-C) enabled while
+            # allowing single-key shortcuts without waiting for Enter.
+            tty.setcbreak(fd)
+            self._reader_ready.set()
+            while not self._stop_event.is_set():
+                try:
+                    ready, _, _ = select.select([fd], [], [], 0.10)
+                except (OSError, ValueError):
+                    return
+                if not ready:
+                    continue
+                try:
+                    data = os.read(fd, 1)
+                except OSError:
+                    return
+                if not data:
+                    continue
+                self.handle_key(data.decode(errors="ignore"))
+        finally:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, original)
+            except (OSError, termios.error):
+                pass
+
+    def _windows_keyboard_loop(self) -> None:
+        try:
+            import msvcrt
+        except ImportError:
+            self._reader_ready.set()
+            return
+        self._reader_ready.set()
+        while not self._stop_event.wait(0.05):
+            if not msvcrt.kbhit():
+                continue
+            key = msvcrt.getwch()
+            if key in {"\x00", "\xe0"}:
+                if msvcrt.kbhit():
+                    msvcrt.getwch()
+                continue
+            self.handle_key(key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,12 +667,41 @@ def completion_line(
 
 
 class ThreeLineProgressBody:
-    """Live Rich renderable backed by a state callback."""
+    """Live Rich renderable backed by a state callback and optional TUI inspector."""
 
-    def __init__(self, state_provider: Callable[[], ThreeLineProgressState]) -> None:
+    def __init__(
+        self,
+        state_provider: Callable[[], ThreeLineProgressState],
+        *,
+        inspection: TuiInspectionController | None = None,
+    ) -> None:
         self._state_provider = state_provider
+        self.inspection = inspection
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        inspection = self.inspection
+        mode = inspection.mode if inspection is not None and inspection.enabled else TuiDisplayMode.COMPACT
+
+        if mode == TuiDisplayMode.HELP:
+            yield self._help_panel()
+            return
+        if mode == TuiDisplayMode.CONFIRM_STOP:
+            yield self._stop_panel()
+            return
+        if mode == TuiDisplayMode.LOGS:
+            yield self._log_panel(options, include_progress=False)
+            return
+        if mode == TuiDisplayMode.VERBOSE:
+            yield self._log_panel(options, include_progress=True)
+            return
+
+        yield from self._render_compact(console, options)
+        if inspection is not None:
+            footer = inspection.shortcut_footer()
+            if footer is not None:
+                yield footer
+
+    def _render_compact(self, console: Console, options: ConsoleOptions) -> RenderResult:
         state = self._state_provider()
         now = time.monotonic()
         width = max(1, options.max_width)
@@ -482,6 +753,57 @@ class ThreeLineProgressBody:
                     diagnostics.append(" · ", style="dim")
                 diagnostics.append(f"✗ {state.errors} error{'s' if state.errors != 1 else ''}", style="red")
             yield diagnostics
+
+    def _log_panel(self, options: ConsoleOptions, *, include_progress: bool) -> Panel:
+        inspection = self.inspection
+        assert inspection is not None
+        # Keep enough room for the outer panel, title/footer, and compact status.
+        max_height = max(6, int(options.max_height or 24))
+        reserve = 10 if include_progress else 5
+        line_limit = max(3, min(24, max_height - reserve))
+        lines = inspection.lines(limit=line_limit)
+        log_rows: list[Text] = []
+        if lines:
+            for value in lines:
+                lowered = value.lower()
+                style = "red" if "error" in lowered or "failed" in lowered else ("yellow" if "warning" in lowered else "")
+                log_rows.append(Text(value, style=style, no_wrap=True, overflow="ellipsis"))
+        else:
+            log_rows.append(Text("Waiting for command output…", style="dim"))
+
+        rows: list[object] = []
+        if include_progress:
+            rows.append(ThreeLineProgressBody(self._state_provider))
+            rows.append(Text("Live output", style="bold"))
+        rows.extend(log_rows)
+        shortcut_hint = "v compact" if include_progress else "v verbose"
+        rows.append(Text(f"{shortcut_hint}  •  l logs  •  c compact  •  ? help  •  q stop", style="dim", no_wrap=True, overflow="ellipsis"))
+        title = "Verbose output" if include_progress else "Logs only"
+        return Panel(Group(*rows), title=title, border_style="cyan", padding=(0, 1))
+
+    @staticmethod
+    def _help_panel() -> Panel:
+        rows = Group(
+            Text("v  Toggle verbose view", style="bold"),
+            Text("l  Logs-only view"),
+            Text("c  Compact progress view"),
+            Text("?  Toggle this help"),
+            Text("Esc  Close modal / return compact"),
+            Text("q q  Stop the running command (two presses)", style="yellow"),
+        )
+        return Panel(rows, title="TUI shortcuts", border_style="cyan", padding=(0, 1))
+
+    @staticmethod
+    def _stop_panel() -> Panel:
+        return Panel(
+            Group(
+                Text("Stop the running command?", style="bold yellow"),
+                Text("Press q again to stop. Press Esc to cancel.", style="dim"),
+            ),
+            title="Confirm stop",
+            border_style="yellow",
+            padding=(0, 1),
+        )
 
     def __rich_measure__(self, console: Console, options: ConsoleOptions) -> Measurement:
         return Measurement(1, options.max_width)
