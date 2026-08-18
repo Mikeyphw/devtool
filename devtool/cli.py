@@ -98,6 +98,7 @@ from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressS
 from .toolchains import apply_destination_toolchain_wrapper, apply_toolchain_wrapper, toolchain_doctor_rows
 from .termux_toolchains import (
     VALID_GRADLE_PROVIDERS, VALID_JAVA_PROVIDERS, VALID_NATIVE_PROVIDERS,
+    VALID_ANDROID_SDK_PROVIDERS,
     VALID_NATIVE_CACHE_PROVIDERS, VALID_ANDROID_BUILD_TOOLS_PROVIDERS,
 )
 from .termux_diagnostics import (
@@ -427,6 +428,7 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--offline", action="store_true", help="Alias for --no-bootstrap-downloads --deny-network and Gradle offline mode")
     bootstrap.add_argument("--toolchain-profile", default="", help="Chroot/toolchain profile name from global or repo config")
     bootstrap.add_argument("--android-sdk-root", default="", help="Android SDK root for Android/Gradle projects")
+    bootstrap.add_argument("--android-sdk-provider", choices=sorted(VALID_ANDROID_SDK_PROVIDERS), default="", help="Android SDK provider: auto, TermuxVoid, HomuHomu ARM64 Android SDK, or managed Google SDK")
     bootstrap.add_argument("--gradle-command", default="", help="Gradle or gradlew executable for Android/Gradle projects")
     bootstrap.add_argument("--gradle-provider", choices=sorted(VALID_GRADLE_PROVIDERS), default="", help="Gradle provider for Android/Gradle projects: auto, wrapper, termux, system, or download")
     bootstrap.add_argument("--java-home", default="", help="JDK home for Android/Gradle projects")
@@ -2539,6 +2541,10 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
     if sdk_root:
         android = ensure_section("android")
         android["sdk_root"] = sdk_root
+    sdk_provider = str(getattr(args, "android_sdk_provider", "") or "").strip()
+    if sdk_provider:
+        android = ensure_section("android")
+        android["sdk_provider"] = sdk_provider
     java_home = str(getattr(args, "java_home", "") or "").strip()
     if java_home:
         android = ensure_section("android")

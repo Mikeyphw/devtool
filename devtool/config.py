@@ -182,7 +182,7 @@ def minimal_global_config_template() -> str:
         "default_chroot = \"androidos\"",
         "",
         "[termux]",
-        "# Diagnostics/package recommendations are read-only; devtool never runs pkg/apt install or upgrade automatically.",
+        "# Diagnostics/package recommendations are read-only. Android SDK provider bootstrap may install narrowly-scoped Termux prerequisites/repository metadata when bootstrap policy allows it.",
         "wake_lock = \"auto\" # auto | on | off",
         "resource_profile = \"balanced\" # auto | conservative | balanced | performance",
         "",
@@ -217,6 +217,7 @@ def minimal_global_config_template() -> str:
         "stop_after_run = true",
         "",
         "[android]",
+        "sdk_provider = \"auto\" # auto | termuxvoid | homuhomu | managed",
         "aapt2_provider = \"auto\"",
         "aapt2_fallback_path = \"/sdcard/Download/aapt2-arm64-v8a.bin\"",
         "",
@@ -1320,7 +1321,7 @@ bind = []
 env = []
 
 [termux]
-# Diagnostics/package recommendations are read-only; devtool never runs pkg/apt install or upgrade automatically.
+# Diagnostics/package recommendations are read-only. Android SDK provider bootstrap may install narrowly-scoped Termux prerequisites/repository metadata when bootstrap policy allows it.
 wake_lock = "auto"
 resource_profile = "balanced"
 
@@ -1348,6 +1349,7 @@ manager = "auto" # auto | mise | none
 
 [android]
 variant = "debug"
+sdk_provider = "auto" # auto | termuxvoid | homuhomu | managed
 aapt2_provider = "auto"
 ndk_host_provider = "auto" # auto | google | arm64 | qemu | none
 arm64_ndk_url = ""

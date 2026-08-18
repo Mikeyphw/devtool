@@ -531,6 +531,9 @@ toolchain profile from global or repository config.
 .BR --android-sdk-root " PATH"
 Set the Android SDK root for Android/Gradle runs.
 .TP
+.BR --android-sdk-provider " PROVIDER"
+Select the Android SDK provider for Android/Gradle runs: \fBauto\fR, \fBtermuxvoid\fR, \fBhomuhomu\fR, or \fBmanaged\fR. On native ARM64 Termux, auto may bootstrap the TermuxVoid preassembled SDK, then the HomuHomu Android-host ARM64 SDK, before falling back to Devtool's managed Google SDK. Bootstrap download and network policy remain authoritative.
+.TP
 .BR --gradle-command " PATH"
 Set the Gradle or gradlew executable for Android/Gradle runs.
 .TP

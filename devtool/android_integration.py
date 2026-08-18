@@ -181,7 +181,7 @@ def refresh_android_builders_for_specs(specs: Iterable[Any]) -> None:
         argv = [str(value) for value in getattr(spec, "argv", ())]
         required_options = {
             option
-            for option in ("--gradle-user-home", "--toolchain-downloads", "--bootstrap-network")
+            for option in ("--gradle-user-home", "--toolchain-downloads", "--bootstrap-network", "--sdk-provider")
             if option in argv
         }
         if not required_options:
@@ -669,6 +669,7 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--java-home", android.get("java_home") or java_options.get("home") or gradle.get("java_home"))
     _append_non_default_option(argv, "--java-provider", java_options.get("provider") or android.get("java_provider", "auto"))
     _append_option(argv, "--sdk-root", android.get("sdk_root"))
+    _append_non_default_option(argv, "--sdk-provider", android.get("sdk_provider", "auto"))
     _append_option(argv, "--aapt2", android.get("aapt2"))
     requested_aapt2_provider = str(
         build_tools_options.get("aapt2_provider")
@@ -911,6 +912,7 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     native_cache = str(native_options.get("cache") or android.get("native_cache") or "auto")
     build_tools_provider = str(build_tools_options.get("provider") or android.get("build_tools_provider") or "auto")
     aapt2_provider = str(build_tools_options.get("aapt2_provider") or android.get("aapt2_provider") or "auto")
+    sdk_provider = str(android.get("sdk_provider") or "auto")
     downloads, network = _bootstrap_policy(config)
     tasks = configured_tasks(config, "build")
     test_tasks = configured_tasks(config, "test")
@@ -925,6 +927,7 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("gradle_provider", gradle_provider),
         ("native_provider", native_provider_name),
         ("native_cache", native_cache),
+        ("android_sdk_provider", sdk_provider),
         ("android_build_tools_provider", build_tools_provider),
         ("aapt2_provider", aapt2_provider),
         ("minimum_java", str(requirement.minimum) + (" exact toolchain" if requirement.exact else "")),
@@ -962,6 +965,7 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     native_cache = str(native_options.get("cache") or android.get("native_cache") or "auto")
     build_tools_provider = str(build_tools_options.get("provider") or android.get("build_tools_provider") or "auto")
     aapt2_provider = str(build_tools_options.get("aapt2_provider") or android.get("aapt2_provider") or "auto")
+    sdk_provider = str(android.get("sdk_provider") or "auto")
     downloads, network = _bootstrap_policy(config)
     java_home: Path | None = None
     try:
@@ -1009,6 +1013,7 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("native_requirement", native_requirement.capability),
         ("native_provider", native_provider_name),
         ("native_cache", native_cache),
+        ("android_sdk_provider", sdk_provider),
         ("android_build_tools_provider", build_tools_provider),
         ("aapt2_provider", aapt2_provider),
         ("java_provider", java_provider),

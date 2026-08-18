@@ -16,6 +16,7 @@ VALID_GRADLE_PROVIDERS = {'auto', 'wrapper', 'termux', 'system', 'download'}
 VALID_NATIVE_PROVIDERS = {'auto', 'termux-sysroot', 'ndk', 'system'}
 VALID_NATIVE_CACHE_PROVIDERS = {'auto', 'ccache', 'off'}
 VALID_ANDROID_BUILD_TOOLS_PROVIDERS = {'auto', 'termux', 'sdk', 'commit451', 'none'}
+VALID_ANDROID_SDK_PROVIDERS = {'auto', 'termuxvoid', 'homuhomu', 'managed'}
 
 
 @dataclass(frozen=True)

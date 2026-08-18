@@ -66,6 +66,12 @@ GRADLE_PROVIDERS = {"auto", "wrapper", "termux", "system", "download"}
 NATIVE_PROVIDERS = {"auto", "termux-sysroot", "ndk", "system"}
 NATIVE_CACHE_PROVIDERS = {"auto", "ccache", "off"}
 ANDROID_BUILD_TOOLS_PROVIDERS = {"auto", "termux", "sdk", "commit451", "none"}
+ANDROID_SDK_PROVIDERS = {"auto", "termuxvoid", "homuhomu", "managed"}
+TERMUXVOID_REPOSITORY_URL = "https://termuxvoid.github.io/repo"
+TERMUXVOID_REPOSITORY_LINE = f"deb [arch=all] {TERMUXVOID_REPOSITORY_URL} termuxvoid main"
+TERMUXVOID_KEY_URL = "https://raw.githubusercontent.com/termuxvoid/repo/main/assets/termuxvoid.gpg"
+TERMUXVOID_SDK_REPOSITORY = "termuxvoid/android-sdk-termux"
+HOMUHOMU_SDK_REPOSITORY = "HomuHomu833/android-sdk-custom"
 
 
 class BuildError(RuntimeError):
@@ -162,6 +168,372 @@ def normalize_bootstrap_network(value: str | None) -> str:
 
 def bootstrap_provisioning_allowed(downloads: str, network: str) -> bool:
     return normalize_bootstrap_network(network) == "allow" and normalize_bootstrap_downloads(downloads) != "never"
+
+
+def normalize_android_sdk_provider(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower() or "auto"
+    aliases = {
+        "termux-void": "termuxvoid",
+        "void": "termuxvoid",
+        "homu": "homuhomu",
+        "android-sdk-custom": "homuhomu",
+        "google": "managed",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in ANDROID_SDK_PROVIDERS:
+        valid = ", ".join(sorted(ANDROID_SDK_PROVIDERS))
+        fail(f"Unsupported Android SDK provider: {value}. Expected one of: {valid}")
+    return normalized
+
+
+def _termux_prefix_path() -> Path:
+    raw = str(os.environ.get("PREFIX") or "/data/data/com.termux/files/usr").strip()
+    return Path(raw).expanduser().resolve(strict=False)
+
+
+def _termux_package_installed(name: str) -> bool:
+    if not running_under_termux_python():
+        return False
+    dpkg_query = shutil.which("dpkg-query")
+    if not dpkg_query:
+        return False
+    result = run(
+        [dpkg_query, "-W", "-f=${Status}", name],
+        check=False,
+        capture=True,
+        quiet=True,
+    )
+    return result.returncode == 0 and "install ok installed" in (result.stdout or "")
+
+
+def _ensure_termux_packages(packages: Sequence[str], *, dry_run: bool) -> None:
+    missing = [name for name in packages if not _termux_package_installed(name)]
+    if not missing:
+        return
+    package_manager = shutil.which("pkg") or shutil.which("apt")
+    if not package_manager:
+        fail("Native Termux package bootstrap requires pkg or apt in PATH")
+    heading("Installing Termux SDK provider prerequisites")
+    info(", ".join(missing))
+    run([package_manager, "install", "-y", *missing], dry_run=dry_run)
+
+
+def ensure_termuxvoid_repository(*, cache_root: Path, dry_run: bool) -> None:
+    """Idempotently configure the minimal repositories required by TermuxVoid.
+
+    We intentionally do not reproduce TermuxVoid's optional X11-repo setup: the
+    Android SDK package does not require it. The official glibc repo is enabled
+    because TermuxVoid's own installer treats it as a baseline dependency.
+    """
+
+    if not running_under_termux_python():
+        fail("The TermuxVoid Android SDK provider requires native Termux execution")
+    prefix = _termux_prefix_path()
+    sources_dir = prefix / "etc" / "apt" / "sources.list.d"
+    trusted_dir = prefix / "etc" / "apt" / "trusted.gpg.d"
+    glibc_list = sources_dir / "glibc.list"
+    termuxvoid_list = sources_dir / "termuxvoid.list"
+    termuxvoid_key = trusted_dir / "termuxvoid.gpg"
+
+    changed = False
+    if not glibc_list.is_file():
+        _ensure_termux_packages(["glibc-repo"], dry_run=dry_run)
+        changed = True
+
+    if dry_run:
+        if not termuxvoid_list.is_file():
+            info(f"Would configure TermuxVoid APT source: {termuxvoid_list}")
+        if not termuxvoid_key.is_file():
+            info(f"Would install TermuxVoid signing key: {termuxvoid_key}")
+        return
+
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    trusted_dir.mkdir(parents=True, exist_ok=True)
+    desired_line = TERMUXVOID_REPOSITORY_LINE + "\n"
+    current_line = ""
+    try:
+        current_line = termuxvoid_list.read_text(encoding="utf-8")
+    except OSError:
+        pass
+    if current_line != desired_line:
+        temporary = termuxvoid_list.with_suffix(".list.tmp")
+        temporary.write_text(desired_line, encoding="utf-8")
+        temporary.replace(termuxvoid_list)
+        changed = True
+
+    if not termuxvoid_key.is_file() or termuxvoid_key.stat().st_size == 0:
+        key_cache = cache_root / "android-sdk-providers" / "termuxvoid" / "termuxvoid.gpg"
+        download(TERMUXVOID_KEY_URL, key_cache, offline=False, force=False)
+        temporary = termuxvoid_key.with_suffix(".gpg.tmp")
+        shutil.copy2(key_cache, temporary)
+        temporary.replace(termuxvoid_key)
+        changed = True
+
+    if changed:
+        apt = shutil.which("apt") or shutil.which("pkg")
+        if not apt:
+            fail("TermuxVoid repository setup requires apt or pkg in PATH")
+        heading("Refreshing Termux package repositories")
+        run([apt, "update", "-y"] if Path(apt).name == "apt" else [apt, "update", "-y"])
+
+
+def _provider_cache_root(cache_root: Path, provider: str) -> Path:
+    return cache_root / "android-sdk-providers" / provider
+
+
+def _provider_sdk_root(cache_root: Path, provider: str) -> Path:
+    return _provider_cache_root(cache_root, provider) / "sdk"
+
+
+def _sdk_tree_candidate(root: Path) -> Path | None:
+    candidates = [root, root / "android-sdk", root / "sdk"]
+    try:
+        candidates.extend(path for path in root.iterdir() if path.is_dir())
+    except OSError:
+        pass
+    for candidate in candidates:
+        if not candidate.is_dir():
+            continue
+        if (candidate / "build-tools").is_dir() and (
+            (candidate / "platform-tools").is_dir()
+            or (candidate / "cmdline-tools").is_dir()
+        ):
+            return candidate
+    return None
+
+
+def _provider_cached_sdk(cache_root: Path, provider: str) -> Path | None:
+    root = _provider_sdk_root(cache_root, provider)
+    candidate = _sdk_tree_candidate(root)
+    if candidate is not None and sdk_host_compatible(candidate):
+        return candidate.resolve()
+    return None
+
+
+def _github_release_asset(release: Mapping[str, object], predicate, *, label: str) -> Mapping[str, object]:
+    assets = release.get("assets") if isinstance(release, Mapping) else None
+    if not isinstance(assets, list):
+        fail(f"{label} release metadata contains no assets")
+    matches = [asset for asset in assets if isinstance(asset, Mapping) and predicate(str(asset.get("name") or ""))]
+    if not matches:
+        names = ", ".join(str(asset.get("name") or "") for asset in assets if isinstance(asset, Mapping))
+        fail(f"No {label} release asset matched this Termux host. Assets: {names or 'none'}")
+    matches.sort(key=lambda asset: str(asset.get("name") or ""))
+    return matches[0]
+
+
+def _release_asset_sha256(release: Mapping[str, object], asset: Mapping[str, object]) -> str | None:
+    digest = str(asset.get("digest") or "").strip().lower()
+    if digest.startswith("sha256:") and re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        return digest.split(":", 1)[1]
+    name = re.escape(str(asset.get("name") or ""))
+    body = str(release.get("body") or "")
+    patterns = (
+        rf"(?i){name}[^0-9a-f]{{0,80}}([0-9a-f]{{64}})",
+        rf"(?i)([0-9a-f]{{64}})[^\n]{{0,80}}{name}",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, body)
+        if match:
+            return match.group(1).lower()
+    return None
+
+
+def _extract_sdk_provider_archive(archive: Path, staging: Path, *, dry_run: bool) -> None:
+    if dry_run:
+        info(f"Would extract Android SDK provider archive: {archive} -> {staging}")
+        return
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    if archive.name.lower().endswith(".7z"):
+        seven = shutil.which("7z") or shutil.which("7zz")
+        if not seven:
+            fail("7z is required to extract the TermuxVoid Android SDK bundle")
+        run([seven, "t", archive])
+        run([seven, "x", archive, f"-o{staging}", "-y"])
+    else:
+        extract_archive(archive, staging)
+
+
+def _install_provider_sdk_tree(
+    *,
+    cache_root: Path,
+    provider: str,
+    release: Mapping[str, object],
+    asset: Mapping[str, object],
+    force: bool,
+    dry_run: bool,
+) -> Path:
+    tag = str(release.get("tag_name") or "latest").strip() or "latest"
+    asset_name = str(asset.get("name") or "").strip()
+    asset_url = str(asset.get("browser_download_url") or "").strip()
+    if not asset_name or not asset_url:
+        fail(f"{provider} release asset metadata is incomplete")
+    expected = _release_asset_sha256(release, asset)
+    if not expected:
+        fail(f"{provider} release asset has no published SHA-256 digest: {asset_name}")
+
+    provider_root = _provider_cache_root(cache_root, provider)
+    archive = provider_root / "downloads" / tag / asset_name
+    download(asset_url, archive, offline=False, force=force)
+    verify_sha256(archive, expected, f"{provider} Android SDK")
+    target = _provider_sdk_root(cache_root, provider)
+    if dry_run:
+        return target
+
+    staging = provider_root / f".sdk-{os.getpid()}.tmp"
+    _extract_sdk_provider_archive(archive, staging, dry_run=False)
+    extracted = _sdk_tree_candidate(staging)
+    if extracted is None:
+        shutil.rmtree(staging, ignore_errors=True)
+        fail(f"{provider} archive did not contain a recognizable Android SDK tree")
+    if not sdk_host_compatible(extracted):
+        shutil.rmtree(staging, ignore_errors=True)
+        fail(f"{provider} Android SDK contains host-incompatible native build tools")
+
+    backup = provider_root / ".sdk.previous"
+    shutil.rmtree(backup, ignore_errors=True)
+    if target.exists():
+        target.replace(backup)
+    try:
+        if extracted == staging:
+            staging.replace(target)
+        else:
+            extracted.replace(target)
+            shutil.rmtree(staging, ignore_errors=True)
+    except Exception:
+        shutil.rmtree(target, ignore_errors=True)
+        if backup.exists():
+            backup.replace(target)
+        raise
+    shutil.rmtree(backup, ignore_errors=True)
+    provenance = {
+        "provider": provider,
+        "tag": tag,
+        "asset": asset_name,
+        "asset_url": asset_url,
+        "sha256": expected,
+    }
+    (target / ".devtool-sdk-provider.json").write_text(
+        json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return target.resolve()
+
+
+def provision_termuxvoid_sdk(cache_root: Path, *, force: bool, dry_run: bool) -> Path:
+    if not running_under_termux_python() or normalized_machine() != "arm64":
+        fail("TermuxVoid Android SDK auto-provisioning requires native ARM64 Termux")
+    existing = _termux_prefix_path() / "opt" / "android-sdk"
+    if existing.is_dir() and _sdk_tree_candidate(existing) is not None and sdk_host_compatible(existing):
+        info(f"Using installed TermuxVoid Android SDK: {existing}")
+        return existing.resolve()
+    cached = _provider_cached_sdk(cache_root, "termuxvoid")
+    if cached is not None and not force:
+        info(f"Using cached TermuxVoid Android SDK: {cached}")
+        return cached
+
+    ensure_termuxvoid_repository(cache_root=cache_root, dry_run=dry_run)
+    _ensure_termux_packages(["7zip"], dry_run=dry_run)
+    if dry_run:
+        target = _provider_sdk_root(cache_root, "termuxvoid")
+        info(f"Would query TermuxVoid release metadata and provision SDK at: {target}")
+        return target
+    endpoint = f"https://api.github.com/repos/{TERMUXVOID_SDK_REPOSITORY}/releases/latest"
+    release = github_json(endpoint, offline=False)
+    asset = _github_release_asset(
+        release,
+        lambda name: name.lower() == "android-sdk.7z",
+        label="TermuxVoid Android SDK",
+    )
+    return _install_provider_sdk_tree(
+        cache_root=cache_root,
+        provider="termuxvoid",
+        release=release,
+        asset=asset,
+        force=force,
+        dry_run=dry_run,
+    )
+
+
+def provision_homuhomu_sdk(cache_root: Path, *, force: bool, dry_run: bool) -> Path:
+    if not running_under_termux_python() or normalized_machine() != "arm64":
+        fail("HomuHomu Android-host SDK auto-provisioning requires native ARM64 Termux")
+    cached = _provider_cached_sdk(cache_root, "homuhomu")
+    if cached is not None and not force:
+        info(f"Using cached HomuHomu Android SDK: {cached}")
+        return cached
+    if dry_run:
+        target = _provider_sdk_root(cache_root, "homuhomu")
+        info(f"Would query HomuHomu release metadata and provision SDK at: {target}")
+        return target
+    endpoint = f"https://api.github.com/repos/{HOMUHOMU_SDK_REPOSITORY}/releases/latest"
+    release = github_json(endpoint, offline=False)
+    asset = _github_release_asset(
+        release,
+        lambda name: (
+            "android-sdk" in name.lower()
+            and "aarch64-linux-android" in name.lower()
+            and name.lower().endswith((".tar.xz", ".txz", ".tar.gz", ".tgz"))
+        ),
+        label="HomuHomu ARM64 Android SDK",
+    )
+    return _install_provider_sdk_tree(
+        cache_root=cache_root,
+        provider="homuhomu",
+        release=release,
+        asset=asset,
+        force=force,
+        dry_run=dry_run,
+    )
+
+
+def provision_android_sdk_provider(
+    provider: str,
+    cache_root: Path,
+    *,
+    force: bool,
+    dry_run: bool,
+    downloads: str,
+    network: str,
+) -> tuple[Path, str]:
+    provider = normalize_android_sdk_provider(provider)
+    if provider == "managed":
+        return managed_sdk_root_for_host(cache_root), "managed Google SDK"
+    if not bootstrap_provisioning_allowed(downloads, network):
+        fail_bootstrap_blocked(
+            f"Android SDK provider {provider}",
+            downloads=downloads,
+            network=network,
+            checked=[str(_provider_sdk_root(cache_root, provider))],
+        )
+    if provider == "termuxvoid":
+        return provision_termuxvoid_sdk(cache_root, force=force, dry_run=dry_run), "TermuxVoid preassembled SDK"
+    if provider == "homuhomu":
+        return provision_homuhomu_sdk(cache_root, force=force, dry_run=dry_run), "HomuHomu ARM64 Android SDK"
+
+    # Auto is deliberately Termux-specific. On ordinary hosts retain Devtool's
+    # existing managed Google SDK behavior without introducing third-party repos.
+    if running_under_termux_python() and normalized_machine() == "arm64":
+        for candidate_provider, label in (
+            ("termuxvoid", "TermuxVoid preassembled SDK"),
+            ("homuhomu", "HomuHomu ARM64 Android SDK"),
+        ):
+            cached = _provider_cached_sdk(cache_root, candidate_provider)
+            if cached is not None and not force:
+                info(f"Android SDK provider auto: {label} (cached)")
+                return cached, label
+            try:
+                root = (
+                    provision_termuxvoid_sdk(cache_root, force=force, dry_run=dry_run)
+                    if candidate_provider == "termuxvoid"
+                    else provision_homuhomu_sdk(cache_root, force=force, dry_run=dry_run)
+                )
+                info(f"Android SDK provider auto: {label}")
+                return root, label
+            except BuildError as exc:
+                warn(f"Android SDK provider {candidate_provider} unavailable: {exc}")
+    return managed_sdk_root_for_host(cache_root), "managed Google SDK"
 
 
 def fail_bootstrap_blocked(component: str, *, downloads: str, network: str, checked: Sequence[str] = ()) -> "None":
@@ -3306,6 +3678,8 @@ def discover_sdk_root_with_source(
             candidates.append((Path(os.environ[variable]).expanduser(), variable, False))
     if include_managed_cache and cache_root is not None:
         candidates.append(((cache_root / "android-sdk").expanduser(), "managed cache", False))
+    if running_under_termux_python():
+        candidates.append((_termux_prefix_path() / "opt" / "android-sdk", "TermuxVoid android-sdk", False))
     candidates.extend(
         [
             (Path.home() / "Android" / "Sdk", "system install", False),
@@ -4911,6 +5285,7 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument("-s", "--sdk-root", type=Path, help="Android SDK root")
+    parser.add_argument("--sdk-provider", choices=sorted(ANDROID_SDK_PROVIDERS), default=os.environ.get("DEVTOOL_ANDROID_SDK_PROVIDER", "auto"), help="Android SDK provider: auto, termuxvoid, homuhomu, or managed")
     parser.add_argument("-P", "--android-platform", default="auto", help="android-36, 36, auto, or none")
     parser.add_argument("-B", "--build-tools", default="auto", help="Build Tools version, auto, or none")
     parser.add_argument("--ndk-version", default="auto", help="NDK version, auto, or none")
@@ -5402,14 +5777,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.sdk_root,
             label="Android SDK root",
         )
-        sdk_root, sdk_source = discover_sdk_root_with_source(
-            effective_sdk_root_arg,
-            project.root,
-        )
+        requested_sdk_provider = normalize_android_sdk_provider(args.sdk_provider)
+        if effective_sdk_root_arg is not None:
+            sdk_root, sdk_source = discover_sdk_root_with_source(
+                effective_sdk_root_arg,
+                project.root,
+            )
+        elif requested_sdk_provider == "auto":
+            sdk_root, sdk_source = discover_sdk_root_with_source(None, project.root)
+            if sdk_root is None:
+                for cached_provider, cached_label in (
+                    ("termuxvoid", "TermuxVoid preassembled SDK cache"),
+                    ("homuhomu", "HomuHomu ARM64 Android SDK cache"),
+                ):
+                    cached_sdk = _provider_cached_sdk(cache_root, cached_provider)
+                    if cached_sdk is not None:
+                        sdk_root, sdk_source = cached_sdk, cached_label
+                        break
+        elif requested_sdk_provider == "termuxvoid":
+            installed_termuxvoid = _termux_prefix_path() / "opt" / "android-sdk" if running_under_termux_python() else None
+            if installed_termuxvoid is not None and installed_termuxvoid.is_dir() and _sdk_tree_candidate(installed_termuxvoid) is not None:
+                sdk_root, sdk_source = installed_termuxvoid.resolve(), "TermuxVoid android-sdk"
+            else:
+                sdk_root = _provider_cached_sdk(cache_root, "termuxvoid")
+                sdk_source = "TermuxVoid preassembled SDK cache" if sdk_root is not None else None
+        elif requested_sdk_provider == "homuhomu":
+            sdk_root = _provider_cached_sdk(cache_root, "homuhomu")
+            sdk_source = "HomuHomu ARM64 Android SDK cache" if sdk_root is not None else None
+        else:
+            sdk_root, sdk_source = None, None
+
         if sdk_root is None and not args.skip_sdk_install:
             if not provisioning_allowed:
                 fail_bootstrap_blocked(
-                    "Android SDK",
+                    f"Android SDK provider {requested_sdk_provider}",
                     downloads=args.toolchain_downloads,
                     network=args.bootstrap_network,
                     checked=[
@@ -5417,14 +5818,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "local.properties sdk.dir",
                         "$ANDROID_HOME",
                         "$ANDROID_SDK_ROOT",
+                        str(_termux_prefix_path() / "opt" / "android-sdk") if running_under_termux_python() else "",
+                        str(_provider_sdk_root(cache_root, "termuxvoid")),
+                        str(_provider_sdk_root(cache_root, "homuhomu")),
                         str(Path.home() / "Android" / "Sdk"),
                         str(Path.home() / "android-sdk"),
                         "/opt/android-sdk",
                         "/usr/lib/android-sdk",
                     ],
                 )
-            sdk_root = managed_sdk_root_for_host(cache_root)
-            sdk_source = "managed cache"
+            sdk_root, sdk_source = provision_android_sdk_provider(
+                requested_sdk_provider,
+                cache_root,
+                force=args.force_setup,
+                dry_run=args.dry_run,
+                downloads=args.toolchain_downloads,
+                network=args.bootstrap_network,
+            )
         if sdk_root:
             sdk_root.mkdir(parents=True, exist_ok=True)
             configure_android_sdk_env(env, sdk_root)
