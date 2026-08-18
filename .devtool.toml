@@ -27,29 +27,143 @@ chroot_name = "androidos"
 [targets.android_hud.android]
 variant = "debug"
 aapt2_provider = "auto"
+instrumentation = "when-device-present"
 prefer_native_termux = false
 
 [targets.android_hud.gradle]
-max_workers = 1
-parallel = false
-no_daemon = true
+max_workers = 2
+parallel = true
+no_daemon = false
+daemon_idle_timeout_ms = 900000
 build_cache = true
-structured_events = true
+structured_events = false
+fail_fast = true
+offline = false
+args = [
+  "-Dorg.gradle.parallel=true",
+  "-Dorg.gradle.vfs.watch=false",
+]
 
 [targets.android_hud.tasks]
-build = ["assembleDebug"]
-test = ["testDebugUnitTest"]
-lint = ["lintDebug"]
-clean = ["clean"]
+build = [":app:assembleDebug"]
+test = [":app:testDebugUnitTest"]
+lint = [":app:lintDebug"]
+instrumentation = [":app:connectedDebugAndroidTest"]
+clean = [":app:clean"]
 
 [targets.android_hud.artifacts]
 required = true
 external_verification = "auto"
 
 [targets.android_hud.validation]
-android_safe = true
+android_safe = false
+split_gradle = true
+max_workers = 2
+cpu_limit = 2
+parallel = true
+no_daemon = false
+stop_daemon_after_phase = false
+low_priority = false
+memory_guard_mb = 512
+gradle_heap_mb = 1152
+gradle_metaspace_mb = 512
+gradle_packaging_metaspace_mb = 640
+gradle_lint_metaspace_mb = 640
+affected_module_lint = true
+
+[targets.devtool.validation]
+python_safe = true
+low_priority = false
+memory_guard_mb = 256
+
+
+[targets.android_hud.validation.phase_profiles.preflight]
+max_workers = 1
+cpu_limit = 1
+gradle_heap_mb = 768
+gradle_metaspace_mb = 512
+memory_guard_mb = 384
+no_daemon = false
+low_priority = false
+
+
+[targets.android_hud.validation.phase_profiles.compile]
+max_workers = 2
+cpu_limit = 2
+gradle_heap_mb = 1152
+gradle_metaspace_mb = 512
+memory_guard_mb = 512
+no_daemon = false
+low_priority = false
+
+
+[targets.android_hud.validation.phase_profiles.resources]
+max_workers = 2
+cpu_limit = 2
+gradle_heap_mb = 1152
+gradle_metaspace_mb = 512
+memory_guard_mb = 512
+no_daemon = false
+low_priority = false
+
+
+[targets.android_hud.validation.phase_profiles.unit-test]
+max_workers = 2
+cpu_limit = 2
+gradle_heap_mb = 1152
+gradle_metaspace_mb = 512
+memory_guard_mb = 512
+no_daemon = false
+low_priority = false
+
+
+[targets.android_hud.validation.phase_profiles.package]
+max_workers = 2
+cpu_limit = 2
+gradle_heap_mb = 1152
+gradle_metaspace_mb = 512
+memory_guard_mb = 640
+no_daemon = false
+low_priority = false
+
+
+[targets.android_hud.validation.phase_profiles.lint]
 max_workers = 1
 cpu_limit = 2
-parallel = false
-no_daemon = true
-low_priority = true
+gradle_heap_mb = 1152
+gradle_metaspace_mb = 512
+memory_guard_mb = 640
+no_daemon = false
+low_priority = false
+
+
+[targets.android_hud.validation.phase_profiles.instrumentation]
+max_workers = 1
+cpu_limit = 2
+gradle_heap_mb = 1024
+gradle_metaspace_mb = 512
+memory_guard_mb = 512
+no_daemon = false
+low_priority = false
+
+
+[targets.android_hud.validation.phases]
+preflight = [
+  "help",
+]
+compile = [
+  ":app:compileDebugJavaWithJavac",
+]
+resources = [
+  ":app:processDebugResources",
+]
+unit-test = [
+  ":app:testDebugUnitTest",
+]
+package = [
+  ":app:assembleDebug",
+]
+lint = [
+  ":app:lintDebug",
+]
+

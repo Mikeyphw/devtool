@@ -24,14 +24,50 @@ class InstrumentationError(RuntimeError):
 
 
 def run(argv: Sequence[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(list(argv), text=True, capture_output=True, check=False)
+    rendered = " ".join(shlex.quote(value) for value in argv)
+    try:
+        result = subprocess.run(list(argv), text=True, capture_output=True, check=False)
+    except OSError as exc:
+        raise InstrumentationError(
+            f"Could not execute command: {rendered}: {exc}"
+        ) from exc
     if result.stdout:
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
     if result.stderr:
         print(result.stderr, end="" if result.stderr.endswith("\n") else "\n", file=sys.stderr)
     if check and result.returncode != 0:
-        raise InstrumentationError(f"Command failed ({result.returncode}): {' '.join(shlex.quote(value) for value in argv)}")
+        raise InstrumentationError(
+            f"Command failed ({result.returncode}): {rendered}"
+        )
     return result
+
+
+def _resolve_gradle(project: Path, configured: str) -> Path:
+    raw = (configured or "./gradlew").strip() or "./gradlew"
+    candidate = Path(raw).expanduser()
+    project_candidate = candidate if candidate.is_absolute() else project / candidate
+
+    if project_candidate.is_file() and os.access(project_candidate, os.X_OK):
+        return project_candidate.resolve()
+
+    resolved = shutil.which(raw)
+    if resolved:
+        return Path(resolved).resolve()
+
+    if raw in {"./gradlew", "gradlew"}:
+        fallback = shutil.which("gradle")
+        if fallback:
+            return Path(fallback).resolve()
+
+    if project_candidate.exists() and not os.access(project_candidate, os.X_OK):
+        raise InstrumentationError(
+            f"Gradle executable is not executable: {project_candidate}"
+        )
+
+    raise InstrumentationError(
+        f"Gradle executable was not found: {raw}. "
+        "Install Gradle, add it to PATH, or configure an executable Gradle command."
+    )
 
 
 def _variant_title(value: str) -> str:
@@ -206,14 +242,16 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         installed_test_package = args.runner.split("/", 1)[0].strip()
     try:
         if not args.skip_build:
-            gradle = Path(args.gradle)
-            if not gradle.is_absolute():
-                gradle = project / gradle
-            if not gradle.exists():
-                found = shutil.which(args.gradle)
-                if found:
-                    gradle = Path(found)
-            run([str(gradle), f"assemble{variant_title}", f"assemble{variant_title}AndroidTest", "--console=plain"], check=True)
+            gradle = _resolve_gradle(project, args.gradle)
+            run(
+                [
+                    str(gradle),
+                    f"assemble{variant_title}",
+                    f"assemble{variant_title}AndroidTest",
+                    "--console=plain",
+                ],
+                check=True,
+            )
 
         app_apk, test_apk = _find_apks(project, args.variant)
         print(f"DEVTOOL_EVENT {json.dumps({'kind': 'instrumentation-apks', 'app': str(app_apk), 'test': str(test_apk)})}")
@@ -287,6 +325,10 @@ def main(raw_args: Sequence[str] | None = None) -> int:
             report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         except OSError as report_error:
             print(f"Instrumentation report write failed: {report_error}", file=sys.stderr)
+        print(
+            f"DEVTOOL_INSTRUMENTATION_RESULT "
+            f"{json.dumps(payload, separators=(',', ':'))}"
+        )
         return 1
     finally:
         if installed_test_package and not args.keep_installed:

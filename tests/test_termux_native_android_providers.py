@@ -544,3 +544,40 @@ class IntegrationConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+def test_gradle_aapt2_override_collapses_duplicate_explicit_properties():
+    from pathlib import Path
+    from devtool.android_build import gradle_arguments_with_aapt2_override
+
+    args = [
+        "-Pandroid.aapt2FromMavenOverride=/old/aapt2",
+        "-Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2",
+        "-Pandroid.suppressUnsupportedOptionWarnings=android.otherOption",
+    ]
+
+    result = gradle_arguments_with_aapt2_override(
+        args,
+        Path("/auto/detected/aapt2"),
+    )
+
+    overrides = [
+        arg
+        for arg in result
+        if arg.startswith("-Pandroid.aapt2FromMavenOverride=")
+    ]
+
+    assert overrides == [
+        "-Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2"
+    ]
+
+    suppressions = next(
+        arg
+        for arg in result
+        if arg.startswith(
+            "-Pandroid.suppressUnsupportedOptionWarnings="
+        )
+    )
+
+    assert "android.aapt2FromMavenOverride" in suppressions
+    assert "android.otherOption" in suppressions
+

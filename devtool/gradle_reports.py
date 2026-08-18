@@ -552,7 +552,21 @@ def collect_instrumentation_output(
         return ReportCollection({}, [issue])
     issues: list[Issue] = []
     if int(payload.get("failed") or 0) > 0 or int(payload.get("returncode") or 0) != 0:
-        issues.append(Issue("error", command_name, "-", "ANDROID_INSTRUMENTATION", f"Instrumentation reported {payload.get('failed', 0)} failed test(s)."))
+        setup_error = str(payload.get("error") or "").strip()
+        message = (
+            f"Instrumentation setup failed: {setup_error}"
+            if setup_error
+            else f"Instrumentation reported {payload.get('failed', 0)} failed test(s)."
+        )
+        issues.append(
+            Issue(
+                "error",
+                command_name,
+                "-",
+                "ANDROID_INSTRUMENTATION",
+                message,
+            )
+        )
     return ReportCollection(dict(payload), issues)
 
 

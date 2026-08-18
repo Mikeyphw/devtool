@@ -98,6 +98,9 @@ _GENERIC_BUILD_NOISE_MESSAGES = {
     "build_py: byte-compiling is disabled, skipping.",
     "install_lib: byte-compiling is disabled, skipping.",
 }
+_GRADLE_BENIGN_TERMUX_WARNING_PREFIXES = (
+    "Warning: Unable to set daemon's environment variables to match the client because:",
+)
 _GRADLE_INFRA_WARNING_PREFIXES = (
     "WARNING: The option setting 'android.aapt2FromMavenOverride=",
 )
@@ -490,6 +493,16 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 match.group("message").strip(),
                 line=int(match.group("line")),
             ))
+            index += 1
+            continue
+
+        if any(
+            stripped.startswith(prefix)
+            for prefix in _GRADLE_BENIGN_TERMUX_WARNING_PREFIXES
+        ):
+            # Gradle cannot synchronize daemon environment variables through
+            # its native integration layer on Android/Termux. This is benign
+            # when Devtool passes toolchain paths and build inputs explicitly.
             index += 1
             continue
 

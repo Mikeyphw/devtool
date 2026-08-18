@@ -933,8 +933,23 @@ class AndroidGradleRunner(ProjectRunner):
                     config.runner_options.pop("test_selection", None)
                 else:
                     config.runner_options["test_selection"] = original
+            package_outputs_include_android_test = any(
+                "androidtest" in task.lower()
+                for task in phase_tasks(
+                    "package",
+                    configured_tasks(config, "build"),
+                )
+            )
             for spec in instrumentation_specs:
-                policy = resolve_android_validation_phase_policy(config, "instrumentation")
+                if (
+                    package_outputs_include_android_test
+                    and "--skip-build" not in spec.argv
+                ):
+                    spec.argv.append("--skip-build")
+                policy = resolve_android_validation_phase_policy(
+                    config,
+                    "instrumentation",
+                )
                 spec.name = f"{self.kind}-validation-instrumentation"
                 spec.metadata.update({
                     "validation_components": ["instrumentation"],

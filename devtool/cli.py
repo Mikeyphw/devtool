@@ -1108,6 +1108,10 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             line = raw_line.strip()
             if not line or "0 Warning(s)" in line or "warnings=0" in line:
                 continue
+            if line.startswith(
+                "Warning: Unable to set daemon's environment variables to match the client because:"
+            ):
+                continue
             if not combined.search(line):
                 continue
             cleaned = _re.sub(r"\s+", " ", line).strip()

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import os
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -304,6 +307,48 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
                 )
             )
 
+
+    def test_qemu_rootfs_extraction_rewrites_absolute_symlink_for_python314(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "rootfs.tar"
+            destination = root / "out"
+
+            payload = b"#!/bin/sh\n"
+            with tarfile.open(archive, "w") as package:
+                executable = tarfile.TarInfo("usr/bin/mawk")
+                executable.mode = 0o755
+                executable.size = len(payload)
+                package.addfile(executable, io.BytesIO(payload))
+
+                link = tarfile.TarInfo("etc/alternatives/awk")
+                link.type = tarfile.SYMTYPE
+                link.linkname = "/usr/bin/mawk"
+                package.addfile(link)
+
+            android_build.extract_archive(
+                archive,
+                destination,
+                rootfs_links=True,
+            )
+
+            extracted_link = destination / "etc/alternatives/awk"
+            self.assertTrue(extracted_link.is_symlink())
+            self.assertEqual(
+                os.readlink(extracted_link),
+                "../../usr/bin/mawk",
+            )
+            self.assertEqual(
+                extracted_link.resolve(),
+                (destination / "usr/bin/mawk").resolve(),
+            )
+
+    def test_qemu_sysroot_uses_rootfs_link_extraction_mode(self) -> None:
+        source = Path(android_build.__file__).read_text()
+        self.assertIn(
+            "extract_archive(archive, staging, rootfs_links=True)",
+            source,
+        )
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,12 +17,14 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import importlib
 import importlib.util
 import json
 import os
 import platform
+import posixpath
 import re
 import shutil
 import ssl
@@ -54,7 +56,7 @@ QEMU_INSTALL_POLICIES = {"auto", "never"}
 QEMU_X86_64_NAMES = ("qemu-x86_64", "qemu-x86_64-static", "qemu-user-x86_64")
 DEFAULT_QEMU_X86_64_SYSROOT_URL = "https://cdimages.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-amd64.tar.gz"
 DEFAULT_QEMU_X86_64_SYSROOT_SHA256 = "c1e67ef7b17a6300e136118bd1dc04725009cb376c1aad10abcf8cd453628d58"
-ANDROID_CMDLINE_TOOLS_URL = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
+ANDROID_CMDLINE_TOOLS_URL = "https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip"
 AAPT2_OVERRIDE_PROPERTY = "android.aapt2FromMavenOverride"
 UNSUPPORTED_OPTION_WARNINGS_PROPERTY = "android.suppressUnsupportedOptionWarnings"
 BOOTSTRAP_DOWNLOAD_POLICIES = {"never", "missing", "auto", "force"}
@@ -665,20 +667,82 @@ def extract_zip(archive: Path, destination: Path) -> None:
                     pass
 
 
-def extract_archive(archive: Path, destination: Path) -> None:
-    """Extract a zip/tar NDK-style archive while preserving executable bits."""
+def _rootfs_tar_members(package: tarfile.TarFile) -> list[tarfile.TarInfo]:
+    """Return rootfs members with absolute links made extraction-root relative.
+
+    Linux root filesystem archives legitimately contain absolute symbolic
+    links, for example ``etc/alternatives/awk -> /usr/bin/mawk``. Python 3.14
+    defaults tar extraction to the ``data`` filter, which correctly rejects
+    such links for ordinary archives. For a verified rootfs, preserve the
+    rootfs meaning without weakening extraction globally: rewrite absolute
+    symlink targets to equivalent relative targets inside the extraction root.
+    Absolute hard-link names are rewritten to archive-root-relative names.
+    """
+
+    members: list[tarfile.TarInfo] = []
+
+    for member in package.getmembers():
+        candidate = member
+
+        if member.linkname and posixpath.isabs(member.linkname):
+            candidate = copy.copy(member)
+            target = posixpath.normpath(member.linkname.lstrip("/"))
+
+            if member.issym():
+                parent = posixpath.dirname(posixpath.normpath(member.name)) or "."
+                candidate.linkname = posixpath.relpath(target, start=parent)
+            elif member.islnk():
+                candidate.linkname = target
+
+        members.append(candidate)
+
+    return members
+
+
+def extract_archive(
+    archive: Path,
+    destination: Path,
+    *,
+    rootfs_links: bool = False,
+) -> None:
+    """Extract a zip/tar Android bootstrap archive.
+
+    Ordinary tar extraction keeps Python's safe default extraction policy.
+    ``rootfs_links=True`` is reserved for checksum-verified Linux rootfs
+    archives used as QEMU loader prefixes. It rewrites rootfs-absolute links
+    before applying Python's ``data`` extraction filter when available.
+    """
 
     destination.mkdir(parents=True, exist_ok=True)
     suffixes = "".join(archive.suffixes).lower()
+
     if archive.suffix.lower() == ".zip":
         extract_zip(archive, destination)
         return
-    if suffixes.endswith((".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2")) or archive.suffix.lower() == ".tar":
-        with tarfile.open(archive) as package:
-            package.extractall(destination)
-        return
-    fail(f"Unsupported archive type for Android NDK bootstrap: {archive}")
 
+    if (
+        suffixes.endswith(
+            (".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2")
+        )
+        or archive.suffix.lower() == ".tar"
+    ):
+        with tarfile.open(archive) as package:
+            if rootfs_links:
+                members = _rootfs_tar_members(package)
+
+                if hasattr(tarfile, "data_filter"):
+                    package.extractall(
+                        destination,
+                        members=members,
+                        filter="data",
+                    )
+                else:
+                    package.extractall(destination, members=members)
+            else:
+                package.extractall(destination)
+        return
+
+    fail(f"Unsupported archive type for Android NDK bootstrap: {archive}")
 
 def root_command(command: Sequence[str]) -> list[str]:
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -772,11 +836,13 @@ def install_missing_system_dependencies(
     need_java: bool,
     need_certificates: bool,
     need_node: bool = False,
+    need_cmake: bool = False,
+    need_ninja: bool = False,
     offline: bool,
     java_version: int = 17,
     java_provider: str = "auto",
 ) -> None:
-    if not need_java and not need_certificates and not need_node:
+    if not need_java and not need_certificates and not need_node and not need_cmake and not need_ninja:
         info("System dependencies are already ready")
         return
     if offline:
@@ -787,6 +853,10 @@ def install_missing_system_dependencies(
             missing.append("CA certificates")
         if need_node:
             missing.append("Node.js")
+        if need_cmake:
+            missing.append("CMake")
+        if need_ninja:
+            missing.append("Ninja")
         fail("Missing system dependencies in --offline mode: " + ", ".join(missing))
 
     if running_under_termux_python():
@@ -804,6 +874,10 @@ def install_missing_system_dependencies(
             packages.append("ca-certificates")
         if need_node:
             packages.append("nodejs")
+        if need_cmake:
+            packages.append("cmake")
+        if need_ninja:
+            packages.append("ninja")
         package_manager = shutil.which("pkg")
         if package_manager:
             heading("Installing missing Termux dependencies")
@@ -829,6 +903,10 @@ def install_missing_system_dependencies(
         packages.append("ca-certificates")
     if need_node:
         packages.append("nodejs")
+    if need_cmake:
+        packages.append("cmake")
+    if need_ninja:
+        packages.append("ninja-build")
     if not packages:
         info("System dependencies are already ready")
         return
@@ -917,12 +995,12 @@ def _native_termux_sanitize_guest_path(
     replacement = fallback.expanduser() if fallback is not None else None
 
     if replacement is None:
-        warn(
+        info(
             f"Ignoring chroot-only {label} during native Termux execution: "
             f"{candidate}"
         )
     else:
-        warn(
+        info(
             f"Replacing chroot-only {label} during native Termux execution: "
             f"{candidate} -> {replacement}"
         )
@@ -2040,7 +2118,7 @@ def obtain_qemu_x86_64_sysroot(
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True, exist_ok=True)
-    extract_archive(archive, staging)
+    extract_archive(archive, staging, rootfs_links=True)
     if not qemu_prefix_has_x86_64_loader(staging):
         shutil.rmtree(staging, ignore_errors=True)
         fail(
@@ -3313,9 +3391,23 @@ def installed_build_tools_versions(sdk_root: Path) -> list[str]:
     root = sdk_root / "build-tools"
     if not root.is_dir():
         return []
+
+    versions: set[str] = set()
+
+    for item in root.iterdir():
+        if not item.is_dir():
+            continue
+
+        revision = source_properties_revision(item)
+        versions.add(revision or item.name)
+
     def key(value: str) -> tuple[int, ...]:
-        return tuple(int(part) if part.isdigit() else 0 for part in re.split(r"[.-]", value))
-    return sorted((item.name for item in root.iterdir() if item.is_dir()), key=key, reverse=True)
+        return tuple(
+            int(part) if part.isdigit() else 0
+            for part in re.split(r"[.-]", value)
+        )
+
+    return sorted(versions, key=key, reverse=True)
 
 def source_properties_revision(directory: Path) -> str | None:
     properties = directory / "source.properties"
@@ -3327,6 +3419,36 @@ def source_properties_revision(directory: Path) -> str | None:
         return None
     match = re.search(r"^Pkg\.Revision\s*=\s*(.+?)\s*$", text, re.MULTILINE)
     return match.group(1).strip() if match else None
+
+
+def normalize_sdk_build_tools_locations(sdk_root: Path, *, dry_run: bool) -> None:
+    root = sdk_root / "build-tools"
+    if not root.is_dir():
+        return
+    quarantine = sdk_root / ".devtool-noncanonical-build-tools"
+    for directory in sorted(root.iterdir(), key=lambda item: item.name):
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        revision = source_properties_revision(directory)
+        if not revision or directory.name == revision:
+            continue
+        canonical = root / revision
+        if dry_run:
+            info(f"Would normalize Android build-tools location: {directory} -> {canonical}")
+            continue
+        if not canonical.exists():
+            directory.rename(canonical)
+            info(f"Normalized Android build-tools location: {directory.name} -> {revision}")
+            continue
+        quarantine.mkdir(parents=True, exist_ok=True)
+        destination = quarantine / directory.name
+        if destination.exists():
+            if destination.is_dir() and not destination.is_symlink():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+        directory.rename(destination)
+        info(f"Quarantined duplicate noncanonical build-tools directory: {directory.name}")
 
 
 def ndk_is_ready(sdk_root: Path, version: str) -> bool:
@@ -3383,9 +3505,14 @@ def ensure_host_cmake_compatible(
     host_cmake = shutil.which("cmake")
     host_ninja = shutil.which("ninja") or shutil.which("ninja-build")
     if not host_cmake or not host_ninja:
+        install_hint = (
+            "pkg install cmake ninja"
+            if running_under_termux_python()
+            else "sudo apt install cmake ninja-build"
+        )
         fail(
             f"Android SDK CMake {version} is not executable on {machine}. "
-            "Install host-native tools first: sudo apt install cmake ninja-build"
+            f"Install host-native tools first: {install_hint}"
         )
 
     replacements = {
@@ -3717,6 +3844,17 @@ def ensure_android_sdk(
         cmake_version = cmake_override
     else:
         cmake_version = project.cmake_version
+
+    normalize_sdk_build_tools_locations(sdk_root, dry_run=dry_run)
+
+    if cmake_version:
+        cmake_dir = sdk_root / "cmake" / cmake_version
+        if source_properties_revision(cmake_dir) == cmake_version:
+            ensure_host_cmake_compatible(
+                sdk_root,
+                cmake_version,
+                dry_run=dry_run,
+            )
 
     def collect_missing(root: Path) -> tuple[list[str], list[Path]]:
         missing_packages: list[str] = []
@@ -4232,6 +4370,65 @@ def select_gradle(
 
     if provider == "auto" and wrapper_state.complete:
         _warn_wrapper_version_override()
+
+        # Native Termux optimization:
+        #
+        # The wrapper remains authoritative for the required Gradle
+        # version, but there is no benefit in launching/downloading its
+        # distribution when Termux already provides exactly that Gradle
+        # version.
+        #
+        # Only select Termux Gradle when:
+        #   * Devtool itself is running natively under Termux;
+        #   * PATH resolves Gradle to the Termux provider;
+        #   * its version exactly matches the wrapper/requested version;
+        #   * it satisfies the project's AGP requirement; and
+        #   * the existing Termux capability probe accepts the binary.
+        #
+        # Any mismatch falls through to the existing wrapper path.
+        if running_under_termux_python():
+            system = shutil.which("gradle")
+
+            if system:
+                system_path = ensure_executable(
+                    Path(system),
+                    "Gradle launcher",
+                )
+
+                if executable_provider(system_path) == "termux":
+                    actual = gradle_version(system_path)
+                    required = pinned_version or wrapper_version
+
+                    if (
+                        actual
+                        and required
+                        and gradle_version_matches(actual, required)
+                        and gradle_meets_agp_minimum(actual, project)
+                    ):
+                        if provider_evidence is not None:
+                            gradle_evidence = provider_evidence.gradle
+                        else:
+                            gradle_evidence = (
+                                _termux_toolchains_runtime_module()
+                                .termux_gradle_probe(env=os.environ)
+                            )
+
+                        evidence_matches = (
+                            gradle_evidence.compatible
+                            and gradle_evidence.path is not None
+                            and gradle_evidence.path.resolve(strict=False)
+                            == system_path.resolve(strict=False)
+                        )
+
+                        if evidence_matches:
+                            info(
+                                "Using compatible termux Gradle instead "
+                                "of wrapper launcher: "
+                                f"{system_path} ({actual}); "
+                                "wrapper version remains authoritative"
+                            )
+                            return system_path
+
         if not bootstrap_provisioning_allowed(bootstrap_downloads, bootstrap_network):
             if wrapper_version and gradle_wrapper_distribution_cached(
                 project_root, wrapper_version, gradle_user_home=gradle_user_home
@@ -4536,10 +4733,15 @@ def gradle_arguments_with_aapt2_override(
         return normalized
 
     suppression_prefix = f"-P{UNSUPPORTED_OPTION_WARNINGS_PROPERTY}="
+    aapt2_prefix = f"-P{AAPT2_OVERRIDE_PROPERTY}="
+
     suppressions: list[str] = []
     remaining: list[str] = []
+    explicit_aapt2: str | None = None
+
     for argument in normalized:
         value = str(argument)
+
         if value.startswith(suppression_prefix):
             configured = value[len(suppression_prefix):]
             for item in configured.split(","):
@@ -4547,13 +4749,33 @@ def gradle_arguments_with_aapt2_override(
                 if item and item not in suppressions:
                     suppressions.append(item)
             continue
+
+        if value.startswith(aapt2_prefix):
+            candidate = value[len(aapt2_prefix):].strip()
+
+            # Last explicit value wins, matching normal Gradle CLI
+            # semantics while ensuring Gradle ultimately receives only
+            # one stable property.
+            if candidate:
+                explicit_aapt2 = candidate
+            continue
+
         remaining.append(value)
 
-    if AAPT2_OVERRIDE_PROPERTY not in suppressions:
-        suppressions.append(AAPT2_OVERRIDE_PROPERTY)
+    # Both properties are experimental AGP options. Suppress the
+    # AAPT2 override warning as well as the suppression property's own
+    # warning, while preserving any caller-provided suppressions.
+    for property_name in (
+        AAPT2_OVERRIDE_PROPERTY,
+        UNSUPPORTED_OPTION_WARNINGS_PROPERTY,
+    ):
+        if property_name not in suppressions:
+            suppressions.append(property_name)
+
+    selected_aapt2 = explicit_aapt2 or str(aapt2)
 
     properties = [
-        f"-P{AAPT2_OVERRIDE_PROPERTY}={aapt2}",
+        f"-P{AAPT2_OVERRIDE_PROPERTY}={selected_aapt2}",
         f"-P{UNSUPPORTED_OPTION_WARNINGS_PROPERTY}={','.join(suppressions)}",
     ]
 
@@ -4962,6 +5184,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     requested_tasks = list(args.tasks or default_tasks(project))
     node_required = gradle_tasks_require_node(requested_tasks)
     need_node = node_required and node_runtime_path() is None
+
+    cmake_required = bool(project.native_build and project.cmake_version)
+    termux_cmake = (
+        _termux_toolchains_runtime_module().termux_cmake_probe(env=os.environ)
+        if running_under_termux_python()
+        else None
+    )
+    termux_ninja = (
+        _termux_toolchains_runtime_module().termux_ninja_probe(env=os.environ)
+        if running_under_termux_python()
+        else None
+    )
+    need_cmake = bool(
+        cmake_required
+        and running_under_termux_python()
+        and (termux_cmake is None or not termux_cmake.compatible)
+    )
+    need_ninja = bool(
+        cmake_required
+        and running_under_termux_python()
+        and (termux_ninja is None or not termux_ninja.compatible)
+    )
+
     if args.system_deps == "always":
         if not provisioning_allowed:
             fail_bootstrap_blocked(
@@ -4974,6 +5219,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             need_java=True,
             need_certificates=need_certificates,
             need_node=need_node,
+            need_cmake=need_cmake,
+            need_ninja=need_ninja,
             offline=args.offline,
             java_version=minimum_java,
             java_provider=args.java_provider,
@@ -4985,7 +5232,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             provider=args.java_provider,
             provider_evidence=None,
         )
-    elif args.system_deps == "auto" and (need_java or need_certificates or need_node):
+    elif args.system_deps == "auto" and (
+        need_java
+        or need_certificates
+        or need_node
+        or need_cmake
+        or need_ninja
+    ):
         if not provisioning_allowed:
             missing = []
             if need_java:
@@ -4994,6 +5247,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 missing.append("CA certificates")
             if need_node:
                 missing.append("Node.js")
+            if need_cmake:
+                missing.append("CMake")
+            if need_ninja:
+                missing.append("Ninja")
             fail_bootstrap_blocked(
                 "System dependencies",
                 downloads=args.toolchain_downloads,
@@ -5004,6 +5261,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             need_java=need_java,
             need_certificates=need_certificates,
             need_node=need_node,
+            need_cmake=need_cmake,
+            need_ninja=need_ninja,
             offline=args.offline,
             java_version=minimum_java,
             java_provider=args.java_provider,
