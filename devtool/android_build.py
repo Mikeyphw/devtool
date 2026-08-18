@@ -50,7 +50,7 @@ REVANCED_API = f"https://api.github.com/repos/{REVANCED_REPOSITORY}"
 ARM_BUILD_TOOLS_REPOSITORY = "Commit451/android-arm-build-tools"
 ARM_BUILD_TOOLS_RELEASE_ALIASES = {"35.0.0": "35.0.1"}
 ARM_BUILD_TOOLS_PUBLISHED_RELEASES = {"35.0.1", "36.0.0", "36.1.0", "37.0.0"}
-ARM_BUILD_TOOLS_NATIVE_NAMES = ("aidl", "zipalign", "split-select")
+ARM_BUILD_TOOLS_NATIVE_NAMES = ("aapt2", "aidl", "zipalign", "split-select")
 NDK_HOST_PROVIDERS = {"auto", "google", "arm64", "qemu", "none"}
 QEMU_INSTALL_POLICIES = {"auto", "never"}
 QEMU_X86_64_NAMES = ("qemu-x86_64", "qemu-x86_64-static", "qemu-user-x86_64")
@@ -1794,7 +1794,7 @@ def android_build_tool_executes(path: Path, tool_name: str, *, timeout: float = 
     """
 
     probes = {
-        "aidl": ("--version",),
+        "aidl": ("--help",),
         "zipalign": ("-h",),
         "split-select": ("--help",),
         "aapt2": ("version",),
@@ -4446,12 +4446,18 @@ def select_gradle(
             system = shutil.which("gradle")
 
             if system:
-                system_path = ensure_executable(
-                    Path(system),
-                    "Gradle launcher",
-                )
+                try:
+                    system_path = ensure_executable(
+                        Path(system),
+                        "Gradle launcher",
+                    )
+                except BuildError:
+                    # PATH may contain a stale/broken Gradle launcher. In
+                    # auto mode this is only an optimization candidate; the
+                    # complete project wrapper remains authoritative.
+                    system_path = None
 
-                if executable_provider(system_path) == "termux":
+                if system_path is not None and executable_provider(system_path) == "termux":
                     actual = gradle_version(system_path)
                     required = pinned_version or wrapper_version
 
@@ -4493,9 +4499,12 @@ def select_gradle(
                 return ensure_executable(wrapper, "Gradle wrapper")
             system = shutil.which("gradle")
             if system:
-                system_path = ensure_executable(Path(system), "Gradle launcher")
-                actual = gradle_version(system_path)
-                if wrapper_version and gradle_version_matches(actual, wrapper_version):
+                try:
+                    system_path = ensure_executable(Path(system), "Gradle launcher")
+                except BuildError:
+                    system_path = None
+                actual = gradle_version(system_path) if system_path is not None else None
+                if system_path is not None and wrapper_version and gradle_version_matches(actual, wrapper_version):
                     selected_provider = executable_provider(system_path)
                     info(
                         f"Using compatible {selected_provider} Gradle because the wrapper distribution is not cached: "
@@ -4818,15 +4827,12 @@ def gradle_arguments_with_aapt2_override(
 
         remaining.append(value)
 
-    # Both properties are experimental AGP options. Suppress the
-    # AAPT2 override warning as well as the suppression property's own
-    # warning, while preserving any caller-provided suppressions.
-    for property_name in (
-        AAPT2_OVERRIDE_PROPERTY,
-        UNSUPPORTED_OPTION_WARNINGS_PROPERTY,
-    ):
-        if property_name not in suppressions:
-            suppressions.append(property_name)
+    # The custom AAPT2 override is the experimental option that AGP warns
+    # about. Suppress that warning while preserving caller-provided entries.
+    # Do not add the suppression property to its own value: doing so creates a
+    # self-referential unsupported-option warning on newer AGP releases.
+    if AAPT2_OVERRIDE_PROPERTY not in suppressions:
+        suppressions.append(AAPT2_OVERRIDE_PROPERTY)
 
     selected_aapt2 = explicit_aapt2 or str(aapt2)
 

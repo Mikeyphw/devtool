@@ -340,7 +340,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
             build_tools.mkdir(parents=True)
             payloads = {
                 name: arm_header + name.encode("ascii")
-                for name in ("aidl", "zipalign", "split-select")
+                for name in ("aapt2", "aidl", "zipalign", "split-select")
             }
             for name in payloads:
                 target = build_tools / name
@@ -409,7 +409,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
             build_tools.mkdir(parents=True)
             payloads = {
                 name: arm_header + name.encode("ascii")
-                for name in ("aidl", "zipalign", "split-select")
+                for name in ("aapt2", "aidl", "zipalign", "split-select")
             }
             for name in payloads:
                 target = build_tools / name

@@ -397,6 +397,7 @@ def _termux_binary_probe(
     version_args: Sequence[str] = ('--version',),
     version_pattern: str = r'([0-9]+(?:\.[0-9A-Za-z_-]+)+)',
     require_version: bool = True,
+    accepted_returncodes: Sequence[int] | None = None,
     env: Mapping[str, str] | None = None,
     runtime: RuntimeIdentity | None = None,
 ) -> ToolProvider:
@@ -423,7 +424,9 @@ def _termux_binary_probe(
         except (OSError, subprocess.TimeoutExpired) as exc:
             reason = f'Termux {capability} runtime probe failed: {exc}'
             return ToolProvider(capability, 'termux', True, path=resolved, package=package, package_version=package_probe.version, package_manager=package_probe.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=(capability,), reason=reason)
-        if probe.returncode in {126, 127}:
+        allowed = set(accepted_returncodes) if accepted_returncodes is not None else None
+        rejected = probe.returncode in {126, 127} or (allowed is not None and probe.returncode not in allowed)
+        if rejected:
             reason = f'Termux {capability} runtime probe exited {probe.returncode}'
             return ToolProvider(capability, 'termux', True, path=resolved, package=package, package_version=package_probe.version, package_manager=package_probe.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=(capability,), reason=reason)
         if not version:
@@ -518,7 +521,7 @@ def termux_android_tool_probe(name: str, *, env: Mapping[str, str] | None = None
         'adb': r'Version\s+([^\s]+)',
     }
     versioned = name in {'adb', 'aapt', 'aapt2', 'apksigner'}
-    helper_args = {'aidl': ('--version',), 'zipalign': ('-h',), 'split-select': ('--help',)}
+    helper_args = {'aidl': ('--help',), 'zipalign': ('-h',), 'split-select': ('--help',)}
     args = ('version',) if name in {'adb', 'aapt', 'aapt2'} else ('--version',) if versioned else helper_args.get(name, ('--help',))
     return _termux_binary_probe(
         name,
@@ -527,6 +530,7 @@ def termux_android_tool_probe(name: str, *, env: Mapping[str, str] | None = None
         version_args=args,
         version_pattern=patterns.get(name, r'([0-9]+(?:\.[0-9A-Za-z_-]+)+)'),
         require_version=versioned,
+        accepted_returncodes=(0,) if name == 'aidl' else None,
         env=env,
         runtime=runtime,
     )

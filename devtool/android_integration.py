@@ -670,7 +670,19 @@ def android_builder_arguments_for_tasks(
     _append_non_default_option(argv, "--java-provider", java_options.get("provider") or android.get("java_provider", "auto"))
     _append_option(argv, "--sdk-root", android.get("sdk_root"))
     _append_option(argv, "--aapt2", android.get("aapt2"))
-    _append_option(argv, "--aapt2-provider", build_tools_options.get("aapt2_provider") or android.get("aapt2_provider", "auto"))
+    requested_aapt2_provider = str(
+        build_tools_options.get("aapt2_provider")
+        or android.get("aapt2_provider", "auto")
+        or "auto"
+    ).strip().lower()
+    effective_aapt2_provider = requested_aapt2_provider
+    if requested_aapt2_provider == "termux" and _android_execution_mode(config) == "chroot":
+        # Termux's AAPT2 is an Android/Bionic executable and cannot be used by
+        # the glibc Linux chroot. Let the staged Linux builder use its normal
+        # ARM64 provider chain instead; ensure_arm64_build_tools_compatible()
+        # installs the Commit451 aarch64-linux-gnu AAPT2 into the selected SDK.
+        effective_aapt2_provider = "auto"
+    _append_option(argv, "--aapt2-provider", effective_aapt2_provider)
     _append_option(argv, "--aapt2-release", android.get("aapt2_release"))
     _append_option(argv, "--android-platform", _android_platform_option(root, android, project_info))
     _append_option(argv, "--build-tools", build_tools_options.get("version") or (build_tools_value if not isinstance(build_tools_value, dict) else "auto"))

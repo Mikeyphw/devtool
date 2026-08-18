@@ -429,7 +429,9 @@ class AndroidJavaGradleProviderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             wrapper = _write_wrapper(root)
-            with patch("devtool.android_build.shutil.which", return_value="/unused/gradle"):
+            with patch("devtool.android_build.running_under_termux_python", return_value=True), patch(
+                "devtool.android_build.shutil.which", return_value="/unused/gradle"
+            ):
                 selected = android_build.select_gradle(
                     root,
                     explicit=None,

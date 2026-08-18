@@ -11,7 +11,7 @@ from devtool import termux_toolchains
 
 def test_aidl_probe_rejects_shell_syntax_fallback() -> None:
     result = subprocess.CompletedProcess(
-        ["aidl", "--version"],
+        ["aidl", "--help"],
         2,
         stdout=b"",
         stderr=b"aidl: 1: Syntax error: word unexpected (expecting \")\")\n",
@@ -24,7 +24,7 @@ def test_aidl_probe_rejects_shell_syntax_fallback() -> None:
 
 def test_aidl_probe_rejects_nonzero_without_loader_marker() -> None:
     result = subprocess.CompletedProcess(
-        ["aidl", "--version"], 2, stdout=b"", stderr=b"usage error\n"
+        ["aidl", "--help"], 2, stdout=b"", stderr=b"usage error\n"
     )
     with patch("devtool.android_build.subprocess.run", return_value=result):
         assert not android_build.android_build_tool_executes(
@@ -32,9 +32,9 @@ def test_aidl_probe_rejects_nonzero_without_loader_marker() -> None:
         )
 
 
-def test_aidl_probe_accepts_successful_version_probe() -> None:
+def test_aidl_probe_accepts_successful_help_probe() -> None:
     result = subprocess.CompletedProcess(
-        ["aidl", "--version"], 0, stdout=b"aidl version\n", stderr=b""
+        ["aidl", "--help"], 0, stdout=b"usage\n", stderr=b""
     )
     with patch("devtool.android_build.subprocess.run", return_value=result):
         assert android_build.android_build_tool_executes(Path("/tmp/aidl"), "aidl")
