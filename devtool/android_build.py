@@ -1784,12 +1784,13 @@ def native_tool_matches_host(path: Path, machine: str | None = None) -> bool:
 
 
 def android_build_tool_executes(path: Path, tool_name: str, *, timeout: float = 5.0) -> bool:
-    """Return whether an Android build-tool executable can actually start here.
+    """Return whether an Android build-tool executable really runs here.
 
     Matching ELF architecture is not enough on Android/Termux: an AArch64
-    glibc executable still cannot run under Bionic. Use a harmless probe and
-    accept any normal exit status; loader/exec failures and timeouts are not
-    compatible.
+    glibc executable still cannot run under Bionic. In addition, termux-exec
+    or a launcher shell can turn a loader/exec failure into a normal non-zero
+    process result. Capture the harmless probe and reject those results rather
+    than treating every successfully spawned process as compatible.
     """
 
     probes = {
@@ -1798,20 +1799,44 @@ def android_build_tool_executes(path: Path, tool_name: str, *, timeout: float = 
         "split-select": ("--help",),
         "aapt2": ("version",),
     }
+    accepted_returncodes = {
+        "aidl": {0},
+        "aapt2": {0},
+        "zipalign": {0, 1},
+        "split-select": {0, 1},
+    }
+    fatal_markers = (
+        "syntax error",
+        "exec format error",
+        "cannot execute",
+        "not executable",
+        "bad elf",
+        "wrong elf class",
+        "no such file or directory",
+        "linker:",
+        "could not load",
+    )
     args = probes.get(tool_name, ("--help",))
     try:
-        subprocess.run(
+        result = subprocess.run(
             [str(path), *args],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             timeout=timeout,
             check=False,
         )
-        return True
     except (OSError, subprocess.SubprocessError):
         return False
 
+    output = (
+        bytes(result.stdout or b"")
+        + b"\n"
+        + bytes(result.stderr or b"")
+    ).decode("utf-8", errors="replace").lower()
+    if any(marker in output for marker in fatal_markers):
+        return False
+    return result.returncode in accepted_returncodes.get(tool_name, {0, 1})
 
 def native_android_build_tool_compatible(path: Path, tool_name: str, machine: str | None = None) -> bool:
     if not native_tool_matches_host(path, machine):
@@ -2695,7 +2720,7 @@ def ensure_arm64_build_tools_compatible(
             if running_under_termux_python():
                 fail(
                     f"No compatible Termux-native {tool_name} is available. Commit451 linux-glibc-arm64 helpers "
-                    "cannot run under native Termux/Bionic; install/update the Termux aapt package or use a compatible Linux backend."
+                    "cannot run under native Termux/Bionic; install/update the required Termux Android tool package (for example `pkg install aidl`) or use a compatible Linux backend."
                 )
             source = obtain_commit451_arm64_tool(
                 cache_root, build_tools_version, tool_name, offline=offline, force=force, dry_run=dry_run,
@@ -3192,25 +3217,18 @@ def sdk_host_compatible(sdk_root: Path) -> bool:
         return True
 
     # AAPT2 is provided independently through the ReVanced override on ARM.
-    # The remaining native SDK tools must match the host architecture.
-    probe_names = ARM_BUILD_TOOLS_NATIVE_NAMES
+    # The remaining SDK helpers must both match the host architecture and
+    # survive a runtime probe. This catches arm64/glibc helpers on arm64/Bionic,
+    # which static ELF inspection alone cannot distinguish.
     for version in build_tools[:2]:
         directory = sdk_root / "build-tools" / version
-        for name in probe_names:
+        for name in ARM_BUILD_TOOLS_NATIVE_NAMES:
             candidate = directory / name
             if not candidate.is_file():
                 continue
-            try:
-                header = candidate.read_bytes()[:4096]
-            except OSError:
-                continue
-            if not header.startswith(b"\x7fELF"):
-                continue
-            detected = _elf_machine(header)
-            if detected is not None and detected != machine:
+            if not native_android_build_tool_compatible(candidate, name, machine):
                 return False
     return True
-
 
 def _elf_machine(header: bytes) -> str | None:
     if len(header) < 20 or not header.startswith(b"\x7fELF"):
@@ -3387,19 +3405,34 @@ def ensure_sdkmanager_available(
     return ensure_executable(manager, "sdkmanager")
 
 
+def canonical_build_tools_package_id(value: str) -> str | None:
+    """Return the canonical SDK Build Tools package-id directory name.
+
+    Android package IDs use X.Y.Z names (or X.Y.Z-rcN previews). Some Termux
+    package metadata carries an additional packaging revision such as
+    ``36.0.0-5``. That suffix must not become the SDK directory requested by
+    AGP, so collapse it back to ``36.0.0``.
+    """
+
+    text = str(value or "").strip()
+    if re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\d+)?", text):
+        return text
+    packaged = re.fullmatch(r"(\d+\.\d+\.\d+)-\d+", text)
+    return packaged.group(1) if packaged else None
+
+
 def installed_build_tools_versions(sdk_root: Path) -> list[str]:
     root = sdk_root / "build-tools"
     if not root.is_dir():
         return []
 
     versions: set[str] = set()
-
     for item in root.iterdir():
-        if not item.is_dir():
+        if not item.is_dir() or item.is_symlink():
             continue
-
-        revision = source_properties_revision(item)
-        versions.add(revision or item.name)
+        canonical = canonical_build_tools_package_id(item.name)
+        if canonical is not None:
+            versions.add(canonical)
 
     def key(value: str) -> tuple[int, ...]:
         return tuple(
@@ -3408,6 +3441,7 @@ def installed_build_tools_versions(sdk_root: Path) -> list[str]:
         )
 
     return sorted(versions, key=key, reverse=True)
+
 
 def source_properties_revision(directory: Path) -> str | None:
     properties = directory / "source.properties"
@@ -3422,24 +3456,46 @@ def source_properties_revision(directory: Path) -> str | None:
 
 
 def normalize_sdk_build_tools_locations(sdk_root: Path, *, dry_run: bool) -> None:
+    """Repair legacy/noncanonical Build Tools directory names.
+
+    Older Devtool versions could rename a canonical ``36.0.0`` directory to a
+    package/build revision such as ``36.0.0-5`` by trusting Pkg.Revision as the
+    SDK package ID. Repair those suffixed paths back to the canonical AGP path.
+    """
+
     root = sdk_root / "build-tools"
     if not root.is_dir():
         return
     quarantine = sdk_root / ".devtool-noncanonical-build-tools"
+
     for directory in sorted(root.iterdir(), key=lambda item: item.name):
         if not directory.is_dir() or directory.is_symlink():
             continue
-        revision = source_properties_revision(directory)
-        if not revision or directory.name == revision:
+
+        # Canonical SDK package-id directories remain authoritative even when
+        # source.properties carries a downstream package revision suffix.
+        if re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\d+)?", directory.name):
             continue
-        canonical = root / revision
+
+        canonical_name = canonical_build_tools_package_id(directory.name)
+        if canonical_name is None:
+            revision = source_properties_revision(directory)
+            canonical_name = canonical_build_tools_package_id(revision or "")
+
+        if canonical_name is not None:
+            canonical = root / canonical_name
+            if dry_run:
+                info(f"Would normalize Android build-tools location: {directory} -> {canonical}")
+                continue
+            if not canonical.exists():
+                directory.rename(canonical)
+                info(f"Normalized Android build-tools location: {directory.name} -> {canonical_name}")
+                continue
+
         if dry_run:
-            info(f"Would normalize Android build-tools location: {directory} -> {canonical}")
+            info(f"Would quarantine duplicate noncanonical build-tools directory: {directory}")
             continue
-        if not canonical.exists():
-            directory.rename(canonical)
-            info(f"Normalized Android build-tools location: {directory.name} -> {revision}")
-            continue
+
         quarantine.mkdir(parents=True, exist_ok=True)
         destination = quarantine / directory.name
         if destination.exists():

@@ -503,7 +503,7 @@ _TERMUX_ANDROID_TOOL_PACKAGES = {
     'aapt2': 'aapt',
     'apksigner': 'apksigner',
     'adb': 'android-tools',
-    'aidl': 'aapt',
+    'aidl': 'aidl',
     'zipalign': 'aapt',
     'split-select': 'aapt',
 }
