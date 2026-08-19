@@ -221,6 +221,15 @@ def minimal_global_config_template() -> str:
         "aapt2_provider = \"auto\"",
         "aapt2_fallback_path = \"/sdcard/Download/aapt2-arm64-v8a.bin\"",
         "",
+        "[android.storage]",
+        "auto_cleanup = \"safe\" # safe | off",
+        "min_free_mb = 4096",
+        "target_free_mb = 6144",
+        "managed_gradle_retention = 2",
+        "manage_gradle_user_cache = false # opt in to pruning old ~/.gradle version caches/build-cache-1",
+        "keep_provider_downloads = false",
+        "cleanup_after_build = true",
+        "",
         "[android.java]",
         "provider = \"auto\" # auto | termux | system",
         "",
@@ -1359,6 +1368,15 @@ qemu_sysroot_url = "" # optional amd64 rootfs archive; default auto-download use
 qemu_sysroot_sha256 = ""
 qemu_install = "auto"
 prefer_native_termux = false
+
+[android.storage]
+auto_cleanup = "safe" # safe | off
+min_free_mb = 4096
+target_free_mb = 6144
+managed_gradle_retention = 2
+manage_gradle_user_cache = false # opt in to pruning old ~/.gradle version caches/build-cache-1
+keep_provider_downloads = false
+cleanup_after_build = true
 
 [android.java]
 provider = "auto" # auto | termux | system

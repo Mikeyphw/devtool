@@ -647,6 +647,7 @@ def android_builder_arguments_for_tasks(
     java_options = android.get("java", {}) if isinstance(android.get("java", {}), dict) else {}
     nested_gradle = android.get("gradle", {}) if isinstance(android.get("gradle", {}), dict) else {}
     native_options = android.get("native", {}) if isinstance(android.get("native", {}), dict) else {}
+    storage_options = android.get("storage", {}) if isinstance(android.get("storage", {}), dict) else {}
     build_tools_value = android.get("build_tools", "auto")
     build_tools_options = build_tools_value if isinstance(build_tools_value, dict) else {}
     artifacts = _dict_option(config, "artifacts")
@@ -703,6 +704,21 @@ def android_builder_arguments_for_tasks(
     _append_non_default_option(argv, "--gradle-provider", gradle.get("provider") or nested_gradle.get("provider") or "auto")
     _append_option(argv, "--gradle-version", gradle.get("version"))
     _append_option(argv, "--gradle-user-home", gradle.get("user_home") or android.get("gradle_user_home"))
+    _append_non_default_option(
+        argv,
+        "--space-cleanup",
+        storage_options.get("auto_cleanup", "safe"),
+        default="safe",
+    )
+    _append_option(argv, "--space-min-free-mb", storage_options.get("min_free_mb", android_build.DEFAULT_ANDROID_SPACE_MIN_FREE_MB))
+    _append_option(argv, "--space-target-free-mb", storage_options.get("target_free_mb", android_build.DEFAULT_ANDROID_SPACE_TARGET_FREE_MB))
+    _append_option(argv, "--managed-gradle-retention", storage_options.get("managed_gradle_retention", android_build.DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION))
+    if bool(storage_options.get("manage_gradle_user_cache", False)):
+        argv.append("--manage-gradle-user-cache")
+    if bool(storage_options.get("keep_provider_downloads", False)):
+        argv.append("--keep-provider-downloads")
+    if storage_options.get("cleanup_after_build", True) is False:
+        argv.append("--no-post-build-space-cleanup")
     downloads, network = _bootstrap_policy(config)
     _append_option(argv, "--toolchain-downloads", downloads)
     _append_option(argv, "--bootstrap-network", network)
@@ -906,6 +922,7 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     java_provider = str(java_options.get("provider") or android.get("java_provider") or "auto")
     gradle_provider = str(gradle.get("provider") or "auto")
     native_options = android.get("native", {}) if isinstance(android.get("native", {}), dict) else {}
+    storage_options = android.get("storage", {}) if isinstance(android.get("storage", {}), dict) else {}
     build_tools_value = android.get("build_tools", {})
     build_tools_options = build_tools_value if isinstance(build_tools_value, dict) else {}
     native_provider_name = str(native_options.get("provider") or android.get("native_provider") or "auto")
@@ -928,6 +945,12 @@ def android_inspect_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("native_provider", native_provider_name),
         ("native_cache", native_cache),
         ("android_sdk_provider", sdk_provider),
+        ("android_space_cleanup", str(storage_options.get("auto_cleanup", "safe"))),
+        (
+            "android_space_thresholds",
+            f"{storage_options.get('min_free_mb', android_build.DEFAULT_ANDROID_SPACE_MIN_FREE_MB)} MiB trigger / "
+            f"{storage_options.get('target_free_mb', android_build.DEFAULT_ANDROID_SPACE_TARGET_FREE_MB)} MiB target",
+        ),
         ("android_build_tools_provider", build_tools_provider),
         ("aapt2_provider", aapt2_provider),
         ("minimum_java", str(requirement.minimum) + (" exact toolchain" if requirement.exact else "")),
@@ -959,6 +982,7 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
     java_provider = str(java_options.get("provider") or android.get("java_provider") or "auto")
     gradle_provider = str(gradle.get("provider") or "auto")
     native_options = android.get("native", {}) if isinstance(android.get("native", {}), dict) else {}
+    storage_options = android.get("storage", {}) if isinstance(android.get("storage", {}), dict) else {}
     build_tools_value = android.get("build_tools", {})
     build_tools_options = build_tools_value if isinstance(build_tools_value, dict) else {}
     native_provider_name = str(native_options.get("provider") or android.get("native_provider") or "auto")
@@ -1014,6 +1038,12 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         ("native_provider", native_provider_name),
         ("native_cache", native_cache),
         ("android_sdk_provider", sdk_provider),
+        ("android_space_cleanup", str(storage_options.get("auto_cleanup", "safe"))),
+        (
+            "android_space_thresholds",
+            f"{storage_options.get('min_free_mb', android_build.DEFAULT_ANDROID_SPACE_MIN_FREE_MB)} MiB trigger / "
+            f"{storage_options.get('target_free_mb', android_build.DEFAULT_ANDROID_SPACE_TARGET_FREE_MB)} MiB target",
+        ),
         ("android_build_tools_provider", build_tools_provider),
         ("aapt2_provider", aapt2_provider),
         ("java_provider", java_provider),

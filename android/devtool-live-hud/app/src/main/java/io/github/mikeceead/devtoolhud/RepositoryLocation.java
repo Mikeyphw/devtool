@@ -1,13 +1,13 @@
 package io.github.mikeceead.devtoolhud;
 
-// import android.annotation.SuppressLint;
+import android.annotation.SuppressLint;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-// @SuppressLint("SdCardPath")
+@SuppressLint("SdCardPath")
 final class RepositoryLocation {
     static final String TERMUX_HOME = "/data/data/com.termux/files/home";
 

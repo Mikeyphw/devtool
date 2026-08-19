@@ -147,7 +147,15 @@ Run the configured application or module.
 Create configured distributable artifacts.
 .TP
 .B clean " | " cl
-Remove runner-owned generated output.
+Remove runner-owned generated output. Use
+.B --caches
+for repository-scoped Devtool caches, or
+.B --space
+for safe global Android/toolchain cache pruning. Space cleanup preserves active SDK/NDK/CMake trees, extracted QEMU sysroots, Gradle dependency modules, and Gradle wrapper distributions. Add
+.B --gradle-user-cache
+only when you explicitly want old version-specific Gradle caches and the local build cache included. Use
+.B --dry-run
+to preview reclaimed paths and sizes.
 .TP
 .B inspect " | " info
 Inspect project detection, selected runner, toolchain, variants/tasks, tests, and expected

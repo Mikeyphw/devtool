@@ -44,6 +44,33 @@ def test_aidl_runtime_probe_rejects_shell_fallback_even_if_process_spawned() -> 
         assert not android_build.android_build_tool_executes(Path("/tmp/aidl"), "aidl")
 
 
+
+
+def test_runtime_probe_accepts_nonzero_usage_exit_when_loader_succeeded() -> None:
+    result = subprocess.CompletedProcess(
+        ["zipalign", "-h"], 2, stdout=b"usage: zipalign ...\n", stderr=b""
+    )
+    with patch("devtool.android_build.subprocess.run", return_value=result):
+        assert android_build.android_build_tool_executes(Path("/tmp/zipalign"), "zipalign")
+
+
+def test_runtime_probe_rejects_android_linker_failure() -> None:
+    result = subprocess.CompletedProcess(
+        ["aidl", "--help"],
+        1,
+        stdout=b"",
+        stderr=b'CANNOT LINK EXECUTABLE "/tmp/aidl": library "libfoo.so" not found\n',
+    )
+    with patch("devtool.android_build.subprocess.run", return_value=result):
+        assert not android_build.android_build_tool_executes(Path("/tmp/aidl"), "aidl")
+
+
+def test_runtime_probe_rejects_launcher_exit_126() -> None:
+    result = subprocess.CompletedProcess(["aidl", "--help"], 126, stdout=b"", stderr=b"")
+    with patch("devtool.android_build.subprocess.run", return_value=result):
+        assert not android_build.android_build_tool_executes(Path("/tmp/aidl"), "aidl")
+
+
 def test_termux_aidl_provider_uses_help_and_requires_success() -> None:
     sentinel = ToolProvider("aidl", "termux", False, compatible=False)
     with patch("devtool.termux_toolchains._termux_binary_probe", return_value=sentinel) as probe:

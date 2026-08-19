@@ -149,7 +149,7 @@ low_priority = false
 
 [targets.android_hud.validation.phases]
 preflight = [
-  "help",
+  "verifyStableToolchainBaseline",
 ]
 compile = [
   ":app:compileDebugJavaWithJavac",

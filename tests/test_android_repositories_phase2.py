@@ -87,6 +87,12 @@ def test_environment_aware_repository_identity_jvm(tmp_path: Path) -> None:
     package = tmp_path / "io" / "github" / "mikeceead" / "devtoolhud"
     package.mkdir(parents=True)
     shutil.copy2(JAVA / "RepositoryLocation.java", package / "RepositoryLocation.java")
+    annotation = tmp_path / "android" / "annotation" / "SuppressLint.java"
+    annotation.parent.mkdir(parents=True)
+    annotation.write_text(
+        "package android.annotation; public @interface SuppressLint { String[] value(); }\n",
+        encoding="utf-8",
+    )
     (package / "RunRecord.java").write_text(
         textwrap.dedent(
             """
@@ -141,7 +147,7 @@ def test_environment_aware_repository_identity_jvm(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    sources = [str(path) for path in package.glob("*.java")]
+    sources = [str(path) for path in tmp_path.rglob("*.java")]
     subprocess.run([javac, "-d", str(tmp_path), *sources], check=True, capture_output=True, text=True)
     subprocess.run(
         [java, "-cp", str(tmp_path), "io.github.mikeceead.devtoolhud.RepositoryIdentityHarness"],

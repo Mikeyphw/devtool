@@ -12,11 +12,11 @@ else
   CMDLINE_URL_EXPLICIT=false
   CMDLINE_URL_VALUE="https://dl.google.com/android/repository/$CMDLINE_ZIP"
 fi
-JAVA_HOME_VALUE="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}"
+JAVA_HOME_VALUE="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
 ANDROID_PLATFORM="${ANDROID_PLATFORM:-android-36}"
 ANDROID_BUILD_TOOLS="${ANDROID_BUILD_TOOLS:-36.0.0}"
 PLATFORM_TOOLS_PACKAGE="${PLATFORM_TOOLS_PACKAGE:-platform-tools}"
-GRADLE_TRANSFORMS_DIR="${GRADLE_TRANSFORMS_DIR:-$HOME/.gradle/caches/8.13/transforms}"
+GRADLE_TRANSFORMS_DIR="${GRADLE_TRANSFORMS_DIR:-$HOME/.gradle/caches/9.7.1/transforms}"
 GRADLE_CLEAN_TASK="${GRADLE_CLEAN_TASK:-clean}"
 GRADLE_ASSEMBLE_TASK="${GRADLE_ASSEMBLE_TASK:-assembleDebug}"
 APK_PATH="${APK_PATH:-}"
@@ -26,7 +26,7 @@ SUDO_COMMAND="${SUDO_COMMAND:-sudo}"
 WGET_COMMAND="${WGET_COMMAND:-wget}"
 UNZIP_COMMAND="${UNZIP_COMMAND:-unzip}"
 SDKMANAGER_COMMAND="${SDKMANAGER_COMMAND:-sdkmanager}"
-APT_PACKAGES=(openjdk-17-jdk unzip wget)
+APT_PACKAGES=(openjdk-21-jdk unzip wget)
 GRADLE_ARGS=(--no-daemon)
 SKIP_SYSTEM_DEPS=false
 SKIP_SDK_INSTALL=false

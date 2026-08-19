@@ -22,12 +22,12 @@ def test_aidl_probe_rejects_shell_syntax_fallback() -> None:
         )
 
 
-def test_aidl_probe_rejects_nonzero_without_loader_marker() -> None:
+def test_aidl_probe_accepts_usage_exit_when_binary_started() -> None:
     result = subprocess.CompletedProcess(
         ["aidl", "--help"], 2, stdout=b"", stderr=b"usage error\n"
     )
     with patch("devtool.android_build.subprocess.run", return_value=result):
-        assert not android_build.android_build_tool_executes(
+        assert android_build.android_build_tool_executes(
             Path("/tmp/aidl"), "aidl"
         )
 

@@ -478,7 +478,25 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
             cmd.add_argument("--explain", action="store_true", help="Explain Termux provider selection and rejection reasons")
         if name == "clean":
-            cmd.add_argument("--caches", action="store_true", help="Also prune devtool-managed caches and transient state")
+            cmd.add_argument("--caches", action="store_true", help="Also prune repository-scoped devtool-managed caches and transient state")
+            cmd.add_argument("--space", action="store_true", help="Prune safe global Android/toolchain caches managed by Devtool")
+            cmd.add_argument(
+                "--gradle-user-cache",
+                action="store_true",
+                help="With --space, also prune old version-specific ~/.gradle caches and build-cache-1; modules/wrapper caches are preserved",
+            )
+            cmd.add_argument(
+                "--space-target-free-mb",
+                type=int,
+                default=0,
+                help="With --space, stop after reaching this much free space; 0 removes all safe candidates",
+            )
+            cmd.add_argument(
+                "--managed-gradle-retention",
+                type=int,
+                default=2,
+                help="With --space, keep this many newest Devtool-managed Gradle distributions",
+            )
         if name == "test":
             cmd.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="Pass --no-build to dotnet test")
             cmd.add_argument("--list-tests", "--list", action="store_true", help="Discover and list tests without executing them")
@@ -7849,6 +7867,58 @@ def _build_cache_cleanup_result(config: ProjectConfig, args: argparse.Namespace,
 
 
 
+def _build_space_cleanup_result(config: ProjectConfig, args: argparse.Namespace, *, dry_run: bool) -> OperationResult:
+    started = datetime.now(timezone.utc)
+    from . import android_build
+
+    cache_root = android_build.devtool_cache_dir() / android_build.APP_NAME
+    target_mb = max(0, int(getattr(args, "space_target_free_mb", 0) or 0))
+    target_bytes = target_mb * 1024 * 1024 if target_mb else None
+    report = android_build.cleanup_android_space(
+        cache_root,
+        target_free_bytes=target_bytes,
+        dry_run=dry_run,
+        managed_gradle_retention=max(0, int(getattr(args, "managed_gradle_retention", 2) or 0)),
+        include_gradle_user_cache=bool(getattr(args, "gradle_user_cache", False)),
+        gradle_user_home=Path.home() / ".gradle",
+    )
+    duration = max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+    lines = [
+        "Android/toolchain space cleanup:",
+        f"- Free before: {android_build.format_transfer_size(report.free_before) if report.free_before is not None else 'unknown'}",
+    ]
+    if report.removed:
+        verb = "Would remove" if dry_run else "Removed"
+        lines.append(f"- {verb}: {android_build.format_transfer_size(report.reclaimed_bytes)} across {len(report.removed)} path(s)")
+        for candidate in report.removed:
+            lines.append(
+                f"  - {android_build.format_transfer_size(candidate.size_bytes)} [{candidate.category}] "
+                f"{candidate.path} — {candidate.reason}"
+            )
+    else:
+        lines.append("- No safe reclaimable Android/toolchain cache paths were found.")
+    lines.append(
+        f"- {'Estimated free after' if dry_run else 'Free after'}: "
+        f"{android_build.format_transfer_size(report.free_after) if report.free_after is not None else 'unknown'}"
+    )
+    lines.append("- Preserved: active SDK/NDK/CMake trees, QEMU sysroots, Gradle modules-2, and Gradle wrapper distributions.")
+    return OperationResult(
+        "space-cleanup",
+        ["devtool", "clean", "--space"],
+        0,
+        duration,
+        "\n".join(lines),
+        [],
+        metadata={
+            "cleanup": True,
+            "space_cleanup": True,
+            "dry_run": dry_run,
+            "reclaimed_bytes": report.reclaimed_bytes,
+            "paths": [str(item.path) for item in report.removed],
+        },
+    )
+
+
 def _write_performance_report(
     args: argparse.Namespace,
     results: list[OperationResult],
@@ -8352,8 +8422,11 @@ def _main_after_parse(
         tasker_progress.started()
 
     cache_cleanup_result: OperationResult | None = None
+    space_cleanup_result: OperationResult | None = None
     if args.command in {"clean", "cl"} and bool(getattr(args, "caches", False)):
         cache_cleanup_result = _build_cache_cleanup_result(config, args, dry_run=bool(getattr(args, "dry_run", False)))
+    if args.command in {"clean", "cl"} and bool(getattr(args, "space", False)):
+        space_cleanup_result = _build_space_cleanup_result(config, args, dry_run=bool(getattr(args, "dry_run", False)))
 
     stale_transaction = find_active_transaction(config.repo_root)
     stale_recovery_results: list[OperationResult] = []
@@ -8701,9 +8774,18 @@ def _main_after_parse(
     elif args.command in {"clean", "cl"}:
         specs = build_specs(config, args.command)
         results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
+        cleanup_prefix: list[OperationResult] = []
+        cleanup_outputs: list[str] = []
+        if space_cleanup_result is not None:
+            cleanup_prefix.append(space_cleanup_result)
+            cleanup_outputs.append(space_cleanup_result.output)
         if cache_cleanup_result is not None:
-            results = [cache_cleanup_result, *results]
-            raw_output = cache_cleanup_result.output + ("\n\n" + raw_output if raw_output else "")
+            cleanup_prefix.append(cache_cleanup_result)
+            cleanup_outputs.append(cache_cleanup_result.output)
+        if cleanup_prefix:
+            results = [*cleanup_prefix, *results]
+            prefix_text = "\n\n".join(cleanup_outputs)
+            raw_output = prefix_text + ("\n\n" + raw_output if raw_output else "")
     elif args.command in {"validate", "v", "validate-all", "wine-validate", "wv"}:
         if getattr(args, "watch", False):
             def _run_once() -> int:

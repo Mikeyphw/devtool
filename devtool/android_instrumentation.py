@@ -18,6 +18,8 @@ import subprocess
 import sys
 from typing import Any, Sequence
 
+from . import android_build
+
 
 class InstrumentationError(RuntimeError):
     pass
@@ -73,6 +75,82 @@ def _resolve_gradle(project: Path, configured: str) -> Path:
 def _variant_title(value: str) -> str:
     value = value.strip() or "debug"
     return value[:1].upper() + value[1:]
+
+
+def _instrumentation_aapt2(
+    project: Path,
+    *,
+    configured: str = "",
+    provider: str = "auto",
+) -> Path | None:
+    """Resolve a host-runnable AAPT2 for instrumentation APK builds.
+
+    Instrumentation historically invoked the project Gradle launcher directly,
+    bypassing ``android_build``'s AAPT2 provider selection. On native Termux
+    that lets AGP download the Maven linux/x86_64 AAPT2, which Android/Bionic
+    cannot execute. Mirror the builder's host-safe selection here and fail
+    before Gradle rather than ever falling through to an incompatible Maven
+    executable.
+    """
+
+    requested = str(provider or "auto").strip().lower() or "auto"
+    explicit = str(configured or "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve(strict=False)
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            raise InstrumentationError(f"Configured AAPT2 is not executable: {candidate}")
+        try:
+            return android_build.validate_aapt2(candidate, dry_run=False)
+        except Exception as exc:
+            raise InstrumentationError(f"Configured AAPT2 cannot run: {candidate}: {exc}") from exc
+
+    if not android_build.running_under_termux_python():
+        return None
+    if requested == "none":
+        return None
+
+    try:
+        info = android_build.inspect_project(project)
+        sdk_root = android_build.discover_sdk_root(None, project)
+    except Exception:
+        info = None
+        sdk_root = None
+    platform_id = f"android-{info.compile_sdk}" if info is not None and info.compile_sdk else None
+
+    if requested in {"auto", "termux"}:
+        candidate = android_build.termux_aapt2_path()
+        if candidate is not None:
+            compatible = sdk_root is None or android_build.termux_aapt2_supports_platform(
+                candidate, sdk_root, platform_id, dry_run=False
+            )
+            if compatible:
+                return candidate
+        if requested == "termux":
+            raise InstrumentationError(
+                "Termux AAPT2 provider requested for instrumentation, but "
+                "$PREFIX/bin/aapt2 is unavailable or incompatible with "
+                f"{platform_id or 'the selected Android platform'}"
+            )
+
+    if requested in {"auto", "sdk"} and sdk_root is not None and info is not None:
+        build_tools = android_build.select_required_build_tools_version(info, sdk_root, "auto")
+        candidate = android_build.select_sdk_build_tools_aapt2(
+            sdk_root, build_tools, platform_id, dry_run=False
+        )
+        if candidate is not None:
+            return candidate
+        if requested == "sdk":
+            raise InstrumentationError(
+                "SDK AAPT2 provider requested for instrumentation, but no "
+                "host-compatible SDK AAPT2 is available"
+            )
+
+    raise InstrumentationError(
+        "No host-compatible AAPT2 is available for the instrumentation setup build. "
+        "On native Termux, install a compatible Termux AAPT2 or configure "
+        "[android].aapt2 / [android.build_tools].aapt2_provider explicitly; "
+        "Devtool will not fall back to AGP's linux/x86_64 Maven AAPT2."
+    )
 
 
 def _find_apks(project: Path, variant: str) -> tuple[Path, Path]:
@@ -215,6 +293,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("project", type=Path)
     parser.add_argument("--variant", default="debug")
     parser.add_argument("--gradle", default="./gradlew")
+    parser.add_argument("--aapt2", default="")
+    parser.add_argument("--aapt2-provider", default="auto")
+    parser.add_argument("--gradle-arg", action="append", default=[])
     parser.add_argument("--device-serial", default="")
     parser.add_argument("--install-command", default="sudo pm install -r -t")
     parser.add_argument("--am-command", default="sudo am instrument")
@@ -243,15 +324,22 @@ def main(raw_args: Sequence[str] | None = None) -> int:
     try:
         if not args.skip_build:
             gradle = _resolve_gradle(project, args.gradle)
-            run(
+            aapt2 = _instrumentation_aapt2(
+                project,
+                configured=args.aapt2,
+                provider=args.aapt2_provider,
+            )
+            gradle_arguments = android_build.gradle_arguments_with_aapt2_override(
                 [
-                    str(gradle),
                     f"assemble{variant_title}",
                     f"assemble{variant_title}AndroidTest",
+                    *args.gradle_arg,
                     "--console=plain",
                 ],
-                check=True,
+                aapt2,
+                plain_console=True,
             )
+            run([str(gradle), *gradle_arguments], check=True)
 
         app_apk, test_apk = _find_apks(project, args.variant)
         print(f"DEVTOOL_EVENT {json.dumps({'kind': 'instrumentation-apks', 'app': str(app_apk), 'test': str(test_apk)})}")

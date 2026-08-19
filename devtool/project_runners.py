@@ -676,6 +676,27 @@ class AndroidGradleRunner(ProjectRunner):
                 "--install-command", str(android.get("install_command") or "sudo pm install -r -t"),
                 "--am-command", str(android.get("am_command") or "sudo am instrument"),
             ]
+            build_tools_value = android.get("build_tools", {})
+            build_tools_options = build_tools_value if isinstance(build_tools_value, dict) else {}
+            configured_aapt2 = str(android.get("aapt2") or "").strip()
+            aapt2_provider = str(
+                build_tools_options.get("aapt2_provider")
+                or android.get("aapt2_provider")
+                or "auto"
+            ).strip().lower() or "auto"
+            if configured_aapt2:
+                argv.extend(["--aapt2", configured_aapt2])
+            argv.extend(["--aapt2-provider", aapt2_provider])
+            gradle_options = config.runner_options.get("gradle", {})
+            gradle_options = dict(gradle_options) if isinstance(gradle_options, dict) else {}
+            configured_gradle_args = gradle_options.get("args", [])
+            if isinstance(configured_gradle_args, str):
+                configured_gradle_args = [configured_gradle_args]
+            if isinstance(configured_gradle_args, (list, tuple)):
+                for value in configured_gradle_args:
+                    item = str(value).strip()
+                    if item:
+                        argv.extend(["--gradle-arg", item])
             runner = str(android.get("test_runner") or "").strip()
             target_package = str(android.get("target_package") or "").strip()
             if runner:

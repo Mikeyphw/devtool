@@ -21,6 +21,10 @@ A portrait-first GUI frontend and live HUD for devtool.
 
 The CLI no longer provides Tasker flags or a separate Termux notification mode. The app owns the live notification and floating overlay experience.
 
+## Stable toolchain baseline
+
+Devtool Live HUD is pinned to Gradle 9.7.1, Android Gradle Plugin 9.3.1, Java 21, compile/target SDK 36, and Android Build Tools 36.0.0. The bootstrap scripts verify the Gradle distribution checksum before extraction, and `verifyStableToolchainBaseline` rejects toolchain drift or prerelease plugin/dependency versions.
+
 ## Build
 
 ```bash

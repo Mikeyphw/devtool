@@ -21,6 +21,9 @@ from devtool.android_build import (
     discover_sdk_root_with_source,
     download,
     default_build_tools_version,
+    build_tools_is_ready,
+    select_required_build_tools_version,
+    compatible_build_tools_donor,
     ensure_arm64_build_tools_compatible,
     find_java_home,
     inspect_project,
@@ -300,6 +303,80 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         self.assertEqual(default_build_tools_version(project), "36.0.0")
 
+    def test_compile_sdk_36_requires_build_tools_36_even_when_provider_has_newer_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sdk_root = Path(tmp) / "sdk"
+            (sdk_root / "build-tools" / "36.1.0").mkdir(parents=True)
+            project = ProjectInfo(
+                root=Path(tmp) / "project",
+                name="Demo",
+                android=True,
+                android_application=True,
+                compile_sdk=36,
+                build_tools=None,
+                agp_major=9,
+                native_build=False,
+                ndk_version=None,
+                cmake_version=None,
+            )
+
+            selected = select_required_build_tools_version(project, sdk_root, "auto")
+
+        self.assertEqual(selected, "36.0.0")
+
+    def test_build_tools_readiness_rejects_partial_directory_without_sdk_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sdk_root = Path(tmp) / "sdk"
+            partial = sdk_root / "build-tools" / "36.0.0"
+            partial.mkdir(parents=True)
+            (partial / "aapt2").write_bytes(b"native-only")
+            (partial / "zipalign").write_bytes(b"native-only")
+
+            self.assertFalse(build_tools_is_ready(sdk_root, "36.0.0"))
+
+    def test_build_tools_readiness_requires_non_native_java_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sdk_root = Path(tmp) / "sdk"
+            directory = sdk_root / "build-tools" / "36.0.0"
+            directory.mkdir(parents=True)
+            (directory / "source.properties").write_text("Pkg.Revision = 36.0.0\n")
+
+            self.assertFalse(build_tools_is_ready(sdk_root, "36.0.0"))
+
+            (directory / "lib").mkdir()
+            (directory / "lib" / "d8.jar").write_bytes(b"jar")
+            self.assertTrue(build_tools_is_ready(sdk_root, "36.0.0"))
+
+    def test_build_tools_readiness_accepts_downstream_revision_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sdk_root = Path(tmp) / "sdk"
+            directory = sdk_root / "build-tools" / "36.0.0"
+            (directory / "lib").mkdir(parents=True)
+            (directory / "source.properties").write_text("Pkg.Revision = 36.0.0-5\n")
+            (directory / "lib" / "d8.jar").write_bytes(b"jar")
+
+            self.assertTrue(build_tools_is_ready(sdk_root, "36.0.0"))
+
+    def test_build_tools_donor_reuses_native_tool_from_same_major_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sdk_root = Path(tmp) / "sdk"
+            donor = sdk_root / "build-tools" / "36.1.0" / "zipalign"
+            donor.parent.mkdir(parents=True)
+            donor.write_bytes(b"native")
+            other = sdk_root / "build-tools" / "37.0.0" / "zipalign"
+            other.parent.mkdir(parents=True)
+            other.write_bytes(b"native")
+
+            with patch(
+                "devtool.android_build.native_android_build_tool_compatible",
+                side_effect=lambda path, *_args: Path(path) == donor,
+            ):
+                selected = compatible_build_tools_donor(
+                    sdk_root, "36.0.0", "zipalign"
+                )
+
+        self.assertEqual(selected, donor)
+
     def test_unknown_compile_sdk_defaults_to_published_commit451_build_tools(self) -> None:
         project = ProjectInfo(
             root=Path("/tmp/project"),
@@ -315,6 +392,54 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         )
 
         self.assertEqual(default_build_tools_version(project), "35.0.1")
+
+    def test_arm64_repair_prefers_same_major_sdk_native_donor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sdk_root = root / "sdk"
+            target_dir = sdk_root / "build-tools" / "36.0.0"
+            donor_dir = sdk_root / "build-tools" / "36.1.0"
+            target_dir.mkdir(parents=True)
+            donor_dir.mkdir(parents=True)
+            for name in ("aapt2", "aidl", "split-select"):
+                (target_dir / name).write_bytes(b"already-native")
+            (target_dir / "zipalign").write_bytes(b"x86")
+            (donor_dir / "zipalign").write_bytes(b"donor-native")
+
+            def compatible(path: Path, tool_name: str, _machine: str) -> bool:
+                path = Path(path)
+                if tool_name != "zipalign":
+                    return True
+                try:
+                    return path.read_bytes() == b"donor-native"
+                except OSError:
+                    return False
+
+            with patch(
+                "devtool.android_build.normalized_machine", return_value="arm64"
+            ), patch(
+                "devtool.android_build.native_android_build_tool_compatible",
+                side_effect=compatible,
+            ), patch(
+                "devtool.android_build.sdk_root_is_writable_for_install",
+                return_value=True,
+            ):
+                ensure_arm64_build_tools_compatible(
+                    sdk_root,
+                    "36.0.0",
+                    root / "cache",
+                    provider="auto",
+                    offline=True,
+                    force=False,
+                    dry_run=False,
+                )
+
+            self.assertEqual(
+                (target_dir / "zipalign").read_bytes(), b"donor-native"
+            )
+            self.assertEqual(
+                (target_dir / "zipalign.google-x86_64").read_bytes(), b"x86"
+            )
 
     def test_commit451_tools_replace_incompatible_sdk_binaries(self) -> None:
         x86_header = (
@@ -469,7 +594,10 @@ class AndroidProjectInspectionTests(unittest.TestCase):
             sdk_root = root / "sdk"
             (sdk_root / "platforms" / "android-36").mkdir(parents=True)
             (sdk_root / "platforms" / "android-36" / "android.jar").write_bytes(b"jar")
-            (sdk_root / "build-tools" / "36.0.0").mkdir(parents=True)
+            build_tools_dir = sdk_root / "build-tools" / "36.0.0"
+            (build_tools_dir / "lib").mkdir(parents=True)
+            (build_tools_dir / "source.properties").write_text("Pkg.Revision = 36.0.0\n")
+            (build_tools_dir / "lib" / "d8.jar").write_bytes(b"jar")
             project = ProjectInfo(
                 root=project_root,
                 name="Demo",
@@ -504,6 +632,70 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         repair.assert_called_once()
         self.assertEqual(repair.call_args.kwargs["provider"], "auto")
+
+    def test_partial_exact_build_tools_directory_is_reinstalled_before_gradle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            sdk_root = root / "sdk"
+            platform = sdk_root / "platforms" / "android-36"
+            platform.mkdir(parents=True)
+            (platform / "android.jar").write_bytes(b"jar")
+            partial = sdk_root / "build-tools" / "36.0.0"
+            partial.mkdir(parents=True)
+            (partial / "aapt2").write_bytes(b"native-only")
+            project = ProjectInfo(
+                root=project_root,
+                name="Demo",
+                android=True,
+                android_application=True,
+                compile_sdk=36,
+                build_tools="36.0.0",
+                agp_major=9,
+                native_build=False,
+                ndk_version=None,
+                cmake_version=None,
+            )
+
+            def install(_manager, target_root, packages, **_kwargs):
+                self.assertIn("build-tools;36.0.0", packages)
+                directory = target_root / "build-tools" / "36.0.0"
+                (directory / "lib").mkdir(parents=True, exist_ok=True)
+                (directory / "source.properties").write_text("Pkg.Revision = 36.0.0\n")
+                (directory / "lib" / "d8.jar").write_bytes(b"jar")
+
+            with patch(
+                "devtool.android_build.find_sdkmanager",
+                return_value=Path("/tmp/sdkmanager"),
+            ), patch(
+                "devtool.android_build.run",
+            ), patch(
+                "devtool.android_build.install_sdk_packages_with_repair",
+                side_effect=install,
+            ) as installer, patch(
+                "devtool.android_build.ensure_arm64_build_tools_compatible"
+            ):
+                selected, _platform, build_tools, _ndk, _cmake = ensure_android_sdk(
+                    project,
+                    sdk_root,
+                    root / "cache",
+                    force_setup=False,
+                    platform_override="auto",
+                    build_tools_override="auto",
+                    ndk_override="none",
+                    cmake_override="none",
+                    skip_install=False,
+                    offline=False,
+                    env={"PATH": "/usr/bin"},
+                    dry_run=False,
+                    arm_build_tools_provider="auto",
+                )
+
+            self.assertEqual(selected, sdk_root)
+            self.assertEqual(build_tools, "36.0.0")
+            installer.assert_called_once()
+            self.assertTrue(build_tools_is_ready(sdk_root, "36.0.0"))
 
     def test_read_only_implicit_sdk_falls_back_to_managed_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

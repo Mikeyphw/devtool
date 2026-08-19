@@ -76,6 +76,22 @@ def _write_wrapper(root: Path, version: str = "8.13", *, jar: bool = True) -> Pa
     return launcher
 
 
+def _write_standalone_wrapper(root: Path, version: str = "8.13") -> Path:
+    launcher = root / "gradlew"
+    launcher.write_text(
+        "#!/usr/bin/env sh\n"
+        "set -eu\n"
+        f"VERSION={version}\n"
+        'BASE="${GRADLE_USER_HOME:-$HOME/.gradle}/devtool-bootstrap"\n'
+        'HOME_DIR="$BASE/gradle-$VERSION"\n'
+        'URL="https://services.gradle.org/distributions/gradle-$VERSION-bin.zip"\n'
+        'exec "$HOME_DIR/bin/gradle" "$@"\n',
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    return launcher
+
+
 class TermuxProviderFoundationTests(unittest.TestCase):
     def test_standalone_builder_and_shared_provider_contracts_stay_in_sync(self) -> None:
         self.assertEqual(android_build.JAVA_PROVIDERS, VALID_JAVA_PROVIDERS)
@@ -402,6 +418,47 @@ class AndroidJavaGradleProviderTests(unittest.TestCase):
             ), patch("devtool.android_build.java_home_candidates", return_value=[system_java, termux_java]):
                 selected = android_build.find_java_home(None, 17, provider="auto")
         self.assertEqual(selected, termux_java)
+
+    def test_self_bootstrap_gradle_wrapper_is_complete_and_pins_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = _write_standalone_wrapper(root, "8.13")
+            state = android_build.gradle_wrapper_state(root)
+            self.assertTrue(state.present)
+            self.assertTrue(state.complete)
+            self.assertEqual(state.missing, ())
+            self.assertEqual(android_build.wrapper_distribution_version(root), "8.13")
+            self.assertEqual(android_build.standalone_gradle_wrapper_version(root), "8.13")
+            self.assertTrue(wrapper.is_file())
+
+    def test_auto_gradle_accepts_supported_self_bootstrap_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = _write_standalone_wrapper(root, "8.13")
+            with patch("devtool.android_build.running_under_termux_python", return_value=True), patch(
+                "devtool.android_build.shutil.which", return_value=None
+            ):
+                selected = android_build.select_gradle(
+                    root,
+                    explicit=None,
+                    version=None,
+                    cache_root=root / ".cache",
+                    offline=False,
+                    force=False,
+                )
+            self.assertEqual(selected, wrapper.resolve())
+
+    def test_random_gradlew_without_wrapper_metadata_remains_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            launcher = root / "gradlew"
+            launcher.write_text("#!/bin/sh\nexec gradle \"$@\"\n", encoding="utf-8")
+            launcher.chmod(0o755)
+            state = android_build.gradle_wrapper_state(root)
+            self.assertTrue(state.present)
+            self.assertFalse(state.complete)
+            self.assertIn("gradle/wrapper/gradle-wrapper.properties", state.missing)
+            self.assertIn("gradle/wrapper/gradle-wrapper.jar", state.missing)
 
     def test_auto_gradle_refuses_incomplete_wrapper_instead_of_silent_substitution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -48,8 +48,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
     }
 
     buildTypes {
@@ -99,6 +99,10 @@ tasks.register('verifyReleaseSigning') {
 
 tasks.matching { it.name == 'preReleaseBuild' }.configureEach {
     dependsOn tasks.named('verifyReleaseSigning')
+}
+
+tasks.matching { it.name == 'preBuild' }.configureEach {
+    dependsOn rootProject.tasks.named('verifyStableToolchainBaseline')
 }
 
 tasks.register('verifyReleaseApk') {

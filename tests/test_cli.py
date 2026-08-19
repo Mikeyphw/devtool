@@ -232,6 +232,39 @@ class CliTests(unittest.TestCase):
         args = parser.parse_args(["clean", "--caches"])
         self.assertTrue(args.caches)
 
+    def test_parser_accepts_clean_space_flags(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args([
+            "clean", "--space", "--gradle-user-cache",
+            "--space-target-free-mb", "8192",
+            "--managed-gradle-retention", "1",
+        ])
+        self.assertTrue(args.space)
+        self.assertTrue(args.gradle_user_cache)
+        self.assertEqual(args.space_target_free_mb, 8192)
+        self.assertEqual(args.managed_gradle_retention, 1)
+
+    def test_clean_space_invokes_global_toolchain_prune_before_runner_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as home:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            clean_result = __import__("devtool.models").models.OperationResult("clean", ["dotnet", "clean"], 0, 0.0, "ok", [])
+            space_result = __import__("devtool.models").models.OperationResult("space-cleanup", ["devtool", "clean", "--space"], 0, 0.0, "space output", [])
+            space_patch = patch("devtool.cli._build_space_cleanup_result", return_value=space_result)
+            run_patch = patch("devtool.cli._run_specs_for_args", return_value=([clean_result], "clean output"))
+            with (
+                patch.dict("os.environ", {"HOME": home, "XDG_RUNTIME_DIR": ""}),
+                space_patch as space_mock,
+                run_patch as run_specs,
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "clean", "--space"])
+
+        self.assertEqual(rc, 0)
+        space_mock.assert_called_once()
+        run_specs.assert_called_once()
+
     def test_clean_caches_invokes_cache_prune_before_runner_clean(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as home:
             root = Path(tmp)

@@ -1,15 +1,41 @@
 #!/usr/bin/env sh
 set -eu
-VERSION=8.13
+VERSION=9.7.1
+SHA256=acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a
 BASE="${GRADLE_USER_HOME:-$HOME/.gradle}/devtool-bootstrap"
 HOME_DIR="$BASE/gradle-$VERSION"
 ZIP="$BASE/gradle-$VERSION-bin.zip"
+
+verify_zip() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum "$ZIP" | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    actual=$(shasum -a 256 "$ZIP" | awk '{print $1}')
+  else
+    echo "sha256sum or shasum is required to verify Gradle" >&2
+    exit 2
+  fi
+  if [ "$actual" != "$SHA256" ]; then
+    echo "Gradle $VERSION checksum mismatch: expected $SHA256, got $actual" >&2
+    rm -f "$ZIP"
+    exit 2
+  fi
+}
+
 if [ ! -x "$HOME_DIR/bin/gradle" ]; then
   mkdir -p "$BASE"
   URL="https://services.gradle.org/distributions/gradle-$VERSION-bin.zip"
-  if command -v curl >/dev/null 2>&1; then curl -fL "$URL" -o "$ZIP"
-  elif command -v wget >/dev/null 2>&1; then wget -O "$ZIP" "$URL"
-  else echo "curl or wget is required to bootstrap Gradle" >&2; exit 2; fi
+  if [ ! -f "$ZIP" ]; then
+    if command -v curl >/dev/null 2>&1; then
+      curl -fL "$URL" -o "$ZIP"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -O "$ZIP" "$URL"
+    else
+      echo "curl or wget is required to bootstrap Gradle" >&2
+      exit 2
+    fi
+  fi
+  verify_zip
   rm -rf "$HOME_DIR"
   unzip -q "$ZIP" -d "$BASE"
 fi

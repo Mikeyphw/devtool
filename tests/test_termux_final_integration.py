@@ -495,7 +495,7 @@ class TermuxFinalCliContractTests(unittest.TestCase):
             self.assertIn("[proot]", text)
             self.assertIn("auto_bind_repo", text)
             self.assertIn("cache_mount", text)
-            self.assertIn("never runs pkg/apt install or upgrade automatically", text)
+            self.assertIn("Android SDK provider bootstrap may install narrowly-scoped Termux prerequisites/repository metadata", text)
             self.assertIn("guest does not need devtool", text)
 
 

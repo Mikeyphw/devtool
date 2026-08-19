@@ -73,6 +73,45 @@ TERMUXVOID_KEY_URL = "https://raw.githubusercontent.com/termuxvoid/repo/main/ass
 TERMUXVOID_SDK_REPOSITORY = "termuxvoid/android-sdk-termux"
 HOMUHOMU_SDK_REPOSITORY = "HomuHomu833/android-sdk-custom"
 
+# sdkmanager needs both download and unpack headroom. These are deliberately
+# conservative working-space estimates, not claims about exact package sizes.
+# The preflight only protects writable SDK provisioning paths and can reclaim
+# Devtool-owned caches before deciding that the filesystem is too full.
+ANDROID_SDK_INSTALL_RESERVE_BYTES = 512 * 1024 * 1024
+ANDROID_SDK_PACKAGE_WORKING_SPACE_BYTES = {
+    "platforms": 384 * 1024 * 1024,
+    "build-tools": 512 * 1024 * 1024,
+    "platform-tools": 256 * 1024 * 1024,
+    "cmdline-tools": 384 * 1024 * 1024,
+    "cmake": 1536 * 1024 * 1024,
+    "ndk": 4096 * 1024 * 1024,
+    "system-images": 4096 * 1024 * 1024,
+}
+ANDROID_SDK_UNKNOWN_PACKAGE_WORKING_SPACE_BYTES = 512 * 1024 * 1024
+SPACE_CLEANUP_POLICIES = {"off", "safe"}
+DEFAULT_ANDROID_SPACE_MIN_FREE_MB = 4096
+DEFAULT_ANDROID_SPACE_TARGET_FREE_MB = 6144
+DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION = 2
+
+
+@dataclass(frozen=True)
+class SpaceReclaimCandidate:
+    path: Path
+    category: str
+    reason: str
+    size_bytes: int
+    priority: int = 100
+
+
+@dataclass(frozen=True)
+class SpaceCleanupReport:
+    free_before: int | None
+    free_after: int | None
+    reclaimed_bytes: int
+    removed: tuple[SpaceReclaimCandidate, ...]
+    candidates: tuple[SpaceReclaimCandidate, ...]
+    dry_run: bool = False
+
 
 class BuildError(RuntimeError):
     """User-actionable build failure."""
@@ -285,6 +324,68 @@ def _provider_sdk_root(cache_root: Path, provider: str) -> Path:
     return _provider_cache_root(cache_root, provider) / "sdk"
 
 
+def _provider_archive_working_space_bytes(archive: Path) -> int:
+    try:
+        archive_bytes = int(archive.stat().st_size)
+    except OSError:
+        archive_bytes = 0
+    # Extraction can transiently coexist with the compressed archive and SDK
+    # tree. Three archive sizes plus 512 MiB is conservative enough to avoid
+    # the common ENOSPC failure without pretending to know the exact unpacked
+    # size of third-party bundles.
+    return max(768 * 1024 * 1024, archive_bytes * 3 + 512 * 1024 * 1024)
+
+
+def _ensure_provider_extraction_space(provider: str, archive: Path, provider_root: Path) -> None:
+    free = android_sdk_free_bytes(provider_root)
+    if free is None:
+        return
+    required = _provider_archive_working_space_bytes(archive)
+    if free < required:
+        fail(
+            f"Insufficient free space for {provider} Android SDK extraction: "
+            f"{format_transfer_size(free)} free, approximately "
+            f"{format_transfer_size(required)} working space reserved for "
+            f"{archive.name}."
+        )
+
+
+def _clear_failed_provider_cache(cache_root: Path, provider: str) -> None:
+    provider_root = _provider_cache_root(cache_root, provider)
+    for staging in provider_root.glob(".sdk-*.tmp"):
+        shutil.rmtree(staging, ignore_errors=True)
+    downloads = provider_root / "downloads"
+    if downloads.exists():
+        shutil.rmtree(downloads, ignore_errors=True)
+        info(f"Cleared failed Android SDK provider download cache: {downloads}")
+
+
+def clear_selected_provider_download(
+    cache_root: Path,
+    sdk_root: Path | None,
+    *,
+    dry_run: bool,
+) -> None:
+    if sdk_root is None:
+        return
+    selected = sdk_root.expanduser().resolve(strict=False)
+    for provider in ("termuxvoid", "homuhomu"):
+        provider_sdk = _provider_sdk_root(cache_root, provider).resolve(strict=False)
+        if selected != provider_sdk and provider_sdk not in selected.parents:
+            continue
+        downloads = _provider_cache_root(cache_root, provider) / "downloads"
+        if not downloads.exists():
+            return
+        size = _path_size_bytes(downloads)
+        if dry_run:
+            info(f"Would clear installed {provider} provider download cache: {downloads}")
+        else:
+            shutil.rmtree(downloads, ignore_errors=True)
+            suffix = f" ({format_transfer_size(size)})" if size else ""
+            info(f"Cleared installed {provider} provider download cache{suffix}: {downloads}")
+        return
+
+
 def _sdk_tree_candidate(root: Path) -> Path | None:
     candidates = [root, root / "android-sdk", root / "sdk"]
     try:
@@ -339,6 +440,47 @@ def _release_asset_sha256(release: Mapping[str, object], asset: Mapping[str, obj
     return None
 
 
+def _provider_archive_output(result: subprocess.CompletedProcess[str]) -> str:
+    return "\n".join(
+        item.strip()
+        for item in (result.stdout, result.stderr)
+        if item and item.strip()
+    )
+
+
+def _validate_provider_symlinks(root: Path) -> None:
+    """Reject provider-archive symlinks that escape the staging directory.
+
+    Recent 7-Zip releases deliberately reject some chained symlinks. Android
+    NDK archives legitimately contain chains such as ``clang++ -> clang``.
+    When we opt into 7-Zip's ``-snld`` compatibility mode we compensate by
+    validating every extracted link before the staged tree can replace a live
+    SDK.
+    """
+
+    base = root.resolve()
+    for path in root.rglob("*"):
+        if not path.is_symlink():
+            continue
+        try:
+            raw_target = os.readlink(path)
+        except OSError as exc:
+            fail(f"Could not inspect Android SDK provider symlink: {path}\n{exc}")
+        if os.path.isabs(raw_target):
+            fail(
+                "Android SDK provider archive contains an absolute symlink: "
+                f"{path} -> {raw_target}"
+            )
+        try:
+            resolved = path.resolve(strict=False)
+            resolved.relative_to(base)
+        except (OSError, RuntimeError, ValueError):
+            fail(
+                "Android SDK provider archive contains a symlink escaping its "
+                f"staging directory: {path} -> {raw_target}"
+            )
+
+
 def _extract_sdk_provider_archive(archive: Path, staging: Path, *, dry_run: bool) -> None:
     if dry_run:
         info(f"Would extract Android SDK provider archive: {archive} -> {staging}")
@@ -350,9 +492,66 @@ def _extract_sdk_provider_archive(archive: Path, staging: Path, *, dry_run: bool
         if not seven:
             fail("7z is required to extract the TermuxVoid Android SDK bundle")
         run([seven, "t", archive])
-        run([seven, "x", archive, f"-o{staging}", "-y"])
+        command = [seven, "x", archive, f"-o{staging}", "-y"]
+        result = run(command, check=False, capture=True, quiet=True)
+        if result.returncode != 0:
+            output = _provider_archive_output(result)
+            dangerous_link_markers = (
+                "dangerous link via another link was ignored",
+                "dangerous symbolic link path was ignored",
+                "dangerous link path was ignored",
+            )
+            if not any(marker in output.lower() for marker in dangerous_link_markers):
+                fail(
+                    f"Command failed ({result.returncode}): {shell_join(command)}"
+                    + (f"\n{output}" if output else "")
+                )
+
+            # 7-Zip 25+ tightened symlink extraction and can reject legitimate
+            # Android NDK link chains. -snld is the upstream CLI escape hatch.
+            # Retry only for that specific diagnostic, inside a fresh staging
+            # tree, then reject any link that resolves outside that tree.
+            warn(
+                "7z rejected Android SDK/NDK symlink chains; retrying in isolated "
+                "staging with -snld and validating all extracted symlink targets"
+            )
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir(parents=True, exist_ok=True)
+            retry = [seven, "x", "-snld", archive, f"-o{staging}", "-y"]
+            result = run(retry, check=False, capture=True, quiet=True)
+            if result.returncode != 0:
+                output = _provider_archive_output(result)
+                if any(marker in output.lower() for marker in dangerous_link_markers):
+                    bsdtar = shutil.which("bsdtar")
+                    if bsdtar:
+                        warn(
+                            "7z still rejected Android SDK/NDK symlink chains; "
+                            "retrying with Termux libarchive/bsdtar in isolated staging"
+                        )
+                        shutil.rmtree(staging, ignore_errors=True)
+                        staging.mkdir(parents=True, exist_ok=True)
+                        fallback = [bsdtar, "-xf", archive, "-C", staging]
+                        result = run(fallback, check=False, capture=True, quiet=True)
+                        if result.returncode != 0:
+                            fallback_output = _provider_archive_output(result)
+                            fail(
+                                f"Command failed ({result.returncode}): {shell_join(fallback)}"
+                                + (f"\n{fallback_output}" if fallback_output else "")
+                            )
+                    else:
+                        fail(
+                            f"Command failed ({result.returncode}): {shell_join(retry)}"
+                            + (f"\n{output}" if output else "")
+                        )
+                else:
+                    fail(
+                        f"Command failed ({result.returncode}): {shell_join(retry)}"
+                        + (f"\n{output}" if output else "")
+                    )
+        _validate_provider_symlinks(staging)
     else:
         extract_archive(archive, staging)
+        _validate_provider_symlinks(staging)
 
 
 def _install_provider_sdk_tree(
@@ -377,19 +576,25 @@ def _install_provider_sdk_tree(
     archive = provider_root / "downloads" / tag / asset_name
     download(asset_url, archive, offline=False, force=force)
     verify_sha256(archive, expected, f"{provider} Android SDK")
+    _ensure_provider_extraction_space(provider, archive, provider_root)
     target = _provider_sdk_root(cache_root, provider)
     if dry_run:
         return target
 
     staging = provider_root / f".sdk-{os.getpid()}.tmp"
-    _extract_sdk_provider_archive(archive, staging, dry_run=False)
-    extracted = _sdk_tree_candidate(staging)
-    if extracted is None:
+    try:
+        _extract_sdk_provider_archive(archive, staging, dry_run=False)
+        extracted = _sdk_tree_candidate(staging)
+        if extracted is None:
+            fail(f"{provider} archive did not contain a recognizable Android SDK tree")
+        if not sdk_host_compatible(extracted):
+            fail(f"{provider} Android SDK contains host-incompatible native build tools")
+    except Exception:
+        # Provider archives can be hundreds of MiB and a failed extraction can
+        # consume substantially more. Never leave a partial .sdk-*.tmp tree
+        # behind when auto falls through to another provider.
         shutil.rmtree(staging, ignore_errors=True)
-        fail(f"{provider} archive did not contain a recognizable Android SDK tree")
-    if not sdk_host_compatible(extracted):
-        shutil.rmtree(staging, ignore_errors=True)
-        fail(f"{provider} Android SDK contains host-incompatible native build tools")
+        raise
 
     backup = provider_root / ".sdk.previous"
     shutil.rmtree(backup, ignore_errors=True)
@@ -434,7 +639,7 @@ def provision_termuxvoid_sdk(cache_root: Path, *, force: bool, dry_run: bool) ->
         return cached
 
     ensure_termuxvoid_repository(cache_root=cache_root, dry_run=dry_run)
-    _ensure_termux_packages(["7zip"], dry_run=dry_run)
+    _ensure_termux_packages(["7zip", "bsdtar"], dry_run=dry_run)
     if dry_run:
         target = _provider_sdk_root(cache_root, "termuxvoid")
         info(f"Would query TermuxVoid release metadata and provision SDK at: {target}")
@@ -533,6 +738,8 @@ def provision_android_sdk_provider(
                 return root, label
             except BuildError as exc:
                 warn(f"Android SDK provider {candidate_provider} unavailable: {exc}")
+                if not dry_run:
+                    _clear_failed_provider_cache(cache_root, candidate_provider)
     return managed_sdk_root_for_host(cache_root), "managed Google SDK"
 
 
@@ -1570,6 +1777,41 @@ class GradleWrapperState:
     missing: tuple[str, ...]
 
 
+def standalone_gradle_wrapper_version(project_root: Path) -> str | None:
+    """Recognize Devtool-style self-bootstrap Gradle launchers.
+
+    Some projects intentionally ship a small ``gradlew`` shell launcher that
+    pins a Gradle version and downloads the official distribution directly,
+    instead of using Gradle's ``gradle-wrapper.jar`` bootstrap.  Treat that
+    format as complete only when the launcher contains all of the contract
+    markers we rely on: a pinned VERSION, the official Gradle distribution
+    endpoint, and an execution path into the downloaded Gradle distribution.
+    A random/incomplete ``gradlew`` therefore remains fail-closed.
+    """
+    launcher = project_root / "gradlew"
+    if not launcher.is_file():
+        return None
+    try:
+        text = launcher.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if len(text) > 256 * 1024:
+        return None
+    match = re.search(r"(?m)^\s*VERSION\s*=\s*['\"]?([0-9][0-9A-Za-z._-]*)['\"]?\s*$", text)
+    if not match:
+        return None
+    version = match.group(1)
+    distribution_markers = (
+        "services.gradle.org/distributions/gradle-$VERSION-bin.zip",
+        "services.gradle.org/distributions/gradle-${VERSION}-bin.zip",
+    )
+    if not any(marker in text for marker in distribution_markers):
+        return None
+    if "bin/gradle" not in text or "exec " not in text:
+        return None
+    return version
+
+
 def gradle_wrapper_state(project_root: Path) -> GradleWrapperState:
     files = (
         ("gradlew", project_root / "gradlew"),
@@ -1577,6 +1819,8 @@ def gradle_wrapper_state(project_root: Path) -> GradleWrapperState:
         ("gradle/wrapper/gradle-wrapper.jar", project_root / "gradle" / "wrapper" / "gradle-wrapper.jar"),
     )
     present = any(path.exists() for _, path in files)
+    if standalone_gradle_wrapper_version(project_root):
+        return GradleWrapperState(present=True, complete=True, missing=())
     missing = tuple(label for label, path in files if not path.is_file())
     return GradleWrapperState(present=present, complete=present and not missing, missing=missing)
 
@@ -2171,12 +2415,6 @@ def android_build_tool_executes(path: Path, tool_name: str, *, timeout: float = 
         "split-select": ("--help",),
         "aapt2": ("version",),
     }
-    accepted_returncodes = {
-        "aidl": {0},
-        "aapt2": {0},
-        "zipalign": {0, 1},
-        "split-select": {0, 1},
-    }
     fatal_markers = (
         "syntax error",
         "exec format error",
@@ -2185,6 +2423,7 @@ def android_build_tool_executes(path: Path, tool_name: str, *, timeout: float = 
         "bad elf",
         "wrong elf class",
         "no such file or directory",
+        "cannot link executable",
         "linker:",
         "could not load",
     )
@@ -2208,7 +2447,11 @@ def android_build_tool_executes(path: Path, tool_name: str, *, timeout: float = 
     ).decode("utf-8", errors="replace").lower()
     if any(marker in output for marker in fatal_markers):
         return False
-    return result.returncode in accepted_returncodes.get(tool_name, {0, 1})
+    # Host compatibility asks whether the binary can *start*, not whether a
+    # harmless help/usage probe is semantically successful. Different Android
+    # SDK builds return 0, 1, 2, or even 255 for these probes. Negative values
+    # mean termination by signal; 126/127 are conventional launcher failures.
+    return result.returncode >= 0 and result.returncode not in {126, 127}
 
 def native_android_build_tool_compatible(path: Path, tool_name: str, machine: str | None = None) -> bool:
     if not native_tool_matches_host(path, machine):
@@ -2249,12 +2492,394 @@ def ndk_google_tool_bin(sdk_root: Path, version: str) -> Path:
     return ndk_root_for_version(sdk_root, version) / "toolchains" / "llvm" / "prebuilt" / ndk_google_host_tag() / "bin"
 
 
+def ndk_legacy_cmake_arm_host_tag() -> str:
+    # CMake 3.22 (and several later releases) maps any Linux host processor
+    # other than x86_64 to the historical ``linux-x86`` Android NDK host tag.
+    # On AArch64 hosts that makes CMAKE_ANDROID_NDK_TOOLCHAIN_UNIFIED empty
+    # when a modern NDK only exposes linux-x86_64 (or an ARM64 compatibility
+    # prebuilt), and CMake then constructs broken paths such as
+    # ``toolchains/llvm/prebuilt/bin/clang++``.  Devtool keeps the canonical
+    # compatibility toolchain under linux-x86_64 and exposes this legacy alias
+    # for ARM-hosted CMake discovery.
+    return "linux-x86"
+
+
+def ensure_ndk_legacy_cmake_arm_alias(sdk_root: Path, version: str, *, dry_run: bool) -> bool:
+    if normalized_machine() not in {"arm64", "armv7"}:
+        return True
+    prebuilt = ndk_prebuilt_root(ndk_root_for_version(sdk_root, version))
+    canonical = prebuilt / ndk_google_host_tag()
+    if not canonical.is_dir():
+        return False
+    legacy = prebuilt / ndk_legacy_cmake_arm_host_tag()
+    try:
+        if legacy.exists() or legacy.is_symlink():
+            if legacy.resolve(strict=True) == canonical.resolve(strict=True):
+                return True
+    except OSError:
+        pass
+
+    backup = legacy.with_name(legacy.name + ".devtool-original")
+    if dry_run:
+        info(f"Would expose NDK host toolchain for ARM-hosted CMake as {legacy}: {canonical}")
+        return True
+
+    if legacy.exists() or legacy.is_symlink():
+        if not backup.exists() and not backup.is_symlink():
+            legacy.rename(backup)
+        elif legacy.is_dir() and not legacy.is_symlink():
+            shutil.rmtree(legacy)
+        else:
+            legacy.unlink(missing_ok=True)
+    # Use a relative alias so cached SDK trees remain movable.
+    legacy.symlink_to(canonical.name, target_is_directory=True)
+    info(f"Exposed NDK host toolchain for ARM-hosted CMake as {legacy}: {canonical}")
+    return legacy.is_dir() and (legacy / "bin" / "clang++").is_file()
+
+
+def ensure_ndk_empty_host_tag_compat(sdk_root: Path, version: str, *, dry_run: bool) -> bool:
+    """Make an empty NDK host tag resolve to Devtool's normalized toolchain.
+
+    Some CMake/NDK combinations running natively under Termux can still reach
+    the legacy toolchain with ``ANDROID_HOST_TAG`` unset.  The NDK then forms
+    ``toolchains/llvm/prebuilt/bin`` and ``.../prebuilt/sysroot`` rather than
+    using a host-tagged directory.  Expose only those two compatibility
+    entries at the prebuilt root so that even this empty-tag path resolves to
+    the canonical ``linux-x86_64`` tree that Devtool has already made runnable.
+
+    Existing real entries are preserved once as ``.devtool-original``.
+    Relative symlinks keep cached SDK trees relocatable.
+    """
+
+    if not running_under_termux_python():
+        return True
+    prebuilt = ndk_prebuilt_root(ndk_root_for_version(sdk_root, version))
+    canonical = prebuilt / ndk_google_host_tag()
+    if not canonical.is_dir():
+        return False
+
+    aliases = (("bin", canonical / "bin"), ("sysroot", canonical / "sysroot"))
+    for name, target in aliases:
+        if not target.exists():
+            return False
+        alias = prebuilt / name
+        try:
+            if alias.is_symlink() and alias.resolve(strict=True) == target.resolve(strict=True):
+                continue
+        except OSError:
+            pass
+
+        backup = alias.with_name(alias.name + ".devtool-original")
+        if dry_run:
+            info(f"Would expose empty NDK host-tag compatibility path {alias}: {target}")
+            continue
+
+        if alias.exists() or alias.is_symlink():
+            if not backup.exists() and not backup.is_symlink():
+                alias.rename(backup)
+            elif alias.is_dir() and not alias.is_symlink():
+                shutil.rmtree(alias)
+            else:
+                alias.unlink(missing_ok=True)
+        alias.symlink_to(Path(ndk_google_host_tag()) / name, target_is_directory=True)
+        info(f"Exposed empty NDK host-tag compatibility path {alias}: {target}")
+
+    if dry_run:
+        return True
+    return (prebuilt / "bin" / "clang++").is_file() and (prebuilt / "sysroot").is_dir()
+
+
+def ensure_ndk_cmake_termux_host_support(sdk_root: Path, version: str, *, dry_run: bool) -> bool:
+    """Teach the NDK CMake toolchain that native Termux is a supported host.
+
+    CMake reports ``CMAKE_HOST_SYSTEM_NAME=Android`` when its executable runs
+    natively under Termux.  The Android NDK's recommended legacy toolchain
+    historically assigns ``ANDROID_HOST_TAG`` only for Linux, Darwin, and
+    Windows.  On Termux that leaves the tag empty and produces paths such as
+    ``toolchains/llvm/prebuilt/bin/clang++``.
+
+    Devtool already normalizes a runnable host toolchain under
+    ``linux-x86_64`` (native ARM64 or QEMU-wrapped), so extend the NDK's Linux
+    host branch to Android as well.  Preserve the pristine file once and make
+    the edit idempotent.
+    """
+
+    if not running_under_termux_python():
+        return True
+
+    cmake_dir = ndk_root_for_version(sdk_root, version) / "build" / "cmake"
+    candidates = (
+        cmake_dir / "android-legacy.toolchain.cmake",
+        cmake_dir / "android.toolchain.cmake",
+    )
+    required = candidates[0] if candidates[0].is_file() else candidates[1]
+    if not required.is_file():
+        return False
+
+    pattern = re.compile(
+        r'(?m)^(?P<indent>[ \t]*)if\(CMAKE_HOST_SYSTEM_NAME STREQUAL ["\']?Linux["\']?\)'
+        r'(?P<trailing>[ \t]*)\r?\n'
+        r'(?P<body>[ \t]+)set\(ANDROID_HOST_TAG[ \t]+linux-x86_64\)'
+    )
+
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text()
+        except OSError:
+            if path == required:
+                return False
+            continue
+
+        # Already patched (by Devtool or an upstream that gained Android-host
+        # support) as long as the Android branch selects the normalized tag.
+        host_window = re.search(
+            r'(?ms)if\([^\n]*CMAKE_HOST_SYSTEM_NAME[^\n]*Android[^\n]*\)'
+            r'.{0,240}?set\(ANDROID_HOST_TAG[ \t]+linux-x86_64\)',
+            text,
+        )
+        if host_window:
+            continue
+
+        match = pattern.search(text)
+        if match is None:
+            if path == required:
+                return False
+            continue
+
+        replacement = (
+            f"{match.group('indent')}if(CMAKE_HOST_SYSTEM_NAME STREQUAL Linux OR "
+            "CMAKE_HOST_SYSTEM_NAME STREQUAL Android)"
+            f"{match.group('trailing')}\n{match.group('body')}set(ANDROID_HOST_TAG linux-x86_64)"
+        )
+        patched = text[: match.start()] + replacement + text[match.end() :]
+        if dry_run:
+            info(f"Would enable native Termux/Android host support in NDK CMake toolchain: {path}")
+            continue
+
+        backup = path.with_name(path.name + ".devtool-original")
+        try:
+            if not backup.exists():
+                shutil.copy2(path, backup)
+            mode = path.stat().st_mode
+            temporary = path.with_name(path.name + f".devtool-{os.getpid()}.tmp")
+            temporary.write_text(patched)
+            os.chmod(temporary, mode)
+            os.replace(temporary, path)
+        except OSError:
+            try:
+                temporary.unlink(missing_ok=True)
+            except (OSError, UnboundLocalError):
+                pass
+            if path == required:
+                return False
+            continue
+        info(f"Enabled native Termux/Android host support in NDK CMake toolchain: {path}")
+
+    try:
+        final = required.read_text()
+    except OSError:
+        return False
+    return bool(
+        re.search(
+            r'(?ms)if\([^\n]*CMAKE_HOST_SYSTEM_NAME[^\n]*Android[^\n]*\)'
+            r'.{0,240}?set\(ANDROID_HOST_TAG[ \t]+linux-x86_64\)',
+            final,
+        )
+    )
+
+
 def ndk_clangxx(sdk_root: Path, version: str) -> Path:
     return ndk_google_tool_bin(sdk_root, version) / "clang++"
 
 
 def ndk_host_toolchain_runs(sdk_root: Path, version: str) -> bool:
     return executable_runs(ndk_clangxx(sdk_root, version), "--version")
+
+
+def ndk_host_linker_runs(sdk_root: Path, version: str) -> bool:
+    """Return whether the NDK ELF linker entry point selects a real LLD flavor.
+
+    LLVM's ``lld`` executable is a multi-call driver.  Android NDKs normally
+    expose ``ld.lld`` as a symlink/hardlink to it, and the invoked basename is
+    what selects the ELF linker flavor.  A host shim or QEMU wrapper that loses
+    that argv[0] identity can make clang compilation succeed but linking fail
+    with "lld is a generic driver".
+    """
+
+    linker = ndk_google_tool_bin(sdk_root, version) / "ld.lld"
+    return executable_runs(linker, "--version")
+
+
+def ndk_clang_resource_dir(sdk_root: Path, version: str) -> Path | None:
+    """Locate the Clang resource directory shipped by the selected NDK.
+
+    The NDK keeps compiler-rt, libunwind, libatomic compatibility archives,
+    and Clang builtin headers below the host prebuilt's lib/clang tree. QEMU
+    wrappers cannot rely on Clang inferring this location from a wrapper or
+    backup executable name, so Devtool resolves it directly from the NDK.
+    """
+
+    host_root = ndk_google_tool_bin(sdk_root, version).parent
+    candidates: list[Path] = []
+    for clang_root in (host_root / "lib" / "clang", host_root / "lib64" / "clang"):
+        if not clang_root.is_dir():
+            continue
+        for child in clang_root.iterdir():
+            try:
+                if child.is_dir() and (child / "lib" / "linux").is_dir():
+                    candidates.append(child)
+            except OSError:
+                continue
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: version_key(item.name))
+
+
+def ndk_host_android_link_runs(sdk_root: Path, version: str) -> bool:
+    """Smoke-link minimal Android programs for arm64 and x86_64.
+
+    ``clang++ --version`` and ``-print-resource-dir`` can both succeed while
+    real Android links still use Termux's compiler runtime or miss the NDK's
+    libunwind/libatomic. This probe exercises the exact runtime/linker pieces
+    CMake needs before Devtool reports the NDK as host-compatible.
+    """
+
+    compiler = ndk_clangxx(sdk_root, version)
+    sysroot = compiler.parent.parent / "sysroot"
+    if not compiler.is_file() or not sysroot.is_dir():
+        return False
+    targets = ("aarch64-none-linux-android21", "x86_64-none-linux-android21")
+    try:
+        with tempfile.TemporaryDirectory(prefix="devtool-ndk-link-") as temporary:
+            root = Path(temporary)
+            source = root / "main.cpp"
+            source.write_text("int main() { return 0; }\n", encoding="utf-8")
+            for index, target in enumerate(targets):
+                result = subprocess.run(
+                    [
+                        str(compiler),
+                        f"--target={target}",
+                        f"--sysroot={sysroot}",
+                        "-static-libstdc++",
+                        "-Wl,--no-undefined",
+                        str(source),
+                        "-o",
+                        str(root / f"probe-{index}"),
+                        "-latomic",
+                        "-lm",
+                    ],
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    return False
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+def ndk_host_resource_dir_ready(sdk_root: Path, version: str) -> bool:
+    """Return whether clang resolves its runtime resource dir inside the NDK.
+
+    QEMU's ``-0`` controls guest argv[0].  Passing only ``clang++`` preserves
+    driver mode, but it drops the absolute NDK installation path that Clang
+    uses to locate ``../lib/clang/<version>``.  On Termux that can make the NDK
+    compiler silently use ``$PREFIX/lib/clang`` and then fail to find Android
+    compiler-rt, libunwind, or libatomic at link time.
+    """
+
+    compiler = ndk_clangxx(sdk_root, version)
+    if not compiler.is_file():
+        return False
+    try:
+        result = subprocess.run(
+            [str(compiler), "-print-resource-dir"],
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0:
+        return False
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not lines:
+        return False
+    resource = Path(lines[-1]).expanduser()
+    if not resource.is_absolute() or not resource.is_dir():
+        return False
+    ndk_root = ndk_root_for_version(sdk_root, version)
+    try:
+        resource.resolve(strict=True).relative_to(ndk_root.resolve(strict=True))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def ensure_ndk_termux_multicall_aliases(sdk_root: Path, version: str, *, dry_run: bool) -> bool:
+    """Materialize executable NDK bin symlinks as hardlinks on native Termux.
+
+    Termux's exec interposition can resolve an executable symlink before the
+    target program observes argv[0].  LLVM deliberately uses argv[0] for
+    multi-call entry points such as clang++/clang and ld.lld/lld.  Replacing
+    same-directory executable symlinks with hardlinks preserves the visible
+    entry-point name without duplicating the large LLVM binaries.
+    """
+
+    if not running_under_termux_python():
+        return True
+    bin_dir = ndk_google_tool_bin(sdk_root, version)
+    if not bin_dir.is_dir():
+        return False
+    try:
+        resolved_bin = bin_dir.resolve(strict=True)
+    except OSError:
+        return False
+
+    for alias in sorted(bin_dir.iterdir()):
+        if not alias.is_symlink():
+            continue
+        try:
+            target = alias.resolve(strict=True)
+            if target.parent.resolve(strict=True) != resolved_bin or not target.is_file():
+                continue
+            if not os.access(target, os.X_OK):
+                continue
+        except OSError:
+            continue
+
+        backup = alias.with_name(alias.name + ".devtool-symlink")
+        if dry_run:
+            info(f"Would materialize NDK multi-call alias as hardlink: {alias} -> {target}")
+            continue
+        try:
+            if not backup.exists() and not backup.is_symlink():
+                alias.rename(backup)
+            else:
+                alias.unlink(missing_ok=True)
+            temporary = alias.with_name(alias.name + f".devtool-{os.getpid()}.tmp")
+            temporary.unlink(missing_ok=True)
+            os.link(target, temporary)
+            os.replace(temporary, alias)
+        except OSError:
+            try:
+                temporary.unlink(missing_ok=True)
+            except (OSError, UnboundLocalError):
+                pass
+            if not alias.exists() and backup.is_symlink():
+                try:
+                    backup.rename(alias)
+                except OSError:
+                    pass
+            return False
+        info(f"Materialized NDK multi-call alias as hardlink: {alias} -> {target}")
+
+    return True
 
 
 def find_arm64_ndk_prebuilt(ndk_root: Path) -> Path | None:
@@ -2277,14 +2902,100 @@ def find_arm64_ndk_prebuilt(ndk_root: Path) -> Path | None:
     return None
 
 
+def finalize_arm_ndk_host_layout(sdk_root: Path, version: str, *, dry_run: bool) -> bool:
+    """Finish every compatibility view required by ARM-hosted Android builds.
+
+    A native ARM NDK may already expose its runnable prebuilt through the
+    canonical ``linux-x86_64`` name.  That does not mean CMake on Termux can
+    discover it: older CMake can request ``linux-x86`` and the NDK toolchain
+    can leave ``ANDROID_HOST_TAG`` empty on an Android host.  Finalization must
+    therefore run even when the canonical alias itself needed no changes.
+    """
+
+    if not ensure_ndk_termux_multicall_aliases(sdk_root, version, dry_run=dry_run):
+        return False
+    if not ensure_ndk_legacy_cmake_arm_alias(sdk_root, version, dry_run=dry_run):
+        return False
+    if not ensure_ndk_cmake_termux_host_support(sdk_root, version, dry_run=dry_run):
+        return False
+    if not ensure_ndk_empty_host_tag_compat(sdk_root, version, dry_run=dry_run):
+        return False
+    return dry_run or (
+        ndk_host_toolchain_runs(sdk_root, version)
+        and ndk_host_linker_runs(sdk_root, version)
+    )
+
+
+def restore_google_ndk_x86_64_prebuilt_for_qemu(
+    sdk_root: Path, version: str, *, dry_run: bool
+) -> bool:
+    """Restore the pristine Google linux-x86_64 prebuilt before QEMU wrapping.
+
+    Native ARM probing temporarily exposes an ARM-host prebuilt through the
+    canonical ``linux-x86_64`` path so AGP/CMake can discover it.  If that
+    candidate later fails the real Android link probes, QEMU fallback must not
+    wrap that mixed/native view: the x86_64 compiler, resource directory,
+    sysroot, and runtime libraries must all come from the same original Google
+    host prebuilt.  ``expose_arm64_ndk_as_linux_x86_64`` preserves that tree as
+    ``linux-x86_64.google-x86_64``; restore it atomically here.
+    """
+
+    ndk_root = ndk_root_for_version(sdk_root, version)
+    prebuilt_root = ndk_prebuilt_root(ndk_root)
+    google_tag = prebuilt_root / ndk_google_host_tag()
+    backup = google_tag.with_name(google_tag.name + ".google-x86_64")
+    if not backup.exists() or not backup.is_dir():
+        return True
+
+    # A pristine backup is only useful when it actually contains the expected
+    # x86_64 Google host compiler.  Refuse to replace the active tree with an
+    # unrelated or already-damaged directory.
+    backup_clang = backup / "bin" / "clang++"
+    candidate = x86_64_binary_candidate(backup_clang)
+    if candidate is None and native_tool_arch(backup_clang) != "x86_64":
+        warn(f"Ignoring non-x86_64 Google NDK backup during QEMU fallback: {backup}")
+        return False
+
+    if dry_run:
+        info(f"Would restore pristine Google NDK host prebuilt for QEMU: {backup} -> {google_tag}")
+        return True
+
+    displaced = google_tag.with_name(google_tag.name + ".devtool-arm-host")
+    try:
+        if displaced.exists() or displaced.is_symlink():
+            if displaced.is_symlink() or displaced.is_file():
+                displaced.unlink(missing_ok=True)
+            else:
+                shutil.rmtree(displaced)
+        if google_tag.exists() or google_tag.is_symlink():
+            google_tag.rename(displaced)
+        backup.rename(google_tag)
+    except OSError as exc:
+        # Best-effort rollback: never leave the canonical host tag absent.
+        try:
+            if not google_tag.exists() and not google_tag.is_symlink() and displaced.exists():
+                displaced.rename(google_tag)
+        except OSError:
+            pass
+        warn(f"Could not restore pristine Google NDK host prebuilt for QEMU: {exc}")
+        return False
+
+    info(f"Restored pristine Google NDK host prebuilt for QEMU: {google_tag}")
+    return True
+
+
 def expose_arm64_ndk_as_linux_x86_64(sdk_root: Path, version: str, *, dry_run: bool) -> bool:
     ndk_root = ndk_root_for_version(sdk_root, version)
     arm_prebuilt = find_arm64_ndk_prebuilt(ndk_root)
     if arm_prebuilt is None:
         return False
     google_tag = ndk_prebuilt_root(ndk_root) / ndk_google_host_tag()
-    if google_tag.resolve() == arm_prebuilt.resolve():
-        return True
+    try:
+        already_exposed = google_tag.resolve(strict=True) == arm_prebuilt.resolve(strict=True)
+    except OSError:
+        already_exposed = False
+    if already_exposed:
+        return finalize_arm_ndk_host_layout(sdk_root, version, dry_run=dry_run)
     if google_tag.exists() or google_tag.is_symlink():
         backup = google_tag.with_name(google_tag.name + ".google-x86_64")
         if not backup.exists():
@@ -2305,7 +3016,7 @@ def expose_arm64_ndk_as_linux_x86_64(sdk_root: Path, version: str, *, dry_run: b
         return True
     google_tag.symlink_to(arm_prebuilt, target_is_directory=True)
     info(f"Exposed ARM64 NDK host prebuilt as {google_tag}: {arm_prebuilt}")
-    return ndk_host_toolchain_runs(sdk_root, version)
+    return finalize_arm_ndk_host_layout(sdk_root, version, dry_run=dry_run)
 
 
 def find_extracted_ndk_root(directory: Path) -> Path | None:
@@ -2584,6 +3295,31 @@ def wrapper_mentions_devtool(path: Path) -> bool:
     return "devtool-x86_64" in head and "qemu" in head
 
 
+def qemu_wrapper_real_binary(path: Path) -> Path | None:
+    """Recover the preserved x86_64 ELF referenced by a Devtool wrapper."""
+
+    if not wrapper_mentions_devtool(path):
+        return None
+    import shlex
+
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if not line.startswith("exec "):
+            continue
+        try:
+            tokens = shlex.split(line[5:])
+        except ValueError:
+            continue
+        for token in tokens:
+            candidate = Path(token)
+            if candidate.name.endswith(".devtool-x86_64") and native_tool_arch(candidate) == "x86_64":
+                return candidate
+    return None
+
+
 def x86_64_binary_candidate(path: Path) -> Path | None:
     """Return an x86_64 ELF executable for an NDK bin entry.
 
@@ -2605,6 +3341,10 @@ def x86_64_binary_candidate(path: Path) -> Path | None:
         if native_tool_arch(resolved) == "x86_64":
             return resolved
         return None
+
+    wrapped_real = qemu_wrapper_real_binary(path)
+    if wrapped_real is not None:
+        return wrapped_real
 
     backup = ndk_wrapped_backup(path)
     if backup.exists():
@@ -2664,13 +3404,45 @@ def snapshot_ndk_x86_64_targets(bin_dir: Path) -> dict[Path, Path]:
     return targets
 
 
-def write_qemu_wrapper(wrapper: Path, real_binary: Path, qemu: Path, ld_prefix: Path | None, *, dry_run: bool) -> None:
+def write_qemu_wrapper(
+    wrapper: Path,
+    real_binary: Path,
+    qemu: Path,
+    ld_prefix: Path | None,
+    *,
+    dry_run: bool,
+    clang_resource_dir: Path | None = None,
+) -> None:
     import shlex
 
     qemu_parts = [shlex.quote(str(qemu))]
     if ld_prefix is not None:
         qemu_parts.extend(["-L", shlex.quote(str(ld_prefix))])
-    script = "#!/bin/sh\nexec " + " ".join(qemu_parts) + " " + shlex.quote(str(real_binary)) + " \"$@\"\n"
+    # Do not pass Termux's host preload into the Linux/x86_64 guest.  The
+    # preload object is built for the Android host and guest ld.so cannot use
+    # it.  qemu-user's -U removes it from the target environment.
+    qemu_parts.extend(["-U", "LD_PRELOAD"])
+    # qemu-user's -0 option preserves the visible NDK entry-point name for
+    # multi-call LLVM binaries (clang++/clang, ld.lld/lld, llvm-ranlib, ...).
+    qemu_parts.extend(["-0", shlex.quote(str(wrapper))])
+    guest_args: list[str] = []
+    if clang_resource_dir is not None and wrapper.name in {"clang", "clang++"}:
+        # Force the NDK's compiler runtime location. Under qemu-user Clang can
+        # otherwise derive ResourceDir from the preserved backing ELF or host
+        # installation and silently fall back to Termux's $PREFIX/lib/clang.
+        guest_args.extend(["-resource-dir", shlex.quote(str(clang_resource_dir))])
+    tail = " ".join(guest_args)
+    if tail:
+        tail += " "
+    script = (
+        "#!/bin/sh\nexec "
+        + " ".join(qemu_parts)
+        + " "
+        + shlex.quote(str(real_binary))
+        + " "
+        + tail
+        + '"$@"\n'
+    )
     if dry_run:
         info(f"Would install QEMU wrapper: {wrapper} -> {real_binary}")
         return
@@ -2700,7 +3472,12 @@ def install_qemu_ndk_wrappers(
     clang = bin_dir / "clang++"
     if not clang.is_file():
         return False
-    if ndk_host_toolchain_runs(sdk_root, version):
+    if (
+        ndk_host_toolchain_runs(sdk_root, version)
+        and ndk_host_linker_runs(sdk_root, version)
+        and ndk_host_resource_dir_ready(sdk_root, version)
+        and ndk_host_android_link_runs(sdk_root, version)
+    ):
         return True
     if normalized_machine() not in {"arm64", "armv7"}:
         return False
@@ -2731,6 +3508,12 @@ def install_qemu_ndk_wrappers(
     targets = snapshot_ndk_x86_64_targets(bin_dir)
     if not targets:
         return False
+    resource_dir = ndk_clang_resource_dir(sdk_root, version)
+    if resource_dir is None:
+        fail(
+            f"Android NDK {version} does not contain a usable Clang resource directory under "
+            f"{bin_dir.parent}. The NDK package is incomplete or malformed."
+        )
 
     # Preserve all direct ELF executables before writing any wrapper.  This is
     # critical for NDK symlinks such as clang++ -> clang: a wrapper must never
@@ -2749,7 +3532,14 @@ def install_qemu_ndk_wrappers(
         if not dry_run and (not real.is_file() or native_tool_arch(real) != "x86_64"):
             warn(f"Skipping NDK QEMU wrapper with non-ELF target: {path} -> {real}")
             continue
-        write_qemu_wrapper(path, real, qemu, ld_prefix, dry_run=dry_run)
+        write_qemu_wrapper(
+            path,
+            real,
+            qemu,
+            ld_prefix,
+            dry_run=dry_run,
+            clang_resource_dir=resource_dir,
+        )
     if dry_run:
         return True
     if not ndk_host_toolchain_runs(sdk_root, version):
@@ -2760,6 +3550,39 @@ def install_qemu_ndk_wrappers(
             f"QEMU loader prefix: {ld_prefix or 'none'}\n"
             "Devtool tried to provision an x86_64 sysroot automatically. If this still fails, "
             "configure --qemu-sysroot-url to a trusted amd64 rootfs or configure an ARM64 NDK URL."
+        )
+    if not ndk_host_linker_runs(sdk_root, version):
+        fail(
+            "QEMU NDK wrappers can execute clang++, but the Android ELF linker entry point "
+            "still does not select ld.lld mode. Devtool preserved argv[0] for LLVM multi-call "
+            "tools, but ld.lld --version still failed."
+        )
+    if not ndk_host_resource_dir_ready(sdk_root, version):
+        fail(
+            "QEMU NDK wrappers can execute clang++ and ld.lld, but clang resolves its runtime "
+            "resource directory outside the NDK."
+        )
+    if not ndk_host_android_link_runs(sdk_root, version):
+        fail(
+            "QEMU NDK wrappers can execute clang++ and ld.lld, but the compiler cannot link "
+            "minimal Android arm64/x86_64 programs with the NDK compiler-rt/libunwind/libatomic "
+            "runtime set. Devtool forced the NDK Clang resource directory, so this usually means "
+            "the NDK package itself is incomplete."
+        )
+    if not ensure_ndk_legacy_cmake_arm_alias(sdk_root, version, dry_run=dry_run):
+        fail(
+            "QEMU NDK wrapper is executable, but Devtool could not expose the legacy linux-x86 "
+            "host tag required by ARM-hosted CMake discovery."
+        )
+    if not ensure_ndk_cmake_termux_host_support(sdk_root, version, dry_run=dry_run):
+        fail(
+            "QEMU NDK wrapper is executable, but Devtool could not enable native Termux/Android "
+            "host detection in the NDK CMake toolchain."
+        )
+    if not ensure_ndk_empty_host_tag_compat(sdk_root, version, dry_run=dry_run):
+        fail(
+            "QEMU NDK wrapper is executable, but Devtool could not expose the empty host-tag "
+            "compatibility paths used by native Termux CMake."
         )
     info(f"QEMU NDK wrapper ready: {clang}")
     return True
@@ -2799,34 +3622,101 @@ def ensure_ndk_host_compatible(
     # trusted unofficial NDK, while still falling back to QEMU when no native
     # toolchain is available.
     if machine in {"arm64", "armv7"} and provider in {"auto", "arm64"}:
-        if expose_arm64_ndk_as_linux_x86_64(sdk_root, version, dry_run=dry_run):
-            return
+        # Exposing or installing a native ARM prebuilt only proves that its host
+        # executables can be reached under the canonical linux-x86_64 layout.
+        # Do not return here: the NDK still has to pass the linker, resource-dir,
+        # and real Android runtime-link probes below.  Returning early used to
+        # let a Termux-host clang++ that sourced $PREFIX/lib/clang reach CMake
+        # even though it could not link a trivial Android executable.
+        native_candidate = expose_arm64_ndk_as_linux_x86_64(
+            sdk_root, version, dry_run=dry_run
+        )
         configured_url = arm64_ndk_url or os.environ.get("DEVTOOL_ARM64_NDK_URL", "").strip()
-        if configured_url and obtain_unofficial_arm64_ndk(
-            sdk_root,
-            version,
-            cache_root,
-            url=configured_url,
-            offline=offline,
-            force=force,
-            dry_run=dry_run,
-        ):
-            return
-        if provider == "arm64":
+        if not native_candidate and configured_url:
+            native_candidate = obtain_unofficial_arm64_ndk(
+                sdk_root,
+                version,
+                cache_root,
+                url=configured_url,
+                offline=offline,
+                force=force,
+                dry_run=dry_run,
+            )
+        if provider == "arm64" and not native_candidate:
             fail(
                 "An ARM64-host NDK was requested, but no runnable ARM64 prebuilt was found.\n"
                 "Set --arm64-ndk-url or DEVTOOL_ARM64_NDK_URL to a trusted unofficial NDK archive."
             )
 
     if ndk_host_toolchain_runs(sdk_root, version):
-        info(f"NDK host toolchain executable: {version}")
-        return
+        if machine in {"arm64", "armv7"} and not ensure_ndk_termux_multicall_aliases(
+            sdk_root, version, dry_run=dry_run
+        ):
+            fail(
+                "NDK host compiler is executable, but Devtool could not preserve LLVM "
+                "multi-call tool identities for native Termux execution."
+            )
+        if machine in {"arm64", "armv7"} and not ensure_ndk_legacy_cmake_arm_alias(
+            sdk_root, version, dry_run=dry_run
+        ):
+            fail(
+                "NDK host compiler is executable, but the NDK cannot be exposed under the "
+                "legacy linux-x86 tag used by ARM-hosted CMake."
+            )
+        if machine in {"arm64", "armv7"} and not ensure_ndk_cmake_termux_host_support(
+            sdk_root, version, dry_run=dry_run
+        ):
+            fail(
+                "NDK host compiler is executable, but Devtool could not enable native "
+                "Termux/Android host detection in the NDK CMake toolchain."
+            )
+        if machine in {"arm64", "armv7"} and not ensure_ndk_empty_host_tag_compat(
+            sdk_root, version, dry_run=dry_run
+        ):
+            fail(
+                "NDK host compiler is executable, but Devtool could not expose the empty "
+                "host-tag compatibility paths used by native Termux CMake."
+            )
+        linker_ready = ndk_host_linker_runs(sdk_root, version)
+        resource_ready = ndk_host_resource_dir_ready(sdk_root, version)
+        link_ready = ndk_host_android_link_runs(sdk_root, version) if linker_ready and resource_ready else False
+        if linker_ready and resource_ready and link_ready:
+            info(f"NDK host toolchain executable and Android link-ready: {version}")
+            return
+        if provider not in {"auto", "qemu"}:
+            problems: list[str] = []
+            if not linker_ready:
+                problems.append("ld.lld does not select a usable ELF linker")
+            if not resource_ready:
+                problems.append("clang resource directory resolves outside the NDK")
+            elif not link_ready:
+                problems.append("Android compiler runtime link probe fails")
+            fail(f"NDK {version} clang++ executes, but " + " and ".join(problems) + ".")
+        problems: list[str] = []
+        if not linker_ready:
+            problems.append("ld.lld is not usable")
+        if not resource_ready:
+            problems.append("clang resource directory escapes the NDK")
+        elif not link_ready:
+            problems.append("Android compiler runtime link probe fails")
+        warn(
+            f"NDK {version} compiler executes but {' and '.join(problems)}; rebuilding QEMU "
+            "wrappers with preserved LLVM argv[0] identity and installation path."
+        )
     if machine not in {"arm64", "armv7"}:
         fail(f"NDK {version} is installed but clang++ cannot run on this host: {ndk_clangxx(sdk_root, version)}")
     if provider == "none":
         warn(f"NDK host compatibility repair disabled; native Gradle tasks may fail: {ndk_clangxx(sdk_root, version)}")
         return
     if provider in {"auto", "qemu"}:
+        if not restore_google_ndk_x86_64_prebuilt_for_qemu(
+            sdk_root, version, dry_run=dry_run
+        ):
+            if provider == "qemu":
+                fail(
+                    "QEMU NDK fallback was requested, but Devtool could not restore the "
+                    "pristine Google linux-x86_64 NDK host prebuilt after native ARM probing."
+                )
         if install_qemu_ndk_wrappers(
             sdk_root,
             version,
@@ -2852,7 +3742,7 @@ def ensure_ndk_host_compatible(
             "Use --ndk-host-provider qemu or configure --arm64-ndk-url."
         )
     warn(
-        f"NDK {version} host compiler is still not executable on {machine}. "
+        f"NDK {version} host toolchain is still not fully usable on {machine}. "
         "Native/CMake Gradle tasks may fail. Configure [android].ndk_host_provider='qemu' "
         "or set [android].arm64_ndk_url to a trusted ARM64 NDK archive."
     )
@@ -3075,7 +3965,20 @@ def ensure_arm64_build_tools_compatible(
     sources: dict[str, Path] = {}
     for tool_name in selected:
         source: Path | None = None
-        if provider in {"auto", "termux"} and running_under_termux_python():
+        if provider == "auto":
+            donor = compatible_build_tools_donor(
+                sdk_root,
+                build_tools_version,
+                tool_name,
+                machine="arm64",
+            )
+            if donor is not None:
+                source = donor
+                info(
+                    f"Using SDK-native {tool_name} donor from Build Tools "
+                    f"{donor.parent.name}: {donor}"
+                )
+        if source is None and provider in {"auto", "termux"} and running_under_termux_python():
             if provider_evidence is not None:
                 decision = next((item for item in provider_evidence.android_tools if item.capability == tool_name), None)
                 candidate = decision.path if decision is not None and decision.compatible else None
@@ -3629,6 +4532,31 @@ def managed_sdk_root_for_host(cache_root: Path) -> Path:
     return (cache_root / f"android-sdk-{normalized_machine()}").expanduser().resolve()
 
 
+def termux_can_repair_sdk_build_tools(sdk_root: Path) -> bool:
+    """Return whether native Termux can repair all incompatible ARM build tools.
+
+    On ARM64 Termux an SDK may look repairable merely because it is writable,
+    while one or more required helpers (most commonly ``zipalign`` or
+    ``split-select``) are unavailable as Bionic-native executables. In that
+    case ``sdk_provider=auto`` should prefer a host-compatible external SDK
+    rather than selecting the SDK and failing later in the repair phase.
+    """
+
+    if not running_under_termux_python() or normalized_machine() != "arm64":
+        return True
+    versions = installed_build_tools_versions(sdk_root)
+    if not versions:
+        return True
+    for version in versions[:2]:
+        for tool_name in arm64_build_tools_replacements_needed(sdk_root, version):
+            candidate = termux_tool_path(tool_name)
+            if candidate is None or not native_android_build_tool_compatible(
+                candidate, tool_name, "arm64"
+            ):
+                return False
+    return True
+
+
 def sdk_root_is_writable_for_install(sdk_root: Path) -> bool:
     """Return whether SDK components can be created below ``sdk_root``."""
 
@@ -3795,6 +4723,13 @@ def canonical_build_tools_package_id(value: str) -> str | None:
     return packaged.group(1) if packaged else None
 
 
+def _build_tools_version_key(value: str) -> tuple[int, ...]:
+    return tuple(
+        int(part) if part.isdigit() else 0
+        for part in re.split(r"[.-]", value)
+    )
+
+
 def installed_build_tools_versions(sdk_root: Path) -> list[str]:
     root = sdk_root / "build-tools"
     if not root.is_dir():
@@ -3808,13 +4743,91 @@ def installed_build_tools_versions(sdk_root: Path) -> list[str]:
         if canonical is not None:
             versions.add(canonical)
 
-    def key(value: str) -> tuple[int, ...]:
-        return tuple(
-            int(part) if part.isdigit() else 0
-            for part in re.split(r"[.-]", value)
-        )
+    return sorted(versions, key=_build_tools_version_key, reverse=True)
 
-    return sorted(versions, key=key, reverse=True)
+
+def build_tools_is_ready(sdk_root: Path, version: str) -> bool:
+    """Return whether an SDK Build Tools package is complete enough for AGP.
+
+    A directory alone is not evidence that ``sdkmanager`` completed. Devtool's
+    ARM64 repair path can also populate native executables into a partially
+    created directory. AGP still rejects such a tree because the SDK package
+    metadata and Java payload are missing. Require the canonical package
+    revision plus the D8/R8 jar before treating the exact revision as present.
+    Native host binaries are validated/repaired separately afterwards.
+    """
+
+    canonical = canonical_build_tools_package_id(version)
+    if canonical is None:
+        return False
+    directory = sdk_root / "build-tools" / canonical
+    if not directory.is_dir() or directory.is_symlink():
+        return False
+
+    revision = source_properties_revision(directory)
+    if revision is None or canonical_build_tools_package_id(revision) != canonical:
+        return False
+
+    # Modern Android Build Tools (the versions Devtool manages) ship D8/R8 as
+    # this jar. It is non-host-specific and therefore must come from a complete
+    # SDK package, not from the ARM64 executable repair layer.
+    if not (directory / "lib" / "d8.jar").is_file():
+        return False
+    return True
+
+
+def select_required_build_tools_version(
+    project: ProjectInfo,
+    sdk_root: Path,
+    override: str,
+) -> str | None:
+    """Resolve the Build Tools revision Gradle/AGP is expected to load.
+
+    A provider SDK may contain a newer Build Tools directory than the revision
+    expected by the project's AGP.  Treating "whatever is installed" as the
+    requirement can therefore pass Devtool readiness while Gradle later aborts
+    with e.g. ``Failed to find Build Tools revision 36.0.0``.
+    """
+
+    if override == "none":
+        return None
+    if override != "auto":
+        return override
+    if project.build_tools:
+        return project.build_tools
+    if project.compile_sdk is not None or project.agp_major is not None:
+        return default_build_tools_version(project)
+    installed = installed_build_tools_versions(sdk_root)
+    return installed[0] if installed else default_build_tools_version(project)
+
+
+def compatible_build_tools_donor(
+    sdk_root: Path,
+    target_version: str,
+    tool_name: str,
+    *,
+    machine: str = "arm64",
+) -> Path | None:
+    """Return a host-native tool from another compatible Build Tools revision.
+
+    External ARM64 SDKs sometimes ship a newer revision (for example 36.1.0)
+    while AGP requires the exact 36.0.0 package directory.  After sdkmanager
+    installs that exact package, reuse only the native executable from another
+    revision in the same Build Tools major line.  The package metadata/JARs stay
+    those of the exact requested revision.
+    """
+
+    target = canonical_build_tools_package_id(target_version)
+    if target is None:
+        return None
+    target_major = target.split(".", 1)[0]
+    for version in installed_build_tools_versions(sdk_root):
+        if version == target or version.split(".", 1)[0] != target_major:
+            continue
+        candidate = sdk_root / "build-tools" / version / tool_name
+        if native_android_build_tool_compatible(candidate, tool_name, machine):
+            return candidate
+    return None
 
 
 def source_properties_revision(directory: Path) -> str | None:
@@ -3989,6 +5002,515 @@ def clear_android_download_debris(sdk_root: Path, *, dry_run: bool) -> None:
                 info(f"Cleared Android download cache: {candidate}")
 
 
+def _nearest_existing_path(path: Path) -> Path:
+    candidate = path.expanduser().resolve(strict=False)
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return candidate
+
+
+def android_sdk_free_bytes(path: Path) -> int | None:
+    try:
+        return int(shutil.disk_usage(_nearest_existing_path(path)).free)
+    except OSError:
+        return None
+
+
+def _path_size_bytes(path: Path) -> int:
+    """Best-effort size for a file/tree without following symlink targets."""
+
+    try:
+        if path.is_symlink() or path.is_file():
+            return int(path.lstat().st_size)
+    except OSError:
+        return 0
+    if not path.is_dir():
+        return 0
+    total = 0
+    for root, dirs, files in os.walk(path, followlinks=False):
+        root_path = Path(root)
+        # Symlinked directories are entries, not storage owned by this tree.
+        kept_dirs: list[str] = []
+        for name in dirs:
+            candidate = root_path / name
+            try:
+                if candidate.is_symlink():
+                    total += int(candidate.lstat().st_size)
+                else:
+                    kept_dirs.append(name)
+            except OSError:
+                continue
+        dirs[:] = kept_dirs
+        for name in files:
+            candidate = root_path / name
+            try:
+                total += int(candidate.lstat().st_size)
+            except OSError:
+                continue
+    return total
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _staging_is_abandoned(path: Path) -> bool:
+    match = re.fullmatch(r"\.sdk-(\d+)\.tmp", path.name)
+    if match and _pid_is_alive(int(match.group(1))):
+        return False
+    # Be conservative with unrecognized staging names that were touched very
+    # recently; another Devtool process may still be using them.
+    if not match:
+        try:
+            if time.time() - path.stat().st_mtime < 3600:
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def _space_candidate(path: Path, category: str, reason: str, *, priority: int) -> SpaceReclaimCandidate | None:
+    if not path.exists() and not path.is_symlink():
+        return None
+    size = _path_size_bytes(path)
+    return SpaceReclaimCandidate(
+        path=Path(os.path.abspath(path.expanduser())),
+        category=category,
+        reason=reason,
+        size_bytes=size,
+        priority=priority,
+    )
+
+
+def _gradle_distribution_version_key(path: Path) -> tuple[int, ...]:
+    raw = path.name.removeprefix("gradle-")
+    values = [int(item) for item in re.findall(r"\d+", raw)]
+    return tuple(values) if values else (0,)
+
+
+def _managed_sdk_roots(cache_root: Path) -> list[Path]:
+    roots: list[Path] = []
+    for candidate in (cache_root / "android-sdk", cache_root / "android-sdk-arm64"):
+        if candidate.is_dir():
+            roots.append(candidate)
+    providers = cache_root / "android-sdk-providers"
+    if providers.is_dir():
+        for provider_root in providers.iterdir():
+            candidate = provider_root / "sdk"
+            if candidate.is_dir():
+                roots.append(candidate)
+    return roots
+
+
+def collect_android_space_candidates(
+    cache_root: Path,
+    *,
+    managed_gradle_retention: int = DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION,
+    include_gradle_user_cache: bool = False,
+    gradle_user_home: Path | None = None,
+) -> list[SpaceReclaimCandidate]:
+    """Return safe, regenerable cache candidates ordered by cleanup value.
+
+    Automatic cleanup intentionally stays inside Devtool-owned caches, plus the
+    standard Android download cache. The user's Gradle cache is only included
+    when explicitly requested. Active SDK/NDK/CMake trees and the extracted
+    QEMU sysroot are never candidates.
+    """
+
+    cache_root = cache_root.expanduser().resolve(strict=False)
+    candidates: list[SpaceReclaimCandidate] = []
+
+    def add(path: Path, category: str, reason: str, priority: int) -> None:
+        candidate = _space_candidate(path, category, reason, priority=priority)
+        if candidate is not None:
+            candidates.append(candidate)
+
+    providers = cache_root / "android-sdk-providers"
+    if providers.is_dir():
+        for provider_root in providers.iterdir():
+            if not provider_root.is_dir():
+                continue
+            current_sdk = _sdk_tree_candidate(provider_root / "sdk")
+            current_sdk_usable = bool(current_sdk is not None and sdk_host_compatible(current_sdk))
+            # Once a provider SDK is installed and host-usable, the original
+            # release archive is purely a redownload cache. Keep it while the
+            # SDK is absent/broken so cleanup cannot destroy the only local
+            # recovery payload.
+            if current_sdk_usable:
+                add(
+                    provider_root / "downloads",
+                    "provider-download",
+                    f"download archive for installed {provider_root.name} SDK",
+                    10,
+                )
+                add(
+                    provider_root / ".sdk.previous",
+                    "provider-backup",
+                    f"superseded {provider_root.name} SDK backup",
+                    30,
+                )
+            for staging in provider_root.glob(".sdk-*.tmp"):
+                if _staging_is_abandoned(staging):
+                    add(staging, "provider-staging", "abandoned SDK provider staging", 0)
+
+    add(cache_root / "downloads", "download-cache", "Devtool toolchain download cache", 10)
+    add(cache_root / "android" / "commandlinetools-linux-latest.zip", "download-cache", "Android command-line tools archive", 10)
+
+    qemu_root = cache_root / "qemu"
+    if (qemu_root / "x86_64-sysroot").is_dir():
+        add(qemu_root / "downloads", "download-cache", "QEMU sysroot source archive", 10)
+
+    for sdk_root in _managed_sdk_roots(cache_root):
+        add(sdk_root / ".devtool-old-cmdline-tools", "sdk-backup", "superseded Android command-line tools", 20)
+        temp = sdk_root / ".temp"
+        if temp.is_dir():
+            try:
+                stale = time.time() - temp.stat().st_mtime >= 3600
+            except OSError:
+                stale = False
+            if stale:
+                add(temp, "sdk-temp", "stale sdkmanager temporary files", 0)
+
+        noncanonical = sdk_root / ".devtool-noncanonical-build-tools"
+        if noncanonical.is_dir():
+            for backup in noncanonical.iterdir():
+                if not backup.is_dir():
+                    continue
+                version_match = re.match(r"(\d+(?:\.\d+)+)", backup.name)
+                if version_match and build_tools_is_ready(sdk_root, version_match.group(1)):
+                    add(backup, "sdk-backup", f"superseded Build Tools {version_match.group(1)} backup", 20)
+
+    android_user_cache = Path.home() / ".android" / "cache"
+    add(android_user_cache, "android-download-cache", "Android SDK download cache", 15)
+
+    gradle_root = cache_root / "gradle"
+    if gradle_root.is_dir():
+        managed = [
+            path for path in gradle_root.iterdir()
+            if path.is_dir() and re.fullmatch(r"gradle-[0-9][0-9A-Za-z._-]*", path.name)
+        ]
+        managed.sort(key=_gradle_distribution_version_key, reverse=True)
+        retain = max(0, int(managed_gradle_retention))
+        for old in managed[retain:]:
+            add(old, "managed-gradle", "old Devtool-managed Gradle distribution", 40)
+
+    if include_gradle_user_cache:
+        gradle_home = (gradle_user_home or Path.home() / ".gradle").expanduser().resolve(strict=False)
+        caches = gradle_home / "caches"
+        if caches.is_dir():
+            versioned = [
+                path for path in caches.iterdir()
+                if path.is_dir() and re.fullmatch(r"\d+(?:\.\d+)+(?:[-.][0-9A-Za-z_-]+)?", path.name)
+            ]
+            versioned.sort(key=lambda path: tuple(int(x) for x in re.findall(r"\d+", path.name)), reverse=True)
+            # Manual opt-in still keeps the newest version-specific cache.
+            for old in versioned[1:]:
+                add(old, "gradle-user-version-cache", "old Gradle version cache (explicit opt-in)", 60)
+            add(caches / "build-cache-1", "gradle-build-cache", "Gradle local build cache (explicit opt-in)", 70)
+
+    # Parent candidates subsume children. Keep only the highest-priority parent
+    # so dry-run totals do not double-count storage.
+    candidates.sort(key=lambda item: (item.priority, -item.size_bytes, str(item.path)))
+    kept: list[SpaceReclaimCandidate] = []
+    for candidate in candidates:
+        if any(parent.path == candidate.path or parent.path in candidate.path.parents for parent in kept):
+            continue
+        kept.append(candidate)
+    return kept
+
+
+def _acquire_space_cleanup_lock(cache_root: Path) -> Path | None:
+    lock = cache_root / ".space-cleanup.lock"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    for _attempt in range(2):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            try:
+                raw = lock.read_text(encoding="utf-8").strip()
+                pid = int(raw) if raw.isdigit() else 0
+            except (OSError, ValueError):
+                pid = 0
+            if pid and _pid_is_alive(pid):
+                return None
+            try:
+                lock.unlink()
+            except OSError:
+                return None
+            continue
+        else:
+            try:
+                os.write(fd, str(os.getpid()).encode("ascii"))
+            finally:
+                os.close(fd)
+            return lock
+    return None
+
+
+def _cleanup_android_space_locked(
+    cache_root: Path,
+    *,
+    target_free_bytes: int | None = None,
+    dry_run: bool = False,
+    managed_gradle_retention: int = DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION,
+    include_gradle_user_cache: bool = False,
+    gradle_user_home: Path | None = None,
+) -> SpaceCleanupReport:
+    """Prune safe caches until ``target_free_bytes`` is reached.
+
+    ``target_free_bytes=None`` means remove every safe candidate, which powers
+    the explicit ``devtool clean --space`` command. Automatic callers pass a
+    target and stop as soon as enough headroom has been recovered.
+    """
+
+    cache_root = cache_root.expanduser().resolve(strict=False)
+    free_before = android_sdk_free_bytes(cache_root)
+    candidates = collect_android_space_candidates(
+        cache_root,
+        managed_gradle_retention=managed_gradle_retention,
+        include_gradle_user_cache=include_gradle_user_cache,
+        gradle_user_home=gradle_user_home,
+    )
+    removed: list[SpaceReclaimCandidate] = []
+    estimated_free = free_before
+    for candidate in candidates:
+        if target_free_bytes is not None and estimated_free is not None and estimated_free >= target_free_bytes:
+            break
+        if dry_run:
+            removed.append(candidate)
+            if estimated_free is not None:
+                estimated_free += candidate.size_bytes
+            continue
+        try:
+            if candidate.path.is_dir() and not candidate.path.is_symlink():
+                shutil.rmtree(candidate.path)
+            else:
+                candidate.path.unlink(missing_ok=True)
+        except OSError as exc:
+            warn(f"Could not reclaim {candidate.path}: {exc}")
+            continue
+        removed.append(candidate)
+        if estimated_free is not None:
+            estimated_free += candidate.size_bytes
+        info(
+            f"Reclaimed {format_transfer_size(candidate.size_bytes)}: "
+            f"{candidate.reason} ({candidate.path})"
+        )
+
+    free_after = android_sdk_free_bytes(cache_root) if not dry_run else estimated_free
+    reclaimed = sum(item.size_bytes for item in removed)
+    report = SpaceCleanupReport(
+        free_before=free_before,
+        free_after=free_after,
+        reclaimed_bytes=reclaimed,
+        removed=tuple(removed),
+        candidates=tuple(candidates),
+        dry_run=dry_run,
+    )
+    return report
+
+
+def cleanup_android_space(
+    cache_root: Path,
+    *,
+    target_free_bytes: int | None = None,
+    dry_run: bool = False,
+    managed_gradle_retention: int = DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION,
+    include_gradle_user_cache: bool = False,
+    gradle_user_home: Path | None = None,
+) -> SpaceCleanupReport:
+    cache_root = cache_root.expanduser().resolve(strict=False)
+    free_before = android_sdk_free_bytes(cache_root)
+    lock = _acquire_space_cleanup_lock(cache_root)
+    if lock is None:
+        warn("Skipping Android space cleanup because another Devtool process is managing the shared toolchain cache")
+        return SpaceCleanupReport(
+            free_before=free_before,
+            free_after=free_before,
+            reclaimed_bytes=0,
+            removed=(),
+            candidates=(),
+            dry_run=dry_run,
+        )
+    try:
+        return _cleanup_android_space_locked(
+            cache_root,
+            target_free_bytes=target_free_bytes,
+            dry_run=dry_run,
+            managed_gradle_retention=managed_gradle_retention,
+            include_gradle_user_cache=include_gradle_user_cache,
+            gradle_user_home=gradle_user_home,
+        )
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+
+
+def auto_manage_android_space(
+    cache_root: Path,
+    *,
+    policy: str = "safe",
+    min_free_mb: int = DEFAULT_ANDROID_SPACE_MIN_FREE_MB,
+    target_free_mb: int = DEFAULT_ANDROID_SPACE_TARGET_FREE_MB,
+    managed_gradle_retention: int = DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION,
+    include_gradle_user_cache: bool = False,
+    gradle_user_home: Path | None = None,
+    dry_run: bool = False,
+    reason: str = "Android build",
+) -> SpaceCleanupReport | None:
+    normalized = str(policy or "safe").strip().lower()
+    if normalized not in SPACE_CLEANUP_POLICIES:
+        fail(
+            f"Unsupported Android space cleanup policy: {policy}. "
+            f"Expected one of: {', '.join(sorted(SPACE_CLEANUP_POLICIES))}"
+        )
+    if normalized == "off":
+        return None
+    minimum = max(0, int(min_free_mb)) * 1024 * 1024
+    target = max(int(target_free_mb), int(min_free_mb), 0) * 1024 * 1024
+    free = android_sdk_free_bytes(cache_root)
+    if free is None or free >= minimum:
+        return None
+    warn(
+        f"Low storage before {reason}: {format_transfer_size(free)} free. "
+        f"Devtool will prune safe regenerable caches toward "
+        f"{format_transfer_size(target)} free space."
+    )
+    report = cleanup_android_space(
+        cache_root,
+        target_free_bytes=target,
+        dry_run=dry_run,
+        managed_gradle_retention=managed_gradle_retention,
+        include_gradle_user_cache=include_gradle_user_cache,
+        gradle_user_home=gradle_user_home,
+    )
+    if report.removed:
+        info(
+            f"Storage cleanup {'would reclaim' if dry_run else 'reclaimed'} "
+            f"{format_transfer_size(report.reclaimed_bytes)} across "
+            f"{len(report.removed)} path(s)"
+        )
+    if not dry_run and report.free_after is not None and report.free_after < minimum:
+        warn(
+            f"Storage remains low after safe Devtool cleanup: "
+            f"{format_transfer_size(report.free_after)} free. Active SDK/NDK/QEMU "
+            "trees and user Gradle dependency caches were preserved."
+        )
+    return report
+
+
+def android_sdk_install_working_space_bytes(packages: Sequence[str]) -> int:
+    required = ANDROID_SDK_INSTALL_RESERVE_BYTES
+    for package in packages:
+        kind = str(package).split(";", 1)[0].strip()
+        required += ANDROID_SDK_PACKAGE_WORKING_SPACE_BYTES.get(
+            kind, ANDROID_SDK_UNKNOWN_PACKAGE_WORKING_SPACE_BYTES
+        )
+    return required
+
+
+def clear_abandoned_android_provider_staging(cache_root: Path, *, dry_run: bool) -> None:
+    providers = cache_root / "android-sdk-providers"
+    if not providers.is_dir():
+        return
+    for provider_root in providers.iterdir():
+        if not provider_root.is_dir():
+            continue
+        for candidate in provider_root.glob(".sdk-*.tmp"):
+            if dry_run:
+                info(f"Would clear abandoned Android SDK provider staging: {candidate}")
+            else:
+                shutil.rmtree(candidate, ignore_errors=True)
+                info(f"Cleared abandoned Android SDK provider staging: {candidate}")
+
+
+def clear_android_provider_download_cache(cache_root: Path, *, dry_run: bool) -> None:
+    providers = cache_root / "android-sdk-providers"
+    if not providers.is_dir():
+        return
+    for provider_root in providers.iterdir():
+        downloads = provider_root / "downloads"
+        if not downloads.exists():
+            continue
+        if dry_run:
+            info(f"Would clear Android SDK provider download cache: {downloads}")
+        else:
+            shutil.rmtree(downloads, ignore_errors=True)
+            info(f"Cleared Android SDK provider download cache: {downloads}")
+
+
+def ensure_android_sdk_install_space(
+    sdk_root: Path,
+    cache_root: Path,
+    packages: Sequence[str],
+    *,
+    dry_run: bool,
+) -> None:
+    """Ensure sdkmanager has enough scratch space before modifying the SDK.
+
+    sdkmanager downloads and unpacks into the same filesystem and can leave a
+    package half-installed on ENOSPC. Reclaim only disposable Android caches,
+    then fail before installation if the filesystem still lacks conservative
+    working headroom.
+    """
+
+    required = android_sdk_install_working_space_bytes(packages)
+    free_before = android_sdk_free_bytes(sdk_root)
+    if free_before is None or free_before >= required:
+        return
+
+    warn(
+        "Low free space before Android SDK package installation: "
+        f"{format_transfer_size(free_before)} free; approximately "
+        f"{format_transfer_size(required)} working space reserved for "
+        f"{', '.join(packages)}. Clearing safe Android caches first."
+    )
+    clear_android_download_debris(sdk_root, dry_run=dry_run)
+    clear_abandoned_android_provider_staging(cache_root, dry_run=dry_run)
+    cleanup_android_space(
+        cache_root,
+        target_free_bytes=required,
+        dry_run=dry_run,
+        managed_gradle_retention=DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION,
+    )
+    if dry_run:
+        return
+
+    free_after = android_sdk_free_bytes(sdk_root)
+    if free_after is not None and free_after < required:
+        reclaimed = max(0, free_after - free_before)
+        fail(
+            "Insufficient free space for Android SDK package installation. "
+            f"Free after safe cache cleanup: {format_transfer_size(free_after)}; "
+            f"reserved working space: {format_transfer_size(required)}; "
+            f"reclaimed: {format_transfer_size(reclaimed)}. Packages: "
+            f"{', '.join(packages)}. Free additional storage and rerun; "
+            "Devtool intentionally did not start sdkmanager, so no new partial "
+            "SDK package was created."
+        )
+
+
+def sdkmanager_failed_for_no_space(result: subprocess.CompletedProcess[str]) -> bool:
+    output = "\n".join(str(item or "") for item in (result.stdout, result.stderr)).lower()
+    return (
+        "no space left on device" in output
+        or "enospc" in output
+        or "not enough space" in output
+    )
+
+
 def clean_android_cxx_state(project_root: Path, *, dry_run: bool) -> None:
     """Remove stale AGP/CMake state after NDK host-toolchain rewriting."""
 
@@ -4104,7 +5626,13 @@ def install_sdk_packages_with_repair(
     *,
     env: Mapping[str, str],
     dry_run: bool,
+    cache_root: Path | None = None,
 ) -> None:
+    if cache_root is not None:
+        ensure_android_sdk_install_space(
+            sdk_root, cache_root, packages, dry_run=dry_run
+        )
+
     command = [manager, f"--sdk_root={sdk_root}", *packages]
     result = run_sdkmanager_with_progress(
         command,
@@ -4114,6 +5642,34 @@ def install_sdk_packages_with_repair(
     )
     if dry_run or result.returncode == 0:
         return
+
+    if sdkmanager_failed_for_no_space(result):
+        # ENOSPC is not transient. Retrying immediately only destroys more of
+        # the partially installed SDK and produces misleading secondary errors
+        # such as PackageOperationXX disappearing underneath sdkmanager.
+        clear_android_download_debris(sdk_root, dry_run=False)
+        if cache_root is not None:
+            clear_abandoned_android_provider_staging(cache_root, dry_run=False)
+            clear_android_provider_download_cache(cache_root, dry_run=False)
+        for package in packages:
+            kind, _, version = package.partition(";")
+            if kind in {"ndk", "cmake", "build-tools"} and version:
+                remove_path(sdk_root / kind / version, dry_run=False)
+            elif kind == "platforms" and version:
+                remove_path(sdk_root / "platforms" / version, dry_run=False)
+        free_after = android_sdk_free_bytes(sdk_root)
+        suffix = (
+            f" Free space after cleanup: {format_transfer_size(free_after)}."
+            if free_after is not None
+            else ""
+        )
+        fail(
+            "Android SDK package installation stopped because the filesystem ran "
+            "out of space. Devtool cleared partial SDK/download/provider cache "
+            "state and will not retry an ENOSPC failure."
+            f"{suffix} Packages: {', '.join(packages)}. Free additional storage "
+            "and rerun."
+        )
 
     warn("Android SDK package installation failed; repairing partial downloads and retrying once")
     clear_android_download_debris(sdk_root, dry_run=False)
@@ -4240,20 +5796,11 @@ def ensure_android_sdk(
     else:
         platform_id = f"android-{project.compile_sdk}" if project.compile_sdk else None
 
-    if build_tools_override == "none":
-        build_tools = None
-    elif build_tools_override != "auto":
-        build_tools = build_tools_override
-    else:
-        if project.build_tools:
-            build_tools = project.build_tools
-        else:
-            installed_versions = installed_build_tools_versions(sdk_root)
-            build_tools = (
-                installed_versions[0]
-                if installed_versions
-                else default_build_tools_version(project)
-            )
+    build_tools = select_required_build_tools_version(
+        project,
+        sdk_root,
+        build_tools_override,
+    )
 
     if ndk_override == "none":
         ndk_version = None
@@ -4292,7 +5839,7 @@ def ensure_android_sdk(
         if platform_id and not (root / "platforms" / platform_id / "android.jar").is_file():
             missing_packages.append(f"platforms;{platform_id}")
             incomplete.append(root / "platforms" / platform_id)
-        if build_tools and not (root / "build-tools" / build_tools).is_dir():
+        if build_tools and not build_tools_is_ready(root, build_tools):
             missing_packages.append(f"build-tools;{build_tools}")
             incomplete.append(root / "build-tools" / build_tools)
         if ndk_version and not ndk_is_ready(root, ndk_version):
@@ -4349,13 +5896,11 @@ def ensure_android_sdk(
             fail(f"Managed Android SDK path is not writable: {sdk_root}")
         configure_android_sdk_env(env, sdk_root)
 
-        if build_tools_override == "auto" and not project.build_tools:
-            installed_versions = installed_build_tools_versions(sdk_root)
-            build_tools = (
-                installed_versions[0]
-                if installed_versions
-                else default_build_tools_version(project)
-            )
+        build_tools = select_required_build_tools_version(
+            project,
+            sdk_root,
+            build_tools_override,
+        )
         missing, incomplete_paths = collect_missing(sdk_root)
         native_replacements = (
             arm64_build_tools_replacements_needed(sdk_root, build_tools)
@@ -4408,11 +5953,20 @@ def ensure_android_sdk(
             missing,
             env=env,
             dry_run=dry_run,
+            cache_root=cache_root,
         )
+        # sdkmanager may leave packaging-revision-suffixed directories behind
+        # on some Termux SDK distributions. Normalize again after installation
+        # before validating the exact revision AGP will request.
+        normalize_sdk_build_tools_locations(sdk_root, dry_run=dry_run)
         if cmake_version:
             ensure_host_cmake_compatible(sdk_root, cmake_version, dry_run=dry_run)
         if not dry_run:
             validation_failures: list[str] = []
+            if platform_id and not (sdk_root / "platforms" / platform_id / "android.jar").is_file():
+                validation_failures.append(f"Platform {platform_id}")
+            if build_tools and not build_tools_is_ready(sdk_root, build_tools):
+                validation_failures.append(f"Build Tools {build_tools}")
             if ndk_version and not ndk_is_ready(sdk_root, ndk_version):
                 validation_failures.append(f"NDK {ndk_version}")
             if cmake_version and not cmake_is_ready(sdk_root, cmake_version):
@@ -4469,11 +6023,12 @@ def ensure_android_sdk(
 
 def wrapper_distribution_version(project_root: Path) -> str | None:
     properties = project_root / "gradle" / "wrapper" / "gradle-wrapper.properties"
-    if not properties.is_file():
-        return None
-    text = properties.read_text(encoding="utf-8", errors="replace")
-    match = re.search(r"gradle-([0-9][^-]*)-(?:bin|all)\.zip", text)
-    return match.group(1) if match else None
+    if properties.is_file():
+        text = properties.read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"gradle-([0-9][^-]*)-(?:bin|all)\.zip", text)
+        if match:
+            return match.group(1)
+    return standalone_gradle_wrapper_version(project_root)
 
 
 def gradle_version(command: Path, *, timeout: float = 10.0) -> str | None:
@@ -5348,6 +6903,49 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-G", "--gradle-version", help="Managed Gradle version when no wrapper is available")
     parser.add_argument("--gradle-user-home", type=Path, help="GRADLE_USER_HOME for this build")
     parser.add_argument("-k", "--cache-dir", type=Path, default=devtool_cache_dir() / APP_NAME)
+    parser.add_argument(
+        "--space-cleanup",
+        choices=sorted(SPACE_CLEANUP_POLICIES),
+        default=os.environ.get("DEVTOOL_ANDROID_SPACE_CLEANUP", "safe"),
+        help="Automatic Android/Devtool cache cleanup policy when storage is low",
+    )
+    parser.add_argument(
+        "--space-min-free-mb",
+        type=int,
+        default=int(os.environ.get("DEVTOOL_ANDROID_MIN_FREE_MB", DEFAULT_ANDROID_SPACE_MIN_FREE_MB)),
+        help="Trigger safe automatic cleanup below this free-space threshold",
+    )
+    parser.add_argument(
+        "--space-target-free-mb",
+        type=int,
+        default=int(os.environ.get("DEVTOOL_ANDROID_TARGET_FREE_MB", DEFAULT_ANDROID_SPACE_TARGET_FREE_MB)),
+        help="Stop automatic cleanup after reaching this free-space target",
+    )
+    parser.add_argument(
+        "--managed-gradle-retention",
+        type=int,
+        default=int(os.environ.get("DEVTOOL_ANDROID_MANAGED_GRADLE_RETENTION", DEFAULT_ANDROID_MANAGED_GRADLE_RETENTION)),
+        help="Number of newest Devtool-managed Gradle distributions to retain during space cleanup",
+    )
+    parser.add_argument(
+        "--manage-gradle-user-cache",
+        action="store_true",
+        default=os.environ.get("DEVTOOL_ANDROID_MANAGE_GRADLE_USER_CACHE", "").strip().lower() in {"1", "true", "yes", "on"},
+        help="Allow low-space cleanup to prune old version-specific GRADLE_USER_HOME caches and build-cache-1; modules and wrapper distributions are preserved",
+    )
+    parser.add_argument(
+        "--keep-provider-downloads",
+        action="store_true",
+        default=os.environ.get("DEVTOOL_ANDROID_KEEP_PROVIDER_DOWNLOADS", "").strip().lower() in {"1", "true", "yes", "on"},
+        help="Keep TermuxVoid/HomuHomu provider release archives after an installed SDK is usable",
+    )
+    parser.add_argument(
+        "--no-post-build-space-cleanup",
+        dest="post_build_space_cleanup",
+        action="store_false",
+        default=True,
+        help="Do not prune safe superseded Devtool caches after a successful Android build",
+    )
     parser.add_argument("-w", "--max-workers", type=int, default=max(1, min(4, os.cpu_count() or 2)))
     parser.add_argument("--gradle-jvm-heap-mb", type=int, default=0, help="Cap the Gradle JVM heap in MiB")
     parser.add_argument("--gradle-metaspace-mb", type=int, default=0, help="Cap the Gradle JVM metaspace in MiB")
@@ -5595,6 +7193,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if project.cmake_version:
         info(f"Declared CMake: {project.cmake_version}")
 
+    if project.android:
+        auto_manage_android_space(
+            cache_root,
+            policy=args.space_cleanup,
+            min_free_mb=args.space_min_free_mb,
+            target_free_mb=args.space_target_free_mb,
+            managed_gradle_retention=args.managed_gradle_retention,
+            include_gradle_user_cache=False,
+            dry_run=args.dry_run,
+            reason="Android toolchain setup",
+        )
+
     provider_evidence = None
     if running_under_termux_python():
         provider_evidence = _termux_toolchains_runtime_module().resolve_provider_decisions(
@@ -5744,6 +7354,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if effective_gradle_user_home is not None:
         env["GRADLE_USER_HOME"] = str(effective_gradle_user_home)
+    if project.android and args.manage_gradle_user_cache:
+        auto_manage_android_space(
+            cache_root,
+            policy=args.space_cleanup,
+            min_free_mb=args.space_min_free_mb,
+            target_free_mb=args.space_target_free_mb,
+            managed_gradle_retention=args.managed_gradle_retention,
+            include_gradle_user_cache=True,
+            gradle_user_home=effective_gradle_user_home or (Path.home() / ".gradle"),
+            dry_run=args.dry_run,
+            reason="Android build with Gradle cache management enabled",
+        )
     heading("Java")
     selected_java_provider = executable_provider(java_home / "bin" / "java")
     info(f"JAVA_HOME={java_home}")
@@ -5785,6 +7407,36 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         elif requested_sdk_provider == "auto":
             sdk_root, sdk_source = discover_sdk_root_with_source(None, project.root)
+            if (
+                sdk_root is not None
+                and running_under_termux_python()
+                and normalized_machine() == "arm64"
+                and not sdk_host_compatible(sdk_root)
+                and not termux_can_repair_sdk_build_tools(sdk_root)
+            ):
+                warn(
+                    "Skipping discovered Android SDK because its ARM64 build-tools "
+                    "cannot be repaired completely with native Termux helpers; "
+                    f"trying external SDK providers instead: {sdk_root} "
+                    f"({sdk_source or 'unknown source'})"
+                )
+                sdk_root, sdk_source = None, None
+            if sdk_root is None:
+                installed_termuxvoid = (
+                    _termux_prefix_path() / "opt" / "android-sdk"
+                    if running_under_termux_python()
+                    else None
+                )
+                if (
+                    installed_termuxvoid is not None
+                    and installed_termuxvoid.is_dir()
+                    and _sdk_tree_candidate(installed_termuxvoid) is not None
+                    and sdk_host_compatible(installed_termuxvoid)
+                ):
+                    sdk_root, sdk_source = (
+                        installed_termuxvoid.resolve(),
+                        "TermuxVoid android-sdk",
+                    )
             if sdk_root is None:
                 for cached_provider, cached_label in (
                     ("termuxvoid", "TermuxVoid preassembled SDK cache"),
@@ -5840,6 +7492,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             configure_android_sdk_env(env, sdk_root)
             if sdk_source:
                 info(f"SDK path source: {sdk_source}")
+            if not args.keep_provider_downloads:
+                clear_selected_provider_download(cache_root, sdk_root, dry_run=args.dry_run)
             if args.auto_sdk and not args.skip_sdk_install:
                 info("Auto SDK downloads: enabled")
         sdk_root, platform_id, build_tools, _, _ = ensure_android_sdk(
@@ -6000,6 +7654,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"failure-mode={failure_mode}"
         )
     build_started = time.time()
+    build_succeeded = False
     try:
         run(
             command,
@@ -6010,6 +7665,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             low_priority=args.low_priority,
             cpu_limit=args.cpu_limit,
         )
+        build_succeeded = True
 
         if args.no_artifact_scan or args.dry_run:
             return 0
@@ -6039,6 +7695,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 project_root,
                 env,
                 dry_run=args.dry_run,
+            )
+        if build_succeeded and project.android and args.post_build_space_cleanup:
+            auto_manage_android_space(
+                cache_root,
+                policy=args.space_cleanup,
+                min_free_mb=args.space_min_free_mb,
+                target_free_mb=args.space_target_free_mb,
+                managed_gradle_retention=args.managed_gradle_retention,
+                include_gradle_user_cache=args.manage_gradle_user_cache,
+                gradle_user_home=effective_gradle_user_home or (Path.home() / ".gradle"),
+                dry_run=args.dry_run,
+                reason="successful Android build",
             )
 
 

@@ -92,8 +92,9 @@ def test_repo_config_declares_chroot_android_hud_target() -> None:
     assert target["execution_environment"] == "chroot"
     assert target["chroot_name"] == "androidos"
     assert target["android"]["prefer_native_termux"] is False
-    assert target["tasks"]["build"] == ["assembleDebug"]
-    assert target["gradle"]["max_workers"] == 1
+    assert target["tasks"]["build"] == [":app:assembleDebug"]
+    assert target["gradle"]["max_workers"] == 2
+    assert target["validation"]["phases"]["preflight"] == ["verifyStableToolchainBaseline"]
 
 
 def test_android_build_exports_stable_trackable_apk() -> None:

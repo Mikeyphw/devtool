@@ -158,6 +158,12 @@ def test_termux_workdir_normalizes_shell_home_forms(tmp_path: Path) -> None:
     sources = root / "io" / "github" / "mikeceead" / "devtoolhud"
     sources.mkdir(parents=True)
     shutil.copy2(PACKAGE / "TermuxPaths.java", sources / "TermuxPaths.java")
+    annotation = root / "android" / "annotation" / "SuppressLint.java"
+    annotation.parent.mkdir(parents=True)
+    annotation.write_text(
+        "package android.annotation; public @interface SuppressLint { String[] value(); }\n",
+        encoding="utf-8",
+    )
     (sources / "PathHarness.java").write_text(
         textwrap.dedent(
             """
@@ -177,7 +183,7 @@ def test_termux_workdir_normalizes_shell_home_forms(tmp_path: Path) -> None:
     output = root / "classes"
     output.mkdir()
     subprocess.run(
-        ["javac", "-d", str(output), *map(str, sources.glob("*.java"))],
+        ["javac", "-d", str(output), *map(str, root.rglob("*.java"))],
         check=True,
         text=True,
         capture_output=True,

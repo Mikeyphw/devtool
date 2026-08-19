@@ -590,7 +590,12 @@ _devtool() {
           fi
           ;;
         clean|cl)
-          _arguments '--caches[also prune devtool-managed caches and transient state]'
+          _arguments \
+            '--caches[also prune repository-scoped devtool-managed caches and transient state]' \
+            '--space[prune safe global Android/toolchain caches managed by Devtool]' \
+            '--gradle-user-cache[with --space, also prune old version-specific Gradle caches and build-cache-1]' \
+            '--space-target-free-mb[stop space cleanup after reaching this much free space]:MiB:' \
+            '--managed-gradle-retention[keep this many newest Devtool-managed Gradle distributions]:count:'
           ;;
         apply-overlay|ao|apply-overlays|aos|apply-snapshot|as)
           _devtool_apply_args

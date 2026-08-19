@@ -1,3 +1,62 @@
 plugins {
-    id 'com.android.application' version '8.13.2' apply false
+    id 'com.android.application' version '9.3.1' apply false
+}
+
+final String expectedGradleVersion = '9.7.1'
+final String expectedGradleSha256 = 'acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a'
+final List<String> prereleaseMarkers = ['alpha', 'beta', 'rc', 'eap', 'preview', 'canary', 'snapshot', 'nightly', 'milestone']
+
+tasks.register('verifyStableToolchainBaseline') {
+    group = 'verification'
+    description = 'Verify the pinned stable Android/Gradle/Java toolchain used by Devtool Live HUD.'
+
+    doLast {
+        if (gradle.gradleVersion != expectedGradleVersion) {
+            throw new GradleException("Devtool Live HUD requires Gradle ${expectedGradleVersion}; running ${gradle.gradleVersion}.")
+        }
+
+        if (JavaVersion.current() != JavaVersion.VERSION_21) {
+            throw new GradleException("Devtool Live HUD requires Java 21; running ${System.getProperty('java.version')}.")
+        }
+
+        def rootBuild = rootProject.file('build.gradle').getText('UTF-8')
+        def appBuild = rootProject.file('app/build.gradle').getText('UTF-8')
+        def unixWrapper = rootProject.file('gradlew').getText('UTF-8')
+        def windowsWrapper = rootProject.file('gradlew.bat').getText('UTF-8')
+        def buildScript = rootProject.file('build.sh').getText('UTF-8')
+
+        def requiredFragments = [
+            [rootBuild, "id 'com.android.application' version '9.3.1' apply false", 'AGP 9.3.1'],
+            [appBuild, 'compileSdk 36', 'compileSdk 36'],
+            [appBuild, "buildToolsVersion '36.0.0'", 'Build Tools 36.0.0'],
+            [appBuild, 'targetSdk 36', 'targetSdk 36'],
+            [appBuild, 'sourceCompatibility JavaVersion.VERSION_21', 'Java source compatibility 21'],
+            [appBuild, 'targetCompatibility JavaVersion.VERSION_21', 'Java target compatibility 21'],
+            [unixWrapper, 'VERSION=9.7.1', 'Unix wrapper Gradle 9.7.1'],
+            [unixWrapper, "SHA256=${expectedGradleSha256}", 'Unix wrapper Gradle checksum'],
+            [windowsWrapper, 'set VERSION=9.7.1', 'Windows wrapper Gradle 9.7.1'],
+            [windowsWrapper, "set SHA256=${expectedGradleSha256}", 'Windows wrapper Gradle checksum'],
+            [buildScript, '/usr/lib/jvm/java-21-openjdk-amd64', 'Java 21 build default'],
+            [buildScript, 'openjdk-21-jdk', 'Java 21 system dependency'],
+            [buildScript, '.gradle/caches/9.7.1/transforms', 'Gradle 9.7.1 transforms cache'],
+            [buildScript, 'android-36', 'Android platform 36'],
+            [buildScript, '36.0.0', 'Android Build Tools 36.0.0'],
+        ]
+        requiredFragments.each { entry ->
+            if (!entry[0].contains(entry[1])) {
+                throw new GradleException("Stable toolchain baseline drift: missing ${entry[2]}.")
+            }
+        }
+
+        [rootBuild, appBuild].each { buildText ->
+            buildText.eachLine { line ->
+                def normalized = line.toLowerCase(Locale.ROOT)
+                if ((normalized.contains('version ') || normalized.contains('implementation ') || normalized.contains('testimplementation ')
+                        || normalized.contains('androidtestimplementation '))
+                        && prereleaseMarkers.any { marker -> normalized =~ /(^|[^a-z])${marker}([0-9._-]|$)/ }) {
+                    throw new GradleException("Prerelease dependency/plugin version is forbidden: ${line.trim()}")
+                }
+            }
+        }
+    }
 }

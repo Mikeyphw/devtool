@@ -16,6 +16,33 @@ def test_android_app_source_is_bundled() -> None:
     assert (ROOT / "build-android-hud.sh").is_file()
 
 
+def test_android_hud_stable_toolchain_contract() -> None:
+    root_build = (APP / "build.gradle").read_text(encoding="utf-8")
+    app_build = (APP / "app" / "build.gradle").read_text(encoding="utf-8")
+    unix_wrapper = (APP / "gradlew").read_text(encoding="utf-8")
+    windows_wrapper = (APP / "gradlew.bat").read_text(encoding="utf-8")
+    build_script = (APP / "build.sh").read_text(encoding="utf-8")
+    expected_sha = "acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a"
+
+    assert "version '9.3.1'" in root_build
+    assert "verifyStableToolchainBaseline" in root_build
+    assert "JavaVersion.current() != JavaVersion.VERSION_21" in root_build
+    assert "compileSdk 36" in app_build
+    assert "targetSdk 36" in app_build
+    assert "buildToolsVersion '36.0.0'" in app_build
+    assert app_build.count("JavaVersion.VERSION_21") == 2
+    assert "JavaVersion.VERSION_17" not in app_build
+    assert "VERSION=9.7.1" in unix_wrapper
+    assert f"SHA256={expected_sha}" in unix_wrapper
+    assert "set VERSION=9.7.1" in windows_wrapper
+    assert f"set SHA256={expected_sha}" in windows_wrapper
+    assert "/usr/lib/jvm/java-21-openjdk-amd64" in build_script
+    assert "openjdk-21-jdk" in build_script
+    assert ".gradle/caches/9.7.1/transforms" in build_script
+    assert "8.13.2" not in root_build
+    assert "VERSION=8.13" not in unix_wrapper
+
+
 def test_manifest_declares_opt_in_overlay_service() -> None:
     root = ET.parse(APP / "app" / "src" / "main" / "AndroidManifest.xml").getroot()
     permissions = {node.attrib.get(ANDROID_NS + "name") for node in root.findall("uses-permission")}
