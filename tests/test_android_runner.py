@@ -1493,7 +1493,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
             arguments,
         )
         self.assertIn(
-            "-Pandroid.suppressUnsupportedOptionWarnings=android.aapt2FromMavenOverride",
+            "-Pandroid.sync.suppressAgpWarnings=UNSUPPORTED_PROJECT_OPTION_USE",
             arguments,
         )
         self.assertEqual(arguments[-1], "--console=plain")
@@ -1501,7 +1501,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
     def test_custom_aapt2_merges_existing_warning_suppressions(self) -> None:
         arguments = gradle_arguments_with_aapt2_override(
             [
-                "-Pandroid.suppressUnsupportedOptionWarnings=android.otherExperimentalOption",
+                "-Pandroid.sync.suppressAgpWarnings=DEPRECATED_DSL",
                 "--console=rich",
             ],
             Path("/opt/devtool/aapt2"),
@@ -1510,15 +1510,15 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         suppression = next(
             value
             for value in arguments
-            if value.startswith("-Pandroid.suppressUnsupportedOptionWarnings=")
+            if value.startswith("-Pandroid.sync.suppressAgpWarnings=")
         )
         self.assertEqual(
             suppression,
-            "-Pandroid.suppressUnsupportedOptionWarnings="
-            "android.otherExperimentalOption,android.aapt2FromMavenOverride",
+            "-Pandroid.sync.suppressAgpWarnings="
+            "DEPRECATED_DSL,UNSUPPORTED_PROJECT_OPTION_USE",
         )
         self.assertEqual(
-            sum(value.startswith("-Pandroid.suppressUnsupportedOptionWarnings=") for value in arguments),
+            sum(value.startswith("-Pandroid.sync.suppressAgpWarnings=") for value in arguments),
             1,
         )
         self.assertEqual(arguments[-1], "--console=rich")
@@ -1527,7 +1527,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         arguments = gradle_arguments_with_aapt2_override([], None)
 
         self.assertFalse(any("aapt2FromMavenOverride" in value for value in arguments))
-        self.assertFalse(any("suppressUnsupportedOptionWarnings" in value for value in arguments))
+        self.assertFalse(any("sync.suppressAgpWarnings" in value for value in arguments))
 
     def test_gradle_build_continues_across_independent_task_failures_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -25,6 +25,10 @@ class InstrumentationError(RuntimeError):
     pass
 
 
+class InstrumentationUnavailable(InstrumentationError):
+    """No usable Android instrumentation execution target is available."""
+
+
 def run(argv: Sequence[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     rendered = " ".join(shlex.quote(value) for value in argv)
     try:
@@ -183,12 +187,134 @@ def _device_prefix(serial: str) -> list[str]:
     return []
 
 
+def _connected_adb_devices() -> list[str]:
+    adb = shutil.which("adb")
+    if not adb:
+        return []
+
+    try:
+        result = subprocess.run(
+            [adb, "devices"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    devices: list[str] = []
+
+    for raw in result.stdout.splitlines():
+        line = raw.strip()
+
+        if not line or line.startswith("List of devices attached"):
+            continue
+
+        parts = line.split()
+
+        if len(parts) >= 2 and parts[1] == "device":
+            devices.append(parts[0])
+
+    return devices
+
+
+def _command_executable_available(command: str) -> bool:
+    argv = shlex.split(command or "")
+
+    if not argv:
+        return False
+
+    executable = argv[0]
+
+    if "/" in executable:
+        candidate = Path(executable)
+        return candidate.is_file() and os.access(candidate, os.X_OK)
+
+    return shutil.which(executable) is not None
+
+
+def _resolve_execution_serial(
+    configured_serial: str,
+    *,
+    install_command: str,
+    am_command: str,
+) -> str:
+    configured = str(configured_serial or "").strip()
+
+    if configured:
+        return configured
+
+    environment_serial = str(
+        os.environ.get("ANDROID_SERIAL") or ""
+    ).strip()
+
+    if environment_serial:
+        return environment_serial
+
+    devices = _connected_adb_devices()
+
+    if len(devices) == 1:
+        return devices[0]
+
+    if len(devices) > 1:
+        raise InstrumentationError(
+            "Multiple ADB devices are connected. "
+            "Set android.device_serial or ANDROID_SERIAL."
+        )
+
+    # Permit genuinely available explicitly configured local commands.
+    if (
+        _command_executable_available(install_command)
+        and _command_executable_available(am_command)
+    ):
+        return ""
+
+    raise InstrumentationUnavailable(
+        "No usable Android instrumentation target is available: "
+        "no connected ADB device was found and no usable local "
+        "privileged Android command is configured."
+    )
+
+
+def _resolve_local_command(command: Sequence[str]) -> list[str]:
+    argv = [str(item) for item in command if str(item)]
+
+    if not argv:
+        raise InstrumentationUnavailable(
+            "Local Android command is empty"
+        )
+
+    executable = argv[0]
+
+    if "/" in executable:
+        candidate = Path(executable)
+        available = candidate.is_file() and os.access(candidate, os.X_OK)
+    else:
+        available = shutil.which(executable) is not None
+
+    if available:
+        return argv
+
+    if Path(executable).name == "sudo":
+        raise InstrumentationUnavailable(
+            "Instrumentation is configured to use sudo, but sudo is "
+            "unavailable. Devtool will not infer root access merely "
+            "because Termux provides an su executable."
+        )
+
+    raise InstrumentationUnavailable(
+        f"Configured Android command is unavailable: {executable}"
+    )
+
 def _install(apk: Path, *, serial: str, install_command: str) -> None:
     if serial:
         run([*_device_prefix(serial), "install", "-r", "-t", str(apk)])
         return
     command = shlex.split(install_command or "sudo pm install -r -t")
-    run([*command, str(apk)])
+    run(_resolve_local_command([*command, str(apk)]))
 
 
 def _local_pm_prefix(install_command: str) -> list[str]:
@@ -205,7 +331,12 @@ def _pm_instrumentations(serial: str, *, install_command: str) -> str:
     if serial:
         result = run([*_device_prefix(serial), "shell", "pm", "list", "instrumentation"], check=False)
     else:
-        result = run([*_local_pm_prefix(install_command), "list", "instrumentation"], check=False)
+        result = run(
+            _resolve_local_command(
+                [*_local_pm_prefix(install_command), "list", "instrumentation"]
+            ),
+            check=False,
+        )
     return result.stdout + result.stderr
 
 
@@ -232,7 +363,7 @@ def _instrument_command(serial: str, *, am_command: str) -> list[str]:
     if serial:
         return [*_device_prefix(serial), "shell", "am", "instrument"]
     command = shlex.split(am_command or "sudo am instrument")
-    return command or ["sudo", "am", "instrument"]
+    return _resolve_local_command(command or ["sudo", "am", "instrument"])
 
 
 def _uninstall_test_package(package_name: str, *, serial: str, install_command: str) -> None:
@@ -241,7 +372,12 @@ def _uninstall_test_package(package_name: str, *, serial: str, install_command: 
     if serial:
         run([*_device_prefix(serial), "uninstall", package_name], check=False)
     else:
-        run([*_local_pm_prefix(install_command), "uninstall", package_name], check=False)
+        run(
+            _resolve_local_command(
+                [*_local_pm_prefix(install_command), "uninstall", package_name]
+            ),
+            check=False,
+        )
 
 
 def _parse_counts(text: str) -> dict[str, int]:
@@ -311,6 +447,61 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _write_skipped_result(
+    project: Path,
+    *,
+    report: Path | None,
+    runner: str,
+    reason: str,
+) -> int:
+    report_path = report or (
+        project
+        / ".devtool"
+        / "reports"
+        / "android-instrumentation.json"
+    )
+
+    payload: dict[str, Any] = {
+        "framework": "android-instrumentation",
+        "reason": reason,
+        "runner": runner,
+        "test_package": (
+            runner.split("/", 1)[0].strip()
+            if "/" in runner
+            else ""
+        ),
+        "returncode": 0,
+        "discovered": 0,
+        "selected": 0,
+        "executed": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 1,
+        "total": 1,
+        "failed_ids": [],
+    }
+
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        print(
+            f"Instrumentation report write warning: {exc}",
+            file=sys.stderr,
+        )
+
+    print(f"Instrumentation skipped: {reason}")
+    print(
+        "DEVTOOL_INSTRUMENTATION_RESULT "
+        + json.dumps(payload, separators=(",", ":"))
+    )
+
+    return 0
+
+
 def main(raw_args: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(raw_args)
     project = args.project.expanduser().resolve()
@@ -319,9 +510,25 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         return 2
     variant_title = _variant_title(args.variant)
     installed_test_package = ""
-    if args.runner and "/" in args.runner:
-        installed_test_package = args.runner.split("/", 1)[0].strip()
+
     try:
+        try:
+            args.device_serial = _resolve_execution_serial(
+                args.device_serial,
+                install_command=args.install_command,
+                am_command=args.am_command,
+            )
+        except InstrumentationUnavailable as exc:
+            return _write_skipped_result(
+                project,
+                report=args.report,
+                runner=args.runner,
+                reason=str(exc),
+            )
+
+        if args.runner and "/" in args.runner:
+            installed_test_package = args.runner.split("/", 1)[0].strip()
+
         if not args.skip_build:
             gradle = _resolve_gradle(project, args.gradle)
             aapt2 = _instrumentation_aapt2(
@@ -420,7 +627,17 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         return 1
     finally:
         if installed_test_package and not args.keep_installed:
-            _uninstall_test_package(installed_test_package, serial=args.device_serial, install_command=args.install_command)
+            try:
+                _uninstall_test_package(
+                    installed_test_package,
+                    serial=args.device_serial,
+                    install_command=args.install_command,
+                )
+            except InstrumentationError as cleanup_error:
+                print(
+                    f"Instrumentation cleanup warning: {cleanup_error}",
+                    file=sys.stderr,
+                )
 
 
 if __name__ == "__main__":

@@ -79,7 +79,7 @@ INSTRUMENTATION_STATUS_CODE: -2
                         "test_runner": "demo.test/Runner",
                         "aapt2_provider": "termux",
                     },
-                    "gradle": {"args": ["-Pdemo.flag=true"]},
+                    "gradle": {"args": ["-Dorg.gradle.parallel=true", "-Pdemo.flag=true"]},
                     "test_selection": {"instrumented": True, "classes": ["demo.UiTest"]},
                 },
             )
@@ -92,8 +92,16 @@ INSTRUMENTATION_STATUS_CODE: -2
         self.assertIn("sudo am instrument", spec.argv)
         self.assertIn("--aapt2-provider", spec.argv)
         self.assertIn("termux", spec.argv)
-        self.assertIn("--gradle-arg", spec.argv)
-        self.assertIn("-Pdemo.flag=true", spec.argv)
+        self.assertIn("--gradle-arg=-Dorg.gradle.parallel=true", spec.argv)
+        self.assertIn("--gradle-arg=-Pdemo.flag=true", spec.argv)
+
+        # Prove the exact generated argv is accepted by the instrumentation CLI.
+        parser = android_instrumentation.build_parser()
+        parsed = parser.parse_args(spec.argv[3:])
+        self.assertEqual(
+            parsed.gradle_arg,
+            ["-Dorg.gradle.parallel=true", "-Pdemo.flag=true"],
+        )
         self.assertEqual(spec.metadata["report_parser"], "android-instrumentation")
 
     def test_instrumentation_build_injects_native_aapt2_override(self) -> None:
@@ -132,7 +140,7 @@ INSTRUMENTATION_STATUS_CODE: -2
             build_command = calls[0]
             self.assertIn(f"-Pandroid.aapt2FromMavenOverride={aapt2}", build_command)
             self.assertIn(
-                "-Pandroid.suppressUnsupportedOptionWarnings=android.aapt2FromMavenOverride",
+                "-Pandroid.sync.suppressAgpWarnings=UNSUPPORTED_PROJECT_OPTION_USE",
                 build_command,
             )
             self.assertEqual(sum(item.startswith("--console=") for item in build_command), 1)

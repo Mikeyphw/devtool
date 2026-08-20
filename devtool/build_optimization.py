@@ -80,6 +80,25 @@ def _option_dict(config: ProjectConfig, name: str) -> dict[str, object]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _cli_resource_overrides(validation: Mapping[str, object]) -> dict[str, dict[str, object]]:
+    raw = validation.get("_cli_resource_overrides")
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, dict[str, object]] = {}
+    for key, value in raw.items():
+        if isinstance(value, dict):
+            result[str(key)] = dict(value)
+    return result
+
+
+def _cli_override_value(
+    overrides: Mapping[str, Mapping[str, object]],
+    key: str,
+) -> object | None:
+    record = overrides.get(key)
+    return record.get("value") if isinstance(record, Mapping) else None
+
+
 def _explicit_workers(config: ProjectConfig, kind: str) -> int | None:
     raw_env = os.environ.get("DEVTOOL_MAX_WORKERS", "").strip()
     candidates: list[object] = [raw_env] if raw_env else []
@@ -155,6 +174,7 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
     validation = _option_dict(config, "validation")
     gradle = _option_dict(config, "gradle")
     android = _option_dict(config, "android")
+    cli_overrides = _cli_resource_overrides(validation)
 
     env_enabled = os.environ.get("DEVTOOL_ANDROID_SAFE_VALIDATION", "").strip()
     enabled = _bool_option(
@@ -163,6 +183,7 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
     )
     base = resolve_build_policy(config, config.kind or "android")
     workers = _positive_int(
+        _cli_override_value(cli_overrides, "max_workers"),
         os.environ.get("DEVTOOL_VALIDATION_MAX_WORKERS", ""),
         validation.get("max_workers"),
         gradle.get("validation_max_workers"),
@@ -173,6 +194,7 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
     workers = max(1, min(base.cpu_count, workers))
 
     cpu_limit = _positive_int(
+        _cli_override_value(cli_overrides, "cpu_limit"),
         os.environ.get("DEVTOOL_VALIDATION_CPU_LIMIT", ""),
         validation.get("cpu_limit"),
         android.get("validation_cpu_limit"),
@@ -183,6 +205,7 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
 
     available, total = memory_info_mb()
     heap = _positive_int(
+        _cli_override_value(cli_overrides, "gradle_heap_mb"),
         os.environ.get("DEVTOOL_GRADLE_VALIDATION_HEAP_MB", ""),
         validation.get("gradle_heap_mb"),
         gradle.get("validation_heap_mb"),
@@ -192,6 +215,7 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
         heap = max(768, min(2048, int(basis * 0.35)))
 
     guard = _positive_int(
+        _cli_override_value(cli_overrides, "memory_guard_mb"),
         os.environ.get("DEVTOOL_VALIDATION_MEMORY_GUARD_MB", ""),
         validation.get("memory_guard_mb"),
         allow_zero=True,
@@ -207,10 +231,32 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
         gradle_heap_mb=heap,
         memory_guard_mb=guard if enabled else 0,
         split_gradle=_bool_option(validation.get("split_gradle"), enabled and mobile_host),
-        no_daemon=_bool_option(validation.get("no_daemon"), enabled and mobile_host),
-        low_priority=_bool_option(validation.get("low_priority"), enabled and mobile_host),
+        no_daemon=_bool_option(
+            _cli_override_value(cli_overrides, "no_daemon"),
+            _bool_option(validation.get("no_daemon"), enabled and mobile_host),
+        ),
+        low_priority=_bool_option(
+            _cli_override_value(cli_overrides, "low_priority"),
+            _bool_option(validation.get("low_priority"), enabled and mobile_host),
+        ),
     )
 
+
+
+def _android_validation_phase_builtins(
+    base: AndroidValidationResourcePolicy,
+) -> dict[str, dict[str, object]]:
+    return {
+        "preflight": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
+        "dependencies": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
+        "compile": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit)},
+        "resources": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1024, base.gradle_heap_mb)},
+        "unit-test": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit)},
+        "package": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1280, base.gradle_heap_mb)},
+        "lint": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1536, base.gradle_heap_mb)},
+        "instrumentation": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": max(768, base.gradle_heap_mb)},
+        "finalize": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
+    }
 
 
 def resolve_android_validation_phase_policy(
@@ -227,24 +273,32 @@ def resolve_android_validation_phase_policy(
 
     base = resolve_android_validation_policy(config)
     normalized = str(phase or "").strip().lower().replace("_", "-")
-    builtins: dict[str, dict[str, object]] = {
-        "preflight": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
-        "dependencies": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
-        "compile": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit)},
-        "resources": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1024, base.gradle_heap_mb)},
-        "unit-test": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit)},
-        "package": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1280, base.gradle_heap_mb)},
-        "lint": {"max_workers": 1 if base.enabled else base.max_workers, "cpu_limit": min(2, base.cpu_limit), "gradle_heap_mb": max(1536, base.gradle_heap_mb)},
-        "instrumentation": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": max(768, base.gradle_heap_mb)},
-        "finalize": {"max_workers": 1, "cpu_limit": 1, "gradle_heap_mb": 768},
-    }
+    builtins = _android_validation_phase_builtins(base)
     values = dict(builtins.get(normalized, {}))
     validation = _option_dict(config, "validation")
     profiles = validation.get("phase_profiles")
+    configured: dict[str, object] = {}
     if isinstance(profiles, dict):
-        configured = profiles.get(normalized) or profiles.get(normalized.replace("-", "_"))
-        if isinstance(configured, dict):
+        raw_configured = profiles.get(normalized) or profiles.get(normalized.replace("-", "_"))
+        if isinstance(raw_configured, dict):
+            configured = dict(raw_configured)
             values.update(configured)
+
+    cli_overrides = _cli_resource_overrides(validation)
+    # Explicit CLI flags are invocation-level intent and therefore outrank
+    # built-in Android-safe phase defaults and project phase profiles. Real
+    # host limits (for example os.cpu_count()) may still clamp the request.
+    for key in (
+        "max_workers",
+        "cpu_limit",
+        "gradle_heap_mb",
+        "memory_guard_mb",
+        "no_daemon",
+        "low_priority",
+    ):
+        cli_value = _cli_override_value(cli_overrides, key)
+        if cli_value is not None:
+            values[key] = cli_value
 
     max_workers = _positive_int(values.get("max_workers")) or base.max_workers
     cpu_limit = _positive_int(values.get("cpu_limit")) or base.cpu_limit
@@ -264,6 +318,70 @@ def resolve_android_validation_phase_policy(
         low_priority=low_priority,
         split_gradle=split_gradle,
     )
+
+def android_validation_cli_resolution_notes(
+    config: ProjectConfig,
+    phase: str,
+) -> list[str]:
+    """Describe how explicit validation CLI flags resolved for one phase."""
+
+    validation = _option_dict(config, "validation")
+    overrides = _cli_resource_overrides(validation)
+    if not overrides:
+        return []
+
+    policy = resolve_android_validation_phase_policy(config, phase)
+    base = resolve_android_validation_policy(config)
+    normalized = str(phase or "").strip().lower().replace("_", "-")
+    builtin = _android_validation_phase_builtins(base).get(normalized, {})
+    profiles = validation.get("phase_profiles")
+    phase_profile: dict[str, object] = {}
+    if isinstance(profiles, dict):
+        raw = profiles.get(normalized) or profiles.get(normalized.replace("-", "_"))
+        if isinstance(raw, dict):
+            phase_profile = dict(raw)
+
+    gradle = _option_dict(config, "gradle")
+    effective: dict[str, object] = {
+        "max_workers": policy.max_workers,
+        "cpu_limit": policy.cpu_limit,
+        "gradle_heap_mb": policy.gradle_heap_mb,
+        "memory_guard_mb": policy.memory_guard_mb,
+        "no_daemon": policy.no_daemon,
+        "low_priority": policy.low_priority,
+        "parallel": _bool_option(validation.get("parallel"), False),
+        "build_cache": _bool_option(gradle.get("build_cache"), True),
+    }
+
+    notes: list[str] = []
+    for key, record in overrides.items():
+        if key not in effective:
+            continue
+        requested = record.get("value")
+        resolved = effective[key]
+        flag = str(record.get("flag") or key)
+        prior = record.get("prior")
+        displaced: list[str] = []
+        if isinstance(prior, Mapping):
+            for source, value in prior.items():
+                if value not in (None, "", "auto") and value != requested:
+                    displaced.append(f"{source}={value}")
+        if key in phase_profile and phase_profile.get(key) != requested:
+            displaced.append(f"phase-profile[{normalized}]={phase_profile.get(key)}")
+        elif key in builtin and builtin.get(key) != requested:
+            displaced.append(f"android-safe[{normalized}]={builtin.get(key)}")
+
+        status = "applied" if resolved == requested else "clamped"
+        detail = (
+            f"{key}: {flag} requested={requested} -> effective={resolved} ({status})"
+        )
+        if displaced:
+            detail += "; overrides " + ", ".join(displaced)
+        if status == "clamped" and key in {"max_workers", "cpu_limit"}:
+            detail += f"; host cpu_count={resolve_build_policy(config, config.kind or 'android').cpu_count}"
+        notes.append(detail)
+    return notes
+
 
 def _bounded_makeflags(existing: str, workers: int) -> str:
     """Replace only job-count tokens while preserving user make flags."""
@@ -299,13 +417,17 @@ def optimized_validation_env(config: ProjectConfig, kind: str) -> dict[str, str]
             "android-safe" if policy.enabled else "standard"
         )
         if policy.enabled:
-            safe_gradle_opts = (
-                f"-Dorg.gradle.workers.max={policy.max_workers} "
-                "-Dorg.gradle.parallel=false "
-                "-Dorg.gradle.vfs.watch=false "
-                f"-Dorg.gradle.jvmargs=-Xmx{policy.gradle_heap_mb}m "
-                f"-XX:ActiveProcessorCount={policy.cpu_limit}"
-            )
+            validation = _option_dict(config, "validation")
+            parallel_enabled = _bool_option(validation.get("parallel"), False)
+            safe_gradle_parts = [
+                f"-Dorg.gradle.workers.max={policy.max_workers}",
+                "-Dorg.gradle.vfs.watch=false",
+                f"-Dorg.gradle.jvmargs=-Xmx{policy.gradle_heap_mb}m",
+                f"-XX:ActiveProcessorCount={policy.cpu_limit}",
+            ]
+            if not parallel_enabled:
+                safe_gradle_parts.insert(1, "-Dorg.gradle.parallel=false")
+            safe_gradle_opts = " ".join(safe_gradle_parts)
             existing = str(env.get("GRADLE_OPTS") or "").strip()
             env["GRADLE_OPTS"] = f"{existing} {safe_gradle_opts}".strip()
             java_options = str(env.get("JAVA_TOOL_OPTIONS") or "").strip()

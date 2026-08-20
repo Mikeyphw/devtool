@@ -893,10 +893,10 @@ def _add_validation_resource_override_flags(cmd: argparse.ArgumentParser) -> Non
     the current command. They do not rewrite .devtool.toml or global config.
     """
 
-    cmd.add_argument("--max-workers", type=int, default=None, metavar="COUNT", help="Override validation worker count for this invocation")
-    cmd.add_argument("--cpu-limit", type=int, default=None, metavar="COUNT", help="Override validation CPU limit for this invocation")
-    cmd.add_argument("--gradle-heap-mb", type=int, default=None, metavar="MIB", help="Override the Gradle validation heap for this invocation")
-    cmd.add_argument("--memory-guard-mb", type=int, default=None, metavar="MIB", help="Override the validation free-memory guard; 0 disables it")
+    cmd.add_argument("--max-workers", type=int, default=None, metavar="COUNT", help="Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits")
+    cmd.add_argument("--cpu-limit", type=int, default=None, metavar="COUNT", help="Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits")
+    cmd.add_argument("--gradle-heap-mb", type=int, default=None, metavar="MIB", help="Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults")
+    cmd.add_argument("--memory-guard-mb", type=int, default=None, metavar="MIB", help="Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults")
     priority = cmd.add_mutually_exclusive_group()
     priority.add_argument("--low-priority", dest="validation_low_priority", action="store_true", default=None, help="Run validation commands at low scheduler priority")
     priority.add_argument("--normal-priority", dest="validation_low_priority", action="store_false", help="Do not lower validation process priority")
@@ -2453,6 +2453,30 @@ def _apply_validation_resource_overrides(config: ProjectConfig, args: argparse.N
         gradle = {}
         config.runner_options["gradle"] = gradle
 
+    cli_overrides = validation.setdefault("_cli_resource_overrides", {})
+    if not isinstance(cli_overrides, dict):
+        cli_overrides = {}
+        validation["_cli_resource_overrides"] = cli_overrides
+
+    def remember_cli_override(
+        key: str,
+        value: object,
+        *,
+        flag: str,
+        prior: dict[str, object] | None = None,
+    ) -> None:
+        existing = cli_overrides.get(key)
+        preserved_prior = None
+        if isinstance(existing, dict) and existing.get("value") == value and existing.get("flag") == flag:
+            existing_prior = existing.get("prior")
+            if isinstance(existing_prior, dict):
+                preserved_prior = dict(existing_prior)
+        cli_overrides[key] = {
+            "value": value,
+            "flag": flag,
+            "prior": preserved_prior if preserved_prior is not None else dict(prior or {}),
+        }
+
     numeric = {
         "max_workers": ("max_workers", 1, False),
         "cpu_limit": ("cpu_limit", 1, False),
@@ -2466,22 +2490,66 @@ def _apply_validation_resource_overrides(config: ProjectConfig, args: argparse.N
         parsed = int(value)
         if parsed < minimum or (parsed == 0 and not allow_zero):
             raise SystemExit(f"--{attr.replace('_', '-')} must be at least {minimum}.")
+        prior = {
+            "validation": validation.get(key),
+            "gradle": gradle.get(key),
+        }
+        android = config.runner_options.get("android", {})
+        if isinstance(android, dict):
+            prior["android"] = android.get(key)
+        remember_cli_override(
+            key,
+            parsed,
+            flag=f"--{attr.replace('_', '-')}",
+            prior=prior,
+        )
         validation[key] = parsed
 
     low_priority = getattr(args, "validation_low_priority", None)
     if low_priority is not None:
+        remember_cli_override(
+            "low_priority",
+            bool(low_priority),
+            flag="--low-priority" if bool(low_priority) else "--normal-priority",
+            prior={"validation": validation.get("low_priority")},
+        )
         validation["low_priority"] = bool(low_priority)
     parallel = getattr(args, "validation_parallel", None)
     if parallel is not None:
+        remember_cli_override(
+            "parallel",
+            bool(parallel),
+            flag="--parallel" if bool(parallel) else "--no-parallel",
+            prior={
+                "validation": validation.get("parallel"),
+                "gradle": gradle.get("parallel"),
+            },
+        )
         validation["parallel"] = bool(parallel)
         gradle["parallel"] = bool(parallel)
     build_cache = getattr(args, "validation_build_cache", None)
     if build_cache is not None:
+        remember_cli_override(
+            "build_cache",
+            bool(build_cache),
+            flag="--build-cache" if bool(build_cache) else "--no-build-cache",
+            prior={"gradle": gradle.get("build_cache")},
+        )
         gradle["build_cache"] = bool(build_cache)
     daemon = getattr(args, "validation_daemon", None)
     if daemon is not None:
-        validation["no_daemon"] = not bool(daemon)
-        gradle["no_daemon"] = not bool(daemon)
+        no_daemon = not bool(daemon)
+        remember_cli_override(
+            "no_daemon",
+            no_daemon,
+            flag="--daemon" if bool(daemon) else "--no-daemon",
+            prior={
+                "validation": validation.get("no_daemon"),
+                "gradle": gradle.get("no_daemon"),
+            },
+        )
+        validation["no_daemon"] = no_daemon
+        gradle["no_daemon"] = no_daemon
 
 
 def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -> None:

@@ -696,7 +696,11 @@ class AndroidGradleRunner(ProjectRunner):
                 for value in configured_gradle_args:
                     item = str(value).strip()
                     if item:
-                        argv.extend(["--gradle-arg", item])
+                        # Gradle arguments commonly begin with "-" (-D, -P, --...).
+                        # Passing the value as a separate argv token makes argparse
+                        # interpret it as another option instead of the value for
+                        # --gradle-arg.  The --option=value form is unambiguous.
+                        argv.append(f"--gradle-arg={item}")
             runner = str(android.get("test_runner") or "").strip()
             target_package = str(android.get("target_package") or "").strip()
             if runner:

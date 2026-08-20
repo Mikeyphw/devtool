@@ -141,13 +141,13 @@ def test_aapt2_warning_suppression_is_not_self_referential() -> None:
     args = android_build.gradle_arguments_with_aapt2_override([], Path("/opt/devtool/aapt2"))
     suppression = next(
         value for value in args
-        if value.startswith("-Pandroid.suppressUnsupportedOptionWarnings=")
+        if value.startswith("-Pandroid.sync.suppressAgpWarnings=")
     )
     assert suppression == (
-        "-Pandroid.suppressUnsupportedOptionWarnings="
-        "android.aapt2FromMavenOverride"
+        "-Pandroid.sync.suppressAgpWarnings="
+        "UNSUPPORTED_PROJECT_OPTION_USE"
     )
-    assert "android.suppressUnsupportedOptionWarnings," not in suppression
+    assert "android.suppressUnsupportedOptionWarnings" not in suppression
 
 
 def test_complete_wrapper_survives_broken_termux_gradle_optimization(tmp_path: Path) -> None:

@@ -552,7 +552,7 @@ def test_gradle_aapt2_override_collapses_duplicate_explicit_properties():
     args = [
         "-Pandroid.aapt2FromMavenOverride=/old/aapt2",
         "-Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2",
-        "-Pandroid.suppressUnsupportedOptionWarnings=android.otherOption",
+        "-Pandroid.sync.suppressAgpWarnings=DEPRECATED_DSL",
     ]
 
     result = gradle_arguments_with_aapt2_override(
@@ -574,10 +574,10 @@ def test_gradle_aapt2_override_collapses_duplicate_explicit_properties():
         arg
         for arg in result
         if arg.startswith(
-            "-Pandroid.suppressUnsupportedOptionWarnings="
+            "-Pandroid.sync.suppressAgpWarnings="
         )
     )
 
-    assert "android.aapt2FromMavenOverride" in suppressions
-    assert "android.otherOption" in suppressions
+    assert "UNSUPPORTED_PROJECT_OPTION_USE" in suppressions
+    assert "DEPRECATED_DSL" in suppressions
 

@@ -19,7 +19,7 @@ import sys
 import tempfile
 from typing import Any, Iterable
 
-from .build_optimization import resolve_android_validation_phase_policy, resolve_android_validation_policy, resolve_build_policy
+from .build_optimization import android_validation_cli_resolution_notes, resolve_android_validation_phase_policy, resolve_android_validation_policy, resolve_build_policy
 from . import android_build
 from .execution_environments import CHROOT, NATIVE_TERMUX, detect_current_environment
 from .models import ProjectConfig
@@ -741,7 +741,12 @@ def android_builder_arguments_for_tasks(
         validation_options = _dict_option(config, "validation")
         packaging_workload = _is_android_packaging_workload(seen_tasks)
         heap_mb = validation_policy.gradle_heap_mb
-        if packaging_workload:
+        cli_resource_overrides = validation_options.get("_cli_resource_overrides")
+        cli_heap_explicit = (
+            isinstance(cli_resource_overrides, dict)
+            and isinstance(cli_resource_overrides.get("gradle_heap_mb"), dict)
+        )
+        if packaging_workload and not cli_heap_explicit:
             configured_packaging_heap = _positive_integer(
                 os.environ.get("DEVTOOL_GRADLE_PACKAGING_HEAP_MB")
                 or validation_options.get("gradle_packaging_heap_mb")
@@ -815,6 +820,10 @@ def android_builder_arguments_for_tasks(
         argv.append("--parallel")
     if bool(gradle.get("build_cache", True)):
         argv.append("--build-cache")
+    if validation_policy is not None:
+        resolution_phase = validation_phase or "validation"
+        for note in android_validation_cli_resolution_notes(config, resolution_phase):
+            _append_option(argv, "--resource-resolution", note)
     fail_fast_default = bool(validation_policy is not None and validation_policy.enabled)
     fail_fast_value: Any = None
     env_fail_fast = os.environ.get("DEVTOOL_GRADLE_FAIL_FAST", "").strip()
