@@ -59,6 +59,8 @@ DEFAULT_QEMU_X86_64_SYSROOT_SHA256 = "c1e67ef7b17a6300e136118bd1dc04725009cb376c
 ANDROID_CMDLINE_TOOLS_URL = "https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip"
 AAPT2_OVERRIDE_PROPERTY = "android.aapt2FromMavenOverride"
 UNSUPPORTED_OPTION_WARNINGS_PROPERTY = "android.suppressUnsupportedOptionWarnings"
+AGP_WARNING_SUPPRESSIONS_PROPERTY = "android.sync.suppressAgpWarnings"
+AGP_UNSUPPORTED_PROJECT_OPTION_WARNING = "UNSUPPORTED_PROJECT_OPTION_USE"
 BOOTSTRAP_DOWNLOAD_POLICIES = {"never", "missing", "auto", "force"}
 BOOTSTRAP_NETWORK_POLICIES = {"deny", "allow"}
 JAVA_PROVIDERS = {"auto", "termux", "system"}
@@ -3482,6 +3484,10 @@ def install_qemu_ndk_wrappers(
     if normalized_machine() not in {"arm64", "armv7"}:
         return False
     if ndk_x86_64_real_binary(clang) is None:
+        info(
+            f"QEMU NDK fallback is unavailable for {version}: {clang} has no preserved "
+            "x86_64 Google compiler backing binary to wrap."
+        )
         return False
 
     qemu = find_qemu_x86_64(qemu_command) or install_qemu_x86_64_if_needed(
@@ -3699,6 +3705,14 @@ def ensure_ndk_host_compatible(
             problems.append("clang resource directory escapes the NDK")
         elif not link_ready:
             problems.append("Android compiler runtime link probe fails")
+        if provider == "auto" and linker_ready and resource_ready and not link_ready:
+            info(
+                f"NDK {version} compiler, linker, and resource directory are usable, but the "
+                "synthetic Android runtime link probe did not pass. Auto mode keeps the native "
+                "NDK and defers final compatibility to the real Gradle/CMake build instead of "
+                "forcing QEMU."
+            )
+            return
         warn(
             f"NDK {version} compiler executes but {' and '.join(problems)}; rebuilding QEMU "
             "wrappers with preserved LLVM argv[0] identity and installation path."
@@ -3732,6 +3746,15 @@ def ensure_ndk_host_compatible(
         ):
             return
         if provider == "qemu":
+            clang = ndk_clangxx(sdk_root, version)
+            if ndk_x86_64_real_binary(clang) is None:
+                fail(
+                    "QEMU NDK fallback was requested, but the active NDK has no preserved "
+                    "x86_64 Google host compiler to wrap. This usually means a native ARM-host "
+                    "NDK replaced the canonical linux-x86_64 prebuilt without retaining the "
+                    "original Google prebuilt. Use --ndk-host-provider auto to keep the working "
+                    "native NDK, or restore/reinstall the official Google NDK before forcing QEMU."
+                )
             fail(
                 "QEMU NDK fallback was requested but qemu-x86_64 could not be installed or used.\n"
                 "Install qemu-user-x86-64/qemu-user, or set --qemu-command."
@@ -4242,6 +4265,8 @@ def slugify_name(value: str) -> str:
 
 def inspect_project(root: Path) -> ProjectInfo:
     text = read_project_text(root)
+    toolchains = _termux_toolchains_runtime_module()
+    active_gradle_text = toolchains.active_gradle_config_text(root)
     name = project_display_name(root, text)
     android_application = bool(re.search(r"com\.android\.application|id\s*\(?\s*['\"]com\.android\.application", text))
     android_library = bool(re.search(r"com\.android\.library|id\s*\(?\s*['\"]com\.android\.library", text))
@@ -4251,9 +4276,25 @@ def inspect_project(root: Path) -> ProjectInfo:
             r"\bcompileSdk(?:Version)?\s*(?:=|\s)\s*['\"]?(\d+)",
             r"\bcompileSdk\s*\(\s*(\d+)\s*\)",
         ],
-        text,
-    ) or resolve_catalog_int_reference(root, text, "compileSdk")
-    build_tools_match = re.search(r"\bbuildToolsVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", text)
+        active_gradle_text,
+    )
+    if compile_sdk is None:
+        reference = re.search(
+            r"\bcompileSdk(?:Version)?\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\b",
+            active_gradle_text,
+        )
+        if reference:
+            alias = re.escape(reference.group(1))
+            compile_sdk = first_int(
+                [rf"\b(?:val|var)\s+{alias}\s*(?::\s*[A-Za-z0-9_.<>?]+)?\s*=\s*(\d+)"],
+                active_gradle_text,
+            )
+    if compile_sdk is None:
+        compile_sdk = resolve_catalog_int_reference(root, active_gradle_text, "compileSdk")
+    build_tools_match = re.search(
+        r"\bbuildToolsVersion\s*(?:=|\s)\s*['\"]([^'\"]+)",
+        active_gradle_text,
+    )
     build_tools = build_tools_match.group(1) if build_tools_match else None
     agp_version = None
     for pattern in (
@@ -4269,11 +4310,8 @@ def inspect_project(root: Path) -> ProjectInfo:
     agp_major = int(agp_version.split(".", 1)[0]) if agp_version else first_int(
         [r"com\.android\.tools\.build:gradle:([0-9]+)"], text
     )
-    # Build-time NDK/CMake classification must use the exact same active
-    # Gradle view as provider diagnostics; commented declarations are not
-    # executable configuration.
-    toolchains = _termux_toolchains_runtime_module()
-    active_gradle_text = toolchains.active_gradle_config_text(root)
+    # Build-time NDK/CMake classification uses the same active Gradle view
+    # as SDK inspection so comments and backup build files cannot affect it.
     ndk_match = re.search(r"\bndkVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", active_gradle_text)
     ndk_version = ndk_match.group(1).strip() if ndk_match else None
     native_build = toolchains.classify_native_requirement(root, android=android).capability == "android-ndk"
@@ -6716,64 +6754,67 @@ def gradle_arguments_with_aapt2_override(
 ) -> list[str]:
     """Normalize Gradle arguments and silence the custom-AAPT2 AGP warning.
 
-    Android Gradle Plugin labels ``android.aapt2FromMavenOverride`` as an
-    experimental option. Whenever Devtool injects that property, also add it to
-    ``android.suppressUnsupportedOptionWarnings``. Existing comma-separated
-    suppressions from Gradle passthrough arguments are retained.
+    AGP 9.x reports ``android.aapt2FromMavenOverride`` as an unsupported
+    project option.  Older Devtool releases suppressed that warning with
+    ``android.suppressUnsupportedOptionWarnings``; on current AGP that
+    suppression property is itself experimental and therefore emits another
+    warning.  Use AGP's current warning-category suppression property instead.
+
+    Caller-provided current suppression categories are preserved.  Legacy
+    ``android.suppressUnsupportedOptionWarnings`` arguments are consumed rather
+    than forwarded so they cannot recreate the warning we are trying to hide.
     """
 
     normalized = normalize_gradle_arguments(arguments, plain_console=plain_console)
     if aapt2 is None:
         return normalized
 
-    suppression_prefix = f"-P{UNSUPPORTED_OPTION_WARNINGS_PROPERTY}="
+    legacy_suppression_prefix = f"-P{UNSUPPORTED_OPTION_WARNINGS_PROPERTY}="
+    warning_suppression_prefix = f"-P{AGP_WARNING_SUPPRESSIONS_PROPERTY}="
     aapt2_prefix = f"-P{AAPT2_OVERRIDE_PROPERTY}="
 
-    suppressions: list[str] = []
+    warning_categories: list[str] = []
     remaining: list[str] = []
     explicit_aapt2: str | None = None
 
     for argument in normalized:
         value = str(argument)
 
-        if value.startswith(suppression_prefix):
-            configured = value[len(suppression_prefix):]
+        if value.startswith(legacy_suppression_prefix):
+            # Do not forward the legacy suppression property: AGP 9.x warns
+            # that this property is experimental.  The category suppression
+            # below supersedes it for unsupported project options.
+            continue
+
+        if value.startswith(warning_suppression_prefix):
+            configured = value[len(warning_suppression_prefix):]
             for item in configured.split(","):
                 item = item.strip()
-                if item and item not in suppressions:
-                    suppressions.append(item)
+                if item and item not in warning_categories:
+                    warning_categories.append(item)
             continue
 
         if value.startswith(aapt2_prefix):
             candidate = value[len(aapt2_prefix):].strip()
-
-            # Last explicit value wins, matching normal Gradle CLI
-            # semantics while ensuring Gradle ultimately receives only
-            # one stable property.
             if candidate:
                 explicit_aapt2 = candidate
             continue
 
         remaining.append(value)
 
-    # The custom AAPT2 override is the experimental option that AGP warns
-    # about. Suppress that warning while preserving caller-provided entries.
-    # Do not add the suppression property to its own value: doing so creates a
-    # self-referential unsupported-option warning on newer AGP releases.
-    if AAPT2_OVERRIDE_PROPERTY not in suppressions:
-        suppressions.append(AAPT2_OVERRIDE_PROPERTY)
+    if AGP_UNSUPPORTED_PROJECT_OPTION_WARNING not in warning_categories:
+        warning_categories.append(AGP_UNSUPPORTED_PROJECT_OPTION_WARNING)
 
     selected_aapt2 = explicit_aapt2 or str(aapt2)
 
     properties = [
         f"-P{AAPT2_OVERRIDE_PROPERTY}={selected_aapt2}",
-        f"-P{UNSUPPORTED_OPTION_WARNINGS_PROPERTY}={','.join(suppressions)}",
+        f"-P{AGP_WARNING_SUPPRESSIONS_PROPERTY}={','.join(warning_categories)}",
     ]
 
     console = [item for item in remaining if item.startswith("--console=")]
     remaining = [item for item in remaining if not item.startswith("--console=")]
     return [*properties, *remaining, *console]
-
 
 def split_gradle_passthrough_args(raw_args: Sequence[str]) -> tuple[list[str], list[str]]:
     raw: list[str] = []
@@ -6951,6 +6992,12 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gradle-metaspace-mb", type=int, default=0, help="Cap the Gradle JVM metaspace in MiB")
     parser.add_argument("--memory-guard-mb", type=int, default=0, help="Stop Gradle before system free memory remains below this threshold")
     parser.add_argument("--cpu-limit", type=int, default=0, help="Limit validation to this many logical CPUs when taskset is available")
+    parser.add_argument(
+        "--resource-resolution",
+        action="append",
+        default=[],
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--low-priority", action="store_true", help="Run Gradle with reduced CPU and I/O scheduler priority")
     parser.add_argument("--constrained", action="store_true", help="Use memory-saving Gradle and Kotlin settings for Android-hosted validation")
     parser.add_argument("-O", "--offline", action="store_true", help="Disable downloads and Gradle network access")
@@ -7617,8 +7664,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.gradle_lock_timeout_ms:
         command.append(f"-Dorg.gradle.cache.internal.lockTimeout={args.gradle_lock_timeout_ms}")
     if args.constrained:
+        if not args.parallel:
+            command.append("-Dorg.gradle.parallel=false")
         command.extend([
-            "-Dorg.gradle.parallel=false",
             "-Dorg.gradle.vfs.watch=false",
             "-Pkotlin.compiler.execution.strategy=in-process",
         ])
@@ -7646,13 +7694,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     )
 
-    heading("Build")
+    heading("Gradle process summary")
+    info(f"Project: {project_root}")
+    info(f"Tasks ({len(tasks)}): {' '.join(tasks) if tasks else '(none)'}")
+    info(f"Launcher: {gradle}")
+    info(f"Java home: {java_home}")
+    info(
+        "Execution: "
+        f"workers={args.max_workers}, "
+        f"cpu-limit={args.cpu_limit or 'none'}, "
+        f"parallel={'on' if args.parallel and args.max_workers > 1 else 'off'}, "
+        f"daemon={'off/single-use' if args.no_daemon else 'reusable'}, "
+        f"priority={'low' if args.low_priority else 'normal'}"
+    )
+    heap_summary = f"{args.gradle_jvm_heap_mb} MiB" if args.gradle_jvm_heap_mb else "auto"
+    metaspace_summary = f"{args.gradle_metaspace_mb} MiB" if args.gradle_metaspace_mb else "auto"
+    guard_summary = f"{args.memory_guard_mb} MiB" if args.memory_guard_mb else "disabled"
+    info(
+        "Memory: "
+        f"heap={heap_summary}, "
+        f"metaspace={metaspace_summary}, "
+        f"guard={guard_summary}"
+    )
+    configuration_cache = "default"
+    if "--no-configuration-cache" in args.gradle_args:
+        configuration_cache = "off"
+    elif "--configuration-cache" in args.gradle_args:
+        configuration_cache = "on"
+    info(
+        "Caching: "
+        f"build-cache={'on' if args.build_cache else 'off'}, "
+        f"configuration-cache={configuration_cache}"
+    )
+    info(
+        "Android tools: "
+        f"aapt2={aapt2 or 'Gradle/default'}, "
+        f"failure-mode={'continue' if args.continue_on_failure else 'fail-fast'}"
+    )
     if jvmargs:
-        failure_mode = "continue" if args.continue_on_failure else "fail-fast"
-        info(
-            f"Resource profile: workers={args.max_workers}, {jvmargs}, "
-            f"failure-mode={failure_mode}"
-        )
+        info(f"Gradle JVM args: {jvmargs}")
+    if args.resource_resolution:
+        info("Flag resolution:")
+        for note in args.resource_resolution:
+            info(f"  - {note}")
+
+    heading("Build")
     build_started = time.time()
     build_succeeded = False
     try:
@@ -7666,7 +7752,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             cpu_limit=args.cpu_limit,
         )
         build_succeeded = True
+        info(f"Gradle result: success in {time.time() - build_started:.1f}s")
+    except Exception:
+        info(f"Gradle result: failed in {time.time() - build_started:.1f}s")
+        raise
 
+    try:
         if args.no_artifact_scan or args.dry_run:
             return 0
         artifacts = discover_artifacts(project_root, build_started)

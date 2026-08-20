@@ -669,7 +669,7 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
             self.assertEqual(calls, ["expose", "arm64:https://example.invalid/android-ndk-r28c-aarch64.tar.xz"])
             qemu.assert_not_called()
 
-    def test_auto_native_candidate_must_pass_runtime_link_probe_before_acceptance(self) -> None:
+    def test_auto_native_candidate_defers_synthetic_runtime_probe_to_gradle(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             sdk = root / "sdk"
@@ -687,8 +687,10 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
                 patch.object(android_build, "ndk_host_linker_runs", return_value=True),
                 patch.object(android_build, "ndk_host_resource_dir_ready", return_value=True),
                 patch.object(android_build, "ndk_host_android_link_runs", return_value=False) as link_probe,
-                patch.object(android_build, "restore_google_ndk_x86_64_prebuilt_for_qemu", return_value=True) as restore,
-                patch.object(android_build, "install_qemu_ndk_wrappers", return_value=True) as qemu,
+                patch.object(android_build, "restore_google_ndk_x86_64_prebuilt_for_qemu") as restore,
+                patch.object(android_build, "install_qemu_ndk_wrappers") as qemu,
+                patch.object(android_build, "warn") as warning,
+                patch.object(android_build, "info") as information,
             ):
                 android_build.ensure_ndk_host_compatible(
                     sdk,
@@ -708,8 +710,46 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
 
             expose.assert_called_once()
             link_probe.assert_called_once_with(sdk, version)
-            restore.assert_called_once_with(sdk, version, dry_run=False)
-            qemu.assert_called_once()
+            restore.assert_not_called()
+            qemu.assert_not_called()
+            warning.assert_not_called()
+            self.assertTrue(
+                any("defers final compatibility to the real Gradle/CMake build" in str(call) for call in information.call_args_list)
+            )
+
+    def test_forced_qemu_reports_missing_preserved_google_compiler(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sdk = root / "sdk"
+            version = "28.2.13676358"
+            self._fake_ndk(sdk, version)
+
+            with (
+                patch.object(android_build, "normalized_machine", return_value="arm64"),
+                patch.object(android_build, "ndk_host_toolchain_runs", return_value=False),
+                patch.object(android_build, "restore_google_ndk_x86_64_prebuilt_for_qemu", return_value=True),
+                patch.object(android_build, "install_qemu_ndk_wrappers", return_value=False),
+                patch.object(android_build, "ndk_x86_64_real_binary", return_value=None),
+            ):
+                with self.assertRaisesRegex(
+                    android_build.BuildError,
+                    "no preserved x86_64 Google host compiler",
+                ):
+                    android_build.ensure_ndk_host_compatible(
+                        sdk,
+                        version,
+                        root / "cache",
+                        provider="qemu",
+                        arm64_ndk_url="",
+                        qemu_command="",
+                        qemu_ld_prefix="auto",
+                        qemu_sysroot_url="",
+                        qemu_sysroot_sha256="",
+                        qemu_install="auto",
+                        offline=False,
+                        force=False,
+                        dry_run=False,
+                    )
 
     def test_qemu_wrapper_targets_preserved_elf_for_ndk_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
