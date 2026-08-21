@@ -1113,6 +1113,15 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             # NuGet warnings such as NU1603 and NU1903.
             r"^(.*?\bwarning\s+NU\d+\s*:\s*.+)$",
 
+            # Kotlin compiler warnings.
+            r"^(w:\s+file:///.+)$",
+
+            # File/line warning forms used by Android lint and compilers.
+            r"^(.+?:\d+(?::\d+)?:\s*warning\s*:\s*.+)$",
+
+            # Canonical diagnostics appended by the runner after reports.
+            r"^(-\s+WARNING(?:\s+\[[^\]]+\])?\s+.+)$",
+
             # Generic command warnings.
             r"^(.*?\bwarning\s*:\s*.+)$",
 
@@ -1151,6 +1160,10 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             # Kotlin/Java/Android compiler diagnostics.
             r"^(?:e|error):\s+file:///.+",
             r"^.+?:\d+(?::\d+)?:\s*(?:error|fatal error)\b.+",
+
+            # Canonical diagnostics appended by the runner
+            # after report parsing.
+            r"^-\s+ERROR(?:\s+\[[^\]]+\])?\s+.+$",
 
             # Gradle/lint/build summaries.
             r"^>\s*Task\s+.+\s+FAILED$",

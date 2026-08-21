@@ -548,6 +548,32 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             index += 1
             continue
 
+        # Gradle deprecation notices commonly contain wording such as
+        # "This will fail with an error in Gradle 10". The word "error"
+        # describes a future Gradle release: it is not the severity of the
+        # current invocation. Route these before the generic error matcher.
+        gradle_deprecation_text = stripped.lower()
+
+        if (
+            command_name in {"build", "test", "restore", "package", "lint"}
+            and "has been deprecated" in gradle_deprecation_text
+            and (
+                "gradle 10" in gradle_deprecation_text
+                or "will fail with an error in gradle" in gradle_deprecation_text
+            )
+        ):
+            issues.append(
+                Issue(
+                    "warning",
+                    command_name,
+                    "-",
+                    "GRADLE_DEPRECATION",
+                    stripped,
+                )
+            )
+            index += 1
+            continue
+
         match = _GENERIC_WARN_ERR.search(stripped)
         if match and command_name in {"build", "test", "restore", "package", "lint"}:
             message = match.group("message").strip()

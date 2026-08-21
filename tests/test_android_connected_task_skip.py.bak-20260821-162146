@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import devtool.android_build as android_build
+
+
+def test_connected_android_test_task_detection() -> None:
+    assert android_build.is_connected_android_test_task(
+        ":app:connectedDebugAndroidTest"
+    )
+    assert android_build.is_connected_android_test_task(
+        "connectedReleaseAndroidTest"
+    )
+
+    assert not android_build.is_connected_android_test_task(
+        ":app:assembleDebugAndroidTest"
+    )
+    assert not android_build.is_connected_android_test_task(
+        ":app:compileDebugAndroidTestKotlin"
+    )
+    assert not android_build.is_connected_android_test_task(
+        ":app:testDebugUnitTest"
+    )
+
+
+def test_parse_adb_devices_keeps_states() -> None:
+    states = android_build._parse_adb_device_states(
+        """List of devices attached
+serial-ok device product:test
+serial-offline offline
+serial-auth unauthorized
+
+"""
+    )
+
+    assert states == {
+        "serial-ok": "device",
+        "serial-offline": "offline",
+        "serial-auth": "unauthorized",
+    }
+
+
+def test_connected_devices_uses_sdk_adb(
+    tmp_path: Path,
+) -> None:
+    sdk = tmp_path / "sdk"
+    adb = sdk / "platform-tools" / "adb"
+
+    adb.parent.mkdir(parents=True)
+    adb.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' "
+        "'List of devices attached' "
+        "'serial-1 device product:test'\\n",
+        encoding="utf-8",
+    )
+    adb.chmod(0o755)
+
+    devices, selected, states = (
+        android_build.connected_android_devices(
+            sdk,
+            {"PATH": ""},
+        )
+    )
+
+    assert devices == ["serial-1"]
+    assert selected == str(adb)
+    assert states["serial-1"] == "device"
+
+
+def test_connected_tasks_are_skipped_when_no_device(
+    tmp_path: Path,
+) -> None:
+    sdk = tmp_path / "sdk"
+    adb = sdk / "platform-tools" / "adb"
+
+    adb.parent.mkdir(parents=True)
+    adb.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' "
+        "'List of devices attached'\\n",
+        encoding="utf-8",
+    )
+    adb.chmod(0o755)
+
+    retained, skipped, selected, states = (
+        android_build.filter_unavailable_connected_android_tests(
+            [
+                ":app:assembleDebug",
+                ":app:connectedDebugAndroidTest",
+                ":app:lintDebug",
+            ],
+            sdk_root=sdk,
+            env={"PATH": ""},
+        )
+    )
+
+    assert retained == [
+        ":app:assembleDebug",
+        ":app:lintDebug",
+    ]
+    assert skipped == [
+        ":app:connectedDebugAndroidTest",
+    ]
+    assert selected == str(adb)
+    assert states == {}
+
+
+def test_connected_tasks_run_when_device_present(
+    tmp_path: Path,
+) -> None:
+    sdk = tmp_path / "sdk"
+    adb = sdk / "platform-tools" / "adb"
+
+    adb.parent.mkdir(parents=True)
+    adb.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' "
+        "'List of devices attached' "
+        "'serial-1 device'\\n",
+        encoding="utf-8",
+    )
+    adb.chmod(0o755)
+
+    tasks = [
+        ":app:assembleDebug",
+        ":app:connectedDebugAndroidTest",
+    ]
+
+    retained, skipped, selected, states = (
+        android_build.filter_unavailable_connected_android_tests(
+            tasks,
+            sdk_root=sdk,
+            env={"PATH": ""},
+        )
+    )
+
+    assert retained == tasks
+    assert skipped == []
+    assert selected == str(adb)
+    assert states == {"serial-1": "device"}
+
+
+def test_unauthorized_device_does_not_enable_connected_tests(
+    tmp_path: Path,
+) -> None:
+    sdk = tmp_path / "sdk"
+    adb = sdk / "platform-tools" / "adb"
+
+    adb.parent.mkdir(parents=True)
+    adb.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' "
+        "'List of devices attached' "
+        "'serial-1 unauthorized'\\n",
+        encoding="utf-8",
+    )
+    adb.chmod(0o755)
+
+    retained, skipped, _, states = (
+        android_build.filter_unavailable_connected_android_tests(
+            [":app:connectedDebugAndroidTest"],
+            sdk_root=sdk,
+            env={"PATH": ""},
+        )
+    )
+
+    assert retained == []
+    assert skipped == [
+        ":app:connectedDebugAndroidTest"
+    ]
+    assert states == {
+        "serial-1": "unauthorized"
+    }
+
+
+def test_dry_run_never_probes_or_removes_connected_tasks() -> None:
+    tasks = [
+        ":app:connectedDebugAndroidTest",
+    ]
+
+    retained, skipped, adb, states = (
+        android_build.filter_unavailable_connected_android_tests(
+            tasks,
+            sdk_root=None,
+            env={"PATH": ""},
+            dry_run=True,
+        )
+    )
+
+    assert retained == tasks
+    assert skipped == []
+    assert adb == ""
+    assert states == {}

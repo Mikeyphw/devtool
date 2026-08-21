@@ -101,6 +101,130 @@ def _append_report_issue_summary(
     return rendered
 
 
+def _append_complete_diagnostic_summary(
+    output: str,
+    issues: Sequence[Issue],
+    *,
+    title: str = "Devtool complete diagnostics",
+) -> str:
+    """Append every structured warning/error without a finding-count cap.
+
+    Child stdout/stderr is already streamed into the authoritative Devtool
+    run log. Report parsers such as Android lint XML/SARIF, JUnit, Python
+    reports, package checks, and artifact verification can discover
+    diagnostics which the child process only summarized.
+
+    Keeping a canonical appendix in OperationResult.output guarantees that
+    those complete diagnostics are persisted into the same log and are also
+    available to summary/clipboard surfaces.
+    """
+
+    selected: list[Issue] = []
+    seen: set[
+        tuple[str, str, str, int | None, str, str]
+    ] = set()
+
+    for issue in issues:
+        severity = str(
+            issue.severity or ""
+        ).strip().lower()
+
+        if severity not in {"warning", "error"}:
+            continue
+
+        key = (
+            severity,
+            str(issue.command or "").strip(),
+            str(issue.file or "").strip(),
+            issue.line,
+            str(issue.code or "").strip(),
+            str(issue.message or "").strip(),
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        selected.append(issue)
+
+    if not selected:
+        return output
+
+    lines: list[str] = []
+
+    for issue in selected:
+        severity = str(
+            issue.severity or "diagnostic"
+        ).strip().upper()
+
+        command = str(
+            issue.command or ""
+        ).strip()
+
+        location = str(
+            issue.file or ""
+        ).strip()
+
+        if location in {"", "-"}:
+            location = ""
+        elif issue.line is not None:
+            location = f"{location}:{issue.line}"
+
+        code = str(
+            issue.code or ""
+        ).strip()
+
+        message = str(
+            issue.message or ""
+        ).strip()
+
+        prefix_parts = [severity]
+
+        if command:
+            prefix_parts.append(
+                f"[{command}]"
+            )
+
+        detail_parts: list[str] = []
+
+        if location:
+            detail_parts.append(location)
+
+        if code:
+            detail_parts.append(code)
+
+        detail = ": ".join(detail_parts)
+        prefix = " ".join(prefix_parts)
+
+        if detail and message:
+            rendered = (
+                f"{prefix} {detail}: {message}"
+            )
+        elif detail:
+            rendered = (
+                f"{prefix} {detail}"
+            )
+        else:
+            rendered = (
+                f"{prefix} {message}"
+            ).rstrip()
+
+        lines.append(f"- {rendered}")
+
+    prefix = (
+        output.rstrip() + "\n"
+        if output
+        else ""
+    )
+
+    return (
+        prefix
+        + f"{title} ({len(lines)}):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def _memory_snapshot() -> tuple[int | None, int | None, int | None, float | None, float | None]:
     """Return MemAvailable, SwapFree, SwapTotal and memory PSI avg10 values."""
 
@@ -1889,6 +2013,13 @@ def run_specs(
                         output += f"- {issue.file} [{issue.code}]: {issue.message}\n"
                     if len(warnings) > 8:
                         output += f"- ... and {len(warnings) - 8} more notice(s).\n"
+        # Persist every structured diagnostic discovered
+        # from stdout and report parsers into the authoritative command
+        # output/log. This deliberately has no finding-count cap: tools such
+        # as Android lint may print only their first failure while the report
+        # contains the complete set.
+        output = _append_complete_diagnostic_summary(output, issues)
+
         if _is_dotnet_test_command(spec.argv, spec.name):
             try:
                 from .test_selection import save_failed_test_ids
