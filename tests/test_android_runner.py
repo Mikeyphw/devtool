@@ -22,6 +22,7 @@ from devtool.android_build import (
     download,
     default_build_tools_version,
     build_tools_is_ready,
+    resolve_build_tools_requirement,
     select_required_build_tools_version,
     compatible_build_tools_donor,
     ensure_arm64_build_tools_compatible,
@@ -377,7 +378,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         self.assertEqual(selected, donor)
 
-    def test_unknown_compile_sdk_defaults_to_published_commit451_build_tools(self) -> None:
+    def test_unknown_compile_sdk_and_agp_do_not_invent_build_tools_revision(self) -> None:
         project = ProjectInfo(
             root=Path("/tmp/project"),
             name="Demo",
@@ -391,7 +392,32 @@ class AndroidProjectInspectionTests(unittest.TestCase):
             cmake_version=None,
         )
 
-        self.assertEqual(default_build_tools_version(project), "35.0.1")
+        self.assertIsNone(default_build_tools_version(project))
+        with tempfile.TemporaryDirectory() as tmp:
+            version, source = resolve_build_tools_requirement(project, Path(tmp), "auto")
+        self.assertIsNone(version)
+        self.assertEqual(source, "unknown")
+
+    def test_agp9_default_build_tools_is_36_even_when_compile_sdk_is_unknown(self) -> None:
+        project = ProjectInfo(
+            root=Path("/tmp/project"),
+            name="Demo",
+            android=True,
+            android_application=True,
+            compile_sdk=None,
+            build_tools=None,
+            agp_major=9,
+            native_build=True,
+            ndk_version=None,
+            cmake_version=None,
+            agp_version="9.3.1",
+        )
+
+        self.assertEqual(default_build_tools_version(project), "36.0.0")
+        with tempfile.TemporaryDirectory() as tmp:
+            version, source = resolve_build_tools_requirement(project, Path(tmp), "auto")
+        self.assertEqual(version, "36.0.0")
+        self.assertEqual(source, "agp-default")
 
     def test_arm64_repair_prefers_same_major_sdk_native_donor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

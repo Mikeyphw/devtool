@@ -42,6 +42,83 @@ def _exe(path: Path, output: str = "1.2.3") -> None:
 
 class TermuxNativeProviderTests(unittest.TestCase):
 
+    def test_termux_android_tool_packages_use_configured_apt_sources_and_deduplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp) / "usr"
+            installed = False
+
+            def tool_path(name: str):
+                if not installed:
+                    return None
+                path = prefix / "bin" / name
+                _exe(path)
+                return path
+
+            def install(packages, *, dry_run: bool):
+                nonlocal installed
+                self.assertFalse(dry_run)
+                self.assertEqual(list(packages), ["aapt"])
+                installed = True
+
+            with patch("devtool.android_build.running_under_termux_python", return_value=True), patch(
+                "devtool.android_build.termux_prefix_path", return_value=prefix
+            ), patch(
+                "devtool.android_build.termux_tool_path", side_effect=tool_path
+            ), patch(
+                "devtool.android_build.native_android_build_tool_compatible", return_value=True
+            ), patch(
+                "devtool.android_build._termux_package_available", side_effect=lambda name: name == "aapt"
+            ), patch(
+                "devtool.android_build._ensure_termux_packages", side_effect=install
+            ), patch(
+                "devtool.android_build._refresh_termux_package_indexes"
+            ) as refresh:
+                resolved = android_build.ensure_termux_android_tool_packages(
+                    ["aidl", "zipalign", "aapt2"], dry_run=False
+                )
+
+            refresh.assert_not_called()
+            self.assertEqual(set(resolved), {"aidl", "zipalign", "aapt2"})
+
+    def test_termux_android_tool_packages_refresh_indexes_when_custom_package_is_not_yet_visible(self) -> None:
+        refreshed = False
+
+        def available(name: str) -> bool:
+            return refreshed and name == "split-select"
+
+        def refresh(*, dry_run: bool) -> None:
+            nonlocal refreshed
+            self.assertFalse(dry_run)
+            refreshed = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp) / "usr"
+            tool = prefix / "bin" / "split-select"
+
+            def install(packages, *, dry_run: bool):
+                self.assertEqual(list(packages), ["split-select"])
+                _exe(tool)
+
+            with patch("devtool.android_build.running_under_termux_python", return_value=True), patch(
+                "devtool.android_build.termux_prefix_path", return_value=prefix
+            ), patch(
+                "devtool.android_build.termux_tool_path", side_effect=lambda name: tool if tool.exists() else None
+            ), patch(
+                "devtool.android_build.native_android_build_tool_compatible", return_value=True
+            ), patch(
+                "devtool.android_build._termux_package_available", side_effect=available
+            ), patch(
+                "devtool.android_build._refresh_termux_package_indexes", side_effect=refresh
+            ) as refresh_mock, patch(
+                "devtool.android_build._ensure_termux_packages", side_effect=install
+            ):
+                resolved = android_build.ensure_termux_android_tool_packages(
+                    ["split-select"], dry_run=False
+                )
+
+            refresh_mock.assert_called_once_with(dry_run=False)
+            self.assertEqual(resolved["split-select"], tool)
+
     def test_gradle_config_scan_prunes_generated_and_cache_trees(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

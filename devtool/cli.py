@@ -24,6 +24,15 @@ from rich.prompt import Confirm
 
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
 from .apply_notifications import notify_apply_finished
+from .bootstrap import (
+    apply_registered_bootstrap_policy,
+    bootstrap_status,
+    install_bootstrap,
+    parse_destination as parse_bootstrap_destination,
+    remove_receipt as remove_bootstrap_receipt,
+    render_bootstrap_result,
+    request_from_args as bootstrap_request_from_args,
+)
 from .artifacts import (
     SUPPORTED_ARCHIVE_SUFFIXES,
     append_history,
@@ -424,6 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bootstrap = parser.add_argument_group("Toolchain bootstrap")
     bootstrap.add_argument("--no-bootstrap-downloads", action="store_true", help="Never download or install missing toolchain components")
+    bootstrap.add_argument("--bootstrap-downloads", choices=["auto", "missing", "force", "never"], default="", help="Override receipt/config toolchain provisioning policy for this run")
     bootstrap.add_argument("--deny-network", action="store_true", help="Deny Devtool-managed network downloads for this run")
     bootstrap.add_argument("--offline", action="store_true", help="Alias for --no-bootstrap-downloads --deny-network and Gradle offline mode")
     bootstrap.add_argument("--toolchain-profile", default="", help="Chroot/toolchain profile name from global or repo config")
@@ -689,6 +699,44 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_sub.add_parser("resolve")
     cfg_doctor = cfg_sub.add_parser("doctor")
     cfg_doctor.add_argument("--global", dest="global_config", action="store_true", help="Diagnose the user global config")
+
+    bootstrap_cmd = subparsers.add_parser("bootstrap", help="Provision reusable destination-specific build toolchains")
+    bootstrap_sub = bootstrap_cmd.add_subparsers(dest="bootstrap_command", required=True)
+
+    def add_bootstrap_destination(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument(
+            "--destination",
+            default="current",
+            help="current, termux, linux-arm64, linux-amd64, chroot:<name>, chroot-arm64:<name>, or chroot-amd64:<name>",
+        )
+        sub.add_argument("--format", choices=["text", "json"], default="text")
+
+    bootstrap_install = bootstrap_sub.add_parser("install", help="Provision and seal a reusable toolchain for a destination")
+    add_bootstrap_destination(bootstrap_install)
+    bootstrap_install.add_argument("--java-version", dest="bootstrap_java_version", type=int, default=21)
+    bootstrap_install.add_argument("--gradle-version", dest="bootstrap_gradle_version", default="9.7.1")
+    bootstrap_install.add_argument("--android-platform", dest="bootstrap_android_platform", default="36")
+    bootstrap_install.add_argument("--build-tools", dest="bootstrap_build_tools", default="auto")
+    bootstrap_install.add_argument("--ndk-version", dest="bootstrap_ndk_version", default="auto")
+    bootstrap_install.add_argument("--cmake-version", dest="bootstrap_cmake_version", default="auto")
+    bootstrap_install.add_argument("--sdk-provider", dest="bootstrap_sdk_provider", choices=sorted(VALID_ANDROID_SDK_PROVIDERS), default="auto")
+    bootstrap_install.add_argument("--aapt2-provider", dest="bootstrap_aapt2_provider", choices=["auto", "termux", "sdk", "revanced", "none"], default="auto")
+    bootstrap_install.add_argument("--arm-build-tools-provider", dest="bootstrap_arm_build_tools_provider", choices=sorted(VALID_ANDROID_BUILD_TOOLS_PROVIDERS), default="auto")
+    bootstrap_install.add_argument("--native-provider", dest="bootstrap_native_provider", choices=sorted(VALID_NATIVE_PROVIDERS), default="auto")
+    bootstrap_install.add_argument("--gradle-provider", dest="bootstrap_gradle_provider", choices=sorted(VALID_GRADLE_PROVIDERS), default="auto")
+    bootstrap_install.add_argument("--java-provider", dest="bootstrap_java_provider", choices=sorted(VALID_JAVA_PROVIDERS), default="auto")
+    bootstrap_install.add_argument("--sdk-root", dest="bootstrap_sdk_root", default="")
+    bootstrap_install.add_argument("--gradle-user-home", dest="bootstrap_gradle_user_home", default="")
+    bootstrap_install.add_argument("--cache-dir", dest="bootstrap_cache_dir", default="")
+    bootstrap_install.add_argument("--repair", action="store_true", help="Re-run provisioning and repair missing/corrupt components")
+    bootstrap_install.add_argument("--upgrade", action="store_true", help="Force refresh of Devtool-managed toolchain downloads")
+    bootstrap_install.add_argument("--dry-run", dest="bootstrap_dry_run", action="store_true", help="Print/probe provisioning without writing a receipt")
+
+    bootstrap_status_cmd = bootstrap_sub.add_parser("status", help="Verify the provisioning receipt for a destination")
+    add_bootstrap_destination(bootstrap_status_cmd)
+
+    bootstrap_remove = bootstrap_sub.add_parser("remove", help="Remove the destination receipt without uninstalling shared system packages")
+    add_bootstrap_destination(bootstrap_remove)
 
     termux_cmd = subparsers.add_parser("termux", help="Inspect native Termux providers, packages, and PRoot guests")
     termux_sub = termux_cmd.add_subparsers(dest="termux_command", required=True)
@@ -2614,6 +2662,10 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
         bootstrap["network"] = "deny"
         android["offline"] = True
         gradle["offline"] = True
+    explicit_bootstrap_downloads = str(getattr(args, "bootstrap_downloads", "") or "").strip()
+    if explicit_bootstrap_downloads:
+        bootstrap = ensure_section("bootstrap")
+        bootstrap["downloads"] = explicit_bootstrap_downloads
     if bool(getattr(args, "no_bootstrap_downloads", False)):
         bootstrap = ensure_section("bootstrap")
         bootstrap["downloads"] = "never"
@@ -2752,6 +2804,8 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
             selection[key] = True
     if selection:
         config.runner_options["test_selection"] = selection
+
+    apply_registered_bootstrap_policy(config, args)
 
 
 def _print_test_catalog(config: ProjectConfig, args: argparse.Namespace, *, as_json: bool) -> int:
@@ -8104,7 +8158,7 @@ def _main_after_parse(
     if ssh_rc is not None:
         return ssh_rc
     args._devtool_cli_repo_explicit = bool(str(getattr(args, "repo", "") or "").strip())
-    if args._devtool_cli_repo_explicit or args.command not in {"inspect-artifact", "ia"}:
+    if args._devtool_cli_repo_explicit or args.command not in {"inspect-artifact", "ia", "bootstrap"}:
         args.repo = str(resolve_repository_root(args.repo, args.config))
     args._devtool_cli_target_explicit = bool(str(getattr(args, "target", "") or "").strip())
     args._devtool_cli_solution_explicit = bool(str(getattr(args, "solution", "") or "").strip())
@@ -8194,6 +8248,51 @@ def _main_after_parse(
             return tail_log(path, lines=int(getattr(args, "lines", 200) or 200), follow=not bool(getattr(args, "no_follow", False)))
         console.print(f"[red]Unknown logs command: {logs_command}[/red]")
         return 2
+
+    if args.command == "bootstrap":
+        try:
+            destination = parse_bootstrap_destination(str(getattr(args, "destination", "current") or "current"))
+            action = str(getattr(args, "bootstrap_command", "") or "")
+            if action == "install":
+                if bool(getattr(args, "repair", False)) and bool(getattr(args, "upgrade", False)):
+                    parser.error("bootstrap install --repair and --upgrade are mutually exclusive")
+                payload = install_bootstrap(
+                    destination,
+                    bootstrap_request_from_args(args),
+                    repair=bool(getattr(args, "repair", False)),
+                    upgrade=bool(getattr(args, "upgrade", False)),
+                    dry_run=bool(getattr(args, "bootstrap_dry_run", False)),
+                )
+            elif action == "status":
+                payload = bootstrap_status(destination)
+            elif action == "remove":
+                removed = remove_bootstrap_receipt(destination)
+                payload = {
+                    "ok": True,
+                    "destination": destination.canonical,
+                    "status": "removed" if removed else "not-registered",
+                    "detail": (
+                        "bootstrap receipt removed; shared system/toolchain packages were left installed"
+                        if removed
+                        else "no bootstrap receipt was registered"
+                    ),
+                    "receipt": "",
+                    "resolved": {},
+                }
+            else:
+                parser.error(f"Unknown bootstrap command: {action}")
+                return 2
+        except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:
+            if str(getattr(args, "format", "text") or "text") == "json":
+                print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+            else:
+                print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        if str(getattr(args, "format", "text") or "text") == "json":
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(render_bootstrap_result(payload))
+        return 0 if bool(payload.get("ok", False)) else 1
 
     if args.command == "termux":
         repo = Path(args.repo or Path.cwd()).resolve()

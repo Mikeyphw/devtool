@@ -1470,6 +1470,32 @@ class PythonRunner(ProjectRunner):
             execution = str(config.execution_environment or "auto").strip().lower().replace("_", "-")
             current = detect_current_environment()
 
+            # Replacing HOME must not silently discard the user's pip index
+            # policy.  This matters especially on Termux, where Android wheels
+            # may come from a user-configured index rather than PyPI.  Preserve
+            # an explicit PIP_CONFIG_FILE, or pin pip to the existing user
+            # config before HOME is redirected to the isolated validation home.
+            if "PIP_CONFIG_FILE" not in env:
+                explicit_pip_config = os.environ.get("PIP_CONFIG_FILE")
+                if explicit_pip_config:
+                    env["PIP_CONFIG_FILE"] = explicit_pip_config
+                else:
+                    pip_config_candidates: list[Path] = []
+                    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+                    original_home = os.environ.get("HOME")
+                    if xdg_config_home:
+                        pip_config_candidates.append(Path(xdg_config_home).expanduser() / "pip" / "pip.conf")
+                    if original_home:
+                        home_path = Path(original_home).expanduser()
+                        pip_config_candidates.extend([
+                            home_path / ".config" / "pip" / "pip.conf",
+                            home_path / ".pip" / "pip.conf",
+                        ])
+                    for candidate in pip_config_candidates:
+                        if candidate.is_file():
+                            env["PIP_CONFIG_FILE"] = str(candidate)
+                            break
+
             # Test/validator temp trees must not live under the repository.
             # Otherwise nested TemporaryDirectory projects inherit the parent
             # .devtool.toml/Git boundary and cease to be isolated. Native
@@ -1816,7 +1842,7 @@ class PythonRunner(ProjectRunner):
             filtered.append(text)
         packages = filtered
         normalized = {str(item).split("[", 1)[0].split("==", 1)[0].split(">=", 1)[0].split("<=", 1)[0].lower() for item in packages}
-        if normalized and normalized <= {"pytest", "pytest-asyncio", "pexpect"}:
+        if normalized and normalized <= {"pytest", "pytest-asyncio", "pexpect", "httpx"}:
             return "restore:test-tools"
         if any(item.startswith("setuptools") or item in {"wheel", "build", "hatchling", "flit_core", "poetry-core"} for item in normalized):
             return "restore:build-system"
@@ -2254,6 +2280,28 @@ class PythonRunner(ProjectRunner):
         specs.extend(self._import_isolation_specs(config))
         specs.extend(self._cli_contract_specs(config))
         if not skip_build and scope.run_build:
+            info = self._info(config)
+            plan = self._plan(config)
+            if info.manager == "venv":
+                from .python_support import missing_build_frontend_dependency
+
+                if missing_build_frontend_dependency(info, plan):
+                    install_args = ["install"]
+                    if bool(self._options(config).get("offline", False)):
+                        install_args.append("--no-index")
+                    install_args.append("build")
+                    specs.append(CommandSpec(
+                        "build-frontend",
+                        self._module(config, "pip", *install_args),
+                        env=self._env(config),
+                        cwd=str(self._root(config)),
+                        metadata=_tool_metadata(
+                            self.kind,
+                            self._root(config),
+                            validation_component="package-build-frontend",
+                            implicit_environment_bootstrap=True,
+                        ),
+                    ))
             specs.extend(self.build_specs(config, "build"))
             specs.extend(self.build_specs(config, "package-check"))
             reproducible = self._reproducible_spec(config)

@@ -384,6 +384,26 @@ class PythonSupportTests(unittest.TestCase):
         self.assertIn("STDLIB_SHADOW", codes)
         self.assertIn("VERSION_MISMATCH", codes)
 
+    def test_source_audit_ignores_generated_venv_directory_but_not_venv_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='1'\n", encoding="utf-8")
+            (root / "venv").mkdir()
+            (root / "venv" / "pyvenv.cfg").write_text("home = /python\n", encoding="utf-8")
+            info = inspect_python_project(root, "venv")
+            payload, rc = audit_source_tree(root, info)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("venv", payload["stdlib_shadowing"])
+
+            (root / "venv").rename(root / "runtime-env")
+            (root / "venv.py").write_text("VALUE = 1\n", encoding="utf-8")
+            info = inspect_python_project(root, "venv")
+            payload, rc = audit_source_tree(root, info)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("venv", payload["stdlib_shadowing"])
+        self.assertTrue(any(item["code"] == "STDLIB_SHADOW" and item["path"] == "venv" for item in payload["issues"]))
+
     def test_safe_cleanup_does_not_enter_nested_project_fixtures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

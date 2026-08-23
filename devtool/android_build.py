@@ -74,6 +74,17 @@ TERMUXVOID_REPOSITORY_LINE = f"deb [arch=all] {TERMUXVOID_REPOSITORY_URL} termux
 TERMUXVOID_KEY_URL = "https://raw.githubusercontent.com/termuxvoid/repo/main/assets/termuxvoid.gpg"
 TERMUXVOID_SDK_REPOSITORY = "termuxvoid/android-sdk-termux"
 HOMUHOMU_SDK_REPOSITORY = "HomuHomu833/android-sdk-custom"
+TERMUX_ANDROID_SDK_PACKAGE = "android-sdk"
+TERMUX_ANDROID_TOOL_PACKAGE_CANDIDATES: Mapping[str, tuple[str, ...]] = {
+    # The official Termux `aapt` package is built from termux/android-build-tools
+    # and currently supplies aidl, aapt/aapt2, and zipalign.  Keep exact-name
+    # fallbacks so enabled third-party repositories can provide split packages
+    # without Devtool having to know which repository owns them.
+    "aapt2": ("aapt", "aapt2", "aapt-builder"),
+    "aidl": ("aapt", "aidl"),
+    "zipalign": ("aapt", "zipalign"),
+    "split-select": ("split-select",),
+}
 
 # sdkmanager needs both download and unpack headroom. These are deliberately
 # conservative working-space estimates, not claims about exact package sizes.
@@ -247,6 +258,42 @@ def _termux_package_installed(name: str) -> bool:
     return result.returncode == 0 and "install ok installed" in (result.stdout or "")
 
 
+def _termux_package_available(name: str) -> bool:
+    """Return whether any currently enabled Termux APT source offers ``name``."""
+
+    if _termux_package_installed(name):
+        return True
+    apt_cache = shutil.which("apt-cache")
+    if apt_cache:
+        result = run(
+            [apt_cache, "policy", name],
+            check=False,
+            capture=True,
+            quiet=True,
+        )
+        match = re.search(r"^\s*Candidate:\s*(\S+)\s*$", result.stdout or "", re.MULTILINE)
+        if match and match.group(1) not in {"(none)", "none"}:
+            return True
+    package_manager = shutil.which("pkg")
+    if package_manager:
+        result = run(
+            [package_manager, "show", name],
+            check=False,
+            capture=True,
+            quiet=True,
+        )
+        return result.returncode == 0
+    return False
+
+
+def _refresh_termux_package_indexes(*, dry_run: bool) -> None:
+    package_manager = shutil.which("pkg") or shutil.which("apt") or shutil.which("apt-get")
+    if not package_manager:
+        fail("Native Termux package bootstrap requires pkg or apt in PATH")
+    heading("Refreshing configured Termux package repositories")
+    run([package_manager, "update", "-y"], dry_run=dry_run)
+
+
 def _ensure_termux_packages(packages: Sequence[str], *, dry_run: bool) -> None:
     missing = [name for name in packages if not _termux_package_installed(name)]
     if not missing:
@@ -257,6 +304,71 @@ def _ensure_termux_packages(packages: Sequence[str], *, dry_run: bool) -> None:
     heading("Installing Termux SDK provider prerequisites")
     info(", ".join(missing))
     run([package_manager, "install", "-y", *missing], dry_run=dry_run)
+
+
+def ensure_termux_android_tool_packages(
+    tool_names: Sequence[str],
+    *,
+    dry_run: bool,
+    refresh_if_needed: bool = True,
+) -> dict[str, Path]:
+    """Install Bionic-native Android helpers from all configured Termux repos.
+
+    This deliberately asks APT for package names instead of hard-coding a
+    repository.  Official Termux, TUR, TermuxVoid, i-Haklab, or any other
+    enabled source may therefore satisfy a capability.  The result contains
+    only executables which were runtime-verified (or their expected paths in a
+    dry run).
+    """
+
+    if not running_under_termux_python():
+        return {}
+    requested = [name for name in dict.fromkeys(tool_names) if name in ARM_BUILD_TOOLS_NATIVE_NAMES]
+    if not requested:
+        return {}
+
+    ready: dict[str, Path] = {}
+    missing: list[str] = []
+    for tool_name in requested:
+        candidate = termux_tool_path(tool_name)
+        if candidate is not None and native_android_build_tool_compatible(candidate, tool_name, "arm64"):
+            ready[tool_name] = candidate
+        else:
+            missing.append(tool_name)
+    if not missing:
+        return ready
+
+    def select_packages() -> dict[str, str]:
+        selected: dict[str, str] = {}
+        for tool_name in missing:
+            for package in TERMUX_ANDROID_TOOL_PACKAGE_CANDIDATES.get(tool_name, (tool_name,)):
+                if _termux_package_available(package):
+                    selected[tool_name] = package
+                    break
+        return selected
+
+    packages_by_tool = select_packages()
+    unresolved = [name for name in missing if name not in packages_by_tool]
+    if unresolved and refresh_if_needed:
+        _refresh_termux_package_indexes(dry_run=dry_run)
+        if not dry_run:
+            packages_by_tool = select_packages()
+
+    packages = list(dict.fromkeys(packages_by_tool.values()))
+    if packages:
+        heading("Installing native Android build tools from configured Termux repositories")
+        info(", ".join(packages))
+        _ensure_termux_packages(packages, dry_run=dry_run)
+
+    prefix = termux_prefix_path()
+    for tool_name in missing:
+        if dry_run and tool_name in packages_by_tool:
+            ready[tool_name] = prefix / "bin" / tool_name
+            continue
+        candidate = termux_tool_path(tool_name)
+        if candidate is not None and native_android_build_tool_compatible(candidate, tool_name, "arm64"):
+            ready[tool_name] = candidate
+    return ready
 
 
 def ensure_termuxvoid_repository(*, cache_root: Path, dry_run: bool) -> None:
@@ -635,12 +747,36 @@ def provision_termuxvoid_sdk(cache_root: Path, *, force: bool, dry_run: bool) ->
     if existing.is_dir() and _sdk_tree_candidate(existing) is not None and sdk_host_compatible(existing):
         info(f"Using installed TermuxVoid Android SDK: {existing}")
         return existing.resolve()
+    ensure_termuxvoid_repository(cache_root=cache_root, dry_run=dry_run)
+    # Prefer the APT package exposed by the configured TermuxVoid repository.
+    # This keeps package ownership/versioning with APT and, unlike the generic
+    # GitHub release fallback, gives native Termux the repository-maintained SDK
+    # layout under $PREFIX/opt/android-sdk.
+    package_available = _termux_package_available(TERMUX_ANDROID_SDK_PACKAGE)
+    if not package_available and not dry_run:
+        _refresh_termux_package_indexes(dry_run=False)
+        package_available = _termux_package_available(TERMUX_ANDROID_SDK_PACKAGE)
+    if package_available or dry_run:
+        try:
+            _ensure_termux_packages([TERMUX_ANDROID_SDK_PACKAGE], dry_run=dry_run)
+            if dry_run:
+                info(f"Would verify TermuxVoid Android SDK package at: {existing}")
+                return existing
+            if existing.is_dir() and _sdk_tree_candidate(existing) is not None and sdk_host_compatible(existing):
+                info(f"Using TermuxVoid Android SDK package: {existing}")
+                return existing.resolve()
+            warn(
+                "TermuxVoid android-sdk package installed but its SDK tree is not fully host-compatible; "
+                "falling back to the provider release bundle."
+            )
+        except BuildError as exc:
+            warn(f"TermuxVoid android-sdk package installation failed; trying provider release bundle: {exc}")
+
     cached = _provider_cached_sdk(cache_root, "termuxvoid")
     if cached is not None and not force:
         info(f"Using cached TermuxVoid Android SDK: {cached}")
         return cached
 
-    ensure_termuxvoid_repository(cache_root=cache_root, dry_run=dry_run)
     _ensure_termux_packages(["7zip", "bsdtar"], dry_run=dry_run)
     if dry_run:
         target = _provider_sdk_root(cache_root, "termuxvoid")
@@ -4262,6 +4398,45 @@ def ensure_arm64_build_tools_compatible(
 
     heading(f"Repairing Android Build Tools {build_tools_version} for ARM64")
     selected = list(ARM_BUILD_TOOLS_NATIVE_NAMES) if force else replacements
+    termux_package_tools: dict[str, Path] = {}
+    termux_provider_sdk: Path | None = None
+    if provider in {"auto", "termux"} and running_under_termux_python():
+        if not offline:
+            termux_package_tools = ensure_termux_android_tool_packages(
+                selected,
+                dry_run=dry_run,
+                refresh_if_needed=True,
+            )
+
+        # `split-select` is not part of the official Termux aapt package.  An
+        # enabled Termux SDK repository (notably TermuxVoid) can still provide a
+        # fully Bionic-native SDK tree, which is a safe donor for the exact SDK
+        # package Devtool is repairing.  Provision it only when a direct Termux
+        # executable cannot satisfy every selected helper.
+        unresolved_after_packages = [name for name in selected if name not in termux_package_tools]
+        if unresolved_after_packages and not offline:
+            existing_donors = {
+                name: termux_external_sdk_build_tools_donor(
+                    cache_root,
+                    sdk_root,
+                    build_tools_version,
+                    name,
+                )
+                for name in unresolved_after_packages
+            }
+            if any(value is None for value in existing_donors.values()):
+                try:
+                    termux_provider_sdk = provision_termuxvoid_sdk(
+                        cache_root,
+                        force=False,
+                        dry_run=dry_run,
+                    )
+                except BuildError as exc:
+                    warn(f"Could not provision Termux-native Android SDK donor: {exc}")
+            elif existing_donors:
+                # The actual donor path will still be selected per-tool below.
+                termux_provider_sdk = _termux_prefix_path() / "opt" / "android-sdk"
+
     sources: dict[str, Path] = {}
     for tool_name in selected:
         source: Path | None = None
@@ -4279,23 +4454,49 @@ def ensure_arm64_build_tools_compatible(
                     f"{donor.parent.name}: {donor}"
                 )
         if source is None and provider in {"auto", "termux"} and running_under_termux_python():
-            if provider_evidence is not None:
+            dynamic_candidate = termux_package_tools.get(tool_name)
+            if dynamic_candidate is not None:
+                candidate = dynamic_candidate
+            elif provider_evidence is not None:
                 decision = next((item for item in provider_evidence.android_tools if item.capability == tool_name), None)
                 candidate = decision.path if decision is not None and decision.compatible else None
             else:
                 candidate = termux_tool_path(tool_name)
-            if candidate is not None and native_android_build_tool_compatible(candidate, tool_name, "arm64"):
+            package_dry_run = dry_run and dynamic_candidate is not None and candidate == dynamic_candidate
+            if candidate is not None and (
+                package_dry_run or native_android_build_tool_compatible(candidate, tool_name, "arm64")
+            ):
                 source = candidate
                 info(f"Using Termux-native {tool_name}: {candidate}")
+        if source is None and provider in {"auto", "termux"} and running_under_termux_python():
+            donor = termux_external_sdk_build_tools_donor(
+                cache_root,
+                sdk_root,
+                build_tools_version,
+                tool_name,
+            )
+            if donor is not None:
+                source = donor
+                info(f"Using Termux-native SDK donor for {tool_name}: {donor}")
+            elif dry_run and termux_provider_sdk is not None:
+                source = termux_provider_sdk / "build-tools" / build_tools_version / tool_name
+                info(f"Would use Termux-native SDK donor for {tool_name}: {source}")
             elif provider == "termux":
-                fail(f"Termux build-tools provider requested but compatible {tool_name} is unavailable under {termux_prefix_path()}")
+                candidates = ", ".join(TERMUX_ANDROID_TOOL_PACKAGE_CANDIDATES.get(tool_name, (tool_name,)))
+                fail(
+                    f"Termux build-tools provider requested but compatible {tool_name} is unavailable. "
+                    f"Checked configured APT package candidates ({candidates}) and Termux-native SDK donors."
+                )
         if source is None:
             if provider == "termux":
                 fail(f"Termux build-tools provider requested but no compatible {tool_name} was found")
             if running_under_termux_python():
+                candidates = ", ".join(TERMUX_ANDROID_TOOL_PACKAGE_CANDIDATES.get(tool_name, (tool_name,)))
                 fail(
-                    f"No compatible Termux-native {tool_name} is available. Commit451 linux-glibc-arm64 helpers "
-                    "cannot run under native Termux/Bionic; install/update the required Termux Android tool package (for example `pkg install aidl`) or use a compatible Linux backend."
+                    f"No compatible Termux-native {tool_name} is available after package and SDK-provider provisioning. "
+                    f"Checked configured APT package candidates ({candidates}) and Termux-native SDK donors. "
+                    "Commit451 linux-glibc-arm64 helpers cannot run under native Termux/Bionic; "
+                    "refresh/fix the configured Termux repositories or use a compatible Linux backend."
                 )
             source = obtain_commit451_arm64_tool(
                 cache_root, build_tools_version, tool_name, offline=offline, force=force, dry_run=dry_run,
@@ -4868,6 +5069,16 @@ def termux_can_repair_sdk_build_tools(sdk_root: Path) -> bool:
             if candidate is None or not native_android_build_tool_compatible(
                 candidate, tool_name, "arm64"
             ):
+                # This predicate is used while choosing an SDK root, before the
+                # provisioning policy for the build has been resolved. A
+                # package merely being available in APT (or a donor living in a
+                # different SDK tree) does not mean the currently selected SDK
+                # can be repaired without network/package-manager side effects.
+                # Keep this check deliberately strict and deterministic: every
+                # helper required by the selected SDK must already have a
+                # compatible Termux-native executable. The later repair phase
+                # may still install packages or provision an SDK donor when the
+                # active policy permits it.
                 return False
     return True
 
@@ -5091,29 +5302,190 @@ def build_tools_is_ready(sdk_root: Path, version: str) -> bool:
     return True
 
 
+def installed_ready_build_tools_versions(sdk_root: Path) -> list[str]:
+    """Return complete Build Tools packages, newest first."""
+
+    return [
+        version
+        for version in installed_build_tools_versions(sdk_root)
+        if build_tools_is_ready(sdk_root, version)
+    ]
+
+
+def installed_ndk_versions(sdk_root: Path) -> list[str]:
+    """Return complete side-by-side NDK packages, newest first."""
+
+    root = sdk_root / "ndk"
+    if not root.is_dir():
+        return []
+    versions = [
+        item.name
+        for item in root.iterdir()
+        if item.is_dir() and not item.is_symlink() and ndk_is_ready(sdk_root, item.name)
+    ]
+    return sorted(versions, key=_build_tools_version_key, reverse=True)
+
+
+def installed_cmake_versions(sdk_root: Path) -> list[str]:
+    """Return runnable SDK CMake packages, newest first."""
+
+    root = sdk_root / "cmake"
+    if not root.is_dir():
+        return []
+    versions = [
+        item.name
+        for item in root.iterdir()
+        if item.is_dir() and not item.is_symlink() and cmake_is_ready(sdk_root, item.name)
+    ]
+    return sorted(versions, key=_build_tools_version_key, reverse=True)
+
+
+def agp_default_build_tools_version(project: ProjectInfo) -> str | None:
+    """Return a documented AGP default, never a guessed project pin.
+
+    AGP 9.0 through 9.4 document SDK Build Tools 36.0.0 as their default.
+    Keep this mapping deliberately narrow: if Devtool does not know an AGP
+    generation's default, the requirement remains unresolved instead of
+    silently falling back to an unrelated Build Tools revision.
+    """
+
+    if project.agp_major == 9:
+        return "36.0.0"
+    return None
+
+
+def agp_default_ndk_version(project: ProjectInfo) -> str | None:
+    """Return the documented AGP default NDK for native builds."""
+
+    if project.native_build and project.agp_major == 9:
+        return "28.2.13676358"
+    return None
+
+
+def inferred_build_tools_version_from_compile_sdk(project: ProjectInfo) -> str | None:
+    """Infer a Build Tools line only when compileSdk is actually known."""
+
+    if project.compile_sdk is None:
+        return None
+    if project.compile_sdk >= 37:
+        return f"{project.compile_sdk}.0.0"
+    if project.compile_sdk == 36:
+        return "36.0.0"
+    if project.compile_sdk == 35:
+        return "35.0.1"
+    return None
+
+
+def resolve_build_tools_requirement(
+    project: ProjectInfo,
+    sdk_root: Path,
+    override: str,
+    *,
+    prefer_installed: bool = False,
+) -> tuple[str | None, str]:
+    """Resolve Build Tools while preserving where the requirement came from."""
+
+    if override == "none":
+        return None, "disabled"
+    if override != "auto":
+        return override, "cli-explicit"
+    if project.build_tools:
+        return project.build_tools, "project-explicit"
+    if prefer_installed:
+        installed = installed_ready_build_tools_versions(sdk_root)
+        if project.compile_sdk is not None:
+            major = str(project.compile_sdk)
+            same_major = [version for version in installed if version.split(".", 1)[0] == major]
+            if same_major:
+                return same_major[0], "bootstrap-installed"
+        elif installed:
+            return installed[0], "bootstrap-installed"
+    agp_default = agp_default_build_tools_version(project)
+    if agp_default:
+        return agp_default, "agp-default"
+    inferred = inferred_build_tools_version_from_compile_sdk(project)
+    if inferred:
+        return inferred, "compile-sdk-inferred"
+    return None, "unknown"
+
+
 def select_required_build_tools_version(
     project: ProjectInfo,
     sdk_root: Path,
     override: str,
+    *,
+    prefer_installed: bool = False,
 ) -> str | None:
-    """Resolve the Build Tools revision Gradle/AGP is expected to load.
+    return resolve_build_tools_requirement(
+        project, sdk_root, override, prefer_installed=prefer_installed
+    )[0]
 
-    A provider SDK may contain a newer Build Tools directory than the revision
-    expected by the project's AGP.  Treating "whatever is installed" as the
-    requirement can therefore pass Devtool readiness while Gradle later aborts
-    with e.g. ``Failed to find Build Tools revision 36.0.0``.
-    """
 
+def resolve_ndk_requirement(
+    project: ProjectInfo,
+    sdk_root: Path,
+    override: str,
+    *,
+    prefer_installed: bool = False,
+) -> tuple[str | None, str]:
     if override == "none":
-        return None
+        return None, "disabled"
     if override != "auto":
-        return override
-    if project.build_tools:
-        return project.build_tools
-    if project.compile_sdk is not None or project.agp_major is not None:
-        return default_build_tools_version(project)
-    installed = installed_build_tools_versions(sdk_root)
-    return installed[0] if installed else default_build_tools_version(project)
+        return override, "cli-explicit"
+    if project.ndk_version:
+        return project.ndk_version, "project-explicit"
+    if prefer_installed:
+        installed = installed_ndk_versions(sdk_root)
+        if installed:
+            return installed[0], "bootstrap-installed"
+    agp_default = agp_default_ndk_version(project)
+    if agp_default:
+        return agp_default, "agp-default"
+    return None, "unknown"
+
+
+def select_required_ndk_version(
+    project: ProjectInfo,
+    sdk_root: Path,
+    override: str,
+    *,
+    prefer_installed: bool = False,
+) -> str | None:
+    return resolve_ndk_requirement(
+        project, sdk_root, override, prefer_installed=prefer_installed
+    )[0]
+
+
+def resolve_cmake_requirement(
+    project: ProjectInfo,
+    sdk_root: Path,
+    override: str,
+    *,
+    prefer_installed: bool = False,
+) -> tuple[str | None, str]:
+    if override == "none":
+        return None, "disabled"
+    if override != "auto":
+        return override, "cli-explicit"
+    if project.cmake_version:
+        return project.cmake_version, "project-explicit"
+    if prefer_installed:
+        installed = installed_cmake_versions(sdk_root)
+        if installed:
+            return installed[0], "bootstrap-installed"
+    return None, "unknown"
+
+
+def select_required_cmake_version(
+    project: ProjectInfo,
+    sdk_root: Path,
+    override: str,
+    *,
+    prefer_installed: bool = False,
+) -> str | None:
+    return resolve_cmake_requirement(
+        project, sdk_root, override, prefer_installed=prefer_installed
+    )[0]
 
 
 def compatible_build_tools_donor(
@@ -5142,6 +5514,63 @@ def compatible_build_tools_donor(
         candidate = sdk_root / "build-tools" / version / tool_name
         if native_android_build_tool_compatible(candidate, tool_name, machine):
             return candidate
+    return None
+
+
+def compatible_build_tools_donor_from_sdk(
+    sdk_root: Path,
+    target_version: str,
+    tool_name: str,
+    *,
+    machine: str = "arm64",
+) -> Path | None:
+    """Find a compatible helper in a separate SDK, including the exact revision."""
+
+    target = canonical_build_tools_package_id(target_version)
+    if target is None:
+        return None
+    target_major = target.split(".", 1)[0]
+    versions = installed_build_tools_versions(sdk_root)
+    versions.sort(key=lambda version: (version != target, version), reverse=False)
+    for version in versions:
+        if version.split(".", 1)[0] != target_major:
+            continue
+        candidate = sdk_root / "build-tools" / version / tool_name
+        if native_android_build_tool_compatible(candidate, tool_name, machine):
+            return candidate
+    return None
+
+
+def termux_external_sdk_build_tools_donor(
+    cache_root: Path,
+    target_sdk_root: Path,
+    target_version: str,
+    tool_name: str,
+) -> Path | None:
+    """Find a Bionic-native helper in installed/cached Termux SDK providers."""
+
+    if not running_under_termux_python():
+        return None
+    roots: list[Path] = [_termux_prefix_path() / "opt" / "android-sdk"]
+    for provider in ("termuxvoid", "homuhomu"):
+        candidate = _sdk_tree_candidate(_provider_sdk_root(cache_root, provider))
+        if candidate is not None:
+            roots.append(candidate)
+    target_resolved = target_sdk_root.expanduser().resolve(strict=False)
+    seen: set[Path] = set()
+    for root in roots:
+        sdk = root.expanduser().resolve(strict=False)
+        if sdk in seen or sdk == target_resolved or not sdk.is_dir():
+            continue
+        seen.add(sdk)
+        donor = compatible_build_tools_donor_from_sdk(
+            sdk,
+            target_version,
+            tool_name,
+            machine="arm64",
+        )
+        if donor is not None:
+            return donor
     return None
 
 
@@ -6038,17 +6467,15 @@ def update_local_properties(project_root: Path, sdk_root: Path) -> None:
         info(f"Reusing SDK path from {target}")
 
 
-def default_build_tools_version(project: ProjectInfo) -> str:
-    """Choose a modern Build Tools release with published ARM64 binaries."""
+def default_build_tools_version(project: ProjectInfo) -> str | None:
+    """Return the best known non-explicit Build Tools requirement.
 
-    if project.compile_sdk is not None:
-        if project.compile_sdk >= 37:
-            return f"{project.compile_sdk}.0.0"
-        if project.compile_sdk == 36:
-            return "36.0.0"
-        if project.compile_sdk == 35:
-            return "35.0.1"
-    return "35.0.1"
+    Prefer the Android Gradle Plugin's documented default. Only fall back to
+    compileSdk inference when compileSdk was actually discovered. Unknown must
+    stay unknown; it must never become 35.0.1 merely because parsing failed.
+    """
+
+    return agp_default_build_tools_version(project) or inferred_build_tools_version_from_compile_sdk(project)
 
 
 def ensure_android_sdk(
@@ -6077,6 +6504,7 @@ def ensure_android_sdk(
     bootstrap_downloads: str = "auto",
     bootstrap_network: str = "allow",
     provider_evidence=None,
+    prefer_installed: bool = False,
 ) -> tuple[Path, str | None, str | None, str | None, str | None]:
     if not project.android:
         fail("Internal error: ensure_android_sdk called for a non-Android project")
@@ -6111,33 +6539,50 @@ def ensure_android_sdk(
     else:
         platform_id = f"android-{project.compile_sdk}" if project.compile_sdk else None
 
-    build_tools = select_required_build_tools_version(
+    # Normalize downstream package-directory suffixes before ``auto`` scans the
+    # installed SDK. Otherwise a complete Termux package such as 36.1.0-1 can
+    # be overlooked and bootstrap needlessly asks sdkmanager for another copy.
+    normalize_sdk_build_tools_locations(sdk_root, dry_run=dry_run)
+
+    build_tools, build_tools_source = resolve_build_tools_requirement(
         project,
         sdk_root,
         build_tools_override,
+        prefer_installed=prefer_installed,
+    )
+    ndk_version, ndk_source = resolve_ndk_requirement(
+        project,
+        sdk_root,
+        ndk_override,
+        prefer_installed=prefer_installed,
+    )
+    cmake_version, cmake_source = resolve_cmake_requirement(
+        project,
+        sdk_root,
+        cmake_override,
+        prefer_installed=prefer_installed,
     )
 
-    if ndk_override == "none":
-        ndk_version = None
-    elif ndk_override != "auto":
-        ndk_version = ndk_override
-    elif project.ndk_version:
-        ndk_version = project.ndk_version
-    elif project.native_build and project.agp_major is not None and project.agp_major >= 9:
-        # AGP 9.0 defaults to NDK r28c. Installing it here avoids AGP's opaque
-        # configuration-time auto-install path and lets us repair corrupt downloads.
-        ndk_version = "28.2.13676358"
-    else:
-        ndk_version = None
+    if build_tools_override == "auto":
+        if build_tools:
+            info(f"Build Tools requirement: {build_tools} ({build_tools_source})")
+        else:
+            info("Build Tools requirement: unknown; Devtool will not invent a revision")
+    if project.native_build and ndk_override == "auto":
+        if ndk_version:
+            info(f"NDK requirement: {ndk_version} ({ndk_source})")
+        else:
+            info("NDK requirement: unknown; Devtool will not invent a revision")
+    if project.native_build and cmake_override == "auto" and cmake_version:
+        info(f"CMake requirement: {cmake_version} ({cmake_source})")
 
-    if cmake_override == "none":
-        cmake_version = None
-    elif cmake_override != "auto":
-        cmake_version = cmake_override
-    else:
-        cmake_version = project.cmake_version
-
-    normalize_sdk_build_tools_locations(sdk_root, dry_run=dry_run)
+    if prefer_installed:
+        if build_tools_override == "auto" and build_tools and build_tools_is_ready(sdk_root, build_tools):
+            info(f"Bootstrap auto: reusing installed Build Tools {build_tools}")
+        if ndk_override == "auto" and ndk_version and ndk_is_ready(sdk_root, ndk_version):
+            info(f"Bootstrap auto: reusing installed NDK {ndk_version}")
+        if cmake_override == "auto" and cmake_version and cmake_is_ready(sdk_root, cmake_version):
+            info(f"Bootstrap auto: reusing installed SDK CMake {cmake_version}")
 
     if cmake_version:
         cmake_dir = sdk_root / "cmake" / cmake_version
@@ -6215,6 +6660,19 @@ def ensure_android_sdk(
             project,
             sdk_root,
             build_tools_override,
+            prefer_installed=prefer_installed,
+        )
+        ndk_version = select_required_ndk_version(
+            project,
+            sdk_root,
+            ndk_override,
+            prefer_installed=prefer_installed,
+        )
+        cmake_version = select_required_cmake_version(
+            project,
+            sdk_root,
+            cmake_override,
+            prefer_installed=prefer_installed,
         )
         missing, incomplete_paths = collect_missing(sdk_root)
         native_replacements = (
@@ -7138,6 +7596,8 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-o", "--output-dir", type=Path, help="Copy newly produced artifacts here")
     parser.add_argument("-n", "--output-name", help="Base filename for copied artifacts; extension is inferred unless a single artifact is built")
     parser.add_argument("-Q", "--no-artifact-scan", action="store_true", help="Do not scan for produced APK/AAB/AAR/JAR artifacts")
+    parser.add_argument("--bootstrap-only", action="store_true", help="Provision and verify the requested toolchain, then exit before running Gradle tasks")
+    parser.add_argument("--bootstrap-report", type=Path, help="Write resolved bootstrap/toolchain paths as JSON (used with --bootstrap-only)")
 
     parser.add_argument("-a", "--aapt2", type=Path, help="Use this AAPT2 binary; shared-storage files are staged automatically")
     parser.add_argument(
@@ -7556,7 +8016,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     node_required = gradle_tasks_require_node(requested_tasks)
     need_node = node_required and node_runtime_path() is None
 
-    cmake_required = bool(project.native_build and project.cmake_version)
+    cmake_required = bool(
+        project.native_build
+        and (project.cmake_version or (args.bootstrap_only and args.cmake_version != "none"))
+    )
     termux_cmake = (
         _termux_toolchains_runtime_module().termux_cmake_probe(env=os.environ)
         if running_under_termux_python()
@@ -7718,6 +8181,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     sdk_root: Path | None = None
     sdk_source: str | None = None
     platform_id: str | None = None
+    build_tools: str | None = None
+    ndk_version: str | None = None
+    cmake_version: str | None = None
     if project.android:
         effective_sdk_root_arg = _native_termux_sanitize_guest_path(
             args.sdk_root,
@@ -7820,7 +8286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 clear_selected_provider_download(cache_root, sdk_root, dry_run=args.dry_run)
             if args.auto_sdk and not args.skip_sdk_install:
                 info("Auto SDK downloads: enabled")
-        sdk_root, platform_id, build_tools, _, _ = ensure_android_sdk(
+        sdk_root, platform_id, build_tools, ndk_version, cmake_version = ensure_android_sdk(
             project,
             sdk_root,
             cache_root,
@@ -7845,6 +8311,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             bootstrap_downloads=args.toolchain_downloads,
             bootstrap_network=args.bootstrap_network,
             provider_evidence=provider_evidence,
+            prefer_installed=args.bootstrap_only,
         )
 
         if project.native_build and normalized_machine() in {"arm64", "armv7"} and args.ndk_host_provider in {"auto", "arm64", "qemu"}:
@@ -7930,6 +8397,57 @@ def main(argv: Sequence[str] | None = None) -> int:
     if should_cleanup_gradle(args):
         stop_gradle_processes(gradle, project_root, env, dry_run=args.dry_run)
     run([gradle, "--version"], cwd=project_root, env=env, dry_run=args.dry_run)
+
+    if args.bootstrap_only:
+        architecture = normalized_machine()
+        if architecture == "x86_64":
+            architecture = "amd64"
+        build_tool_paths: dict[str, str] = {}
+        if sdk_root is not None and build_tools:
+            build_tools_dir = sdk_root / "build-tools" / build_tools
+            for tool_name in ARM_BUILD_TOOLS_NATIVE_NAMES:
+                candidate = build_tools_dir / tool_name
+                if args.dry_run or candidate.exists():
+                    build_tool_paths[tool_name] = str(candidate)
+        termux_packages: dict[str, str] = {}
+        if running_under_termux_python():
+            for package_name in ("aapt", "apksigner", "android-tools", TERMUX_ANDROID_SDK_PACKAGE):
+                version = termux_package_version(package_name)
+                if version:
+                    termux_packages[package_name] = version
+        report = {
+            "schema": 1,
+            "architecture": architecture,
+            "java_home": str(java_home),
+            "java_version": java_major(java_home / "bin" / "java") if not args.dry_run else minimum_java,
+            "gradle": str(gradle),
+            "gradle_version": gradle_version(gradle) if not args.dry_run else (args.gradle_version or ""),
+            "sdk_root": str(sdk_root or ""),
+            "platform": str(platform_id or ""),
+            "build_tools": str(build_tools or ""),
+            "ndk": str(ndk_version or ""),
+            "cmake": str(cmake_version or ""),
+            "aapt2": str(aapt2 or ""),
+            "build_tool_paths": build_tool_paths,
+            "termux_packages": termux_packages,
+            "native_provider": str(selected_native_provider or "none"),
+            "sdk_provider": str(args.sdk_provider),
+            "gradle_provider": executable_provider(gradle),
+            "java_provider": executable_provider(java_home / "bin" / "java"),
+            "dry_run": bool(args.dry_run),
+        }
+        if args.bootstrap_report:
+            target = args.bootstrap_report.expanduser()
+            if not target.is_absolute():
+                target = Path.cwd() / target
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+            temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(temporary, target)
+            info(f"Bootstrap report: {target}")
+        heading("Bootstrap complete")
+        info("Toolchain provisioning and verification completed; no Gradle tasks were executed")
+        return 0
 
     tasks = list(requested_tasks)
 

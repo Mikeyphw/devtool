@@ -156,6 +156,7 @@ _devtool_commands() {
     'st:alias for status'
     'doctor:diagnose devtool and project prerequisites'
     'dr:alias for doctor'
+    'bootstrap:provision reusable destination-specific toolchains'
     'termux:inspect native Termux providers, packages, and PRoot guests'
     'apply-overlay:transactionally apply one overlay'
     'ao:alias for apply-overlay'
@@ -458,6 +459,7 @@ _devtool() {
     '--artifact-export[copy verified artifacts to directory]:directory:' \
     '--no-auto-chroot[disable automatic Termux-to-chroot routing]' \
     '--no-bootstrap-downloads[never download or install missing toolchain components]' \
+    '--bootstrap-downloads[override receipt/config provisioning policy]:policy:(auto missing force never)' \
     '--deny-network[deny Devtool-managed bootstrap network downloads]' \
     '--offline[disable bootstrap downloads, deny bootstrap network, and use Gradle offline mode]' \
     '--toolchain-profile[chroot/toolchain profile]:profile:' \
@@ -569,6 +571,42 @@ _devtool() {
           ;;
         doctor|dr)
           _arguments '--fix[create safe devtool state and cache directories]' '--explain[explain Termux provider selection and rejection reasons]'
+          ;;
+        bootstrap)
+          if (( ${#line} < 2 )); then
+            _values 'bootstrap action' install status remove
+          else
+            case ${line[2]} in
+              install)
+                _arguments \
+                  '--destination[target destination]:destination:(current termux linux-arm64 linux-amd64 chroot\:androidos chroot-arm64\:androidos chroot-amd64\:androidos)' \
+                  '--format[output format]:format:(text json)' \
+                  '--java-version[JDK major version]:version:' \
+                  '--gradle-version[managed Gradle version]:version:' \
+                  '--android-platform[Android platform]:platform:' \
+                  '--build-tools[Android Build Tools version]:version:' \
+                  '--ndk-version[Android NDK version]:version:' \
+                  '--cmake-version[CMake version]:version:' \
+                  '--sdk-provider[Android SDK provider]:provider:(auto termuxvoid homuhomu managed)' \
+                  '--aapt2-provider[AAPT2 provider]:provider:(auto termux sdk revanced none)' \
+                  '--arm-build-tools-provider[ARM build-tools provider]:provider:(auto termux sdk commit451 none)' \
+                  '--native-provider[native compiler provider]:provider:(auto termux-sysroot ndk system)' \
+                  '--gradle-provider[Gradle provider]:provider:(auto wrapper termux system download)' \
+                  '--java-provider[Java provider]:provider:(auto termux system)' \
+                  '--sdk-root[explicit Android SDK root]:directory:_files -/' \
+                  '--gradle-user-home[Gradle user home]:directory:_files -/' \
+                  '--cache-dir[Android bootstrap cache directory]:directory:_files -/' \
+                  '(--upgrade)--repair[repair missing or corrupt components]' \
+                  '(--repair)--upgrade[force refresh Devtool-managed toolchains]' \
+                  '--dry-run[probe provisioning without writing a receipt]'
+                ;;
+              status|remove)
+                _arguments \
+                  '--destination[target destination]:destination:(current termux linux-arm64 linux-amd64 chroot\:androidos chroot-arm64\:androidos chroot-amd64\:androidos)' \
+                  '--format[output format]:format:(text json)'
+                ;;
+            esac
+          fi
           ;;
         termux)
           if (( ${#line} < 2 )); then

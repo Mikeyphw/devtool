@@ -674,6 +674,24 @@ Sealed final reports use a content hash and a write-once `.final.json` path; lat
 
 See `docs/DESKTOP_GTK_MIGRATION.md` for the Phase 1/2 desktop GTK4 migration notes.
 
+## Destination bootstrap provisioning
+
+Toolchains that were previously discovered or provisioned lazily during Android/Gradle runs can be installed deliberately once and registered for reuse:
+
+```bash
+devtool bootstrap install --destination termux
+devtool bootstrap install --destination chroot-arm64:androidos
+devtool bootstrap install --destination linux-amd64
+```
+
+The default bootstrap set uses Java 21, Gradle 9.7.1, Android platform 36, Build Tools 36.0.0, NDK auto-selection, and CMake 3.22.1. The same provider knobs used by the Android builder are available on `bootstrap install`. `--repair` re-runs provisioning without forcing newer downloads; `--upgrade` forces refresh of Devtool-managed downloads. `bootstrap status` verifies the destination receipt and known provisioned paths, while `bootstrap remove` only removes the Devtool receipt and deliberately leaves shared system packages/toolchains installed.
+
+On native Termux, provisioning resolves missing Bionic-native Android helpers through the package manager using all currently enabled APT sources rather than assuming one repository owns them. The official `aapt` package is preferred for `aapt2`, `aidl`, and `zipalign`; exact-name packages from custom repositories are accepted when available. If a helper such as `split-select` still needs a native donor, Devtool prefers the TermuxVoid `android-sdk` APT package and its `$PREFIX/opt/android-sdk` tree before falling back to the existing provider release bundle. Package indexes are refreshed only when a required capability cannot be resolved from the current indexes.
+
+A successful install writes a destination receipt under the Devtool XDG state directory. Termux receipts include the concrete Android build-tool paths and are accepted only after Bionic runtime probes succeed. Later Devtool runs targeting that destination automatically set Devtool-managed toolchain downloads to `never` **only while the receipt still probes cleanly**. If a recorded helper disappears or stops executing after a package update, the receipt is treated as stale and normal repair is re-enabled. Project dependency/network access is not disabled by the receipt. Override the seal for one invocation with `--bootstrap-downloads auto`, `--bootstrap-downloads missing`, or `--bootstrap-downloads force`.
+
+`chroot:<name>` accepts the detected chroot architecture. Use `chroot-arm64:<name>` or `chroot-amd64:<name>` when the architecture must be verified explicitly. Chroot provisioning is launched from native Termux through the existing staged `build-apk` runtime, so Devtool itself does not need to be installed inside the guest.
+
 ## Termux Java and Gradle providers
 
 Native Termux runs now distinguish Termux-packaged Java/Gradle from ordinary

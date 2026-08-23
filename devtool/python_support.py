@@ -1131,6 +1131,8 @@ def build_sync_command(
             commands.append([*uv_pip, "pytest-asyncio"])
         if info.framework == "pytest" and _uses_pexpect(info.root) and not _declares_requirement(info.root, "pexpect"):
             commands.append([*uv_pip, "pexpect"])
+        if info.framework == "pytest" and _uses_httpx_testclient(info.root) and not _declares_requirement(info.root, "httpx"):
+            commands.append([*uv_pip, "httpx"])
         return commands
     if info.manager == "poetry":
         if offline:
@@ -1219,6 +1221,8 @@ def build_sync_command(
         commands.append([*pip_base, "pytest-asyncio"])
     if info.framework == "pytest" and _uses_pexpect(info.root) and not _declares_requirement(info.root, "pexpect"):
         commands.append([*pip_base, "pexpect"])
+    if info.framework == "pytest" and _uses_httpx_testclient(info.root) and not _declares_requirement(info.root, "httpx"):
+        commands.append([*pip_base, "httpx"])
     build_requires = list(build_system_requirements(info.root)) if (info.root / "pyproject.toml").is_file() else []
     if install_project and build_requires:
         commands.append([*pip_base, *build_requires])
@@ -2015,6 +2019,32 @@ def _uses_pexpect(root: Path) -> bool:
     return False
 
 
+def _uses_httpx_testclient(root: Path) -> bool:
+    """Detect pytest modules that import FastAPI/Starlette's HTTP test client.
+
+    Those test-client modules require the external ``httpx`` distribution at
+    import/collection time, but projects often omit it because it is not a
+    runtime dependency.  Treat it like Devtool's other validator-only helpers.
+    """
+
+    tests_root = root / "tests"
+    candidates = tests_root.rglob("*.py") if tests_root.is_dir() else root.glob("test*.py")
+    pattern = re.compile(
+        r"(?m)^\s*(?:from\s+(?:fastapi|starlette)\.testclient\s+import\b|"
+        r"import\s+(?:fastapi|starlette)\.testclient\b)"
+    )
+    for path in candidates:
+        if any(part in IGNORED_DIRECTORIES for part in path.relative_to(root).parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if pattern.search(text):
+            return True
+    return False
+
+
 def _declares_pytest_async_plugin(root: Path) -> bool:
     return any(_declares_requirement(root, name) for name in ("pytest-asyncio", "anyio", "pytest-trio", "pytest-tornasync", "pytest-twisted"))
 
@@ -2032,6 +2062,22 @@ def _can_import_with_python(python: str, module: str) -> bool:
     return proc.returncode == 0
 
 
+def missing_build_frontend_dependency(info: PythonProjectInfo, plan: PythonEnvironmentPlan) -> bool:
+    """Return whether a venv-managed build needs the PyPA ``build`` frontend.
+
+    ``[build-system].requires`` declares the backend requirements used *by* a
+    PEP 517 frontend; it does not install the frontend itself.  Devtool invokes
+    ``python -m build`` for venv-managed projects, so ensure that module is
+    available independently of the project's runtime dependencies.
+    """
+
+    if info.manager != "venv":
+        return False
+    if _declares_requirement(info.root, "build"):
+        return False
+    return not (Path(plan.python).is_file() and _can_import_with_python(plan.python, "build"))
+
+
 def missing_auto_validator_dependencies(info: PythonProjectInfo, plan: PythonEnvironmentPlan) -> tuple[str, ...]:
     if info.manager != "venv" or info.framework != "pytest" or not Path(plan.python).is_file():
         return ()
@@ -2042,6 +2088,8 @@ def missing_auto_validator_dependencies(info: PythonProjectInfo, plan: PythonEnv
         missing.append("pytest-asyncio")
     if _uses_pexpect(info.root) and not _declares_requirement(info.root, "pexpect") and not _can_import_with_python(plan.python, "pexpect"):
         missing.append("pexpect")
+    if _uses_httpx_testclient(info.root) and not _declares_requirement(info.root, "httpx") and not _can_import_with_python(plan.python, "httpx"):
+        missing.append("httpx")
     return tuple(missing)
 
 
@@ -2207,6 +2255,11 @@ def audit_source_tree(root: Path, info: PythonProjectInfo) -> tuple[dict[str, An
             continue
         for child in base.iterdir():
             if child.name.startswith("."):
+                continue
+            # Generated/runtime directories such as ``venv/`` are not Python
+            # project modules.  Keep similarly named source files (for example
+            # ``venv.py``) eligible for the stdlib-shadow check.
+            if child.is_dir() and child.name in IGNORED_DIRECTORIES:
                 continue
             name = child.stem if child.is_file() and child.suffix == ".py" else child.name
             if name.isidentifier():

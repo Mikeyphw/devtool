@@ -39,6 +39,42 @@ class AndroidSdkExternalProviderTests(unittest.TestCase):
         self.assertEqual(found, sdk.resolve())
         self.assertEqual(source, "TermuxVoid android-sdk")
 
+    def test_termuxvoid_provider_prefers_repository_android_sdk_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prefix = root / "usr"
+            sdk = prefix / "opt" / "android-sdk"
+            cache = root / "cache"
+
+            def install(packages, *, dry_run: bool):
+                self.assertEqual(list(packages), ["android-sdk"])
+                self.assertFalse(dry_run)
+                (sdk / "build-tools" / "36.0.0").mkdir(parents=True)
+                (sdk / "platform-tools").mkdir(parents=True)
+
+            with patch("devtool.android_build.running_under_termux_python", return_value=True), patch(
+                "devtool.android_build.normalized_machine", return_value="arm64"
+            ), patch(
+                "devtool.android_build._termux_prefix_path", return_value=prefix
+            ), patch(
+                "devtool.android_build.ensure_termuxvoid_repository"
+            ) as setup_repo, patch(
+                "devtool.android_build._termux_package_available", return_value=True
+            ), patch(
+                "devtool.android_build._ensure_termux_packages", side_effect=install
+            ), patch(
+                "devtool.android_build.sdk_host_compatible", return_value=True
+            ), patch(
+                "devtool.android_build.github_json"
+            ) as github:
+                selected = android_build.provision_termuxvoid_sdk(
+                    cache, force=False, dry_run=False
+                )
+
+            setup_repo.assert_called_once_with(cache_root=cache, dry_run=False)
+            github.assert_not_called()
+            self.assertEqual(selected, sdk.resolve())
+
     def test_termuxvoid_repo_setup_installs_glibc_and_adds_repo_and_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -346,6 +382,38 @@ class AndroidSdkExternalProviderTests(unittest.TestCase):
                 side_effect=lambda name: aapt2 if name == "aapt2" else None,
             ), patch(
                 "devtool.android_build.native_android_build_tool_compatible", return_value=True
+            ):
+                self.assertFalse(android_build.termux_can_repair_sdk_build_tools(sdk))
+
+    def test_termux_repair_capability_does_not_count_future_packages_or_other_sdk_donors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sdk = root / "sdk"
+            (sdk / "build-tools" / "36.0.0").mkdir(parents=True)
+            available = root / "bin"
+            available.mkdir()
+            aapt2 = available / "aapt2"
+            aapt2.write_text("tool", encoding="utf-8")
+            donor = root / "prefix" / "opt" / "android-sdk" / "build-tools" / "36.0.0" / "zipalign"
+            donor.parent.mkdir(parents=True)
+            donor.write_text("tool", encoding="utf-8")
+
+            with patch("devtool.android_build.running_under_termux_python", return_value=True), patch(
+                "devtool.android_build.normalized_machine", return_value="arm64"
+            ), patch(
+                "devtool.android_build.installed_build_tools_versions", return_value=["36.0.0"]
+            ), patch(
+                "devtool.android_build.arm64_build_tools_replacements_needed",
+                return_value=["aapt2", "zipalign"],
+            ), patch(
+                "devtool.android_build.termux_tool_path",
+                side_effect=lambda name: aapt2 if name == "aapt2" else None,
+            ), patch(
+                "devtool.android_build.native_android_build_tool_compatible", return_value=True
+            ), patch(
+                "devtool.android_build._termux_package_available", return_value=True
+            ), patch(
+                "devtool.android_build._termux_prefix_path", return_value=root / "prefix"
             ):
                 self.assertFalse(android_build.termux_can_repair_sdk_build_tools(sdk))
 

@@ -371,6 +371,115 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
             )
         )
 
+    def test_python_venv_restore_installs_httpx_for_fastapi_testclient(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='demo'\nversion='0.1'\ndependencies=['fastapi>=0.115']\n",
+                encoding="utf-8",
+            )
+            (root / "tests").mkdir()
+            (root / "tests" / "test_web.py").write_text(
+                "from fastapi.testclient import TestClient\n\ndef test_client_symbol(): assert TestClient is not None\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(
+                    repo_root=root,
+                    project_root=str(root),
+                    kind="python",
+                    runner_options={"python": {"manager": "venv"}},
+                )
+                specs = build_specs(config, "restore")
+
+        httpx = next(spec for spec in specs if spec.argv[-1] == "httpx")
+        self.assertEqual(httpx.name, "restore:test-tools")
+        self.assertEqual(httpx.argv[-4:], ["-m", "pip", "install", "httpx"])
+
+    def test_python_venv_validation_bootstraps_pypa_build_frontend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[build-system]\nrequires=['setuptools>=68','wheel']\nbuild-backend='setuptools.build_meta'\n"
+                "[project]\nname='demo'\nversion='0.1'\n",
+                encoding="utf-8",
+            )
+            (root / "tests").mkdir()
+            (root / "tests" / "test_demo.py").write_text("def test_demo(): pass\n", encoding="utf-8")
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(
+                    repo_root=root,
+                    project_root=str(root),
+                    kind="python",
+                    runner_options={"python": {"manager": "venv", "environment": str(root / ".devtool" / "venv")}},
+                )
+                specs = build_validation_specs(config, skip_test=True)
+
+        frontend = next(spec for spec in specs if spec.name == "build-frontend")
+        self.assertEqual(frontend.argv[-4:], ["-m", "pip", "install", "build"])
+        self.assertTrue(frontend.metadata["implicit_environment_bootstrap"])
+        names = [spec.name for spec in specs]
+        self.assertLess(names.index("build-frontend"), names.index("build"))
+
+    def test_python_venv_validation_build_frontend_respects_offline_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[build-system]\nrequires=['setuptools>=68','wheel']\nbuild-backend='setuptools.build_meta'\n"
+                "[project]\nname='demo'\nversion='0.1'\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"DEVTOOL_XDG_DIR": xdg}, clear=False):
+                config = ProjectConfig(
+                    repo_root=root,
+                    project_root=str(root),
+                    kind="python",
+                    runner_options={"python": {"manager": "venv", "offline": True, "environment": str(root / ".devtool" / "venv")}},
+                )
+                specs = build_validation_specs(config, skip_test=True)
+
+        frontend = next(spec for spec in specs if spec.name == "build-frontend")
+        self.assertEqual(frontend.argv[-5:], ["-m", "pip", "install", "--no-index", "build"])
+
+    def test_python_isolation_preserves_existing_user_pip_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            pip_config = Path(home) / ".config" / "pip" / "pip.conf"
+            pip_config.parent.mkdir(parents=True)
+            pip_config.write_text("[global]\nextra-index-url = https://example.invalid/simple\n", encoding="utf-8")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "venv", "isolation": True}},
+            )
+            with patch.dict(os.environ, {"HOME": home, "DEVTOOL_XDG_DIR": xdg}, clear=False):
+                spec = build_specs(config, "test")[0]
+
+        self.assertEqual(spec.env["PIP_CONFIG_FILE"], str(pip_config))
+        self.assertNotEqual(spec.env["HOME"], home)
+
+    def test_python_isolation_keeps_explicit_pip_config_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as xdg:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1'\n", encoding="utf-8")
+            explicit = str(Path(home) / "custom-pip.conf")
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="python",
+                runner_options={"python": {"manager": "venv", "isolation": True}},
+            )
+            with patch.dict(
+                os.environ,
+                {"HOME": home, "DEVTOOL_XDG_DIR": xdg, "PIP_CONFIG_FILE": explicit},
+                clear=False,
+            ):
+                spec = build_specs(config, "test")[0]
+
+        self.assertEqual(spec.env["PIP_CONFIG_FILE"], explicit)
+
     def test_python_uv_build_uses_native_uv_frontend_without_python_build_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as xdg:
             root = Path(tmp)
