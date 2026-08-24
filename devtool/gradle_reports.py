@@ -631,10 +631,48 @@ def collect_python_tool_output(
     for item in payload.get("issues", []) if isinstance(payload, dict) else []:
         if not isinstance(item, dict):
             continue
-        message = str(item.get("message") or "Python tool reported an issue")
-        issues.append(Issue("error", command_name, "-", f"PYTHON_{str(payload.get('tool') or 'TOOL').upper()}", message))
-    if int(payload.get("returncode") or 0) != 0 and not issues:
-        issues.append(Issue("error", command_name, "-", "PYTHON_TOOL", f"{payload.get('tool', 'Python tool')} exited with code {payload.get('returncode')}"))
+        message = str(
+            item.get("message")
+            or "Python tool reported an issue"
+        )
+
+        severity = str(
+            item.get("severity")
+            or "error"
+        ).strip().lower()
+
+        if severity not in {
+            "error",
+            "warning",
+        }:
+            severity = "error"
+
+        issues.append(
+            Issue(
+                severity,
+                command_name,
+                "-",
+                f"PYTHON_{str(payload.get('tool') or 'TOOL').upper()}",
+                message,
+            )
+        )
+
+    if (
+        int(payload.get("returncode") or 0) != 0
+        and not any(
+            issue.severity == "error"
+            for issue in issues
+        )
+    ):
+        issues.append(
+            Issue(
+                "error",
+                command_name,
+                "-",
+                "PYTHON_TOOL",
+                f"{payload.get('tool', 'Python tool')} exited with code {payload.get('returncode')}",
+            )
+        )
     return ReportCollection(dict(payload), issues)
 
 

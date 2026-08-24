@@ -296,8 +296,19 @@ def split_runner_passthrough_args(raw_args: list[str]) -> tuple[list[str], list[
     return list(raw_args[:separator]), list(raw_args[separator + 1 :])
 
 
+def _add_python_format_flags(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument(
+        "--format",
+        "--fix",
+        dest="python_format_fix",
+        action="store_true",
+        help="Autofix Python formatter output during lint/validation; default is check-only",
+    )
+
+
 def _add_apply_validation_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--validate", action="store_true", help="Run validation after applying the artifact; required artifact validation is enabled automatically")
+    _add_python_format_flags(cmd)
     cmd.add_argument("--defer-validate", action="store_true", help="Apply now, preserve rollback state, and create a resumable validation session without running a phase")
     cmd.add_argument("--static-validate", action="store_true", help="Apply artifact and run only artifact/static validation scripts without Gradle validation phases")
     cmd.add_argument("--no-validate", action="store_true", help="Disable validation requested or required by the artifact manifest")
@@ -524,7 +535,10 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--changed", action="store_true", help="Select tests related to changed files")
             cmd.add_argument("--changed-from", default="HEAD", help="Git base for --changed")
             cmd.add_argument("--instrumented", action="store_true", help="Run Android instrumentation tests on a device")
+        if name == "lint":
+            _add_python_format_flags(cmd)
         if name in {"validate", "validate-all", "wine-validate"}:
+            _add_python_format_flags(cmd)
             _add_validation_skip_flags(cmd)
             if name == "validate":
                 cmd.add_argument("validate_scope", nargs="?", help="Optional artifact validation scope: overlay or overlays")
@@ -547,6 +561,7 @@ def build_parser() -> argparse.ArgumentParser:
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases, help=f"{mode.title()} a persistent sequential validation session")
         cmd.set_defaults(_devtool_validation_mode=mode)
+        _add_python_format_flags(cmd)
         _add_validation_skip_flags(cmd)
         _add_validation_test_selection_flags(cmd)
         cmd.add_argument("--test-profile", default="", help="Saved test profile used by validation")
@@ -2738,6 +2753,27 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
             section = {}
         config.runner_options[name] = section
         return section
+
+    if str(getattr(args, "command", "") or "") in {
+        "lint",
+        "validate",
+        "v",
+        "validate-all",
+        "wine-validate",
+        "wv",
+        "start-validation",
+        "sv",
+        "resume-validation",
+        "rv",
+        *APPLY_COMMANDS,
+    }:
+        python_options = ensure_section("python")
+
+        # Source formatting must always be explicitly requested.
+        # Normal validation remains check-only.
+        python_options["format_fix"] = bool(
+            getattr(args, "python_format_fix", False)
+        )
 
     if bool(getattr(args, "offline", False)):
         bootstrap = ensure_section("bootstrap")

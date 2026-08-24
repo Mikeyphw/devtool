@@ -1777,17 +1777,64 @@ class PythonRunner(ProjectRunner):
         root = self._root(config)
         target_values = list(dict.fromkeys(str(item) for item in targets if str(item))) or ["."]
         plan = self._plan(config)
+        format_fix = bool(self._options(config).get("format_fix", False))
         specs: list[CommandSpec] = []
+
         for configured_tool in self._lint_tools(config):
             tool, *configured_args = shlex.split(configured_tool)
+
             if tool == "ruff":
-                tool_args = ["check", *configured_args, *target_values]
+                fix_args = (
+                    ["--fix"]
+                    if format_fix and "--fix" not in configured_args
+                    else []
+                )
+                tool_args = [
+                    "check",
+                    *fix_args,
+                    *configured_args,
+                    *target_values,
+                ]
+
             elif tool == "ruff-format":
-                tool, tool_args = "ruff", ["format", "--check", *configured_args, *target_values]
+                configured_args = [
+                    arg
+                    for arg in configured_args
+                    if not (format_fix and arg == "--check")
+                ]
+                tool, tool_args = "ruff", [
+                    "format",
+                    *([] if format_fix else ["--check"]),
+                    *configured_args,
+                    *target_values,
+                ]
+
             elif tool == "black":
-                tool_args = ["--check", *configured_args, *target_values]
+                configured_args = [
+                    arg
+                    for arg in configured_args
+                    if not (format_fix and arg == "--check")
+                ]
+                tool_args = [
+                    *([] if format_fix else ["--check"]),
+                    *configured_args,
+                    *target_values,
+                ]
+
             elif tool == "isort":
-                tool_args = ["--check-only", *configured_args, *target_values]
+                configured_args = [
+                    arg
+                    for arg in configured_args
+                    if not (
+                        format_fix
+                        and arg in {"--check", "--check-only"}
+                    )
+                ]
+                tool_args = [
+                    *([] if format_fix else ["--check-only"]),
+                    *configured_args,
+                    *target_values,
+                ]
             elif tool == "bandit":
                 tool_args = ["-r", *configured_args, *target_values]
             else:

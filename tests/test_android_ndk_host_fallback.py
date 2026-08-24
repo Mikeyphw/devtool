@@ -26,9 +26,22 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
         linker.write_text("#!/bin/sh\nexit 0\n")
         linker.chmod(0o755)
 
+    def _termux_cmake_toolchain(self) -> str:
+        return (
+            "if(CMAKE_HOST_SYSTEM_NAME STREQUAL Linux)\n"
+            "  set(ANDROID_HOST_TAG linux-x86_64)\n"
+            "elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL Darwin)\n"
+            "  set(ANDROID_HOST_TAG darwin-x86_64)\n"
+            "endif()\n"
+        )
+
     def _fake_ndk(self, root: Path, version: str) -> Path:
         ndk = root / "ndk" / version
-        (ndk / "build" / "cmake").mkdir(parents=True)
+        cmake_dir = ndk / "build" / "cmake"
+        cmake_dir.mkdir(parents=True)
+        toolchain = self._termux_cmake_toolchain()
+        (cmake_dir / "android-legacy.toolchain.cmake").write_text(toolchain)
+        (cmake_dir / "android.toolchain.cmake").write_text(toolchain)
         (ndk / "build" / "cmake" / "android.toolchain.cmake").write_text("# test\n")
         (ndk / "source.properties").write_text(f"Pkg.Revision = {version}\n")
         bin_dir = ndk / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin"
@@ -242,11 +255,12 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
             compiler.chmod(0o755)
             self.assertTrue(android_build.ndk_host_android_link_runs(sdk, version))
 
-    def test_termux_materializes_hardlinks_when_python_has_no_os_link(self) -> None:
+    def test_termux_argv0_launcher_does_not_require_os_link(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             sdk = root / "sdk"
             version = "28.2.13676358"
+
             ndk = sdk / "ndk" / version
             bin_dir = (
                 ndk
@@ -256,12 +270,12 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
                 / "linux-x86_64"
                 / "bin"
             )
+
             bin_dir.mkdir(parents=True)
             (bin_dir.parent / "sysroot").mkdir()
 
             clang = bin_dir / "clang"
-            clang.write_text("#!/bin/sh\\nexit 0\\n")
-            clang.chmod(0o755)
+            self._fake_x86_64_elf(clang)
 
             clangxx = bin_dir / "clang++"
             clangxx.symlink_to("clang")
@@ -288,45 +302,114 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
                 )
 
             self.assertFalse(clangxx.is_symlink())
-            self.assertEqual(
-                clangxx.stat().st_ino,
-                clang.stat().st_ino,
+
+            wrapper = clangxx.read_text()
+
+            self.assertIn(
+                "# devtool-ndk-argv0-wrapper",
+                wrapper,
             )
+            self.assertIn(
+                f"# devtool-ndk-argv0-target={clang}",
+                wrapper,
+            )
+            self.assertIn(" -a ", wrapper)
+            self.assertIn(str(clangxx), wrapper)
+
             self.assertTrue(
-                (bin_dir / "clang++.devtool-symlink").is_symlink()
+                (
+                    bin_dir
+                    / "clang++.devtool-symlink"
+                ).is_symlink()
             )
 
-    def test_termux_materializes_ndk_executable_symlinks_as_hardlinks(self) -> None:
+            self.assertEqual(
+                android_build.native_tool_arch(clangxx),
+                "x86_64",
+            )
+
+    def test_termux_materializes_ndk_executable_symlinks_as_argv0_launchers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             sdk = root / "sdk"
             version = "28.2.13676358"
+
             ndk = sdk / "ndk" / version
-            bin_dir = ndk / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin"
+            bin_dir = (
+                ndk
+                / "toolchains"
+                / "llvm"
+                / "prebuilt"
+                / "linux-x86_64"
+                / "bin"
+            )
+
             bin_dir.mkdir(parents=True)
             (bin_dir.parent / "sysroot").mkdir()
+
             lld = bin_dir / "lld"
-            lld.write_text("#!/bin/sh\nexit 0\n")
-            lld.chmod(0o755)
+            self._fake_x86_64_elf(lld)
+
             ld_lld = bin_dir / "ld.lld"
             ld_lld.symlink_to("lld")
+
             clang = bin_dir / "clang"
-            clang.write_text("#!/bin/sh\nexit 0\n")
-            clang.chmod(0o755)
+            self._fake_x86_64_elf(clang)
+
             clangxx = bin_dir / "clang++"
             clangxx.symlink_to("clang")
 
-            with patch.object(android_build, "running_under_termux_python", return_value=True):
+            with patch.object(
+                android_build,
+                "running_under_termux_python",
+                return_value=True,
+            ):
                 self.assertTrue(
-                    android_build.ensure_ndk_termux_multicall_aliases(sdk, version, dry_run=False)
+                    android_build.ensure_ndk_termux_multicall_aliases(
+                        sdk,
+                        version,
+                        dry_run=False,
+                    )
                 )
 
-            self.assertFalse(ld_lld.is_symlink())
-            self.assertFalse(clangxx.is_symlink())
-            self.assertEqual(ld_lld.stat().st_ino, lld.stat().st_ino)
-            self.assertEqual(clangxx.stat().st_ino, clang.stat().st_ino)
-            self.assertTrue((bin_dir / "ld.lld.devtool-symlink").is_symlink())
-            self.assertTrue((bin_dir / "clang++.devtool-symlink").is_symlink())
+            for alias, target in (
+                (ld_lld, lld),
+                (clangxx, clang),
+            ):
+                self.assertFalse(alias.is_symlink())
+
+                wrapper = alias.read_text()
+
+                self.assertIn(
+                    "# devtool-ndk-argv0-wrapper",
+                    wrapper,
+                )
+                self.assertIn(
+                    f"# devtool-ndk-argv0-target={target}",
+                    wrapper,
+                )
+                self.assertIn(" -a ", wrapper)
+                self.assertIn(str(alias), wrapper)
+
+                # native_tool_arch must see through the launcher so that
+                # subsequent Devtool runs still identify the backing ELF.
+                self.assertEqual(
+                    android_build.native_tool_arch(alias),
+                    "x86_64",
+                )
+
+            self.assertTrue(
+                (
+                    bin_dir
+                    / "ld.lld.devtool-symlink"
+                ).is_symlink()
+            )
+            self.assertTrue(
+                (
+                    bin_dir
+                    / "clang++.devtool-symlink"
+                ).is_symlink()
+            )
 
     def test_native_arm64_ndk_exposes_legacy_linux_x86_alias_for_cmake(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -335,7 +418,7 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
             version = "28.2.13676358"
             ndk = sdk / "ndk" / version
             (ndk / "build" / "cmake").mkdir(parents=True)
-            (ndk / "build" / "cmake" / "android.toolchain.cmake").write_text("# test\n")
+            (ndk / "build" / "cmake" / "android.toolchain.cmake").write_text(self._termux_cmake_toolchain())
             (ndk / "source.properties").write_text(f"Pkg.Revision = {version}\n")
             arm = ndk / "toolchains" / "llvm" / "prebuilt" / "linux-arm64"
             (arm / "bin").mkdir(parents=True)

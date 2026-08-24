@@ -2159,39 +2159,239 @@ def run_validator(args: argparse.Namespace) -> int:
 
 def run_tool(args: argparse.Namespace) -> int:
     root = args.root.resolve()
+
     try:
-        info = inspect_python_project(root, args.manager, args.framework)
-        plan = resolve_environment(info, configured_python=args.python, environment=args.environment)
+        info = inspect_python_project(
+            root,
+            args.manager,
+            args.framework,
+        )
+        plan = resolve_environment(
+            info,
+            configured_python=args.python,
+            environment=args.environment,
+        )
     except PythonProjectError as exc:
-        print(f"DEVTOOL_PYTHON_TOOL_RESULT {json.dumps({'tool': args.tool, 'errors': 1, 'warnings': 0, 'issues': [{'message': str(exc)}]})}")
+        print(
+            "DEVTOOL_PYTHON_TOOL_RESULT "
+            + json.dumps(
+                {
+                    "tool": args.tool,
+                    "errors": 1,
+                    "warnings": 0,
+                    "issues": [
+                        {
+                            "severity": "error",
+                            "message": str(exc),
+                        }
+                    ],
+                }
+            )
+        )
         return 2
-    command = python_module_argv(plan, args.tool, *args.tool_args)
+
+    command = python_module_argv(
+        plan,
+        args.tool,
+        *args.tool_args,
+    )
+
     env = os.environ.copy()
-    env.update(python_cache_env(root, os.environ.get("DEVTOOL_EXECUTION_CONTEXT", "host")))
+    env.update(
+        python_cache_env(
+            root,
+            os.environ.get(
+                "DEVTOOL_EXECUTION_CONTEXT",
+                "host",
+            ),
+        )
+    )
+
     try:
-        proc = _run_capture(command, cwd=root, env=env, timeout=args.timeout)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        payload = {"tool": args.tool, "returncode": 127, "errors": 1, "warnings": 0, "issues": [{"message": str(exc)}]}
-        print("DEVTOOL_PYTHON_TOOL_RESULT " + json.dumps(payload, ensure_ascii=False))
+        proc = _run_capture(
+            command,
+            cwd=root,
+            env=env,
+            timeout=args.timeout,
+        )
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+    ) as exc:
+        payload = {
+            "tool": args.tool,
+            "returncode": 127,
+            "errors": 1,
+            "warnings": 0,
+            "issues": [
+                {
+                    "severity": "error",
+                    "message": str(exc),
+                }
+            ],
+        }
+
+        print(
+            "DEVTOOL_PYTHON_TOOL_RESULT "
+            + json.dumps(
+                payload,
+                ensure_ascii=True,
+            )
+        )
+
         return 127
+
     output = proc.stdout
+
     if output:
-        print(output, end="" if output.endswith("\n") else "\n")
+        print(
+            output,
+            end="" if output.endswith("\n") else "\n",
+        )
+
     warnings = 0
     returncode = proc.returncode
+
+    # Ruff lint findings are warnings in Devtool.
     if args.tool == "ruff":
         summary = _RUFF_SUMMARY.search(output)
+
         if summary:
-            warnings = int(summary.group("errors") or 0) + int(summary.group("warnings") or 0)
+            warnings = (
+                int(summary.group("errors") or 0)
+                + int(summary.group("warnings") or 0)
+            )
+
             if returncode == 1 and warnings > 0:
                 returncode = 0
+
     issues: list[dict[str, str]] = []
+
+    black_check = (
+        args.tool == "black"
+        and "--check" in args.tool_args
+    )
+
+    black_reformats = [
+        line.strip()
+        for line in output.splitlines()
+        if line.strip().startswith(
+            "would reformat "
+        )
+    ]
+
+    black_hard_failure = bool(
+        re.search(
+            r"error:\s+cannot format"
+            r"|internal error"
+            r"|traceback \(most recent call last\)",
+            output,
+            re.I,
+        )
+    )
+
+    # Black exits 1 in check mode when formatting differs.
+    # That condition is advisory in Devtool.
+    if (
+        black_check
+        and returncode == 1
+        and black_reformats
+        and not black_hard_failure
+    ):
+        returncode = 0
+        warnings += len(black_reformats)
+
+        issues.extend(
+            {
+                "severity": "warning",
+                "message": line[:2000],
+            }
+            for line in black_reformats
+        )
+
     for line in output.splitlines():
-        if re.search(r"(^|:)\s*(error|warning)(\[|:|\s)", line, re.I) or re.match(r".+:\d+:\d+:\s+[A-Z]\d+", line):
-            issues.append({"message": line[:2000]})
-    errors = len(issues) if returncode else 0
-    payload = {"tool": args.tool, "returncode": returncode, "errors": errors, "warnings": warnings, "issues": issues[:200]}
-    print("DEVTOOL_PYTHON_TOOL_RESULT " + json.dumps(payload, ensure_ascii=False))
+        stripped = line.strip()
+
+        if (
+            black_check
+            and stripped.startswith(
+                "would reformat "
+            )
+        ):
+            continue
+
+        match = re.search(
+            r"(^|:)\s*(error|warning)(\[|:|\s)",
+            line,
+            re.I,
+        )
+
+        if match or re.match(
+            r".+:\d+:\d+:\s+[A-Z]\d+",
+            line,
+        ):
+            severity = (
+                "warning"
+                if (
+                    match
+                    and match.group(2).lower()
+                    == "warning"
+                )
+                else "error"
+            )
+
+            issues.append(
+                {
+                    "severity": severity,
+                    "message": line[:2000],
+                }
+            )
+
+    errors = sum(
+        1
+        for item in issues
+        if item.get("severity") == "error"
+    )
+
+    parsed_warnings = sum(
+        1
+        for item in issues
+        if item.get("severity") == "warning"
+    )
+
+    if not black_reformats or returncode != 0:
+        warnings += parsed_warnings
+
+    # A real nonzero tool failure can never report
+    # zero errors.
+    if returncode and errors == 0:
+        issues.append(
+            {
+                "severity": "error",
+                "message": (
+                    f"{args.tool} exited with "
+                    f"code {returncode}"
+                ),
+            }
+        )
+        errors = 1
+
+    payload = {
+        "tool": args.tool,
+        "returncode": returncode,
+        "errors": errors,
+        "warnings": warnings,
+        "issues": issues[:200],
+    }
+
+    print(
+        "DEVTOOL_PYTHON_TOOL_RESULT "
+        + json.dumps(
+            payload,
+            ensure_ascii=True,
+        )
+    )
+
     return returncode
 
 

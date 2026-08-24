@@ -2878,6 +2878,13 @@ def native_android_build_tool_compatible(path: Path, tool_name: str, machine: st
 
 
 def native_tool_arch(path: Path) -> str | None:
+    # devtool-ndk-argv0-wrapper-target-arch
+    resolver = globals().get("ndk_termux_argv0_wrapper_target")
+    if callable(resolver):
+        wrapped_target = resolver(path)
+        if wrapped_target is not None and wrapped_target != path:
+            return native_tool_arch(wrapped_target)
+
     if not path.is_file():
         return None
     try:
@@ -3315,91 +3322,169 @@ def ndk_host_resource_dir_ready(sdk_root: Path, version: str) -> bool:
     return True
 
 
-def ensure_ndk_termux_multicall_aliases(sdk_root: Path, version: str, *, dry_run: bool) -> bool:
-    """Materialize executable NDK bin symlinks as hardlinks on native Termux.
+def ndk_termux_argv0_wrapper_target(path: Path) -> Path | None:
+    """Return the backing executable referenced by a Devtool Termux argv[0] launcher."""
 
-    Termux's exec interposition can resolve an executable symlink before the
-    target program observes argv[0].  LLVM deliberately uses argv[0] for
-    multi-call entry points such as clang++/clang and ld.lld/lld.  Replacing
-    same-directory executable symlinks with hardlinks preserves the visible
-    entry-point name without duplicating the large LLVM binaries.
+    marker = b"# devtool-ndk-argv0-target="
+    try:
+        head = path.read_bytes()[:4096]
+    except OSError:
+        return None
+
+    for line in head.splitlines():
+        if not line.startswith(marker):
+            continue
+        try:
+            value = line[len(marker):].decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        target = Path(value)
+        return target if target.is_file() else None
+
+    return None
+
+
+def ensure_ndk_termux_multicall_aliases(
+    sdk_root: Path,
+    version: str,
+    *,
+    dry_run: bool,
+) -> bool:
+    """Replace executable NDK symlinks with argv[0]-preserving launchers on Termux.
+
+    Android/Termux does not provide the hard-link semantics previously used
+    here. LLVM multi-call tools still need their visible alias name, such as
+    clang++ or ld.lld, so GNU env -a is used to control argv[0].
+
+    The original NDK symlink is preserved once as .devtool-symlink.
     """
 
     if not running_under_termux_python():
         return True
+
     bin_dir = ndk_google_tool_bin(sdk_root, version)
     if not bin_dir.is_dir():
         return False
+
+    shell = shutil.which("sh")
+    env_command = shutil.which("env")
+    if not shell or not env_command:
+        warn(
+            "Cannot preserve NDK LLVM argv[0] on Termux because "
+            "sh or env is unavailable."
+        )
+        return False
+
+    import shlex
+
+    suffix = ".devtool-symlink"
+
+    # The old os.link implementation renamed the symlink before calling
+    # os.link(). Because AttributeError was not caught, a real NDK may have
+    # been left with the alias absent and only the backup remaining.
+    for backup in sorted(bin_dir.glob(f"*{suffix}")):
+        alias = backup.with_name(backup.name[:-len(suffix)])
+
+        if alias.exists() or alias.is_symlink():
+            continue
+
+        try:
+            backup.rename(alias)
+            info(
+                "Recovered NDK multi-call alias after interrupted repair: "
+                f"{alias}"
+            )
+        except OSError:
+            return False
+
     try:
         resolved_bin = bin_dir.resolve(strict=True)
     except OSError:
         return False
 
     for alias in sorted(bin_dir.iterdir()):
+        if alias.name.endswith(
+            (
+                ".devtool-symlink",
+                ".devtool-original",
+                ".devtool-x86_64",
+            )
+        ):
+            continue
+
         if not alias.is_symlink():
             continue
+
         try:
             target = alias.resolve(strict=True)
-            if target.parent.resolve(strict=True) != resolved_bin or not target.is_file():
+
+            # Only replace same-bin executable aliases. Do not rewrite random
+            # NDK data/library symlinks.
+            if (
+                target.parent.resolve(strict=True) != resolved_bin
+                or not target.is_file()
+            ):
                 continue
+
             if not os.access(target, os.X_OK):
                 continue
         except OSError:
             continue
 
-        backup = alias.with_name(alias.name + ".devtool-symlink")
+        backup = alias.with_name(alias.name + suffix)
+
         if dry_run:
-            info(f"Would materialize NDK multi-call alias as hardlink: {alias} -> {target}")
+            info(f"Would install NDK argv[0] launcher: {alias} -> {target}")
             continue
+
+        temporary = alias.with_name(
+            alias.name + f".devtool-{os.getpid()}.tmp"
+        )
+
         try:
             if not backup.exists() and not backup.is_symlink():
                 alias.rename(backup)
             else:
                 alias.unlink(missing_ok=True)
-            temporary = alias.with_name(alias.name + f".devtool-{os.getpid()}.tmp")
-            temporary.unlink(missing_ok=True)
-            link_fn = getattr(os, "link", None)
-            if callable(link_fn):
-                link_fn(target, temporary)
-            else:
-                # Some Termux Python builds intentionally do not expose
-                # os.link(). Preserve real hard-link semantics by delegating
-                # to the native `ln` utility instead of copying the binary.
-                ln = shutil.which("ln")
-                if not ln:
-                    raise OSError(
-                        "Python os.link is unavailable and no 'ln' executable "
-                        "was found for NDK hardlink materialization"
-                    )
 
-                result = subprocess.run(
-                    [ln, "--", str(target), str(temporary)],
-                    text=True,
-                    capture_output=True,
-                    check=False,
+            temporary.unlink(missing_ok=True)
+
+            if "\n" in str(target):
+                raise OSError(
+                    f"NDK tool path contains a newline: {target}"
                 )
-                if result.returncode != 0:
-                    detail = (
-                        result.stderr.strip()
-                        or result.stdout.strip()
-                        or f"exit {result.returncode}"
-                    )
-                    raise OSError(
-                        f"failed to create NDK hardlink with ln: {detail}"
-                    )
+
+            # Passing the full alias path as argv[0] is intentional:
+            # clang uses its executable identity/location when resolving its
+            # NDK resource directory.
+            script = (
+                f"#!{shell}\n"
+                "# devtool-ndk-argv0-wrapper\n"
+                f"# devtool-ndk-argv0-target={target}\n"
+                f"exec {shlex.quote(env_command)} "
+                f"-a {shlex.quote(str(alias))} "
+                f"{shlex.quote(str(target))} \"$@\"\n"
+            )
+
+            temporary.write_text(script, encoding="utf-8")
+            temporary.chmod(0o755)
             os.replace(temporary, alias)
+
         except OSError:
             try:
                 temporary.unlink(missing_ok=True)
-            except (OSError, UnboundLocalError):
+            except OSError:
                 pass
+
             if not alias.exists() and backup.is_symlink():
                 try:
                     backup.rename(alias)
                 except OSError:
                     pass
+
             return False
-        info(f"Materialized NDK multi-call alias as hardlink: {alias} -> {target}")
+
+        info(f"Installed NDK argv[0] launcher: {alias} -> {target}")
 
     return True
 
@@ -3506,7 +3591,125 @@ def restore_google_ndk_x86_64_prebuilt_for_qemu(
     return True
 
 
+def native_android_ndk_prebuilt(sdk_root: Path, version: str) -> Path | None:
+    """Return an Android/Bionic ARM host prebuilt when the NDK provides one."""
+
+    if not running_under_termux_python():
+        return None
+    if normalized_machine() not in {"arm64", "armv7"}:
+        return None
+
+    ndk_root = ndk_root_for_version(sdk_root, version)
+    prebuilt = ndk_prebuilt_root(ndk_root)
+
+    names = (
+        ("linux-arm64", "arm64"),
+        ("linux-aarch64", "arm64"),
+        ("linux-arm", "armv7"),
+    )
+
+    for name, expected_arch in names:
+        candidate = prebuilt / name
+        clang = candidate / "bin" / "clang++"
+
+        if not candidate.is_dir() or not clang.is_file():
+            continue
+
+        try:
+            real = clang.resolve(strict=True)
+        except OSError:
+            continue
+
+        if native_tool_arch(real) == expected_arch:
+            return candidate
+
+    return None
+
+
+def ensure_native_android_ndk_layout(
+    sdk_root: Path,
+    version: str,
+    *,
+    dry_run: bool,
+) -> bool:
+    """Finalize a Bionic-native ARM NDK without converting it to linux-x86_64."""
+
+    native = native_android_ndk_prebuilt(sdk_root, version)
+    if native is None:
+        return False
+
+    ndk_root = ndk_root_for_version(sdk_root, version)
+
+    # HomuHomu/AndroidIDE's Bionic NDK compatibility convention is
+    # linux-arm64 -> linux-aarch64. Keep the real native host tree intact.
+    if native.name == "linux-arm64":
+        for parent in (
+            ndk_root / "toolchains" / "llvm" / "prebuilt",
+            ndk_root / "prebuilt",
+            ndk_root / "shader-tools",
+        ):
+            source = parent / "linux-arm64"
+            alias = parent / "linux-aarch64"
+
+            if not source.is_dir():
+                continue
+
+            try:
+                if (
+                    alias.is_symlink()
+                    and alias.resolve(strict=True) == source.resolve(strict=True)
+                ):
+                    continue
+            except OSError:
+                pass
+
+            if dry_run:
+                info(
+                    f"Would expose native Android NDK host alias "
+                    f"{alias}: {source}"
+                )
+                continue
+
+            if alias.exists() or alias.is_symlink():
+                if alias.is_symlink() or alias.is_file():
+                    alias.unlink(missing_ok=True)
+                else:
+                    shutil.rmtree(alias)
+
+            alias.symlink_to("linux-arm64", target_is_directory=True)
+            info(
+                f"Exposed native Android NDK host alias "
+                f"{alias}: {source}"
+            )
+
+    if dry_run:
+        return True
+
+    clang = native / "bin" / "clang++"
+    linker = native / "bin" / "ld.lld"
+
+    if not executable_runs(clang, "--version"):
+        warn(f"Native Android NDK clang++ cannot execute: {clang}")
+        return False
+
+    if linker.is_file() and not executable_runs(linker, "--version"):
+        warn(f"Native Android NDK ld.lld cannot execute: {linker}")
+        return False
+
+    return True
+
+
 def expose_arm64_ndk_as_linux_x86_64(sdk_root: Path, version: str, *, dry_run: bool) -> bool:
+
+    # devtool-native-bionic-ndk-fast-path
+    native = native_android_ndk_prebuilt(sdk_root, version)
+    if native is not None:
+        return ensure_native_android_ndk_layout(
+            sdk_root,
+            version,
+            dry_run=dry_run,
+        )
+
     ndk_root = ndk_root_for_version(sdk_root, version)
     arm_prebuilt = find_arm64_ndk_prebuilt(ndk_root)
     if arm_prebuilt is None:
@@ -4164,6 +4367,25 @@ def ensure_ndk_host_compatible(
     force: bool,
     dry_run: bool,
 ) -> None:
+
+    # devtool-native-bionic-host-fast-path
+    native = native_android_ndk_prebuilt(sdk_root, version)
+    if native is not None:
+        if not ensure_native_android_ndk_layout(
+            sdk_root,
+            version,
+            dry_run=dry_run,
+        ):
+            fail(
+                f"Native Android/Bionic NDK {version} was found at "
+                f"{native}, but its ARM host compiler/linker could not execute."
+            )
+
+        info(
+            f"Using native Android/Bionic NDK host toolchain: {native}"
+        )
+        return
+
     if not version:
         return
     if provider not in NDK_HOST_PROVIDERS:
