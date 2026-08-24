@@ -1062,6 +1062,123 @@ artifact-cleanup: ok exit=0 time=0.10s
         self.assertIn("Errors:", text)
         self.assertIn("build-apk: error: unrecognized arguments: --java-provider auto --gradle-provider auto", text)
 
+    def test_failure_copy_keeps_resource_error_and_full_gradle_warning(self) -> None:
+        from devtool.diagnostics import parse_issues
+
+        raw_output = (
+            "$ python3 build-apk /repo --task assembleDebug --memory-guard-mb 640\n"
+            "Warning: Unable to set daemon's environment variables to match the client because: \n"
+            "  There is no native integration with this operating environment.\n"
+            "  If the daemon was started with a significantly different environment from the client, and your build \n"
+            "  relies on environment variables, you may experience unexpected behavior.\n"
+            "\n"
+            "Devtool stopped validation after hard emergency floor: 313 MiB available; "
+            "configured warning guard 640 MiB; adaptive sustained threshold 448 MiB; hard floor 320 MiB.\n"
+        )
+        issues = parse_issues(Path("/repo"), "android-validation-build", raw_output)
+        issue_payload = [
+            {
+                "severity": issue.severity,
+                "command": issue.command,
+                "file": issue.file,
+                "line": issue.line,
+                "code": issue.code,
+                "message": issue.message,
+            }
+            for issue in issues
+        ]
+        summary_text = "android-validation-build: failed exit=75 time=12.00s\n"
+        json_text = json.dumps({
+            "warnings": 1,
+            "errors": 1,
+            "failed": 1,
+            "skipped": 0,
+            "results": [{
+                "name": "android-validation-build",
+                "returncode": 75,
+                "failure_kind": "resource_interrupted",
+                "output": raw_output,
+                "issues": issue_payload,
+            }],
+        })
+        args = SimpleNamespace(no_clipboard=False, copy=True, copy_via="auto")
+        copied: list[str] = []
+        result = SimpleNamespace(success=True, backend="test", reason="")
+        with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
+            _maybe_copy(raw_output, summary_text, json_text, args)
+
+        self.assertEqual(len(copied), 1)
+        text = copied[0]
+        self.assertIn("Failure reason:", text)
+        self.assertNotIn("compile failure", text.lower())
+        self.assertIn("Errors:", text)
+        self.assertIn("GRADLE_MEMORY_GUARD", text)
+        self.assertIn("313 MiB available", text)
+        self.assertIn("Warnings:", text)
+        self.assertIn("GRADLE_ENVIRONMENT", text)
+        self.assertIn("There is no native integration", text)
+        self.assertIn("relies on environment variables", text)
+
+    def test_failure_copy_semantically_dedupes_child_and_raw_android_diagnostics(self) -> None:
+        raw_output = (
+            "e: file:///repo/app/src/main/kotlin/Demo.kt:24:29 The feature \"references to synthetic java properties\" is unsupported.\n"
+            "> Task :app:compileOfficialDebugKotlin FAILED\n"
+            "- ERROR [android-validation-build] app/src/main/kotlin/Demo.kt:24: KOTLIN: The feature \"references to synthetic java properties\" is unsupported.\n"
+            "- ERROR [android-validation-build] GRADLE_TASK: Gradle task failed: :app:compileOfficialDebugKotlin\n"
+            "- WARNING [android-validation-build] GRADLE_ENVIRONMENT: Warning: Unable to set daemon's environment variables to match the client because: There is no native integration with this operating environment.\n"
+        )
+        issues = [
+            {
+                "severity": "error",
+                "command": "android-validation-build",
+                "file": "app/src/main/kotlin/Demo.kt",
+                "line": 24,
+                "code": "KOTLIN",
+                "message": 'The feature "references to synthetic java properties" is unsupported.',
+            },
+            {
+                "severity": "error",
+                "command": "android-validation-build",
+                "file": "-",
+                "line": None,
+                "code": "GRADLE_TASK",
+                "message": "Gradle task failed: :app:compileOfficialDebugKotlin",
+            },
+            {
+                "severity": "warning",
+                "command": "android-validation-build",
+                "file": "-",
+                "line": None,
+                "code": "GRADLE_ENVIRONMENT",
+                "message": "Warning: Unable to set daemon's environment variables to match the client because: There is no native integration with this operating environment.",
+            },
+        ]
+        summary_text = "android-validation-build: failed exit=2 time=1.00s\n"
+        json_text = json.dumps({
+            "warnings": 1, "errors": 2, "failed": 1,
+            "results": [{
+                "name": "android-validation-build",
+                "returncode": 2,
+                "failure_kind": "compile_failure",
+                "output": raw_output,
+                "issues": issues,
+            }],
+        })
+        args = SimpleNamespace(no_clipboard=False, copy=True, copy_via="auto")
+        copied: list[str] = []
+        result = SimpleNamespace(success=True, backend="test", reason="")
+        with patch("devtool.cli.copy_text", side_effect=lambda text: copied.append(text) or result), patch("devtool.cli.console.print"):
+            _maybe_copy(raw_output, summary_text, json_text, args)
+
+        text = copied[0]
+        errors_block = text.split("Errors:\n", 1)[1].split("\n\nWarnings:", 1)[0]
+        warnings_block = text.split("Warnings:\n", 1)[1].split("\nFailed:", 1)[0]
+        self.assertEqual(errors_block.count('The feature "references to synthetic java properties" is unsupported.'), 1)
+        self.assertEqual(errors_block.count("Gradle task failed: :app:compileOfficialDebugKotlin"), 1)
+        self.assertNotIn("- ERROR [android-validation-build]", errors_block)
+        self.assertEqual(warnings_block.count("Unable to set daemon's environment variables"), 1)
+        self.assertNotIn("- WARNING [android-validation-build]", warnings_block)
+
     def test_success_copy_includes_structured_warning_details(self) -> None:
         raw_output = (
             "$ ./gradlew lintDebug\n"

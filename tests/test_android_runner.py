@@ -1223,6 +1223,25 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         self.assertNotIn("--fail-fast", args)
 
+    def test_android_validation_always_delegates_memory_guard_ownership_to_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={"validation": {"android_safe": False, "memory_guard_mb": 0}},
+            )
+
+            args = android_builder_arguments_for_tasks(
+                config, ["assembleDebug"], scan_artifacts=False, validation=True
+            )
+
+        self.assertIn("--memory-guard-mb", args)
+        self.assertEqual(args[args.index("--memory-guard-mb") + 1], "0")
+        self.assertTrue(_command_delegates_memory_guard(args))
+
     def test_constrained_gradle_options_are_accepted_and_bounded(self) -> None:
         args = parse_args([
             "/tmp/demo",

@@ -273,7 +273,6 @@ def apply_termux_resource_defaults(runner_options: dict, *, profile_name: str = 
         "max_workers": profile.max_workers,
         "cpu_limit": profile.cpu_limit,
         "gradle_heap_mb": profile.gradle_heap_mb,
-        "gradle_metaspace_mb": profile.gradle_metaspace_mb,
         "memory_guard_mb": profile.memory_guard_mb,
         "parallel": False,
     }.items():
@@ -302,8 +301,22 @@ def classify_runtime_failure(output: str, *, native_termux: bool = True) -> Runt
         return RuntimeFailureHint("tls", "TLS/certificate negotiation failed while accessing a dependency or tool provider.")
     if "timed out" in lower or "connection timeout" in lower or "connection timed out" in lower:
         return RuntimeFailureHint("network-timeout", "Network access timed out; this may be transient, unlike a confirmed HTTP 404.")
-    if "404" in lower and ("http" in lower or "url" in lower or "not found" in lower):
-        return RuntimeFailureHint("http-404", "The requested upstream artifact does not exist; retries should not be treated as transient.")
+    http_404_patterns = (
+        re.compile(r"\bhttp(?:/\d(?:\.\d)?)?\s+(?:error\s+)?404\b", re.IGNORECASE),
+        re.compile(r"\bhttp\s+error\s+404\b", re.IGNORECASE),
+        re.compile(r"\b404\s+not\s+found\b", re.IGNORECASE),
+        re.compile(r"\b(?:url|uri)\b[^\n]{0,160}\b404\b", re.IGNORECASE),
+        re.compile(r"\b404\b[^\n]{0,160}\bhttps?://", re.IGNORECASE),
+    )
+    if any(
+        pattern.search(line)
+        for line in text.splitlines()
+        for pattern in http_404_patterns
+    ):
+        return RuntimeFailureHint(
+            "http-404",
+            "The requested upstream artifact does not exist; retries should not be treated as transient.",
+        )
     return None
 
 

@@ -144,6 +144,33 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(issues[0].code, "GRADLE_MEMORY_GUARD")
         self.assertIn("165 MiB available", issues[0].message)
 
+    def test_parse_outer_validation_memory_guard_and_termux_daemon_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = (
+                "Warning: Unable to set daemon's environment variables to match the client because: \n"
+                "  There is no native integration with this operating environment.\n"
+                "  If the daemon was started with a significantly different environment from the client, and your build \n"
+                "  relies on environment variables, you may experience unexpected behavior.\n"
+                "\n"
+                "Devtool stopped validation after hard emergency floor: 313 MiB available; "
+                "configured warning guard 640 MiB; adaptive sustained threshold 448 MiB; "
+                "hard floor 320 MiB; swap 6226/8191 MiB free, trend -16 MiB.\n"
+            )
+            issues = parse_issues(root, "android-validation-build", output)
+
+        self.assertEqual([(issue.severity, issue.code) for issue in issues], [
+            ("warning", "GRADLE_ENVIRONMENT"),
+            ("error", "GRADLE_MEMORY_GUARD"),
+        ])
+        self.assertIn("There is no native integration", issues[0].message)
+        self.assertIn("relies on environment variables", issues[0].message)
+        self.assertIn("313 MiB available", issues[1].message)
+        self.assertEqual(
+            classify_failure("android-validation-build", output, 75),
+            "resource_interrupted",
+        )
+
     def test_parse_gradle_daemon_disappeared_as_fatal_resource_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

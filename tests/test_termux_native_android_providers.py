@@ -411,13 +411,60 @@ class AndroidNativeProviderTests(unittest.TestCase):
             project = android_build.inspect_project(root)
         self.assertFalse(project.native_build)
 
-    def test_inspect_project_ndk_version_requires_full_ndk(self) -> None:
+    def test_inspect_project_resolves_version_catalog_backed_toolchain_variables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "gradle").mkdir()
+            (root / "gradle" / "libs.versions.toml").write_text(
+                '[versions]\ncompileSdk = "36"\nbuildTools = "36.0.0"\n'
+                'ndk = "28.2.13676358"\nandroidGradlePlugin = "9.3.1"\n',
+                encoding="utf-8",
+            )
+            (root / "build.gradle.kts").write_text(
+                'plugins { id("com.android.application") version "9.3.1" }\n'
+                'val compileSdkBaseline = libs.versions.compileSdk.get().toInt()\n'
+                'val buildToolsBaseline = libs.versions.buildTools.get()\n'
+                'val ndkBaseline = libs.versions.ndk.get()\n'
+                'android { compileSdk = compileSdkBaseline; buildToolsVersion = buildToolsBaseline; ndkVersion = ndkBaseline }\n',
+                encoding="utf-8",
+            )
+            project = android_build.inspect_project(root)
+        self.assertEqual(project.compile_sdk, 36)
+        self.assertEqual(project.build_tools, "36.0.0")
+        self.assertEqual(project.ndk_version, "28.2.13676358")
+        self.assertFalse(project.native_build)
+
+    def test_policy_only_ndk_pin_is_not_provisioned_in_auto_mode(self) -> None:
+        project = android_build.ProjectInfo(
+            Path("/project"), "x", True, True, 36, "36.0.0", 9, False,
+            "28.2.13676358", None, "9.3.1"
+        )
+        version, source = android_build.resolve_ndk_requirement(project, Path("/sdk"), "auto")
+        self.assertIsNone(version)
+        self.assertEqual(source, "not-required")
+
+    def test_inspect_project_ndk_version_without_native_integration_is_policy_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "build.gradle.kts").write_text(
                 'plugins { id("com.android.application") version "8.8.0" }\nandroid { compileSdk = 35; ndkVersion = "28.2.13676358" }',
                 encoding="utf-8",
             )
+            project = android_build.inspect_project(root)
+        self.assertFalse(project.native_build)
+        self.assertEqual(project.ndk_version, "28.2.13676358")
+        self.assertEqual(android_build.native_requirement(project), "none")
+
+    def test_inspect_project_ndk_version_plus_external_native_build_requires_full_ndk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "build.gradle.kts").write_text(
+                'plugins { id("com.android.application") version "8.8.0" }\n'
+                'android { compileSdk = 35; ndkVersion = "28.2.13676358"; '
+                'externalNativeBuild { cmake { path = file("CMakeLists.txt") } } }',
+                encoding="utf-8",
+            )
+            (root / "CMakeLists.txt").write_text("project(native)\n", encoding="utf-8")
             project = android_build.inspect_project(root)
         self.assertTrue(project.native_build)
         self.assertEqual(android_build.native_requirement(project), "android-ndk")

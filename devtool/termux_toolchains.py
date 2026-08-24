@@ -611,10 +611,12 @@ def active_gradle_config_text(project_root: Path) -> str:
 def classify_native_requirement(project_root: Path, *, android: bool = False) -> NativeRequirement:
     root = Path(project_root).expanduser()
     text = active_gradle_config_text(root)
-    # A CMakeLists.txt by itself is not enough to prove Android NDK integration:
-    # repositories often contain host-side helpers or third-party CMake projects.
-    # Require an Android/Gradle NDK declaration or an ndk-build makefile instead.
-    full_ndk_markers = ('externalNativeBuild', 'ndkVersion', 'ndk-build', 'android.toolchain.cmake')
+    # A CMakeLists.txt or ndkVersion declaration by itself is not enough to
+    # prove Android native compilation. Projects commonly pin ndkVersion only
+    # as a fleet/toolchain policy value even when no C/C++ source is wired into
+    # Gradle. Treat only actual Android native build integration as requiring a
+    # runnable NDK host toolchain.
+    full_ndk_markers = ('externalNativeBuild', 'ndk-build', 'android.toolchain.cmake')
     has_ndk_makefiles = False
     has_compiler_inputs = False
     for path in _iter_project_files(root):

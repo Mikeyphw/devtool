@@ -26,6 +26,7 @@ import os
 import platform
 import posixpath
 import re
+import shlex
 import shutil
 import ssl
 import stat
@@ -3152,19 +3153,33 @@ def ndk_clang_resource_dir(sdk_root: Path, version: str) -> Path | None:
     return max(candidates, key=lambda item: version_key(item.name))
 
 
-def ndk_host_android_link_runs(sdk_root: Path, version: str) -> bool:
-    """Smoke-link minimal Android programs for arm64 and x86_64.
+@dataclass(frozen=True)
+class NdkAndroidLinkProbeResult:
+    ok: bool
+    target: str | None = None
+    phase: str | None = None
+    command: tuple[str, ...] = ()
+    returncode: int | None = None
+    stdout: str = ""
+    stderr: str = ""
 
-    ``clang++ --version`` and ``-print-resource-dir`` can both succeed while
-    real Android links still use Termux's compiler runtime or miss the NDK's
-    libunwind/libatomic. This probe exercises the exact runtime/linker pieces
-    CMake needs before Devtool reports the NDK as host-compatible.
+
+def ndk_host_android_link_probe(sdk_root: Path, version: str) -> NdkAndroidLinkProbeResult:
+    """Compile and link minimal Android C++ programs for both 64-bit ABIs.
+
+    Keep compile and link as separate subprocesses. That mirrors CMake more
+    closely and, importantly for QEMU user-mode, tells us whether the emulated
+    Clang driver itself failed or whether its child linker/tool lookup failed.
     """
 
     compiler = ndk_clangxx(sdk_root, version)
     sysroot = compiler.parent.parent / "sysroot"
     if not compiler.is_file() or not sysroot.is_dir():
-        return False
+        return NdkAndroidLinkProbeResult(
+            False,
+            phase="layout",
+            stderr=f"missing compiler or sysroot: compiler={compiler} sysroot={sysroot}",
+        )
     targets = ("aarch64-none-linux-android21", "x86_64-none-linux-android21")
     try:
         with tempfile.TemporaryDirectory(prefix="devtool-ndk-link-") as temporary:
@@ -3172,29 +3187,93 @@ def ndk_host_android_link_runs(sdk_root: Path, version: str) -> bool:
             source = root / "main.cpp"
             source.write_text("int main() { return 0; }\n", encoding="utf-8")
             for index, target in enumerate(targets):
-                result = subprocess.run(
-                    [
-                        str(compiler),
-                        f"--target={target}",
-                        f"--sysroot={sysroot}",
-                        "-static-libstdc++",
-                        "-Wl,--no-undefined",
-                        str(source),
-                        "-o",
-                        str(root / f"probe-{index}"),
-                        "-latomic",
-                        "-lm",
-                    ],
+                obj = root / f"probe-{index}.o"
+                output = root / f"probe-{index}"
+                compile_command = (
+                    str(compiler),
+                    f"--target={target}",
+                    f"--sysroot={sysroot}",
+                    "-c",
+                    str(source),
+                    "-o",
+                    str(obj),
+                )
+                compile_result = subprocess.run(
+                    compile_command,
                     text=True,
                     capture_output=True,
                     timeout=30,
                     check=False,
                 )
-                if result.returncode != 0:
-                    return False
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return True
+                if compile_result.returncode != 0:
+                    return NdkAndroidLinkProbeResult(
+                        False,
+                        target=target,
+                        phase="compile",
+                        command=compile_command,
+                        returncode=compile_result.returncode,
+                        stdout=compile_result.stdout,
+                        stderr=compile_result.stderr,
+                    )
+
+                link_command = (
+                    str(compiler),
+                    f"--target={target}",
+                    f"--sysroot={sysroot}",
+                    "-static-libstdc++",
+                    "-Wl,--no-undefined",
+                    "-v",
+                    str(obj),
+                    "-o",
+                    str(output),
+                    "-latomic",
+                    "-lm",
+                )
+                link_result = subprocess.run(
+                    link_command,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+                if link_result.returncode != 0:
+                    return NdkAndroidLinkProbeResult(
+                        False,
+                        target=target,
+                        phase="link",
+                        command=link_command,
+                        returncode=link_result.returncode,
+                        stdout=link_result.stdout,
+                        stderr=link_result.stderr,
+                    )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return NdkAndroidLinkProbeResult(False, phase="execute", stderr=str(exc))
+    return NdkAndroidLinkProbeResult(True)
+
+
+def ndk_host_android_link_runs(sdk_root: Path, version: str) -> bool:
+    """Return whether the NDK can compile and link minimal Android programs."""
+
+    return ndk_host_android_link_probe(sdk_root, version).ok
+
+
+def format_ndk_link_probe_failure(result: NdkAndroidLinkProbeResult) -> str:
+    parts: list[str] = []
+    if result.phase:
+        parts.append(f"phase={result.phase}")
+    if result.target:
+        parts.append(f"target={result.target}")
+    if result.returncode is not None:
+        parts.append(f"exit={result.returncode}")
+    if result.command:
+        parts.append("command=" + " ".join(shlex.quote(item) for item in result.command))
+    detail = (result.stderr or result.stdout).strip()
+    if detail:
+        # Keep the failure readable in Devtool's stage summary while retaining
+        # the end of Clang/LLD's diagnostics, where the actionable error lives.
+        lines = detail.splitlines()[-24:]
+        parts.append("diagnostic=" + "\n".join(lines))
+    return "\n".join(parts) if parts else "no diagnostic output"
 
 
 def ndk_host_resource_dir_ready(sdk_root: Path, version: str) -> bool:
@@ -3279,7 +3358,35 @@ def ensure_ndk_termux_multicall_aliases(sdk_root: Path, version: str, *, dry_run
                 alias.unlink(missing_ok=True)
             temporary = alias.with_name(alias.name + f".devtool-{os.getpid()}.tmp")
             temporary.unlink(missing_ok=True)
-            os.link(target, temporary)
+            link_fn = getattr(os, "link", None)
+            if callable(link_fn):
+                link_fn(target, temporary)
+            else:
+                # Some Termux Python builds intentionally do not expose
+                # os.link(). Preserve real hard-link semantics by delegating
+                # to the native `ln` utility instead of copying the binary.
+                ln = shutil.which("ln")
+                if not ln:
+                    raise OSError(
+                        "Python os.link is unavailable and no 'ln' executable "
+                        "was found for NDK hardlink materialization"
+                    )
+
+                result = subprocess.run(
+                    [ln, "--", str(target), str(temporary)],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    detail = (
+                        result.stderr.strip()
+                        or result.stdout.strip()
+                        or f"exit {result.returncode}"
+                    )
+                    raise OSError(
+                        f"failed to create NDK hardlink with ln: {detail}"
+                    )
             os.replace(temporary, alias)
         except OSError:
             try:
@@ -3819,6 +3926,13 @@ def snapshot_ndk_x86_64_targets(bin_dir: Path) -> dict[Path, Path]:
     return targets
 
 
+def ndk_clang_driver_entry(path: Path) -> bool:
+    """Return whether an NDK bin entry is a Clang compiler driver alias."""
+
+    name = path.name
+    return name in {"clang", "clang++"} or re.fullmatch(r".+-clang(?:\+\+)?", name) is not None
+
+
 def write_qemu_wrapper(
     wrapper: Path,
     real_binary: Path,
@@ -3841,16 +3955,40 @@ def write_qemu_wrapper(
     # multi-call LLVM binaries (clang++/clang, ld.lld/lld, llvm-ranlib, ...).
     qemu_parts.extend(["-0", shlex.quote(str(wrapper))])
     guest_args: list[str] = []
-    if clang_resource_dir is not None and wrapper.name in {"clang", "clang++"}:
-        # Force the NDK's compiler runtime location. Under qemu-user Clang can
-        # otherwise derive ResourceDir from the preserved backing ELF or host
-        # installation and silently fall back to Termux's $PREFIX/lib/clang.
-        guest_args.extend(["-resource-dir", shlex.quote(str(clang_resource_dir))])
+    clang_driver = clang_resource_dir is not None and ndk_clang_driver_entry(wrapper)
+    if clang_driver:
+        # Renaming the real ELF to *.devtool-x86_64 breaks assumptions Clang
+        # normally makes from its installed executable location. Reconstruct
+        # the NDK driver environment explicitly instead of relying on
+        # /proc/self/exe or QEMU argv[0] behavior. User/build-system arguments
+        # are appended afterwards, so an explicit later --sysroot/-B can still
+        # override these compatibility defaults.
+        tool_dir = wrapper.parent
+        sysroot = tool_dir.parent / "sysroot"
+        guest_args.extend(
+            [
+                "-resource-dir",
+                shlex.quote(str(clang_resource_dir)),
+                shlex.quote(f"--sysroot={sysroot}"),
+                shlex.quote(f"-B{tool_dir}"),
+            ]
+        )
     tail = " ".join(guest_args)
     if tail:
         tail += " "
+
+    environment = ""
+    if clang_driver:
+        quoted_tool_dir = shlex.quote(str(wrapper.parent))
+        environment = (
+            f"DEVTOOL_NDK_TOOL_DIR={quoted_tool_dir}\n"
+            'export COMPILER_PATH="$DEVTOOL_NDK_TOOL_DIR${COMPILER_PATH:+:$COMPILER_PATH}"\n'
+            'export PATH="$DEVTOOL_NDK_TOOL_DIR${PATH:+:$PATH}"\n'
+        )
     script = (
-        "#!/bin/sh\nexec "
+        "#!/bin/sh\n"
+        + environment
+        + "exec "
         + " ".join(qemu_parts)
         + " "
         + shlex.quote(str(real_binary))
@@ -3981,12 +4119,15 @@ def install_qemu_ndk_wrappers(
             "QEMU NDK wrappers can execute clang++ and ld.lld, but clang resolves its runtime "
             "resource directory outside the NDK."
         )
-    if not ndk_host_android_link_runs(sdk_root, version):
+    link_probe = ndk_host_android_link_probe(sdk_root, version)
+    if not link_probe.ok:
         fail(
-            "QEMU NDK wrappers can execute clang++ and ld.lld, but the compiler cannot link "
-            "minimal Android arm64/x86_64 programs with the NDK compiler-rt/libunwind/libatomic "
-            "runtime set. Devtool forced the NDK Clang resource directory, so this usually means "
-            "the NDK package itself is incomplete."
+            "QEMU NDK wrappers can execute clang++ and ld.lld, but the Android compile/link "
+            "probe still fails. Devtool now reconstructs the NDK Clang resource directory, "
+            "sysroot, and linker/tool search path explicitly, so the diagnostic below identifies "
+            "whether the remaining problem is compilation, child-tool execution, linker lookup, "
+            "or a genuinely incomplete runtime package.\n"
+            + format_ndk_link_probe_failure(link_probe)
         )
     if not ensure_ndk_legacy_cmake_arm_alias(sdk_root, version, dry_run=dry_run):
         fail(
@@ -4664,14 +4805,8 @@ def _version_catalog_alias_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
 
 
-def version_catalog_versions(root: Path) -> dict[str, int]:
-    """Return integer version aliases from ``gradle/libs.versions.toml``.
-
-    Android projects commonly keep SDK levels in a Gradle version catalog and
-    reference them as ``libs.versions.android.compileSdk.get().toInt()``.  The
-    Android builder runs before Gradle, so it needs a conservative static view
-    of those aliases when deciding which SDK platform to provision.
-    """
+def version_catalog_values(root: Path) -> dict[str, str]:
+    """Return normalized string values from ``gradle/libs.versions.toml``."""
 
     catalog = root / "gradle" / "libs.versions.toml"
     if not catalog.is_file():
@@ -4684,7 +4819,7 @@ def version_catalog_versions(root: Path) -> dict[str, int]:
     versions = data.get("versions") if isinstance(data, dict) else None
     if not isinstance(versions, dict):
         return {}
-    resolved: dict[str, int] = {}
+    resolved: dict[str, str] = {}
     for alias, raw_value in versions.items():
         value: object = raw_value
         if isinstance(raw_value, dict):
@@ -4693,11 +4828,68 @@ def version_catalog_versions(root: Path) -> dict[str, int]:
                 if candidate is not None:
                     value = candidate
                     break
-        match = re.fullmatch(r"\s*(\d+)\s*", str(value))
-        if not match:
-            continue
-        resolved[_version_catalog_alias_key(str(alias))] = int(match.group(1))
+        text = str(value).strip()
+        if text:
+            resolved[_version_catalog_alias_key(str(alias))] = text
     return resolved
+
+
+def version_catalog_versions(root: Path) -> dict[str, int]:
+    """Return integer version aliases from ``gradle/libs.versions.toml``."""
+
+    resolved: dict[str, int] = {}
+    for alias, value in version_catalog_values(root).items():
+        match = re.fullmatch(r"\s*(\d+)\s*", value)
+        if match:
+            resolved[alias] = int(match.group(1))
+    return resolved
+
+
+def _catalog_alias_for_variable(text: str, variable: str) -> str | None:
+    pattern = (
+        rf"\b(?:val|var)\s+{re.escape(variable)}"
+        r"\s*(?::\s*[A-Za-z0-9_.<>?]+)?\s*=\s*"
+        r"libs\.versions\.([A-Za-z0-9_.-]+)\.get\(\)"
+        r"(?:\.to(?:Int|Integer)\(\))?"
+    )
+    match = re.search(pattern, text, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def resolve_catalog_string_reference(root: Path, text: str, setting_name: str) -> str | None:
+    """Resolve a Gradle string setting through version-catalog indirection."""
+
+    values = version_catalog_values(root)
+    if not values:
+        return None
+    direct = re.search(
+        rf"\b{re.escape(setting_name)}(?:Version)?\s*(?:=|\s)\s*"
+        r"libs\.versions\.([A-Za-z0-9_.-]+)\.get\(\)",
+        text,
+        re.MULTILINE,
+    )
+    alias: str | None = direct.group(1) if direct else None
+    if alias is None:
+        reference = re.search(
+            rf"\b{re.escape(setting_name)}(?:Version)?\s*(?:=|\s)\s*"
+            r"([A-Za-z_][A-Za-z0-9_]*)\b",
+            text,
+            re.MULTILINE,
+        )
+        if reference:
+            variable = reference.group(1)
+            literal = re.search(
+                rf"\b(?:val|var)\s+{re.escape(variable)}"
+                r"\s*(?::\s*[A-Za-z0-9_.<>?]+)?\s*=\s*['\"]([^'\"]+)",
+                text,
+                re.MULTILINE,
+            )
+            if literal:
+                return literal.group(1).strip()
+            alias = _catalog_alias_for_variable(text, variable)
+    if alias is None:
+        return None
+    return values.get(_version_catalog_alias_key(alias))
 
 
 def resolve_catalog_int_reference(root: Path, text: str, setting_name: str) -> int | None:
@@ -4716,6 +4908,18 @@ def resolve_catalog_int_reference(root: Path, text: str, setting_name: str) -> i
         key = _version_catalog_alias_key(match.group(1))
         if key in versions:
             return versions[key]
+
+    reference = re.search(
+        rf"\b{re.escape(setting_name)}(?:Version)?\s*(?:=|\s)\s*([A-Za-z_][A-Za-z0-9_]*)\b",
+        text,
+        re.MULTILINE,
+    )
+    if reference:
+        alias = _catalog_alias_for_variable(text, reference.group(1))
+        if alias is not None:
+            key = _version_catalog_alias_key(alias)
+            if key in versions:
+                return versions[key]
     return None
 
 
@@ -4774,6 +4978,10 @@ def inspect_project(root: Path) -> ProjectInfo:
         active_gradle_text,
     )
     build_tools = build_tools_match.group(1) if build_tools_match else None
+    if build_tools is None:
+        build_tools = resolve_catalog_string_reference(
+            root, active_gradle_text, "buildToolsVersion"
+        )
     agp_version = None
     for pattern in (
         r"com\.android\.tools\.build:gradle:([0-9]+(?:\.[0-9]+){1,2})",
@@ -4792,6 +5000,10 @@ def inspect_project(root: Path) -> ProjectInfo:
     # as SDK inspection so comments and backup build files cannot affect it.
     ndk_match = re.search(r"\bndkVersion\s*(?:=|\s)\s*['\"]([^'\"]+)", active_gradle_text)
     ndk_version = ndk_match.group(1).strip() if ndk_match else None
+    if ndk_version is None:
+        ndk_version = resolve_catalog_string_reference(
+            root, active_gradle_text, "ndkVersion"
+        )
     native_build = toolchains.classify_native_requirement(root, android=android).capability == "android-ndk"
     cmake_match = re.search(
         r"externalNativeBuild\s*\{.*?cmake\s*\{.*?\bversion\s*=\s*['\"]([^'\"]+)",
@@ -5432,6 +5644,13 @@ def resolve_ndk_requirement(
         return None, "disabled"
     if override != "auto":
         return override, "cli-explicit"
+    # ndkVersion can be a policy/parity declaration without any native source
+    # wired into the Android build. Do not install or host-validate an NDK for
+    # such projects merely because the version is declared. A real native
+    # integration (externalNativeBuild/ndk-build/Android.mk) flips
+    # project.native_build and then the project pin becomes authoritative.
+    if not project.native_build and not prefer_installed:
+        return None, "not-required"
     if project.ndk_version:
         return project.ndk_version, "project-explicit"
     if prefer_installed:
@@ -7917,15 +8136,17 @@ def gradle_jvmargs(args: argparse.Namespace) -> str | None:
     metaspace = (
         explicit_metaspace
         or int(os.environ.get("DEVTOOL_GRADLE_METASPACE_MB", "") or "0")
-        or min(1024, max(512 if args.constrained else 384, int(heap * 0.75)))
     )
-    cpu_limit = explicit_cpu or int(os.environ.get("DEVTOOL_VALIDATION_CPU_LIMIT", "") or "0")
+    cpu_limit = explicit_cpu or int(
+        os.environ.get("DEVTOOL_VALIDATION_CPU_LIMIT", "") or "0"
+    )
     parts = [
         f"-Xmx{heap}m",
-        f"-XX:MaxMetaspaceSize={metaspace}m",
         "-XX:ReservedCodeCacheSize=128m",
         "-Dfile.encoding=UTF-8",
     ]
+    if metaspace > 0:
+        parts.insert(1, f"-XX:MaxMetaspaceSize={metaspace}m")
     if cpu_limit > 0:
         parts.append(f"-XX:ActiveProcessorCount={cpu_limit}")
     return " ".join(parts)

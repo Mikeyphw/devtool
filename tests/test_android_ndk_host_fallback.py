@@ -81,12 +81,67 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
             self.assertIn(f"-0 {clang}", text)
             resource_dir = clang.parent.parent / "lib" / "clang" / "19"
             self.assertIn(f"-resource-dir {resource_dir}", text)
+            self.assertIn(f"--sysroot={clang.parent.parent / 'sysroot'}", text)
+            self.assertIn(f"-B{clang.parent}", text)
+            self.assertIn("COMPILER_PATH", text)
+            self.assertIn("DEVTOOL_NDK_TOOL_DIR", text)
 
             linker = clang.parent / "ld.lld"
             linker_text = linker.read_text()
             self.assertIn("-U LD_PRELOAD", linker_text)
             self.assertIn(f"-0 {linker}", linker_text)
             self.assertIn("lld.devtool-x86_64", linker_text)
+
+    def test_qemu_target_specific_clang_alias_gets_full_ndk_driver_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_dir = root / "ndk" / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin"
+            resource_dir = bin_dir.parent / "lib" / "clang" / "19"
+            (resource_dir / "lib" / "linux").mkdir(parents=True)
+            (bin_dir.parent / "sysroot").mkdir(parents=True)
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            qemu = root / "qemu-x86_64"
+            qemu.write_text("#!/bin/sh\nexit 0\n")
+            qemu.chmod(0o755)
+            real = bin_dir / "clang.devtool-x86_64"
+            self._fake_x86_64_elf(real)
+            wrapper = bin_dir / "aarch64-linux-android21-clang++"
+
+            android_build.write_qemu_wrapper(
+                wrapper, real, qemu, None, dry_run=False, clang_resource_dir=resource_dir
+            )
+            text = wrapper.read_text()
+            self.assertIn(f"-resource-dir {resource_dir}", text)
+            self.assertIn(f"--sysroot={bin_dir.parent / 'sysroot'}", text)
+            self.assertIn(f"-B{bin_dir}", text)
+            self.assertIn("COMPILER_PATH", text)
+
+    def test_ndk_link_probe_reports_exact_phase_target_and_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sdk = root / "sdk"
+            version = "28.2.13676358"
+            bin_dir = sdk / "ndk" / version / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin"
+            bin_dir.mkdir(parents=True)
+            (bin_dir.parent / "sysroot").mkdir()
+            compiler = bin_dir / "clang++"
+            compiler.write_text(
+                "#!/bin/sh\n"
+                "case \" $* \" in *\" -c \"*) exit 0;; esac\n"
+                "echo 'ld.lld: error: synthetic qemu child-link failure' >&2\n"
+                "exit 7\n"
+            )
+            compiler.chmod(0o755)
+
+            result = android_build.ndk_host_android_link_probe(sdk, version)
+            self.assertFalse(result.ok)
+            self.assertEqual(result.phase, "link")
+            self.assertEqual(result.target, "aarch64-none-linux-android21")
+            self.assertEqual(result.returncode, 7)
+            detail = android_build.format_ndk_link_probe_failure(result)
+            self.assertIn("phase=link", detail)
+            self.assertIn("target=aarch64-none-linux-android21", detail)
+            self.assertIn("synthetic qemu child-link failure", detail)
 
     def test_qemu_wrapper_repair_recovers_old_multicall_target_and_preserves_argv0(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -186,6 +241,60 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
             compiler.write_text("#!/bin/sh\nexit 0\n")
             compiler.chmod(0o755)
             self.assertTrue(android_build.ndk_host_android_link_runs(sdk, version))
+
+    def test_termux_materializes_hardlinks_when_python_has_no_os_link(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sdk = root / "sdk"
+            version = "28.2.13676358"
+            ndk = sdk / "ndk" / version
+            bin_dir = (
+                ndk
+                / "toolchains"
+                / "llvm"
+                / "prebuilt"
+                / "linux-x86_64"
+                / "bin"
+            )
+            bin_dir.mkdir(parents=True)
+            (bin_dir.parent / "sysroot").mkdir()
+
+            clang = bin_dir / "clang"
+            clang.write_text("#!/bin/sh\\nexit 0\\n")
+            clang.chmod(0o755)
+
+            clangxx = bin_dir / "clang++"
+            clangxx.symlink_to("clang")
+
+            with (
+                patch.object(
+                    android_build,
+                    "running_under_termux_python",
+                    return_value=True,
+                ),
+                patch.object(
+                    android_build.os,
+                    "link",
+                    None,
+                    create=True,
+                ),
+            ):
+                self.assertTrue(
+                    android_build.ensure_ndk_termux_multicall_aliases(
+                        sdk,
+                        version,
+                        dry_run=False,
+                    )
+                )
+
+            self.assertFalse(clangxx.is_symlink())
+            self.assertEqual(
+                clangxx.stat().st_ino,
+                clang.stat().st_ino,
+            )
+            self.assertTrue(
+                (bin_dir / "clang++.devtool-symlink").is_symlink()
+            )
 
     def test_termux_materializes_ndk_executable_symlinks_as_hardlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

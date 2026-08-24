@@ -737,6 +737,14 @@ def android_builder_arguments_for_tasks(
     _append_option(argv, "--max-workers", max_workers)
     _append_option(argv, "--system-deps", android.get("system_deps", "auto"))
     _append_option(argv, "--daemon-idle-timeout-ms", gradle.get("daemon_idle_timeout_ms", 900_000))
+    if validation_policy is not None:
+        # The Android builder owns the Gradle memory watchdog. Always pass the
+        # resolved value, including 0, so the outer validation runner can see
+        # that ownership explicitly and never run a second competing guard.
+        # This also keeps the builder's process summary truthful: guard=disabled
+        # now means no validation watchdog is active anywhere in the stack.
+        _append_option(argv, "--memory-guard-mb", validation_policy.memory_guard_mb)
+
     if validation_policy is not None and validation_policy.enabled:
         validation_options = _dict_option(config, "validation")
         packaging_workload = _is_android_packaging_workload(seen_tasks)
@@ -765,18 +773,12 @@ def android_builder_arguments_for_tasks(
         )
         lint_workload = any("lint" in task.lower() for task in seen_tasks)
         test_workload = any("test" in task.lower() for task in seen_tasks)
-        # Kotlin/KSP, AGP transforms and Android packaging retain substantially
-        # more class metadata than a small JVM-only Gradle task. A 384 MiB cap
-        # made MMRL's assembleOfficialDebug daemon exhaust metaspace, after
-        # which --continue left checkDuplicateClasses looking like the hang.
-        metaspace_floor = 384
-        if packaging_workload:
-            metaspace_floor = max(metaspace_floor, 768)
-        if lint_workload:
-            metaspace_floor = max(metaspace_floor, 640)
-        if sum((packaging_workload, lint_workload, test_workload)) >= 2:
-            metaspace_floor = max(metaspace_floor, 896)
-
+        # Do not invent a hard MaxMetaspaceSize for Android validation.
+        # AGP, Kotlin/KSP, lint and packaging can legitimately need more
+        # class metadata than a fixed mobile-host floor. The adaptive system
+        # memory watchdog already protects the device from real pressure.
+        #
+        # Only explicitly configured metaspace caps are forwarded.
         workload_metaspace: int | None = None
         if packaging_workload:
             workload_metaspace = _positive_integer(
@@ -790,11 +792,18 @@ def android_builder_arguments_for_tasks(
                 or validation_options.get("gradle_lint_metaspace_mb")
                 or gradle.get("validation_lint_metaspace_mb")
             )
-            workload_metaspace = max(workload_metaspace or 0, lint_metaspace or 0) or workload_metaspace
+            workload_metaspace = (
+                max(workload_metaspace or 0, lint_metaspace or 0)
+                or workload_metaspace
+            )
 
-        metaspace_mb = max(configured_metaspace or 0, workload_metaspace or 0, metaspace_floor)
-        _append_option(argv, "--gradle-metaspace-mb", metaspace_mb)
-        _append_option(argv, "--memory-guard-mb", validation_policy.memory_guard_mb)
+        metaspace_mb = max(
+            configured_metaspace or 0,
+            workload_metaspace or 0,
+        ) or None
+
+        if metaspace_mb is not None:
+            _append_option(argv, "--gradle-metaspace-mb", metaspace_mb)
         _append_option(argv, "--cpu-limit", validation_policy.cpu_limit)
         argv.append("--constrained")
         if validation_policy.low_priority:

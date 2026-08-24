@@ -24,6 +24,11 @@ _ANDROID_MANIFEST_DIAGNOSTIC = re.compile(
     r"^(?P<file>.+?AndroidManifest\.xml):(?P<line>\d+):(?P<col>\d+)(?:-\d+)?\s+(?P<severity>Error|Warning):\s*(?P<message>.+)$",
     re.IGNORECASE,
 )
+_ANDROID_LINT_DIAGNOSTIC = re.compile(
+    r"^(?P<file>.+?):(?P<line>\d+)(?::(?P<col>\d+))?:\s*"
+    r"(?P<severity>Error|Warning):\s*(?P<message>.+?)\s+\[(?P<code>[A-Za-z][A-Za-z0-9_.-]*)\]$",
+    re.IGNORECASE,
+)
 _GRADLE_JAVA_TOOLCHAIN = re.compile(
     r"Cannot find a Java installation on your machine .* matching: \{languageVersion=(?P<version>\d+),.*\}\.",
     re.IGNORECASE,
@@ -33,7 +38,8 @@ _GRADLE_METASPACE_EXHAUSTED = re.compile(
     re.IGNORECASE,
 )
 _GRADLE_MEMORY_GUARD = re.compile(
-    r"Emergency memory guard stopped Gradle after (?P<reason>[^:]+):\s*(?P<detail>.+)$",
+    r"(?:Emergency memory guard stopped Gradle|Devtool stopped validation) after "
+    r"(?P<reason>[^:]+):\s*(?P<detail>.+)$",
     re.IGNORECASE,
 )
 _GRADLE_DAEMON_DISAPPEARED = re.compile(
@@ -230,7 +236,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 command_name,
                 "-",
                 "GRADLE_METASPACE",
-                "Gradle exhausted its configured JVM metaspace; increase the Android validation metaspace cap.",
+                "Gradle exhausted a configured JVM metaspace cap; increase or remove the explicit Android validation metaspace cap.",
             ))
             index += 1
             continue
@@ -447,6 +453,19 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             index += 1
             continue
 
+        match = _ANDROID_LINT_DIAGNOSTIC.match(stripped)
+        if match:
+            issues.append(Issue(
+                match.group("severity").lower(),
+                command_name,
+                relative_path(match.group("file")),
+                match.group("code"),
+                match.group("message").strip(),
+                line=int(match.group("line")),
+            ))
+            index += 1
+            continue
+
         match = _GCC_CLANG.match(stripped)
         if match:
             severity = match.group("severity").lower()
@@ -497,13 +516,36 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             continue
 
         if any(
-            stripped.startswith(prefix)
+            prefix in stripped
             for prefix in _GRADLE_BENIGN_TERMUX_WARNING_PREFIXES
         ):
-            # Gradle cannot synchronize daemon environment variables through
-            # its native integration layer on Android/Termux. This is benign
-            # when Devtool passes toolchain paths and build inputs explicitly.
-            index += 1
+            # This warning is often harmless on Termux, but it is still real
+            # Gradle output. Devtool's summary/clipboard contract is to retain
+            # every warning/error rather than silently discarding diagnostics.
+            warning_start = min(
+                stripped.index(prefix)
+                for prefix in _GRADLE_BENIGN_TERMUX_WARNING_PREFIXES
+                if prefix in stripped
+            )
+            warning_lines = [stripped[warning_start:].strip()]
+            lookahead = index + 1
+            while lookahead < len(lines):
+                continuation = lines[lookahead].strip()
+                if not continuation:
+                    break
+                if lines[lookahead][:1].isspace():
+                    warning_lines.append(continuation)
+                    lookahead += 1
+                    continue
+                break
+            issues.append(Issue(
+                "warning",
+                command_name,
+                "-",
+                "GRADLE_ENVIRONMENT",
+                " ".join(warning_lines),
+            ))
+            index = lookahead
             continue
 
         if any(stripped.startswith(prefix) for prefix in _GRADLE_INFRA_WARNING_PREFIXES):
@@ -718,6 +760,12 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return "wine_issue"
     if "exec format error" in text or "wrong architecture" in text or "bad cpu type" in text or "arm64" in text and "x64" in text:
         return "arm_mismatch"
+    if (
+        "emergency memory guard stopped gradle after" in text
+        or "devtool stopped validation after hard emergency floor" in text
+        or "devtool stopped validation after corroborated sustained memory pressure" in text
+    ):
+        return "resource_interrupted"
     if (
         "gradle build daemon disappeared unexpectedly" in text
         or "daemon disappeared unexpectedly" in text

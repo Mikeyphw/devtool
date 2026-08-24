@@ -1105,6 +1105,72 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
         return None
 
+    def _semantic_detail_key(line: str) -> str:
+        """Collapse alternate renderings of the same diagnostic into one identity.
+
+        Android's child builder emits both original compiler output and its own
+        canonical ``- ERROR [...]``/``- WARNING [...]`` report.  The outer
+        validator also receives structured issues for those same diagnostics.
+        Clipboard/failure summaries should keep unique raw context, but must not
+        repeat one Kotlin/Gradle issue two or three times just because it crossed
+        those representation boundaries.
+        """
+
+        cleaned = _re.sub(r"\s+", " ", str(line or "")).strip()
+        cleaned = _re.sub(
+            r"^-\s+(?:ERROR|WARNING)(?:\s+\[[^\]]+\])?\s+",
+            "",
+            cleaned,
+            flags=_re.IGNORECASE,
+        )
+
+        task = _re.match(r"^>\s*Task\s+(\S+)\s+FAILED$", cleaned, _re.IGNORECASE)
+        if task:
+            return f"gradle-task:{task.group(1).casefold()}"
+        task = _re.match(r"^Gradle task failed:\s*(\S+)$", cleaned, _re.IGNORECASE)
+        if task:
+            return f"gradle-task:{task.group(1).casefold()}"
+
+        def normalize_message(message: str) -> str:
+            normalized = _re.sub(r"\s+", " ", str(message or "")).strip()
+            normalized = _re.sub(
+                r"^(?:error|warning):\s+",
+                "",
+                normalized,
+                flags=_re.IGNORECASE,
+            )
+            normalized = _re.sub(
+                r"\s+\[[A-Za-z][A-Za-z0-9_.-]*\]$",
+                "",
+                normalized,
+            )
+            return normalized.casefold()
+
+        compiler = _re.match(
+            r"^[ew]:\s+file:///.+?:\d+:\d+\s+(?P<message>.+)$",
+            cleaned,
+            _re.IGNORECASE,
+        )
+        if compiler:
+            return normalize_message(compiler.group("message"))
+
+        located = _re.match(
+            r"^.+?:\d+(?::\d+)?:\s+(?:[A-Za-z][A-Za-z0-9_.-]*:\s+)?(?P<message>.+)$",
+            cleaned,
+        )
+        if located:
+            return normalize_message(located.group("message"))
+
+        coded = _re.match(
+            r"^(?:GRADLE_ENVIRONMENT|GRADLE_MEMORY_GUARD|GRADLE_TASK|KOTLIN):\s+(?P<message>.+)$",
+            cleaned,
+            _re.IGNORECASE,
+        )
+        if coded:
+            return _semantic_detail_key(coded.group("message"))
+
+        return cleaned.casefold()
+
     def _dedupe_detail_lines(lines: list[str]) -> list[str]:
         deduped: list[str] = []
         seen: set[str] = set()
@@ -1112,12 +1178,28 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             cleaned = _re.sub(r"\s+", " ", str(line or "")).strip()
             if not cleaned:
                 continue
-            key = cleaned.casefold()
+            key = _semantic_detail_key(cleaned)
             if key in seen:
                 continue
             seen.add(key)
             deduped.append(cleaned)
         return deduped
+
+    def _merge_detail_lines(primary: list[str], fallback: list[str]) -> list[str]:
+        """Prefer structured diagnostics and add only semantically new raw context."""
+
+        merged: list[str] = []
+        seen: set[str] = set()
+        for line in [*primary, *fallback]:
+            cleaned = _re.sub(r"\s+", " ", str(line or "")).strip()
+            if not cleaned:
+                continue
+            key = _semantic_detail_key(cleaned)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(cleaned)
+        return merged
 
     def _format_issue_detail(issue: dict, *, default: str) -> str:
         code = str(issue.get("code") or "").strip()
@@ -1253,8 +1335,10 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     def _warning_details() -> tuple[list[str], int]:
         """Extract all useful, deduplicated warnings from structured issues and output."""
 
-        lines = [*_structured_issue_details("warning"), *_raw_warning_details(raw_output)]
-        warning_lines = _dedupe_detail_lines(lines)
+        warning_lines = _merge_detail_lines(
+            _structured_issue_details("warning"),
+            _raw_warning_details(raw_output),
+        )
         return warning_lines, len(warning_lines)
 
     def _commit_hash() -> str:
@@ -1477,8 +1561,9 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 part for part in [failed_block, _failed_result_outputs(), raw_output]
                 if str(part or "").strip()
             )
-            error_lines = _dedupe_detail_lines(
-                [*_structured_issue_details("error"), *_raw_error_details(raw_error_source)]
+            error_lines = _merge_detail_lines(
+                _structured_issue_details("error"),
+                _raw_error_details(raw_error_source),
             )
             return error_lines, len(error_lines)
 

@@ -67,7 +67,8 @@ class TermuxFinalDiagnosticsTests(unittest.TestCase):
     def test_provider_explanation_rejects_sysroot_for_android_ndk_requirement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "build.gradle.kts").write_text("android { ndkVersion = \"28.0.0\" }", encoding="utf-8")
+            (root / "build.gradle.kts").write_text("android { ndkVersion = \"28.0.0\"; externalNativeBuild { cmake { path = file(\"CMakeLists.txt\") } } }", encoding="utf-8")
+            (root / "CMakeLists.txt").write_text("project(native)\n", encoding="utf-8")
             config = _config(root, kind="android")
             with patch("devtool.termux_diagnostics.detect_runtime_identity", return_value=_termux_runtime(root / "usr")), patch(
                 "devtool.termux_diagnostics.termux_gradle_probe",
@@ -79,6 +80,23 @@ class TermuxFinalDiagnosticsTests(unittest.TestCase):
                 rows = dict(provider_explanation_rows(config))
         self.assertIn("full Android NDK required", rows["provider_explain_native"])
         self.assertIn("compiler/sysroot capability only", rows["provider_explain_native"])
+
+    def test_provider_explanation_treats_ndk_version_without_native_integration_as_policy_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "build.gradle.kts").write_text(
+                'android { ndkVersion = "28.0.0" }', encoding="utf-8"
+            )
+            config = _config(root, kind="android")
+            with patch("devtool.termux_diagnostics.detect_runtime_identity", return_value=_termux_runtime(root / "usr")), patch(
+                "devtool.termux_diagnostics.termux_gradle_probe",
+                return_value=ToolProvider("gradle", "termux", False, compatible=False),
+            ), patch("devtool.termux_diagnostics.termux_java_providers", return_value=()), patch(
+                "devtool.termux_diagnostics.termux_native_provider",
+                return_value=ToolProvider("native-compiler", "termux-sysroot", True, path=root / "clang", compatible=True),
+            ):
+                rows = dict(provider_explanation_rows(config))
+        self.assertIn("no native compiler work detected", rows["provider_explain_native"])
 
     def test_package_recommendations_are_read_only_and_skip_gradle_with_complete_wrapper(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -280,7 +298,8 @@ class TermuxFinalDiagnosticsTests(unittest.TestCase):
             root = Path(tmp)
             sdk = root / "sdk"
             (sdk / "ndk" / "28.2.0").mkdir(parents=True)
-            (root / "build.gradle.kts").write_text('android { ndkVersion = "28.2.0" }\n', encoding="utf-8")
+            (root / "build.gradle.kts").write_text('android { ndkVersion = "28.2.0"; externalNativeBuild { cmake { path = file("CMakeLists.txt") } } }\n', encoding="utf-8")
+            (root / "CMakeLists.txt").write_text("project(native)\n", encoding="utf-8")
             config = _config(root, kind="android")
             project = Mock(ndk_version="28.2.0")
             with patch("devtool.android_build.inspect_project", return_value=project), patch(
