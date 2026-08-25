@@ -489,13 +489,52 @@ def _source_roots(root: Path, data: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(path.resolve().relative_to(root).as_posix() or "." for path in roots))
 
 
-def _import_packages(root: Path, source_roots: Iterable[str], package_name: str = "") -> tuple[str, ...]:
+def _import_packages(
+    root: Path,
+    source_roots: Iterable[str],
+    package_name: str = "",
+    data: Mapping[str, Any] | None = None,
+) -> tuple[str, ...]:
+    """Discover import packages without promoting unrelated repository trees.
+
+    When setuptools package discovery metadata is present, it is authoritative
+    for ownership.  A repository-root source layout is common in dotfile and
+    monorepo projects, and merely containing a ``.py`` file somewhere below a
+    top-level directory does *not* make that directory an installable package.
+    """
     packages: list[str] = []
     normalized_distribution = re.sub(r"[-.]+", "_", package_name).strip("_")
     ignored_modules = {
         "setup", "conftest", "noxfile", "manage", "tasks", "fabfile",
         "sitecustomize", "usercustomize",
     }
+
+    include_patterns: tuple[str, ...] = ()
+    exclude_patterns: tuple[str, ...] = ()
+    explicit_top_levels: set[str] = set()
+    setuptools = _tool_table(data or {}, "setuptools")
+    package_config = setuptools.get("packages") if isinstance(setuptools, dict) else None
+    if isinstance(package_config, dict):
+        find_config = package_config.get("find")
+        if isinstance(find_config, dict):
+            include_patterns = tuple(str(value) for value in _list(find_config.get("include")))
+            exclude_patterns = tuple(str(value) for value in _list(find_config.get("exclude")))
+    elif isinstance(package_config, (list, tuple)):
+        explicit_top_levels = {
+            str(value).split(".", 1)[0]
+            for value in package_config
+            if str(value).strip()
+        }
+
+    def selected(name: str) -> bool:
+        if explicit_top_levels and name not in explicit_top_levels:
+            return False
+        if include_patterns and not any(fnmatch.fnmatch(name, pattern) for pattern in include_patterns):
+            return False
+        if exclude_patterns and any(fnmatch.fnmatch(name, pattern) for pattern in exclude_patterns):
+            return False
+        return True
+
     for relative in source_roots:
         source = (root / relative).resolve()
         if not source.is_dir():
@@ -510,7 +549,7 @@ def _import_packages(root: Path, source_roots: Iterable[str], package_name: str 
                 name = child.stem
                 if name in ignored_modules or name.startswith("test"):
                     continue
-                if source_is_root and normalized_distribution and name != normalized_distribution:
+                if source_is_root and normalized_distribution and name != normalized_distribution and not (include_patterns or explicit_top_levels):
                     continue
             elif child.is_dir():
                 name = child.name
@@ -518,7 +557,7 @@ def _import_packages(root: Path, source_roots: Iterable[str], package_name: str 
                     continue
             else:
                 continue
-            if name.isidentifier():
+            if name.isidentifier() and selected(name):
                 packages.append(name)
     return tuple(dict.fromkeys(packages))
 
@@ -585,7 +624,7 @@ def inspect_python_project(
         lock_file=lock,
         requires_python=requires_python,
         source_roots=roots,
-        import_packages=_import_packages(root, roots, name),
+        import_packages=_import_packages(root, roots, name, data),
         console_scripts=_console_scripts(data),
         workspace_members=_workspace_members(root, data),
         dependency_files=dependency_files,
@@ -2456,6 +2495,7 @@ _IMPORT_DISTRIBUTION_ALIASES: dict[str, set[str]] = {
     "dateutil": {"python-dateutil"},
     "dotenv": {"python-dotenv"},
     "attr": {"attrs"},
+    "gi": {"pygobject"},
 }
 
 
