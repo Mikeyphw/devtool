@@ -175,6 +175,8 @@ _devtool_commands() {
     'inspect-artifact:inspect overlay artifact metadata, inventory, validation, and diff'
     'ia:alias for inspect-artifact'
     'artifact:inspect and maintain the produced build-artifact registry'
+    'tui:open the responsive terminal dashboard'
+    'cleanup:archive historical repository backups'
     'bundle:create artifact bundles'
     'batch:run an ordered batch of operations'
     'commit:create a Git commit'
@@ -715,6 +717,12 @@ _devtool() {
                 ;;
             esac
           fi
+          ;;
+        tui)
+          _arguments '--page[initial page]:page:(dashboard build overlays)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:'
+          ;;
+        cleanup)
+          _arguments '--dry-run[show changes without moving or deleting files]' '--prune-history-days[delete archived backup batches older than this many days]:days:'
           ;;
         bundle)
           if (( ${#line} < 2 )); then

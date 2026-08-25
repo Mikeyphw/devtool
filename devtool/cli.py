@@ -704,6 +704,16 @@ def build_parser() -> argparse.ArgumentParser:
     artifact_prune.add_argument("--delete-files", action="store_true", help="Also delete matching files inside .devtool/build-artifacts only")
     artifact_prune.add_argument("--json", action="store_true", help="Emit prune result JSON")
 
+    tui_cmd = subparsers.add_parser("tui", help="Open the responsive terminal dashboard")
+    tui_cmd.add_argument("--page", choices=["dashboard", "build", "overlays"], default="dashboard", help="Initial terminal dashboard page")
+    tui_cmd.add_argument("--artifact", default="", help="Overlay artifact to preflight on the overlays page")
+    tui_cmd.add_argument("--once", action="store_true", help="Render one frame and exit")
+    tui_cmd.add_argument("--width", type=int, default=0, help="Override terminal width for rendering/debugging")
+
+    cleanup_cmd = subparsers.add_parser("cleanup", help="Archive historical repository backups and optionally prune old backup history")
+    cleanup_cmd.add_argument("--dry-run", action="store_true", help="Show what would be archived or pruned without changing files")
+    cleanup_cmd.add_argument("--prune-history-days", type=float, default=0.0, metavar="DAYS", help="Delete archived backup batches older than this many days; 0 keeps all history")
+
     batch = subparsers.add_parser("batch")
     batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
 
@@ -8777,6 +8787,33 @@ def _main_after_parse(
             no_overlay=bool(getattr(args, "no_overlay", False)),
         )
         return run_hud(hud_args)
+
+    if args.command == "tui":
+        from .tui import run_tui
+
+        config = _load_command_config(args)
+        return run_tui(args, repo_root=config.repo_root, console=console)
+
+    if args.command == "cleanup":
+        from .repository_cleanup import cleanup_repository
+
+        config = _load_command_config(args)
+        payload = cleanup_repository(
+            config.repo_root,
+            dry_run=bool(getattr(args, "dry_run", False)),
+            prune_history_days=float(getattr(args, "prune_history_days", 0.0) or 0.0),
+        )
+        archived = int(payload.get("archived_count", 0))
+        pruned = int(payload.get("pruned_count", 0))
+        prefix = "Would archive" if bool(payload.get("dry_run")) else "Archived"
+        console.print(f"{prefix} {archived} historical backup item(s).")
+        if float(getattr(args, "prune_history_days", 0.0) or 0.0) > 0:
+            prune_prefix = "Would prune" if bool(payload.get("dry_run")) else "Pruned"
+            console.print(f"{prune_prefix} {pruned} old backup-history batch(es).")
+        if archived and bool(getattr(args, "verbose", False)):
+            for item in payload.get("archived", []):
+                console.print(f"  {item.get('source')} -> {item.get('destination')}")
+        return 0
 
     if args.command == "history":
         config = _load_command_config(args)
