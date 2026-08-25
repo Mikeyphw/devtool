@@ -163,16 +163,15 @@ def test_source_audit_scans_extensionless_tools_and_termux_portability() -> None
         info = inspect_python_project(root, "venv", "pytest")
         payload, rc = audit_source_tree(root, info)
 
-    assert rc == 1
-    by_code = {}
-    for item in payload["issues"]:
-        by_code.setdefault(item["code"], []).append(item)
-    assert len(by_code["PYTHON_UNDECLARED_IMPORT"]) == 2
-    assert {item["path"] for item in by_code["PYTHON_UNDECLARED_IMPORT"]} == {
+    # Default project scope still scans auxiliary scripts but keeps their
+    # host-specific dependencies outside the installable package contract.
+    assert rc == 0
+    assert payload["dependency_audit_scope"] == "project"
+    assert {item["path"] for item in payload["auxiliary_undeclared_imports"]} == {
         "dotfiles/common/bin/zrun",
         "dotfiles/termux/bin/backup",
     }
-    assert by_code["PYTHON_PLATFORM_GLIBC"][0]["path"] == "dotfiles/termux/bin/backup"
+    assert payload["auxiliary_portability_findings"][0]["path"] == "dotfiles/termux/bin/backup"
     assert "dotfiles/common/bin/zrun" in payload["audited_python_files"]
     assert "dotfiles/termux/bin/backup" in payload["audited_python_files"]
 

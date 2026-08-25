@@ -32,7 +32,13 @@ class AndroidSdkExternalProviderTests(unittest.TestCase):
             sdk = prefix / "opt" / "android-sdk"
             (sdk / "build-tools").mkdir(parents=True)
             (sdk / "platform-tools").mkdir(parents=True)
-            with patch("devtool.android_build.running_under_termux_python", return_value=True), patch(
+            with patch.dict(
+                "os.environ",
+                {"ANDROID_HOME": "", "ANDROID_SDK_ROOT": ""},
+                clear=False,
+            ), patch(
+                "devtool.android_build.running_under_termux_python", return_value=True
+            ), patch(
                 "devtool.android_build._termux_prefix_path", return_value=prefix
             ), patch("devtool.android_build.sdk_host_compatible", return_value=True):
                 found, source = android_build.discover_sdk_root_with_source(None, None)

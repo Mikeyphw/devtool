@@ -454,7 +454,11 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
                 kind="python",
                 runner_options={"python": {"manager": "venv", "isolation": True}},
             )
-            with patch.dict(os.environ, {"HOME": home, "DEVTOOL_XDG_DIR": xdg}, clear=False):
+            with patch.dict(
+                os.environ,
+                {"HOME": home, "DEVTOOL_XDG_DIR": xdg, "PIP_CONFIG_FILE": ""},
+                clear=False,
+            ):
                 spec = build_specs(config, "test")[0]
 
         self.assertEqual(spec.env["PIP_CONFIG_FILE"], str(pip_config))

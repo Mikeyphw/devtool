@@ -107,7 +107,10 @@ def _overlay_fixture(tmp_path: Path) -> str:
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
-def test_golden_cli_help_contract() -> None:
+def test_golden_cli_help_contract(monkeypatch) -> None:
+    # argparse wraps help using the ambient terminal width. Golden output must
+    # be stable in narrow Termux panes, tmux, CI, and wide desktop terminals.
+    monkeypatch.setenv("COLUMNS", "80")
     assert build_parser().format_help() == (GOLDEN / "cli-help.txt").read_text(encoding="utf-8")
 
 

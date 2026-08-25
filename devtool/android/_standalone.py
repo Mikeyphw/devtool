@@ -4388,6 +4388,13 @@ def ensure_ndk_host_compatible(
     dry_run: bool,
 ) -> None:
 
+    # No NDK was selected for this project. Host-compatibility probing must
+    # stop before constructing any versioned NDK paths. This is common for
+    # non-native Android applications and keeps SDK-only validation independent
+    # of the host's NDK state.
+    if not version:
+        return
+
     # devtool-native-bionic-host-fast-path
     native = native_android_ndk_prebuilt(sdk_root, version)
     if native is not None:
@@ -4406,8 +4413,6 @@ def ensure_ndk_host_compatible(
         )
         return
 
-    if not version:
-        return
     if provider not in NDK_HOST_PROVIDERS:
         valid = ", ".join(sorted(NDK_HOST_PROVIDERS))
         fail(f"Unsupported NDK host provider: {provider}. Expected one of: {valid}")
