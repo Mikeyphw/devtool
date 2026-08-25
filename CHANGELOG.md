@@ -1,4 +1,6 @@
 
+
+- Fix Python source-audit dependency ownership: project dependencies are enforced for package/project automation by default, while heterogeneous auxiliary scripts and captured pip console launchers are inventoried without being misclassified as package requirements; strict repository-wide enforcement remains opt-in via `[tool.devtool.python-audit] dependency-scope = "repository"`.
 ## 2026-08-25 - Android metaspace and Termux resource-control hotfix
 
 - Promote real Gradle metaspace OOMs to the primary fatal resource diagnostic.

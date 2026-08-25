@@ -2507,6 +2507,143 @@ def _python_audit_files(root: Path) -> list[Path]:
     return sorted(set(files))
 
 
+def _python_audit_configuration(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Return project-local source-audit policy.
+
+    Dependency declarations describe the installable Python project, not every
+    Python-looking file stored in a heterogeneous repository.  Dotfile repos in
+    particular may carry copied console launchers, host-specific helpers, or
+    scripts whose dependencies are managed by the target host rather than the
+    package environment.
+
+    The default ``project`` scope therefore enforces dependency consistency for
+    package/build/project script surfaces while still inventorying auxiliary
+    Python files. Projects that intentionally want repo-wide enforcement can
+    opt in with::
+
+        [tool.devtool.python-audit]
+        dependency-scope = "repository"
+
+    ``off`` disables dependency declaration enforcement while retaining the
+    other source-audit checks.
+    """
+    tool = data.get("tool") if isinstance(data.get("tool"), dict) else {}
+    raw = tool.get("devtool") if isinstance(tool, dict) else {}
+    raw = raw if isinstance(raw, dict) else {}
+    audit = raw.get("python-audit")
+    if audit is None:
+        audit = raw.get("python_audit")
+    audit = dict(audit) if isinstance(audit, dict) else {}
+    scope = str(audit.get("dependency-scope") or audit.get("dependency_scope") or "project").strip().casefold()
+    if scope not in {"project", "repository", "off"}:
+        scope = "project"
+    include = tuple(_list(audit.get("include")))
+    exclude = tuple(_list(audit.get("exclude")))
+    include_generated = bool(audit.get("include-generated-launchers") or audit.get("include_generated_launchers"))
+    return {
+        "dependency_scope": scope,
+        "include": include,
+        "exclude": exclude,
+        "include_generated_launchers": include_generated,
+    }
+
+
+def _matches_any_path_pattern(relative: str, patterns: Sequence[str]) -> bool:
+    normalized = relative.replace("\\", "/")
+    return any(fnmatch.fnmatch(normalized, pattern.replace("\\", "/")) for pattern in patterns if pattern)
+
+
+def _is_generated_console_launcher(source: str, tree: ast.AST) -> bool:
+    """Recognize small pip/setuptools-style console-script wrappers.
+
+    These wrappers are installation artifacts.  A dotfiles repository may
+    intentionally capture them under a profile ``bin/`` directory; treating
+    their imports as package requirements creates false positives such as
+    ``f2py -> numpy`` or ``flask -> flask`` even though the wrapper itself is
+    not project source.
+    """
+    if len(source) > 8192:
+        return False
+    lowered = source.casefold()
+    if "easy-install-entry-script" in lowered or "__requires__" in lowered:
+        return True
+    body = getattr(tree, "body", [])
+    if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for node in body):
+        return False
+    # Modern pip launchers are tiny: imports, an optional argv[0] rewrite, and
+    # a __main__ guard which exits through a directly imported callable.
+    has_main_guard = False
+    has_exit_call = False
+    imported_callable = False
+    for node in body:
+        if isinstance(node, ast.ImportFrom):
+            if any(alias.name in {"main", "cli", "run"} for alias in node.names):
+                imported_callable = True
+        if isinstance(node, ast.If):
+            test = node.test
+            if isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "__name__":
+                has_main_guard = True
+            for nested in ast.walk(node):
+                if isinstance(nested, ast.Call):
+                    func = nested.func
+                    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "sys" and func.attr == "exit":
+                        has_exit_call = True
+    return has_main_guard and has_exit_call and imported_callable and len(body) <= 8
+
+
+def _project_dependency_audit_paths(
+    root: Path,
+    info: PythonProjectInfo,
+    audited_files: Sequence[Path],
+    data: Mapping[str, Any],
+    *,
+    scope_override: str | None = None,
+) -> tuple[set[Path], dict[str, Any]]:
+    policy = _python_audit_configuration(data)
+    if scope_override is not None:
+        policy = dict(policy)
+        policy["dependency_scope"] = str(scope_override).strip().casefold()
+    scope = str(policy["dependency_scope"])
+    include = tuple(policy["include"])
+    exclude = tuple(policy["exclude"])
+
+    if scope == "off":
+        managed: set[Path] = set()
+    elif scope == "repository":
+        managed = set(audited_files)
+    else:
+        managed = set()
+        # Installable import packages are always owned by the project dependency
+        # declaration, even when source_root is the repository root.
+        for source_root in info.source_roots:
+            base = (root / source_root).resolve()
+            for package in info.import_packages:
+                package_dir = base / package
+                package_file = base / f"{package}.py"
+                if package_dir.is_dir():
+                    for candidate in package_dir.rglob("*"):
+                        if candidate.is_file() and candidate in audited_files:
+                            managed.add(candidate)
+                if package_file in audited_files:
+                    managed.add(package_file)
+
+        # Conventional project-owned automation belongs to the Python project
+        # dependency contract. Heterogeneous dotfiles/**/bin trees do not unless
+        # explicitly included below.
+        for path in audited_files:
+            relative = path.relative_to(root).as_posix()
+            if relative in {"setup.py", "noxfile.py"} or relative.startswith("scripts/") or relative.startswith("tools/"):
+                managed.add(path)
+
+    for path in audited_files:
+        relative = path.relative_to(root).as_posix()
+        if _matches_any_path_pattern(relative, include):
+            managed.add(path)
+        if _matches_any_path_pattern(relative, exclude):
+            managed.discard(path)
+    return managed, policy
+
+
 def _local_import_roots(root: Path, info: PythonProjectInfo) -> set[str]:
     local = set(info.import_packages)
     for source_root in info.source_roots:
@@ -2536,7 +2673,7 @@ def _declared_import(import_name: str, declared: set[str]) -> bool:
     return bool(candidates & declared)
 
 
-def audit_source_tree(root: Path, info: PythonProjectInfo) -> tuple[dict[str, Any], int]:
+def audit_source_tree(root: Path, info: PythonProjectInfo, *, dependency_scope: str | None = None) -> tuple[dict[str, Any], int]:
     root = root.resolve()
     issues: list[dict[str, str]] = []
     top_level: set[str] = set()
@@ -2618,7 +2755,19 @@ def audit_source_tree(root: Path, info: PythonProjectInfo) -> tuple[dict[str, An
     local_imports = _local_import_roots(root, info)
     stdlib_imports = set(getattr(sys, "stdlib_module_names", set()))
     audited_files = _python_audit_files(root)
+    requested_scope = None
+    if dependency_scope is not None:
+        requested_scope = str(dependency_scope).strip().casefold()
+        if requested_scope not in {"project", "repository", "off"}:
+            raise PythonProjectError(f"Unsupported Python dependency audit scope: {dependency_scope}")
+    dependency_audit_files, audit_policy = _project_dependency_audit_paths(
+        root, info, audited_files, data, scope_override=requested_scope
+    )
     third_party_imports: dict[str, list[str]] = {}
+    auxiliary_third_party_imports: dict[str, list[str]] = {}
+    auxiliary_undeclared_imports: list[dict[str, str]] = []
+    auxiliary_portability_findings: list[dict[str, str]] = []
+    generated_console_launchers: list[str] = []
     undeclared_seen: set[tuple[str, str]] = set()
     glibc_seen: set[str] = set()
 
@@ -2631,6 +2780,13 @@ def audit_source_tree(root: Path, info: PythonProjectInfo) -> tuple[dict[str, An
             # Syntax validation is handled by the dedicated source-audit
             # compile path.  Import consistency should not duplicate it.
             continue
+
+        generated_launcher = _is_generated_console_launcher(source, tree)
+        if generated_launcher:
+            generated_console_launchers.append(relative)
+        enforce_dependencies = path in dependency_audit_files
+        if generated_launcher and not bool(audit_policy.get("include_generated_launchers")):
+            enforce_dependencies = False
 
         optional_import_nodes: set[int] = set()
         for try_node in (node for node in ast.walk(tree) if isinstance(node, ast.Try)):
@@ -2688,21 +2844,26 @@ def audit_source_tree(root: Path, info: PythonProjectInfo) -> tuple[dict[str, An
                 )
                 if not required_pattern.search(source):
                     continue
-            third_party_imports.setdefault(imported, []).append(relative)
+            target = third_party_imports if enforce_dependencies else auxiliary_third_party_imports
+            target.setdefault(imported, []).append(relative)
             if _declared_import(imported, declared_distributions):
                 continue
             key = (relative, imported)
             if key in undeclared_seen:
                 continue
             undeclared_seen.add(key)
-            issues.append({
+            finding = {
                 "code": "PYTHON_UNDECLARED_IMPORT",
                 "path": relative,
                 "message": (
                     f"Imports third-party module {imported!r}, but no matching distribution is declared "
                     "in project/build/optional requirements."
                 ),
-            })
+            }
+            if enforce_dependencies:
+                issues.append(finding)
+            else:
+                auxiliary_undeclared_imports.append(finding)
 
         # Android/Termux uses Bionic rather than glibc.  Loading glibc SONAMEs
         # directly is also unnecessarily brittle across other Unix systems.
@@ -2710,14 +2871,18 @@ def audit_source_tree(root: Path, info: PythonProjectInfo) -> tuple[dict[str, An
         if re.search(r"ctypes\s*\.\s*(?:CDLL|PyDLL)\s*\(\s*['\"]libc\.so\.6['\"]", source):
             if relative not in glibc_seen:
                 glibc_seen.add(relative)
-                issues.append({
+                finding = {
                     "code": "PYTHON_PLATFORM_GLIBC",
                     "path": relative,
                     "message": (
                         "Hard-codes glibc SONAME 'libc.so.6'; use ctypes.CDLL(None) or "
                         "ctypes.util.find_library('c') for Android/Termux portability."
                     ),
-                })
+                }
+                if enforce_dependencies:
+                    issues.append(finding)
+                else:
+                    auxiliary_portability_findings.append(finding)
 
     issue_counts: dict[str, int] = {}
     for item in issues:
@@ -2731,8 +2896,14 @@ def audit_source_tree(root: Path, info: PythonProjectInfo) -> tuple[dict[str, An
         "stdlib_shadowing": sorted(top_level & stdlib),
         "stale_generated": stale_generated,
         "audited_python_files": [path.relative_to(root).as_posix() for path in audited_files],
+        "dependency_audit_scope": audit_policy["dependency_scope"],
+        "dependency_audit_files": sorted(path.relative_to(root).as_posix() for path in dependency_audit_files),
+        "generated_console_launchers": sorted(generated_console_launchers),
         "declared_distributions": sorted(declared_distributions),
         "third_party_imports": {name: sorted(paths) for name, paths in sorted(third_party_imports.items())},
+        "auxiliary_third_party_imports": {name: sorted(paths) for name, paths in sorted(auxiliary_third_party_imports.items())},
+        "auxiliary_undeclared_imports": auxiliary_undeclared_imports,
+        "auxiliary_portability_findings": auxiliary_portability_findings,
         "issue_counts": issue_counts,
         "issues": issues,
         "errors": len(issues),
@@ -3000,7 +3171,7 @@ def _service_command(args: argparse.Namespace) -> int:
 
 def _source_audit_command(args: argparse.Namespace) -> int:
     info = inspect_python_project(args.root, args.manager, args.framework)
-    payload, rc = audit_source_tree(args.root, info)
+    payload, rc = audit_source_tree(args.root, info, dependency_scope=getattr(args, "dependency_scope", None))
     report = args.root / ".devtool" / "reports" / "python-source-audit.json"
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -3120,6 +3291,7 @@ def main(raw_args: Sequence[str] | None = None) -> int:
     audit.add_argument("root", type=Path)
     audit.add_argument("--manager", default="auto")
     audit.add_argument("--framework", default="auto")
+    audit.add_argument("--dependency-scope", choices=("project", "repository", "off"), default=None)
 
     diff_cov = sub.add_parser("diff-coverage")
     diff_cov.add_argument("root", type=Path)

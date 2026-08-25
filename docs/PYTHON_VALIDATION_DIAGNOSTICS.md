@@ -20,17 +20,28 @@ HUD, JSON, Rich summaries, and clipboard summaries consume the same structured `
 
 ## Python source/dependency preflight
 
-`python-source-audit` scans:
+`python-source-audit` inventories:
 
 - importable project source roots;
 - production `.py` files outside the package tree;
 - extensionless executable scripts with a Python shebang.
 
-Generated environments, caches, and test directories are excluded from the production dependency audit. The audit compares third-party imports with dependencies declared in project/build/optional requirement metadata and `requirements*.txt` files.
+Dependency enforcement is intentionally narrower than inventory. By default, `dependency-scope = "project"`: package modules plus conventional project automation under `scripts/` and `tools/` are checked against project/build/optional requirement metadata and `requirements*.txt`. Heterogeneous auxiliary files such as `dotfiles/**/bin/*` are still scanned and reported in audit metadata, but they do not redefine the installable package dependency contract. This prevents captured host tools and pip-generated launchers from producing false project dependency failures.
+
+Projects which intentionally manage every Python script from one dependency set can opt back into strict repository-wide enforcement:
+
+```toml
+[tool.devtool.python-audit]
+dependency-scope = "repository"
+```
+
+`dependency-scope = "off"` disables dependency declaration enforcement while keeping version/staleness/source checks. Individual auxiliary paths can be promoted or excluded with `include`/`exclude` glob lists. The standalone source-audit command also accepts `--dependency-scope project|repository|off` for one run.
+
+Small pip/setuptools-style console-script launchers are recognized as generated installation artifacts and are not dependency-enforced by default, even in repository scope. Set `include-generated-launchers = true` when those wrappers are intentionally owned source.
 
 Imports explicitly marked `# type: ignore[import-not-found]` are treated as externally supplied system integrations. Imports guarded by `ImportError`/`ModuleNotFoundError` are treated as optional unless the source itself states that the dependency is required/installable.
 
-For portable Python projects, direct `ctypes.CDLL("libc.so.6")`/`ctypes.PyDLL("libc.so.6")` usage is rejected. Prefer `ctypes.CDLL(None)` or `ctypes.util.find_library("c")`.
+Direct `ctypes.CDLL("libc.so.6")`/`ctypes.PyDLL("libc.so.6")` use is a portability error on dependency-enforced project surfaces. On auxiliary scripts it is retained as an advisory audit finding rather than failing an unrelated package validation. Prefer `ctypes.CDLL(None)` or `ctypes.util.find_library("c")`.
 
 ## Failure rendering
 
