@@ -169,6 +169,9 @@ _devtool_commands() {
     'vo:alias for validate-overlay'
     'validate-overlays:validate a bundle or ordered overlays'
     'vos:alias for validate-overlays'
+    'overlay:preflight and rebase overlay artifacts'
+    'plugin:discover and diagnose devtool plugins'
+    'plugins:alias for plugin'
     'inspect-artifact:inspect overlay artifact metadata, inventory, validation, and diff'
     'ia:alias for inspect-artifact'
     'artifact:inspect and maintain the produced build-artifact registry'
@@ -391,6 +394,7 @@ _devtool_apply_args() {
     '--commit[commit after successful apply and validation]:message:' \
     '--no-commit[disable a commit requested by the artifact manifest]' \
     '--no-artifact-script[skip embedded artifact validation scripts]' \
+    '--rebase[rebase a single overlay inventory against the current repository before apply]' \
     '*:artifact:_devtool_artifact_path'
 }
 
@@ -416,6 +420,7 @@ _devtool() {
     '--performance[write a JSON performance report]' \
     '--performance-file[performance report path]:file:_files' \
     '--machine-file[write the machine envelope]:file:_files' \
+    '--json[emit a universal machine-readable JSON invocation envelope]' \
     '(-p --copy)'{-p,--copy}'[copy summary on success or verbose output on failure]' \
     '--no-clipboard[disable clipboard prompts and copy behavior]' \
     '--copy-via[preferred clipboard backend]:backend:(auto socket fifo termux x11 wayland)' \
@@ -655,6 +660,34 @@ _devtool() {
             '--fail-on-conflict[fail when nested overlays write the same path]' \
             '--ignore-checksum[skip SHA-256 checks while retaining other manifest checks]' \
             '*:artifact:_devtool_artifact_path'
+          ;;
+        overlay)
+          if (( ${#line} < 2 )); then
+            _values 'overlay action' check rebase
+          else
+            case ${line[2]} in
+              check)
+                _arguments '--diff[include a repository-relative unified diff]' '--diff-context[number of context lines]:lines:' '--max-diff-lines[maximum emitted diff lines]:lines:' '--ignore-checksum[skip checksum verification]' '--json[emit structured overlay preflight JSON]' '1:artifact:_devtool_artifact_path'
+                ;;
+              rebase)
+                _arguments '-o[output rebased archive]:artifact:_files' '--output[output rebased archive]:artifact:_files' '--json[emit structured rebase JSON]' '1:artifact:_devtool_artifact_path'
+                ;;
+            esac
+          fi
+          ;;
+        plugin|plugins)
+          if (( ${#line} < 2 )); then
+            _values 'plugin action' list ls doctor
+          else
+            case ${line[2]} in
+              list|ls)
+                _arguments '--json[emit plugin discovery JSON]'
+                ;;
+              doctor)
+                _arguments '--json[emit plugin doctor JSON]' '1:plugin:(android python rust magisk)'
+                ;;
+            esac
+          fi
           ;;
         inspect-artifact|ia)
           _arguments \

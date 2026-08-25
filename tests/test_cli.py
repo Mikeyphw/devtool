@@ -1638,12 +1638,20 @@ artifact-cleanup: ok exit=0 time=0.10s
         with self.assertRaises(SystemExit):
             parser.parse_args(["--stdout-payload", "runner-json", "validate"])
 
-    def test_removed_json_flag_is_rejected(self) -> None:
+    def test_universal_json_flag_emits_machine_envelope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "App.sln").write_text("", encoding="utf-8")
-            with self.assertRaises(SystemExit):
-                main(["--repo", str(root), "--json", "validate"])
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                rc = main(["--repo", str(root), "--json", "--dry-run", "validate"])
+            self.assertEqual(rc, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["schema_version"], 1)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["command"], "validate")
+            self.assertIsInstance(payload["data"], dict)
+            self.assertEqual(payload["stderr"], "")
 
     def test_copy_flags_must_not_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

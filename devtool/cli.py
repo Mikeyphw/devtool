@@ -65,6 +65,9 @@ from .cache_cleanup import cleanup_devtool_caches
 from .artifact_validation import run_artifact_validation_script
 from .artifact_inspection import inspect_artifact
 from .artifact_registry import load_registry, find_record, verify_record, prune_registry
+from .api_output import extract_universal_json_flag, run_json_invocation
+from .overlay import check_overlay, rebase_overlay
+from .plugins import discover_plugins, doctor_plugin
 from .doctor import collect_doctor_checks, doctor_payload
 from .validation_profiles import apply_profile as apply_validation_workflow_profile, available_profiles as available_validation_profiles
 from .detect import detect_repo, render_detect_text
@@ -336,6 +339,7 @@ def _add_apply_policy_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--commit", default="", help="Commit with this message after apply and optional validation")
     cmd.add_argument("--no-commit", action="store_true", help="Disable a commit requested by the artifact manifest")
     cmd.add_argument("--no-artifact-script", action="store_true", help="Skip embedded artifact validation scripts while keeping built-in validation")
+    cmd.add_argument("--rebase", action="store_true", help="Rebase a single overlay inventory against the current repository before applying")
 
 
 def _add_apply_command_flags(cmd: argparse.ArgumentParser, *, name: str) -> None:
@@ -636,6 +640,28 @@ def build_parser() -> argparse.ArgumentParser:
     validate_overlays_cmd.add_argument("artifact", nargs="+", help="Overlay bundle archive, or multiple overlay archives to validate as a bundle")
     validate_overlays_cmd.add_argument("--fail-on-conflict", action="store_true", help="Fail if multiple nested overlays write the same file")
     validate_overlays_cmd.add_argument("--ignore-checksum", action="store_true", help="Skip SHA-256 checksum validation while retaining all other artifact manifest checks")
+
+    overlay_cmd = subparsers.add_parser("overlay", help="Inspect, preflight, and rebase overlay artifacts")
+    overlay_sub = overlay_cmd.add_subparsers(dest="overlay_command", required=True)
+    overlay_check = overlay_sub.add_parser("check", help="Preflight an overlay against the current repository")
+    overlay_check.add_argument("artifact")
+    overlay_check.add_argument("--diff", action="store_true", help="Include a repository-relative unified diff")
+    overlay_check.add_argument("--diff-context", type=int, default=3)
+    overlay_check.add_argument("--max-diff-lines", type=int, default=4000)
+    overlay_check.add_argument("--ignore-checksum", action="store_true")
+    overlay_check.add_argument("--json", action="store_true", help="Emit structured overlay preflight JSON")
+    overlay_rebase = overlay_sub.add_parser("rebase", help="Regenerate overlay inventory source hashes against the current repository")
+    overlay_rebase.add_argument("artifact")
+    overlay_rebase.add_argument("-o", "--output", default="", help="Output archive; defaults to <name>.rebased.<ext>")
+    overlay_rebase.add_argument("--json", action="store_true", help="Emit structured rebase JSON")
+
+    plugin_cmd = subparsers.add_parser("plugin", aliases=["plugins"], help="Discover and diagnose devtool plugins")
+    plugin_sub = plugin_cmd.add_subparsers(dest="plugin_command", required=True)
+    plugin_list = plugin_sub.add_parser("list", aliases=["ls"], help="List built-in and entry-point plugins")
+    plugin_list.add_argument("--json", action="store_true", help="Emit plugin discovery JSON")
+    plugin_doctor = plugin_sub.add_parser("doctor", help="Run plugin-specific health checks")
+    plugin_doctor.add_argument("name")
+    plugin_doctor.add_argument("--json", action="store_true", help="Emit plugin doctor JSON")
 
     inspect_artifact_cmd = subparsers.add_parser("inspect-artifact", aliases=["ia"], help="Print machine-readable artifact, bundle, inventory, validation, and diff metadata")
     inspect_artifact_cmd.add_argument("artifact")
@@ -1831,6 +1857,13 @@ def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentPa
 
 def _normalize_live_progress_args(args: argparse.Namespace) -> None:
     command = str(getattr(args, "command", "") or "")
+    if bool(getattr(args, "_devtool_json", False)):
+        args.auto_hud = False
+        args.tasker_progress = False
+        args.notify_progress = False
+        args.hud_overlay = False
+        args.hud_no_overlay = True
+        return
     env_overlay = os.environ.get("DEVTOOL_HUD_OVERLAY", "").strip().lower() in {"1", "true", "yes", "on"}
     if env_overlay and not bool(getattr(args, "hud_no_overlay", False)):
         args.hud_overlay = True
@@ -2534,6 +2567,10 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--no-validate cannot be combined with --validate, --validate-only, or --defer-validate.")
     if deferred and (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
         parser.error("--defer-validate cannot be combined with --validate or --validate-only.")
+    if deferred and bool(getattr(args, "rebase", False)):
+        parser.error("--rebase cannot be combined with --defer-validate because deferred validation requires a persistent source artifact.")
+    if bool(getattr(args, "rebase", False)) and args.command in {"apply-overlays", "aos", "apply-snapshot", "as"}:
+        parser.error("--rebase is supported only for a single overlay apply.")
     if deferred and any(str(getattr(args, name, "") or "").strip() for name in ("phase", "phase_only", "through", "from_phase", "pause_after")):
         parser.error("Phase selection is not used during --defer-validate; apply first, then run `devtool validate continue ...`.")
     if getattr(args, "no_commit", False) and str(getattr(args, "commit", "") or "").strip():
@@ -6037,12 +6074,21 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     artifact_items = _artifact_arg_list(artifact)
     display_artifact = " ".join(artifact_items) if artifact_items else ""
     temp_bundle: tempfile.TemporaryDirectory[str] | None = None
+    rebase_temp: tempfile.TemporaryDirectory[str] | None = None
     source_artifacts: list[Path] = []
     if name in {"apply-overlays", "aos"} and len(artifact_items) > 1:
         temp_bundle, temp_path, source_artifacts = _make_ad_hoc_overlay_bundle(artifact_items, name="adhoc_overlay_bundle")
         artifact = str(temp_path)
     else:
         artifact = _single_artifact_arg(artifact)
+    if bool(getattr(args, "rebase", False)):
+        if snapshot or name in {"apply-overlays", "aos"}:
+            raise RuntimeError("--rebase is supported only for a single overlay apply.")
+        rebase_temp = tempfile.TemporaryDirectory(prefix="devtool-overlay-rebase-")
+        rebased_path = Path(rebase_temp.name) / Path(str(artifact)).name
+        rebase_result = rebase_overlay(config.repo_root, str(artifact), output=rebased_path)
+        args._devtool_rebase_result = rebase_result.to_dict()
+        artifact = str(rebased_path)
     if tasker_progress is not None:
         tasker_progress.phase_started(name, index=1, total=1, argv=[name, display_artifact or str(artifact)])
 
@@ -6051,6 +6097,8 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             tasker_progress.phase_finished(result)
         if temp_bundle is not None:
             temp_bundle.cleanup()
+        if rebase_temp is not None:
+            rebase_temp.cleanup()
         return [result], text
 
     if getattr(args, "validate_only", False):
@@ -8255,8 +8303,20 @@ def _write_performance_report(
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     parse_argv, passthrough_args = split_runner_passthrough_args(raw_argv)
+    parse_argv, universal_json = extract_universal_json_flag(parse_argv)
     parser = build_parser()
     args = parser.parse_args(parse_argv)
+    if universal_json:
+        args._devtool_json = True
+        if hasattr(args, "json"):
+            args.json = True
+        command = str(getattr(args, "command", "") or "devtool")
+        repo = str(getattr(args, "repo", "") or Path.cwd())
+        return run_json_invocation(
+            lambda: _main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args),
+            command=command,
+            repo=repo,
+        )
     try:
         return _main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args)
     except SystemExit as exc:
@@ -8473,6 +8533,82 @@ def _main_after_parse(
 
     if args.command == "bundle":
         return _run_bundle_command(args)
+
+    if args.command == "overlay":
+        repo = Path(args.repo or Path.cwd()).resolve()
+        action = str(getattr(args, "overlay_command", "") or "")
+        if action == "check":
+            result = check_overlay(
+                repo,
+                args.artifact,
+                include_diff=bool(getattr(args, "diff", False)),
+                diff_context=max(0, int(getattr(args, "diff_context", 3) or 3)),
+                max_diff_lines=max(100, int(getattr(args, "max_diff_lines", 4000) or 4000)),
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+            )
+            payload = result.to_dict()
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("artifact", result.artifact),
+                    ("status", "ready" if result.ok else "conflict"),
+                    ("structural", "ok" if result.structural_ok else "failed"),
+                    ("source_state", "ok" if result.source_state_ok else "failed"),
+                    ("conflicts", str(len(result.conflicts))),
+                    ("rebaseable", "yes" if result.rebaseable else "no"),
+                ]
+                render_status_table(rows)
+                for message in result.messages:
+                    console.print(message)
+                for conflict in result.conflicts:
+                    console.print(f"[yellow]{conflict.kind}[/yellow] {conflict.path}: {conflict.detail}")
+                if result.diff:
+                    print(result.diff, end="" if result.diff.endswith("\n") else "\n")
+            return 0 if result.ok else 1
+        if action == "rebase":
+            try:
+                result = rebase_overlay(repo, args.artifact, output=(args.output or None))
+            except Exception as exc:
+                if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                    print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Overlay rebase failed: {exc}", file=sys.stderr)
+                return 2
+            payload = {"ok": True, **result.to_dict()}
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([("output", result.output), ("changed_entries", str(result.changed_entries)), ("actions_changed", str(result.actions_changed)), ("validation", "passed")])
+            return 0
+
+    if args.command in {"plugin", "plugins"}:
+        repo = Path(args.repo or Path.cwd()).resolve()
+        action = str(getattr(args, "plugin_command", "") or "")
+        if action in {"list", "ls"}:
+            plugins, errors = discover_plugins()
+            payload = {"ok": not errors, "plugins": [item.to_dict() for item in plugins], "load_errors": errors}
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([(item.name, f"{item.version} | {item.source} | {', '.join(item.capabilities) or 'no capabilities'}") for item in plugins])
+                for error in errors:
+                    console.print(f"[yellow]{error['plugin']}[/yellow]: {error['error']}")
+            return 0 if not errors else 1
+        if action == "doctor":
+            try:
+                payload = doctor_plugin(args.name, repo_root=repo, project_type=str(getattr(args, "project_type", "auto") or "auto"))
+            except KeyError as exc:
+                if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                    print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+                else:
+                    print(str(exc), file=sys.stderr)
+                return 2
+            if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([(item["name"], ("ok" if item["ok"] else "missing") + " | " + item["detail"]) for item in payload["checks"]] or [("plugin", "no doctor checks")])
+            return 0 if bool(payload.get("ok")) else 1
 
     if args.command in {"inspect-artifact", "ia"}:
         repo_root = Path(args.repo).expanduser().resolve() if args.repo else None
@@ -9286,7 +9422,7 @@ def _main_after_parse(
     totals, summary_text, json_text, _machine_json_text = _emit_summary(
         results,
         config,
-        as_json=False,
+        as_json=bool(getattr(args, "_devtool_json", False)),
         payload_mode=effective_payload,
         raw_output=raw_output,
         command=args.command,
