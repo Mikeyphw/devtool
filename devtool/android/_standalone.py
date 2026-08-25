@@ -128,7 +128,11 @@ class SpaceCleanupReport:
 
 
 class BuildError(RuntimeError):
-    """User-actionable build failure."""
+    """User-actionable build failure with an optional child-process exit code."""
+
+    def __init__(self, message: str, *, exit_code: int = 2) -> None:
+        super().__init__(message)
+        self.exit_code = int(exit_code or 2)
 
 
 _TERMUX_TOOLCHAINS_RUNTIME_MODULE = None
@@ -196,8 +200,8 @@ def warn(message: str) -> None:
     print(f"warning: {message}", file=sys.stderr, flush=True)
 
 
-def fail(message: str) -> "None":
-    raise BuildError(message)
+def fail(message: str, *, exit_code: int = 2) -> "None":
+    raise BuildError(message, exit_code=exit_code)
 
 
 def normalize_bootstrap_downloads(value: str | None) -> str:
@@ -1228,7 +1232,10 @@ def run(
             )
             if combined:
                 details = f"\n{combined}"
-        fail(f"Command failed ({result.returncode}): {shell_join(rendered)}{details}")
+        fail(
+            f"Command failed ({result.returncode}): {shell_join(rendered)}{details}",
+            exit_code=int(result.returncode),
+        )
     return result
 
 
@@ -1575,8 +1582,14 @@ def _parse_adb_device_states(output: str) -> dict[str, str]:
 
         fields = line.split()
 
-        if len(fields) >= 2:
-            devices[fields[0]] = fields[1]
+        if len(fields) < 2:
+            continue
+        serial, state = fields[0], fields[1].lower()
+        if serial.endswith(":") or serial.lower().startswith(("error:", "adb:")):
+            continue
+        if state not in {"device", "offline", "unauthorized", "bootloader", "recovery", "sideload", "host", "no"}:
+            continue
+        devices[serial] = state
 
     return devices
 
@@ -1659,11 +1672,17 @@ def connected_android_devices(
         ):
             continue
 
+        if result.returncode != 0:
+            last_states = {}
+            detail = " ".join(str(result.stdout or "").split())
+            if detail:
+                warn(f"ADB probe failed via {adb}: {detail[:500]}")
+            else:
+                warn(f"ADB probe failed via {adb} with exit {result.returncode}")
+            continue
+
         states = _parse_adb_device_states(result.stdout)
         last_states = states
-
-        if result.returncode != 0:
-            continue
 
         usable = [
             serial
@@ -8168,7 +8187,9 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("-w", "--max-workers", type=int, default=max(1, min(4, os.cpu_count() or 2)))
     parser.add_argument("--gradle-jvm-heap-mb", type=int, default=0, help="Cap the Gradle JVM heap in MiB")
-    parser.add_argument("--gradle-metaspace-mb", type=int, default=0, help="Cap the Gradle JVM metaspace in MiB")
+    metaspace = parser.add_mutually_exclusive_group()
+    metaspace.add_argument("--gradle-metaspace-mb", type=int, default=0, help="Cap the Gradle JVM metaspace in MiB")
+    metaspace.add_argument("--no-gradle-metaspace-cap", action="store_true", help="Do not set -XX:MaxMetaspaceSize even for constrained validation")
     parser.add_argument("--memory-guard-mb", type=int, default=0, help="Stop Gradle before system free memory remains below this threshold")
     parser.add_argument("--cpu-limit", type=int, default=0, help="Limit validation to this many logical CPUs when taskset is available")
     parser.add_argument(
@@ -8356,7 +8377,7 @@ def gradle_jvmargs(args: argparse.Namespace) -> str | None:
     # 768 MiB heap into 512 MiB and caused D8/R8 to fail while plenty of system
     # memory and swap remained available.  Resource safety is enforced by the
     # adaptive watchdog, worker cap, CPU cap and low-priority scheduling.
-    metaspace = (
+    metaspace = 0 if args.no_gradle_metaspace_cap else (
         explicit_metaspace
         or int(os.environ.get("DEVTOOL_GRADLE_METASPACE_MB", "") or "0")
         or (max(256, int(heap * 0.75)) if args.constrained else 0)
@@ -9102,8 +9123,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"daemon={'off/single-use' if args.no_daemon else 'reusable'}, "
         f"priority={'low' if args.low_priority else 'normal'}"
     )
-    heap_summary = f"{args.gradle_jvm_heap_mb} MiB" if args.gradle_jvm_heap_mb else "auto"
-    metaspace_summary = f"{args.gradle_metaspace_mb} MiB" if args.gradle_metaspace_mb else "auto"
+    if jvmargs:
+        heap_match = re.search(r"(?:^|\s)-Xmx(?P<mb>\d+)m(?:\s|$)", jvmargs)
+        metaspace_match = re.search(r"(?:^|\s)-XX:MaxMetaspaceSize=(?P<mb>\d+)m(?:\s|$)", jvmargs)
+        heap_summary = (f"{heap_match.group('mb')} MiB (Devtool org.gradle.jvmargs)" if heap_match else "external/default")
+        if args.no_gradle_metaspace_cap:
+            metaspace_summary = "uncapped by Devtool (external/default may still apply)"
+        else:
+            metaspace_summary = (f"{metaspace_match.group('mb')} MiB (Devtool org.gradle.jvmargs)" if metaspace_match else "external/default")
+    else:
+        heap_summary = "external/default (Devtool did not set org.gradle.jvmargs)"
+        metaspace_summary = "external/default (Devtool did not set org.gradle.jvmargs)"
     guard_summary = f"{args.memory_guard_mb} MiB" if args.memory_guard_mb else "disabled"
     info(
         "Memory: "
@@ -9201,7 +9231,7 @@ def standalone_main(argv: Sequence[str] | None = None) -> int:
         return main(argv)
     except BuildError as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
-        return 2
+        return int(getattr(exc, "exit_code", 2) or 2)
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         return 130

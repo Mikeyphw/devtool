@@ -1,3 +1,12 @@
+
+## 2026-08-25 - Android metaspace and Termux resource-control hotfix
+
+- Promote real Gradle metaspace OOMs to the primary fatal resource diagnostic.
+- Add `--gradle-metaspace-mb 0`, `--no-metaspace-guard`, and `--no-termux-resource-profile`.
+- Report effective Gradle JVM memory provenance more truthfully.
+- Structure low-storage and ADB probe warnings and reject ADB error text as device state.
+- Preserve child-process exit codes from the standalone Android builder.
+
 # Changelog
 
 ## 1.1.0 Termux integration doctor and final seal

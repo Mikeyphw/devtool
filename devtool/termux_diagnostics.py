@@ -500,11 +500,14 @@ def termux_integration_doctor_rows(
     storage = options.get("storage", {}) if isinstance(options.get("storage"), dict) else {}
     artifacts = options.get("artifacts", {}) if isinstance(options.get("artifacts"), dict) else {}
     profile_name = str(options.get("resource_profile") or "balanced")
-    try:
-        profile = select_termux_resource_profile(profile_name)
-        profile_detail = f"{profile.name}: workers={profile.max_workers}, heap={profile.gradle_heap_mb}MiB, native_jobs={profile.native_jobs}"
-    except ValueError as exc:
-        profile_detail = f"INVALID: {exc}"
+    if profile_name.strip().lower().replace("_", "-") in {"off", "none", "disabled", "disable"}:
+        profile_detail = "disabled (automatic Termux resource defaults bypassed)"
+    else:
+        try:
+            profile = select_termux_resource_profile(profile_name)
+            profile_detail = f"{profile.name}: workers={profile.max_workers}, heap={profile.gradle_heap_mb}MiB, native_jobs={profile.native_jobs}"
+        except ValueError as exc:
+            profile_detail = f"INVALID: {exc}"
     package_manager = shutil.which("dpkg-query", path=str(env.get("PATH") or ""))
     packages = termux_installed_packages("openjdk-*", env=env, runtime=runtime) if package_manager else ()
     distro = proot_distro or str(_dict_option(config, "proot").get("distro") or "")

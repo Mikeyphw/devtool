@@ -445,7 +445,9 @@ def build_parser() -> argparse.ArgumentParser:
     proot_isolation.add_argument("--proot-isolated", action="store_true", help="Use PRoot-Distro isolated mode (Termux hosts only)")
     proot_isolation.add_argument("--proot-minimal", action="store_true", help="Use PRoot-Distro minimal mode (Termux hosts only)")
     environment.add_argument("--proot-stage-dir", default="", metavar="PATH", help="Host staging directory bound into the PRoot guest")
-    environment.add_argument("--termux-resource-profile", choices=["auto", "automatic", "conservative", "balanced", "performance"], default="", help="Termux resource defaults for workers/JVM/native concurrency")
+    termux_profile = environment.add_mutually_exclusive_group()
+    termux_profile.add_argument("--termux-resource-profile", choices=["auto", "automatic", "conservative", "balanced", "performance", "off", "none"], default="", help="Termux resource defaults for workers/JVM/native concurrency; off/none bypasses automatic Termux resource defaults")
+    termux_profile.add_argument("--no-termux-resource-profile", dest="termux_resource_profile", action="store_const", const="off", help="Bypass automatic Termux resource defaults for this invocation")
     wake_lock_group = environment.add_mutually_exclusive_group()
     wake_lock_group.add_argument("--termux-wake-lock", action="store_true", help="Acquire a Termux wake lock while command phases run")
     wake_lock_group.add_argument("--no-termux-wake-lock", action="store_true", help="Disable Termux wake-lock integration for this run")
@@ -1020,6 +1022,9 @@ def _add_validation_resource_override_flags(cmd: argparse.ArgumentParser) -> Non
     cmd.add_argument("--max-workers", type=int, default=None, metavar="COUNT", help="Override validation worker count for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits")
     cmd.add_argument("--cpu-limit", type=int, default=None, metavar="COUNT", help="Override validation CPU limit for this invocation; explicit CLI value wins over Android-safe/project phase defaults and is only clamped by real host limits")
     cmd.add_argument("--gradle-heap-mb", type=int, default=None, metavar="MIB", help="Override the Gradle validation heap for this invocation; explicit CLI value wins over Android-safe/project phase defaults")
+    metaspace = cmd.add_mutually_exclusive_group()
+    metaspace.add_argument("--gradle-metaspace-mb", "--metaspace-guard-mb", dest="gradle_metaspace_mb", type=int, default=None, metavar="MIB", help="Override the Gradle validation max metaspace; 0 disables Devtool's explicit MaxMetaspaceSize cap")
+    metaspace.add_argument("--no-metaspace-guard", dest="disable_metaspace_guard", action="store_true", help="Do not set an explicit Gradle MaxMetaspaceSize for this validation invocation")
     cmd.add_argument("--memory-guard-mb", type=int, default=None, metavar="MIB", help="Override the validation free-memory guard for this invocation; 0 disables it and explicit CLI value wins over phase defaults")
     priority = cmd.add_mutually_exclusive_group()
     priority.add_argument("--low-priority", dest="validation_low_priority", action="store_true", default=None, help="Run validation commands at low scheduler priority")
@@ -1199,6 +1204,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             cleaned,
             flags=_re.IGNORECASE,
         )
+        cleaned = _re.sub(r"^(?:warning|error):\s+", "", cleaned, flags=_re.IGNORECASE)
 
         task = _re.match(r"^>\s*Task\s+(\S+)\s+FAILED$", cleaned, _re.IGNORECASE)
         if task:
@@ -1238,7 +1244,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             return normalize_message(located.group("message"))
 
         coded = _re.match(
-            r"^(?:GRADLE_ENVIRONMENT|GRADLE_MEMORY_GUARD|GRADLE_TASK|KOTLIN):\s+(?P<message>.+)$",
+            r"^(?:GRADLE_ENVIRONMENT|GRADLE_MEMORY_GUARD|GRADLE_METASPACE_OOM|GRADLE_TASK|LOW_STORAGE|ADB_PROBE|KOTLIN):\s+(?P<message>.+)$",
             cleaned,
             _re.IGNORECASE,
         )
@@ -1302,13 +1308,32 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             issues = result.get("issues")
             if not isinstance(issues, list):
                 continue
+            codes = {
+                str(item.get("code") or "").upper()
+                for item in issues
+                if isinstance(item, dict)
+            }
+            metaspace_root = "GRADLE_METASPACE_OOM" in codes
             for issue in issues:
                 if not isinstance(issue, dict):
                     continue
                 if str(issue.get("severity") or "").lower() != severity:
                     continue
+                code = str(issue.get("code") or "").upper()
+                if metaspace_root and severity == "error" and code in {"GRADLE_TASK", "GRADLE_DAEMON_DISAPPEARED"}:
+                    continue
                 lines.append(_format_issue_detail(issue, default=default))
         return _dedupe_detail_lines(lines)
+
+    def _has_structured_issue_code(code: str) -> bool:
+        wanted = str(code or "").upper()
+        for result in payload.get("results", []) if isinstance(payload.get("results"), list) else []:
+            if not isinstance(result, dict):
+                continue
+            for issue in result.get("issues", []) if isinstance(result.get("issues"), list) else []:
+                if isinstance(issue, dict) and str(issue.get("code") or "").upper() == wanted:
+                    return True
+        return False
 
     def _raw_warning_details(text: str) -> list[str]:
         warning_patterns = (
@@ -1637,10 +1662,9 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 part for part in [failed_block, _failed_result_outputs(), raw_output]
                 if str(part or "").strip()
             )
-            error_lines = _merge_detail_lines(
-                _structured_issue_details("error"),
-                _raw_error_details(raw_error_source),
-            )
+            structured_errors = _structured_issue_details("error")
+            raw_errors = [] if _has_structured_issue_code("GRADLE_METASPACE_OOM") else _raw_error_details(raw_error_source)
+            error_lines = _merge_detail_lines(structured_errors, raw_errors)
             return error_lines, len(error_lines)
 
         def _overlay_failure_lines(*, detail_warnings: int = 0, detail_errors: int = 0) -> list[str]:
@@ -2710,10 +2734,14 @@ def _apply_validation_resource_overrides(config: ProjectConfig, args: argparse.N
             "prior": preserved_prior if preserved_prior is not None else dict(prior or {}),
         }
 
+    if bool(getattr(args, "disable_metaspace_guard", False)):
+        setattr(args, "gradle_metaspace_mb", 0)
+
     numeric = {
         "max_workers": ("max_workers", 1, False),
         "cpu_limit": ("cpu_limit", 1, False),
         "gradle_heap_mb": ("gradle_heap_mb", 128, False),
+        "gradle_metaspace_mb": ("gradle_metaspace_mb", 128, True),
         "memory_guard_mb": ("memory_guard_mb", 0, True),
     }
     for attr, (key, minimum, allow_zero) in numeric.items():
@@ -2721,8 +2749,9 @@ def _apply_validation_resource_overrides(config: ProjectConfig, args: argparse.N
         if value is None:
             continue
         parsed = int(value)
-        if parsed < minimum or (parsed == 0 and not allow_zero):
-            raise SystemExit(f"--{attr.replace('_', '-')} must be at least {minimum}.")
+        if parsed < 0 or (parsed == 0 and not allow_zero) or (parsed > 0 and parsed < minimum):
+            suffix = " or 0 to disable" if allow_zero and minimum > 0 else ""
+            raise SystemExit(f"--{attr.replace('_', '-')} must be at least {minimum}{suffix}.")
         prior = {
             "validation": validation.get(key),
             "gradle": gradle.get(key),
@@ -2730,10 +2759,15 @@ def _apply_validation_resource_overrides(config: ProjectConfig, args: argparse.N
         android = config.runner_options.get("android", {})
         if isinstance(android, dict):
             prior["android"] = android.get(key)
+        flag_name = (
+            "--no-metaspace-guard"
+            if attr == "gradle_metaspace_mb" and bool(getattr(args, "disable_metaspace_guard", False))
+            else f"--{attr.replace('_', '-')}"
+        )
         remember_cli_override(
             key,
             parsed,
-            flag=f"--{attr.replace('_', '-')}",
+            flag=flag_name,
             prior=prior,
         )
         validation[key] = parsed
@@ -2808,6 +2842,7 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
         if isinstance(artifacts, dict):
             artifacts["export_dir"] = args.artifact_export
     from .termux_runtime import apply_termux_resource_defaults
+    requested_profile_normalized = requested_profile.strip().lower().replace("_", "-")
     requested_execution = str(getattr(args, "execution_environment", "") or config.execution_environment or "auto").strip().lower().replace("_", "-")
     if str(getattr(args, "ssh", "") or "").strip():
         requested_execution = "ssh"
@@ -2815,8 +2850,14 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
     # not bake phone-sized Gradle/JVM limits into SSH command plans that will
     # execute on an independent remote host. Chroot and PRoot still share the
     # phone's CPU/RAM and therefore keep the Termux profile.
-    if requested_execution not in {"ssh", "desktop-linux", "android-device", "external-device"}:
+    if (
+        requested_execution not in {"ssh", "desktop-linux", "android-device", "external-device"}
+        and requested_profile_normalized not in {"off", "none", "disabled", "disable"}
+    ):
         apply_termux_resource_defaults(config.runner_options, profile_name=requested_profile)
+        termux["_resource_profile_applied"] = True
+    else:
+        termux["_resource_profile_applied"] = False
     apply_validation_workflow_profile(config, args)
     _apply_validation_resource_profile(config, args)
     _apply_validation_resource_overrides(config, args)
@@ -4140,7 +4181,7 @@ def _load_or_create_validation_session(
             )
         if stored_tasks:
             args.test_task = list(stored_tasks)
-        for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "max_workers", "cpu_limit", "gradle_heap_mb", "memory_guard_mb", "validation_low_priority", "validation_parallel", "validation_build_cache", "validation_daemon", "max_infrastructure_retries", "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action"):
+        for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "max_workers", "cpu_limit", "gradle_heap_mb", "gradle_metaspace_mb", "memory_guard_mb", "validation_low_priority", "validation_parallel", "validation_build_cache", "validation_daemon", "max_infrastructure_retries", "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action"):
             if name in active.options:
                 setattr(args, name, active.options[name])
 
@@ -5517,7 +5558,7 @@ def _handle_validation_accept_plan_change(
     for name in (
         "skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase",
         "keep_gradle_daemon", "validation_resource_profile", "max_workers", "cpu_limit",
-        "gradle_heap_mb", "memory_guard_mb", "validation_low_priority", "validation_parallel",
+        "gradle_heap_mb", "gradle_metaspace_mb", "memory_guard_mb", "validation_low_priority", "validation_parallel",
         "validation_build_cache", "validation_daemon", "max_infrastructure_retries",
         "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action",
     ):

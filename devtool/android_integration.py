@@ -553,6 +553,23 @@ def _positive_integer(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _explicit_zero(value: Any) -> bool:
+    if value is None or value == "":
+        return False
+    try:
+        return int(str(value).strip()) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _cli_override_record(options: dict[str, Any], key: str) -> dict[str, Any] | None:
+    records = options.get("_cli_resource_overrides")
+    if not isinstance(records, dict):
+        return None
+    record = records.get(key)
+    return record if isinstance(record, dict) else None
+
+
 def _resolve_auto_android_platform(
     root: Path,
     project: android_build.ProjectInfo | None = None,
@@ -760,50 +777,66 @@ def android_builder_arguments_for_tasks(
                 or validation_options.get("gradle_packaging_heap_mb")
                 or gradle.get("validation_packaging_heap_mb")
             )
-            # D8/R8 transforms, especially Compose's extended material-icons
-            # artifact, routinely exceed a 512-768 MiB heap even with one
-            # Gradle worker.  Keep a bounded packaging floor while the adaptive
-            # system-memory watchdog remains authoritative for device safety.
             heap_mb = configured_packaging_heap or max(int(heap_mb), 1024)
         _append_option(argv, "--gradle-jvm-heap-mb", heap_mb)
-        configured_metaspace = _positive_integer(
-            os.environ.get("DEVTOOL_GRADLE_VALIDATION_METASPACE_MB")
-            or validation_options.get("gradle_metaspace_mb")
-            or gradle.get("validation_metaspace_mb")
+
+        metaspace_record = _cli_override_record(validation_options, "gradle_metaspace_mb")
+        raw_env_metaspace = os.environ.get("DEVTOOL_GRADLE_VALIDATION_METASPACE_MB")
+        raw_validation_metaspace = validation_options.get("gradle_metaspace_mb")
+        raw_gradle_metaspace = gradle.get("validation_metaspace_mb")
+        explicit_metaspace_disabled = (
+            (metaspace_record is not None and _explicit_zero(metaspace_record.get("value")))
+            or (metaspace_record is None and raw_env_metaspace not in {None, ""} and _explicit_zero(raw_env_metaspace))
+            or (metaspace_record is None and raw_env_metaspace in {None, ""} and raw_validation_metaspace not in {None, ""} and _explicit_zero(raw_validation_metaspace))
         )
-        lint_workload = any("lint" in task.lower() for task in seen_tasks)
-        test_workload = any("test" in task.lower() for task in seen_tasks)
-        # Android validation uses workload-aware bounded metaspace floors.
-        # They prevent known lint/KSP class-metadata exhaustion while the
-        # adaptive system-memory watchdog remains authoritative for device safety.
-        workload_metaspace: int | None = None
-        if packaging_workload:
-            configured_packaging_metaspace = _positive_integer(
-                os.environ.get("DEVTOOL_GRADLE_PACKAGING_METASPACE_MB")
-                or validation_options.get("gradle_packaging_metaspace_mb")
-                or gradle.get("validation_packaging_metaspace_mb")
-            )
-            workload_metaspace = max(configured_packaging_metaspace or 0, 768)
-        if lint_workload:
-            lint_metaspace = _positive_integer(
-                os.environ.get("DEVTOOL_GRADLE_LINT_METASPACE_MB")
-                or validation_options.get("gradle_lint_metaspace_mb")
-                or gradle.get("validation_lint_metaspace_mb")
-            )
-            workload_metaspace = max(workload_metaspace or 0, lint_metaspace or 0, 640)
-        if packaging_workload and lint_workload and test_workload:
-            # Combined AGP/Kotlin/KSP/lint validation has the largest class
-            # metadata footprint. Preserve the historical mobile-safe floor
-            # while the outer memory watchdog remains authoritative.
-            workload_metaspace = max(workload_metaspace or 0, 896)
 
-        metaspace_mb = max(
-            configured_metaspace or 0,
-            workload_metaspace or 0,
-        ) or None
+        if explicit_metaspace_disabled:
+            argv.append("--no-gradle-metaspace-cap")
+            flag = str((metaspace_record or {}).get("flag") or "configured gradle_metaspace_mb=0")
+            _append_option(
+                argv,
+                "--resource-resolution",
+                f"gradle_metaspace_mb: {flag} requested=0 -> effective=uncapped-by-devtool (applied)",
+            )
+        else:
+            configured_metaspace = _positive_integer(
+                (metaspace_record or {}).get("value")
+                if metaspace_record is not None
+                else raw_env_metaspace or raw_validation_metaspace or raw_gradle_metaspace
+            )
+            lint_workload = any("lint" in task.lower() for task in seen_tasks)
+            test_workload = any("test" in task.lower() for task in seen_tasks)
+            workload_metaspace: int | None = None
+            if packaging_workload:
+                configured_packaging_metaspace = _positive_integer(
+                    os.environ.get("DEVTOOL_GRADLE_PACKAGING_METASPACE_MB")
+                    or validation_options.get("gradle_packaging_metaspace_mb")
+                    or gradle.get("validation_packaging_metaspace_mb")
+                )
+                workload_metaspace = max(configured_packaging_metaspace or 0, 768)
+            if lint_workload:
+                lint_metaspace = _positive_integer(
+                    os.environ.get("DEVTOOL_GRADLE_LINT_METASPACE_MB")
+                    or validation_options.get("gradle_lint_metaspace_mb")
+                    or gradle.get("validation_lint_metaspace_mb")
+                )
+                workload_metaspace = max(workload_metaspace or 0, lint_metaspace or 0, 640)
+            if packaging_workload and lint_workload and test_workload:
+                workload_metaspace = max(workload_metaspace or 0, 896)
 
-        if metaspace_mb is not None:
-            _append_option(argv, "--gradle-metaspace-mb", metaspace_mb)
+            metaspace_mb = max(
+                configured_metaspace or 0,
+                workload_metaspace or 0,
+            ) or None
+            if metaspace_mb is not None:
+                _append_option(argv, "--gradle-metaspace-mb", metaspace_mb)
+                if metaspace_record is not None:
+                    flag = str(metaspace_record.get("flag") or "--gradle-metaspace-mb")
+                    _append_option(
+                        argv,
+                        "--resource-resolution",
+                        f"gradle_metaspace_mb: {flag} requested={metaspace_record.get('value')} -> effective={metaspace_mb} (applied)",
+                    )
         _append_option(argv, "--cpu-limit", validation_policy.cpu_limit)
         argv.append("--constrained")
         if validation_policy.low_priority:
@@ -817,6 +850,21 @@ def android_builder_arguments_for_tasks(
         argv.append("--offline")
     if bool(android.get("force_setup", False)):
         argv.append("--force-setup")
+    if validation_policy is not None and not validation_policy.enabled:
+        validation_options = _dict_option(config, "validation")
+        metaspace_record = _cli_override_record(validation_options, "gradle_metaspace_mb")
+        if metaspace_record is not None:
+            requested_metaspace = int(metaspace_record.get("value") or 0)
+            if requested_metaspace == 0:
+                argv.append("--no-gradle-metaspace-cap")
+                _append_option(argv, "--resource-resolution", "gradle_metaspace_mb: explicit CLI requested=0 -> effective=uncapped-by-devtool (applied)")
+            else:
+                _append_option(argv, "--gradle-metaspace-mb", requested_metaspace)
+                _append_option(argv, "--resource-resolution", f"gradle_metaspace_mb: explicit CLI requested={requested_metaspace} -> effective={requested_metaspace} (applied)")
+        heap_record = _cli_override_record(validation_options, "gradle_heap_mb")
+        if heap_record is not None:
+            _append_option(argv, "--gradle-jvm-heap-mb", int(heap_record.get("value") or 0))
+
     no_daemon = bool(gradle.get("no_daemon", False))
     parallel = bool(gradle.get("parallel", config.kind == "android"))
     if validation_policy is not None and validation_policy.enabled:
@@ -831,6 +879,19 @@ def android_builder_arguments_for_tasks(
         argv.append("--build-cache")
     if validation_policy is not None:
         resolution_phase = validation_phase or "validation"
+        termux_options = _dict_option(config, "termux")
+        termux_profile = str(termux_options.get("resource_profile") or "balanced")
+        termux_applied = bool(termux_options.get("_resource_profile_applied", False))
+        _append_option(
+            argv,
+            "--resource-resolution",
+            f"android_safe: effective={str(validation_policy.enabled).lower()} environment={validation_policy.environment}",
+        )
+        _append_option(
+            argv,
+            "--resource-resolution",
+            f"termux_resource_profile: requested={termux_profile} applied={str(termux_applied).lower()}",
+        )
         for note in android_validation_cli_resolution_notes(config, resolution_phase):
             _append_option(argv, "--resource-resolution", note)
     fail_fast_default = bool(validation_policy is not None and validation_policy.enabled)

@@ -21,8 +21,9 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET]
                [--proot-no-auto-bind-repo] [--proot-shared-home]
                [--proot-shared-tmp] [--proot-isolated | --proot-minimal]
                [--proot-stage-dir PATH]
-               [--termux-resource-profile {auto,automatic,conservative,balanced,performance}]
-               [--termux-wake-lock | --no-termux-wake-lock]
+               [--termux-resource-profile {auto,automatic,conservative,balanced,performance,off,none} |
+               --no-termux-resource-profile] [--termux-wake-lock |
+               --no-termux-wake-lock]
                [--shared-storage-policy {allow,warn,deny}]
                [--allow-shared-storage-build] [--artifact-export DIR]
                [--no-auto-chroot] [--no-bootstrap-downloads]
@@ -207,9 +208,13 @@ Execution environment:
   --proot-minimal       Use PRoot-Distro minimal mode (Termux hosts only)
   --proot-stage-dir PATH
                         Host staging directory bound into the PRoot guest
-  --termux-resource-profile {auto,automatic,conservative,balanced,performance}
+  --termux-resource-profile {auto,automatic,conservative,balanced,performance,off,none}
                         Termux resource defaults for workers/JVM/native
-                        concurrency
+                        concurrency; off/none bypasses automatic Termux
+                        resource defaults
+  --no-termux-resource-profile
+                        Bypass automatic Termux resource defaults for this
+                        invocation
   --termux-wake-lock    Acquire a Termux wake lock while command phases run
   --no-termux-wake-lock
                         Disable Termux wake-lock integration for this run

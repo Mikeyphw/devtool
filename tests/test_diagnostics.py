@@ -125,8 +125,8 @@ class DiagnosticTests(unittest.TestCase):
             issues = parse_issues(root, "build", output)
 
         by_code = {issue.code: issue for issue in issues}
-        self.assertEqual(by_code["GRADLE_METASPACE"].severity, "warning")
-        self.assertIn("metaspace", by_code["GRADLE_METASPACE"].message.lower())
+        self.assertEqual(by_code["GRADLE_METASPACE_PRESSURE"].severity, "warning")
+        self.assertIn("metaspace", by_code["GRADLE_METASPACE_PRESSURE"].message.lower())
         self.assertEqual(by_code["GRADLE_TASK"].severity, "error")
         self.assertIn(":platform:compileDebugKotlin", by_code["GRADLE_TASK"].message)
 

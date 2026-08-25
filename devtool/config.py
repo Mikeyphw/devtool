@@ -1519,6 +1519,7 @@ build_directory = ".devtool/build/meson"
 # no_daemon = true
 # low_priority = true
 # gradle_heap_mb = 1536
+# gradle_metaspace_mb = 0 # 0 disables Devtool MaxMetaspaceSize; positive values set an explicit cap
 # memory_guard_mb = 640
 # stop_daemon_after_phase = false
 # affected_module_lint = true
@@ -1536,6 +1537,7 @@ build_directory = ".devtool/build/meson"
 # max_workers = 1
 # cpu_limit = 2
 # gradle_heap_mb = 1536
+# gradle_metaspace_mb = 0 # 0 disables Devtool MaxMetaspaceSize; positive values set an explicit cap
 # memory_guard_mb = 640
 # low_priority = true
 

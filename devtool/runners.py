@@ -2081,10 +2081,14 @@ def run_specs(
                     failure_kind = "environment_failure"
         if any(
             issue.severity == "error"
-            and issue.code in {"GRADLE_MEMORY_GUARD", "GRADLE_DAEMON_DISAPPEARED"}
+            and issue.code in {"GRADLE_MEMORY_GUARD", "GRADLE_DAEMON_DISAPPEARED", "GRADLE_METASPACE_OOM"}
             for issue in issues
         ):
-            failure_kind = "resource_interrupted"
+            failure_kind = (
+                "metaspace_oom"
+                if any(issue.severity == "error" and issue.code == "GRADLE_METASPACE_OOM" for issue in issues)
+                else "resource_interrupted"
+            )
         elif any(
             issue.severity == "error"
             and issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION", "UNITTEST", "PYTEST", "VSTEST"}

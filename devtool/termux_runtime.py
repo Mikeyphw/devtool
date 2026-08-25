@@ -254,6 +254,9 @@ def select_termux_resource_profile(name: str = "balanced", *, available_mb: int 
 def apply_termux_resource_defaults(runner_options: dict, *, profile_name: str = "balanced", env: Mapping[str, str] | None = None) -> TermuxResourceProfile | None:
     if not is_termux_host(env or os.environ):
         return None
+    normalized = str(profile_name or "balanced").strip().lower().replace("_", "-")
+    if normalized in {"off", "none", "disabled", "disable"}:
+        return None
     profile = select_termux_resource_profile(profile_name)
     gradle = runner_options.setdefault("gradle", {})
     if not isinstance(gradle, dict):
@@ -498,11 +501,14 @@ def termux_runtime_doctor_rows(config, *, env: Mapping[str, str] | None = None) 
     options = dict(options) if isinstance(options, dict) else {}
     storage = options.get("storage", {}) if isinstance(options.get("storage", {}), dict) else {}
     profile_name = str(options.get("resource_profile") or "balanced")
-    try:
-        profile = select_termux_resource_profile(profile_name)
-        profile_detail = f"{profile.name}: workers={profile.max_workers}, heap={profile.gradle_heap_mb}MiB, native_jobs={profile.native_jobs}"
-    except ValueError as exc:
-        profile_detail = f"INVALID: {exc}"
+    if profile_name.strip().lower().replace("_", "-") in {"off", "none", "disabled", "disable"}:
+        profile_detail = "disabled (automatic Termux resource defaults bypassed)"
+    else:
+        try:
+            profile = select_termux_resource_profile(profile_name)
+            profile_detail = f"{profile.name}: workers={profile.max_workers}, heap={profile.gradle_heap_mb}MiB, native_jobs={profile.native_jobs}"
+        except ValueError as exc:
+            profile_detail = f"INVALID: {exc}"
     wake = bool(shutil.which("termux-wake-lock") and shutil.which("termux-wake-unlock"))
     try:
         from .proot_distro_runner import installed_distros, proot_distro_available

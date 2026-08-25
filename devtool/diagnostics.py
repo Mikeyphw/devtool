@@ -37,6 +37,22 @@ _GRADLE_METASPACE_EXHAUSTED = re.compile(
     r"running out of JVM Metaspace",
     re.IGNORECASE,
 )
+_GRADLE_METASPACE_OOM = re.compile(
+    r"(?:OutOfMemoryError:\s*Metaspace|>\s*Metaspace\s*$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_GRADLE_CONFIGURED_MEMORY = re.compile(
+    r"currently configured max heap space is '(?P<heap>[^']+)' and the configured max metaspace is '(?P<meta>[^']+)'",
+    re.IGNORECASE,
+)
+_LOW_STORAGE_WARNING = re.compile(
+    r"^warning:\s*(?P<message>(?:Low storage before|Storage remains low after).+)$",
+    re.IGNORECASE,
+)
+_ADB_PROBE_WARNING = re.compile(
+    r"^warning:\s*(?P<message>ADB probe failed.+)$",
+    re.IGNORECASE,
+)
 _GRADLE_MEMORY_GUARD = re.compile(
     r"(?:Emergency memory guard stopped Gradle|Devtool stopped validation) after "
     r"(?P<reason>[^:]+):\s*(?P<detail>.+)$",
@@ -55,7 +71,7 @@ _GRADLE_DAEMON_DISAPPEARED = re.compile(
 )
 _GRADLE_FAILED_TASK = re.compile(
     r"^>\s*Task\s+(?P<task>\S+)\s+FAILED$",
-    re.IGNORECASE,
+    re.IGNORECASE | re.MULTILINE,
 )
 _ANDROIDX_AAR_METADATA = re.compile(
     r"Dependency '(?P<dependency>[^']+)' requires libraries and applications that depend on it to compile against version (?P<version>\d+) or later of the Android APIs\.",
@@ -166,6 +182,27 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
     aar_current: tuple[str, int] | None = None
     lines = output.splitlines()
     relative_path = _make_relativizer(repo_root)
+    metaspace_oom = bool(_GRADLE_METASPACE_OOM.search(output))
+    configured_memory = _GRADLE_CONFIGURED_MEMORY.search(output)
+    if metaspace_oom:
+        detail = "Gradle JVM metaspace was exhausted"
+        if configured_memory:
+            detail += (
+                f" at the effective {configured_memory.group('meta')} max metaspace "
+                f"(effective max heap {configured_memory.group('heap')})"
+            )
+        if "-Dorg.gradle.jvmargs=" not in output:
+            detail += "; Devtool did not pass org.gradle.jvmargs, so the effective cap came from Gradle/project/user configuration or Gradle defaults"
+        failed_task = _GRADLE_FAILED_TASK.search(output)
+        if failed_task:
+            detail += f"; affected task {failed_task.group('task')}"
+        issues.append(Issue(
+            "error",
+            command_name,
+            "-",
+            "GRADLE_METASPACE_OOM",
+            detail + ".",
+        ))
     index = 0
 
     while index < len(lines):
@@ -231,12 +268,33 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 continue
 
         if _GRADLE_METASPACE_EXHAUSTED.search(stripped):
+            if not metaspace_oom:
+                message = "Gradle reports JVM metaspace pressure"
+                if configured_memory:
+                    message += f" with effective max metaspace {configured_memory.group('meta')} and max heap {configured_memory.group('heap')}"
+                message += "; the limit may come from Devtool, org.gradle.jvmargs, project/user Gradle properties, environment options, or Gradle defaults."
+                issues.append(Issue(
+                    "warning",
+                    command_name,
+                    "-",
+                    "GRADLE_METASPACE_PRESSURE",
+                    message,
+                ))
+            index += 1
+            continue
+
+        match = _LOW_STORAGE_WARNING.match(stripped)
+        if match:
             issues.append(Issue(
-                "warning",
-                command_name,
-                "-",
-                "GRADLE_METASPACE",
-                "Gradle exhausted a configured JVM metaspace cap; increase or remove the explicit Android validation metaspace cap.",
+                "warning", command_name, "-", "LOW_STORAGE", match.group("message").strip()
+            ))
+            index += 1
+            continue
+
+        match = _ADB_PROBE_WARNING.match(stripped)
+        if match:
+            issues.append(Issue(
+                "warning", command_name, "-", "ADB_PROBE", match.group("message").strip()
             ))
             index += 1
             continue
@@ -257,6 +315,9 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
             continue
 
         if _GRADLE_DAEMON_DISAPPEARED.search(stripped):
+            if metaspace_oom:
+                index += 1
+                continue
             issues.append(Issue(
                 "error",
                 command_name,
@@ -272,6 +333,9 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
 
         match = _GRADLE_FAILED_TASK.match(stripped)
         if match:
+            if metaspace_oom:
+                index += 1
+                continue
             issues.append(Issue(
                 "error",
                 command_name,
@@ -760,6 +824,8 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return "wine_issue"
     if "exec format error" in text or "wrong architecture" in text or "bad cpu type" in text or "arm64" in text and "x64" in text:
         return "arm_mismatch"
+    if "outofmemoryerror: metaspace" in text or "running out of jvm metaspace" in text:
+        return "metaspace_oom"
     if (
         "emergency memory guard stopped gradle after" in text
         or "devtool stopped validation after hard emergency floor" in text

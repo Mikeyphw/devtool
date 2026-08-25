@@ -289,6 +289,9 @@ _devtool_validation_args() {
     '--max-workers[override validation worker count for this invocation]:count:' \
     '--cpu-limit[override validation CPU limit for this invocation]:count:' \
     '--gradle-heap-mb[override the Gradle validation heap]:mebibytes:' \
+    '--gradle-metaspace-mb[override max metaspace; 0 disables Devtool cap]:mebibytes:' \
+    '--metaspace-guard-mb[alias for --gradle-metaspace-mb]:mebibytes:' \
+    '--no-metaspace-guard[do not set an explicit Gradle MaxMetaspaceSize]' \
     '--memory-guard-mb[override the free-memory guard]:mebibytes:' \
     '(--low-priority --normal-priority)--low-priority[run validation commands at low scheduler priority]' \
     '(--low-priority --normal-priority)--normal-priority[run validation commands at normal scheduler priority]' \
@@ -378,6 +381,9 @@ _devtool_apply_args() {
     '--max-workers[override validation worker count for this invocation]:count:' \
     '--cpu-limit[override validation CPU limit for this invocation]:count:' \
     '--gradle-heap-mb[override the Gradle validation heap]:mebibytes:' \
+    '--gradle-metaspace-mb[override max metaspace; 0 disables Devtool cap]:mebibytes:' \
+    '--metaspace-guard-mb[alias for --gradle-metaspace-mb]:mebibytes:' \
+    '--no-metaspace-guard[do not set an explicit Gradle MaxMetaspaceSize]' \
     '--memory-guard-mb[override the free-memory guard]:mebibytes:' \
     '(--low-priority --normal-priority)--low-priority[run validation commands at low scheduler priority]' \
     '(--low-priority --normal-priority)--normal-priority[run validation commands at normal scheduler priority]' \
@@ -461,7 +467,8 @@ _devtool() {
     '(--proot-minimal)--proot-isolated[use PRoot-Distro isolated mode on Termux]' \
     '(--proot-isolated)--proot-minimal[use PRoot-Distro minimal mode on Termux]' \
     '--proot-stage-dir[host staging directory bound into PRoot guest]:directory:' \
-    '--termux-resource-profile[Termux resource profile]:profile:(auto automatic conservative balanced performance)' \
+    '--termux-resource-profile[Termux resource profile]:profile:(auto automatic conservative balanced performance off none)' \
+    '--no-termux-resource-profile[bypass automatic Termux resource defaults]' \
     '(--no-termux-wake-lock)--termux-wake-lock[acquire Termux wake lock during command phases]' \
     '(--termux-wake-lock)--no-termux-wake-lock[disable Termux wake-lock integration]' \
     '--shared-storage-policy[Android shared-storage build policy]:policy:(allow warn deny)' \
@@ -569,6 +576,9 @@ _devtool() {
             '--max-workers[override validation worker count for this invocation]:count:' \
             '--cpu-limit[override validation CPU limit for this invocation]:count:' \
             '--gradle-heap-mb[override the Gradle validation heap]:mebibytes:' \
+            '--gradle-metaspace-mb[override max metaspace; 0 disables Devtool cap]:mebibytes:' \
+            '--metaspace-guard-mb[alias for --gradle-metaspace-mb]:mebibytes:' \
+            '--no-metaspace-guard[do not set an explicit Gradle MaxMetaspaceSize]' \
             '--memory-guard-mb[override the free-memory guard]:mebibytes:' \
             '(--low-priority --normal-priority)--low-priority[run validation commands at low scheduler priority]' \
             '(--low-priority --normal-priority)--normal-priority[run validation commands at normal scheduler priority]' \

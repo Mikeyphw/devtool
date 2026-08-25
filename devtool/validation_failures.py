@@ -182,6 +182,7 @@ def classify_validation_failure(result: OperationResult) -> FailureClassificatio
         "memory-pressure",
         "resource-failure",
         "resource-interrupted",
+        "metaspace-oom",
         "thermal-guard",
         "battery-guard",
         "low-disk-space",
