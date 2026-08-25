@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+PLUGIN_API_VERSION = 1
+
 
 @dataclass(frozen=True, slots=True)
 class PluginContext:
@@ -33,12 +35,14 @@ class PluginDescriptor:
     source: str = "builtin"
     capabilities: tuple[str, ...] = ()
     doctor: DoctorCallable | None = field(default=None, compare=False, repr=False)
+    api_version: int = PLUGIN_API_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "description": self.description,
             "version": self.version,
+            "api_version": self.api_version,
             "source": self.source,
             "capabilities": list(self.capabilities),
         }

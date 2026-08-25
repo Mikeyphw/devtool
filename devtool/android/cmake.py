@@ -1,6 +1,6 @@
 """CMake requirement and host compatibility helpers."""
 
-from ..android_build import (
+from ._standalone import (
     cmake_is_ready,
     ensure_host_cmake_compatible,
     installed_cmake_versions,

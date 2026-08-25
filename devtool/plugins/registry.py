@@ -4,7 +4,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
-from .api import PluginContext, PluginDescriptor
+from .api import PLUGIN_API_VERSION, PluginContext, PluginDescriptor
 from .builtin import BUILTIN_PLUGINS
 
 ENTRY_POINT_GROUP = "devtool.plugins"
@@ -25,10 +25,13 @@ def _external_descriptors() -> tuple[list[PluginDescriptor], list[dict[str, str]
             descriptor = instance.descriptor() if hasattr(instance, "descriptor") else instance
             if not isinstance(descriptor, PluginDescriptor):
                 raise TypeError("entry point must expose PluginDescriptor or descriptor()")
+            if int(descriptor.api_version) != PLUGIN_API_VERSION:
+                raise TypeError(f"unsupported plugin API version {descriptor.api_version}; expected {PLUGIN_API_VERSION}")
             plugins.append(PluginDescriptor(
                 descriptor.name,
                 descriptor.description,
                 version=descriptor.version,
+                api_version=descriptor.api_version,
                 source=f"entry-point:{point.value}",
                 capabilities=descriptor.capabilities,
                 doctor=descriptor.doctor,

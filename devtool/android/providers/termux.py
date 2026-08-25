@@ -1,6 +1,6 @@
 """Termux-native Android provider API."""
 
-from ...android_build import (
+from .._standalone import (
     ensure_termux_android_tool_packages,
     ensure_termuxvoid_repository,
     native_android_build_tool_compatible,

@@ -1,0 +1,23 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│  ! Completed with warnings                                                   │
+│                                                                              │
+│  Stages    1 passed, 0 failed                                                │
+│  Duration  1.25s                                                             │
+│  Tests     2 passed, 0 failed, 0 skipped (2 total)                           │
+│  Warnings  ⚠ 1                                                               │
+│  Errors    0                                                                 │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+                                    Actions                                     
+                                                                                
+      Action                  Result   Duration   Details                       
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+  ✓   Python Test             Done        1.25s   1 warning                     
+                                                                                
+                     Warnings and Errors                      
+┏━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃ Level   ┃ Command     ┃ Location  ┃ Code ┃ Message         ┃
+┡━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ warning │ python-test │ demo.py:7 │ W001 │ fixture warning │
+└─────────┴─────────────┴───────────┴──────┴─────────────────┘

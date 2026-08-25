@@ -49,7 +49,7 @@ def test_real_chroot_keeps_guest_paths() -> None:
 
 
 def test_both_java_provisioning_paths_force_fresh_discovery() -> None:
-    source = Path(android_build.__file__).read_text(encoding="utf-8")
+    source = android_build.standalone_source_path().read_text(encoding="utf-8")
 
     main = source[source.index("def main("):]
 

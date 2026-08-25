@@ -1,0 +1,17 @@
+{
+  "conflicts": [
+    {
+      "action": "modify",
+      "actual": "48aa6cae8c70abdb28631d22b316e6d9f9d0768ec2911de7090e248b2afe6ca1",
+      "detail": "Repository file changed since the overlay inventory was generated.",
+      "expected": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee",
+      "kind": "source-sha-mismatch",
+      "path": "file.txt",
+      "rebaseable": true
+    }
+  ],
+  "ok": false,
+  "rebaseable": true,
+  "source_state_ok": false,
+  "structural_ok": true
+}

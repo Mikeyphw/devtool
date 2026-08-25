@@ -4,7 +4,7 @@ import devtool.android_build as android_build
 
 
 def test_explicit_sdk_provider_has_real_sdk_selection_lane() -> None:
-    source = Path(android_build.__file__).read_text(
+    source = android_build.standalone_source_path().read_text(
         encoding="utf-8"
     )
 

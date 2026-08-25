@@ -12,13 +12,14 @@ from typing import Any
 from .models import DotnetTarget, ProjectConfig
 from .toolchains import normalize_toolchain_manager
 from .execution_environments import normalize_execution_environment
+from .features import FEATURE_DEFAULTS, FeatureFlags, resolve_feature_flags
 
 CONFIG_NAME = ".devtool.toml"
 
 GLOBAL_CONFIG_NAME = "config.toml"
 GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
     "cli", "environment", "termux_chroot", "termux", "proot", "android", "gradle", "dotnet", "terminal",
-    "bootstrap", "chroots",
+    "bootstrap", "chroots", "features",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "targets", "tasks", "artifacts", "python", "node", "rust",
@@ -274,7 +275,7 @@ SUPPORTED_PROJECT_KINDS = {
 RUNNER_OPTION_SECTIONS = (
     "android", "gradle", "python", "dotnet", "node", "rust", "go",
     "maven", "cmake", "meson", "make", "build", "tasks", "artifacts",
-    "test_profiles", "validation", "termux_chroot", "termux", "proot", "ssh", "bootstrap", "chroots",
+    "test_profiles", "validation", "termux_chroot", "termux", "proot", "ssh", "bootstrap", "chroots", "features",
 )
 PROJECT_ENV_PREFIX = "DEVTOOL_PROJECT_"
 RUNTIME_ENV_PREFIX = "DEVTOOL_ENV_"

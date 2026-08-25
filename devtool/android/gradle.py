@@ -1,6 +1,6 @@
 """Gradle selection and execution policy for Android projects."""
 
-from ..android_build import (
+from ._standalone import (
     DEFAULT_GRADLE_VERSION,
     GRADLE_PROVIDERS,
     GradleWrapperState,

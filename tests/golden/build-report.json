@@ -1,0 +1,75 @@
+{
+  "clipboard": {
+    "json": {
+      "errors": 0,
+      "failed": 0,
+      "repairs": {
+        "after_failures": null,
+        "applied": [],
+        "auto_fix": [],
+        "before_failures": null,
+        "confirm_fix": [],
+        "counts": {
+          "auto_fix": 0,
+          "confirm_fix": 0,
+          "manual_review": 0
+        },
+        "manual_review": [],
+        "restored": false
+      },
+      "repo_root": "/repo",
+      "results": [
+        {
+          "argv": [
+            "make"
+          ],
+          "duration_seconds": 2.5,
+          "failure_kind": "",
+          "issues": [],
+          "log_path": "",
+          "metadata": {},
+          "name": "build",
+          "output": "ok\n",
+          "returncode": 0,
+          "skipped": false
+        }
+      ],
+      "skipped": 0,
+      "warnings": 0
+    },
+    "preferred": "json",
+    "raw": "$ make\nok\n",
+    "summary": "build ok"
+  },
+  "command": "build",
+  "duration_s": 3.0,
+  "exit_code": 0,
+  "finished_at": "2026-08-25T12:00:03Z",
+  "notification": {
+    "body": "✅ PASS: repo: build • 0E 0W",
+    "level": "success",
+    "should_notify": true,
+    "title": "✅ PASS"
+  },
+  "ok": true,
+  "repo": "/repo",
+  "results": [
+    {
+      "exit_code": 0,
+      "failure_kind": null,
+      "log": null,
+      "metadata": {},
+      "name": "build",
+      "status": "ok",
+      "time_s": 2.5
+    }
+  ],
+  "schema_version": 1,
+  "started_at": "2026-08-25T12:00:00Z",
+  "totals": {
+    "errors": 0,
+    "failed": 0,
+    "skipped": 0,
+    "warnings": 0
+  }
+}

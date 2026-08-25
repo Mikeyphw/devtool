@@ -11,6 +11,7 @@ import subprocess
 from typing import Any
 
 from .models import ProjectConfig
+from .features import resolve_feature_flags
 
 @dataclass(slots=True)
 class DoctorCheck:
@@ -107,10 +108,12 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
 
 def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
     checks = collect_doctor_checks(config)
+    features = resolve_feature_flags(config.repo_root)
     return {
         "schema_version": 1,
         "repository": str(config.repo_root),
         "kind": config.kind,
         "healthy": not any(item.status == "missing" for item in checks),
+        "features": features.to_dict(),
         "checks": [item.as_dict() for item in checks],
     }

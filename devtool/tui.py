@@ -26,6 +26,7 @@ from rich.text import Text
 from .artifact_registry import load_registry
 from .artifacts import load_history
 from .console_utils import create_console, detect_console_width, is_termux_environment
+from .core.events import tui_event_snapshot
 
 COMPACT_MAX = 60
 NARROW_MAX = 96
@@ -105,6 +106,7 @@ def _repo_snapshot(repo_root: Path) -> dict[str, Any]:
         "artifacts": artifacts,
         "history": history,
         "live": live,
+        "core_events": tui_event_snapshot(),
     }
 
 
@@ -151,6 +153,10 @@ def _dashboard(snapshot: dict[str, Any], profile: TerminalProfile) -> Group:
     if live_status and live_status != "idle":
         phase = str(live.get("phase_name") or live.get("event_type") or "").strip()
         summary_rows.insert(0, ("Live run", f"{live_status}: {phase}" if phase else live_status))
+    events = snapshot.get("core_events") if isinstance(snapshot.get("core_events"), list) else []
+    if events:
+        latest = events[-1]
+        summary_rows.append(("Event", str(latest.get("type") or "-") + (f": {latest.get('task')}" if latest.get("task") else "")))
     if profile.termux:
         summary_rows.append(("Runtime", "Termux"))
     return Group(

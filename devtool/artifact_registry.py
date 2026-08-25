@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 import subprocess
 from typing import Any, Iterable
+
+from .core.events import ArtifactCreated, publish_event
 import uuid
 
 REGISTRY_SCHEMA = 1
@@ -91,6 +93,7 @@ def register_paths(repo_root: Path, paths: Iterable[Path], *, metadata: dict[str
             record["metadata"] = dict(metadata)
         by_path[display] = record
         registered.append(record)
+        publish_event(ArtifactCreated(path=display, metadata={"id": record["id"], "sha256": record["sha256"], "size": record["size"], "type": record["type"]}))
     data["items"] = sorted(by_path.values(), key=lambda item: str(item.get("registered_at") or ""), reverse=True)
     save_registry(repo_root, data)
     return registered

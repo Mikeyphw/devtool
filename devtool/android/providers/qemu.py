@@ -1,6 +1,6 @@
 """QEMU x86_64 NDK host fallback provider."""
 
-from ...android_build import (
+from .._standalone import (
     QEMU_INSTALL_POLICIES,
     QEMU_X86_64_NAMES,
     find_qemu_x86_64,

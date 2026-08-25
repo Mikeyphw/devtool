@@ -1,6 +1,6 @@
 """AAPT2 and Android build-tools provider selection."""
 
-from ..android_build import (
+from ._standalone import (
     AAPT2_OVERRIDE_PROPERTY,
     REVANCED_REPOSITORY,
     arm64_build_tools_replacements_needed,

@@ -703,7 +703,7 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
                 )
 
     def test_android_integration_forwards_ndk_host_options(self) -> None:
-        source = Path(android_build.__file__).read_text()
+        source = android_build.standalone_source_path().read_text()
         self.assertIn("--ndk-host-provider", source)
         self.assertIn("--arm64-ndk-url", source)
         self.assertIn("--qemu-install", source)
@@ -1081,7 +1081,7 @@ class AndroidNdkHostFallbackTest(unittest.TestCase):
             )
 
     def test_qemu_sysroot_uses_rootfs_link_extraction_mode(self) -> None:
-        source = Path(android_build.__file__).read_text()
+        source = android_build.standalone_source_path().read_text()
         self.assertIn(
             "extract_archive(archive, staging, rootfs_links=True)",
             source,

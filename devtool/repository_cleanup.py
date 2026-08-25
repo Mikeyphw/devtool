@@ -20,6 +20,7 @@ _BACKUP_DIR_PREFIXES = (
     ".warning-fix-backup-",
     ".connected-test-skip-backup-",
     ".no-device-config-cache-fix-",
+    ".transitive-connected-skip-backup-",
 )
 
 
@@ -44,8 +45,14 @@ def _is_backup_candidate(path: Path, repo_root: Path) -> bool:
     if relative.parts[0] in {".git", ".devtool"}:
         return False
     name = path.name
-    if path.is_dir() and any(name.startswith(prefix) for prefix in _BACKUP_DIR_PREFIXES):
-        return True
+    if path.is_dir():
+        if any(name.startswith(prefix) for prefix in _BACKUP_DIR_PREFIXES):
+            return True
+        # Historical migration helpers consistently created hidden top-level
+        # backup directories. Recognize future variants without treating an
+        # arbitrary nested directory containing the word "backup" as disposable.
+        if path.parent == repo_root and name.startswith(".") and ("backup" in name.lower() or ".before-" in name.lower() or ".pre-" in name.lower()):
+            return True
     if path.is_file():
         if any(marker in name for marker in _BACKUP_FILE_MARKERS):
             return True

@@ -120,8 +120,7 @@ def test_refresh_repairs_stale_toolchain_companion() -> None:
         refresh_android_builders_for_specs([spec])
 
         expected = (
-            Path(android_build.__file__)
-            .with_name("termux_toolchains.py")
+            android_build.standalone_companion_path()
             .read_bytes()
         )
 

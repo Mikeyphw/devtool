@@ -1,6 +1,6 @@
 """Ordinary Linux host provider helpers."""
 
-from ...android_build import (
+from .._standalone import (
     certificate_store_available,
     executable_provider,
     normalized_machine,

@@ -38,6 +38,11 @@ class OperationResult:
     failure_kind: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def to_command_result(self):
+        """Return the canonical architecture result without changing legacy fields."""
+        from .core.results import CommandResult
+        return CommandResult.from_operation(self)
+
 
 @dataclass(slots=True)
 class DotnetTarget:

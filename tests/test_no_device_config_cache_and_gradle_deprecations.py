@@ -84,9 +84,7 @@ def test_project_dependency_gradle_10_deprecation_is_warning() -> None:
 def test_no_device_init_script_wiring_forces_cache_off() -> None:
     import devtool.android_build as android_build
 
-    source = Path(
-        android_build.__file__
-    ).read_text(
+    source = android_build.standalone_source_path().read_text(
         encoding="utf-8"
     )
 

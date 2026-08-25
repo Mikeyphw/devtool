@@ -415,6 +415,8 @@ _devtool() {
     '--project[exact project path for run/validation]:project:_files' \
     '--project-type[override project detection]:type:(auto dotnet android gradle python node rust go maven cmake meson make command unknown)' \
     '(-v --verbose)'{-v,--verbose}'[stream full command output]' \
+    '(-q --quiet)'{-q,--quiet}'[suppress normal human output]' \
+    '--trace[emit architecture event traces and full exception tracebacks]' \
     '(-y --yes)'{-y,--yes}'[assume yes for confirmations]' \
     '(-f --force)'{-f,--force}'[force dangerous actions]' \
     '--dry-run[print commands without executing]' \

@@ -1,0 +1,272 @@
+usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET]
+               [--variant VARIANT] [--solution SOLUTION] [--project PROJECT]
+               [--project-type {auto,dotnet,android,gradle,python,node,rust,go,maven,cmake,meson,make,command,unknown}]
+               [-v] [-q] [--trace] [-y] [-f] [--dry-run] [--no-build] [-k]
+               [--fail-fast] [--performance]
+               [--performance-file PERFORMANCE_FILE]
+               [--stdout-payload {auto,summary,raw}]
+               [--machine-file MACHINE_FILE] [-p] [--no-clipboard]
+               [--copy-via {auto,socket,fifo,termux,x11,wayland}]
+               [--theme {auto,plain}] [--auto-hud] [--no-hud]
+               [--hud-mode HUD_MODE] [--hud-overlay | --hud-no-overlay]
+               [--host | --chroot CHROOT | --ssh HOST |
+               --proot-distro DISTRO |
+               --execution-environment {auto,native-termux,chroot,desktop-linux,android-device,external-device,ssh,proot-distro}]
+               [--ssh-port PORT] [--ssh-user USER] [--ssh-identity PATH]
+               [--ssh-session NAME] [--ssh-cwd PATH] [--ssh-tool COMMAND]
+               [--ssh-mode {devtool,commands}] [--ssh-stage-dir PATH]
+               [--ssh-no-artifact-copy] [--ssh-detached] [--proot-user USER]
+               [--proot-cwd PATH] [--proot-repo-mount PATH]
+               [--proot-bind HOST:GUEST] [--proot-env NAME=VALUE]
+               [--proot-no-auto-bind-repo] [--proot-shared-home]
+               [--proot-shared-tmp] [--proot-isolated | --proot-minimal]
+               [--proot-stage-dir PATH]
+               [--termux-resource-profile {auto,automatic,conservative,balanced,performance}]
+               [--termux-wake-lock | --no-termux-wake-lock]
+               [--shared-storage-policy {allow,warn,deny}]
+               [--allow-shared-storage-build] [--artifact-export DIR]
+               [--no-auto-chroot] [--no-bootstrap-downloads]
+               [--bootstrap-downloads {auto,missing,force,never}]
+               [--deny-network] [--offline]
+               [--toolchain-profile TOOLCHAIN_PROFILE]
+               [--android-sdk-root ANDROID_SDK_ROOT]
+               [--android-sdk-provider {auto,homuhomu,managed,termuxvoid}]
+               [--gradle-command GRADLE_COMMAND]
+               [--gradle-provider {auto,download,system,termux,wrapper}]
+               [--java-home JAVA_HOME] [--java-provider {auto,system,termux}]
+               [--gradle-user-home GRADLE_USER_HOME]
+               [--native-provider {auto,ndk,system,termux-sysroot}]
+               [--native-cache {auto,ccache,off}]
+               [--android-build-tools-provider {auto,commit451,none,sdk,termux}]
+               [--aapt2-provider {auto,termux,sdk,revanced,none}]
+               {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,control-center,gui,ipc-server} ...
+
+Apply artifacts, validate projects, and produce reviewable handoff commits.
+
+positional arguments:
+  {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,control-center,gui,ipc-server}
+    start-validation (sv)
+                        Start a persistent sequential validation session
+    resume-validation (rv)
+                        Resume a persistent sequential validation session
+    validation-menu (vm)
+                        Open the interactive validation menu and wizard
+    menu                Open an interactive Devtool menu
+    apply               Apply an overlay, overlay bundle, or snapshot
+    overlay             Inspect, preflight, and rebase overlay artifacts
+    plugin (plugins)    Discover and diagnose devtool plugins
+    inspect-artifact (ia)
+                        Print machine-readable artifact, bundle, inventory,
+                        validation, and diff metadata
+    artifact            Inspect and maintain the produced build-artifact
+                        registry
+    tui                 Open the responsive terminal dashboard
+    cleanup             Archive historical repository backups and optionally
+                        prune old backup history
+    bootstrap           Provision reusable destination-specific build
+                        toolchains
+    termux              Inspect native Termux providers, packages, and PRoot
+                        guests
+    android-hud-bridge (termux-hud-bridge)
+                        Display chroot/proot Android HUD bridge state from the
+                        Termux host
+    validation-status (vs)
+                        Show the active resumable validation session
+    validation-plan (vplan)
+                        Show the durable validation phase plan
+    validation-pause (vpause)
+                        Pause a validation session at the next phase boundary
+    validation-stop (vstop)
+                        Stop the current validation phase and leave it
+                        retryable
+    validation-events (vevents)
+                        Read durable validation session events
+    validation-report (vreport)
+                        Show the durable validation report
+    validation-abort (va)
+                        Abort a resumable validation session
+    validation-finalize (vf)
+                        Finalize a completed resumable validation session
+    validation-recover (vrec)
+                        Recover an interrupted validation attempt or resume a
+                        failed rollback
+    validation-reset (vreset)
+                        Reset one phase and its dependents, or all validation
+                        progress
+    validation-accept-plan-change (vapc)
+                        Explicitly accept an incompatible validation plan
+                        change
+    control-center (gui)
+                        Launch the Devtool desktop Control Center
+    ipc-server          Run or start the local Control Center IPC broker
+
+options:
+  -h, --help            show this help message and exit
+
+Project selection:
+  -r, --repo REPO       Repository root
+  -c, --config CONFIG   Config file path
+  --target TARGET       Named target/profile from .devtool.toml
+  --variant VARIANT     Build/test variant within the selected target
+  --solution SOLUTION   Exact solution path for restore/build/test
+  --project PROJECT     Exact project path for run/validation
+  --project-type {auto,dotnet,android,gradle,python,node,rust,go,maven,cmake,meson,make,command,unknown}
+                        Override project detection for this run
+
+Execution:
+  -v, --verbose         Stream full command output
+  -q, --quiet           Suppress normal human output; errors still print
+  --trace               Enable architecture event tracing and full exception
+                        tracebacks
+  -y, --yes             Assume yes for confirmations
+  -f, --force           Force dangerous actions
+  --dry-run             Print commands without running them
+  --no-build            For test: pass --no-build to dotnet test
+  -k, --continue-on-error
+                        Continue with the next independent step after an error
+  --fail-fast           Stop at the first failed step
+  --performance         Write a JSON performance report for this run
+  --performance-file PERFORMANCE_FILE
+                        Performance report path (default: devtool state
+                        directory)
+
+Output and clipboard:
+  --stdout-payload {auto,summary,raw}
+                        Select stdout content: normal UI, concise summary, or
+                        raw command output
+  --machine-file MACHINE_FILE
+                        Write the machine envelope to this file
+  -p, --copy            Copy the selected run summary or prompt output to the
+                        clipboard
+  --no-clipboard        Disable clipboard prompts and copy behavior
+  --copy-via {auto,socket,fifo,termux,x11,wayland}
+                        Prefer a clipboard backend family
+  --theme {auto,plain}  Summary theme
+
+HUD and app bridge:
+  --auto-hud, --hud-auto
+                        Auto-start or reuse the selected HUD while progress is
+                        emitted (default)
+  --no-hud              Do not publish live HUD progress for this command
+  --hud-mode HUD_MODE   HUD backend: desktop, android-bridge, desktop-window
+                        (GTK4), web, studio, or terminal
+  --hud-overlay         On Android, also show the run in the user-enabled
+                        floating overlay HUD
+  --hud-no-overlay      On Android, keep the update in the app without opening
+                        the floating overlay
+
+Execution environment:
+  --host                Force command phases to run in devtool's current host
+                        environment
+  --chroot CHROOT       Run command phases inside a named chroot via chrootctl
+                        exec
+  --ssh, --ssh-host HOST
+                        Use HOST as the SSH execution target (whole devtool or
+                        command-phase mode)
+  --proot-distro DISTRO
+                        Run command phases inside a PRoot-Distro container;
+                        guest does not need devtool
+  --execution-environment {auto,native-termux,chroot,desktop-linux,android-device,external-device,ssh,proot-distro}
+                        Execution backend: auto, native-termux, chroot, proot-
+                        distro, desktop-linux, ssh, android-device, or
+                        external-device
+  --ssh-port PORT       SSH port (default: 22 or [ssh].port)
+  --ssh-user USER       SSH login user
+  --ssh-identity PATH   SSH private-key identity file
+  --ssh-session NAME    tmux session name; stable names can be reattached
+  --ssh-cwd PATH        Working directory on the SSH host; omitted means the
+                        remote login default
+  --ssh-tool COMMAND    Remote devtool executable used by --ssh-mode devtool
+                        (default: devtool)
+  --ssh-mode {devtool,commands}
+                        SSH mode: delegate the whole devtool run, or keep
+                        devtool local and run command phases remotely
+  --ssh-stage-dir PATH  Remote staging root for copied overlays/helper files
+  --ssh-no-artifact-copy
+                        Disable automatic SSH/SCP artifact transfer
+  --ssh-detached        Start/reuse the remote tmux session without attaching
+                        (whole-run devtool mode)
+  --proot-user USER     PRoot-Distro guest user (default: root or
+                        [proot].user)
+  --proot-cwd PATH      Initial absolute working directory inside the PRoot
+                        guest
+  --proot-repo-mount PATH
+                        Absolute guest mount point for the current repository
+  --proot-bind HOST:GUEST
+                        Additional PRoot bind; repeatable, guest destination
+                        must be absolute
+  --proot-env NAME=VALUE
+                        Explicit environment variable passed to the PRoot
+                        guest; repeatable
+  --proot-no-auto-bind-repo
+                        Do not automatically bind the repository into the
+                        PRoot guest
+  --proot-shared-home   Ask PRoot-Distro to share the host home with the guest
+  --proot-shared-tmp    Ask PRoot-Distro to share Termux tmp with the guest
+  --proot-isolated      Use PRoot-Distro isolated mode (Termux hosts only)
+  --proot-minimal       Use PRoot-Distro minimal mode (Termux hosts only)
+  --proot-stage-dir PATH
+                        Host staging directory bound into the PRoot guest
+  --termux-resource-profile {auto,automatic,conservative,balanced,performance}
+                        Termux resource defaults for workers/JVM/native
+                        concurrency
+  --termux-wake-lock    Acquire a Termux wake lock while command phases run
+  --no-termux-wake-lock
+                        Disable Termux wake-lock integration for this run
+  --shared-storage-policy {allow,warn,deny}
+                        Policy for repositories on Android shared storage
+  --allow-shared-storage-build
+                        Allow a build from Android shared storage for this run
+  --artifact-export DIR
+                        Copy verified artifacts to DIR after successful local
+                        verification
+  --no-auto-chroot      On Termux, do not auto-route command phases through
+                        chrootctl
+
+Toolchain bootstrap:
+  --no-bootstrap-downloads
+                        Never download or install missing toolchain components
+  --bootstrap-downloads {auto,missing,force,never}
+                        Override receipt/config toolchain provisioning policy
+                        for this run
+  --deny-network        Deny Devtool-managed network downloads for this run
+  --offline             Alias for --no-bootstrap-downloads --deny-network and
+                        Gradle offline mode
+  --toolchain-profile TOOLCHAIN_PROFILE
+                        Chroot/toolchain profile name from global or repo
+                        config
+  --android-sdk-root ANDROID_SDK_ROOT
+                        Android SDK root for Android/Gradle projects
+  --android-sdk-provider {auto,homuhomu,managed,termuxvoid}
+                        Android SDK provider: auto, TermuxVoid, HomuHomu ARM64
+                        Android SDK, or managed Google SDK
+  --gradle-command GRADLE_COMMAND
+                        Gradle or gradlew executable for Android/Gradle
+                        projects
+  --gradle-provider {auto,download,system,termux,wrapper}
+                        Gradle provider for Android/Gradle projects: auto,
+                        wrapper, termux, system, or download
+  --java-home JAVA_HOME
+                        JDK home for Android/Gradle projects
+  --java-provider {auto,system,termux}
+                        Java provider for Android/Gradle projects: auto,
+                        termux, or system
+  --gradle-user-home GRADLE_USER_HOME
+                        GRADLE_USER_HOME for Android/Gradle projects
+  --native-provider {auto,ndk,system,termux-sysroot}
+                        Native provider for Android/native projects: auto,
+                        termux-sysroot, ndk, or system
+  --native-cache {auto,ccache,off}
+                        Native compiler cache provider: auto, ccache, or off
+  --android-build-tools-provider {auto,commit451,none,sdk,termux}
+                        Android native build-tools provider: auto, termux,
+                        sdk, commit451, or none
+  --aapt2-provider {auto,termux,sdk,revanced,none}
+                        AAPT2 provider for Android builds
+
+Common workflows:
+  devtool -r REPO validate
+  devtool -r REPO apply-overlay PATCH.zip --validate --commit MESSAGE
+  devtool -r REPO apply-overlays BUNDLE.zip --validate --commit MESSAGE
+
+Multiple overlays run sequentially: each overlay is applied, validated, and committed before the next starts.

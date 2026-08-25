@@ -171,7 +171,7 @@ class ResumableValidationTests(unittest.TestCase):
 
     def test_parser_exposes_deferred_validation_and_low_power_profile(self) -> None:
         args = build_parser().parse_args([
-            "apply-overlay", "--defer-validate", "--profile", "android-low-power", "demo.zip",
+            "apply-overlay", "--defer-validate", "--resource-profile", "android-low-power", "demo.zip",
         ])
         self.assertTrue(args.defer_validate)
         self.assertEqual(args.validation_resource_profile, "android-low-power")
@@ -604,7 +604,7 @@ class ResumableValidationTests(unittest.TestCase):
             with patch.dict(os.environ, env, clear=False), patch("devtool.cli.render_summary"):
                 apply_rc = main([
                     "--repo", str(repo), "--yes", "--no-clipboard",
-                    "apply-overlay", "--defer-validate", "--profile", "android-low-power",
+                    "apply-overlay", "--defer-validate", "--resource-profile", "android-low-power",
                     "--keep-artifact", str(artifact),
                 ])
             self.assertEqual(apply_rc, 0)

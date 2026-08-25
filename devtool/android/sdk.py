@@ -1,6 +1,6 @@
 """Android SDK discovery, provisioning, and package selection."""
 
-from ..android_build import (
+from ._standalone import (
     ANDROID_BUILD_TOOLS_PROVIDERS,
     ANDROID_SDK_PROVIDERS,
     BuildError,

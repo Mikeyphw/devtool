@@ -1,6 +1,6 @@
 """Android/Gradle task classification and availability filtering."""
 
-from ..android_build import (
+from ._standalone import (
     connected_android_devices,
     default_tasks,
     filter_unavailable_connected_android_tests,

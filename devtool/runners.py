@@ -44,6 +44,7 @@ from .gradle_reports import collect_report_metadata
 from .transactions import create_apply_transaction, rollback_transaction
 from .logstore import finalize_log, redact_sensitive_text, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
+from .core.events import TaskFinished, TaskStarted, WarningDetected, publish_event
 from .xdg import state_dir
 from .project_runners import (
     DotnetRunner as _DotnetRunner,
@@ -1703,11 +1704,14 @@ def run_specs(
         )
         if tasker_progress is not None and not dry_run:
             tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=effective_argv, metadata=spec.metadata)
+        publish_event(TaskStarted(task=spec.name, metadata={"index": spec_index, "total": len(specs), "argv": list(effective_argv), **dict(spec.metadata)}))
 
         if dry_run:
             output = "$ " + " ".join(effective_argv)
             log_file = str(write_log(output, log_path, append=log_path is not None))
-            results.append(OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file, metadata=dict(spec.metadata)))
+            dry_result = OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file, metadata=dict(spec.metadata))
+            results.append(dry_result)
+            publish_event(TaskFinished(task=spec.name, success=True, metadata={"skipped": True, "dry_run": True, "returncode": 0}))
             raw_sections.append(output)
             if cleanup_dir:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
@@ -2132,6 +2136,10 @@ def run_specs(
             log_file = str(write_log(raw_text, log_path, append=False))
         result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind, metadata=result_metadata)
         results.append(result)
+        for issue in issues:
+            if str(issue.severity).lower() == "warning":
+                publish_event(WarningDetected(message=str(issue.message or ""), metadata={"task": spec.name, "code": str(issue.code or ""), "file": str(issue.file or ""), "line": issue.line}))
+        publish_event(TaskFinished(task=spec.name, success=returncode == 0, metadata={"returncode": returncode, "duration_seconds": duration, "failure_kind": failure_kind}))
         if tasker_progress is not None and not dry_run:
             tasker_progress.phase_finished(result)
         raw_sections.append(raw_text)

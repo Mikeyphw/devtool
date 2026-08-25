@@ -112,6 +112,7 @@ def test_validation_report_cli_returns_machine_envelope(tmp_path: Path, capsys) 
     code = main(["-r", str(tmp_path), "validation-report", "--session", session.session_id, "--json"])
     payload = json.loads(capsys.readouterr().out)
     assert code == 0
+    assert payload["api_version"] == 1
     assert payload["accepted"] is True
     assert payload["action"] == "report"
     assert payload["data"]["report"]["session_id"] == session.session_id

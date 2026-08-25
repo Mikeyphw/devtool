@@ -89,8 +89,8 @@ def stage_android_builder(*, destination: Path | None = None) -> Path:
     execution without Python package context.
     """
 
-    source = Path(android_build.__file__).resolve()
-    companion_source = source.with_name("termux_toolchains.py")
+    source = android_build.standalone_source_path()
+    companion_source = android_build.standalone_companion_path()
 
     target = (destination or _state_builder_path()).expanduser().resolve()
     companion_target = target.with_name("termux_toolchains.py")
@@ -773,29 +773,29 @@ def android_builder_arguments_for_tasks(
         )
         lint_workload = any("lint" in task.lower() for task in seen_tasks)
         test_workload = any("test" in task.lower() for task in seen_tasks)
-        # Do not invent a hard MaxMetaspaceSize for Android validation.
-        # AGP, Kotlin/KSP, lint and packaging can legitimately need more
-        # class metadata than a fixed mobile-host floor. The adaptive system
-        # memory watchdog already protects the device from real pressure.
-        #
-        # Only explicitly configured metaspace caps are forwarded.
+        # Android validation uses workload-aware bounded metaspace floors.
+        # They prevent known lint/KSP class-metadata exhaustion while the
+        # adaptive system-memory watchdog remains authoritative for device safety.
         workload_metaspace: int | None = None
         if packaging_workload:
-            workload_metaspace = _positive_integer(
+            configured_packaging_metaspace = _positive_integer(
                 os.environ.get("DEVTOOL_GRADLE_PACKAGING_METASPACE_MB")
                 or validation_options.get("gradle_packaging_metaspace_mb")
                 or gradle.get("validation_packaging_metaspace_mb")
             )
+            workload_metaspace = max(configured_packaging_metaspace or 0, 768)
         if lint_workload:
             lint_metaspace = _positive_integer(
                 os.environ.get("DEVTOOL_GRADLE_LINT_METASPACE_MB")
                 or validation_options.get("gradle_lint_metaspace_mb")
                 or gradle.get("validation_lint_metaspace_mb")
             )
-            workload_metaspace = (
-                max(workload_metaspace or 0, lint_metaspace or 0)
-                or workload_metaspace
-            )
+            workload_metaspace = max(workload_metaspace or 0, lint_metaspace or 0, 640)
+        if packaging_workload and lint_workload and test_workload:
+            # Combined AGP/Kotlin/KSP/lint validation has the largest class
+            # metadata footprint. Preserve the historical mobile-safe floor
+            # while the outer memory watchdog remains authoritative.
+            workload_metaspace = max(workload_metaspace or 0, 896)
 
         metaspace_mb = max(
             configured_metaspace or 0,

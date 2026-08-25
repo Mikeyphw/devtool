@@ -325,9 +325,7 @@ def test_dry_run_does_not_probe_or_remove_tasks() -> None:
 
 
 def test_main_source_wires_transitive_policy_into_gradle() -> None:
-    source = Path(
-        android_build.__file__
-    ).read_text(
+    source = android_build.standalone_source_path().read_text(
         encoding="utf-8"
     )
 

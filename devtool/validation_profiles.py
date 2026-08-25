@@ -46,6 +46,18 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
         "gradle": {"parallel": True, "build_cache": True},
         "android": {"instrumentation": "never"},
     },
+    "architecture-final": {
+        "validation": {
+            "workflow_profile": "architecture-final",
+            "android_safe": True,
+            "split_gradle": True,
+            "parallel": True,
+            "architecture_contracts": True,
+        },
+        "gradle": {"parallel": True, "build_cache": True},
+        "android": {"instrumentation": "when-device-present"},
+        "artifacts": {"external_verification": "optional"},
+    },
 }
 
 

@@ -21,3 +21,11 @@ def result_from_exception(exc: Exception, *, metadata: dict[str, Any] | None = N
 
 def result_to_dict(result: CommandResult) -> dict[str, Any]:
     return asdict(result)
+
+
+def result_from_operation(operation: Any) -> CommandResult:
+    return CommandResult.from_operation(operation)
+
+
+def result_from_completed_process(process: Any, *, duration: float = 0.0, metadata: dict[str, Any] | None = None) -> CommandResult:
+    return CommandResult.from_completed_process(process, duration=duration, metadata=metadata)

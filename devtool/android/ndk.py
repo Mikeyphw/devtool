@@ -1,6 +1,6 @@
 """Android NDK selection and host compatibility helpers."""
 
-from ..android_build import (
+from ._standalone import (
     NDK_HOST_PROVIDERS,
     NdkAndroidLinkProbeResult,
     ensure_ndk_cmake_termux_host_support,

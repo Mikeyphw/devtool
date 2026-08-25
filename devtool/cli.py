@@ -16,7 +16,8 @@ import traceback
 import resource
 import tempfile
 import zipfile
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
+import io
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -66,6 +67,8 @@ from .artifact_validation import run_artifact_validation_script
 from .artifact_inspection import inspect_artifact
 from .artifact_registry import load_registry, find_record, verify_record, prune_registry
 from .api_output import extract_universal_json_flag, run_json_invocation
+from .core import configure_logging
+from .core.events import BuildFinished, BuildStarted, OverlayApplied, configure_event_console, publish_event
 from .overlay import check_overlay, rebase_overlay
 from .plugins import discover_plugins, doctor_plugin
 from .doctor import collect_doctor_checks, doctor_payload
@@ -381,6 +384,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     execution = parser.add_argument_group("Execution")
     execution.add_argument("-v", "--verbose", action="store_true", help="Stream full command output")
+    execution.add_argument("-q", "--quiet", action="store_true", help="Suppress normal human output; errors still print")
+    execution.add_argument("--trace", action="store_true", help="Enable architecture event tracing and full exception tracebacks")
     execution.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
     execution.add_argument("-f", "--force", action="store_true", help="Force dangerous actions")
     execution.add_argument("--dry-run", action="store_true", help="Print commands without running them")
@@ -5768,6 +5773,8 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
             ]
         except Exception:
             args._devtool_history_paths = [".devtool/artifacts.json"]
+        if status == "ok":
+            publish_event(OverlayApplied(artifact=str(artifact), metadata={"commit": commit_hash, "validation_status": validation_status}))
     except Exception as exc:
         args._devtool_history_error = f"{type(exc).__name__}: {exc}"
         console.print(f"[yellow]Could not write artifact history: {exc}[/yellow]")
@@ -7683,7 +7690,8 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
         proot_distro=str(getattr(args, "proot_distro", "") or "") if args is not None else "",
     ))
     rows.extend(runner.doctor_rows(config))
-    if bool(getattr(args, "json", False)) if args is not None else False:
+    json_requested = args is not None and getattr(args, "json", False) is True
+    if json_requested:
         print(json.dumps(doctor_payload(config), indent=2, ensure_ascii=False))
     else:
         render_status_table(rows)
@@ -8316,6 +8324,29 @@ def main(argv: list[str] | None = None) -> int:
     parse_argv, universal_json = extract_universal_json_flag(parse_argv)
     parser = build_parser()
     args = parser.parse_args(parse_argv)
+    configure_logging(verbose=bool(getattr(args, "verbose", False)), quiet=bool(getattr(args, "quiet", False)), trace=bool(getattr(args, "trace", False)))
+    console.quiet = bool(getattr(args, "quiet", False))
+    configure_event_console(console, enabled=bool((getattr(args, "verbose", False) or getattr(args, "trace", False)) and not getattr(args, "quiet", False) and not universal_json))
+
+    def _invoke() -> int:
+        command = str(getattr(args, "command", "") or "devtool")
+        emit_build = command in PROGRESS_CAPABLE_COMMANDS
+        if emit_build:
+            publish_event(BuildStarted(project=str(getattr(args, "repo", "") or Path.cwd()), metadata={"command": command}))
+        try:
+            if bool(getattr(args, "quiet", False)) and not universal_json:
+                with redirect_stdout(io.StringIO()):
+                    code = int(_main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args))
+            else:
+                code = int(_main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args))
+        except BaseException:
+            if emit_build:
+                publish_event(BuildFinished(success=False, metadata={"command": command, "exception": True}))
+            raise
+        if emit_build:
+            publish_event(BuildFinished(success=code == 0, metadata={"command": command, "exit_code": code}))
+        return code
+
     if universal_json:
         args._devtool_json = True
         if hasattr(args, "json"):
@@ -8323,12 +8354,12 @@ def main(argv: list[str] | None = None) -> int:
         command = str(getattr(args, "command", "") or "devtool")
         repo = str(getattr(args, "repo", "") or Path.cwd())
         return run_json_invocation(
-            lambda: _main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args),
+            lambda: _invoke(),
             command=command,
             repo=repo,
         )
     try:
-        return _main_after_parse(raw_argv, parse_argv, passthrough_args, parser, args)
+        return _invoke()
     except SystemExit as exc:
         code = exc.code
         if isinstance(code, int):
@@ -8337,11 +8368,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {message}", file=sys.stderr)
         return 1
     except Exception as exc:
-        if bool(getattr(args, "verbose", False)) or _tracebacks_enabled():
+        if bool(getattr(args, "verbose", False)) or bool(getattr(args, "trace", False)) or _tracebacks_enabled():
             traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
             return 1
         print(f"Internal devtool error: {exc}", file=sys.stderr)
-        print("Run again with --verbose or DEVTOOL_TRACEBACK=1 for a full traceback.", file=sys.stderr)
+        print("Run again with --verbose or DEVTOOL_TRACEBACK=1 for a full traceback; --trace also enables traceback logging.", file=sys.stderr)
         return 1
 
 

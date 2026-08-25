@@ -5,7 +5,7 @@ builder remains in :mod:`devtool.android_build` because that file is also staged
 as a standalone executable in chroot environments.
 """
 
-from ..android_build import (
+from ._standalone import (
     BuildError,
     JavaRequirement,
     ProjectInfo,
