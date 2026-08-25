@@ -1912,15 +1912,38 @@ def run_specs(
                             if report_parser == "gradle-junit"
                             else "Devtool test failures"
                         ),
-                        codes={"GRADLE_TEST", "ANDROID_INSTRUMENTATION"},
+                        codes=(
+                            {"GRADLE_TEST"}
+                            if report_parser == "gradle-junit"
+                            else {"ANDROID_INSTRUMENTATION"}
+                            if report_parser == "android-instrumentation"
+                            else {"PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT"}
+                        ),
                     )
+                    # Pytest JUnit XML is the authoritative identity/source for
+                    # failed test cases.  Console ``FAILED ...`` lines are useful
+                    # fallback diagnostics when XML is missing, but keeping both
+                    # makes one failed testcase appear twice in HUD/clipboard
+                    # summaries.  Once a current pytest report exists, discard
+                    # only the raw pytest failure duplicates and retain warnings
+                    # and unrelated process diagnostics.
+                    if report_parser == "pytest-junit" and tests.get("report_files"):
+                        issues = [issue for issue in issues if issue.code != "PYTEST_FAILURE"]
                     try:
                         from .test_selection import save_failed_test_ids
                         metadata_failed = collection.metadata.get("failed_ids") if isinstance(collection.metadata, dict) else None
                         if isinstance(metadata_failed, (list, tuple)):
                             failed_ids = [str(value).strip() for value in metadata_failed if str(value).strip()]
                         else:
-                            failed_ids = [issue.message.split(":", 1)[0] for issue in collection.issues if issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION"}]
+                            failed_ids = [
+                                issue.message.split(":", 1)[0]
+                                for issue in collection.issues
+                                if issue.code in {
+                                    "GRADLE_TEST", "ANDROID_INSTRUMENTATION",
+                                    "PYTEST_FAILURE", "PYTHON_DEPENDENCY",
+                                    "PYTHON_PLATFORM", "PYTHON_IMPORT",
+                                }
+                            ]
                         save_failed_test_ids(config.repo_root, failed_ids)
                         result_metadata["failed_test_ids"] = failed_ids
                     except Exception:
@@ -2089,9 +2112,22 @@ def run_specs(
                 if any(issue.severity == "error" and issue.code == "GRADLE_METASPACE_OOM" for issue in issues)
                 else "resource_interrupted"
             )
+        elif spec.name == "python-source-audit" and any(
+            issue.severity == "error" and issue.code == "PYTHON_UNDECLARED_IMPORT"
+            for issue in issues
+        ):
+            failure_kind = "dependency_failure"
+        elif spec.name == "python-source-audit" and any(
+            issue.severity == "error" and issue.code == "PYTHON_PLATFORM_GLIBC"
+            for issue in issues
+        ):
+            failure_kind = "platform_failure"
         elif any(
             issue.severity == "error"
-            and issue.code in {"GRADLE_TEST", "ANDROID_INSTRUMENTATION", "UNITTEST", "PYTEST", "VSTEST"}
+            and issue.code in {
+                "GRADLE_TEST", "ANDROID_INSTRUMENTATION", "UNITTEST", "PYTEST", "VSTEST",
+                "PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT",
+            }
             for issue in issues
         ):
             failure_kind = "test_failure"

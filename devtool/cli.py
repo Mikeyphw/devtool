@@ -1244,7 +1244,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             return normalize_message(located.group("message"))
 
         coded = _re.match(
-            r"^(?:GRADLE_ENVIRONMENT|GRADLE_MEMORY_GUARD|GRADLE_METASPACE_OOM|GRADLE_TASK|LOW_STORAGE|ADB_PROBE|KOTLIN):\s+(?P<message>.+)$",
+            r"^(?:GRADLE_ENVIRONMENT|GRADLE_MEMORY_GUARD|GRADLE_METASPACE_OOM|GRADLE_TASK|LOW_STORAGE|ADB_PROBE|KOTLIN|PYTEST_WARNING|PYTEST_FAILURE|PYTHON_DEPENDENCY|PYTHON_PLATFORM|PYTHON_IMPORT|PYTHON_UNDECLARED_IMPORT|PYTHON_PLATFORM_GLIBC):\s+(?P<message>.+)$",
             cleaned,
             _re.IGNORECASE,
         )
@@ -1288,7 +1288,10 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         message = str(issue.get("message") or "").strip()
         file_text = str(issue.get("file") or "").strip()
         line = issue.get("line")
-        if code in {"GRADLE_TASK", "GRADLE_TEST", "UNITTEST", "PYTEST", "VSTEST"}:
+        if code in {
+            "GRADLE_TASK", "GRADLE_TEST", "UNITTEST", "PYTEST", "VSTEST",
+            "PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT",
+        }:
             return message or code or default
         location = ""
         if file_text and file_text != "-":
@@ -1435,11 +1438,12 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
     def _warning_details() -> tuple[list[str], int]:
         """Extract all useful, deduplicated warnings from structured issues and output."""
-
-        warning_lines = _merge_detail_lines(
-            _structured_issue_details("warning"),
-            _raw_warning_details(raw_output),
-        )
+        structured = _structured_issue_details("warning")
+        # Once pytest warnings were parsed into structured diagnostics they are
+        # canonical.  Re-adding the raw warnings-summary lines would inflate the
+        # clipboard count even though the HUD correctly counts one issue each.
+        raw = [] if _has_structured_issue_code("PYTEST_WARNING") else _raw_warning_details(raw_output)
+        warning_lines = _merge_detail_lines(structured, raw)
         return warning_lines, len(warning_lines)
 
     def _commit_hash() -> str:
@@ -1663,7 +1667,15 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 if str(part or "").strip()
             )
             structured_errors = _structured_issue_details("error")
-            raw_errors = [] if _has_structured_issue_code("GRADLE_METASPACE_OOM") else _raw_error_details(raw_error_source)
+            authoritative_python = any(
+                _has_structured_issue_code(code)
+                for code in ("PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT")
+            )
+            raw_errors = (
+                []
+                if _has_structured_issue_code("GRADLE_METASPACE_OOM") or authoritative_python
+                else _raw_error_details(raw_error_source)
+            )
             error_lines = _merge_detail_lines(structured_errors, raw_errors)
             return error_lines, len(error_lines)
 
@@ -1766,10 +1778,33 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 failure_kind = str(result.get("failure_kind") or "").replace("_", " ").strip()
                 issues = result.get("issues") if isinstance(result.get("issues"), list) else []
                 issue_message = ""
-                for issue in issues:
-                    if isinstance(issue, dict) and str(issue.get("severity") or "").lower() == "error":
-                        issue_message = _format_issue_detail(issue, default="Error")
-                        break
+                error_issues = [
+                    issue for issue in issues
+                    if isinstance(issue, dict) and str(issue.get("severity") or "").lower() == "error"
+                ]
+                priority = {
+                    "GRADLE_METASPACE_OOM": 0,
+                    "GRADLE_MEMORY_GUARD": 1,
+                    "PYTHON_DEPENDENCY": 10,
+                    "PYTHON_PLATFORM": 11,
+                    "PYTHON_IMPORT": 12,
+                    "PYTHON_UNDECLARED_IMPORT": 13,
+                    "PYTHON_PLATFORM_GLIBC": 14,
+                    "PYTEST_FAILURE": 20,
+                    "PYTEST": 21,
+                    "GRADLE_TEST": 30,
+                    "GRADLE_TASK": 40,
+                    "GENERIC": 90,
+                }
+                if error_issues:
+                    issue = min(
+                        enumerate(error_issues),
+                        key=lambda item: (
+                            priority.get(str(item[1].get("code") or "").upper(), 50),
+                            item[0],
+                        ),
+                    )[1]
+                    issue_message = _format_issue_detail(issue, default="Error")
                 raw_error_lines = _raw_error_details(str(result.get("output") or ""))
                 raw_error_message = raw_error_lines[0] if raw_error_lines else ""
                 normalized_failure_kind = failure_kind.casefold().replace("-", "_").replace(" ", "_")

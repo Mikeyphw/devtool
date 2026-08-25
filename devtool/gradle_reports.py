@@ -116,6 +116,10 @@ def parse_junit_reports(
     files: Iterable[Path],
     *,
     command_name: str = "test",
+    framework: str = "gradle-junit",
+    issue_code: str = "GRADLE_TEST",
+    report_label: str = "Gradle test report",
+    report_error_code: str = "JUNIT_XML",
 ) -> ReportCollection:
     passed = failed = skipped = total = 0
     duration = 0.0
@@ -131,8 +135,8 @@ def parse_junit_reports(
                 "error",
                 command_name,
                 relativize(repo_root, str(path)),
-                "JUNIT_XML",
-                f"Could not parse Gradle test report: {exc}",
+                report_error_code,
+                f"Could not parse {report_label}: {exc}",
             ))
             continue
 
@@ -187,7 +191,7 @@ def parse_junit_reports(
                             str(case.attrib.get("name") or "").strip(),
                         )
                         if item
-                    ) or "Gradle test"
+                    ) or "test"
                     message = str(failure_node.attrib.get("message") or "").strip()
                     body = str(failure_node.text or "").strip()
                     detail = message or (body.splitlines()[0] if body else "Test failed")
@@ -195,7 +199,7 @@ def parse_junit_reports(
                         "error",
                         command_name,
                         file_text,
-                        "GRADLE_TEST",
+                        issue_code,
                         f"{test_name}: {detail}",
                         line=line,
                     ))
@@ -205,7 +209,7 @@ def parse_junit_reports(
                     passed += 1
 
     metadata: dict[str, Any] = {
-        "framework": "gradle-junit",
+        "framework": framework,
         "report_files": parsed_files,
         "suites": suites,
         "discovered": total,
@@ -500,8 +504,50 @@ def collect_pytest_report(
 ) -> ReportCollection:
     path = Path(report_path) if report_path else project_root / ".devtool" / "reports" / "pytest.xml"
     files = [path] if path.is_file() else list(project_root.glob("**/pytest*.xml"))
-    collection = parse_junit_reports(repo_root or project_root, files, command_name=command_name)
-    collection.metadata["framework"] = "pytest-junit"
+    collection = parse_junit_reports(
+        repo_root or project_root,
+        files,
+        command_name=command_name,
+        framework="pytest-junit",
+        issue_code="PYTEST_FAILURE",
+        report_label="pytest JUnit report",
+        report_error_code="PYTEST_JUNIT_XML",
+    )
+
+    def classify_failure(issue: Issue) -> str:
+        text = str(issue.message or "").casefold()
+        if (
+            "modulenotfounderror" in text
+            or "no module named" in text
+            or "install it with: pip install" in text
+            or "pyyaml is required" in text
+        ):
+            return "PYTHON_DEPENDENCY"
+        if (
+            "dlopen failed" in text
+            or "libc.so.6" in text
+            or "cannot open shared object file" in text
+            or "wrong elf class" in text
+        ):
+            return "PYTHON_PLATFORM"
+        if "importerror" in text:
+            return "PYTHON_IMPORT"
+        return "PYTEST_FAILURE"
+
+    category_names = {
+        "PYTHON_DEPENDENCY": "dependency",
+        "PYTHON_PLATFORM": "platform",
+        "PYTHON_IMPORT": "import",
+        "PYTEST_FAILURE": "test",
+    }
+    category_counts: dict[str, int] = {}
+    for issue in collection.issues:
+        if issue.code == "PYTEST_FAILURE":
+            issue.code = classify_failure(issue)
+        if issue.severity == "error":
+            category = category_names.get(issue.code, "test")
+            category_counts[category] = category_counts.get(category, 0) + 1
+    collection.metadata["failure_categories"] = category_counts
     failed_ids: list[str] = []
     for file in files:
         try:

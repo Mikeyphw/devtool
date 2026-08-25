@@ -137,7 +137,25 @@ def _root_cause_issue(result: OperationResult) -> Issue | None:
         if str(issue.code or "").upper() not in {"ARTIFACT_MISSING"}
         and str(issue.command or "") != "artifact-verify"
     ]
-    return primary[0] if primary else errors[0]
+    candidates = primary if primary else errors
+    priority = {
+        "GRADLE_METASPACE_OOM": 0,
+        "GRADLE_MEMORY_GUARD": 1,
+        "PYTHON_DEPENDENCY": 10,
+        "PYTHON_PLATFORM": 11,
+        "PYTHON_IMPORT": 12,
+        "PYTHON_UNDECLARED_IMPORT": 13,
+        "PYTHON_PLATFORM_GLIBC": 14,
+        "PYTEST_FAILURE": 20,
+        "PYTEST": 21,
+        "GRADLE_TEST": 30,
+        "GRADLE_TASK": 40,
+        "GENERIC": 90,
+    }
+    return min(
+        enumerate(candidates),
+        key=lambda item: (priority.get(str(item[1].code or "").upper(), 50), item[0]),
+    )[1]
 
 
 def _issue_summary(issue: Issue) -> str:
@@ -166,7 +184,27 @@ def _render_failed_output_details(results: list[OperationResult], target_console
             table.add_row("log", result.log_path)
         if issue := _root_cause_issue(result):
             table.add_row("root cause", Text(_issue_summary(issue), overflow="fold", style="bold red"))
-        table.add_row("details", Text(_shorten_output(result.output), overflow="fold"))
+        python_test_issues = [
+            issue for issue in result.issues
+            if issue.severity == "error" and str(issue.code or "").upper() in {
+                "PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT",
+            }
+        ]
+        if python_test_issues:
+            tests = result.metadata.get("tests") if isinstance(result.metadata, dict) else {}
+            categories = tests.get("failure_categories") if isinstance(tests, dict) else {}
+            if isinstance(categories, dict) and categories:
+                table.add_row(
+                    "categories",
+                    ", ".join(f"{name}={int(count)}" for name, count in sorted(categories.items())),
+                )
+            failure_lines = [
+                f"{index}. {_issue_summary(issue)}"
+                for index, issue in enumerate(python_test_issues, start=1)
+            ]
+            table.add_row("failures", Text("\n".join(failure_lines), overflow="fold"))
+        else:
+            table.add_row("details", Text(_shorten_output(result.output), overflow="fold"))
         renderables.append(table)
     target_console.print(Panel(Group(*renderables), title="Failure details", expand=not is_narrow_console(target_console)))
 

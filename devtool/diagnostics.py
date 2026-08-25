@@ -87,6 +87,10 @@ _GCC_CLANG = re.compile(
     re.IGNORECASE,
 )
 _PYTEST_FAILURE = re.compile(r"^FAILED\s+(?P<file>[^:]+)(?:::(?P<node>.+))?\s+-\s+(?P<message>.+)$")
+_PYTEST_WARNING = re.compile(
+    r"^(?P<file>.+?):(?P<line>\d+):\s+"
+    r"(?P<category>[A-Za-z_][A-Za-z0-9_.]*Warning):\s+(?P<message>.+)$"
+)
 _UNITTEST_FAILURE = re.compile(r"^(?P<kind>FAIL|ERROR):\s+(?P<label>.+?)\s+\((?P<test_id>[^)]+)\)$")
 _XUNIT_FAILED = re.compile(r"^\s*Failed\s+(?P<test_name>.+?)\s+\[(?P<duration_ms>\d+)\s+ms\]\s*$")
 _XUNIT_ERROR_MESSAGE = re.compile(r"^\s*Error Message:\s*$", re.IGNORECASE)
@@ -218,11 +222,28 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                     "error",
                     command_name,
                     relative_path(match.group("file")),
-                    "PYTEST",
+                    "PYTEST_FAILURE",
                     match.group("message").strip(),
                 ))
                 index += 1
                 continue
+
+        # Pytest's warnings summary uses a source-location form rather than a
+        # literal ``warning:`` prefix.  Parse it into the same structured issue
+        # stream used by the HUD, JSON, summary and clipboard so warning counts
+        # do not diverge between surfaces.
+        pytest_warning = _PYTEST_WARNING.match(stripped)
+        if pytest_warning:
+            issues.append(Issue(
+                "warning",
+                command_name,
+                relative_path(pytest_warning.group("file")),
+                "PYTEST_WARNING",
+                f"{pytest_warning.group('category')}: {pytest_warning.group('message').strip()}",
+                line=int(pytest_warning.group("line")),
+            ))
+            index += 1
+            continue
 
         if stripped.upper().startswith(("ERROR: ", "WARNING: ")):
             match = _ANDROID_TOOL_DIAGNOSTIC.match(stripped)
@@ -459,7 +480,7 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 "error",
                 command_name,
                 relative_path(match.group("file")),
-                "PYTEST",
+                "PYTEST_FAILURE",
                 match.group("message").strip(),
             ))
             index += 1

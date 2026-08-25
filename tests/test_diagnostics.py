@@ -71,7 +71,7 @@ class DiagnosticTests(unittest.TestCase):
             output = "FAILED tests/test_app.py::test_x - assert 1 == 2\n"
             issues = parse_issues(root, "test", output)
             self.assertEqual(len(issues), 1)
-            self.assertEqual(issues[0].code, "PYTEST")
+            self.assertEqual(issues[0].code, "PYTEST_FAILURE")
 
     def test_parse_flake8_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

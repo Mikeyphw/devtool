@@ -2445,6 +2445,97 @@ def _package_check(args: argparse.Namespace) -> int:
 
 
 
+_IMPORT_DISTRIBUTION_ALIASES: dict[str, set[str]] = {
+    "yaml": {"pyyaml"},
+    "ruamel": {"ruamel-yaml"},
+    "multipart": {"python-multipart"},
+    "pil": {"pillow"},
+    "bs4": {"beautifulsoup4"},
+    "cv2": {"opencv-python", "opencv-python-headless"},
+    "sklearn": {"scikit-learn"},
+    "dateutil": {"python-dateutil"},
+    "dotenv": {"python-dotenv"},
+    "attr": {"attrs"},
+}
+
+
+def _declared_python_distributions(root: Path, data: Mapping[str, Any]) -> set[str]:
+    values = [*_project_dependencies(data), *_build_system_requires(data)]
+    values.extend(declared_group_dependencies(root, ["dev", "test", "tests", "web"]))
+    for path in sorted(root.glob("requirements*.txt")):
+        try:
+            values.extend(path.read_text(encoding="utf-8", errors="replace").splitlines())
+        except OSError:
+            continue
+    result: set[str] = set()
+    for value in values:
+        name, _extras = _requirement_name_and_extras(str(value))
+        if name:
+            result.add(name)
+    return result
+
+
+def _python_audit_files(root: Path) -> list[Path]:
+    """Return production Python files, including extensionless shebang tools.
+
+    Package-only auditing misses repositories which ship dotfiles, helper
+    commands and migration scripts outside their import package.  Tests are
+    intentionally excluded here because their dependencies are validator
+    tooling and are checked by the test-environment resolver instead.
+    """
+
+    files: list[Path] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if any(part in IGNORED_DIRECTORIES for part in relative.parts):
+            continue
+        if "tests" in relative.parts or relative.parts[:1] == ("test",):
+            continue
+        if path.suffix == ".py":
+            files.append(path)
+            continue
+        if path.suffix:
+            continue
+        try:
+            first = path.open("rb").readline(256).decode("utf-8", "ignore").casefold()
+        except OSError:
+            continue
+        if first.startswith("#!") and "python" in first:
+            files.append(path)
+    return sorted(set(files))
+
+
+def _local_import_roots(root: Path, info: PythonProjectInfo) -> set[str]:
+    local = set(info.import_packages)
+    for source_root in info.source_roots:
+        base = (root / source_root).resolve()
+        if not base.is_dir():
+            continue
+        try:
+            children = list(base.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            name = child.stem if child.is_file() and child.suffix == ".py" else child.name
+            if name.isidentifier():
+                local.add(name)
+    return local
+
+
+def _declared_import(import_name: str, declared: set[str]) -> bool:
+    root_name = str(import_name or "").split(".", 1)[0].strip().casefold()
+    if not root_name:
+        return True
+    candidates = {
+        _normalized_distribution_name(root_name),
+        _normalized_distribution_name(root_name.replace("_", "-")),
+    }
+    candidates.update(_IMPORT_DISTRIBUTION_ALIASES.get(root_name, set()))
+    return bool(candidates & declared)
+
+
 def audit_source_tree(root: Path, info: PythonProjectInfo) -> tuple[dict[str, Any], int]:
     root = root.resolve()
     issues: list[dict[str, str]] = []
@@ -2523,12 +2614,126 @@ def audit_source_tree(root: Path, info: PythonProjectInfo) -> tuple[dict[str, An
             stale_generated.append(item)
             issues.append({"code": "STALE_GENERATED", "path": item["generated"], "message": f"Generated output is older than {item['source']}."})
 
+    declared_distributions = _declared_python_distributions(root, data)
+    local_imports = _local_import_roots(root, info)
+    stdlib_imports = set(getattr(sys, "stdlib_module_names", set()))
+    audited_files = _python_audit_files(root)
+    third_party_imports: dict[str, list[str]] = {}
+    undeclared_seen: set[tuple[str, str]] = set()
+    glibc_seen: set[str] = set()
+
+    for path in audited_files:
+        relative = path.relative_to(root).as_posix()
+        try:
+            source = path.read_text(encoding="utf-8", errors="replace")
+            tree = ast.parse(source, filename=relative)
+        except (OSError, SyntaxError):
+            # Syntax validation is handled by the dedicated source-audit
+            # compile path.  Import consistency should not duplicate it.
+            continue
+
+        optional_import_nodes: set[int] = set()
+        for try_node in (node for node in ast.walk(tree) if isinstance(node, ast.Try)):
+            guarded = False
+            for handler in try_node.handlers:
+                value = handler.type
+                names: set[str] = set()
+                if isinstance(value, ast.Name):
+                    names.add(value.id)
+                elif isinstance(value, ast.Tuple):
+                    names.update(item.id for item in value.elts if isinstance(item, ast.Name))
+                if names & {"ImportError", "ModuleNotFoundError"}:
+                    guarded = True
+                    break
+            if guarded:
+                for child in try_node.body:
+                    for nested in ast.walk(child):
+                        if isinstance(nested, (ast.Import, ast.ImportFrom)):
+                            optional_import_nodes.add(id(nested))
+
+        imports: dict[str, list[ast.AST]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports.setdefault(alias.name.split(".", 1)[0], []).append(node)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imports.setdefault(node.module.split(".", 1)[0], []).append(node)
+
+        source_lines = source.splitlines()
+        for imported, nodes in sorted(imports.items()):
+            if imported in stdlib_imports or imported in local_imports or imported == "__future__":
+                continue
+            # System/desktop bindings may deliberately be supplied outside
+            # Python packaging.  An explicit import-not-found suppression is a
+            # strong declaration of that intent and avoids false dependency
+            # findings for PyGObject and similar host integrations.
+            declared_external = any(
+                0 < int(getattr(node, "lineno", 0) or 0) <= len(source_lines)
+                and "type: ignore[import-not-found]" in source_lines[int(getattr(node, "lineno", 0)) - 1]
+                for node in nodes
+            )
+            if declared_external:
+                continue
+
+            guarded_only = all(id(node) in optional_import_nodes for node in nodes)
+            if guarded_only:
+                aliases = {imported, *_IMPORT_DISTRIBUTION_ALIASES.get(imported.casefold(), set())}
+                required_pattern = re.compile(
+                    r"(?:"
+                    + "|".join(re.escape(value) for value in sorted(aliases, key=len, reverse=True))
+                    + r").{0,100}\b(?:required|install)\b|\b(?:required|install)\b.{0,100}(?:"
+                    + "|".join(re.escape(value) for value in sorted(aliases, key=len, reverse=True))
+                    + r")",
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if not required_pattern.search(source):
+                    continue
+            third_party_imports.setdefault(imported, []).append(relative)
+            if _declared_import(imported, declared_distributions):
+                continue
+            key = (relative, imported)
+            if key in undeclared_seen:
+                continue
+            undeclared_seen.add(key)
+            issues.append({
+                "code": "PYTHON_UNDECLARED_IMPORT",
+                "path": relative,
+                "message": (
+                    f"Imports third-party module {imported!r}, but no matching distribution is declared "
+                    "in project/build/optional requirements."
+                ),
+            })
+
+        # Android/Termux uses Bionic rather than glibc.  Loading glibc SONAMEs
+        # directly is also unnecessarily brittle across other Unix systems.
+        # ctypes.CDLL(None) or ctypes.util.find_library('c') are portable.
+        if re.search(r"ctypes\s*\.\s*(?:CDLL|PyDLL)\s*\(\s*['\"]libc\.so\.6['\"]", source):
+            if relative not in glibc_seen:
+                glibc_seen.add(relative)
+                issues.append({
+                    "code": "PYTHON_PLATFORM_GLIBC",
+                    "path": relative,
+                    "message": (
+                        "Hard-codes glibc SONAME 'libc.so.6'; use ctypes.CDLL(None) or "
+                        "ctypes.util.find_library('c') for Android/Termux portability."
+                    ),
+                })
+
+    issue_counts: dict[str, int] = {}
+    for item in issues:
+        code = str(item.get("code") or "PYTHON_AUDIT")
+        issue_counts[code] = issue_counts.get(code, 0) + 1
+
     payload = {
         "package": info.package_name,
         "declared_version": declared_version,
         "source_versions": source_versions,
         "stdlib_shadowing": sorted(top_level & stdlib),
         "stale_generated": stale_generated,
+        "audited_python_files": [path.relative_to(root).as_posix() for path in audited_files],
+        "declared_distributions": sorted(declared_distributions),
+        "third_party_imports": {name: sorted(paths) for name, paths in sorted(third_party_imports.items())},
+        "issue_counts": issue_counts,
         "issues": issues,
         "errors": len(issues),
     }

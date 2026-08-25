@@ -136,3 +136,12 @@
 - Rebuilt uv-managed sdists with `uv build --wheel` during package verification instead of spawning a separate `pip wheel` build-isolation resolver.
 - Made `verify_cli` validate installed/executable console-script wrappers without launching application entry points from a deliberately no-dependency wheel-check environment.
 - Prevented interrupted package checks from being misreported as missing `DEVTOOL_PYTHON_PACKAGE_RESULT` payloads, and classified Ctrl-C results as interrupted control flow.
+
+## Python validation diagnostics hotfix
+
+- Make pytest/JUnit failures framework-aware instead of labelling Python tests `GRADLE_TEST`.
+- Deduplicate raw pytest `FAILED` lines against authoritative JUnit testcases.
+- Structure pytest warnings so HUD/JSON/clipboard counts agree.
+- Classify Python dependency, import, platform, and assertion failures separately.
+- Extend Python source audit to production Python/shebang scripts outside package roots, undeclared imports, and glibc-only `libc.so.6` loads.
+- Render Python JUnit failure categories and canonical testcase details in failure summaries.
