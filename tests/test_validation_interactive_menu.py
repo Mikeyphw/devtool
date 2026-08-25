@@ -529,14 +529,15 @@ def test_main_menu_exposes_refresh_for_numbered_fallback(tmp_path: Path) -> None
     assert "refresh" in {choice.key for choice in _main_choices(catalog)}
 
 
-def test_deprecated_validation_profile_alias_warns(capsys) -> None:
-    cli._warn_deprecated_validation_profile_alias(
-        argparse.Namespace(validation_resource_profile="standard"),
-        ["validate", "--profile", "standard"],
-    )
-    captured = capsys.readouterr()
-    assert "deprecated" in (captured.err + captured.out).lower()
-    assert "--resource-profile" in (captured.err + captured.out)
+def test_validation_profile_namespaces_are_distinct() -> None:
+    parser = cli.build_parser()
+    workflow = parser.parse_args(["validate", "--profile", "termux"])
+    assert workflow.validation_workflow_profile == "termux"
+    assert workflow.validation_resource_profile == "automatic"
+
+    resource = parser.parse_args(["validate", "--resource-profile", "standard"])
+    assert resource.validation_workflow_profile == "default"
+    assert resource.validation_resource_profile == "standard"
 
 
 def test_dashboard_ctrl_r_calls_real_catalog_refresh(monkeypatch, tmp_path: Path) -> None:

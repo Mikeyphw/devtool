@@ -64,6 +64,9 @@ from .artifacts import (
 from .cache_cleanup import cleanup_devtool_caches
 from .artifact_validation import run_artifact_validation_script
 from .artifact_inspection import inspect_artifact
+from .artifact_registry import load_registry, find_record, verify_record, prune_registry
+from .doctor import collect_doctor_checks, doctor_payload
+from .validation_profiles import apply_profile as apply_validation_workflow_profile, available_profiles as available_validation_profiles
 from .detect import detect_repo, render_detect_text
 from .execution import apply_matrix
 from .execution_environments import (
@@ -498,6 +501,7 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "doctor":
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
             cmd.add_argument("--explain", action="store_true", help="Explain Termux provider selection and rejection reasons")
+            cmd.add_argument("--json", action="store_true", help="Emit structured runtime, Android, device, and project health checks")
         if name == "clean":
             cmd.add_argument("--caches", action="store_true", help="Also prune repository-scoped devtool-managed caches and transient state")
             cmd.add_argument("--space", action="store_true", help="Prune safe global Android/toolchain caches managed by Devtool")
@@ -658,6 +662,21 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_overlays.add_argument("--validation-task", "--task", dest="validation_tasks", action="append", default=None, help="Gradle task to write into bundle validation.tasks; repeatable")
     bundle_overlays.add_argument("--validation-tasks", dest="validation_tasks_csv", default=None, help="Comma-separated Gradle tasks to write into bundle validation.tasks; pass an empty value to declare an explicit empty task list")
     bundle_overlays.add_argument("-o", "--out", required=True, help="Output bundle archive; extension selects format")
+
+    artifact_cmd = subparsers.add_parser("artifact", help="Inspect and maintain the produced build-artifact registry")
+    artifact_sub = artifact_cmd.add_subparsers(dest="artifact_command", required=True)
+    artifact_list = artifact_sub.add_parser("list", aliases=["ls"], help="List registered build artifacts")
+    artifact_list.add_argument("--json", action="store_true", help="Emit registry JSON")
+    artifact_inspect = artifact_sub.add_parser("inspect", aliases=["show"], help="Inspect a registered build artifact")
+    artifact_inspect.add_argument("selector", help="Artifact id, path, or filename")
+    artifact_inspect.add_argument("--json", action="store_true", help="Emit artifact JSON")
+    artifact_verify = artifact_sub.add_parser("verify", help="Verify existence and SHA-256 of a registered artifact")
+    artifact_verify.add_argument("selector", help="Artifact id, path, or filename")
+    artifact_verify.add_argument("--json", action="store_true", help="Emit verification JSON")
+    artifact_prune = artifact_sub.add_parser("prune", help="Prune old registry entries")
+    artifact_prune.add_argument("--older-than", default="30d", help="Age threshold such as 30d, 12h, or an integer day count")
+    artifact_prune.add_argument("--delete-files", action="store_true", help="Also delete matching files inside .devtool/build-artifacts only")
+    artifact_prune.add_argument("--json", action="store_true", help="Emit prune result JSON")
 
     batch = subparsers.add_parser("batch")
     batch.add_argument("steps", nargs="+", help="Steps like validate or apply-overlay=/path.zip")
@@ -923,7 +942,8 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     daemon = cmd.add_mutually_exclusive_group()
     daemon.add_argument("--stop-gradle-after-phase", action="store_true", help="Stop Gradle daemons after each completed phase")
     daemon.add_argument("--keep-gradle-daemon", action="store_true", help="Keep Gradle daemons available between phase invocations")
-    cmd.add_argument("--resource-profile", "--validation-profile", "--profile", dest="validation_resource_profile", choices=["automatic", "android-low-power", "standard"], default="automatic", help="Validation resource profile; --profile is a deprecated compatibility alias")
+    cmd.add_argument("--resource-profile", dest="validation_resource_profile", choices=["automatic", "android-low-power", "standard"], default="automatic", help="Validation resource profile")
+    cmd.add_argument("--profile", dest="validation_workflow_profile", default="default", help="Named validation workflow profile (minimal, default, android-full, release, termux, or a repo-defined profile)")
     cmd.add_argument("--max-infrastructure-retries", type=int, default=1, metavar="COUNT", help="Automatically retry environment/tooling interruptions this many times per phase")
     cmd.add_argument("--max-resource-retries", type=int, default=1, metavar="COUNT", help="Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available")
     cmd.add_argument("--no-auto-retry", action="store_true", help="Disable automatic infrastructure and resource retries for this session")
@@ -2745,6 +2765,7 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
     # phone's CPU/RAM and therefore keep the Termux profile.
     if requested_execution not in {"ssh", "desktop-linux", "android-device", "external-device"}:
         apply_termux_resource_defaults(config.runner_options, profile_name=requested_profile)
+    apply_validation_workflow_profile(config, args)
     _apply_validation_resource_profile(config, args)
     _apply_validation_resource_overrides(config, args)
     def ensure_section(name: str) -> dict:
@@ -7595,6 +7616,8 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
         ("wine", config.env.get("SIMSTOOLKIT_WINE_PATH", os.environ.get("SIMSTOOLKIT_WINE_PATH", "")) or "-"),
         ("fixed", ", ".join(fixed) if fixed else "-"),
     ]
+    health_checks = collect_doctor_checks(config)
+    rows.extend((f"health.{item.section}.{item.name}", f"{item.status}: {item.detail}") for item in health_checks)
     rows.extend(toolchain_doctor_rows(config))
     rows.extend(termux_integration_doctor_rows(
         config,
@@ -7602,7 +7625,10 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
         proot_distro=str(getattr(args, "proot_distro", "") or "") if args is not None else "",
     ))
     rows.extend(runner.doctor_rows(config))
-    render_status_table(rows)
+    if bool(getattr(args, "json", False)) if args is not None else False:
+        print(json.dumps(doctor_payload(config), indent=2, ensure_ascii=False))
+    else:
+        render_status_table(rows)
 
 
 def _status(config: ProjectConfig, *, args: argparse.Namespace | None = None) -> None:
@@ -8225,15 +8251,6 @@ def _write_performance_report(
 
 
 
-def _warn_deprecated_validation_profile_alias(args: argparse.Namespace, raw_argv: list[str]) -> None:
-    if not hasattr(args, "validation_resource_profile"):
-        return
-    if not any(token == "--profile" or token.startswith("--profile=") for token in raw_argv):
-        return
-    create_console(stderr=True).print(
-        "[yellow]Warning:[/yellow] validation [bold]--profile[/bold] is deprecated; "
-        "use [bold]--resource-profile[/bold]. Test profiles use [bold]--test-profile[/bold]."
-    )
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -8272,7 +8289,6 @@ def _main_after_parse(
     args._devtool_passthrough_args = passthrough_args
     args._devtool_hud_explicit = any(token in {"--auto-hud", "--hud-auto", "--no-hud"} for token in parse_argv)
     _normalize_command_aliases(args)
-    _warn_deprecated_validation_profile_alias(args, parse_argv)
     _apply_global_cli_defaults(args, parse_argv)
     _normalize_live_progress_args(args)
     ssh_rc = _maybe_delegate_ssh(raw_argv, args)
@@ -8477,6 +8493,55 @@ def _main_after_parse(
     if _is_artifact_validation_args(args):
         config = _load_command_config(args)
         return _run_artifact_validation_command(config, args, as_json=False)
+
+    if args.command == "artifact":
+        repo = Path(args.repo or Path.cwd()).resolve()
+        command = str(getattr(args, "artifact_command", "") or "")
+        if command in {"list", "ls"}:
+            payload = load_registry(repo)
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                items = [item for item in payload.get("items", []) if isinstance(item, dict)]
+                rows = [(str(item.get("id") or "-"), f"{item.get('path') or '-'} | {item.get('type') or 'file'} | {item.get('size') or 0} bytes | {'valid' if item.get('valid', True) else 'invalid'}") for item in items]
+                render_status_table(rows or [("artifacts", "none registered")])
+            return 0
+        if command in {"inspect", "show"}:
+            record = find_record(repo, args.selector)
+            if record is None:
+                print(f"Artifact not found in registry: {args.selector}", file=sys.stderr)
+                return 1
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(record, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([(str(key), json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)) for key, value in record.items()])
+            return 0
+        if command == "verify":
+            result = verify_record(repo, args.selector)
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([(str(key), str(value)) for key, value in result.items() if key in {"id", "path", "exists", "valid", "current_sha256", "verified_at"}])
+            return 0 if bool(result.get("valid")) else 1
+        if command == "prune":
+            raw_age = str(args.older_than or "30d").strip().lower()
+            multiplier = 1
+            if raw_age.endswith("d"):
+                raw_age = raw_age[:-1]
+            elif raw_age.endswith("h"):
+                raw_age = raw_age[:-1]
+                multiplier = 0
+            try:
+                value = int(raw_age)
+            except ValueError:
+                parser.error("--older-than must be an integer day count or use a d/h suffix")
+            days = float(value) if multiplier else max(0.0, float(value) / 24.0)
+            result = prune_registry(repo, older_than_days=days, delete_files=bool(args.delete_files))
+            if bool(getattr(args, "json", False)):
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([("removed", str(len(result.get("removed", [])))), ("remaining", str(result.get("remaining", 0))), ("files_deleted", str(sum(1 for item in result.get("removed", []) if item.get("file_deleted"))))])
+            return 0
 
     if args.command == "validation-menu":
         config = _load_command_config(args)

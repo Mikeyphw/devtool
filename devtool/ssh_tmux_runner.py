@@ -53,7 +53,7 @@ _ARTIFACT_COMMAND_VALUE_FLAGS = _GLOBAL_VALUE_FLAGS | _SSH_VALUE_FLAGS | {
     "--changed-from", "--phase", "--phase-only", "--through", "--from-phase",
     "--from", "--pause-after", "--max-phases", "--max-runtime",
     "--stop-below-battery", "--stop-above-temperature", "--stop-below-disk-mb",
-    "--resource-profile", "--validation-profile", "--profile",
+    "--resource-profile", "--profile",
     "--max-infrastructure-retries", "--max-resource-retries", "--failure-action",
     "--session", "--scope", "--if-revision", "--after-event", "--event-limit",
     "--limit", "--max-workers", "--cpu-limit", "--gradle-heap-mb",

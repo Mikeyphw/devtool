@@ -430,6 +430,12 @@ def collect_and_verify_android_artifacts(
         },
         "items": [item.as_dict() for item in records],
     }
+    try:
+        from .artifact_registry import register_android_metadata
+        registered = register_android_metadata(config.repo_root, metadata)
+        metadata["registry"] = {"registered": len(registered)}
+    except Exception as exc:
+        metadata["registry"] = {"registered": 0, "warning": str(exc)}
     return metadata, issues
 
 

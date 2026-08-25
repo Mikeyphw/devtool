@@ -47,7 +47,7 @@ Result:
 - numbered fallback pseudo-terminal smoke test;
 - complete numbered guided-wizard pseudo-terminal traversal;
 - Termux/chroot command parser round-trip;
-- deprecated validation `--profile` warning;
+- authoritative workflow `--profile` parsing with separate `--resource-profile`;
 - packaged `vm` alias normalization;
 - single `--hud-overlay` generation.
 

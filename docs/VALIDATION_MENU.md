@@ -159,13 +159,12 @@ Abort and plan-drift acceptance remain explicit audited actions. The default
 sequential failure policy is to pause and preserve the patched tree plus its
 rollback point.
 
-## Stable JSON and compatibility names
+## Stable JSON and validation profile names
 
 For durable runs and validation controls, the output page can emit either normal
 human output or the stable API-v1 JSON envelope in pretty or compact form. The
 compiler emits `--json` and `--machine pretty|compact` as appropriate.
 
-Use `--resource-profile` for resource policy and `--test-profile` for structured
-test selection. Validation's historical `--profile` resource alias remains
-accepted for compatibility but emits a deprecation warning because it is easily
-confused with test profiles.
+Use `--profile` for validation workflow policy, `--resource-profile` for resource
+policy, and `--test-profile` for structured test selection. These namespaces are
+distinct; `--profile` is not a resource-profile alias.

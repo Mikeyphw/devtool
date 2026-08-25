@@ -169,8 +169,9 @@ _devtool_commands() {
     'vo:alias for validate-overlay'
     'validate-overlays:validate a bundle or ordered overlays'
     'vos:alias for validate-overlays'
-    'inspect-artifact:inspect artifact metadata, inventory, validation, and diff'
+    'inspect-artifact:inspect overlay artifact metadata, inventory, validation, and diff'
     'ia:alias for inspect-artifact'
+    'artifact:inspect and maintain the produced build-artifact registry'
     'bundle:create artifact bundles'
     'batch:run an ordered batch of operations'
     'commit:create a Git commit'
@@ -278,8 +279,8 @@ _devtool_validation_args() {
     '--stop-below-disk-mb[pause when repository storage falls below this threshold]:mebibytes:' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phase invocations]' \
+    '--profile[validation workflow profile]:profile:(minimal default android-full release termux)' \
     '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
-    '--validation-profile[alias for --resource-profile]:profile:(automatic android-low-power standard)' \
     '--max-workers[override validation worker count for this invocation]:count:' \
     '--cpu-limit[override validation CPU limit for this invocation]:count:' \
     '--gradle-heap-mb[override the Gradle validation heap]:mebibytes:' \
@@ -367,8 +368,8 @@ _devtool_apply_args() {
     '--stop-below-disk-mb[pause when repository storage falls below this threshold]:mebibytes:' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phases]' \
+    '--profile[validation workflow profile]:profile:(minimal default android-full release termux)' \
     '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
-    '--validation-profile[alias for --resource-profile]:profile:(automatic android-low-power standard)' \
     '--max-workers[override validation worker count for this invocation]:count:' \
     '--cpu-limit[override validation CPU limit for this invocation]:count:' \
     '--gradle-heap-mb[override the Gradle validation heap]:mebibytes:' \
@@ -570,7 +571,7 @@ _devtool() {
             '(--daemon --no-daemon)--no-daemon[disable the Gradle daemon during validation]'
           ;;
         doctor|dr)
-          _arguments '--fix[create safe devtool state and cache directories]' '--explain[explain Termux provider selection and rejection reasons]'
+          _arguments '--fix[create safe devtool state and cache directories]' '--explain[explain Termux provider selection and rejection reasons]' '--json[emit structured runtime, Android, device, and project health checks]'
           ;;
         bootstrap)
           if (( ${#line} < 2 )); then
@@ -661,6 +662,26 @@ _devtool() {
             '--diff-context[number of context lines]:lines:' \
             '--max-diff-lines[maximum emitted diff lines]:lines:' \
             '1:artifact:_devtool_artifact_path'
+          ;;
+        artifact)
+          if (( ${#line} < 2 )); then
+            _values 'artifact action' list ls inspect show verify prune
+          else
+            case ${line[2]} in
+              list|ls)
+                _arguments '--json[emit registry JSON]'
+                ;;
+              inspect|show)
+                _arguments '--json[emit artifact JSON]' '1:artifact id, path, or filename:'
+                ;;
+              verify)
+                _arguments '--json[emit verification JSON]' '1:artifact id, path, or filename:'
+                ;;
+              prune)
+                _arguments '--older-than[age threshold such as 30d or 12h]:age:' '--delete-files[delete matching files inside .devtool/build-artifacts]' '--json[emit prune result JSON]'
+                ;;
+            esac
+          fi
           ;;
         bundle)
           if (( ${#line} < 2 )); then
