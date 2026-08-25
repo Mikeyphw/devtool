@@ -13,7 +13,7 @@ import subprocess
 from typing import Any, Iterable
 import zipfile
 
-from .android_build import discover_artifacts, artifact_variant, slugify_name
+from .android.build import discover_artifacts, artifact_variant, slugify_name
 from .diagnostics import relativize
 from .models import Issue, ProjectConfig
 

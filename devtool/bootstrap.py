@@ -64,7 +64,7 @@ def normalize_machine(machine: str | None = None) -> str:
 
 def _running_under_termux() -> bool:
     try:
-        from .android_build import running_under_termux_python
+        from .android.providers.termux import running_under_termux_python
 
         return bool(running_under_termux_python())
     except Exception:
@@ -323,7 +323,7 @@ def _validate_provisioning_report(destination: BootstrapDestination, report: Map
     missing = [name for name in required if not str(build_tool_paths.get(name) or "").strip()]
     if missing:
         raise RuntimeError("Termux bootstrap completed without required Android build tools: " + ", ".join(missing))
-    from .android_build import native_android_build_tool_compatible
+    from .android.providers.termux import native_android_build_tool_compatible
 
     broken = [
         name
@@ -444,7 +444,7 @@ def _probe_local_receipt(destination: BootstrapDestination, receipt: Mapping[str
         if missing_tools:
             return False, "Termux receipt is missing verified Android build tools: " + ", ".join(missing_tools)
         try:
-            from .android_build import native_android_build_tool_compatible
+            from .android.providers.termux import native_android_build_tool_compatible
 
             broken = [
                 name
