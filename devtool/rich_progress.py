@@ -74,6 +74,8 @@ class TuiInspectionController:
         self._on_change: Callable[[], None] | None = None
         self._stop_callback: Callable[[], None] | None = None
         self._stop_requested = False
+        self._scroll_offset = 0
+        self._page_size = 10
         self._force_interactive = force_interactive
         self.enabled = self._detect_interactive() if force_interactive is None else bool(force_interactive)
 
@@ -137,7 +139,14 @@ class TuiInspectionController:
         if not values:
             return
         with self._lock:
+            # Preserve the reader's viewport while output continues to arrive.
+            # Offset zero means follow the newest output; once the user scrolls
+            # up, newly appended lines increase the offset so the text under
+            # inspection does not jump away.
+            if self._scroll_offset > 0:
+                self._scroll_offset += len(values)
             self._lines.extend(values)
+            self._scroll_offset = min(self._scroll_offset, max(0, len(self._lines) - 1))
         if self.mode in {TuiDisplayMode.VERBOSE, TuiDisplayMode.LOGS}:
             self._notify_change()
 
@@ -147,6 +156,51 @@ class TuiInspectionController:
         if limit is None or limit <= 0:
             return values
         return values[-limit:]
+
+    @property
+    def scroll_offset(self) -> int:
+        """Number of captured source lines between the viewport and live tail."""
+
+        with self._lock:
+            return int(self._scroll_offset)
+
+    @property
+    def following(self) -> bool:
+        return self.scroll_offset == 0
+
+    def set_page_size(self, value: int) -> None:
+        with self._lock:
+            self._page_size = max(3, int(value))
+
+    def scroll(self, delta: int) -> bool:
+        """Move the log viewport; positive values move toward older output."""
+
+        with self._lock:
+            before = self._scroll_offset
+            maximum = max(0, len(self._lines) - 1)
+            self._scroll_offset = min(maximum, max(0, before + int(delta)))
+            changed = self._scroll_offset != before
+        if changed:
+            self._notify_change()
+        return changed
+
+    def jump_oldest(self) -> bool:
+        with self._lock:
+            before = self._scroll_offset
+            self._scroll_offset = max(0, len(self._lines) - self._page_size)
+            changed = self._scroll_offset != before
+        if changed:
+            self._notify_change()
+        return changed
+
+    def jump_latest(self) -> bool:
+        with self._lock:
+            before = self._scroll_offset
+            self._scroll_offset = 0
+            changed = before != 0
+        if changed:
+            self._notify_change()
+        return changed
 
     def handle_key(self, key: str) -> bool:
         """Apply one shortcut. Returns True when the key was consumed."""
@@ -174,6 +228,36 @@ class TuiInspectionController:
             elif normalized == "v":
                 self.mode = TuiDisplayMode.COMPACT if current == TuiDisplayMode.VERBOSE else TuiDisplayMode.VERBOSE
                 changed = self.mode != current
+            elif current in {TuiDisplayMode.VERBOSE, TuiDisplayMode.LOGS} and normalized in {"k", "up"}:
+                step = 1
+                before = self._scroll_offset
+                self._scroll_offset = min(max(0, len(self._lines) - 1), before + step)
+                changed = self._scroll_offset != before
+            elif current in {TuiDisplayMode.VERBOSE, TuiDisplayMode.LOGS} and normalized in {"j", "down"}:
+                before = self._scroll_offset
+                self._scroll_offset = max(0, before - 1)
+                changed = self._scroll_offset != before
+            elif current in {TuiDisplayMode.VERBOSE, TuiDisplayMode.LOGS} and normalized in {"u", "pageup"}:
+                before = self._scroll_offset
+                maximum = max(0, len(self._lines) - 1)
+                self._scroll_offset = min(maximum, before + max(1, self._page_size - 1))
+                changed = self._scroll_offset != before
+            elif current in {TuiDisplayMode.VERBOSE, TuiDisplayMode.LOGS} and normalized in {"d", "pagedown"}:
+                before = self._scroll_offset
+                self._scroll_offset = max(0, before - max(1, self._page_size - 1))
+                changed = self._scroll_offset != before
+            elif current in {TuiDisplayMode.VERBOSE, TuiDisplayMode.LOGS} and raw == "g":
+                before = self._scroll_offset
+                self._scroll_offset = max(0, len(self._lines) - self._page_size)
+                changed = self._scroll_offset != before
+            elif current in {TuiDisplayMode.VERBOSE, TuiDisplayMode.LOGS} and raw in {"G", "END"}:
+                before = self._scroll_offset
+                self._scroll_offset = 0
+                changed = before != 0
+            elif current in {TuiDisplayMode.VERBOSE, TuiDisplayMode.LOGS} and raw == "HOME":
+                before = self._scroll_offset
+                self._scroll_offset = max(0, len(self._lines) - self._page_size)
+                changed = self._scroll_offset != before
             elif raw == "?":
                 if current == TuiDisplayMode.HELP:
                     self.mode = self._previous_mode
@@ -200,10 +284,17 @@ class TuiInspectionController:
             callback()
         return True
 
-    def shortcut_footer(self) -> Text | None:
+    def shortcut_footer(self, width: int | None = None) -> Text | None:
         if not self.enabled:
             return None
-        return Text("[v] verbose  [l] logs  [c] compact  [?] help  [q] stop", style="dim", no_wrap=True, overflow="ellipsis")
+        available = int(width or getattr(self.console, "width", 80) or 80)
+        if available < 46:
+            label = "v/l view · ? keys · q stop"
+        elif available < 72:
+            label = "v verbose · l logs · c compact · ? keys · q stop"
+        else:
+            label = "[v] verbose  [l] logs  [c] compact  [?] help  [q] stop"
+        return Text(label, style="dim", no_wrap=True, overflow="ellipsis")
 
     def _notify_change(self) -> None:
         callback = self._on_change
@@ -247,7 +338,40 @@ class TuiInspectionController:
                     return
                 if not data:
                     continue
-                self.handle_key(data.decode(errors="ignore"))
+                key = data.decode(errors="ignore")
+                if data == b"\x1b":
+                    # Decode common ANSI navigation sequences without making a
+                    # bare Escape key feel sluggish. Termux, tmux, and most
+                    # POSIX terminals emit these for arrows/PageUp/PageDown.
+                    tail = bytearray()
+                    for _ in range(5):
+                        try:
+                            extra_ready, _, _ = select.select([fd], [], [], 0.008)
+                        except (OSError, ValueError):
+                            break
+                        if not extra_ready:
+                            break
+                        try:
+                            chunk = os.read(fd, 1)
+                        except OSError:
+                            break
+                        if not chunk:
+                            break
+                        tail.extend(chunk)
+                        if bytes(tail).endswith((b"A", b"B", b"H", b"F", b"~")):
+                            break
+                    sequence = b"\x1b" + bytes(tail)
+                    key = {
+                        b"\x1b[A": "UP",
+                        b"\x1b[B": "DOWN",
+                        b"\x1b[5~": "PAGEUP",
+                        b"\x1b[6~": "PAGEDOWN",
+                        b"\x1b[H": "HOME",
+                        b"\x1b[F": "END",
+                        b"\x1bOH": "HOME",
+                        b"\x1bOF": "END",
+                    }.get(sequence, "\x1b")
+                self.handle_key(key)
         finally:
             try:
                 termios.tcsetattr(fd, termios.TCSADRAIN, original)
@@ -266,8 +390,17 @@ class TuiInspectionController:
                 continue
             key = msvcrt.getwch()
             if key in {"\x00", "\xe0"}:
-                if msvcrt.kbhit():
-                    msvcrt.getwch()
+                code = msvcrt.getwch() if msvcrt.kbhit() else ""
+                mapped = {
+                    "H": "UP",
+                    "P": "DOWN",
+                    "I": "PAGEUP",
+                    "Q": "PAGEDOWN",
+                    "G": "HOME",
+                    "O": "END",
+                }.get(code)
+                if mapped:
+                    self.handle_key(mapped)
                 continue
             self.handle_key(key)
 
@@ -689,15 +822,15 @@ class ThreeLineProgressBody:
             yield self._stop_panel()
             return
         if mode == TuiDisplayMode.LOGS:
-            yield self._log_panel(options, include_progress=False)
+            yield self._log_panel(console, options, include_progress=False)
             return
         if mode == TuiDisplayMode.VERBOSE:
-            yield self._log_panel(options, include_progress=True)
+            yield self._log_panel(console, options, include_progress=True)
             return
 
         yield from self._render_compact(console, options)
         if inspection is not None:
-            footer = inspection.shortcut_footer()
+            footer = inspection.shortcut_footer(options.max_width)
             if footer is not None:
                 yield footer
 
@@ -754,44 +887,104 @@ class ThreeLineProgressBody:
                 diagnostics.append(f"✗ {state.errors} error{'s' if state.errors != 1 else ''}", style="red")
             yield diagnostics
 
-    def _log_panel(self, options: ConsoleOptions, *, include_progress: bool) -> Panel:
+    def _log_panel(self, console: Console, options: ConsoleOptions, *, include_progress: bool) -> Panel:
         inspection = self.inspection
         assert inspection is not None
-        # Keep enough room for the outer panel, title/footer, and compact status.
+        width = max(1, int(options.max_width or 1))
         max_height = max(6, int(options.max_height or 24))
-        reserve = 10 if include_progress else 5
-        line_limit = max(3, min(24, max_height - reserve))
-        lines = inspection.lines(limit=line_limit)
+
+        # Verbose deliberately reserves room for live progress. Logs-only uses
+        # almost the entire terminal as a reader, which is the practical reason
+        # to keep `l` separate from `v`.
+        reserve = 10 if include_progress else 4
+        row_budget = max(3, max_height - reserve)
+        content_width = max(8, width - 4)
+        inspection.set_page_size(row_budget)
+
+        all_lines = inspection.lines()
+        total = len(all_lines)
+        offset = min(inspection.scroll_offset, max(0, total - 1))
+        end = max(0, total - offset)
+        selected: list[tuple[int, str]] = []
+        used_rows = 0
+        for index in range(end - 1, -1, -1):
+            value = all_lines[index]
+            probe = Text(value, no_wrap=False, overflow="fold")
+            visual_rows = max(1, len(probe.wrap(console, content_width, overflow="fold", no_wrap=False)))
+            if selected and used_rows + visual_rows > row_budget:
+                break
+            selected.append((index, value))
+            used_rows += visual_rows
+            if used_rows >= row_budget:
+                break
+        selected.reverse()
+
         log_rows: list[Text] = []
-        if lines:
-            for value in lines:
+        if selected:
+            for _, value in selected:
                 lowered = value.lower()
                 style = "red" if "error" in lowered or "failed" in lowered else ("yellow" if "warning" in lowered else "")
-                log_rows.append(Text(value, style=style, no_wrap=True, overflow="ellipsis"))
+                # Fold instead of ellipsizing. Long Gradle paths and exception
+                # messages remain readable in 40-column Termux portrait panes.
+                log_rows.append(Text(value, style=style, no_wrap=False, overflow="fold"))
         else:
-            log_rows.append(Text("Waiting for command output…", style="dim"))
+            log_rows.append(Text("Waiting for command output…", style="dim", overflow="fold"))
 
         rows: list[object] = []
         if include_progress:
             rows.append(ThreeLineProgressBody(self._state_provider))
             rows.append(Text("Live output", style="bold"))
         rows.extend(log_rows)
-        shortcut_hint = "v compact" if include_progress else "v verbose"
-        rows.append(Text(f"{shortcut_hint}  •  l logs  •  c compact  •  ? help  •  q stop", style="dim", no_wrap=True, overflow="ellipsis"))
-        title = "Verbose output" if include_progress else "Logs only"
+
+        if total:
+            first = selected[0][0] + 1 if selected else 0
+            last = selected[-1][0] + 1 if selected else 0
+            position = "follow" if inspection.following else f"↑{inspection.scroll_offset}"
+            status = f"lines {first}-{last}/{total} · {position}"
+            rows.append(Text(status, style="dim", no_wrap=True, overflow="ellipsis"))
+
+        view_hint = "l logs" if include_progress else "v verbose"
+        if width < 46:
+            footer = f"{view_hint} · j/k · G live · ?"
+        elif width < 72:
+            footer = f"{view_hint} · j/k · u/d page · g/G · c compact · ?"
+        else:
+            footer = f"{view_hint} · j/k scroll · u/d page · g/G ends · c compact · ? help · q stop"
+        rows.append(Text(footer, style="dim", no_wrap=True, overflow="ellipsis"))
+
+        if width < 46:
+            title = "Verbose" if include_progress else "Logs"
+        else:
+            title = "Verbose · progress + output" if include_progress else "Logs · scrollable output"
         return Panel(Group(*rows), title=title, border_style="cyan", padding=(0, 1))
 
-    @staticmethod
-    def _help_panel() -> Panel:
-        rows = Group(
-            Text("v  Toggle verbose view", style="bold"),
-            Text("l  Logs-only view"),
-            Text("c  Compact progress view"),
-            Text("?  Toggle this help"),
-            Text("Esc  Close modal / return compact"),
-            Text("q q  Stop the running command (two presses)", style="yellow"),
-        )
-        return Panel(rows, title="TUI shortcuts", border_style="cyan", padding=(0, 1))
+    def _help_panel(self) -> Panel:
+        width = int(getattr(self.inspection.console if self.inspection is not None else None, "width", 80) or 80)
+        if width < 50:
+            rows = Group(
+                Text("v  verbose + progress", style="bold"),
+                Text("l  logs reader"),
+                Text("j/k or ↑/↓  scroll"),
+                Text("u/d or PgUp/PgDn  page"),
+                Text("g/G  oldest/live"),
+                Text("c  compact   ?  help"),
+                Text("q q  stop", style="yellow"),
+            )
+            title = "Keys"
+        else:
+            rows = Group(
+                Text("v  Toggle live verbose view (progress + output)", style="bold"),
+                Text("l  Open dedicated scrollable log viewer"),
+                Text("j/k or ↓/↑  Scroll one output line"),
+                Text("d/u or PgDn/PgUp  Scroll one page"),
+                Text("g/G or Home/End  Jump to oldest / resume live tail"),
+                Text("c  Compact progress view"),
+                Text("?  Toggle this help"),
+                Text("Esc  Close modal / return compact"),
+                Text("q q  Stop the running command (two presses)", style="yellow"),
+            )
+            title = "TUI shortcuts"
+        return Panel(rows, title=title, border_style="cyan", padding=(0, 1))
 
     @staticmethod
     def _stop_panel() -> Panel:

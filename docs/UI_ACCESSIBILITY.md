@@ -6,14 +6,27 @@ During a normal interactive Rich progress run, Devtool keeps the compact TUI as
 the default and exposes single-key inspection shortcuts without restarting the
 child command:
 
-- `v`: toggle the verbose inspection view. The compact progress/status remains
-  visible above a bounded tail of captured command output.
-- `l`: switch directly to a logs-only live tail.
+- `v`: toggle the live verbose inspection view. Progress/status stays visible
+  above captured command output, so this is the best view while watching a run.
+- `l`: open the dedicated log reader. It hides progress to spend more terminal
+  height on output and is intended for inspecting failures or earlier lines.
+- `j` / `k` or Down / Up: scroll one captured output line in either inspection
+  view. New output does not move the viewport while it is scrolled away from the
+  live tail.
+- `d` / `u` or PageDown / PageUp: move approximately one visible page.
+- `g` / `G` or Home / End: jump to the oldest available page or resume following
+  the newest output.
 - `c`: return directly to compact progress.
 - `?`: toggle the shortcut-help modal.
 - `Esc`: close help/confirmation or return to compact progress.
 - `q`, `q`: stop the running command. The first press opens an explicit
   confirmation; only a second `q` invokes the runner's normal interrupt path.
+
+Inspection chrome adapts to the terminal width. Narrow Termux/tmux panes use
+shorter titles and shortcut hints, while output lines wrap instead of being
+ellipsized. The captured output buffer remains bounded; scrolling only navigates
+the retained in-memory tail and does not load the full on-disk log. Use
+`devtool logs open latest` when the complete durable log is required.
 
 The shortcut reader is TTY-only, is disabled in CI and non-interactive output,
 and may be disabled explicitly with `DEVTOOL_TUI_SHORTCUTS=0`. The existing

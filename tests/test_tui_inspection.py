@@ -125,20 +125,21 @@ def test_modal_rendering_keeps_progress_in_verbose_and_hides_it_in_logs_only() -
     controller.handle_key("v")
     console.print(body)
     verbose = output.getvalue()
-    assert "Verbose output" in verbose
+    assert "Verbose · progress + output" in verbose
     assert "2/10" in verbose
     assert "compile line three" in verbose
-    assert "v compact" in verbose
+    assert "c compact" in verbose
 
     output.seek(0)
     output.truncate(0)
     controller.handle_key("l")
     console.print(body)
     logs = output.getvalue()
-    assert "Logs only" in logs
+    assert "Logs · scrollable output" in logs
     assert "compile line three" in logs
     assert "2/10" not in logs
     assert "v verbose" in logs
+    assert "j/k" in logs
 
 
 def test_help_and_compact_views_advertise_discoverable_shortcuts() -> None:
@@ -160,9 +161,124 @@ def test_help_and_compact_views_advertise_discoverable_shortcuts() -> None:
     console.print(body)
     help_text = output.getvalue()
     assert "TUI shortcuts" in help_text
-    assert "Toggle verbose view" in help_text
+    assert "live verbose view" in help_text
     assert "two presses" in help_text
 
+
+
+def test_logs_view_scrolls_and_stays_anchored_when_new_output_arrives() -> None:
+    console, output = _console(width=62, height=14)
+    controller = TuiInspectionController(console, max_lines=50, force_interactive=True)
+    for index in range(30):
+        controller.append_line(f"line-{index:02d}")
+    body = ThreeLineProgressBody(
+        lambda: ThreeLineProgressState(total=None, detail="Working", started_at=1.0),
+        inspection=controller,
+    )
+
+    controller.handle_key("l")
+    console.print(body)
+    latest = output.getvalue()
+    assert "line-29" in latest
+    assert "follow" in latest
+
+    output.seek(0)
+    output.truncate(0)
+    for _ in range(4):
+        controller.handle_key("k")
+    assert controller.scroll_offset == 4
+    console.print(body)
+    older = output.getvalue()
+    assert "line-29" not in older
+    assert "↑4" in older
+
+    controller.append_line("line-30")
+    assert controller.scroll_offset == 5
+    output.seek(0)
+    output.truncate(0)
+    console.print(body)
+    anchored = output.getvalue()
+    assert "line-30" not in anchored
+
+    controller.handle_key("G")
+    assert controller.following is True
+    output.seek(0)
+    output.truncate(0)
+    console.print(body)
+    resumed = output.getvalue()
+    assert "line-30" in resumed
+    assert "follow" in resumed
+
+
+def test_log_navigation_supports_arrows_pages_and_ends() -> None:
+    console, _ = _console(width=62, height=14)
+    controller = TuiInspectionController(console, max_lines=50, force_interactive=True)
+    for index in range(30):
+        controller.append_line(f"line-{index:02d}")
+    controller.handle_key("l")
+    controller.set_page_size(6)
+
+    controller.handle_key("UP")
+    assert controller.scroll_offset == 1
+    controller.handle_key("PAGEUP")
+    assert controller.scroll_offset == 6
+    controller.handle_key("DOWN")
+    assert controller.scroll_offset == 5
+    controller.handle_key("PAGEDOWN")
+    assert controller.scroll_offset == 0
+    controller.handle_key("HOME")
+    assert controller.scroll_offset == 24
+    controller.handle_key("END")
+    assert controller.scroll_offset == 0
+
+
+def test_narrow_log_view_wraps_text_and_uses_compact_chrome() -> None:
+    console, output = _console(width=40, height=15)
+    controller = TuiInspectionController(console, force_interactive=True)
+    controller.append_line("prefix-" + "x" * 58 + "-tail")
+    body = ThreeLineProgressBody(
+        lambda: ThreeLineProgressState(total=None, detail="Working", started_at=1.0),
+        inspection=controller,
+    )
+
+    controller.handle_key("l")
+    console.print(body)
+    rendered = output.getvalue()
+    assert "Logs" in rendered
+    assert "-tail" in rendered
+    assert "j/k" in rendered
+    assert "Logs · scrollable output" not in rendered
+    assert all(len(line) <= 40 for line in rendered.splitlines())
+
+
+@pytest.mark.parametrize("width", [32, 40, 60, 80, 120])
+def test_log_reader_width_matrix_never_exceeds_terminal(width: int) -> None:
+    console, output = _console(width=width, height=16)
+    controller = TuiInspectionController(console, force_interactive=True)
+    for index in range(8):
+        controller.append_line(f"line-{index}: /very/long/path/" + "segment/" * 8 + "file.kt")
+    body = ThreeLineProgressBody(
+        lambda: ThreeLineProgressState(total=None, detail="Working", started_at=1.0),
+        inspection=controller,
+    )
+    controller.handle_key("l")
+    console.print(body)
+    rendered = output.getvalue()
+    assert ".kt" in rendered
+    assert all(len(line) <= width for line in rendered.splitlines())
+
+
+def test_compact_shortcut_footer_adapts_to_termux_width() -> None:
+    console, output = _console(width=40, height=15)
+    controller = TuiInspectionController(console, force_interactive=True)
+    body = ThreeLineProgressBody(
+        lambda: ThreeLineProgressState(total=None, detail="Working", started_at=1.0),
+        inspection=controller,
+    )
+    console.print(body)
+    rendered = output.getvalue()
+    assert "v/l view" in rendered
+    assert "[v] verbose" not in rendered
 
 def test_shortcuts_are_disabled_for_ci_and_non_tty_stdin() -> None:
     console, _ = _console()
