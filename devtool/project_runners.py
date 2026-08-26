@@ -1873,7 +1873,7 @@ class PythonRunner(ProjectRunner):
                 install_index = index
                 break
         packages = command[install_index + 1:] if install_index >= 0 else command
-        option_values = {"-c", "--constraint", "--python", "--project", "--index-url", "--extra-index-url"}
+        option_values = {"-c", "--constraint", "--python", "--project", "--index-url", "--extra-index-url", "--only-binary", "--no-binary"}
         filtered: list[str] = []
         skip_next = False
         for item in packages:

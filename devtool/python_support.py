@@ -1264,7 +1264,23 @@ def build_sync_command(
         commands.append([*pip_base, "httpx"])
     build_requires = list(build_system_requirements(info.root)) if (info.root / "pyproject.toml").is_file() else []
     if install_project and build_requires:
-        commands.append([*pip_base, *build_requires])
+        build_pip_base = [*pip_base, "--disable-pip-version-check"]
+        build_requirement_names = {
+            _requirement_name_and_extras(item)[0]
+            for item in build_requires
+            if _requirement_name_and_extras(item)[0]
+        }
+        wheel_safe_build_backends = {
+            "setuptools",
+            "wheel",
+            "build",
+            "hatchling",
+            "flit-core",
+            "poetry-core",
+        }
+        if build_requirement_names and build_requirement_names <= wheel_safe_build_backends:
+            build_pip_base.extend(["--prefer-binary", "--only-binary", ":all:"])
+        commands.append([*build_pip_base, *build_requires])
     if install_project and (info.root / "pyproject.toml").is_file():
         extra_text = f"[{','.join(extras)}]" if extras else ""
         commands.append([*pip_base, "--no-build-isolation", "-e", f".{extra_text}"])
