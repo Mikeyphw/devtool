@@ -288,6 +288,234 @@ def _requirement_name_and_extras(value: str) -> tuple[str, tuple[str, ...]]:
     return name, extras
 
 
+
+
+ANDROID_PYDANTIC_CORE_INDEX = "https://eutalix.github.io/android-pydantic-core/"
+
+
+def _running_on_termux_host() -> bool:
+    prefix = os.environ.get("PREFIX", "")
+    return "com.termux" in prefix or Path("/data/data/com.termux/files/usr").exists()
+
+
+def _termux_android_api_level() -> str:
+    for key in ("ANDROID_API_LEVEL", "__ANDROID_API__"):
+        value = os.environ.get(key, "").strip()
+        if value.isdigit():
+            return value
+
+    getprop = Path("/system/bin/getprop")
+    if getprop.exists():
+        try:
+            proc = subprocess.run(
+                [str(getprop), "ro.build.version.sdk"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+            value = proc.stdout.strip()
+            if value.isdigit():
+                return value
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    return "35"
+
+
+def termux_pydantic_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    result = dict(env or {})
+    if _running_on_termux_host():
+        api_level = _termux_android_api_level()
+        result.setdefault("ANDROID_API_LEVEL", api_level)
+        result.setdefault("__ANDROID_API__", api_level)
+    return result
+
+
+def _pip_install_payload_start(command: Sequence[str]) -> int:
+    for index, token in enumerate(command):
+        if str(token) == "install":
+            return index + 1
+    return -1
+
+
+def _pip_install_requirement_names(command: Sequence[str]) -> set[str]:
+    start = _pip_install_payload_start(command)
+    if start < 0:
+        return set()
+
+    option_values = {
+        "-c",
+        "--constraint",
+        "--index-url",
+        "--extra-index-url",
+        "--find-links",
+        "-f",
+        "--only-binary",
+        "--no-binary",
+        "--python",
+        "--project",
+    }
+
+    names: set[str] = set()
+    skip_next = False
+
+    for item in list(command)[start:]:
+        text = str(item)
+
+        if skip_next:
+            skip_next = False
+            continue
+
+        if text in option_values:
+            skip_next = True
+            continue
+
+        if text.startswith("-"):
+            continue
+
+        if text.startswith(("http://", "https://", "file://")):
+            continue
+
+        if text in {".", "-"} or text.endswith((".whl", ".tar.gz", ".zip")):
+            continue
+
+        name, _extras = _requirement_name_and_extras(text)
+        if name:
+            names.add(name)
+
+    return names
+
+
+
+
+ANDROID_PYDANTIC_CORE_INDEX = "https://eutalix.github.io/android-pydantic-core/"
+
+
+def _running_on_termux_host() -> bool:
+    prefix = os.environ.get("PREFIX", "")
+    return "com.termux" in prefix or Path("/data/data/com.termux/files/usr").exists()
+
+
+def _termux_android_api_level() -> str:
+    for key in ("ANDROID_API_LEVEL", "__ANDROID_API__"):
+        value = os.environ.get(key, "").strip()
+        if value.isdigit():
+            return value
+
+    getprop = Path("/system/bin/getprop")
+    if getprop.exists():
+        try:
+            proc = subprocess.run(
+                [str(getprop), "ro.build.version.sdk"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+            value = proc.stdout.strip()
+            if value.isdigit():
+                return value
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    return "35"
+
+
+def termux_pydantic_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    result = dict(env or {})
+    if _running_on_termux_host():
+        api_level = _termux_android_api_level()
+        result.setdefault("ANDROID_API_LEVEL", api_level)
+        result.setdefault("__ANDROID_API__", api_level)
+    return result
+
+
+def _pip_install_payload_start(command: Sequence[str]) -> int:
+    for index, token in enumerate(command):
+        if str(token) == "install":
+            return index + 1
+    return -1
+
+
+def _pip_install_requirement_names(command: Sequence[str]) -> set[str]:
+    start = _pip_install_payload_start(command)
+    if start < 0:
+        return set()
+
+    option_values = {
+        "-c", "--constraint",
+        "--index-url", "--extra-index-url",
+        "--find-links", "-f",
+        "--only-binary", "--no-binary",
+        "--python", "--project",
+    }
+
+    names: set[str] = set()
+    skip_next = False
+
+    for item in list(command)[start:]:
+        text = str(item)
+
+        if skip_next:
+            skip_next = False
+            continue
+
+        if text in option_values:
+            skip_next = True
+            continue
+
+        if text.startswith("-"):
+            continue
+
+        if text.startswith(("http://", "https://", "file://")):
+            continue
+
+        if text in {".", "-"} or text.endswith((".whl", ".tar.gz", ".zip")):
+            continue
+
+        name, _extras = _requirement_name_and_extras(text)
+        if name:
+            names.add(name)
+
+    return names
+
+
+def termux_pydantic_pip_workaround(
+    command: Sequence[str],
+    *,
+    root: Path | None = None,
+) -> list[str]:
+    result = list(command)
+
+    if not _running_on_termux_host():
+        return result
+
+    names = _pip_install_requirement_names(result)
+    if not ({"pydantic", "pydantic-core"} & names):
+        return result
+
+    insert_at = _pip_install_payload_start(result)
+    if insert_at < 0:
+        return result
+
+    injected: list[str] = []
+
+    if "--prefer-binary" not in result:
+        injected.append("--prefer-binary")
+
+    if "--only-binary" not in result:
+        injected.extend(["--only-binary", "pydantic-core"])
+
+    if ANDROID_PYDANTIC_CORE_INDEX not in result:
+        injected.extend(["--extra-index-url", ANDROID_PYDANTIC_CORE_INDEX])
+
+    if injected:
+        result[insert_at:insert_at] = injected
+
+    return result
 def _selected_project_dependencies(data: Mapping[str, Any], extras: Sequence[str] = ()) -> list[str]:
     """Return dependencies needed for the base project plus selected extras.
 
@@ -1172,7 +1400,7 @@ def build_sync_command(
             commands.append([*uv_pip, "pexpect"])
         if info.framework == "pytest" and _uses_httpx_testclient(info.root) and not _declares_requirement(info.root, "httpx"):
             commands.append([*uv_pip, "httpx"])
-        return commands
+        return [termux_pydantic_pip_workaround(command) for command in commands]
     if info.manager == "poetry":
         if offline:
             raise PythonProjectError("Offline restore for Poetry is not enforceable by Devtool; refusing network-ambiguous execution.")
@@ -2165,7 +2393,9 @@ def _prepare_declared_validator_dependencies(root: Path, info: PythonProjectInfo
             install_target = f".[{','.join(args.extra)}]" if args.extra else "."
             command.extend(["-e", install_target])
         command.extend(dependencies)
-        proc = _run_capture(command, cwd=root, timeout=1200)
+        command = termux_pydantic_pip_workaround(command, root=root)
+        command = termux_pydantic_pip_workaround(command)
+        proc = _run_capture(command, cwd=root, env=termux_pydantic_env(os.environ), timeout=1200)
         if proc.returncode:
             raise PythonProjectError("Unable to prepare declared validator dependencies:\n" + proc.stdout.strip())
         marker.write_text(plan.fingerprint + "\n", encoding="utf-8")

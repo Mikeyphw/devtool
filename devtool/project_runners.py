@@ -1873,7 +1873,7 @@ class PythonRunner(ProjectRunner):
                 install_index = index
                 break
         packages = command[install_index + 1:] if install_index >= 0 else command
-        option_values = {"-c", "--constraint", "--python", "--project", "--index-url", "--extra-index-url", "--only-binary", "--no-binary"}
+        option_values = {"-c", "--constraint", "--python", "--project", "--index-url", "--extra-index-url", "--only-binary", "--no-binary", "--find-links", "-f", "--only-binary", "--no-binary", "--find-links", "-f"}
         filtered: list[str] = []
         skip_next = False
         for item in packages:
@@ -1896,7 +1896,7 @@ class PythonRunner(ProjectRunner):
         return "restore"
 
     def _restore_specs(self, config: ProjectConfig) -> list[CommandSpec]:
-        from .python_support import build_sync_command, PythonProjectError
+        from .python_support import build_sync_command, PythonProjectError, termux_pydantic_env, termux_pydantic_pip_workaround, termux_pydantic_env, termux_pydantic_pip_workaround
         compatibility = self._runtime_python_compatibility_spec(config)
         prefix = [compatibility] if compatibility is not None else []
         if config.restore_command:
@@ -1918,16 +1918,19 @@ class PythonRunner(ProjectRunner):
             )
         except PythonProjectError as exc:
             raise SystemExit(str(exc)) from exc
+        restore_env = termux_pydantic_env(self._env(config))
         specs: list[CommandSpec] = list(prefix)
         for command in commands:
+            command = termux_pydantic_pip_workaround(command)
             name = self._restore_phase_name(command)
             specs.append(CommandSpec(
-                name, command, env=self._env(config), cwd=str(self._root(config)),
+                name, command, env=restore_env, cwd=str(self._root(config)),
                 metadata=_tool_metadata(self.kind, self._root(config), manager=info.manager),
             ))
         validator_dependencies = self._list_option(config, "validator_dependencies")
         if validator_dependencies and info.manager == "venv":
-            specs.append(CommandSpec("validator-dependencies", self._module(config, "pip", "install", *validator_dependencies), env=self._env(config), cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config))))
+            validator_command = termux_pydantic_pip_workaround(self._module(config, "pip", "install", *validator_dependencies))
+            specs.append(CommandSpec("validator-dependencies", validator_command, env=restore_env, cwd=str(self._root(config)), metadata=_tool_metadata(self.kind, self._root(config))))
         snapshot = [
             *self._python_support_prefix(config), "environment-snapshot",
             str(self._root(config)), "--manager", info.manager, "--framework", info.framework,
