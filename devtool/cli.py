@@ -492,14 +492,14 @@ def build_parser() -> argparse.ArgumentParser:
         ("doctor", ["dr"]),
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
-        if name == "build":
+        if name in {"build", "package"}:
             cmd.add_argument(
                 "-o",
                 "--artifact-output-dir",
                 "--output-dir",
                 dest="artifact_output_dir",
                 default="",
-                help="Copy produced Android/Gradle artifacts here (default: .devtool/build-artifacts)",
+                help="Copy produced artifacts here (default: .devtool/build-artifacts)",
             )
             cmd.add_argument(
                 "-n",
@@ -507,7 +507,28 @@ def build_parser() -> argparse.ArgumentParser:
                 "--output-name",
                 dest="artifact_output_name",
                 default="",
-                help="Base filename for copied Android/Gradle artifacts",
+                help="Base filename for copied artifacts",
+            )
+            cmd.add_argument(
+                "--artifact-collision",
+                choices=["unique", "replace", "fail"],
+                default="",
+                help="Managed artifact collision policy (default: unique)",
+            )
+            verification = cmd.add_mutually_exclusive_group()
+            verification.add_argument(
+                "--verify-artifacts",
+                dest="verify_artifacts_cli",
+                action="store_true",
+                default=None,
+                help="Verify produced artifacts before registration/export",
+            )
+            verification.add_argument(
+                "--no-verify-artifacts",
+                dest="verify_artifacts_cli",
+                action="store_false",
+                default=None,
+                help="Collect artifacts without content verification",
             )
         if name == "doctor":
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
@@ -3013,19 +3034,25 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
         if aapt2_provider:
             build_tools["aapt2_provider"] = aapt2_provider
         android["build_tools"] = build_tools
-    if args.command in {"build", "b"} and config.kind in {"android", "gradle"}:
+    if args.command in {"build", "b", "package", "pkg"}:
         artifacts = config.runner_options.setdefault("artifacts", {})
         if not isinstance(artifacts, dict):
             artifacts = {}
             config.runner_options["artifacts"] = artifacts
         output_dir = str(getattr(args, "artifact_output_dir", "") or "").strip()
         output_name = str(getattr(args, "artifact_output_name", "") or "").strip()
+        collision = str(getattr(args, "artifact_collision", "") or "").strip()
+        verify_override = getattr(args, "verify_artifacts_cli", None)
         if output_dir:
             artifacts["output_directory"] = output_dir
         elif not (artifacts.get("output_directory") or artifacts.get("output_dir")):
             artifacts["output_directory"] = ".devtool/build-artifacts"
         if output_name:
             artifacts["output_name"] = output_name
+        if collision:
+            artifacts["collision"] = collision
+        if verify_override is not None:
+            artifacts["verify"] = bool(verify_override)
 
     passthrough = [str(value) for value in getattr(args, "_devtool_passthrough_args", []) if str(value)]
     if passthrough and config.kind in {"android", "gradle"}:

@@ -120,10 +120,12 @@ def test_artifact_registry_register_inspect_verify_and_prune(tmp_path: Path) -> 
     artifact.write_bytes(b"changed")
     assert verify_record(tmp_path, record["id"])["valid"] is False
 
+    # Seed an old timestamp directly as a fixture. Public registry writes are
+    # append-only and intentionally cannot rewrite an existing production event.
     data = load_registry(tmp_path)
     data["items"][0]["registered_at"] = "2000-01-01T00:00:00Z"
-    from devtool.artifact_registry import save_registry
-    save_registry(tmp_path, data)
+    registry_file = tmp_path / ".devtool" / "artifacts" / "registry.json"
+    registry_file.write_text(json.dumps(data), encoding="utf-8")
     result = prune_registry(tmp_path, older_than_days=30, delete_files=True)
     assert len(result["removed"]) == 1
     assert not artifact.exists()

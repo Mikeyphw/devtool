@@ -369,9 +369,13 @@ def collect_and_verify_android_artifacts(
     project_root: Path,
     started_at: float | None,
     tasks: Iterable[object] = (),
+    candidate_paths: Iterable[Path] = (),
+    register: bool = True,
+    verify: bool = True,
 ) -> tuple[dict[str, Any], list[Issue]]:
     since = float(started_at or 0.0)
-    discovered = discover_artifacts(project_root, since)
+    discovered = [Path(path).expanduser().resolve() for path in candidate_paths]
+    discovered.extend(discover_artifacts(project_root, since))
     used_cached_outputs = False
     output_dir = _configured_output_dir(config)
     if output_dir and output_dir.is_dir():
@@ -397,16 +401,31 @@ def collect_and_verify_android_artifacts(
     records: list[AndroidArtifactRecord] = []
     issues: list[Issue] = []
     for path in unique:
-        record, record_issues = verify_android_artifact(
-            path,
-            repo_root=config.repo_root,
-            project_root=project_root,
-            external_tools=external_tools,
-            external_required=external_required,
-            external_skip_reason=external_skip_reason,
-        )
-        records.append(record)
-        issues.extend(record_issues)
+        if verify:
+            record, record_issues = verify_android_artifact(
+                path,
+                repo_root=config.repo_root,
+                project_root=project_root,
+                external_tools=external_tools,
+                external_required=external_required,
+                external_skip_reason=external_skip_reason,
+            )
+            records.append(record)
+            issues.extend(record_issues)
+        else:
+            records.append(AndroidArtifactRecord(
+                path=relativize(config.repo_root, str(path)),
+                type=path.suffix.lower().lstrip(".") or "file",
+                variant=artifact_variant(path),
+                size=path.stat().st_size,
+                sha256=_sha256(path),
+                valid=path.stat().st_size > 0,
+                checks=[{
+                    "name": "exists_non_empty",
+                    "status": "passed" if path.stat().st_size > 0 else "failed",
+                    "detail": "artifact verification disabled",
+                }],
+            ))
 
     if required and not records:
         issues.append(Issue(
@@ -423,19 +442,20 @@ def collect_and_verify_android_artifacts(
         "required": required,
         "used_cached_outputs": used_cached_outputs,
         "external_verification": {
-            "mode": external_mode,
-            "executed": external_tools,
-            "required": external_required,
-            "skip_reason": external_skip_reason,
+            "mode": external_mode if verify else "disabled",
+            "executed": external_tools if verify else False,
+            "required": external_required if verify else False,
+            "skip_reason": external_skip_reason if verify else "artifact verification disabled",
         },
         "items": [item.as_dict() for item in records],
     }
-    try:
-        from .artifact_registry import register_android_metadata
-        registered = register_android_metadata(config.repo_root, metadata)
-        metadata["registry"] = {"registered": len(registered)}
-    except Exception as exc:
-        metadata["registry"] = {"registered": 0, "warning": str(exc)}
+    if register:
+        try:
+            from .artifact_registry import register_android_metadata
+            registered = register_android_metadata(config.repo_root, metadata)
+            metadata["registry"] = {"registered": len(registered)}
+        except Exception as exc:
+            metadata["registry"] = {"registered": 0, "warning": str(exc)}
     return metadata, issues
 
 

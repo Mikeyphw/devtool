@@ -20,9 +20,10 @@ Options:
   --out-dir PATH    Release-candidate output directory.
   -h, --help        Show this help.
 
-Android release builds require DEVTOOL_RELEASE_STORE_FILE,
-DEVTOOL_RELEASE_STORE_PASSWORD, DEVTOOL_RELEASE_KEY_ALIAS, and
-DEVTOOL_RELEASE_KEY_PASSWORD.
+The release candidate always includes the Python wheel/sdist, deterministic
+root bridge module, deterministic source archive, one release manifest, and
+SHA256SUMS/SHA256SUMS.all generated from that manifest. Desktop and Android
+assets are added when their flags are requested.
 USAGE
 }
 
@@ -39,17 +40,23 @@ while (($#)); do
 done
 
 mkdir -p "$out_dir"
+if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
+  SOURCE_DATE_EPOCH=$(git -C "$root" log -1 --format=%ct HEAD 2>/dev/null || true)
+  SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-315532800}
+fi
+export SOURCE_DATE_EPOCH
+
 qualify=(python3 "$root/tools/release-qualify.py" --root "$root" --output "$out_dir/qualification.json" --final)
 $core_only && qualify+=(--core-only)
 $require_native && qualify+=(--require-desktop --require-android)
 "${qualify[@]}"
 
-SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1784030400} \
-  python3 "$root/tools/build-release.py" --root "$root" --out-dir "$out_dir" --verify-reproducible
+# Build distributable Python artifacts before the final manifest is sealed.
+python3 -m build --outdir "$out_dir" "$root"
+"$root/build-root-bridge-module.sh" "$out_dir/devtool-root-bridge-module.zip"
 
 if $build_desktop; then
-  SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1784030400} OUT_DIR="$out_dir" \
-    "$root/desktop/gtk-control-center/package-deb.sh" --verify
+  OUT_DIR="$out_dir" "$root/desktop/gtk-control-center/package-deb.sh" --verify
 fi
 
 if $build_android; then
@@ -61,11 +68,8 @@ if $build_android; then
     --skip-system-deps --skip-sdk-install
 fi
 
-(
-  cd "$out_dir"
-  find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' -print0 \
-    | sort -z \
-    | xargs -0 sha256sum > SHA256SUMS.all.tmp
-  mv -f SHA256SUMS.all.tmp SHA256SUMS.all
-)
+# Seal all produced release assets into one authoritative manifest/checksum set.
+release_manifest=(python3 "$root/tools/build-release.py" --root "$root" --out-dir "$out_dir" --verify-reproducible)
+$build_android && release_manifest+=(--require-apk-signature)
+"${release_manifest[@]}"
 printf 'Release candidate ready: %s\n' "$out_dir"

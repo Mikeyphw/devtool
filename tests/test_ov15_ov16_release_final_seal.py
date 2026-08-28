@@ -20,7 +20,9 @@ def test_ov15_pack_repo_is_deterministic_checked_and_repository_relative() -> No
     assert "validate_repo_relative_input" in source
     assert '|*"/../"*|../*|*/..|' in source
     assert "LC_ALL=C sort -z" in source
-    assert '--mtime="@${SOURCE_DATE_EPOCH:-1784030400}"' in source
+    assert '--mtime="@${SOURCE_DATE_EPOCH}"' in source
+    assert 'git -C "$repo_root" log -1 --format=%ct HEAD' in source
+    assert 'SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-315532800}' in source
     assert "--owner=0 --group=0 --numeric-owner" in source
     assert "--manifest" in source
     assert 'sha256sum "$output_path" > "$output_path.sha256"' in source
@@ -36,17 +38,36 @@ def test_ov15_installer_state_stamps_are_atomic_private_and_fsynced() -> None:
 
 
 def test_ov16_build_release_manifest_is_hash_checked_and_deterministic(tmp_path: Path) -> None:
+    # Pre-seed two real distributable classes so the final release manifest is
+    # proven to be an authoritative multi-asset inventory, not source-only.
+    subprocess.run([str(ROOT / "build-root-bridge-module.sh"), str(tmp_path / "devtool-root-bridge-module.zip")], check=True, capture_output=True, text=True)
+    import zipfile
+    wheel = tmp_path / "devtool_demo-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("devtool_demo/__init__.py", b"")
+
     command = ["python3", str(ROOT / "tools" / "build-release.py"), "--root", str(ROOT), "--out-dir", str(tmp_path), "--verify-reproducible"]
     subprocess.run(command, check=True, capture_output=True, text=True)
     manifest = json.loads((tmp_path / "release-artifacts.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 2
     assert manifest["hash_algorithm"] == "sha256"
     assert len(manifest["source_tree_sha256"]) == 64
-    assert isinstance(manifest["artifacts"], list) and manifest["artifacts"]
+    assert isinstance(manifest["artifacts"], list) and len(manifest["artifacts"]) >= 3
     artifact = manifest["artifacts"][0]
     archive = tmp_path / artifact["path"]
     assert archive.is_file() and archive.stat().st_size > 0
+    names = {item["path"] for item in manifest["artifacts"]}
+    assert "devtool-root-bridge-module.zip" in names
+    assert wheel.name in names
+    for item in manifest["artifacts"]:
+        assert item["verification"]["status"] == "passed"
+        assert item["provenance"]["producer"]
+        assert item["provenance"]["git_head"] == manifest["git_head"]
+        assert item["provenance"]["source_date_epoch"] == manifest["source_date_epoch"]
+    root_module = next(item for item in manifest["artifacts"] if item["path"] == "devtool-root-bridge-module.zip")
+    assert root_module["provenance"]["producer"] == "build-root-bridge-module.sh"
     assert artifact["sha256"] in (tmp_path / "SHA256SUMS").read_text(encoding="utf-8")
+    assert (tmp_path / "SHA256SUMS.all").read_text(encoding="utf-8") == (tmp_path / "SHA256SUMS").read_text(encoding="utf-8")
     builder = read("tools/build-release.py")
     assert "verify_release_manifest(out_dir, manifest)" in builder
     assert "atomic_write_text(manifest_path" in builder
@@ -93,7 +114,10 @@ def test_ov16_release_qualification_tracks_git_invariants_and_final_cli() -> Non
     assert "--final" in cli
     assert "Evidence SHA-256" in cli
     assert '--output "$out_dir/qualification.json" --final' in make_release
-    assert "SHA256SUMS.all.tmp" in make_release
+    assert 'python3 -m build --outdir "$out_dir" "$root"' in make_release
+    assert 'build-root-bridge-module.sh" "$out_dir/devtool-root-bridge-module.zip"' in make_release
+    assert 'tools/build-release.py" --root "$root" --out-dir "$out_dir" --verify-reproducible' in make_release
+    assert "SHA256SUMS.all.tmp" not in make_release
 
 
 def test_ov16_ci_provisions_toolchains_signing_and_uploads_evidence() -> None:

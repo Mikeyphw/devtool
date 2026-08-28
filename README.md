@@ -620,6 +620,8 @@ The Linux Control Center can install an optional per-user clipboard monitoring s
 
 Project command planning is now runner-based. See [`docs/PROJECT_RUNNERS.md`](docs/PROJECT_RUNNERS.md) for the .NET, Python, and custom-command runner contract and capability model.
 
+Build and package outputs now use one verified artifact contract across first-class runners. Both `devtool build` and `devtool package` accept `-o/--output-dir`, `-n/--output-name`, `--artifact-collision {unique,replace,fail}`, and verification overrides. Successful package artifacts are hash-checked, copied atomically, and recorded as immutable production events in `.devtool/artifacts/registry.json`; failed commands never claim cached outputs as newly produced artifacts. Android release validation verifies its package phase through the same pipeline.
+
 
 ## Native frontend workflow Slice 2
 

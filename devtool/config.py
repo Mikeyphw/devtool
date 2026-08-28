@@ -1500,9 +1500,16 @@ build_directory = ".devtool/build/meson"
 # clean = ["clean"]
 
 [artifacts]
-# output_directory = "artifacts/android"
+# output_directory = ".devtool/build-artifacts"
+# output_name = "app"
+# collision = "unique" # unique | replace | fail
+# verify = true
 # required = true
-# external_verification = "auto" # auto | always | required | never
+# external_verification = "auto" # auto | always | required | never (Android/Gradle)
+# paths = ["dist/custom-package.zip"]
+# directories = ["dist/packages"]
+# patterns = ["*.zip", "*.tar.gz"]
+# recursive = true
 
 # [test_profiles.quick]
 # include = ["unit", "smoke"]

@@ -172,7 +172,7 @@ class DotnetRunnerCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(
             capabilities.supported(),
-            ("restore", "build", "test", "selective_tests", "validate", "run", "package", "clean"),
+            ("restore", "build", "test", "selective_tests", "validate", "run", "package", "clean", "collect_artifacts", "verify_artifacts"),
         )
         self.assertTrue(capabilities.selective_tests)
         self.assertFalse(capabilities.lint)

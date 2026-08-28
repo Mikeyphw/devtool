@@ -842,6 +842,32 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
             for result in results
         ],
     }
+    artifact_runs = [
+        result.metadata.get("artifacts")
+        for result in results
+        if isinstance(result.metadata, dict) and isinstance(result.metadata.get("artifacts"), dict)
+    ]
+    if artifact_runs:
+        artifact_items: list[dict] = []
+        registry_ids: list[str] = []
+        verification_requested = False
+        for run in artifact_runs:
+            artifact_items.extend(
+                dict(item) for item in run.get("items", []) if isinstance(item, dict)
+            )
+            registry = run.get("registry") if isinstance(run.get("registry"), dict) else {}
+            registry_ids.extend(str(value) for value in registry.get("ids", []) if str(value))
+            verification_requested = verification_requested or bool(run.get("verification_requested"))
+        data["artifacts"] = {
+            "schema_version": 1,
+            "count": len(artifact_items),
+            "valid": sum(1 for item in artifact_items if item.get("valid")),
+            "invalid": sum(1 for item in artifact_items if not item.get("valid")),
+            "verification_requested": verification_requested,
+            "registry_ids": registry_ids,
+            "items": artifact_items,
+        }
+
     if overlay_groups:
         data["overlays"] = [
             {

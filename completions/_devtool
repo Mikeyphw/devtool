@@ -503,10 +503,13 @@ _devtool() {
         test|t)
           _devtool_test_args
           ;;
-        build|b)
+        build|b|package|pkg)
           _arguments \
-            '(-o --artifact-output-dir --output-dir)'{-o,--artifact-output-dir,--output-dir}'[copy produced Android/Gradle artifacts here]:directory:_files -/' \
-            '(-n --artifact-output-name --output-name)'{-n,--artifact-output-name,--output-name}'[base filename for copied Android/Gradle artifacts]:name:' \
+            '(-o --artifact-output-dir --output-dir)'{-o,--artifact-output-dir,--output-dir}'[copy produced artifacts here]:directory:_files -/' \
+            '(-n --artifact-output-name --output-name)'{-n,--artifact-output-name,--output-name}'[base filename for copied artifacts]:name:' \
+            '--artifact-collision[managed artifact collision policy]:policy:(unique replace fail)' \
+            '(--no-verify-artifacts)--verify-artifacts[verify produced artifacts before registration/export]' \
+            '(--verify-artifacts)--no-verify-artifacts[collect artifacts without content verification]' \
             '*:runner args:'
           ;;
         validate|v|start-validation|sv|resume-validation|rv)

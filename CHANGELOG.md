@@ -1,6 +1,23 @@
 
 
 - Fix Python source-audit dependency ownership: project dependencies are enforced for package/project automation by default, while heterogeneous auxiliary scripts and captured pip console launchers are inventoried without being misclassified as package requirements; strict repository-wide enforcement remains opt-in via `[tool.devtool.python-audit] dependency-scope = "repository"`.
+## 2026-08-28 - Build/package promise audit seal
+
+- Closed post-delivery gaps found by an 18-item acceptance trace: immutable verification events, append-only stale-save protection, live JVM Gradle artifact routing, richer artifact summaries/JSON, promoted registry provenance, and verified release-asset provenance.
+- Added durable `fsync` before atomic artifact rename, isolated deterministic root-module staging, Maven reactor artifact discovery, plain Gradle tar verification, `.NET pack` variant coverage, and current-run-only Android wrapper artifact resolution.
+- Added `docs/BUILD_PACKAGE_PROMISE_AUDIT.md` with implementation and regression evidence for every promised build/package improvement.
+
+## 2026-08-28 - Build/package artifact pipeline overhaul
+
+- Unified build/package artifact collection, verification, managed copying, export, and immutable registry provenance across first-class runners.
+- Added first-class Android/JVM Gradle packaging, native `dotnet pack`, verified Node/Cargo/Go/Maven/CMake/Meson package outputs, and Python package registration after deep wheel/sdist verification.
+- Fixed Android release/resumable validation so the package phase actually collects and verifies required artifacts, including external verification policy.
+- Added cross-runner `build`/`package` artifact output naming, collision policy, and verification CLI controls plus declared artifact paths/directories for custom output layouts.
+- Replaced mutable path-keyed artifact history with schema-v2 append-only production events, process-safe registry locking, atomic durable writes, corruption preservation, and failed-build non-registration.
+- Added structured Gradle task artifact-output provenance, hash-checked atomic artifact copies, produced/reused/preexisting state, and detailed artifact summaries.
+- Made source/root-module release archives deterministic from `SOURCE_DATE_EPOCH` or Git commit time, and unified source/Python/root/desktop/Android release assets under one manifest and checksum set.
+- Updated Android wrapper packaging to consume Devtool's verified artifact registry instead of hard-coded Gradle output paths.
+
 ## 2026-08-25 - Android metaspace and Termux resource-control hotfix
 
 - Promote real Gradle metaspace OOMs to the primary fatal resource diagnostic.

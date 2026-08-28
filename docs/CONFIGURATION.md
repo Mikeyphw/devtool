@@ -134,6 +134,14 @@ build = ["..."]
 
 [artifacts]
 output_directory = "dist"
+output_name = "app"
+collision = "unique" # unique | replace | fail
+verify = true
+# Custom runners/layouts may declare concrete files or directories:
+# paths = ["dist/custom-package.zip"]
+# directories = ["dist/packages"]
+# patterns = ["*.zip", "*.tar.gz"]
+# recursive = true
 
 [test_profiles.medium]
 select = ["..."]

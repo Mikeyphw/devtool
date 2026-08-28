@@ -29,6 +29,23 @@ Each runner reports only features currently connected to devtool through `Runner
 
 A capability remains false until the corresponding behavior is implemented. Android/Gradle now exposes restore, build, local and instrumentation tests, selective tests, lint, full validation, cleanup, inspection, doctor diagnostics, artifact collection, and artifact verification. Python exposes manager-aware restore, selective tests, configured lint/type checks, PEP 517 packaging, and package verification.
 
+## Build and package artifact contract
+
+`build` and `package` share a runner-neutral artifact pipeline. `package` means a distributable output: the runner creates its native package, Devtool discovers the concrete output, verifies it, copies it atomically to the configured managed output directory when requested, and appends an immutable provenance event to `.devtool/artifacts/registry.json`. Python defers package registration until its wheel/sdist package check has completed. Android release validation uses the same verifier in its package phase instead of a separate artifact-only phase.
+
+Common controls are available on both commands:
+
+```bash
+devtool build   -o dist/build -n app --artifact-collision unique --verify-artifacts
+devtool package -o dist/release -n app --artifact-collision fail --verify-artifacts
+```
+
+Collision policy is `unique` by default; `replace` and `fail` are explicit alternatives. `--no-verify-artifacts` retains collection while disabling generic content verification when a workflow intentionally needs that behavior. For custom layouts, `[artifacts].paths` and `[artifacts].directories` declare outputs without adding runner-specific code; `[artifacts].patterns` and `[artifacts].recursive` refine directory discovery.
+
+Native package defaults are used where the ecosystem defines one: PEP 517/uv for Python, Android/Gradle package tasks, `dotnet pack`, npm/pnpm/Yarn/Bun package tarballs, `cargo package`, Go binary packaging, Maven `package`, CPack, and `meson dist`. Gradle structured events also report concrete archive outputs from each producing task so the registry can distinguish produced outputs from reused/up-to-date ones.
+
+The artifact registry is append-only at the production-event level. Rebuilding the same pathname creates a new record with its own run ID, Git commit, SHA-256, target, variant, producer task, verification state, and timestamp. Registry updates are locked and atomically replaced; malformed registry content is preserved as a corruption backup rather than silently discarded. Failed commands may expose outputs for diagnostics but never register those outputs as successful production events.
+
 ## Validation optimization
 
 `DotnetRunner` owns desktop/.NET validation optimization. When the build and

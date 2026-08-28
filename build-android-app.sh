@@ -9,40 +9,24 @@ usage() {
   cat <<EOF
 Usage: build-android-app.sh [-o OUTPUT_DIR] [-n OUTPUT_NAME]
 
-Build the devtool Android HUD APK with devtool build.
+Build the devtool Android HUD APK through Devtool's managed artifact pipeline.
 
 Options:
-  -o OUTPUT_DIR  Copy the APK to OUTPUT_DIR.
-  -n OUTPUT_NAME APK filename without the .apk suffix.
+  -o OUTPUT_DIR  Managed artifact destination (default: .devtool/build-artifacts).
+  -n OUTPUT_NAME APK filename base.
   -h             Show this help.
 EOF
 }
 
 while getopts ":o:n:h" opt; do
   case "$opt" in
-    o)
-      OUTPUT_DIR="$OPTARG"
-      ;;
-    n)
-      OUTPUT_NAME="$OPTARG"
-      ;;
-    h)
-      usage
-      exit 0
-      ;;
-    :)
-      echo "Option -$OPTARG requires an argument." >&2
-      usage >&2
-      exit 2
-      ;;
-    \?)
-      echo "Unknown option: -$OPTARG" >&2
-      usage >&2
-      exit 2
-      ;;
+    o) OUTPUT_DIR="$OPTARG" ;;
+    n) OUTPUT_NAME="$OPTARG" ;;
+    h) usage; exit 0 ;;
+    :) echo "Option -$OPTARG requires an argument." >&2; usage >&2; exit 2 ;;
+    \?) echo "Unknown option: -$OPTARG" >&2; usage >&2; exit 2 ;;
   esac
 done
-
 shift $((OPTIND - 1))
 if (($#)); then
   echo "Unexpected arguments: $*" >&2
@@ -50,19 +34,41 @@ if (($#)); then
   exit 2
 fi
 
+if [[ -z "$OUTPUT_DIR" ]]; then
+  OUTPUT_DIR="$SCRIPT_DIR/.devtool/build-artifacts"
+fi
+
 echo "==> $SCRIPT_DIR (android_hud)"
-devtool -r "$SCRIPT_DIR" --target android_hud build
+RUN_ID="android-hud-wrapper-$(date +%s)-$$"
+DEVTOOL_RUN_ID="$RUN_ID" devtool -r "$SCRIPT_DIR" --target android_hud build \
+  --output-dir "$OUTPUT_DIR" --output-name "$OUTPUT_NAME" --artifact-collision unique --verify-artifacts
 
-APK="$SCRIPT_DIR/android/devtool-live-hud/app/build/outputs/apk/debug/app-debug.apk"
-if [[ ! -f "$APK" ]]; then
-  echo "APK not found after build: $APK" >&2
-  exit 1
-fi
-
-if [[ -n "$OUTPUT_DIR" ]]; then
-  mkdir -p "$OUTPUT_DIR"
-  cp "$APK" "$OUTPUT_DIR/$OUTPUT_NAME.apk"
-  echo "APK copied to $OUTPUT_DIR/$OUTPUT_NAME.apk"
-else
-  echo "APK built at $APK"
-fi
+APK=$(python3 - "$SCRIPT_DIR" "$RUN_ID" <<'PY'
+from pathlib import Path
+import json
+import sys
+root = Path(sys.argv[1]).resolve()
+run_id = sys.argv[2]
+path = root / ".devtool" / "artifacts" / "registry.json"
+if not path.is_file():
+    raise SystemExit(1)
+data = json.loads(path.read_text(encoding="utf-8"))
+for item in data.get("items", []):
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    if item.get("valid") is False or str(item.get("type", "")).lower() != "apk":
+        continue
+    if str(item.get("run_id") or "") != run_id:
+        continue
+    if metadata.get("target") not in {None, "", "android_hud"}:
+        continue
+    candidate = Path(str(item.get("path") or ""))
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    if candidate.is_file():
+        print(candidate.resolve())
+        break
+else:
+    raise SystemExit(1)
+PY
+) || { echo "No verified APK was registered after the build." >&2; exit 1; }
+printf 'APK built and verified at %s\n' "$APK"

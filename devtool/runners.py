@@ -1987,59 +1987,72 @@ def run_specs(
                 issues.extend(collection.issues)
 
 
-        if bool(result_metadata.get("collect_artifacts") or result_metadata.get("verify_artifacts")) and config.kind in {"android", "gradle"}:
-            from .android_artifacts import collect_and_verify_android_artifacts
+        artifact_options = config.runner_options.get("artifacts", {})
+        artifact_options = dict(artifact_options) if isinstance(artifact_options, dict) else {}
+        if bool(
+            result_metadata.get("collect_artifacts")
+            or result_metadata.get("verify_artifacts")
+            or artifact_options.get("verify") is True
+            or artifact_options.get("paths")
+            or artifact_options.get("artifact_paths")
+            or artifact_options.get("directories")
+            or artifact_options.get("artifact_directories")
+        ):
+            from .artifact_pipeline import collect_and_process_artifacts, format_artifact_summary
             artifact_root = Path(str(result_metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
-            artifact_metadata, artifact_issues = collect_and_verify_android_artifacts(
+            artifact_metadata, artifact_issues = collect_and_process_artifacts(
                 config,
                 project_root=artifact_root,
                 started_at=started_wall,
-                tasks=result_metadata.get("gradle_tasks") or (),
+                spec_name=spec.name,
+                spec_metadata=dict(spec.metadata),
+                result_metadata=result_metadata,
+                process_output=process_output,
+                returncode=returncode,
             )
-            termux_options = config.runner_options.get("termux", {})
-            termux_options = dict(termux_options) if isinstance(termux_options, dict) else {}
-            termux_artifacts = termux_options.get("artifacts", {}) if isinstance(termux_options.get("artifacts", {}), dict) else {}
-            export_dir = str(termux_artifacts.get("export_dir") or "").strip()
-            artifact_errors = [issue for issue in artifact_issues if issue.severity == "error"]
-            if export_dir and returncode == 0 and not artifact_errors:
-                from .termux_runtime import export_artifacts
-                valid_paths = [
-                    item.get("path", "")
-                    for item in artifact_metadata.get("items", [])
-                    if isinstance(item, dict) and item.get("valid") and item.get("path")
-                ]
-                exported = export_artifacts(valid_paths, export_dir)
-                artifact_metadata["exported"] = [str(path) for path in exported]
-                artifact_metadata["export_directory"] = str(Path(export_dir).expanduser())
-            elif export_dir:
-                artifact_metadata["exported"] = []
-                artifact_metadata["export_skipped_reason"] = (
-                    "command failed before artifact export" if returncode != 0
-                    else "artifact verification reported errors"
-                )
-            result_metadata["artifacts"] = artifact_metadata
-            issues.extend(artifact_issues)
-            output = (output.rstrip() + "\n" if output else "") + (
-                "Devtool artifacts: "
-                f"{artifact_metadata.get('valid', 0)} valid, "
-                f"{artifact_metadata.get('invalid', 0)} invalid, "
-                f"{artifact_metadata.get('count', 0)} total.\n"
-            )
-            if artifact_issues:
-                failures = [issue for issue in artifact_issues if issue.severity == "error"]
-                warnings = [issue for issue in artifact_issues if issue.severity == "warning"]
-                if failures:
-                    output += "Devtool artifact verification failures:\n"
-                    for issue in failures[:8]:
-                        output += f"- {issue.file} [{issue.code}]: {issue.message}\n"
-                    if len(failures) > 8:
-                        output += f"- ... and {len(failures) - 8} more failure(s).\n"
-                if warnings:
-                    output += "Devtool artifact verification notices:\n"
-                    for issue in warnings[:8]:
-                        output += f"- {issue.file} [{issue.code}]: {issue.message}\n"
-                    if len(warnings) > 8:
-                        output += f"- ... and {len(warnings) - 8} more notice(s).\n"
+            if artifact_metadata:
+                termux_options = config.runner_options.get("termux", {})
+                termux_options = dict(termux_options) if isinstance(termux_options, dict) else {}
+                termux_artifacts = termux_options.get("artifacts", {}) if isinstance(termux_options.get("artifacts", {}), dict) else {}
+                export_dir = str(termux_artifacts.get("export_dir") or "").strip()
+                artifact_errors = [issue for issue in artifact_issues if issue.severity == "error"]
+                if export_dir and returncode == 0 and not artifact_errors:
+                    from .termux_runtime import export_artifacts
+                    valid_paths = []
+                    for item in artifact_metadata.get("items", []):
+                        if not isinstance(item, dict) or not item.get("valid") or not item.get("path"):
+                            continue
+                        path = Path(str(item["path"])).expanduser()
+                        if not path.is_absolute():
+                            path = config.repo_root / path
+                        valid_paths.append(path.resolve())
+                    exported = export_artifacts(valid_paths, export_dir)
+                    artifact_metadata["exported"] = [str(path) for path in exported]
+                    artifact_metadata["export_directory"] = str(Path(export_dir).expanduser())
+                elif export_dir:
+                    artifact_metadata["exported"] = []
+                    artifact_metadata["export_skipped_reason"] = (
+                        "command failed before artifact export" if returncode != 0
+                        else "artifact verification reported errors"
+                    )
+                result_metadata["artifacts"] = artifact_metadata
+                issues.extend(artifact_issues)
+                output = (output.rstrip() + "\n" if output else "") + format_artifact_summary(artifact_metadata)
+                if artifact_issues:
+                    failures = [issue for issue in artifact_issues if issue.severity == "error"]
+                    warnings = [issue for issue in artifact_issues if issue.severity == "warning"]
+                    if failures:
+                        output += "Devtool artifact verification failures:\n"
+                        for issue in failures[:8]:
+                            output += f"- {issue.file} [{issue.code}]: {issue.message}\n"
+                        if len(failures) > 8:
+                            output += f"- ... and {len(failures) - 8} more failure(s).\n"
+                    if warnings:
+                        output += "Devtool artifact verification notices:\n"
+                        for issue in warnings[:8]:
+                            output += f"- {issue.file} [{issue.code}]: {issue.message}\n"
+                        if len(warnings) > 8:
+                            output += f"- ... and {len(warnings) - 8} more notice(s).\n"
         # Persist every structured diagnostic discovered
         # from stdout and report parsers into the authoritative command
         # output/log. This deliberately has no finding-count cap: tools such

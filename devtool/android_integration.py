@@ -918,6 +918,7 @@ def android_builder_arguments_for_tasks(
         output_name = artifacts.get("output_name")
         _append_option(argv, "--output-dir", output_dir)
         _append_option(argv, "--output-name", output_name)
+        _append_non_default_option(argv, "--artifact-collision", artifacts.get("collision", "unique"))
         if bool(artifacts.get("scan", True)) is False:
             argv.append("--no-artifact-scan")
 

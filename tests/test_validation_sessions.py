@@ -135,7 +135,7 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertEqual([phase.status for phase in session.phases], ["passed", "pending", "passed"])
             self.assertEqual(session.invalidated_from, "unit-test")
 
-    def test_android_resumable_validation_has_no_artifact_phase_or_artifact_flags(self) -> None:
+    def test_android_resumable_validation_verifies_artifacts_in_package_phase(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_android_project(root)
@@ -143,10 +143,16 @@ class ResumableValidationTests(unittest.TestCase):
             specs = AndroidGradleRunner().build_validation_specs(config)
             phases = [str(spec.metadata.get("validation_phase_name") or "") for spec in specs]
             self.assertNotIn("artifact-check", phases)
+            package = next(spec for spec in specs if spec.metadata.get("validation_phase_name") == "package")
+            self.assertTrue(package.metadata.get("collect_artifacts"))
+            self.assertTrue(package.metadata.get("verify_artifacts"))
+            self.assertTrue(package.metadata.get("artifact_required"))
+            self.assertNotIn("--no-artifact-scan", package.argv)
             for spec in specs:
+                if spec is package:
+                    continue
                 self.assertFalse(spec.metadata.get("collect_artifacts"))
                 self.assertFalse(spec.metadata.get("verify_artifacts"))
-                self.assertNotIn("--scan-artifacts", spec.argv)
 
     def test_parser_exposes_complete_sequential_controls(self) -> None:
         args = build_parser().parse_args([

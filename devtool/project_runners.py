@@ -390,13 +390,13 @@ def apply_dotnet_variant_to_spec(config: ProjectConfig, spec: CommandSpec) -> Co
 
     argv = list(spec.argv)
     metadata = dict(spec.metadata)
-    for verb in ("restore", "build", "test", "run", "clean"):
+    for verb in ("restore", "build", "test", "run", "clean", "pack"):
         verb_index = _dotnet_verb_index(argv, verb)
         if verb_index is None:
             continue
         if values.get("runtime"):
             argv = _dotnet_insert_option(argv, verb_index, ("-r", "--runtime"), "-r", values["runtime"])
-        if verb in {"build", "test", "run", "clean"} and values.get("configuration"):
+        if verb in {"build", "test", "run", "clean", "pack"} and values.get("configuration"):
             argv = _dotnet_insert_option(argv, verb_index, ("-c", "--configuration"), "-c", values["configuration"])
         if verb in {"build", "test", "run"} and values.get("framework"):
             argv = _dotnet_insert_option(argv, verb_index, ("-f", "--framework"), "-f", values["framework"])
@@ -425,6 +425,8 @@ class DotnetRunner(ProjectRunner):
         clean=True,
         run=True,
         package=True,
+        collect_artifacts=True,
+        verify_artifacts=True,
     )
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
@@ -440,6 +442,7 @@ class DotnetRunner(ProjectRunner):
             "test",
             "wine-test",
             "run",
+            "package",
         }:
             raise SystemExit(
                 "No dotnet target resolved. Use --target, --solution, --project, or configure .devtool.toml."
@@ -471,10 +474,17 @@ class DotnetRunner(ProjectRunner):
             return [apply_dotnet_variant_to_spec(config, CommandSpec("clean", ["dotnet", "clean", build_target], env=env))]
         if action == "package":
             if config.package_command:
-                return [CommandSpec("package", shlex.split(config.package_command), env=env)]
-            if (config.repo_root / "scripts" / "package-release.sh").exists():
-                return [CommandSpec("package", ["bash", "./scripts/package-release.sh"], env=env)]
-            raise SystemExit("No package command configured.")
+                spec = CommandSpec(
+                    "package", shlex.split(config.package_command), env=env, cwd=str(config.repo_root),
+                    metadata=_tool_metadata(self.kind, config.repo_root, collect_artifacts=True, verify_artifacts=True, artifact_required=True, explicit=True),
+                )
+                return [spec]
+            target = build_target or restore_target
+            spec = CommandSpec(
+                "package", ["dotnet", "pack", target], env=env,
+                metadata=_tool_metadata(self.kind, config.repo_root, collect_artifacts=True, verify_artifacts=True, artifact_required=True),
+            )
+            return [apply_dotnet_variant_to_spec(config, spec)]
         raise SystemExit(f"Unsupported action for dotnet: {action}")
 
     @staticmethod
@@ -642,6 +652,7 @@ class AndroidGradleRunner(ProjectRunner):
         selective_tests=True,
         validate=True,
         lint=True,
+        package=True,
         clean=True,
         inspect=True,
         doctor=True,
@@ -659,7 +670,7 @@ class AndroidGradleRunner(ProjectRunner):
         return android_doctor_rows(config)
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
-        from .android_integration import android_builder_arguments, android_project_root, configured_tasks, plan_android_command
+        from .android_integration import android_builder_arguments, android_builder_arguments_for_tasks, android_project_root, configured_tasks, plan_android_command
         from .test_selection import apply_test_selection, resolve_test_selection
 
         selection = resolve_test_selection(config) if action in {"test", "instrumentation"} else None
@@ -735,6 +746,7 @@ class AndroidGradleRunner(ProjectRunner):
             "restore": config.restore_command,
             "build": config.build_command,
             "test": config.test_command,
+            "package": config.package_command,
         }.get(action, "")
         if explicit:
             specs = _maybe_explicit(action, explicit, _optimized_env(config, self.kind))
@@ -744,19 +756,31 @@ class AndroidGradleRunner(ProjectRunner):
                     "project_type": self.kind,
                     "progress_parser": "gradle",
                     "report_parser": "gradle-junit" if action == "test" else "",
+                    "collect_artifacts": action in {"build", "package"},
+                    "verify_artifacts": action in {"build", "package"},
+                    "artifact_required": action == "package",
                 })
             return [apply_test_selection(config, spec) for spec in specs] if action == "test" else specs
 
-        if action not in {"restore", "build", "test", "lint", "clean"}:
+        if action not in {"restore", "build", "test", "lint", "package", "clean"}:
             raise SystemExit(f"Unsupported Android/Gradle action: {action}")
 
         tasks = configured_tasks(config, action)
+        if action == "package" and not tasks:
+            tasks = configured_tasks(config, "build")
         if action == "lint" and not tasks:
             raise SystemExit(
                 "No Gradle lint task was discovered. Configure [tasks].lint for this target."
             )
-        plan = plan_android_command(config, action)
-        argv = [*plan.argv_prefix, *android_builder_arguments(config, action)]
+        plan_action = "build" if action == "package" else action
+        plan = plan_android_command(config, plan_action)
+        if action == "package":
+            argv = [
+                *plan.argv_prefix,
+                *android_builder_arguments_for_tasks(config, tasks, scan_artifacts=True),
+            ]
+        else:
+            argv = [*plan.argv_prefix, *android_builder_arguments(config, action)]
         report_parser = ""
         if action == "test":
             report_parser = "gradle-junit"
@@ -771,11 +795,12 @@ class AndroidGradleRunner(ProjectRunner):
                 metadata={
                     "runner": self.kind,
                     "project_type": self.kind,
-                    "gradle_tasks": list(plan.default_tasks),
+                    "gradle_tasks": list(tasks if action == "package" else plan.default_tasks),
                     "android_builder": str(plan.builder),
                     "project_root": str(plan.project_root),
-                    "collect_artifacts": action == "build",
-                    "verify_artifacts": action == "build",
+                    "collect_artifacts": action in {"build", "package"},
+                    "verify_artifacts": action in {"build", "package"},
+                    "artifact_required": action == "package",
                     "progress_parser": "gradle",
                     "report_parser": report_parser,
                 },
@@ -857,8 +882,9 @@ class AndroidGradleRunner(ProjectRunner):
                 "gradle_tasks": unique_tasks,
                 "android_builder": str(plan.builder),
                 "project_root": str(project_root),
-                "collect_artifacts": False,
-                "verify_artifacts": False,
+                "collect_artifacts": phase == "package",
+                "verify_artifacts": phase == "package",
+                "artifact_required": phase == "package",
                 "progress_parser": "gradle",
                 "report_parser": parsers[0] if parsers else "",
                 "report_parsers": parsers,
@@ -937,7 +963,7 @@ class AndroidGradleRunner(ProjectRunner):
             specs.append(gradle_phase("unit-test", phase_tasks("unit-test", configured_tasks(config, "test")), report_parsers=["gradle-junit"]))
         if not skip_build and phase_enabled("package"):
             package_tasks = phase_tasks("package", configured_tasks(config, "build"))
-            specs.append(gradle_phase("package", package_tasks, scan_artifacts=False))
+            specs.append(gradle_phase("package", package_tasks, scan_artifacts=True))
         if lint_tasks and phase_enabled("lint"):
             specs.append(gradle_phase("lint", phase_tasks("lint", lint_tasks), report_parsers=["android-lint"]))
 
@@ -1168,8 +1194,9 @@ class AndroidGradleRunner(ProjectRunner):
                     "gradle_tasks": unique_tasks,
                     "android_builder": str(plan.builder),
                     "project_root": str(android_project_root(config)),
-                    "collect_artifacts": False,
-                    "verify_artifacts": False,
+                    "collect_artifacts": "build" in components or validation_phase == "package",
+                    "verify_artifacts": "build" in components or validation_phase == "package",
+                    "artifact_required": validation_phase == "package",
                     "progress_parser": "gradle",
                     "report_parser": report_parsers[0] if report_parsers else "",
                     "report_parsers": report_parsers,
@@ -1202,7 +1229,7 @@ class AndroidGradleRunner(ProjectRunner):
                         *android_builder_arguments_for_tasks(
                             config,
                             unique_tasks,
-                            scan_artifacts=False,
+                            scan_artifacts=("build" in components or validation_phase == "package"),
                             validation=True,
                             validation_phase=validation_phase,
                         ),
@@ -1274,7 +1301,7 @@ class JvmGradleRunner(ProjectRunner):
     display_name = "Gradle/JVM"
     capabilities = RunnerCapabilities(
         restore=True, build=True, test=True, selective_tests=True, validate=True,
-        lint=True, clean=True, collect_artifacts=True, verify_artifacts=True,
+        lint=True, package=True, clean=True, collect_artifacts=True, verify_artifacts=True,
     )
 
     def _root(self, config: ProjectConfig) -> Path:
@@ -1295,19 +1322,20 @@ class JvmGradleRunner(ProjectRunner):
             values = []
         if values:
             return values
-        defaults = {"restore": ["help"], "build": ["build"], "test": ["test"], "clean": ["clean"]}
+        defaults = {"restore": ["help"], "build": ["build"], "test": ["test"], "package": ["assemble"], "clean": ["clean"]}
         return list(defaults.get(action, []))
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
         from .test_selection import apply_test_selection
         explicit = {
             "restore": config.restore_command, "build": config.build_command, "test": config.test_command,
+            "package": config.package_command,
         }.get(action, "")
         env = _optimized_env(config, self.kind)
         if explicit:
             specs = _maybe_explicit(action, explicit, env)
         else:
-            if action not in {"restore", "build", "test", "lint", "clean"}:
+            if action not in {"restore", "build", "test", "lint", "package", "clean"}:
                 raise SystemExit(f"Unsupported JVM/Gradle action: {action}")
             tasks = self._tasks(config, action)
             if not tasks:
@@ -1315,16 +1343,35 @@ class JvmGradleRunner(ProjectRunner):
             root = self._root(config)
             wrapper = root / ("gradlew.bat" if os.name == "nt" else "gradlew")
             gradle = str(wrapper) if wrapper.is_file() else (shutil.which("gradle") or "gradle")
+            argv = [gradle, *tasks]
+            gradle_options = config.runner_options.get("gradle", {})
+            gradle_options = dict(gradle_options) if isinstance(gradle_options, dict) else {}
+            structured_events = bool(gradle_options.get("structured_events", True))
+            if structured_events:
+                # Plain JVM Gradle participates in the same exact-output
+                # provenance contract as Android builds.  The generic Gradle
+                # init script reports task outputs and UP-TO-DATE state.
+                from .android_integration import stage_gradle_init_script
+                argv.extend(["--init-script", str(stage_gradle_init_script())])
+                if "--configuration-cache" not in argv and "--no-configuration-cache" not in argv:
+                    argv.append("--no-configuration-cache")
             specs = [CommandSpec(
-                action, [gradle, *tasks], env=env, cwd=str(root),
+                action, argv, env=env, cwd=str(root),
                 metadata=_tool_metadata(
                     self.kind, root, gradle_tasks=list(tasks), gradle_direct=True,
+                    progress_parser="gradle" if structured_events else "generic",
                     report_parser="gradle-junit" if action == "test" else "",
-                    collect_artifacts=action == "build", verify_artifacts=action == "build",
+                    collect_artifacts=action in {"build", "package"}, verify_artifacts=action in {"build", "package"},
+                    artifact_required=action == "package",
                 ),
             )]
         for spec in specs:
-            spec.metadata.update({"runner": self.kind, "project_type": "gradle", "gradle_direct": True})
+            spec.metadata.update({
+                "runner": self.kind, "project_type": "gradle", "gradle_direct": True,
+                "collect_artifacts": action in {"build", "package"},
+                "verify_artifacts": action in {"build", "package"},
+                "artifact_required": action == "package",
+            })
         return [apply_test_selection(config, spec) for spec in specs] if action == "test" else specs
 
     def build_validation_specs(
@@ -2172,7 +2219,7 @@ class PythonRunner(ProjectRunner):
             return self._restore_specs(config)
         if action == "build":
             if config.build_command:
-                return [CommandSpec("build", shlex.split(config.build_command), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+                return [CommandSpec("build", shlex.split(config.build_command), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=True, verify_artifacts=True))]
             outdir = root / "dist"
             specs: list[CommandSpec] = []
             if bool(options.get("fresh_dist", True)):
@@ -2248,7 +2295,13 @@ class PythonRunner(ProjectRunner):
                 argv.extend(["--import-module", str(module)])
             for script in package.get("console_scripts", []) if isinstance(package.get("console_scripts"), list) else []:
                 argv.extend(["--console-script", str(script)])
-            return [CommandSpec("package-check", argv, env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, report_parser="python-package", package_report=str(report)))]
+            return [CommandSpec(
+                "package-check", argv, env=self._env(config), cwd=str(root),
+                metadata=_tool_metadata(
+                    self.kind, root, report_parser="python-package", package_report=str(report),
+                    collect_artifacts=True, verify_artifacts=True, artifact_required=True,
+                ),
+            )]
         if action == "clean":
             categories = self._list_option(config, "clean_categories") or ["artifacts", "caches"]
             argv = [*self._python_support_prefix(config), "clean", str(root)]
@@ -2265,8 +2318,24 @@ class PythonRunner(ProjectRunner):
             raise SystemExit("No Python run target configured. Set run_command, run_module, or run_target.")
         if action == "package":
             if config.package_command:
-                return [CommandSpec("package", shlex.split(config.package_command), env=self._env(config), cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
-            return self.build_specs(config, "build")
+                return [CommandSpec(
+                    "package", shlex.split(config.package_command), env=self._env(config), cwd=str(root),
+                    metadata=_tool_metadata(
+                        self.kind, root, explicit=True, collect_artifacts=True,
+                        verify_artifacts=True, artifact_required=True,
+                    ),
+                )]
+            build_specs = self.build_specs(config, "build")
+            # Package is a verified distribution contract. Build artifacts are
+            # collected for diagnostics, but immutable registration is deferred
+            # until package-check has validated wheel/sdist metadata and clean
+            # installation semantics.
+            for spec in build_specs:
+                if spec.name == "build":
+                    spec.metadata["register_artifacts"] = False
+                    spec.metadata["copy_artifacts"] = False
+                    spec.metadata["artifact_stage"] = "package-build"
+            return [*build_specs, *self.build_specs(config, "package-check")]
         raise SystemExit(f"Unsupported action for python: {action}")
 
     def build_validation_specs(
@@ -2352,7 +2421,12 @@ class PythonRunner(ProjectRunner):
                             implicit_environment_bootstrap=True,
                         ),
                     ))
-            specs.extend(self.build_specs(config, "build"))
+            package_build_specs = self.build_specs(config, "build")
+            for spec in package_build_specs:
+                if spec.name == "build":
+                    spec.metadata["register_artifacts"] = False
+                    spec.metadata["artifact_stage"] = "validation-package-build"
+            specs.extend(package_build_specs)
             specs.extend(self.build_specs(config, "package-check"))
             reproducible = self._reproducible_spec(config)
             if reproducible is not None:
@@ -2434,6 +2508,8 @@ class NodeRunner(ProjectRunner):
             clean="clean" in scripts,
             inspect=True,
             doctor=True,
+            collect_artifacts=True,
+            verify_artifacts=True,
         )
 
     def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
@@ -2462,7 +2538,14 @@ class NodeRunner(ProjectRunner):
             "run": config.run_command, "package": config.package_command,
         }.get(action, "")
         if explicit:
-            spec = CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=self._metadata(config, root, explicit=True))
+            spec = CommandSpec(
+                action, shlex.split(explicit), env=env, cwd=str(root),
+                metadata=self._metadata(
+                    config, root, explicit=True,
+                    collect_artifacts=action == "package", verify_artifacts=action == "package",
+                    artifact_required=action == "package",
+                ),
+            )
             if action in {"test", "wine-test"}:
                 from .test_selection import apply_test_selection
                 spec = apply_test_selection(config, spec)
@@ -2511,8 +2594,16 @@ class NodeRunner(ProjectRunner):
                 raise SystemExit("package.json has no start/dev script and no run_command is configured.")
             return [CommandSpec("run", self._script_argv(config, script), env=env, cwd=str(root), metadata=self._metadata(config, root, node_script=script))]
         if action == "package":
-            argv = [manager, "pack"] if manager != "yarn" else ["yarn", "pack"]
-            return [CommandSpec("package", argv, env=env, cwd=str(root), metadata=self._metadata(config, root))]
+            if manager == "bun":
+                argv = ["bun", "pm", "pack", "--quiet"]
+            else:
+                argv = [manager, "pack"]
+            if manager == "npm":
+                argv.append("--json")
+            return [CommandSpec(
+                "package", argv, env=env, cwd=str(root),
+                metadata=self._metadata(config, root, collect_artifacts=True, verify_artifacts=True, artifact_required=True),
+            )]
         raise SystemExit(f"Unsupported Node action: {action}")
 
     def build_validation_specs(self, config: ProjectConfig, *, wine: bool = False, skip_restore: bool = False, skip_build: bool = False, skip_test: bool = False) -> list[CommandSpec]:
@@ -2533,7 +2624,7 @@ class NodeRunner(ProjectRunner):
 class RustRunner(ProjectRunner):
     kind = "rust"
     display_name = "Rust/Cargo"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True, collect_artifacts=True, verify_artifacts=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -2562,7 +2653,10 @@ class RustRunner(ProjectRunner):
         workers = resolve_build_policy(config, self.kind).max_workers
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
         if explicit:
-            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+            return [CommandSpec(
+                action, shlex.split(explicit), env=env, cwd=str(root),
+                metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+            )]
         base = self._base(config)
         common = self._common(config)
         if action == "restore":
@@ -2581,7 +2675,10 @@ class RustRunner(ProjectRunner):
             argv = [*base, "clean"]
         else:
             raise SystemExit(f"Unsupported Rust action: {action}")
-        spec = CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))
+        spec = CommandSpec(
+            action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean",
+            metadata=_tool_metadata(self.kind, root, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+        )
         if action in {"test", "wine-test"}:
             from .test_selection import apply_test_selection
             spec = apply_test_selection(config, spec)
@@ -2621,7 +2718,7 @@ class RustRunner(ProjectRunner):
 class GoRunner(ProjectRunner):
     kind = "go"
     display_name = "Go"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, lint=True, run=True, package=True, clean=True, inspect=True, doctor=True, collect_artifacts=True, verify_artifacts=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -2644,7 +2741,10 @@ class GoRunner(ProjectRunner):
         workers = resolve_build_policy(config, self.kind).max_workers
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "run": config.run_command, "package": config.package_command}.get(action, "")
         if explicit:
-            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+            return [CommandSpec(
+                action, shlex.split(explicit), env=env, cwd=str(root),
+                metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+            )]
         packages = self._packages(config)
         if action == "restore":
             argv = ["go", "mod", "download"]
@@ -2658,12 +2758,18 @@ class GoRunner(ProjectRunner):
             target = str(self._options(config).get("run_target") or config.run_target or ".")
             argv = ["go", "run", target]
         elif action == "package":
-            argv = ["go", "build", "-p", str(workers), *packages]
+            package_dir = root / ".devtool" / "package" / "go"
+            argv = ["go", "build", "-p", str(workers), "-o", str(package_dir) + os.sep, *packages]
         elif action == "clean":
             argv = ["go", "clean", "-cache", "-testcache"]
         else:
             raise SystemExit(f"Unsupported Go action: {action}")
-        spec = CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))
+        metadata = _tool_metadata(
+            self.kind, root, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package",
+        )
+        if action == "package":
+            metadata["artifact_directories"] = [str(root / ".devtool" / "package" / "go")]
+        spec = CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=metadata)
         if action in {"test", "wine-test"}:
             from .test_selection import apply_test_selection
             spec = apply_test_selection(config, spec)
@@ -2703,7 +2809,7 @@ class GoRunner(ProjectRunner):
 class MavenRunner(ProjectRunner):
     kind = "maven"
     display_name = "Maven"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True, collect_artifacts=True, verify_artifacts=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -2730,7 +2836,10 @@ class MavenRunner(ProjectRunner):
         env = _optimized_env(config, self.kind)
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "package": config.package_command}.get(action, "")
         if explicit:
-            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+            return [CommandSpec(
+                action, shlex.split(explicit), env=env, cwd=str(root),
+                metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+            )]
         goals = {
             "restore": ["dependency:go-offline"], "build": ["package", "-DskipTests"],
             "test": ["test"], "wine-test": ["test"], "package": ["package"],
@@ -2738,7 +2847,10 @@ class MavenRunner(ProjectRunner):
         }.get(action)
         if goals is None:
             raise SystemExit(f"Unsupported Maven action: {action}")
-        spec = CommandSpec(action.replace("wine-", ""), [*self._base(config), *goals], env=env, cwd=str(root), destructive=action == "clean", metadata=_tool_metadata(self.kind, root))
+        spec = CommandSpec(
+            action.replace("wine-", ""), [*self._base(config), *goals], env=env, cwd=str(root), destructive=action == "clean",
+            metadata=_tool_metadata(self.kind, root, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+        )
         if action in {"test", "wine-test", "verify"}:
             from .test_selection import apply_test_selection
             spec = apply_test_selection(config, spec)
@@ -2777,7 +2889,7 @@ class MavenRunner(ProjectRunner):
 class CMakeRunner(ProjectRunner):
     kind = "cmake"
     display_name = "CMake"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True, collect_artifacts=True, verify_artifacts=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -2875,7 +2987,10 @@ class CMakeRunner(ProjectRunner):
         workers = resolve_build_policy(config, self.kind).max_workers
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "package": config.package_command}.get(action, "")
         if explicit:
-            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+            return [CommandSpec(
+                action, shlex.split(explicit), env=env, cwd=str(root),
+                metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+            )]
         configured = (build_dir / "CMakeCache.txt").exists()
         if action == "restore":
             return [self._configure_spec(config)]
@@ -2892,7 +3007,17 @@ class CMakeRunner(ProjectRunner):
             from .test_selection import apply_test_selection
             return [apply_test_selection(config, spec)]
         if action == "package":
-            return [CommandSpec("package", [self._cmake_command(config, "cpack"), "--config", str(build_dir / "CPackConfig.cmake")], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            package_dir = root / ".devtool" / "package" / "cmake"
+            specs = [] if configured else [self._configure_spec(config)]
+            specs.append(CommandSpec(
+                "package", [self._cmake_command(config, "cpack"), "--config", str(build_dir / "CPackConfig.cmake"), "-B", str(package_dir)],
+                env=env, cwd=str(root),
+                metadata=_tool_metadata(
+                    self.kind, root, build_directory=str(build_dir), artifact_directory=str(package_dir),
+                    collect_artifacts=True, verify_artifacts=True, artifact_required=True,
+                ),
+            ))
+            return specs
         if action == "clean":
             return [CommandSpec("clean", [self._cmake_command(config), "--build", str(build_dir), "--target", "clean", "--parallel", str(workers)], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
         raise SystemExit(f"Unsupported CMake action: {action}")
@@ -2921,7 +3046,7 @@ class CMakeRunner(ProjectRunner):
 class MesonRunner(ProjectRunner):
     kind = "meson"
     display_name = "Meson"
-    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True)
+    capabilities = RunnerCapabilities(restore=True, build=True, test=True, selective_tests=True, validate=True, run=False, package=True, clean=True, inspect=True, doctor=True, collect_artifacts=True, verify_artifacts=True)
 
     def _root(self, config: ProjectConfig) -> Path:
         return _project_root(config)
@@ -2956,7 +3081,10 @@ class MesonRunner(ProjectRunner):
         workers = resolve_build_policy(config, self.kind).max_workers
         explicit = {"restore": config.restore_command, "build": config.build_command, "test": config.test_command, "wine-test": config.test_command, "package": config.package_command}.get(action, "")
         if explicit:
-            return [CommandSpec(action, shlex.split(explicit), env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, explicit=True))]
+            return [CommandSpec(
+                action, shlex.split(explicit), env=env, cwd=str(root),
+                metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
+            )]
         if action == "restore":
             return [self._setup(config)]
         if action == "build":
@@ -2968,7 +3096,15 @@ class MesonRunner(ProjectRunner):
             from .test_selection import apply_test_selection
             return [apply_test_selection(config, spec)]
         if action == "package":
-            return [CommandSpec("package", ["meson", "dist", "-C", str(build_dir), "--no-tests"], env=env, cwd=str(root), metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
+            specs = [] if self._configured(config) else [self._setup(config)]
+            specs.append(CommandSpec(
+                "package", ["meson", "dist", "-C", str(build_dir), "--no-tests"], env=env, cwd=str(root),
+                metadata=_tool_metadata(
+                    self.kind, root, build_directory=str(build_dir), collect_artifacts=True,
+                    verify_artifacts=True, artifact_required=True,
+                ),
+            ))
+            return specs
         if action == "clean":
             return [CommandSpec("clean", ["meson", "compile", "-C", str(build_dir), "--clean"], env=env, cwd=str(root), destructive=True, metadata=_tool_metadata(self.kind, root, build_directory=str(build_dir)))]
         raise SystemExit(f"Unsupported Meson action: {action}")

@@ -7890,20 +7890,70 @@ def planned_artifact_names(
     return names
 
 
+def _artifact_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _unique_artifact_destination(destination: Path) -> Path:
+    if not destination.exists():
+        return destination
+    suffixes = "".join(destination.suffixes)
+    stem = destination.name[:-len(suffixes)] if suffixes else destination.name
+    for index in range(2, 10000):
+        candidate = destination.with_name(f"{stem}-{index}{suffixes}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"Unable to allocate a unique artifact name for {destination}")
+
+
+def _atomic_copy_artifact(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent, delete=False
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        shutil.copy2(source, temporary)
+        if _artifact_sha256(source) != _artifact_sha256(temporary):
+            raise OSError(f"artifact copy hash mismatch: {source} -> {destination}")
+        os.replace(temporary, destination)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def copy_artifacts(
     artifacts: Sequence[Path],
     project_root: Path,
     project_name: str,
     output_dir: Path,
     output_name: str | None = None,
+    collision: str = "unique",
 ) -> list[Path]:
+    collision = str(collision or "unique").strip().lower()
+    if collision not in {"unique", "replace", "fail"}:
+        raise ValueError(f"Unsupported artifact collision policy: {collision}")
     output_dir.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []
     names = planned_artifact_names(artifacts, project_root, project_name, output_name)
     for source, name in zip(artifacts, names):
-        destination = output_dir / name
-        if destination.resolve() != source:
-            shutil.copy2(source, destination)
+        source = source.expanduser().resolve()
+        destination = (output_dir / name).expanduser().resolve()
+        if destination == source:
+            copied.append(destination)
+            continue
+        if destination.exists():
+            if collision == "fail":
+                raise FileExistsError(f"Artifact destination already exists: {destination}")
+            if collision == "unique":
+                destination = _unique_artifact_destination(destination)
+        _atomic_copy_artifact(source, destination)
         copied.append(destination)
     return copied
 
@@ -8061,6 +8111,7 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-c", "--clean", action="store_true", help="Run clean before requested/default tasks")
     parser.add_argument("-o", "--output-dir", type=Path, help="Copy newly produced artifacts here")
     parser.add_argument("-n", "--output-name", help="Base filename for copied artifacts; extension is inferred unless a single artifact is built")
+    parser.add_argument("--artifact-collision", choices=("unique", "replace", "fail"), default="unique", help="Destination collision policy for copied artifacts")
     parser.add_argument("-Q", "--no-artifact-scan", action="store_true", help="Do not scan for produced APK/AAB/AAR/JAR artifacts")
     parser.add_argument("--bootstrap-only", action="store_true", help="Provision and verify the requested toolchain, then exit before running Gradle tasks")
     parser.add_argument("--bootstrap-report", type=Path, help="Write resolved bootstrap/toolchain paths as JSON (used with --bootstrap-only)")
@@ -9204,6 +9255,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 project.name,
                 args.output_dir.expanduser().resolve(),
                 args.output_name,
+                args.artifact_collision,
             )
             heading("Copied artifacts")
             for artifact in copied:

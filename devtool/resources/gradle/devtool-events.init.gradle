@@ -12,6 +12,37 @@ def devtoolTestsFailed = new AtomicLong(0L)
 def devtoolTestsSkipped = new AtomicLong(0L)
 def devtoolRunId = System.getenv('DEVTOOL_RUN_ID') ?: ''
 
+def devtoolArtifactSuffixes = ['.apk', '.aab', '.aar', '.jar', '.war', '.ear', '.zip', '.tar', '.tar.gz', '.tar.xz', '.tgz', '.deb', '.rpm']
+def devtoolArtifactOutputs = { Task task ->
+    def found = new LinkedHashSet<String>()
+    try {
+        task.outputs.files.files.each { File output ->
+            if (found.size() >= 200) {
+                return
+            }
+            if (output.isFile()) {
+                def lower = output.name.toLowerCase(Locale.ROOT)
+                if (devtoolArtifactSuffixes.any { lower.endsWith(it) }) {
+                    found.add(output.absolutePath)
+                }
+            } else if (output.isDirectory()) {
+                output.eachFileRecurse { File candidate ->
+                    if (found.size() < 200 && candidate.isFile()) {
+                        def lower = candidate.name.toLowerCase(Locale.ROOT)
+                        if (devtoolArtifactSuffixes.any { lower.endsWith(it) }) {
+                            found.add(candidate.absolutePath)
+                        }
+                    }
+                }
+            }
+        }
+    } catch (Throwable ignored) {
+        // Artifact discovery is advisory; never make a successful Gradle task
+        // fail because an output provider cannot be inspected.
+    }
+    return found as List
+}
+
 def devtoolEmit = { String kind, Map payload = [:] ->
     def event = [
         sequence: devtoolSequence.incrementAndGet(),
@@ -48,6 +79,7 @@ gradle.addListener(new TaskExecutionListener() {
             outcome: outcome,
             didWork: state.didWork,
             failure: state.failure?.message,
+            artifactOutputs: devtoolArtifactOutputs(task),
         ])
     }
 })

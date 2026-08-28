@@ -113,6 +113,15 @@ if ! command -v tar >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
+  SOURCE_DATE_EPOCH=$(git -C "$repo_root" log -1 --format=%ct HEAD 2>/dev/null || true)
+  SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-315532800}
+fi
+case "$SOURCE_DATE_EPOCH" in
+  *[!0-9]*|'') echo "error: SOURCE_DATE_EPOCH must be an integer" >&2; exit 2 ;;
+esac
+export SOURCE_DATE_EPOCH
+
 should_skip() {
   case "$1" in
     .git|.git/*|*/.git|*/.git/*)
@@ -174,7 +183,7 @@ tar_args=(
   -C "$repo_root"
   --null -T "$list_file"
   --sort=name
-  --mtime="@${SOURCE_DATE_EPOCH:-1784030400}"
+  --mtime="@${SOURCE_DATE_EPOCH}"
   --owner=0 --group=0 --numeric-owner
   --mode=go-w
   -cf "$output_path"
