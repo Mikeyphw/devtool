@@ -1207,6 +1207,25 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
         return None
 
+    def _go_package_totals() -> tuple[int, int, int, int, int] | None:
+        package_sets: list[dict] = []
+        for result in payload.get("results", []) if isinstance(payload.get("results"), list) else []:
+            if not isinstance(result, dict):
+                continue
+            metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+            go_test = metadata.get("go_test") if isinstance(metadata.get("go_test"), dict) else {}
+            packages = go_test.get("packages") if isinstance(go_test.get("packages"), dict) else {}
+            if packages:
+                package_sets.append(packages)
+        if not package_sets:
+            return None
+        passed = sum(int(item.get("passed") or 0) for item in package_sets)
+        failed_count = sum(int(item.get("failed") or 0) for item in package_sets)
+        skipped_count = sum(int(item.get("skipped") or 0) for item in package_sets)
+        no_tests = sum(int(item.get("no_tests") or 0) for item in package_sets)
+        total = sum(int(item.get("total") or 0) for item in package_sets)
+        return passed, failed_count, skipped_count, no_tests, total
+
     def _semantic_detail_key(line: str) -> str:
         """Collapse alternate renderings of the same diagnostic into one identity.
 
@@ -1312,6 +1331,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         if code in {
             "GRADLE_TASK", "GRADLE_TEST", "UNITTEST", "PYTEST", "VSTEST",
             "PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT",
+            "GO_TEST", "GO_TEST_PACKAGE",
         }:
             return message or code or default
         location = ""
@@ -1433,6 +1453,13 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             r"^[A-Za-z0-9_.-]+(?:\.py)?\s*:\s*error:\s+.+",
             r"^(?:fatal|error):\s+.+",
             r"^FAILED\s+.+",
+
+            # Go test failures do not use the word "error" for assertion
+            # failures, so retain their native failure markers as fallback
+            # evidence when structured issue extraction is unavailable.
+            r"^---\s+FAIL:\s+.+",
+            r"^FAIL\s+\S+.*",
+            r"^.+?\.go:\d+(?::\d+)?:\s+.+",
         )
         combined = _re.compile(
             "|".join(f"(?:{pattern})" for pattern in error_patterns),
@@ -1535,6 +1562,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             action_lines.append(f"- {description}: failed ({duration:.2f}s)")
 
     test_totals = _test_totals()
+    go_package_totals = _go_package_totals()
     commit_hash = _commit_hash()
     warning_details, unique_warning_count = _warning_details()
     effective_warning_count = max(warnings, unique_warning_count)
@@ -1597,6 +1625,15 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     else:
         success_lines.append("Tests: completed successfully")
 
+    if go_package_totals is not None:
+        package_passed, package_failed, package_skipped, package_no_tests, package_total = go_package_totals
+        success_lines.append(
+            "Go packages: "
+            f"{package_passed} passed, {package_failed} failed, "
+            f"{package_skipped} skipped, {package_no_tests} no tests "
+            f"({package_total} total)"
+        )
+
     success_lines.append(
         f"Diagnostics: {effective_warning_count} warnings, {errors} errors"
     )
@@ -1632,6 +1669,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             "build": "build",
             "test": "tests",
             "wine-test": "Wine tests",
+            "lint": "lint",
             "package": "package",
             "run": "run",
             "git-commit": "commit",
@@ -1645,7 +1683,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         recovery_steps: list[str] = []
         for name, status, _description, _duration in action_records:
             label_text = terse_names.get(name, name.replace("-", " ").replace("_", " "))
-            if name in {"rollback", "artifact-cleanup"}:
+            if name in {"rollback", "apply-rollback", "artifact-cleanup"}:
                 if status == "ok":
                     recovery_steps.append(f"{label_text} succeeded")
                 elif status == "failed":
@@ -1692,9 +1730,13 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 _has_structured_issue_code(code)
                 for code in ("PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT")
             )
+            authoritative_go = any(
+                _has_structured_issue_code(code)
+                for code in ("GO_TEST", "GO_TEST_PACKAGE")
+            )
             raw_errors = (
                 []
-                if _has_structured_issue_code("GRADLE_METASPACE_OOM") or authoritative_python
+                if _has_structured_issue_code("GRADLE_METASPACE_OOM") or authoritative_python or authoritative_go
                 else _raw_error_details(raw_error_source)
             )
             error_lines = _merge_detail_lines(structured_errors, raw_errors)
@@ -1748,10 +1790,11 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             "apply-overlay": ("devtool extract-overlay", "apply-overlay"),
             "apply-overlays": ("apply-overlays",),
             "apply-snapshot": ("apply-snapshot",),
-            "restore": ("dotnet restore",),
-            "build": ("dotnet build",),
-            "test": ("dotnet test", "pytest", "unittest"),
+            "restore": ("dotnet restore", "go mod download"),
+            "build": ("dotnet build", "go build", "devtool-go"),
+            "test": ("dotnet test", "go test", "pytest", "unittest"),
             "wine-test": ("wine",),
+            "lint": ("go vet",),
             "package": ("dotnet pack", "python -m build", "npm pack"),
             "run": ("dotnet run",),
             "git-commit": ("git commit",),
@@ -1795,7 +1838,20 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                     returncode = 0
                 if returncode == 0:
                     continue
-                name = str(result.get("name") or "command").replace("-", " ").replace("_", " ").strip() or "command"
+                raw_name = str(result.get("name") or "command").strip() or "command"
+                metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+                runner_name = str(metadata.get("runner") or metadata.get("project_type") or "").lower()
+                if runner_name == "go":
+                    name = {
+                        "restore": "Go restore",
+                        "build": "Go build",
+                        "test": "Go tests",
+                        "go-validation": "Go tests",
+                        "lint": "Go vet",
+                        "package": "Go package",
+                    }.get(raw_name.lower(), raw_name.replace("-", " ").replace("_", " "))
+                else:
+                    name = raw_name.replace("-", " ").replace("_", " ")
                 failure_kind = str(result.get("failure_kind") or "").replace("_", " ").strip()
                 issues = result.get("issues") if isinstance(result.get("issues"), list) else []
                 issue_message = ""
@@ -1811,6 +1867,8 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                     "PYTHON_IMPORT": 12,
                     "PYTHON_UNDECLARED_IMPORT": 13,
                     "PYTHON_PLATFORM_GLIBC": 14,
+                    "GO_TEST": 18,
+                    "GO_TEST_PACKAGE": 19,
                     "PYTEST_FAILURE": 20,
                     "PYTEST": 21,
                     "GRADLE_TEST": 30,
@@ -1829,7 +1887,23 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 raw_error_lines = _raw_error_details(str(result.get("output") or ""))
                 raw_error_message = raw_error_lines[0] if raw_error_lines else ""
                 normalized_failure_kind = failure_kind.casefold().replace("-", "_").replace(" ", "_")
-                if issue_message:
+                go_test = metadata.get("go_test") if isinstance(metadata.get("go_test"), dict) else {}
+                go_failures = go_test.get("failures") if isinstance(go_test.get("failures"), list) else []
+                go_reason = ""
+                if runner_name == "go" and go_failures and isinstance(go_failures[0], dict):
+                    first_failure = go_failures[0]
+                    package = str(first_failure.get("package") or "").strip()
+                    test = str(first_failure.get("test") or "").strip()
+                    file_text = str(first_failure.get("file") or "").strip()
+                    line = first_failure.get("line")
+                    message = str(first_failure.get("message") or "Go test failed").strip()
+                    identity = " · ".join(part for part in (package, test) if part)
+                    if file_text and file_text != "-":
+                        identity = " · ".join(part for part in (identity, f"{file_text}:{line}" if line is not None else file_text) if part)
+                    go_reason = f"{identity}: {message}" if identity else message
+                if go_reason:
+                    reason = f"{name} failed with exit {returncode}: {go_reason}"
+                elif issue_message:
                     reason = f"{name} failed with exit {returncode}: {issue_message}"
                 elif raw_error_message and normalized_failure_kind in {"", "unknown", "unknown_failure"}:
                     reason = f"{name} failed with exit {returncode}: {raw_error_message}"
@@ -1848,6 +1922,16 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                     reasons.append(f"Command failed: {failed_command}")
             return _dedupe_detail_lines(reasons)
 
+        rerun_commands: list[str] = []
+        for result in payload.get("results", []) if isinstance(payload.get("results"), list) else []:
+            if not isinstance(result, dict):
+                continue
+            metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+            go_test = metadata.get("go_test") if isinstance(metadata.get("go_test"), dict) else {}
+            rerun = str(go_test.get("rerun") or "").strip()
+            if rerun and rerun not in rerun_commands:
+                rerun_commands.append(rerun)
+
         completion = payload.get("completion") if isinstance(payload.get("completion"), dict) else {}
         headline = str(completion.get("headline") or "").strip()
         if not headline and failed_steps:
@@ -1860,10 +1944,32 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         if overlay_lines:
             lines.extend(("", *overlay_lines))
         failure_reasons = _failed_result_reason_lines()
+        if go_package_totals is not None:
+            package_passed, package_failed, package_skipped, package_no_tests, package_total = go_package_totals
+            lines.extend((
+                "",
+                "Go packages: "
+                f"{package_passed} passed, {package_failed} failed, "
+                f"{package_skipped} skipped, {package_no_tests} no tests "
+                f"({package_total} total)",
+            ))
         if failure_reasons:
             lines.extend(("", "Failure reason:"))
             lines.extend(f"- {reason}" for reason in failure_reasons)
-        if error_details:
+        if rerun_commands:
+            lines.extend(("", "Rerun:"))
+            lines.extend(f"- {command}" for command in rerun_commands)
+        # A typed Go test diagnostic is already the failure reason; repeating
+        # the same assertion under an additional Errors heading makes the
+        # clipboard noisier without adding evidence. Other toolchains retain
+        # the historical diagnostics section.
+        show_error_details = error_details
+        if any(_has_structured_issue_code(code) for code in ("GO_TEST", "GO_TEST_PACKAGE")) and failure_reasons:
+            show_error_details = []
+        if show_error_details:
+            # Keep the long-standing clipboard rendering contract while allowing
+            # typed Go failures to suppress duplicate raw diagnostic lines.
+            error_details = show_error_details
             lines.extend(("", "Errors:"))
             lines.extend(f"- {error}" for error in error_details)
         if failure_warning_details:
@@ -4503,7 +4609,9 @@ def _finalize_validation_session(
             run_id=str(getattr(args, "_devtool_run_id", "") or ""),
         )
         if evidence:
-            raw_output += f"\n\nValidation evidence preserved: {evidence}"
+            evidence_line = f"Validation evidence preserved: {evidence}"
+            raw_output += "\n\n" + evidence_line
+            _append_run_log(log_path, evidence_line)
         session.last_error = "resumable validation finalization failed"
         session.status = "blocked"
         session.paused_reason = "validation finalization failed; applied changes were retained"
@@ -5176,7 +5284,9 @@ def _run_validation_session(
             run_id=str(getattr(args, "_devtool_run_id", "") or ""),
         )
         if evidence:
-            raw_output += ("\n\n" if raw_output else "") + f"Validation evidence preserved: {evidence}"
+            evidence_line = f"Validation evidence preserved: {evidence}"
+            raw_output += ("\n\n" if raw_output else "") + evidence_line
+            _append_run_log(log_path, evidence_line)
         if session.transaction_path and action == "rollback":
             rollback_result, rollback_raw = _run_transaction_rollback(
                 session.transaction_path,
@@ -6199,6 +6309,18 @@ def _reload_config_after_artifact_apply(args: argparse.Namespace, fallback: Proj
         return fallback
 
 
+def _append_run_log(log_path: Path | str | None, text: str) -> None:
+    """Append orchestration evidence to the same durable run log as commands."""
+    if log_path is None or not str(text or "").strip():
+        return
+    try:
+        from .logstore import write_log
+        write_log(str(text).strip(), log_path, append=True)
+    except Exception:
+        # Logging must never replace the original validation/rollback outcome.
+        pass
+
+
 def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artifact: object, *, log_path: Path | str | None = None, tasker_progress: TaskerProgressSink | None = None) -> tuple[list[OperationResult], str]:
     snapshot = "snapshot" in name
     artifact_type = "snapshot" if snapshot else "overlay"
@@ -6395,6 +6517,8 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         preview_data["changes"] = changes
         args._devtool_artifact_preview = preview_data
     manifest_note = "" if getattr(args, "no_manifest_check", False) else "\n" + "\n".join(validation.messages)
+    if manifest_note.strip():
+        _append_run_log(log_path, manifest_note)
     text = "$ " + " ".join(result.argv) + "\n" + result.output + manifest_note
     result.output = result.output + manifest_note
     return _return_apply(result, text)
@@ -7349,7 +7473,9 @@ def _run_sequential_overlays(
                 config.repo_root, all_results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
             )
             if evidence_path:
-                raw_sections.append(f"Validation evidence preserved: {evidence_path}")
+                evidence_line = f"Validation evidence preserved: {evidence_path}"
+                raw_sections.append(evidence_line)
+                _append_run_log(log_path, evidence_line)
             rollback_result, rollback_raw = _run_transaction_rollback(
                 transaction_path,
                 reason="bundle apply or validation failed",
@@ -7387,7 +7513,9 @@ def _run_sequential_overlays(
                         config.repo_root, all_results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
                     )
                     if evidence_path:
-                        raw_sections.append(f"Validation evidence preserved: {evidence_path}")
+                        evidence_line = f"Validation evidence preserved: {evidence_path}"
+                        raw_sections.append(evidence_line)
+                        _append_run_log(log_path, evidence_line)
                     rollback_result, rollback_raw = _run_transaction_rollback(
                         transaction_path,
                         reason="post-bundle command failed",
@@ -9367,7 +9495,9 @@ def _main_after_parse(
                         config.repo_root, results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
                     )
                     if evidence_path:
-                        raw_output += f"\n\nValidation evidence preserved: {evidence_path}"
+                        evidence_line = f"Validation evidence preserved: {evidence_path}"
+                        raw_output += "\n\n" + evidence_line
+                        _append_run_log(log_path, evidence_line)
                     rollback_result, rollback_raw = _run_transaction_rollback(
                         transaction_path,
                         reason="validation or artifact validation script failed after artifact apply",
@@ -9393,7 +9523,9 @@ def _main_after_parse(
                                 config.repo_root, results, run_id=str(getattr(args, "_devtool_run_id", "") or "")
                             )
                             if evidence_path:
-                                raw_output += f"\n\nValidation evidence preserved: {evidence_path}"
+                                evidence_line = f"Validation evidence preserved: {evidence_path}"
+                                raw_output += "\n\n" + evidence_line
+                                _append_run_log(log_path, evidence_line)
                             rollback_result, rollback_raw = _run_transaction_rollback(
                                 transaction_path,
                                 reason="post-apply command failed",

@@ -311,3 +311,27 @@ def test_go_artifact_metadata_records_vcs_provenance_when_embedded(tmp_path: Pat
     assert build_info["vcs"] == "git"
     assert build_info["vcs_revision"] == revision
     assert build_info["vcs_modified"] in {"true", "false"}
+
+
+def test_go_validation_uses_separate_restore_build_test_and_vet_stages(tmp_path: Path) -> None:
+    _module(tmp_path)
+    _main(tmp_path, "cmd/demo")
+    runner = GoRunner()
+    specs = runner.build_validation_specs(_config(tmp_path))
+    assert [spec.name for spec in specs] == ["restore", "build", "test", "lint"]
+    assert specs[1].metadata["collect_artifacts"] is True
+    assert specs[1].metadata["verify_artifacts"] is True
+    assert specs[2].argv[:3] == ["go", "test", "-json"]
+    assert specs[2].metadata["progress_parser"] == "go-test-json"
+    assert specs[2].metadata["go_test_json"] is True
+    assert specs[3].argv[:2] == ["go", "vet"]
+
+
+def test_go_validation_skip_flags_do_not_claim_coalesced_build(tmp_path: Path) -> None:
+    _module(tmp_path)
+    _main(tmp_path, "cmd/demo")
+    runner = GoRunner()
+    specs = runner.build_validation_specs(_config(tmp_path), skip_build=True)
+    assert [spec.name for spec in specs] == ["restore", "test", "lint"]
+    assert all(spec.name != "go-validation" for spec in specs)
+    assert not any(bool(spec.metadata.get("contains_build")) for spec in specs)

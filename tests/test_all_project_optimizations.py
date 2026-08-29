@@ -173,16 +173,23 @@ class FirstClassRunnerPlanningTests(unittest.TestCase):
         self.assertEqual(specs[0].env["CARGO_BUILD_JOBS"], "2")
         self.assertEqual(specs[0].env["CARGO_INCREMENTAL"], "1")
 
-    def test_go_coalesces_compile_and_test_then_reuses_cache_for_vet(self) -> None:
+    def test_go_validation_preserves_real_build_then_structured_tests_and_vet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"HOME": tmp, "DEVTOOL_MAX_WORKERS": "3"}, clear=False):
             root = Path(tmp)
             (root / "go.mod").write_text("module example.com/demo\n", encoding="utf-8")
             config = ProjectConfig(repo_root=root, project_root=str(root), kind="go")
             specs = build_validation_specs(config)
-        self.assertEqual([spec.name for spec in specs], ["go-validation", "lint"])
-        self.assertEqual(specs[0].argv, ["go", "test", "-p", "3", "./..."])
-        self.assertEqual(specs[1].argv, ["go", "vet", "./..."])
-        self.assertEqual(specs[0].env["GOMAXPROCS"], "3")
+        self.assertEqual([spec.name for spec in specs], ["restore", "build", "test", "lint"])
+        self.assertEqual(specs[0].argv, ["go", "mod", "download"])
+        self.assertEqual(specs[1].argv[0:2], ["sh", "-c"])
+        self.assertIn("go build -p", specs[1].argv[2])
+        self.assertIn("DEVTOOL_GO_ARTIFACT_V2", specs[1].argv[2])
+        self.assertTrue(specs[1].metadata["collect_artifacts"])
+        self.assertTrue(specs[1].metadata["verify_artifacts"])
+        self.assertEqual(specs[2].argv, ["go", "test", "-json", "-p", "3", "./..."])
+        self.assertEqual(specs[2].metadata["progress_parser"], "go-test-json")
+        self.assertEqual(specs[3].argv, ["go", "vet", "./..."])
+        self.assertEqual(specs[2].env["GOMAXPROCS"], "3")
 
     def test_maven_uses_one_verify_reactor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"HOME": tmp, "DEVTOOL_MAX_WORKERS": "2"}, clear=False):

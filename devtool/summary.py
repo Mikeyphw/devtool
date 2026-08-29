@@ -68,7 +68,8 @@ _FAILURE_MARKER_RE = re.compile(
     r"\berror\b|\bfatal\b|build failed|task .* failed|execution failed|"
     r"lint found \d+ errors?|failed to find package|failed .* package|"
     r"traceback \(most recent call last\)|unhandled exception|exception:|"
-    r"payload sha-256 mismatch|sdk package installation failed"
+    r"payload sha-256 mismatch|sdk package installation failed|"
+    r"---\s+FAIL:|^FAIL\s+\S+|\.go:\d+(?::\d+)?:"
     r")",
     re.IGNORECASE,
 )
@@ -146,6 +147,8 @@ def _root_cause_issue(result: OperationResult) -> Issue | None:
         "PYTHON_IMPORT": 12,
         "PYTHON_UNDECLARED_IMPORT": 13,
         "PYTHON_PLATFORM_GLIBC": 14,
+        "GO_TEST": 18,
+        "GO_TEST_PACKAGE": 19,
         "PYTEST_FAILURE": 20,
         "PYTEST": 21,
         "GRADLE_TEST": 30,
@@ -175,15 +178,42 @@ def _render_failed_output_details(results: list[OperationResult], target_console
         if parsed is not None:
             renderables.append(_tree_from_json(f"{result.name} parsed output", parsed))
             continue
-        table = Table(title=result.name, show_header=False, expand=not (is_narrow_console(target_console) or target_console.width <= 60), box=None)
+        table = Table(title=_action_label(result.name, result.metadata), show_header=False, expand=not (is_narrow_console(target_console) or target_console.width <= 60), box=None)
         table.add_column("Field", style="bold", no_wrap=True)
         table.add_column("Value", overflow="fold")
         table.add_row("failure", result.failure_kind or "-")
         table.add_row("exit", str(result.returncode))
         if result.log_path:
-            table.add_row("log", result.log_path)
+            table.add_row("log", compact_display_target(result.log_path, max_parts=2))
         if issue := _root_cause_issue(result):
             table.add_row("root cause", Text(_issue_summary(issue), overflow="fold", style="bold red"))
+        go_test = result.metadata.get("go_test") if isinstance(result.metadata, dict) else None
+        if isinstance(go_test, dict):
+            packages = go_test.get("packages") if isinstance(go_test.get("packages"), dict) else {}
+            if packages:
+                table.add_row(
+                    "packages",
+                    f"{int(packages.get('passed') or 0)} passed, "
+                    f"{int(packages.get('failed') or 0)} failed, "
+                    f"{int(packages.get('no_tests') or 0)} no tests",
+                )
+            failures = go_test.get("failures") if isinstance(go_test.get("failures"), list) else []
+            if failures and isinstance(failures[0], dict):
+                first_failure = failures[0]
+                package = str(first_failure.get("package") or "").strip()
+                test = str(first_failure.get("test") or "").strip()
+                file_text = str(first_failure.get("file") or "").strip()
+                line = first_failure.get("line")
+                if package:
+                    table.add_row("failed package", Text(package, overflow="fold"))
+                if test:
+                    table.add_row("failed test", Text(test, overflow="fold"))
+                if file_text and file_text != "-":
+                    location = f"{file_text}:{line}" if line is not None else file_text
+                    table.add_row("location", Text(location, overflow="fold"))
+            rerun = str(go_test.get("rerun") or "").strip()
+            if rerun:
+                table.add_row("rerun", Text(rerun, overflow="fold", style="cyan"))
         python_test_issues = [
             issue for issue in result.issues
             if issue.severity == "error" and str(issue.code or "").upper() in {
@@ -244,6 +274,7 @@ _ACTION_LABELS = {
     "git-add-skipped": "Stage changes",
     "git-commit-skipped": "Commit changes",
     "rollback": "Rollback",
+    "apply-rollback": "Rollback",
     "dotnet-build-server-shutdown": "Stop .NET build servers",
 }
 
@@ -276,10 +307,24 @@ def _coalesced_dotnet_validation_label(metadata: dict[str, object]) -> str:
 
 
 def _action_label(name: str, metadata: dict[str, object] | None = None) -> str:
-    explicit = _coalesced_dotnet_validation_label(metadata or {})
+    metadata = metadata or {}
+    explicit = _coalesced_dotnet_validation_label(metadata)
     if explicit:
         return explicit
     base = name.strip()
+    if str(metadata.get("runner") or metadata.get("project_type") or "").lower() == "go":
+        go_labels = {
+            "restore": "Go restore",
+            "build": "Go build",
+            "test": "Go tests",
+            "lint": "Go vet",
+            "package": "Go package",
+            "go-validation": "Go tests",
+        }
+        prefix = base.partition(" [")[0].lower()
+        if prefix in go_labels:
+            suffix = base[len(base.partition(" [")[0]):]
+            return go_labels[prefix] + suffix
     # Preserve useful target suffixes such as "build [S3pe.Modern.sln]".
     prefix, separator, suffix = base.partition(" [")
     label = _ACTION_LABELS.get(prefix.lower(), prefix.replace("-", " ").replace("_", " ").strip().title())
@@ -340,6 +385,24 @@ def _extract_test_totals(results: list[OperationResult]) -> tuple[int, int, int,
     return None
 
 
+def _extract_go_package_totals(results: list[OperationResult]) -> tuple[int, int, int, int, int] | None:
+    package_sets = []
+    for result in results:
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        go_test = metadata.get("go_test") if isinstance(metadata.get("go_test"), dict) else {}
+        packages = go_test.get("packages") if isinstance(go_test.get("packages"), dict) else {}
+        if packages:
+            package_sets.append(packages)
+    if not package_sets:
+        return None
+    passed = sum(int(item.get("passed") or 0) for item in package_sets)
+    failed = sum(int(item.get("failed") or 0) for item in package_sets)
+    skipped = sum(int(item.get("skipped") or 0) for item in package_sets)
+    no_tests = sum(int(item.get("no_tests") or 0) for item in package_sets)
+    total = sum(int(item.get("total") or 0) for item in package_sets)
+    return passed, failed, skipped, no_tests, total
+
+
 def _extract_commit_hash(results: list[OperationResult]) -> str:
     for result in reversed(results):
         for key in ("commit_hash", "git_commit", "commit"):
@@ -363,6 +426,10 @@ def _result_status(result: OperationResult) -> tuple[str, str, str]:
     return "✗", "Failed", "bold red"
 
 
+def _is_recovery_result(result: OperationResult) -> bool:
+    return result.name.strip().lower() in {"rollback", "apply-rollback", "artifact-cleanup"}
+
+
 def _outcome(totals: dict[str, int]) -> tuple[str, str, str]:
     if totals["failed"] or totals["errors"]:
         return "✗", "Devtool failed", "red"
@@ -375,6 +442,7 @@ def _render_outcome_panel(results: list[OperationResult], totals: dict[str, int]
     symbol, title, style = _outcome(totals)
     duration = sum(result.duration_seconds for result in results)
     tests = _extract_test_totals(results)
+    go_packages = _extract_go_package_totals(results)
     commit_hash = _extract_commit_hash(results)
 
     headline = Text()
@@ -384,14 +452,30 @@ def _render_outcome_panel(results: list[OperationResult], totals: dict[str, int]
     metrics = Table.grid(padding=(0, 2))
     metrics.add_column(style="dim", no_wrap=True)
     metrics.add_column(no_wrap=False)
-    passed_stages = sum(not result.skipped and result.returncode == 0 for result in results)
-    failed_stages = sum(not result.skipped and result.returncode != 0 for result in results)
+    workflow_results = [result for result in results if not _is_recovery_result(result)]
+    recovery_results = [result for result in results if _is_recovery_result(result)]
+    passed_stages = sum(not result.skipped and result.returncode == 0 for result in workflow_results)
+    failed_stages = sum(not result.skipped and result.returncode != 0 for result in workflow_results)
+    skipped_stages = sum(result.skipped for result in workflow_results)
     stage_text = Text()
     stage_text.append(f"{passed_stages} passed", style="green")
     stage_text.append(f", {failed_stages} failed", style="bold red" if failed_stages else "dim")
-    if totals["skipped"]:
-        stage_text.append(f", {totals['skipped']} skipped", style="yellow")
+    if skipped_stages:
+        stage_text.append(f", {skipped_stages} skipped", style="yellow")
     metrics.add_row("Stages", stage_text)
+    if recovery_results:
+        recovery_text = Text()
+        for index, result in enumerate(recovery_results):
+            if index:
+                recovery_text.append(" · ", style="dim")
+            label = _action_label(result.name, result.metadata)
+            if result.returncode == 0:
+                recovery_text.append(f"{label} succeeded", style="green")
+            else:
+                recovery_text.append(f"{label} failed", style="bold red")
+        metrics.add_row("Recovery", recovery_text)
+    if failed_stages:
+        metrics.add_row("Failures", Text(str(failed_stages), style="bold red"))
     metrics.add_row("Duration", _human_duration(duration))
     if tests is not None:
         passed, failed, skipped, total = tests
@@ -401,6 +485,16 @@ def _render_outcome_panel(results: list[OperationResult], totals: dict[str, int]
         test_text.append(f", {skipped} skipped", style="yellow" if skipped else "dim")
         test_text.append(f" ({total} total)", style="dim")
         metrics.add_row("Tests", test_text)
+    if go_packages is not None:
+        passed, failed, skipped, no_tests, total = go_packages
+        package_text = Text()
+        package_text.append(f"{passed} passed", style="bold green" if failed == 0 else "green")
+        package_text.append(f", {failed} failed", style="bold red" if failed else "dim")
+        if skipped:
+            package_text.append(f", {skipped} skipped", style="yellow")
+        package_text.append(f", {no_tests} no tests", style="dim")
+        package_text.append(f" ({total} total)", style="dim")
+        metrics.add_row("Packages", package_text)
     metrics.add_row(
         "Warnings",
         Text(f"⚠ {totals['warnings']}" if totals["warnings"] else "0", style="bold yellow" if totals["warnings"] else "dim"),
@@ -535,6 +629,7 @@ def _overlay_panel(info: dict[str, object], results: list[OperationResult], targ
     symbol, status, style = _overlay_status(results)
     totals = calculate_totals(results)
     tests = _extract_test_totals(results)
+    go_packages = _extract_go_package_totals(results)
     commit_hash = _extract_commit_hash(results)
     duration = sum(result.duration_seconds for result in results)
 
@@ -556,6 +651,16 @@ def _overlay_panel(info: dict[str, object], results: list[OperationResult], targ
         test_text.append(f", {skipped} skipped", style="yellow" if skipped else "dim")
         test_text.append(f" ({total} total)", style="dim")
         metrics.add_row("Tests", test_text)
+    if go_packages is not None:
+        passed, failed, skipped, no_tests, total = go_packages
+        package_text = Text()
+        package_text.append(f"{passed} passed", style="green")
+        package_text.append(f", {failed} failed", style="bold red" if failed else "dim")
+        if skipped:
+            package_text.append(f", {skipped} skipped", style="yellow")
+        package_text.append(f", {no_tests} no tests", style="dim")
+        package_text.append(f" ({total} total)", style="dim")
+        metrics.add_row("Packages", package_text)
     metrics.add_row(
         "Diagnostics",
         Text.assemble(
@@ -648,8 +753,18 @@ def _result_detail(result: OperationResult) -> Text:
         parts = [f"exit {result.returncode}"]
         if result.failure_kind:
             parts.append(result.failure_kind.replace("_", " "))
-        if result.log_path:
-            parts.append(f"log: {result.log_path}")
+        issue = _root_cause_issue(result)
+        if issue is not None:
+            parts.append(_issue_summary(issue))
+        elif isinstance(result.metadata, dict):
+            go_test = result.metadata.get("go_test")
+            if isinstance(go_test, dict):
+                failures = go_test.get("failures")
+                if isinstance(failures, list) and failures and isinstance(failures[0], dict):
+                    first = failures[0]
+                    label = str(first.get("test") or first.get("package") or "Go test")
+                    message = str(first.get("message") or "failed")
+                    parts.append(f"{label}: {message}")
         return Text(" • ".join(parts), style="red", overflow="fold")
     if result.skipped:
         return Text("Not run", style="dim yellow")
@@ -842,6 +957,24 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
             for result in results
         ],
     }
+    if (go_packages := _extract_go_package_totals(results)) is not None:
+        passed, failed, skipped_count, no_tests, total = go_packages
+        data["go_test"] = {
+            "packages": {
+                "passed": passed,
+                "failed": failed,
+                "skipped": skipped_count,
+                "no_tests": no_tests,
+                "total": total,
+            },
+            "rerun": next((
+                str((result.metadata.get("go_test") or {}).get("rerun") or "")
+                for result in results
+                if isinstance(result.metadata, dict) and isinstance(result.metadata.get("go_test"), dict)
+                and str((result.metadata.get("go_test") or {}).get("rerun") or "")
+            ), ""),
+        }
+
     artifact_runs = [
         result.metadata.get("artifacts")
         for result in results

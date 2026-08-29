@@ -3090,7 +3090,7 @@ done < "$plan"
         elif action in {"build", "package"}:
             argv = ["sh", "-c", self._build_driver(config, action, workers)]
         elif action in {"test", "wine-test"}:
-            argv = ["go", "test", "-p", str(workers), *packages]
+            argv = ["go", "test", "-json", "-p", str(workers), *packages]
         elif action == "lint":
             argv = ["go", "vet", *packages]
         elif action == "run":
@@ -3111,6 +3111,9 @@ done < "$plan"
         if artifact_action:
             metadata["artifact_directories"] = [str(self._build_output_dir(config, action))]
             metadata["artifact_allow_cached"] = False
+        if action in {"test", "wine-test"}:
+            metadata["progress_parser"] = "go-test-json"
+            metadata["go_test_json"] = True
         spec = CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=metadata)
         if action in {"test", "wine-test"}:
             from .test_selection import apply_test_selection
@@ -3122,19 +3125,21 @@ done < "$plan"
         explicit = any((config.restore_command, config.build_command, config.test_command))
         if explicit:
             return super().build_validation_specs(config, wine=wine, skip_restore=skip_restore, skip_build=skip_build, skip_test=skip_test)
+
+        # Keep validation stages honest and independently diagnosable.  A Go
+        # test invocation compiles test packages, but it does not exercise the
+        # executable discovery/output/artifact contract implemented by
+        # ``devtool build``.  Validation therefore runs restore, real build,
+        # tests, and vet as separate phases instead of claiming a coalesced
+        # ``go test`` also validated build artifacts.
         specs: list[CommandSpec] = []
-        if not skip_test and not skip_build and bool(options.get("coalesce_validation", True)):
-            spec = self.build_specs(config, "test")[0]
-            spec.name = "go-validation"
-            spec.metadata.update({"validation_components": ["restore", "build", "test"], "contains_build": True, "contains_tests": True})
-            specs.append(spec)
-        else:
-            if not skip_build:
-                specs.extend(self.build_specs(config, "build"))
-            elif not skip_restore and ((self._root(config) / "go.mod").exists() or (self._root(config) / "go.work").exists()):
-                specs.extend(self.build_specs(config, "restore"))
-            if not skip_test:
-                specs.extend(self.build_specs(config, "test"))
+        has_module = (self._root(config) / "go.mod").exists() or (self._root(config) / "go.work").exists()
+        if not skip_restore and has_module:
+            specs.extend(self.build_specs(config, "restore"))
+        if not skip_build:
+            specs.extend(self.build_specs(config, "build"))
+        if not skip_test:
+            specs.extend(self.build_specs(config, "test"))
         if bool(options.get("vet", True)):
             specs.extend(self.build_specs(config, "lint"))
         if not specs:

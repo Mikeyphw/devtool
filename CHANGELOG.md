@@ -1,6 +1,13 @@
 
 
 - Fix Python source-audit dependency ownership: project dependencies are enforced for package/project automation by default, while heterogeneous auxiliary scripts and captured pip console launchers are inventoried without being misclassified as package requirements; strict repository-wide enforcement remains opt-in via `[tool.devtool.python-audit] dependency-scope = "repository"`.
+## 2026-08-29 - Go validation diagnostics and recovery reporting
+
+- Replaced coalesced Go validation with separate restore, real executable build/artifact verification, structured `go test -json`, and vet stages.
+- Added typed Go test/package diagnostics with package totals, exact test/file/line/message extraction, focused rerun commands, and human-readable durable logs without JSON envelope noise.
+- Fixed failure summaries and clipboard output so Go test failures no longer degrade to `unknown failure` or hide the root cause behind tail truncation.
+- Counted rollback/cleanup as recovery rather than successful workflow stages and synchronized artifact-validation/evidence messages into the durable run log.
+
 ## 2026-08-28 - Go executable build outputs
 
 - Go builds now discover `package main` targets, emit verified binaries for `devtool build`, support workspace-aware target discovery/output-name overrides, reject basename collisions, and persist `go version -m` provenance.

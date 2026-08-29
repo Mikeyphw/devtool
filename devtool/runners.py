@@ -1131,6 +1131,7 @@ def _run_process_live(
     supervisor_probe: Callable[[], tuple[str, str] | dict | str | None] | None = None,
     heartbeat_callback: Callable[[], None] | None = None,
     progress_callback: Callable[[dict], None] | None = None,
+    structured_state: dict[str, object] | None = None,
 ) -> tuple[int, str]:
     live_log_handle = None
     if live_log_path is not None:
@@ -1227,6 +1228,21 @@ def _run_process_live(
             return 127, str(exc)
 
     output_parts: list[str] = []
+    go_test_stream = None
+    if progress_parser == "go-test-json":
+        from .go_test import GoTestJSONStream
+        go_test_stream = GoTestJSONStream()
+
+    def _render_process_line(raw_line: str) -> str:
+        if go_test_stream is None:
+            return raw_line
+        return go_test_stream.feed(raw_line)
+
+    def _finalize_structured_state() -> None:
+        if structured_state is None or go_test_stream is None:
+            return
+        structured_state["go_test_report"] = go_test_stream.report()
+
     assert proc.stdout is not None
     if isinstance(tracker, GradleProgressTracker):
         tracker.mark_process_started()
@@ -1383,7 +1399,7 @@ def _run_process_live(
                 stall_warning_message = _termux_chroot_stall_message(argv, chroot_stall_seconds)
         completion_detector = _dotnet_test_completion_status if completion_idle_grace is not None else None
         if tracker is None:
-            for line in _iter_process_output_lines(
+            for raw_line in _iter_process_output_lines(
                 proc,
                 idle_timeout=idle_timeout,
                 completion_idle_grace=completion_idle_grace,
@@ -1394,16 +1410,20 @@ def _run_process_live(
                 stall_warning_seconds=stall_warning_seconds,
                 stall_warning_message=stall_warning_message,
             ):
+                line = _render_process_line(raw_line)
+                if not line:
+                    continue
                 output_parts.append(line)
                 _append_live_log(line)
                 print(line, end="", flush=True)
             code = _wait_process_returncode(proc)
             if tasker_progress is not None and tasker_progress.cancel_requested():
                 code = 130
+            _finalize_structured_state()
             return code, "".join(output_parts)
 
         with tracker:
-            for line in _iter_process_output_lines(
+            for raw_line in _iter_process_output_lines(
                 proc,
                 idle_timeout=idle_timeout,
                 completion_idle_grace=completion_idle_grace,
@@ -1414,6 +1434,9 @@ def _run_process_live(
                 stall_warning_seconds=stall_warning_seconds,
                 stall_warning_message=stall_warning_message,
             ):
+                line = _render_process_line(raw_line)
+                if not line:
+                    continue
                 output_parts.append(line)
                 _append_live_log(line)
                 # Non-verbose mode intentionally keeps command stdout/stderr captured only.
@@ -1434,6 +1457,7 @@ def _run_process_live(
             # runner publishes the authoritative final state afterwards.
             if returncode != 0:
                 tracker.finish(returncode)
+        _finalize_structured_state()
         return returncode, "".join(output_parts)
     except KeyboardInterrupt:
         _interrupt_process()
@@ -1443,6 +1467,7 @@ def _run_process_live(
                 tracker.finish(130)
             except Exception:
                 pass
+        _finalize_structured_state()
         return 130, "".join(output_parts)
     finally:
         cancel_watch_stop.set()
@@ -1732,6 +1757,7 @@ def run_specs(
         returncode = 1
         output = ""
         process_output = ""
+        structured_process_state: dict[str, object] = {}
         command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         try:
             cwd = spec.cwd or str(config.repo_root)
@@ -1781,6 +1807,7 @@ def run_specs(
                     supervisor_probe=supervisor_probe,
                     heartbeat_callback=heartbeat_callback,
                     progress_callback=_capture_progress,
+                    structured_state=structured_process_state,
                 )
             else:
                 if progress_parser == "gradle" or dotnet_progress_plan(progress_argv, progress_cwd):
@@ -1806,6 +1833,7 @@ def run_specs(
                         supervisor_probe=supervisor_probe,
                         heartbeat_callback=heartbeat_callback,
                         progress_callback=_capture_progress,
+                        structured_state=structured_process_state,
                     )
                 else:
                     returncode, output = _run_process_live(
@@ -1836,6 +1864,7 @@ def run_specs(
                         supervisor_probe=supervisor_probe,
                         heartbeat_callback=heartbeat_callback,
                         progress_callback=_capture_progress,
+                        structured_state=structured_process_state,
                     )
         finally:
             if cleanup_dir:
@@ -1843,7 +1872,27 @@ def run_specs(
         process_output = output
         duration = time.perf_counter() - started
         result_metadata = dict(spec.metadata)
+        is_go_test = (
+            str(result_metadata.get("runner") or "").lower() == "go"
+            and str(spec.name or "").lower() in {"test", "go-test", "go-validation"}
+        )
+        go_report = structured_process_state.get("go_test_report")
+        if go_report is None and (
+            bool(result_metadata.get("go_test_json"))
+            or str(result_metadata.get("progress_parser") or "") == "go-test-json"
+            or is_go_test
+        ):
+            from .go_test import parse_go_test_report
+            go_report = parse_go_test_report(output)
+        if go_report is not None and hasattr(go_report, "to_metadata"):
+            go_metadata = go_report.to_metadata()
+            result_metadata["go_test"] = go_metadata
+            result_metadata["tests"] = dict(go_metadata["tests"])
         command_issues = parse_issues(config.repo_root, spec.name, output)
+        if go_report is not None:
+            from .diagnostics import go_test_issues
+            command_issues = [issue for issue in command_issues if issue.code not in {"GO_TEST", "GO_TEST_PACKAGE"}]
+            command_issues.extend(go_test_issues(config.repo_root, spec.name, go_report))
         suppressed_stdout_diagnostics = 0
         if returncode == 0:
             command_issues, suppressed_stdout_diagnostics = _filter_successful_stdout_diagnostics(
@@ -2140,10 +2189,12 @@ def run_specs(
             and issue.code in {
                 "GRADLE_TEST", "ANDROID_INSTRUMENTATION", "UNITTEST", "PYTEST", "VSTEST",
                 "PYTEST_FAILURE", "PYTHON_DEPENDENCY", "PYTHON_PLATFORM", "PYTHON_IMPORT",
+                "GO_TEST", "GO_TEST_PACKAGE",
             }
             for issue in issues
         ):
             failure_kind = "test_failure"
+
         if supervisor_events:
             failure_kind = {
                 "resource": "resource_interrupted",
@@ -2151,6 +2202,37 @@ def run_specs(
                 "interrupted": "interrupted",
                 "environment": "environment_failure",
             }.get(supervisor_events[-1]["kind"], failure_kind)
+
+        go_test_metadata = result_metadata.get("go_test") if isinstance(result_metadata.get("go_test"), dict) else {}
+        if go_test_metadata:
+            packages = go_test_metadata.get("packages") if isinstance(go_test_metadata.get("packages"), dict) else {}
+            failures = go_test_metadata.get("failures") if isinstance(go_test_metadata.get("failures"), list) else []
+            go_log_lines = [
+                "Devtool Go test summary: "
+                f"{int(packages.get('passed') or 0)} package(s) passed, "
+                f"{int(packages.get('failed') or 0)} failed, "
+                f"{int(packages.get('skipped') or 0)} skipped, "
+                f"{int(packages.get('no_tests') or 0)} no tests "
+                f"({int(packages.get('total') or 0)} total); "
+                f"exit {returncode}; {failure_kind or 'success'}."
+            ]
+            if failures and isinstance(failures[0], dict):
+                first_failure = failures[0]
+                package = str(first_failure.get("package") or "").strip()
+                test = str(first_failure.get("test") or "").strip()
+                file_text = str(first_failure.get("file") or "").strip()
+                line = first_failure.get("line")
+                message = str(first_failure.get("message") or "Go test failed").strip()
+                identity = " · ".join(part for part in (package, test) if part)
+                if file_text and file_text != "-":
+                    identity = " · ".join(part for part in (identity, f"{file_text}:{line}" if line is not None else file_text) if part)
+                go_log_lines.append(f"Devtool Go failure: {identity}: {message}" if identity else f"Devtool Go failure: {message}")
+            rerun = str(go_test_metadata.get("rerun") or "").strip()
+            if rerun:
+                go_log_lines.append(f"Devtool Go rerun: {rerun}")
+            go_log_summary = "\n".join(go_log_lines) + "\n"
+            if go_log_summary.strip() not in output:
+                output = (output.rstrip() + "\n" if output else "") + go_log_summary
         if progress_callback is not None:
             final_snapshot = dict(last_progress_snapshot)
             final_snapshot.update({

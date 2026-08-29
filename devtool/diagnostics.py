@@ -177,6 +177,27 @@ def relativize(repo_root: Path, path_text: str) -> str:
     return _make_relativizer(repo_root)(path_text)
 
 
+def go_test_issues(repo_root: Path, command_name: str, report: object) -> list[Issue]:
+    """Convert an authoritative/fallback Go test report into diagnostics."""
+    relative_path = _make_relativizer(repo_root)
+    failures = getattr(report, "failures", [])
+    issues: list[Issue] = []
+    for failure in failures if isinstance(failures, list) else []:
+        test_label = str(getattr(failure, "test", "") or "").strip()
+        message = str(getattr(failure, "message", "") or "Go test failed").strip()
+        if test_label:
+            message = f"{test_label}: {message}"
+        issues.append(Issue(
+            "error",
+            command_name,
+            relative_path(str(getattr(failure, "file", "-") or "-")),
+            "GO_TEST" if test_label else "GO_TEST_PACKAGE",
+            message,
+            line=getattr(failure, "line", None),
+        ))
+    return issues
+
+
 def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]:
     issues: list[Issue] = []
     cargo_pending: Issue | None = None
@@ -718,8 +739,21 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
 
         index += 1
 
+    # Go's normal test stream does not contain the word "error" for an
+    # assertion failure, so generic diagnostic parsing cannot classify it.
+    # Devtool-owned Go tests use a JSON transport rendered back into the human
+    # stream; custom plain ``go test`` output is supported by the same parser.
+    if (
+        "go-test package" in output
+        or "--- FAIL:" in output
+        or command_name.lower() in {"go-validation", "go-test", "test"} and re.search(r"(?m)^FAIL\s+\S+", output)
+    ):
+        from .go_test import parse_go_test_report
+        go_report = parse_go_test_report(output)
+        issues.extend(go_test_issues(repo_root, command_name, go_report))
+
     has_error = any(issue.severity == "error" for issue in issues)
-    command_is_test = "test" in command_name.lower()
+    command_is_test = "test" in command_name.lower() or command_name.lower() == "go-validation"
     if command_is_test and not has_error:
         if dotnet_failed_summary is not None:
             failed, passed, skipped, total = dotnet_failed_summary
@@ -866,10 +900,17 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         return "resource_interrupted"
     if "restore" in name:
         return "restore_failure"
+    if (
+        "test" in name
+        or name == "go-validation"
+        or "test run failed" in text
+        or "--- fail:" in text
+        or "<== go-test package" in text and " fail" in text
+        or re.search(r"\bfailed:\s*[1-9]\d*\b", text)
+    ):
+        return "test_failure"
     if "build" in name or compile_signal:
         return "compile_failure"
-    if "test" in name or "test run failed" in text or re.search(r"\bfailed:\s*[1-9]\d*\b", text):
-        return "test_failure"
     if "lint" in name:
         return "lint_failure"
     if "run" in name:

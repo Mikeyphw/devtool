@@ -79,6 +79,15 @@ executable discovery. Each produced binary is structurally verified and its
 module path/version, Go toolchain, GOOS, GOARCH, and VCS fields when Go embeds
 them.
 
+Go validation uses separate stages rather than treating `go test` compilation as a
+substitute for a Devtool build. The default plan is restore → executable build →
+`go test -json` → `go vet`. Devtool renders the JSON stream back into normal Go
+test text in the durable log, while retaining package/test metadata for terminal,
+JSON, and clipboard summaries. Failed tests are reported with package, test name,
+`*_test.go:line`, message, package totals, and a focused rerun command instead of
+falling through to `unknown_failure`. Rollback and cleanup are reported as recovery
+actions and do not inflate successful workflow-stage counts.
+
 The artifact registry is append-only at the production-event level. Rebuilding the same pathname creates a new record with its own run ID, Git commit, SHA-256, target, variant, producer task, verification state, and timestamp. Registry updates are locked and atomically replaced; malformed registry content is preserved as a corruption backup rather than silently discarded. Failed commands may expose outputs for diagnostics but never register those outputs as successful production events.
 
 ## Validation optimization
@@ -111,7 +120,7 @@ builds can reuse them. Standalone `devtool test` behavior remains unchanged.
 
 Other first-class runners apply equivalent safe optimizations:
 
-- Cargo and Go coalesce compile/test validation into one test invocation.
+- Cargo coalesces compile/test validation where safe. Go deliberately keeps restore, real executable build/artifact verification, structured tests, and vet as separate validation stages so `validate` exercises the same executable-output contract as `build`.
 - Maven uses one parallel `verify` reactor.
 - CMake and Meson retain out-of-tree build state and omit warm configure/setup passes.
 - Node uses incremental prefer-offline installs rather than destructive clean installs by default.
