@@ -2736,16 +2736,72 @@ class GoRunner(ProjectRunner):
             return items or list(default)
         return list(default)
 
+    def _workspace_use_paths(self, config: ProjectConfig) -> list[str]:
+        work_file = self._root(config) / "go.work"
+        if not work_file.is_file():
+            return []
+        values: list[str] = []
+        in_use_block = False
+        try:
+            lines = work_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line or line.startswith("//"):
+                continue
+            if in_use_block:
+                if line.startswith(")"):
+                    in_use_block = False
+                    continue
+                token = line.split("//", 1)[0].strip()
+                try:
+                    parts = shlex.split(token)
+                except ValueError:
+                    parts = []
+                if parts:
+                    values.append(parts[0])
+                continue
+            if not line.startswith("use"):
+                continue
+            remainder = line[3:].strip()
+            if remainder.startswith("("):
+                in_use_block = True
+                remainder = remainder[1:].strip()
+                if not remainder:
+                    continue
+            remainder = remainder.split("//", 1)[0].strip()
+            try:
+                parts = shlex.split(remainder)
+            except ValueError:
+                parts = []
+            if parts:
+                values.append(parts[0])
+        return list(dict.fromkeys(values))
+
+    def _expand_workspace_packages(self, config: ProjectConfig, packages: list[str]) -> list[str]:
+        modules = self._workspace_use_paths(config)
+        if not modules or "./..." not in packages:
+            return packages
+        expanded: list[str] = []
+        for package in packages:
+            if package != "./...":
+                expanded.append(package)
+                continue
+            for module in modules:
+                normalized = module.rstrip("/\\")
+                expanded.append(f"{normalized}/...")
+        return list(dict.fromkeys(expanded)) or packages
+
     def _packages(self, config: ProjectConfig) -> list[str]:
-        return self._string_list(self._options(config).get("packages", ["./..."]), ["./..."])
+        packages = self._string_list(self._options(config).get("packages", ["./..."]), ["./..."])
+        return self._expand_workspace_packages(config, packages)
 
     def _build_targets(self, config: ProjectConfig) -> list[str]:
         options = self._options(config)
         value = options.get("build_targets")
         if value is None:
             value = options.get("build_target")
-        if value is None:
-            value = options.get("packages", ["./..."])
         return self._string_list(value, ["./..."])
 
     def _output_names(self, config: ProjectConfig) -> dict[str, str]:
@@ -2756,8 +2812,20 @@ class GoRunner(ProjectRunner):
         for raw_target, raw_name in value.items():
             target = str(raw_target).strip()
             name = str(raw_name).strip()
-            if target and name:
-                result[target] = name
+            if not target or not name:
+                continue
+            invalid = (
+                name in {".", ".."}
+                or name.endswith((".", " "))
+                or any(char in name for char in '/\\<>:"|?*')
+                or any(ord(char) < 32 for char in name)
+            )
+            if invalid:
+                raise SystemExit(
+                    f"Invalid [go.outputs] name for {target}: {name!r}. "
+                    "Use a portable executable basename without path separators or control characters."
+                )
+            result[target] = name
         return result
 
     def _build_output_dir(self, config: ProjectConfig, action: str) -> Path:
@@ -2810,14 +2878,21 @@ resolve_output_name() {{
     target=$1
     output_name=$2
     case \"$output_name\" in
-        ''|*/*|*\\\\*)
+        ''|.|..|*/*|*\\\\*)
             echo \"devtool: invalid Go output name for $target: $output_name\" >&2
             exit 2
             ;;
     esac
-    import_path=$(go list -f '{{{{if eq .Name \"main\"}}}}{{{{.ImportPath}}}}{{{{end}}}}' \"$target\")
-    if [ -z \"$import_path\" ]; then
-        echo \"devtool: configured Go output target is not package main: $target\" >&2
+    import_paths=$(go list -f '{{{{if eq .Name \"main\"}}}}{{{{.ImportPath}}}}{{{{end}}}}' \"$target\")
+    import_path=\"\"
+    import_count=0
+    for candidate_import_path in $import_paths; do
+        [ -n \"$candidate_import_path\" ] || continue
+        import_count=$((import_count + 1))
+        import_path=$candidate_import_path
+    done
+    if [ \"$import_count\" -ne 1 ]; then
+        echo \"devtool: [go.outputs] target must resolve to exactly one package main: $target (found $import_count)\" >&2
         exit 2
     fi
     printf '%s\\t%s\\n' \"$import_path\" \"$output_name\" >> \"$mappings\"
@@ -2843,6 +2918,7 @@ done
 
 main_count=0
 tab=$(printf '\\t')
+goos=$(go env GOOS)
 while IFS=\"$tab\" read -r pkg dir; do
     [ -n \"$pkg\" ] || continue
     if grep -Fqx -- \"$pkg\" \"$packages_seen\" 2>/dev/null; then
@@ -2859,17 +2935,44 @@ while IFS=\"$tab\" read -r pkg dir; do
     done < \"$mappings\"
     if [ -z \"$name\" ]; then
         name=${{pkg##*/}}
+        module_info=$(go list -f '{{{{with .Module}}}}{{{{.Dir}}}}{{{{\"\t\"}}}}{{{{.Path}}}}{{{{end}}}}' \"$pkg\")
+        module_dir=\"\"
+        module_path=\"\"
+        if [ -n \"$module_info\" ]; then
+            IFS=\"$tab\" read -r module_dir module_path <<EOF_DEVTOOL_GO_MODULE
+$module_info
+EOF_DEVTOOL_GO_MODULE
+        fi
+        if [ -n \"$module_dir\" ] && [ \"$dir\" = \"$module_dir\" ] && [ -n \"$module_path\" ]; then
+            name=${{module_path##*/}}
+            version_tail=${{name#v}}
+            if [ \"$version_tail\" != \"$name\" ] && [ -n \"$version_tail\" ]; then
+                case \"$version_tail\" in
+                    *[!0-9]*) ;;
+                    *)
+                        if [ \"$version_tail\" -ge 2 ]; then
+                            module_parent=${{module_path%/*}}
+                            if [ \"$module_parent\" != \"$module_path\" ]; then
+                                name=${{module_parent##*/}}
+                            fi
+                        fi
+                        ;;
+                esac
+            fi
+        fi
     fi
     case \"$name\" in
-        ''|*/*|*\\\\*)
+        ''|.|..|*/*|*\\\\*)
             echo \"devtool: unsafe Go output name for $pkg: $name\" >&2
             exit 2
             ;;
     esac
 
-    goos=$(go env GOOS)
     if [ \"$goos\" = windows ]; then
-        case \"$name\" in *.exe) ;; *) name=\"$name.exe\" ;; esac
+        case \"$name\" in
+            *.exe|*.exE|*.eXe|*.eXE|*.Exe|*.ExE|*.EXe|*.EXE) ;;
+            *) name=\"$name.exe\" ;;
+        esac
     fi
     if grep -Fqx -- \"$name\" \"$names\" 2>/dev/null; then
         echo \"devtool: Go executable name collision: $name\" >&2
@@ -2916,20 +3019,49 @@ while IFS="$tab" read -r pkg name; do
 done < "$plan"
 
 mkdir -p "$out"
+publish="$out/.devtool-go-publish-$$"
+rm -rf "$publish"
+mkdir -p "$publish"
+trap 'rm -f "$candidates" "$mappings" "$names" "$packages_seen" "$plan"; rm -rf "$staging" "$publish"' EXIT HUP INT TERM
+
+# Copy all successfully built binaries onto the output filesystem first, then
+# replace final paths with same-filesystem renames. Compilation still happens
+# outside the repository, so generated outputs cannot make embedded VCS state
+# dirty while the binaries are being built.
 while IFS="$tab" read -r pkg name; do
     [ -n "$pkg" ] || continue
-    temp_dest="$staging/$name"
+    cp -p "$staging/$name" "$publish/$name"
+done < "$plan"
+
+while IFS="$tab" read -r pkg name; do
+    [ -n "$pkg" ] || continue
     dest="$out/$name"
-    rm -f "$dest"
-    mv "$temp_dest" "$dest"
+    if [ -d "$dest" ]; then
+        echo "devtool: Go output path is an existing directory: $dest" >&2
+        exit 2
+    fi
+    mv -f "$publish/$name" "$dest"
     buildinfo=$(go version -m "$dest") || {{
         echo "devtool: unable to read Go build metadata from $dest" >&2
         exit 3
     }}
-    printf 'DEVTOOL_GO_ARTIFACT\t%s\t%s\t%s\n' "$dest" "$pkg" "$name"
-    printf '%s\n' "$buildinfo" | while IFS= read -r info_line; do
-        printf 'DEVTOOL_GO_BUILDINFO\t%s\t%s\n' "$dest" "$info_line"
-    done
+    compact_buildinfo=$(printf '%s\n' "$buildinfo" | awk -F '\t' '
+        NR == 1 {{ line=$0; sub(/^.*: /, "", line); go_version=line }}
+        $2 == "mod" {{ module_path=$3; module_version=$4 }}
+        $2 == "build" {{
+            split($3, pair, "=")
+            key=pair[1]
+            value=substr($3, length(key) + 2)
+            if (key == "GOOS") goos=value
+            else if (key == "GOARCH") goarch=value
+            else if (key == "vcs") vcs=value
+            else if (key == "vcs.revision") vcs_revision=value
+            else if (key == "vcs.time") vcs_time=value
+            else if (key == "vcs.modified") vcs_modified=value
+        }}
+        END {{ printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", go_version, module_path, module_version, goos, goarch, vcs, vcs_revision, vcs_time, vcs_modified }}
+    ')
+    printf 'DEVTOOL_GO_ARTIFACT_V2\t%s\t%s\t%s\t%s\n' "$dest" "$pkg" "$name" "$compact_buildinfo"
 done < "$plan"
 """
 
@@ -2946,7 +3078,15 @@ done < "$plan"
         packages = self._packages(config)
         artifact_action = action in {"build", "package"}
         if action == "restore":
-            argv = ["go", "mod", "download"]
+            workspace_modules = self._workspace_use_paths(config)
+            if workspace_modules:
+                commands = " && ".join(
+                    f"(cd {shlex.quote(module)} && go mod download)"
+                    for module in workspace_modules
+                )
+                argv = ["sh", "-c", commands or "true"]
+            else:
+                argv = ["go", "mod", "download"]
         elif action in {"build", "package"}:
             argv = ["sh", "-c", self._build_driver(config, action, workers)]
         elif action in {"test", "wine-test"}:
@@ -2991,7 +3131,7 @@ done < "$plan"
         else:
             if not skip_build:
                 specs.extend(self.build_specs(config, "build"))
-            elif not skip_restore and (self._root(config) / "go.mod").exists():
+            elif not skip_restore and ((self._root(config) / "go.mod").exists() or (self._root(config) / "go.work").exists()):
                 specs.extend(self.build_specs(config, "restore"))
             if not skip_test:
                 specs.extend(self.build_specs(config, "test"))

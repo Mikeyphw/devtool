@@ -183,15 +183,12 @@ def _node_candidates(project_root: Path, output: str, started_at: float) -> list
     return candidates
 
 
-
 def _parse_go_buildinfo(lines: Iterable[str]) -> dict[str, Any]:
-    values = [str(line) for line in lines if str(line).strip()]
-    metadata: dict[str, Any] = {"raw": values}
+    metadata: dict[str, Any] = {}
     settings: dict[str, str] = {}
-    dependencies: list[dict[str, str]] = []
-    for index, raw in enumerate(values):
-        line = raw.rstrip("\n")
-        stripped = line.strip()
+    dependency_count = 0
+    for index, raw in enumerate(str(line) for line in lines if str(line).strip()):
+        stripped = raw.rstrip("\n").strip()
         if index == 0 and ": " in stripped:
             metadata["go_version"] = stripped.rsplit(": ", 1)[-1]
             continue
@@ -205,17 +202,14 @@ def _parse_go_buildinfo(lines: Iterable[str]) -> dict[str, Any]:
             if len(fields) >= 3:
                 metadata["module_version"] = fields[2]
         elif fields[0] == "dep" and len(fields) >= 2:
-            item = {"path": fields[1]}
-            if len(fields) >= 3:
-                item["version"] = fields[2]
-            dependencies.append(item)
+            dependency_count += 1
         elif fields[0] == "build" and len(fields) >= 2:
             setting = fields[1]
             if "=" in setting:
                 key, value = setting.split("=", 1)
                 settings[key.lstrip("-")] = value
-    if dependencies:
-        metadata["dependencies"] = dependencies
+    if dependency_count:
+        metadata["dependency_count"] = dependency_count
     if settings:
         metadata["settings"] = settings
         for key in ("GOOS", "GOARCH", "vcs", "vcs.revision", "vcs.time", "vcs.modified"):
@@ -245,24 +239,57 @@ def _go_local_buildinfo(path: Path) -> dict[str, Any]:
 
 
 def _go_event_candidates(output: str, project_root: Path) -> list[ArtifactCandidate]:
-    artifacts: dict[str, tuple[str, str]] = {}
-    buildinfo: dict[str, list[str]] = {}
+    artifacts: dict[str, tuple[str, str, dict[str, Any]]] = {}
+    legacy_buildinfo: dict[str, list[str]] = {}
     for raw_line in (output or "").splitlines():
-        if raw_line.startswith("DEVTOOL_GO_ARTIFACT\t"):
+        if raw_line.startswith("DEVTOOL_GO_ARTIFACT_V2\t"):
+            parts = raw_line.split("\t", 12)
+            if len(parts) != 13:
+                continue
+            (
+                _, raw_path, package_path, output_name, go_version,
+                module_path, module_version, goos, goarch, vcs,
+                vcs_revision, vcs_time, vcs_modified,
+            ) = parts
+            settings = {
+                key: value
+                for key, value in {
+                    "GOOS": goos,
+                    "GOARCH": goarch,
+                    "vcs": vcs,
+                    "vcs.revision": vcs_revision,
+                    "vcs.time": vcs_time,
+                    "vcs.modified": vcs_modified,
+                }.items()
+                if value
+            }
+            build_info: dict[str, Any] = {
+                "package_path": package_path,
+                **({"go_version": go_version} if go_version else {}),
+                **({"module_path": module_path} if module_path else {}),
+                **({"module_version": module_version} if module_version else {}),
+            }
+            if settings:
+                build_info["settings"] = settings
+                for key, value in settings.items():
+                    if key in {"GOOS", "GOARCH", "vcs", "vcs.revision", "vcs.time", "vcs.modified"}:
+                        build_info[key.replace(".", "_").lower()] = value
+            artifacts[raw_path] = (package_path, output_name, build_info)
+        elif raw_line.startswith("DEVTOOL_GO_ARTIFACT\t"):
             parts = raw_line.split("\t", 3)
             if len(parts) != 4:
                 continue
             _, raw_path, package_path, output_name = parts
-            artifacts[raw_path] = (package_path, output_name)
+            artifacts[raw_path] = (package_path, output_name, {})
         elif raw_line.startswith("DEVTOOL_GO_BUILDINFO\t"):
             parts = raw_line.split("\t", 2)
             if len(parts) != 3:
                 continue
             _, raw_path, info = parts
-            buildinfo.setdefault(raw_path, []).append(info)
+            legacy_buildinfo.setdefault(raw_path, []).append(info)
 
     candidates: list[ArtifactCandidate] = []
-    for raw_path, (package_path, output_name) in artifacts.items():
+    for raw_path, (package_path, output_name, build_info) in artifacts.items():
         path = Path(raw_path).expanduser()
         if not path.is_absolute():
             path = project_root / path
@@ -270,16 +297,18 @@ def _go_event_candidates(output: str, project_root: Path) -> list[ArtifactCandid
             "go_package": package_path,
             "go_output_name": output_name,
         }
-        parsed = _parse_go_buildinfo(buildinfo.get(raw_path, []))
-        if parsed:
-            metadata["go_build_info"] = parsed
+        if not build_info:
+            build_info = _parse_go_buildinfo(legacy_buildinfo.get(raw_path, []))
+        if build_info:
+            metadata["go_build_info"] = build_info
         candidates.append(ArtifactCandidate(path.resolve(), "produced", package_path, metadata))
     return candidates
 
 
 def _go_executable_format(path: Path) -> str:
     try:
-        head = path.read_bytes()[:8]
+        with path.open("rb") as handle:
+            head = handle.read(8)
     except OSError:
         return ""
     if head.startswith(b"\x7fELF"):
@@ -311,8 +340,8 @@ def _verify_go_binary(path: Path, candidate_metadata: dict[str, Any]) -> tuple[b
 
     executable_format = _go_executable_format(path)
     metadata["executable_format"] = executable_format
-    if executable_format != "unknown" or build_info:
-        checks.append({"name": "executable_format", "status": "passed", "detail": executable_format})
+    if (executable_format and executable_format != "unknown") or build_info:
+        checks.append({"name": "executable_format", "status": "passed", "detail": executable_format or "identified by Go build info"})
     else:
         checks.append({"name": "executable_format", "status": "failed", "detail": "unrecognized executable format"})
         valid = False
@@ -705,10 +734,25 @@ def collect_and_process_artifacts(
             checks = list(package_record.get("checks") or [])
             semantic_type = str(package_record.get("type") or _suffix(candidate.path).lstrip("."))
             semantic_metadata = dict(package_record)
-        elif verify_requested and kind == "go":
-            valid, checks, semantic_metadata, basic_issues = _verify_go_binary(candidate.path, candidate.metadata)
-            issues.extend(basic_issues)
+        elif kind == "go":
             semantic_type = "go-binary"
+            if verify_requested:
+                valid, checks, semantic_metadata, basic_issues = _verify_go_binary(candidate.path, candidate.metadata)
+                issues.extend(basic_issues)
+            else:
+                semantic_metadata = dict(candidate.metadata)
+                build_info = semantic_metadata.get("go_build_info")
+                if not isinstance(build_info, dict) or not build_info:
+                    build_info = _go_local_buildinfo(candidate.path)
+                    if build_info:
+                        semantic_metadata["go_build_info"] = build_info
+                semantic_metadata["executable_format"] = _go_executable_format(candidate.path)
+                valid = candidate.path.is_file() and candidate.path.stat().st_size > 0
+                checks = [{
+                    "name": "exists_non_empty",
+                    "status": "passed" if valid else "failed",
+                    "detail": "structural verification disabled",
+                }]
         elif verify_requested:
             valid, checks, basic_issues = _basic_verify(candidate.path)
             issues.extend(basic_issues)
@@ -755,8 +799,11 @@ def collect_and_process_artifacts(
                     path = config.repo_root / path
                 path = path.resolve()
                 paths.append(path)
+                semantic_metadata = record.get("metadata")
+                semantic_metadata = dict(semantic_metadata) if isinstance(semantic_metadata, dict) else {}
                 item_metadata[str(path)] = {
                     **record,
+                    **semantic_metadata,
                     "producer": kind,
                     "command": spec_name,
                     "target": str(config.selected_target or ""),

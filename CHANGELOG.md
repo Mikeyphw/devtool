@@ -1,6 +1,12 @@
 
 
 - Fix Python source-audit dependency ownership: project dependencies are enforced for package/project automation by default, while heterogeneous auxiliary scripts and captured pip console launchers are inventoried without being misclassified as package requirements; strict repository-wide enforcement remains opt-in via `[tool.devtool.python-audit] dependency-scope = "repository"`.
+## 2026-08-28 - Go executable build outputs
+
+- Go builds now discover `package main` targets, emit verified binaries for `devtool build`, support workspace-aware target discovery/output-name overrides, reject basename collisions, and persist `go version -m` provenance.
+- `packages` remains the test/vet scope; `build_target`/`build_targets` independently control executable discovery, with `./...` as the default build scope.
+- Library-only Go repositories retain `go build ./...` compile-check behavior, while `devtool package` requires at least one executable target.
+
 ## 2026-08-28 - Build/package promise audit seal
 - Go builds now discover `package main` targets, emit verified binaries for `devtool build`, support workspace-aware target discovery/output-name overrides, reject basename collisions, and persist `go version -m` provenance.
 

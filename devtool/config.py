@@ -1479,6 +1479,7 @@ coalesce_validation = true
 [go]
 coalesce_validation = true
 # packages = ["./..."]                # test/vet scope
+# build_target = "./cmd/app"          # optional single executable target
 # build_targets = ["./..."]           # package-main discovery scope
 # build_directory = ".devtool/build/go"
 # package_directory = ".devtool/package/go"

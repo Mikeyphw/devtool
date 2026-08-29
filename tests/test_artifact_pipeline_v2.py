@@ -393,6 +393,10 @@ def test_python_registry_keeps_semantic_package_metadata(tmp_path: Path) -> None
     semantic = registered["metadata"]["metadata"]
     assert semantic["console_scripts"] == ["demo=demo:main"]
     assert semantic["record_hashes_valid"] is True
+    # Semantic metadata is also promoted for registry consumers while the
+    # original nested payload remains available for backward compatibility.
+    assert registered["metadata"]["console_scripts"] == ["demo=demo:main"]
+    assert registered["metadata"]["record_hashes_valid"] is True
 
 
 def test_native_package_defaults_cover_rust_go_maven_and_node(tmp_path: Path) -> None:

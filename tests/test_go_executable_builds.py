@@ -60,8 +60,8 @@ def test_go_build_discovers_main_packages_and_writes_real_executables(tmp_path: 
     assert completed.returncode == 0, completed.stderr
     output_dir = tmp_path / ".devtool" / "build" / "go"
     assert {path.name for path in output_dir.iterdir()} == {"foo", "bar"}
-    assert "DEVTOOL_GO_ARTIFACT" in completed.stdout
-    assert "DEVTOOL_GO_BUILDINFO" in completed.stdout
+    assert "DEVTOOL_GO_ARTIFACT_V2" in completed.stdout
+    assert "DEVTOOL_GO_BUILDINFO" not in completed.stdout
 
 
 def test_go_build_registers_verified_binary_and_embedded_build_metadata(tmp_path: Path) -> None:
