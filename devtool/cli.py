@@ -6078,6 +6078,50 @@ def _artifact_commit_paths(args: argparse.Namespace, repo_root: Path | None = No
         seen.add(text)
         paths.append(text)
 
+    def commit_path_still_relevant(value: object) -> bool:
+        """Keep paths which can actually contribute to the artifact commit.
+
+        After validation an artifact may have deleted generated/untracked legacy
+        residue. Such a path is absent from both the worktree and HEAD, so an
+        exact ``git add`` pathspec would fail with "did not match any files".
+        Real tracked deletions remain relevant because they still exist in HEAD.
+        """
+        text = str(value or "").strip().replace("\\", "/")
+        if not text or repo_root is None:
+            return True
+
+        target = repo_root / Path(text)
+        if target.exists() or target.is_symlink():
+            return True
+
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=repo_root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if head.returncode != 0:
+            return False
+
+        tracked = subprocess.run(
+            [
+                "git",
+                "ls-tree",
+                "-r",
+                "--name-only",
+                "HEAD",
+                "--",
+                f":(literal){text}",
+            ],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return bool((tracked.stdout or "").strip())
+
     preview = getattr(args, "_devtool_artifact_preview", None)
     if isinstance(preview, dict):
         changes = preview.get("changes")
@@ -6088,7 +6132,10 @@ def _artifact_commit_paths(args: argparse.Namespace, repo_root: Path | None = No
                 kind = str(change.get("kind") or "").strip()
                 if kind == "unchanged":
                     continue
-                add_path(change.get("path"))
+                path = change.get("path")
+                if not commit_path_still_relevant(path):
+                    continue
+                add_path(path)
 
     # Fallback for tests/older apply paths where preview was not attached.
     if not paths:
