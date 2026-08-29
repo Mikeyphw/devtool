@@ -2236,6 +2236,17 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             str(getattr(args, "session", "") or ""),
         )
 
+    bundle_entry_targets = []
+    if isinstance(manifest, dict) and str(manifest.get("type") or "").strip().lower() == "overlay_bundle":
+        raw_order = manifest.get("apply_order") or manifest.get("overlays") or []
+        if isinstance(raw_order, list):
+            bundle_entry_targets = [
+                str(item.get("target") or "").strip()
+                for item in raw_order
+                if isinstance(item, dict) and str(item.get("target") or "").strip()
+            ]
+    allow_bundle_bootstrap = bool(bundle_entry_targets) and not target_name
+
     try:
         return load_project_config(
             args.repo,
@@ -2245,7 +2256,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             solution_override=solution,
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
-            allow_ambiguous_target=args.command in {"targets", "tg"},
+            allow_ambiguous_target=args.command in {"targets", "tg"} or allow_bundle_bootstrap,
         )
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
@@ -6998,6 +7009,12 @@ def _run_sequential_overlays(
         bundle_strategy = str(bundle_policy.get("strategy") or "per-overlay").strip().lower()
         if bundle_strategy not in {"per-overlay", "after-all", "both"}:
             bundle_strategy = "per-overlay"
+        run_per_overlay_validation = bundle_strategy in {"per-overlay", "both"}
+        run_after_all_validation = bundle_strategy in {"after-all", "both"}
+        bundle_target_mode = str(bundle_manifest.get("target_mode") or "").strip().lower().replace("-", "_")
+        bundle_uses_per_overlay_targets = bundle_target_mode == "per_overlay" or any(
+            str(entry.get("target") or "").strip() for entry in entries
+        )
 
         declared_paths: dict[int, set[str]] = {}
         last_writer: dict[str, int] = {}
@@ -7053,7 +7070,7 @@ def _run_sequential_overlays(
                 tasks_declared, selected_entry_tasks, task_source = _bundle_entry_validation_tasks(entry, raw_entry_manifest, bundle_manifest)
                 entry_manifest = _manifest_with_validation_tasks(raw_entry_manifest, selected_entry_tasks, declared=tasks_declared)
                 entry_policy = artifact_validation_policy(entry_manifest)
-                should_validate = not getattr(args, "no_validate", False) and bool(
+                should_validate = run_per_overlay_validation and not getattr(args, "no_validate", False) and bool(
                     getattr(args, "validate", False)
                     or getattr(args, "validate_only", False)
                     or bundle_policy.get("required", False)
@@ -7063,7 +7080,13 @@ def _run_sequential_overlays(
                     continue
 
                 manifest_target = str(entry["target"] or artifact_target(entry_manifest)).strip()
-                target = str(getattr(args, "target", "") or "").strip() if getattr(args, "_devtool_cli_target_explicit", False) else manifest_target
+                cli_target = str(getattr(args, "target", "") or "").strip()
+                if bundle_uses_per_overlay_targets and manifest_target:
+                    target = manifest_target
+                elif getattr(args, "_devtool_cli_target_explicit", False):
+                    target = cli_target
+                else:
+                    target = manifest_target
                 solution = str(getattr(args, "solution", "") or "").strip() if getattr(args, "_devtool_cli_solution_explicit", False) else artifact_solution(entry_manifest)
                 entry_config = load_project_config(
                     args.repo,
@@ -7213,8 +7236,9 @@ def _run_sequential_overlays(
                 if any(result.returncode != 0 for result in group_results) and not continue_on_error:
                     break
 
-            # "both" adds a final integration pass across distinct affected targets.
-            if bundle_strategy == "both" and not any(result.returncode != 0 for result in all_results):
+            # "after-all" validates each distinct affected target once after every overlay
+            # has been applied. "both" performs both the per-overlay and final passes.
+            if run_after_all_validation and not any(result.returncode != 0 for result in all_results):
                 seen_targets: set[str] = set()
                 for entry in entries:
                     path = Path(entry["path"])
