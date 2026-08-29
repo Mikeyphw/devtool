@@ -402,11 +402,13 @@ def test_native_package_defaults_cover_rust_go_maven_and_node(tmp_path: Path) ->
     assert rust.argv[:2] == ["cargo", "package"]
     assert rust.metadata["artifact_required"] is True
 
-    # Go uses an explicit output directory instead of ambiguous `go build ./...` outputs.
+    # Go package uses runtime main-package discovery and a deterministic output directory.
     go = build_specs(ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="go"), "package")[0]
-    assert go.argv[:2] == ["go", "build"]
-    assert "-o" in go.argv
+    assert go.argv[:2] == ["sh", "-c"]
+    assert "go list" in go.argv[2]
+    assert "go build" in go.argv[2]
     assert go.metadata["artifact_directories"]
+    assert go.metadata["artifact_required"] is True
 
     # Maven uses its native distributable lifecycle.
     (tmp_path / "pom.xml").write_text("<project/>\n", encoding="utf-8")

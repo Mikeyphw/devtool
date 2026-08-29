@@ -153,6 +153,16 @@ lint = false
 [go]
 coalesce_validation = true
 vet = true
+packages = ["./..."]
+build_targets = ["./..."]
+build_directory = ".devtool/build/go"
+package_directory = ".devtool/package/go"
+# run_target = "./cmd/app"
+
+# Optional when two package-main targets share the same basename:
+# [go.outputs]
+# "./services/api/cmd/server" = "api-server"
+# "./services/admin/cmd/server" = "admin-server"
 
 [maven]
 coalesce_validation = true

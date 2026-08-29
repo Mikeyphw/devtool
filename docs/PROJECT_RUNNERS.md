@@ -44,6 +44,41 @@ Collision policy is `unique` by default; `replace` and `fail` are explicit alter
 
 Native package defaults are used where the ecosystem defines one: PEP 517/uv for Python, Android/Gradle package tasks, `dotnet pack`, npm/pnpm/Yarn/Bun package tarballs, `cargo package`, Go binary packaging, Maven `package`, CPack, and `meson dist`. Gradle structured events also report concrete archive outputs from each producing task so the registry can distinguish produced outputs from reused/up-to-date ones.
 
+### Go executable discovery
+
+Go builds no longer use bare `go build ./...` as the executable-build contract.
+For `devtool build` and `devtool package`, the Go runner performs `go list`
+inside the selected execution environment, discovers every `package main`, and
+builds each one with an explicit `-o` path. Development binaries go to
+`.devtool/build/go/`; package binaries go to `.devtool/package/go/`. If no main
+package exists, `build` falls back to a normal compile check while `package`
+fails with an actionable error because there is no distributable executable.
+
+The default build scope is `./...`. At a `go.work` root Devtool expands that
+scope across every workspace main module before discovery. Duplicate binary
+basenames are rejected instead of allowing Go's directory-output behavior to
+overwrite one executable with another. Configure explicit targets/names when
+needed:
+
+```toml
+[go]
+packages = ["./..."]
+build_targets = ["./cmd/server", "./cmd/worker"]
+build_directory = ".devtool/build/go"
+package_directory = ".devtool/package/go"
+run_target = "./cmd/server"
+
+[go.outputs]
+"./cmd/server" = "my-server"
+"./cmd/worker" = "my-worker"
+```
+
+`packages` remains the test/vet selection scope; `build_targets` controls only
+executable discovery. Each produced binary is structurally verified and its
+`go version -m` information is stored in the artifact registry, including the
+module path/version, Go toolchain, GOOS, GOARCH, and VCS fields when Go embeds
+them.
+
 The artifact registry is append-only at the production-event level. Rebuilding the same pathname creates a new record with its own run ID, Git commit, SHA-256, target, variant, producer task, verification state, and timestamp. Registry updates are locked and atomically replaced; malformed registry content is preserved as a corruption backup rather than silently discarded. Failed commands may expose outputs for diagnostics but never register those outputs as successful production events.
 
 ## Validation optimization

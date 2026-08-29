@@ -47,3 +47,14 @@ The first delivered archive passed its focused tests but the acceptance trace fo
 The final archive is accepted only after Python bytecode compilation, shell syntax checks, the focused build/package/release tests, and the complete pytest suite all pass from the final source tree.
 
 **Final audited seal:** 1,946/1,946 collected pytest tests passed, plus 59 subtests passed. Python bytecode compilation and shell syntax validation also passed.
+
+## Post-audit Go executable build enhancement
+
+The Go runner was subsequently tightened beyond the original 18-item promise:
+`devtool build` now discovers `package main` targets at execution time, emits
+real development binaries, verifies/registers them as `go-binary` artifacts,
+records `go version -m` module/toolchain/GOOS/GOARCH/VCS provenance, expands
+default discovery across `go.work` modules, rejects output-name collisions, and
+supports `[go].build_targets` plus `[go.outputs]` overrides. Library-only builds
+retain the old compile-check behavior; `package` requires at least one main
+package. Coverage lives in `tests/test_go_executable_builds.py`.

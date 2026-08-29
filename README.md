@@ -179,6 +179,14 @@ out-of-tree build state; Node and Python reuse incremental dependency and
 environment caches. Chroot execution now exports those policies inside
 `chrootctl`.
 
+Go `build` is executable-aware: Devtool discovers every `package main` inside
+the configured build scope, writes real binaries to `.devtool/build/go/`, and
+registers verified Go artifacts with embedded module, Go version, GOOS/GOARCH,
+and VCS build metadata. Library-only repositories still use `go build` as a
+compile check. `go.work` roots expand the default `./...` scope across all
+workspace modules, and executable-name collisions fail rather than silently
+overwriting a binary.
+
 ```toml
 [build]
 max_workers = "auto"

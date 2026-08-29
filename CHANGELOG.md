@@ -2,6 +2,7 @@
 
 - Fix Python source-audit dependency ownership: project dependencies are enforced for package/project automation by default, while heterogeneous auxiliary scripts and captured pip console launchers are inventoried without being misclassified as package requirements; strict repository-wide enforcement remains opt-in via `[tool.devtool.python-audit] dependency-scope = "repository"`.
 ## 2026-08-28 - Build/package promise audit seal
+- Go builds now discover `package main` targets, emit verified binaries for `devtool build`, support workspace-aware target discovery/output-name overrides, reject basename collisions, and persist `go version -m` provenance.
 
 - Closed post-delivery gaps found by an 18-item acceptance trace: immutable verification events, append-only stale-save protection, live JVM Gradle artifact routing, richer artifact summaries/JSON, promoted registry provenance, and verified release-asset provenance.
 - Added durable `fsync` before atomic artifact rename, isolated deterministic root-module staging, Maven reactor artifact discovery, plain Gradle tar verification, `.NET pack` variant coverage, and current-run-only Android wrapper artifact resolution.

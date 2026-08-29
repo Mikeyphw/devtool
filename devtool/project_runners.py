@@ -2727,13 +2727,211 @@ class GoRunner(ProjectRunner):
         value = config.runner_options.get("go", {})
         return dict(value) if isinstance(value, dict) else {}
 
-    def _packages(self, config: ProjectConfig) -> list[str]:
-        value = self._options(config).get("packages", ["./..."])
+    @staticmethod
+    def _string_list(value: object, default: list[str]) -> list[str]:
         if isinstance(value, str):
-            return shlex.split(value) or ["./..."]
+            return shlex.split(value) or list(default)
         if isinstance(value, (list, tuple)):
-            return [str(item) for item in value if str(item).strip()] or ["./..."]
-        return ["./..."]
+            items = [str(item).strip() for item in value if str(item).strip()]
+            return items or list(default)
+        return list(default)
+
+    def _packages(self, config: ProjectConfig) -> list[str]:
+        return self._string_list(self._options(config).get("packages", ["./..."]), ["./..."])
+
+    def _build_targets(self, config: ProjectConfig) -> list[str]:
+        options = self._options(config)
+        value = options.get("build_targets")
+        if value is None:
+            value = options.get("build_target")
+        if value is None:
+            value = options.get("packages", ["./..."])
+        return self._string_list(value, ["./..."])
+
+    def _output_names(self, config: ProjectConfig) -> dict[str, str]:
+        value = self._options(config).get("outputs", {})
+        if not isinstance(value, dict):
+            return {}
+        result: dict[str, str] = {}
+        for raw_target, raw_name in value.items():
+            target = str(raw_target).strip()
+            name = str(raw_name).strip()
+            if target and name:
+                result[target] = name
+        return result
+
+    def _build_output_dir(self, config: ProjectConfig, action: str) -> Path:
+        options = self._options(config)
+        key = "package_directory" if action == "package" else "build_directory"
+        default = ".devtool/package/go" if action == "package" else ".devtool/build/go"
+        path = Path(str(options.get(key) or default)).expanduser()
+        if not path.is_absolute():
+            path = self._root(config) / path
+        return path.resolve()
+
+    def _build_driver(self, config: ProjectConfig, action: str, workers: int) -> str:
+        """Return a POSIX-shell Go executable discovery/build driver.
+
+        Discovery happens inside the selected execution environment instead of
+        while devtool plans the command. This is important for Termux/chroot and
+        remote-compatible execution where the host's Go workspace/toolchain can
+        differ from the environment that actually performs the build.
+        """
+        targets = self._build_targets(config)
+        output_names = self._output_names(config)
+        output_dir = self._build_output_dir(config, action)
+        quoted_targets = " ".join(shlex.quote(item) for item in targets)
+        output_map = "\n".join(
+            f"resolve_output_name {shlex.quote(target)} {shlex.quote(name)}"
+            for target, name in output_names.items()
+        )
+        package_mode = "1" if action == "package" else "0"
+        return f"""set -eu
+out={shlex.quote(str(output_dir))}
+workers={int(workers)}
+package_mode={package_mode}
+
+tmp_base=\"${{TMPDIR:-${{TEMP:-/tmp}}}}/devtool-go-$$\"
+candidates=\"$tmp_base.candidates\"
+mappings=\"$tmp_base.mappings\"
+names=\"$tmp_base.names\"
+packages_seen=\"$tmp_base.packages\"
+plan=\"$tmp_base.plan\"
+staging=\"$tmp_base.out\"
+: > \"$candidates\"
+: > \"$mappings\"
+: > \"$names\"
+: > \"$packages_seen\"
+: > \"$plan\"
+mkdir -p \"$staging\"
+trap 'rm -f \"$candidates\" \"$mappings\" \"$names\" \"$packages_seen\" \"$plan\"; rm -rf \"$staging\"' EXIT HUP INT TERM
+
+resolve_output_name() {{
+    target=$1
+    output_name=$2
+    case \"$output_name\" in
+        ''|*/*|*\\\\*)
+            echo \"devtool: invalid Go output name for $target: $output_name\" >&2
+            exit 2
+            ;;
+    esac
+    import_path=$(go list -f '{{{{if eq .Name \"main\"}}}}{{{{.ImportPath}}}}{{{{end}}}}' \"$target\")
+    if [ -z \"$import_path\" ]; then
+        echo \"devtool: configured Go output target is not package main: $target\" >&2
+        exit 2
+    fi
+    printf '%s\\t%s\\n' \"$import_path\" \"$output_name\" >> \"$mappings\"
+}}
+
+{output_map}
+
+expand_target() {{
+    target=$1
+    if [ "$target" = "./..." ] && [ -f go.work ]; then
+        go list -m -f '{{{{if .Main}}}}{{{{.Dir}}}}/...{{{{end}}}}' all
+    else
+        printf '%s\\n' "$target"
+    fi
+}}
+
+for target in {quoted_targets}; do
+    expand_target "$target" | while IFS= read -r expanded_target; do
+        [ -n "$expanded_target" ] || continue
+        go list -f '{{{{if eq .Name \"main\"}}}}{{{{.ImportPath}}}}{{{{\"\\t\"}}}}{{{{.Dir}}}}{{{{end}}}}' "$expanded_target" >> "$candidates"
+    done
+done
+
+main_count=0
+tab=$(printf '\\t')
+while IFS=\"$tab\" read -r pkg dir; do
+    [ -n \"$pkg\" ] || continue
+    if grep -Fqx -- \"$pkg\" \"$packages_seen\" 2>/dev/null; then
+        continue
+    fi
+    printf '%s\\n' \"$pkg\" >> \"$packages_seen\"
+
+    name=\"\"
+    while IFS=\"$tab\" read -r mapped_pkg mapped_name; do
+        if [ \"$mapped_pkg\" = \"$pkg\" ]; then
+            name=$mapped_name
+            break
+        fi
+    done < \"$mappings\"
+    if [ -z \"$name\" ]; then
+        name=${{pkg##*/}}
+    fi
+    case \"$name\" in
+        ''|*/*|*\\\\*)
+            echo \"devtool: unsafe Go output name for $pkg: $name\" >&2
+            exit 2
+            ;;
+    esac
+
+    goos=$(go env GOOS)
+    if [ \"$goos\" = windows ]; then
+        case \"$name\" in *.exe) ;; *) name=\"$name.exe\" ;; esac
+    fi
+    if grep -Fqx -- \"$name\" \"$names\" 2>/dev/null; then
+        echo \"devtool: Go executable name collision: $name\" >&2
+        echo \"devtool: configure [go.outputs] to give colliding main packages unique names\" >&2
+        exit 2
+    fi
+    printf '%s\\n' \"$name\" >> \"$names\"
+    printf '%s\\t%s\\n' \"$pkg\" \"$name\" >> \"$plan\"
+    main_count=$((main_count + 1))
+done < \"$candidates\"
+
+if [ \"$main_count\" -eq 0 ]; then
+    if [ \"$package_mode\" -eq 1 ]; then
+        echo \"devtool: Go package found no package main targets; configure [go].build_targets for distributable executables\" >&2
+        exit 2
+    fi
+    # Library-only repositories still receive a complete compilation check.
+    if [ -f go.work ]; then
+        set --
+        for target in {quoted_targets}; do
+            if [ "$target" = "./..." ]; then
+                while IFS= read -r expanded_target; do
+                    [ -n "$expanded_target" ] || continue
+                    set -- "$@" "$expanded_target"
+                done <<EOF_DEVTOOL_GO_TARGETS
+$(expand_target "$target")
+EOF_DEVTOOL_GO_TARGETS
+            else
+                set -- "$@" "$target"
+            fi
+        done
+        exec go build -p "$workers" "$@"
+    fi
+    exec go build -p "$workers" {quoted_targets}
+fi
+
+# Build every planned executable outside the repository first. This prevents
+# Devtool's managed output directory from influencing Go's embedded VCS dirty
+# flag and prevents partial final outputs if a later target fails.
+while IFS="$tab" read -r pkg name; do
+    [ -n "$pkg" ] || continue
+    temp_dest="$staging/$name"
+    go build -p "$workers" -o "$temp_dest" "$pkg"
+done < "$plan"
+
+mkdir -p "$out"
+while IFS="$tab" read -r pkg name; do
+    [ -n "$pkg" ] || continue
+    temp_dest="$staging/$name"
+    dest="$out/$name"
+    rm -f "$dest"
+    mv "$temp_dest" "$dest"
+    buildinfo=$(go version -m "$dest") || {{
+        echo "devtool: unable to read Go build metadata from $dest" >&2
+        exit 3
+    }}
+    printf 'DEVTOOL_GO_ARTIFACT\t%s\t%s\t%s\n' "$dest" "$pkg" "$name"
+    printf '%s\n' "$buildinfo" | while IFS= read -r info_line; do
+        printf 'DEVTOOL_GO_BUILDINFO\t%s\t%s\n' "$dest" "$info_line"
+    done
+done < "$plan"
+"""
 
     def build_specs(self, config: ProjectConfig, action: str) -> list[CommandSpec]:
         root = self._root(config)
@@ -2746,10 +2944,11 @@ class GoRunner(ProjectRunner):
                 metadata=_tool_metadata(self.kind, root, explicit=True, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package"),
             )]
         packages = self._packages(config)
+        artifact_action = action in {"build", "package"}
         if action == "restore":
             argv = ["go", "mod", "download"]
-        elif action == "build":
-            argv = ["go", "build", "-p", str(workers), *packages]
+        elif action in {"build", "package"}:
+            argv = ["sh", "-c", self._build_driver(config, action, workers)]
         elif action in {"test", "wine-test"}:
             argv = ["go", "test", "-p", str(workers), *packages]
         elif action == "lint":
@@ -2757,18 +2956,21 @@ class GoRunner(ProjectRunner):
         elif action == "run":
             target = str(self._options(config).get("run_target") or config.run_target or ".")
             argv = ["go", "run", target]
-        elif action == "package":
-            package_dir = root / ".devtool" / "package" / "go"
-            argv = ["go", "build", "-p", str(workers), "-o", str(package_dir) + os.sep, *packages]
         elif action == "clean":
             argv = ["go", "clean", "-cache", "-testcache"]
         else:
             raise SystemExit(f"Unsupported Go action: {action}")
         metadata = _tool_metadata(
-            self.kind, root, collect_artifacts=action == "package", verify_artifacts=action == "package", artifact_required=action == "package",
+            self.kind,
+            root,
+            collect_artifacts=artifact_action,
+            verify_artifacts=artifact_action,
+            artifact_required=action == "package",
+            go_build_targets=self._build_targets(config) if artifact_action else [],
         )
-        if action == "package":
-            metadata["artifact_directories"] = [str(root / ".devtool" / "package" / "go")]
+        if artifact_action:
+            metadata["artifact_directories"] = [str(self._build_output_dir(config, action))]
+            metadata["artifact_allow_cached"] = False
         spec = CommandSpec(action.replace("wine-", ""), argv, env=env, cwd=str(root), destructive=action == "clean", metadata=metadata)
         if action in {"test", "wine-test"}:
             from .test_selection import apply_test_selection
@@ -2800,11 +3002,20 @@ class GoRunner(ProjectRunner):
         return _validation_metadata(specs, "go-incremental")
 
     def inspect_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
-        return [("project_root", str(self._root(config))), ("project_type", "Go"), ("workspace", "go.work" if (self._root(config) / "go.work").exists() else "go.mod")]
+        options = self._options(config)
+        targets = ", ".join(self._build_targets(config))
+        return [
+            ("project_root", str(self._root(config))),
+            ("project_type", "Go"),
+            ("workspace", "go.work" if (self._root(config) / "go.work").exists() else "go.mod"),
+            ("build_targets", targets),
+            ("build_output", str(self._build_output_dir(config, "build"))),
+            ("package_output", str(self._build_output_dir(config, "package"))),
+            ("output_overrides", str(len(options.get("outputs", {}))) if isinstance(options.get("outputs", {}), dict) else "0"),
+        ]
 
     def doctor_rows(self, config: ProjectConfig) -> list[tuple[str, str]]:
         return [("go", f"READY: {shutil.which('go')}" if shutil.which("go") else "MISSING")]
-
 
 class MavenRunner(ProjectRunner):
     kind = "maven"

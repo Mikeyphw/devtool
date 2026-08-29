@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
 from typing import Any, Iterable
@@ -182,6 +183,155 @@ def _node_candidates(project_root: Path, output: str, started_at: float) -> list
     return candidates
 
 
+
+def _parse_go_buildinfo(lines: Iterable[str]) -> dict[str, Any]:
+    values = [str(line) for line in lines if str(line).strip()]
+    metadata: dict[str, Any] = {"raw": values}
+    settings: dict[str, str] = {}
+    dependencies: list[dict[str, str]] = []
+    for index, raw in enumerate(values):
+        line = raw.rstrip("\n")
+        stripped = line.strip()
+        if index == 0 and ": " in stripped:
+            metadata["go_version"] = stripped.rsplit(": ", 1)[-1]
+            continue
+        fields = stripped.split("\t")
+        if not fields:
+            continue
+        if fields[0] == "path" and len(fields) >= 2:
+            metadata["package_path"] = fields[1]
+        elif fields[0] == "mod" and len(fields) >= 2:
+            metadata["module_path"] = fields[1]
+            if len(fields) >= 3:
+                metadata["module_version"] = fields[2]
+        elif fields[0] == "dep" and len(fields) >= 2:
+            item = {"path": fields[1]}
+            if len(fields) >= 3:
+                item["version"] = fields[2]
+            dependencies.append(item)
+        elif fields[0] == "build" and len(fields) >= 2:
+            setting = fields[1]
+            if "=" in setting:
+                key, value = setting.split("=", 1)
+                settings[key.lstrip("-")] = value
+    if dependencies:
+        metadata["dependencies"] = dependencies
+    if settings:
+        metadata["settings"] = settings
+        for key in ("GOOS", "GOARCH", "vcs", "vcs.revision", "vcs.time", "vcs.modified"):
+            if key in settings:
+                metadata[key.replace(".", "_").lower()] = settings[key]
+    return metadata
+
+
+def _go_local_buildinfo(path: Path) -> dict[str, Any]:
+    go = shutil.which("go")
+    if not go:
+        return {}
+    try:
+        proc = subprocess.run(
+            [go, "version", "-m", str(path)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    return _parse_go_buildinfo(proc.stdout.splitlines())
+
+
+def _go_event_candidates(output: str, project_root: Path) -> list[ArtifactCandidate]:
+    artifacts: dict[str, tuple[str, str]] = {}
+    buildinfo: dict[str, list[str]] = {}
+    for raw_line in (output or "").splitlines():
+        if raw_line.startswith("DEVTOOL_GO_ARTIFACT\t"):
+            parts = raw_line.split("\t", 3)
+            if len(parts) != 4:
+                continue
+            _, raw_path, package_path, output_name = parts
+            artifacts[raw_path] = (package_path, output_name)
+        elif raw_line.startswith("DEVTOOL_GO_BUILDINFO\t"):
+            parts = raw_line.split("\t", 2)
+            if len(parts) != 3:
+                continue
+            _, raw_path, info = parts
+            buildinfo.setdefault(raw_path, []).append(info)
+
+    candidates: list[ArtifactCandidate] = []
+    for raw_path, (package_path, output_name) in artifacts.items():
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = project_root / path
+        metadata: dict[str, Any] = {
+            "go_package": package_path,
+            "go_output_name": output_name,
+        }
+        parsed = _parse_go_buildinfo(buildinfo.get(raw_path, []))
+        if parsed:
+            metadata["go_build_info"] = parsed
+        candidates.append(ArtifactCandidate(path.resolve(), "produced", package_path, metadata))
+    return candidates
+
+
+def _go_executable_format(path: Path) -> str:
+    try:
+        head = path.read_bytes()[:8]
+    except OSError:
+        return ""
+    if head.startswith(b"\x7fELF"):
+        return "elf"
+    if head.startswith(b"MZ"):
+        return "pe"
+    if head.startswith(b"\x00asm"):
+        return "wasm"
+    if head[:4] in {
+        bytes.fromhex("feedface"), bytes.fromhex("feedfacf"),
+        bytes.fromhex("cefaedfe"), bytes.fromhex("cffaedfe"),
+        bytes.fromhex("cafebabe"), bytes.fromhex("bebafeca"),
+    }:
+        return "mach-o"
+    # Go also supports Plan 9 and AIX. Their binaries are still conclusively
+    # identified by `go version -m`; keep the structural check permissive when
+    # embedded Go build information is available.
+    return "unknown"
+
+
+def _verify_go_binary(path: Path, candidate_metadata: dict[str, Any]) -> tuple[bool, list[dict[str, Any]], dict[str, Any], list[Issue]]:
+    valid, checks, issues = _basic_verify(path)
+    metadata = dict(candidate_metadata)
+    build_info = metadata.get("go_build_info")
+    if not isinstance(build_info, dict) or not build_info:
+        build_info = _go_local_buildinfo(path)
+        if build_info:
+            metadata["go_build_info"] = build_info
+
+    executable_format = _go_executable_format(path)
+    metadata["executable_format"] = executable_format
+    if executable_format != "unknown" or build_info:
+        checks.append({"name": "executable_format", "status": "passed", "detail": executable_format})
+    else:
+        checks.append({"name": "executable_format", "status": "failed", "detail": "unrecognized executable format"})
+        valid = False
+
+    if build_info:
+        checks.append({"name": "go_build_info", "status": "passed", "detail": str(build_info.get("go_version") or "embedded Go build info")})
+        goos = str(build_info.get("goos") or "")
+        if os.name == "posix" and goos not in {"windows", "js", "wasip1"}:
+            executable = os.access(path, os.X_OK)
+            checks.append({"name": "executable_mode", "status": "passed" if executable else "failed", "detail": "POSIX executable bit"})
+            valid = valid and executable
+    else:
+        checks.append({"name": "go_build_info", "status": "passed", "detail": "go tool unavailable; structural executable validation used"})
+
+    metadata["go_package"] = str(candidate_metadata.get("go_package") or (build_info.get("package_path") if isinstance(build_info, dict) else ""))
+    metadata["go_output_name"] = str(candidate_metadata.get("go_output_name") or path.name)
+    return valid, checks, metadata, issues
+
+
 def _configured_candidates(config: ProjectConfig, project_root: Path, started_at: float) -> list[ArtifactCandidate]:
     options = _options(config)
     candidates: list[ArtifactCandidate] = []
@@ -233,15 +383,19 @@ def _runner_candidates(
     if kind == "rust":
         return _glob_files(project_root / "target" / "package", ("*.crate",), started_at=started_at, allow_cached=True)
     if kind == "go":
+        event_candidates = _go_event_candidates(output, project_root)
+        if event_candidates:
+            return event_candidates
         directories = result_metadata.get("artifact_directories") or []
         if isinstance(directories, str):
             directories = [directories]
         candidates: list[ArtifactCandidate] = []
+        allow_cached = bool(result_metadata.get("artifact_allow_cached", False))
         for raw in directories if isinstance(directories, (list, tuple)) else []:
             directory = Path(str(raw)).expanduser()
             if not directory.is_absolute():
                 directory = project_root / directory
-            candidates.extend(_glob_files(directory, ("*",), started_at=started_at, allow_cached=True))
+            candidates.extend(_glob_files(directory, ("*",), started_at=started_at, allow_cached=allow_cached))
         for raw in result_metadata.get("artifact_paths", []) if isinstance(result_metadata.get("artifact_paths"), (list, tuple)) else []:
             path = Path(str(raw)).expanduser()
             if not path.is_absolute():
@@ -551,6 +705,10 @@ def collect_and_process_artifacts(
             checks = list(package_record.get("checks") or [])
             semantic_type = str(package_record.get("type") or _suffix(candidate.path).lstrip("."))
             semantic_metadata = dict(package_record)
+        elif verify_requested and kind == "go":
+            valid, checks, semantic_metadata, basic_issues = _verify_go_binary(candidate.path, candidate.metadata)
+            issues.extend(basic_issues)
+            semantic_type = "go-binary"
         elif verify_requested:
             valid, checks, basic_issues = _basic_verify(candidate.path)
             issues.extend(basic_issues)

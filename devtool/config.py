@@ -1478,6 +1478,15 @@ coalesce_validation = true
 
 [go]
 coalesce_validation = true
+# packages = ["./..."]                # test/vet scope
+# build_targets = ["./..."]           # package-main discovery scope
+# build_directory = ".devtool/build/go"
+# package_directory = ".devtool/package/go"
+# run_target = "."
+#
+# Optional executable-name overrides for colliding/custom main packages:
+# [go.outputs]
+# "./cmd/server" = "server"
 
 [maven]
 coalesce_validation = true
