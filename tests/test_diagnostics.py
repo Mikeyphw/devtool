@@ -31,6 +31,25 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(classify_failure("android-validation-build", output, 2), "compile_failure")
 
 
+    def test_generic_fallback_requires_diagnostic_prefix_and_colon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = (
+                "WARNING ERROR CRITICAL)'\n"
+                "foo WARNING ERROR CRITICAL)'\n"
+                "warning: a real actionable warning\n"
+                "error: a real actionable error\n"
+            )
+            issues = parse_issues(root, "test", output)
+
+        self.assertEqual(
+            [(issue.severity, issue.code, issue.message) for issue in issues],
+            [
+                ("warning", "GENERIC", "a real actionable warning"),
+                ("error", "GENERIC", "a real actionable error"),
+            ],
+        )
+
     def test_successful_python_build_noise_is_not_reported_as_generic_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

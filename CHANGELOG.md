@@ -7,6 +7,7 @@
 - Added typed Go test/package diagnostics with package totals, exact test/file/line/message extraction, focused rerun commands, and human-readable durable logs without JSON envelope noise.
 - Fixed failure summaries and clipboard output so Go test failures no longer degrade to `unknown failure` or hide the root cause behind tail truncation.
 - Counted rollback/cleanup as recovery rather than successful workflow stages and synchronized artifact-validation/evidence messages into the durable run log.
+- Tightened the generic warning/error fallback to diagnostic-prefixed `warning:` / `error:` lines so source/test text containing severity words is not reported as a false warning.
 
 ## 2026-08-28 - Go executable build outputs
 

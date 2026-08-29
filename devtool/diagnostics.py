@@ -114,7 +114,7 @@ _CARGO_RUSTC = re.compile(
     re.IGNORECASE,
 )
 _CARGO_FILE = re.compile(r"^\s*-->\s+(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+)$")
-_GENERIC_WARN_ERR = re.compile(r"\b(?P<severity>warning|error)\b[: ]+(?P<message>.+)", re.IGNORECASE)
+_GENERIC_WARN_ERR = re.compile(r"^(?P<severity>warning|error)\s*:\s*(?P<message>.+)$", re.IGNORECASE)
 
 # Successful Python package builds can emit these informational messages.
 # They are not actionable validation findings and should not become GENERIC
