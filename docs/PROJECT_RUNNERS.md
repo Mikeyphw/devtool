@@ -81,12 +81,24 @@ them.
 
 Go validation uses separate stages rather than treating `go test` compilation as a
 substitute for a Devtool build. The default plan is restore → executable build →
-`go test -json` → `go vet`. Devtool renders the JSON stream back into normal Go
-test text in the durable log, while retaining package/test metadata for terminal,
-JSON, and clipboard summaries. Failed tests are reported with package, test name,
-`*_test.go:line`, message, package totals, and a focused rerun command instead of
-falling through to `unknown_failure`. Rollback and cleanup are reported as recovery
-actions and do not inflate successful workflow-stage counts.
+`go test -json` → `go vet`. Managed Go build/run commands are noisy by
+default (`go build -v` and `go run -v`) and every child process now emits a
+heartbeat during long no-output windows, so a validation TUI does not sit at
+“Waiting for command output…” during legitimate compilation work. Restore and
+test keep their existing command contracts (`go mod download` and `go test -json`).
+Devtool renders the JSON stream back into normal Go test text in the durable log,
+while retaining package/test metadata for terminal, JSON, and clipboard summaries.
+Failed tests are reported with package, test name, `*_test.go:line`, message,
+package totals, and a focused rerun command instead of falling through to
+`unknown_failure`. Rollback and cleanup are reported as recovery actions and do
+not inflate successful workflow-stage counts.
+
+All command runners also emit an informational no-output heartbeat every 20
+seconds by default. The heartbeat does not reset idle timeouts or alter child
+process output; it simply proves that Devtool is still supervising the command.
+Set `DEVTOOL_COMMAND_HEARTBEAT_SECONDS=0` to disable it or set the variable to a
+positive number of seconds to tune the cadence. Embedded artifact validators use
+the same live streaming and heartbeat behavior.
 
 The artifact registry is append-only at the production-event level. Rebuilding the same pathname creates a new record with its own run ID, Git commit, SHA-256, target, variant, producer task, verification state, and timestamp. Registry updates are locked and atomically replaced; malformed registry content is preserved as a corruption backup rather than silently discarded. Failed commands may expose outputs for diagnostics but never register those outputs as successful production events.
 

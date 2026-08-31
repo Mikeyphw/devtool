@@ -313,6 +313,24 @@ def test_go_artifact_metadata_records_vcs_provenance_when_embedded(tmp_path: Pat
     assert build_info["vcs_modified"] in {"true", "false"}
 
 
+
+def test_go_runner_preserves_restore_contract_and_uses_noisy_build_and_test_commands(tmp_path: Path) -> None:
+    _module(tmp_path)
+    _main(tmp_path, "cmd/demo")
+    runner = GoRunner()
+
+    restore = runner.build_specs(_config(tmp_path), "restore")[0]
+    assert restore.argv == ["go", "mod", "download"]
+
+    test = runner.build_specs(_config(tmp_path), "test")[0]
+    assert test.argv[:3] == ["go", "test", "-json"]
+    assert "-p" in test.argv
+
+    build = runner.build_specs(_config(tmp_path), "build")[0]
+    driver = build.argv[2]
+    assert "go build -p" in driver
+    assert " -v" in driver
+
 def test_go_validation_uses_separate_restore_build_test_and_vet_stages(tmp_path: Path) -> None:
     _module(tmp_path)
     _main(tmp_path, "cmd/demo")
@@ -322,6 +340,7 @@ def test_go_validation_uses_separate_restore_build_test_and_vet_stages(tmp_path:
     assert specs[1].metadata["collect_artifacts"] is True
     assert specs[1].metadata["verify_artifacts"] is True
     assert specs[2].argv[:3] == ["go", "test", "-json"]
+    assert "-p" in specs[2].argv
     assert specs[2].metadata["progress_parser"] == "go-test-json"
     assert specs[2].metadata["go_test_json"] is True
     assert specs[3].argv[:2] == ["go", "vet"]

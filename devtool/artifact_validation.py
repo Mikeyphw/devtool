@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import queue
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,124 @@ from .logstore import write_log
 from .models import Issue, OperationResult
 
 _ALLOWED_RUNNERS = {"bash", "sh", "python3"}
+
+
+def _validation_heartbeat_seconds(env: dict[str, str]) -> float:
+    raw = str(
+        env.get(
+            "DEVTOOL_COMMAND_HEARTBEAT_SECONDS",
+            env.get("DEVTOOL_NO_OUTPUT_HEARTBEAT_SECONDS", "20"),
+        )
+        or "20"
+    ).strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return 20.0
+    return max(0.0, min(value, 3600.0))
+
+
+def _run_validator_command_live(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: int,
+) -> tuple[int, str]:
+    """Run an artifact validator with live output and no-output heartbeats."""
+    started = time.monotonic()
+    last_output_at = started
+    last_heartbeat_at = started
+    heartbeat_seconds = _validation_heartbeat_seconds(env)
+    output_parts: list[str] = []
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    try:
+        proc = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except OSError as exc:
+        return 127, str(exc)
+
+    def _reader() -> None:
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                lines.put(line)
+        finally:
+            lines.put(None)
+
+    reader = threading.Thread(target=_reader, name=f"devtool-artifact-validator-{proc.pid}", daemon=True)
+    reader.start()
+    reader_done = False
+
+    def _append(text: str) -> None:
+        output_parts.append(text)
+        print(text, end="", flush=True)
+
+    while True:
+        now = time.monotonic()
+        timed_out = timeout_seconds > 0 and (now - started) >= timeout_seconds
+        if timed_out and proc.poll() is None:
+            _append(f"\nArtifact validation script timed out after {timeout_seconds} seconds.\n")
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=2.0)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            return 124, "".join(output_parts)
+
+        try:
+            item = lines.get(timeout=0.1)
+        except queue.Empty:
+            item = ""
+
+        if item is None:
+            reader_done = True
+        elif item:
+            last_output_at = time.monotonic()
+            last_heartbeat_at = last_output_at
+            _append(item)
+
+        if proc.poll() is not None and reader_done:
+            break
+
+        now = time.monotonic()
+        if (
+            heartbeat_seconds > 0
+            and (now - last_output_at) >= heartbeat_seconds
+            and (now - last_heartbeat_at) >= heartbeat_seconds
+        ):
+            last_heartbeat_at = now
+            elapsed = int(round(now - last_output_at))
+            _append(
+                "\n"
+                f"Devtool heartbeat: artifact validator is still running after {elapsed}s without child output. "
+                "The process was not stopped; set DEVTOOL_COMMAND_HEARTBEAT_SECONDS=0 to disable this heartbeat.\n"
+            )
+
+    try:
+        rc = proc.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        rc = 124
+    reader.join(timeout=0.25)
+    return rc, "".join(output_parts)
 
 
 def _preferred_tmp_parent() -> str | None:
@@ -174,23 +294,13 @@ def run_artifact_validation_script(
                 command.append("--unlocked")
             if bool(python_spec.get("offline", False)):
                 command.append("--offline")
-        try:
-            proc = subprocess.run(
-                command,
-                cwd=repo_root.resolve(),
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-            )
-            rc = proc.returncode
-            output = proc.stdout or ""
-        except subprocess.TimeoutExpired as exc:
-            rc = 124
-            captured = exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-            output = captured + f"\nArtifact validation script timed out after {timeout_seconds} seconds."
+        print("==> Running artifact validation script", flush=True)
+        rc, output = _run_validator_command_live(
+            command,
+            cwd=repo_root.resolve(),
+            env=env,
+            timeout_seconds=timeout_seconds,
+        )
 
     duration = time.perf_counter() - start
     header = f"$ {runner} {script_rel.as_posix()}"

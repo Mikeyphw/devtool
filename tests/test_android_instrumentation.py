@@ -132,6 +132,10 @@ INSTRUMENTATION_STATUS_CODE: -2
 
             aapt2 = Path("/data/data/com.termux/files/usr/bin/aapt2")
             with mock.patch("devtool.android_instrumentation._instrumentation_aapt2", return_value=aapt2), mock.patch(
+                "devtool.android_instrumentation._resolve_execution_serial", return_value=""
+            ), mock.patch(
+                "devtool.android_instrumentation._resolve_local_command", side_effect=lambda argv: list(argv)
+            ), mock.patch(
                 "devtool.android_instrumentation.run", side_effect=fake_run
             ):
                 rc = android_instrumentation.main([str(root)])
@@ -174,7 +178,11 @@ INSTRUMENTATION_STATUS_CODE: -2
                     )
                 return mock.Mock(returncode=0, stdout="", stderr="")
 
-            with mock.patch("devtool.android_instrumentation.run", side_effect=fake_run):
+            with mock.patch(
+                "devtool.android_instrumentation._resolve_execution_serial", return_value=""
+            ), mock.patch(
+                "devtool.android_instrumentation._resolve_local_command", side_effect=lambda argv: list(argv)
+            ), mock.patch("devtool.android_instrumentation.run", side_effect=fake_run):
                 rc = android_instrumentation.main([str(root), "--skip-build", "--report", str(report)])
 
             self.assertEqual(rc, 1)
@@ -185,7 +193,8 @@ INSTRUMENTATION_STATUS_CODE: -2
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             report = root / "instrumentation.json"
-            rc = android_instrumentation.main([str(root), "--skip-build", "--report", str(report)])
+            with mock.patch("devtool.android_instrumentation._resolve_execution_serial", return_value=""):
+                rc = android_instrumentation.main([str(root), "--skip-build", "--report", str(report)])
 
             self.assertEqual(rc, 1)
             self.assertTrue(report.is_file())
@@ -209,7 +218,11 @@ INSTRUMENTATION_STATUS_CODE: -2
                     raise android_instrumentation.InstrumentationError("test install failed")
                 return mock.Mock(returncode=0, stdout="", stderr="")
 
-            with mock.patch("devtool.android_instrumentation.run", side_effect=fake_run):
+            with mock.patch(
+                "devtool.android_instrumentation._resolve_execution_serial", return_value=""
+            ), mock.patch(
+                "devtool.android_instrumentation._resolve_local_command", side_effect=lambda argv: list(argv)
+            ), mock.patch("devtool.android_instrumentation.run", side_effect=fake_run):
                 rc = android_instrumentation.main([
                     str(root),
                     "--skip-build",

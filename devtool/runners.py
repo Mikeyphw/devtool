@@ -697,6 +697,38 @@ def _idle_timeout_for(argv: list[str], command_name: str) -> float | None:
     return None
 
 
+
+def _command_heartbeat_seconds(env: Mapping[str, str] | dict[str, str]) -> float:
+    """Return how often Devtool should print a no-output heartbeat.
+
+    Some toolchains, especially Go compilation and shell validators, can be
+    legitimately silent for minutes.  A heartbeat is informational only: it is
+    not child output, it does not reset idle timeouts, and it can be disabled
+    with DEVTOOL_COMMAND_HEARTBEAT_SECONDS=0.
+    """
+    raw = str(
+        env.get(
+            "DEVTOOL_COMMAND_HEARTBEAT_SECONDS",
+            env.get("DEVTOOL_NO_OUTPUT_HEARTBEAT_SECONDS", "20"),
+        )
+        or "20"
+    ).strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return 20.0
+    return max(0.0, min(value, 3600.0))
+
+
+def _command_heartbeat_message(command_name: str, argv: Sequence[str], seconds: float, elapsed: float) -> str:
+    label = (command_name or "command").strip() or "command"
+    executable = Path(str(argv[0])).name if argv else "command"
+    return (
+        f"Devtool heartbeat: {label} ({executable}) is still running after "
+        f"{int(round(elapsed))}s without child output. The process was not stopped; "
+        f"set DEVTOOL_COMMAND_HEARTBEAT_SECONDS=0 to disable this heartbeat."
+    )
+
 def _looks_like_chrootctl_exec(argv: Sequence[str]) -> bool:
     tokens = [str(part) for part in argv]
     for index, token in enumerate(tokens):
@@ -743,6 +775,8 @@ def _iter_process_output_lines(
     heartbeat_callback: Callable[[], None] | None = None,
     stall_warning_seconds: float | None = None,
     stall_warning_message: str = "",
+    heartbeat_seconds: float = 0.0,
+    heartbeat_message: Callable[[float], str] | None = None,
 ):
     """Yield child output without waiting forever for pipe EOF.
 
@@ -784,6 +818,7 @@ def _iter_process_output_lines(
     supervisor_checked_at = 0.0
     heartbeat_checked_at = 0.0
     stall_warning_emitted = False
+    last_heartbeat_at = last_output_at
     memory_guard_history: deque[int] = deque(maxlen=12)
     memory_guard_details = ""
     memory_guard_sustained_limit, memory_guard_hard_limit = _memory_guard_limits(memory_guard_mb)
@@ -840,6 +875,7 @@ def _iter_process_output_lines(
                     chunk = b""
                 if chunk:
                     last_output_at = time.monotonic()
+                    last_heartbeat_at = last_output_at
                     for line in emit_and_track(decoder.decode(chunk)):
                         yield line
                     continue
@@ -863,6 +899,17 @@ def _iter_process_output_lines(
                 break
 
             now_monotonic = time.monotonic()
+            if heartbeat_seconds > 0 and (now_monotonic - last_output_at) >= heartbeat_seconds and (now_monotonic - last_heartbeat_at) >= heartbeat_seconds:
+                last_heartbeat_at = now_monotonic
+                elapsed = now_monotonic - last_output_at
+                if heartbeat_message is not None:
+                    message_text = heartbeat_message(elapsed)
+                else:
+                    message_text = f"Devtool heartbeat: child process is still running after {int(round(elapsed))}s without output."
+                message = "\n" + message_text.rstrip() + "\n"
+                for line in emit_and_track(message):
+                    yield line
+
             if (
                 stall_warning_seconds is not None
                 and stall_warning_seconds > 0
@@ -1397,6 +1444,10 @@ def _run_process_live(
             if chroot_stall_seconds > 0 and (stall_warning_seconds is None or chroot_stall_seconds < stall_warning_seconds):
                 stall_warning_seconds = chroot_stall_seconds
                 stall_warning_message = _termux_chroot_stall_message(argv, chroot_stall_seconds)
+        heartbeat_seconds = _command_heartbeat_seconds(env)
+        def _heartbeat_message(elapsed: float) -> str:
+            return _command_heartbeat_message(command_name, argv, heartbeat_seconds, elapsed)
+
         completion_detector = _dotnet_test_completion_status if completion_idle_grace is not None else None
         if tracker is None:
             for raw_line in _iter_process_output_lines(
@@ -1409,6 +1460,8 @@ def _run_process_live(
                 heartbeat_callback=heartbeat_callback,
                 stall_warning_seconds=stall_warning_seconds,
                 stall_warning_message=stall_warning_message,
+                heartbeat_seconds=heartbeat_seconds,
+                heartbeat_message=_heartbeat_message,
             ):
                 line = _render_process_line(raw_line)
                 if not line:
@@ -1433,6 +1486,8 @@ def _run_process_live(
                 heartbeat_callback=heartbeat_callback,
                 stall_warning_seconds=stall_warning_seconds,
                 stall_warning_message=stall_warning_message,
+                heartbeat_seconds=heartbeat_seconds,
+                heartbeat_message=_heartbeat_message,
             ):
                 line = _render_process_line(raw_line)
                 if not line:
@@ -1442,10 +1497,13 @@ def _run_process_live(
                 # Non-verbose mode intentionally keeps command stdout/stderr captured only.
                 # Dotnet commands get a parsed Rich progress display instead of raw output.
                 # Use --verbose when the full restore/build/test stream is needed live.
-                if verbose or not tracker.enabled:
+                visible_heartbeat = line.lstrip().startswith("Devtool heartbeat:")
+                if verbose or not tracker.enabled or visible_heartbeat:
                     # Non-interactive/CI output must remain observable even
                     # when a parser is active; Rich progress is a TTY-only
                     # presentation layer, never a replacement for stdout.
+                    # Heartbeats are Devtool's own progress signal, so always
+                    # surface them to avoid a silent TUI during quiet children.
                     print(line, end="", flush=True)
                 tracker.update_from_line(line)
             returncode = _wait_process_returncode(proc)

@@ -362,8 +362,11 @@ def _choose_runner(text: str, *, configured: str, target_package: str) -> tuple[
 def _instrument_command(serial: str, *, am_command: str) -> list[str]:
     if serial:
         return [*_device_prefix(serial), "shell", "am", "instrument"]
+    # Availability is resolved once up front in _resolve_execution_serial.
+    # Keep this helper as a pure argv builder so unit tests and diagnostics do
+    # not depend on whether the host running the test happens to have sudo/pm.
     command = shlex.split(am_command or "sudo am instrument")
-    return _resolve_local_command(command or ["sudo", "am", "instrument"])
+    return command or ["sudo", "am", "instrument"]
 
 
 def _uninstall_test_package(package_name: str, *, serial: str, install_command: str) -> None:

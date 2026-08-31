@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import shutil
+
+import pytest
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -167,6 +170,8 @@ def test_clipboard_uses_go_failure_reason_and_rerun_without_unknown_failure() ->
 
 
 def test_runner_converts_go_json_to_human_log_and_structured_metadata(tmp_path: Path) -> None:
+    if shutil.which("go") is None:
+        pytest.skip("go executable is required for the real Go JSON runner smoke test")
     import subprocess
     from devtool.models import ProjectConfig
     from devtool.project_runners import GoRunner

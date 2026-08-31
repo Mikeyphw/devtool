@@ -712,6 +712,36 @@ printf 'ran\\n' > "$DEVTOOL_REPO_ROOT/validator-ran.txt"
             self.assertIsNotNone(result)
             self.assertEqual(result.returncode, 0)
 
+    def test_artifact_validator_streams_heartbeat_for_quiet_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            script = b"#!/bin/sh\nsleep 0.35\necho validator done\n"
+            manifest = {
+                "schema_version": 2,
+                "type": "overlay",
+                "validation": {
+                    "script": {
+                        "path": ".devtool-artifact/validate.sh",
+                        "runner": "sh",
+                        "sha256": sha(script),
+                        "timeout_seconds": 5,
+                    }
+                },
+            }
+            archive = root / "script.zip"
+            write_archive_entries(
+                archive,
+                {".devtool-artifact.json": json.dumps(manifest).encode(), ".devtool-artifact/validate.sh": script},
+            )
+            with patch.dict(os.environ, {"DEVTOOL_COMMAND_HEARTBEAT_SECONDS": "0.1"}, clear=False):
+                result = run_artifact_validation_script(repo, archive)
+            self.assertIsNotNone(result)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("Devtool heartbeat: artifact validator", result.output)
+            self.assertIn("validator done", result.output)
+
     def test_bundle_dependencies_are_topologically_sorted_and_cycles_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

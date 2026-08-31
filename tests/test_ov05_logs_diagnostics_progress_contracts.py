@@ -242,6 +242,20 @@ def test_postprocess_failure_and_partial_success_publish_authoritative_final_pro
     assert events[-1]["completed"] == 4 and events[-1]["total"] == 4 and events[-1]["percent"] == 100.0
 
 
+
+def test_quiet_command_emits_repeated_devtool_heartbeat(tmp_path: Path, capsys) -> None:
+    config = ProjectConfig(repo_root=tmp_path, kind="python")
+    spec = CommandSpec(
+        "build",
+        [sys.executable, "-c", "import time; time.sleep(0.35)"],
+        cwd=str(tmp_path),
+        env={"DEVTOOL_COMMAND_HEARTBEAT_SECONDS": "0.1"},
+    )
+    results, raw = run_specs(config, [spec], verbose=False)
+    assert results[0].returncode == 0
+    assert "Devtool heartbeat: build" in raw
+    assert "Devtool heartbeat: build" in capsys.readouterr().out
+
 def test_final_progress_publishes_typed_warning_and_error_counts(tmp_path: Path) -> None:
     config = ProjectConfig(repo_root=tmp_path, kind="python")
     events: list[dict] = []

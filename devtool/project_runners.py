@@ -3004,9 +3004,9 @@ EOF_DEVTOOL_GO_TARGETS
                 set -- "$@" "$target"
             fi
         done
-        exec go build -p "$workers" "$@"
+        exec go build -p "$workers" -v "$@"
     fi
-    exec go build -p "$workers" {quoted_targets}
+    exec go build -p "$workers" -v {quoted_targets}
 fi
 
 # Build every planned executable outside the repository first. This prevents
@@ -3015,7 +3015,7 @@ fi
 while IFS="$tab" read -r pkg name; do
     [ -n "$pkg" ] || continue
     temp_dest="$staging/$name"
-    go build -p "$workers" -o "$temp_dest" "$pkg"
+    go build -p "$workers" -v -o "$temp_dest" "$pkg"
 done < "$plan"
 
 mkdir -p "$out"
@@ -3095,7 +3095,7 @@ done < "$plan"
             argv = ["go", "vet", *packages]
         elif action == "run":
             target = str(self._options(config).get("run_target") or config.run_target or ".")
-            argv = ["go", "run", target]
+            argv = ["go", "run", "-v", target]
         elif action == "clean":
             argv = ["go", "clean", "-cache", "-testcache"]
         else:
