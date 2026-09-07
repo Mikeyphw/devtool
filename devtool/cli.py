@@ -57,6 +57,7 @@ from .artifacts import (
     make_history_entry,
     preview_artifact,
     read_artifact_manifest,
+    read_delete_manifest,
     resolve_artifact_path,
     sha256_file,
     validate_artifact,
@@ -105,7 +106,7 @@ from .config import (
     resolve_config_dict,
 )
 from .log_commands import choose_active_log, format_log_entries, list_log_entries, open_log, resolve_log_path, tail_log
-from .logstore import latest_log, new_log_path
+from .logstore import latest_log, new_log_path, set_log_dir_override
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
@@ -127,8 +128,12 @@ from .termux_diagnostics import (
 )
 from .transactions import (
     abandon_transaction,
+    affected_paths_from_preview,
     devtool_xdg_dir,
     find_active_transaction,
+    find_active_transactions,
+    list_active_transaction_records,
+    resolve_active_transaction,
     mark_transaction_completed,
     mark_transaction_pending_validation,
     mark_transaction_validated,
@@ -388,6 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
     execution.add_argument("--trace", action="store_true", help="Enable architecture event tracing and full exception tracebacks")
     execution.add_argument("-y", "--yes", action="store_true", help="Assume yes for confirmations")
     execution.add_argument("-f", "--force", action="store_true", help="Force dangerous actions")
+    execution.add_argument("--allow-pending-validation", action="store_true", help="Allow a new operation while another artifact remains pending validation; rollback state is preserved")
     execution.add_argument("--dry-run", action="store_true", help="Print commands without running them")
     execution.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="For test: pass --no-build to dotnet test")
     execution.add_argument("-k", "--continue-on-error", action="store_true", help="Continue with the next independent step after an error")
@@ -402,6 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
     output.add_argument("--no-clipboard", action="store_true", help="Disable clipboard prompts and copy behavior")
     output.add_argument("--copy-via", choices=["auto", "socket", "fifo", "termux", "x11", "wayland"], default="auto", help="Prefer a clipboard backend family")
     output.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
+    output.add_argument("--log-dir", default="", help="Override the directory used for command logs (also DEVTOOL_LOG_DIR)")
 
     hud = parser.add_argument_group("HUD and app bridge")
     hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the selected HUD while progress is emitted (default)")
@@ -883,6 +890,9 @@ def build_parser() -> argparse.ArgumentParser:
     rollback_cmd = subparsers.add_parser("rollback")
     rollback_cmd.add_argument("commit", nargs="?", default="")
     rollback_cmd.add_argument("--last", action="store_true")
+    rollback_cmd.add_argument("--transaction", default="", metavar="ID_OR_PATH", help="Resume/perform rollback for an active apply transaction")
+    rollback_cmd.add_argument("--failed", action="store_true", help="Resume the newest rollback-failed transaction")
+    rollback_cmd.add_argument("--list-transactions", action="store_true", help="List active apply transactions and their recovery state")
 
     validation_status = subparsers.add_parser("validation-status", aliases=["vs"], help="Show the active resumable validation session")
     validation_status.add_argument("--session", default="", help="Specific validation session ID")
@@ -3273,9 +3283,17 @@ def _config_for_validation_planning(config: ProjectConfig, args: argparse.Namesp
 
 
 def _exclusive_validation_task_values(args: argparse.Namespace) -> list[str]:
-    """Return the stable, de-duplicated task list explicitly selected by CLI/session."""
+    """Return the stable, de-duplicated task list selected by CLI/artifact/session.
 
-    return list(dict.fromkeys(_cli_string_list(getattr(args, "test_task", None))))
+    Artifact-declared tasks are a validation-plan contract, not merely test
+    selection metadata. Preserve them even if a resumed/deferred path rebuilt
+    an argparse namespace without copying ``test_task``.
+    """
+
+    values = _cli_string_list(getattr(args, "test_task", None))
+    if not values and bool(getattr(args, "_devtool_validation_tasks_declared", False)):
+        values = _cli_string_list(getattr(args, "_devtool_manifest_validation_tasks", None))
+    return list(dict.fromkeys(values))
 
 
 _EXCLUSIVE_VALIDATION_ACTIONS: dict[str, str] = {
@@ -4197,6 +4215,8 @@ def _validation_session_options(args: argparse.Namespace) -> dict[str, object]:
         "skip_build": bool(getattr(args, "skip_build", False)),
         "skip_test": bool(getattr(args, "skip_test", False)),
         "test_task": _exclusive_validation_task_values(args),
+        "validation_tasks_declared": bool(getattr(args, "_devtool_validation_tasks_declared", False) or getattr(args, "_devtool_cli_test_task_explicit", False)),
+        "validation_task_source": ("cli" if bool(getattr(args, "_devtool_cli_test_task_explicit", False)) else str(getattr(args, "_devtool_validation_task_source", "") or "")),
         "max_runtime": str(getattr(args, "max_runtime", "") or ""),
         "stop_below_battery": int(getattr(args, "stop_below_battery", 0) or 0),
         "require_charging": bool(getattr(args, "require_charging", False)),
@@ -4250,6 +4270,8 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "minimum_phase": "finalize" if exclusive_tasks else str(validation_policy.get("minimum_phase") or "finalize"),
         "resource_profile": str(getattr(args, "validation_resource_profile", "automatic") or "automatic"),
         "exclusive_validation_tasks": list(exclusive_tasks),
+        "validation_tasks_declared": bool(getattr(args, "_devtool_validation_tasks_declared", False) or getattr(args, "_devtool_cli_test_task_explicit", False)),
+        "validation_task_source": ("cli" if bool(getattr(args, "_devtool_cli_test_task_explicit", False)) else str(getattr(args, "_devtool_validation_task_source", "") or "artifact-manifest")),
         "artifact_script_in_plan": bool(validation_policy.get("script")) and not bool(getattr(args, "no_artifact_script", False)) and not exclusive_tasks,
         "target": str(getattr(args, "target", "") or artifact_target(manifest)),
         "solution": str(getattr(args, "solution", "") or artifact_solution(manifest)),
@@ -4294,10 +4316,29 @@ def _rehydrate_apply_validation_context(
 ) -> None:
     manifest = context.get("manifest") if isinstance(context.get("manifest"), dict) else {}
     preview = context.get("preview") if isinstance(context.get("preview"), dict) else {}
-    if not manifest and not preview:
+    if not manifest and not preview and not context.get("validation_tasks_declared"):
         return
     if preview:
         args._devtool_artifact_preview = dict(preview)
+
+    context_declared = bool(context.get("validation_tasks_declared", False))
+    context_tasks = list(dict.fromkeys(_cli_string_list(context.get("exclusive_validation_tasks", []))))
+    if context_declared and not bool(getattr(args, "_devtool_cli_test_task_explicit", False)):
+        args.test_task = list(context_tasks)
+        args._devtool_manifest_validation_tasks = list(context_tasks)
+        args._devtool_validation_tasks_declared = True
+        args._devtool_validation_task_source = str(context.get("validation_task_source") or "artifact-manifest")
+
+    if manifest:
+        manifest_declared, manifest_tasks = artifact_validation_task_declaration(dict(manifest))
+        if context_declared and manifest_declared and list(manifest_tasks) != context_tasks:
+            raise ValidationSessionError(
+                "Deferred validation task contract changed since apply: "
+                f"stored={context_tasks!r}, artifact={list(manifest_tasks)!r}. "
+                "Restart validation or explicitly accept the plan change instead of falling back to default phases."
+            )
+    # Preview-only deferred sessions still need changed-path scoping even when
+    # their original artifact had no manifest.
     _apply_artifact_validation_defaults(config, args, dict(manifest or {}))
 
 
@@ -4360,6 +4401,10 @@ def _load_or_create_validation_session(
             )
         if stored_tasks:
             args.test_task = list(stored_tasks)
+        if bool(active.options.get("validation_tasks_declared", False)) or stored_tasks:
+            args._devtool_validation_tasks_declared = True
+            args._devtool_manifest_validation_tasks = list(stored_tasks)
+            args._devtool_validation_task_source = str(active.options.get("validation_task_source") or "session")
         for name in ("skip_restore", "skip_build", "skip_test", "stop_gradle_after_phase", "keep_gradle_daemon", "validation_resource_profile", "max_workers", "cpu_limit", "gradle_heap_mb", "gradle_metaspace_mb", "memory_guard_mb", "validation_low_priority", "validation_parallel", "validation_build_cache", "validation_daemon", "max_infrastructure_retries", "max_resource_retries", "no_auto_retry", "rollback_on_failure", "failure_action"):
             if name in active.options:
                 setattr(args, name, active.options[name])
@@ -4800,6 +4845,10 @@ def _run_validation_session(
                 )
             if stored_tasks:
                 args.test_task = list(stored_tasks)
+            if bool(active.options.get("validation_tasks_declared", False)) or stored_tasks:
+                args._devtool_validation_tasks_declared = True
+                args._devtool_manifest_validation_tasks = list(stored_tasks)
+                args._devtool_validation_task_source = str(active.options.get("validation_task_source") or "session")
         _enable_resumable_validation(config, args)
         effective_context = dict(apply_context or (active.apply_context if active is not None else {}) or {})
         if active is not None and not start_new:
@@ -6041,6 +6090,37 @@ def _print_history(config: ProjectConfig, *, limit: int) -> None:
 
 
 def _rollback(config: ProjectConfig, args: argparse.Namespace) -> int:
+    if bool(getattr(args, "list_transactions", False)):
+        records = list_active_transaction_records(config.repo_root)
+        if not records:
+            console.print("[yellow]No active apply transactions.[/yellow]")
+            return 0
+        rows = []
+        for item in records:
+            rows.append((
+                str(item.get("transaction_id") or "-"),
+                f"{item.get('status') or '-'} target={item.get('target') or '-'} paths={len(item.get('reserved_paths') or item.get('affected_paths') or [])} {item.get('path') or ''}",
+            ))
+        render_status_table(rows)
+        return 0
+
+    transaction_selector = str(getattr(args, "transaction", "") or "").strip()
+    if transaction_selector or bool(getattr(args, "failed", False)):
+        if str(getattr(args, "commit", "") or "").strip() or bool(getattr(args, "last", False)):
+            raise SystemExit("Transaction rollback cannot be combined with a Git commit hash or --last.")
+        try:
+            transaction_path = resolve_active_transaction(
+                config.repo_root,
+                transaction_selector,
+                failed_only=bool(getattr(args, "failed", False)),
+            )
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+        result = rollback_transaction(transaction_path, reason="manual rollback requested by user")
+        totals, _, _, machine = _emit_summary([result], config, as_json=False, raw_output=result.output, command="rollback")
+        _write_json_payload(args.machine_file, machine)
+        return 0 if totals["failed"] == 0 else 1
+
     commit = args.commit
     if args.last:
         entries = [e for e in load_history(config.repo_root) if e.get("commit_hash")]
@@ -6048,10 +6128,10 @@ def _rollback(config: ProjectConfig, args: argparse.Namespace) -> int:
             raise SystemExit("No history entry with commit_hash is available for rollback.")
         commit = str(entries[-1]["commit_hash"])
     if not commit:
-        raise SystemExit("Pass a commit hash or use --last.")
+        raise SystemExit("Pass a commit hash/--last, or use --transaction/--failed for an apply transaction.")
     _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command="rollback")
     specs = [CommandSpec("rollback", ["git", "revert", "--no-edit", commit], destructive=True)]
-    results, raw = _run_specs_for_args(config, specs, args, log_path=new_log_path())
+    results, raw = _run_specs_for_args(config, specs, args, log_path=new_log_path(f"rollback-{commit[:12]}"))
     totals, _, _, machine = _emit_summary(results, config, as_json=False, raw_output=raw, command="rollback")
     _write_json_payload(args.machine_file, machine)
     return 0 if totals["failed"] == 0 else 1
@@ -6235,6 +6315,17 @@ def _record_transaction_commit_from_results(
         record_transaction_git_commit(transaction_path, latest_commit_hash(repo_root))
 
 
+def _log_identifier_for_args(args: argparse.Namespace) -> str:
+    if str(getattr(args, "command", "") or "") not in APPLY_COMMANDS:
+        return ""
+    artifacts = _artifact_arg_list(getattr(args, "artifact", ""))
+    if len(artifacts) == 1:
+        return Path(artifacts[0]).name
+    if artifacts:
+        return Path(artifacts[0]).stem + "-bundle"
+    return ""
+
+
 def _ensure_run_id(args: argparse.Namespace) -> str:
     run_id = str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")).strip()
     if not run_id:
@@ -6244,23 +6335,143 @@ def _ensure_run_id(args: argparse.Namespace) -> str:
     return run_id
 
 
+def _reservation_from_transaction(path: str | Path, *, fallback_target: str = "") -> tuple[str, tuple[str, ...], bool, str]:
+    tx = read_transaction(path)
+    target = str(tx.get("target") or fallback_target or "").strip()
+    raw_paths = tx.get("reserved_paths")
+    if not isinstance(raw_paths, list) and isinstance(tx.get("affected_paths"), list):
+        raw_paths = [
+            str(item.get("path") or "")
+            for item in tx.get("affected_paths") or []
+            if isinstance(item, dict) and str(item.get("path") or "")
+        ]
+    known = int(tx.get("schema_version") or 0) >= 3 and isinstance(raw_paths, list)
+    return target, tuple(str(item) for item in raw_paths or []) if known else (), known, str(tx.get("transaction_id") or "")
+
+
+def _single_run_reservation(config: ProjectConfig, args: argparse.Namespace) -> tuple[str, tuple[str, ...], bool, str]:
+    target = str(config.selected_target or getattr(args, "target", "") or "").strip()
+    command = str(getattr(args, "command", "") or "")
+
+    # Explicit OV18 escape hatch: preserve one pending validation transaction
+    # without treating it as a stale apply. This remains opt-in and does not
+    # bypass any separate live run reservation.
+    # Interrupted non-validation applies are recovered under an exclusive
+    # compatibility reservation before the requested command proceeds. This
+    # preserves the historical auto-recovery behavior without racing a live
+    # scoped operation.
+    stale_nonpending = []
+    for candidate in find_active_transactions(config.repo_root, include_live=False):
+        if not transaction_pending_validation(candidate):
+            try:
+                stale_nonpending.append(read_transaction(candidate))
+            except Exception:
+                pass
+    if len(stale_nonpending) == 1:
+        return "", (), False, str(stale_nonpending[0].get("transaction_id") or "")
+
+    forced_pending_id = ""
+    if bool(getattr(args, "allow_pending_validation", False)):
+        pending = []
+        for candidate in find_active_transactions(config.repo_root, include_live=False):
+            if transaction_pending_validation(candidate):
+                try:
+                    pending.append(read_transaction(candidate))
+                except Exception:
+                    pass
+        if len(pending) == 1:
+            forced_pending_id = str(pending[0].get("transaction_id") or "")
+
+    # A resumed validation owns the transaction it is validating. Its source
+    # reservation remains authoritative across the process boundary.
+    if command in {
+        "validate", "v", "validation-finalize", "vf", "validation-status", "vs",
+        "validation-plan", "vplan", "validation-events", "vevents", "validation-report", "vreport",
+        "validation-pause", "vpause", "validation-stop", "vstop", "validation-abort", "va",
+        "validation-recover", "vrec", "validation-reset", "vreset", "validation-accept-plan-change", "vapc",
+    }:
+        session = load_active_session(config.repo_root)
+        if session is not None and str(session.transaction_path or "").strip():
+            try:
+                return _reservation_from_transaction(session.transaction_path, fallback_target=target)
+            except Exception:
+                # Fail closed below when a legacy/corrupt session cannot prove
+                # its write set.
+                return target, (), False, forced_pending_id
+
+    # Artifact applies can prove their source write set before taking the lock.
+    if command in APPLY_COMMANDS:
+        artifacts = _artifact_arg_list(getattr(args, "artifact", ""))
+        if len(artifacts) == 1:
+            try:
+                artifact_path = resolve_artifact_path(artifacts[0])
+                snapshot = command in {"apply-snapshot", "as"}
+                if not snapshot and (command in {"apply-overlays", "aos"} or is_overlay_bundle(artifact_path)):
+                    return target, (), False, forced_pending_id
+                manifest = _read_artifact_manifest(str(artifact_path))
+                target = artifact_target(manifest) or target
+                preview = preview_artifact(config.repo_root, artifact_path, snapshot=snapshot)
+                args._devtool_artifact_preview = preview
+                paths = affected_paths_from_preview(preview)
+                if not snapshot:
+                    seen = set(paths)
+                    for raw in read_delete_manifest(artifact_path):
+                        value = str(raw).strip()
+                        if value and value not in seen:
+                            seen.add(value)
+                            paths.append(value)
+                return target, tuple(paths), True, ""
+            except Exception:
+                return target, (), False, forced_pending_id
+
+    return target, (), False, forced_pending_id
+
+
+def _rollback_single_run_reservation(repo_root: Path, args: argparse.Namespace) -> tuple[str, tuple[str, ...], bool, str]:
+    if str(getattr(args, "command", "") or "") != "rollback":
+        return "", (), False, ""
+    selector = str(getattr(args, "transaction", "") or "").strip()
+    failed = bool(getattr(args, "failed", False))
+    if not selector and not failed:
+        return "", (), False, ""
+    try:
+        tx_path = resolve_active_transaction(repo_root, selector, failed_only=failed)
+        return _reservation_from_transaction(tx_path)
+    except Exception:
+        return "", (), False, ""
+
+
 def _acquire_repo_single_run_lock(
     repo_root: Path,
     args: argparse.Namespace,
     *,
     log_path: Path | str | None = None,
+    target: str = "",
+    reserved_paths: tuple[str, ...] | list[str] = (),
+    paths_known: bool = False,
+    owned_transaction_id: str = "",
 ) -> SingleRunLock:
+    if not target and not paths_known and not owned_transaction_id:
+        target, reserved_paths, paths_known, owned_transaction_id = _rollback_single_run_reservation(repo_root, args)
     lock = SingleRunLock(
         repo_root,
         command=str(getattr(args, "command", "devtool") or "devtool"),
         run_id=_ensure_run_id(args),
         log_path=str(log_path or ""),
+        target=target,
+        reserved_paths=reserved_paths,
+        paths_known=paths_known,
+        owned_transaction_id=owned_transaction_id,
     )
     try:
         lock.acquire()
     except BlockingIOError as exc:
         raise SystemExit(str(exc)) from exc
     args._devtool_single_run_lock = lock
+    args._devtool_owned_transaction_id = owned_transaction_id
+    if target:
+        args._devtool_active_target = target
+        os.environ["DEVTOOL_ACTIVE_TARGET"] = target
     return lock
 
 
@@ -6270,7 +6481,16 @@ def _acquire_single_run_lock(
     *,
     log_path: Path | str | None = None,
 ) -> SingleRunLock:
-    return _acquire_repo_single_run_lock(config.repo_root, args, log_path=log_path)
+    target, paths, paths_known, transaction_id = _single_run_reservation(config, args)
+    return _acquire_repo_single_run_lock(
+        config.repo_root,
+        args,
+        log_path=log_path,
+        target=target,
+        reserved_paths=paths,
+        paths_known=paths_known,
+        owned_transaction_id=transaction_id,
+    )
 
 
 @contextmanager
@@ -6287,10 +6507,12 @@ def _release_single_run_lock(args: argparse.Namespace) -> None:
     if lock is not None:
         lock.release()
         args._devtool_single_run_lock = None
+    target = str(getattr(args, "_devtool_active_target", "") or "")
+    if target and os.environ.get("DEVTOOL_ACTIVE_TARGET") == target:
+        os.environ.pop("DEVTOOL_ACTIVE_TARGET", None)
     run_id = str(getattr(args, "_devtool_run_id", "") or "")
     if run_id and os.environ.get("DEVTOOL_RUN_ID") == run_id:
         os.environ.pop("DEVTOOL_RUN_ID", None)
-
 
 def _targets(config: ProjectConfig) -> None:
     rows: list[tuple[str, str]] = []
@@ -8697,6 +8919,9 @@ def _main_after_parse(
     ssh_rc = _maybe_delegate_ssh(raw_argv, args)
     if ssh_rc is not None:
         return ssh_rc
+    log_dir_override = str(getattr(args, "log_dir", "") or "").strip()
+    set_log_dir_override(log_dir_override or None)
+
     args._devtool_cli_repo_explicit = bool(str(getattr(args, "repo", "") or "").strip())
     if args._devtool_cli_repo_explicit or args.command not in {"inspect-artifact", "ia", "bootstrap"}:
         args.repo = str(resolve_repository_root(args.repo, args.config))
@@ -9281,7 +9506,7 @@ def _main_after_parse(
     if args.command in {"test", "t"} and bool(getattr(args, "list_tests", False)):
         return _print_test_catalog(config, args, as_json=False)
     continue_on_error = (args.continue_on_error or args.command == "validate-all") and not args.fail_fast
-    log_path = new_log_path()
+    log_path = new_log_path(_log_identifier_for_args(args))
     log_path.touch(exist_ok=True)
     _ensure_run_id(args)
     _single_run_lock = _acquire_single_run_lock(config, args, log_path=log_path)
@@ -9315,6 +9540,19 @@ def _main_after_parse(
         validation_commands = {"validate", "v", "validation-finalize", "vf"}
         if session_matches and args.command in validation_commands:
             stale_transaction = None
+        elif _single_run_lock.allows_transaction(transaction_data):
+            if not bool(getattr(args, "quiet", False)):
+                console.print(
+                    "[yellow]Preserving a disjoint pending validation transaction while this target proceeds.[/yellow]"
+                )
+            stale_transaction = None
+        elif bool(getattr(args, "allow_pending_validation", False)):
+            if not bool(getattr(args, "quiet", False)):
+                console.print(
+                    "[yellow]Proceeding with a pending validation transaction preserved. "
+                    "Use `devtool rollback --transaction ...` if it later needs recovery.[/yellow]"
+                )
+            stale_transaction = None
         else:
             pending_result = OperationResult(
                 "validation-pending",
@@ -9343,6 +9581,20 @@ def _main_after_parse(
             _maybe_copy(pending_result.output, summary_text, json_text, args)
             _release_single_run_lock(args)
             return 1
+
+    if stale_transaction is not None and not transaction_pending_validation(stale_transaction):
+        try:
+            stale_data = read_transaction(stale_transaction)
+        except Exception:
+            stale_data = {}
+        stale_id = str(stale_data.get("transaction_id") or "") if stale_data else ""
+        owned_id = str(getattr(_single_run_lock, "owned_transaction_id", "") or "")
+        if stale_data and stale_id != owned_id and _single_run_lock.allows_transaction(stale_data):
+            if not bool(getattr(args, "quiet", False)):
+                console.print(
+                    "[yellow]Preserving a disjoint interrupted transaction; it can be recovered independently.[/yellow]"
+                )
+            stale_transaction = None
 
     if stale_transaction is not None and args.command not in {"history", "clean", "cl"}:
         rollback_result, rollback_raw = _run_transaction_rollback(

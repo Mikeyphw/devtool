@@ -15,6 +15,7 @@ from typing import Any
 
 from .artifacts import preview_artifact, read_delete_manifest
 from .models import OperationResult
+from .reservations import ReservationConflict, active_reservations, assert_reservation_available, normalize_paths, reservation_coordinator
 from .xdg import data_dir
 
 
@@ -124,9 +125,9 @@ def _active_dir(repo_root: Path) -> Path:
 
 
 def _active_file(repo_root: Path, transaction_id: str = "") -> Path:
-    # Devtool now permits one active run per repository, so a single recovery
-    # marker is authoritative. The active/ directory is still read for cleanup
-    # compatibility with older releases.
+    if transaction_id:
+        return _active_dir(repo_root) / f"{transaction_id}.json"
+    # Legacy single-transaction marker retained for read/recovery compatibility.
     return transaction_root(repo_root) / "active.json"
 
 
@@ -291,6 +292,21 @@ def _git_index_identity(index_path: Path) -> dict[str, Any]:
     return {"exists": True, "sha256": digest, "mode": mode}
 
 
+def _has_other_repository_reservations(repo_root: Path, tx: dict[str, Any]) -> bool:
+    txid = str(tx.get("transaction_id") or "")
+    tx_run_id = str(tx.get("run_id") or "")
+    current_run_id = os.environ.get("DEVTOOL_RUN_ID", "").strip()
+    for reservation in active_reservations(repo_root):
+        if txid and reservation.transaction_id == txid:
+            continue
+        if current_run_id and reservation.run_id == current_run_id:
+            continue
+        if tx_run_id and reservation.run_id == tx_run_id:
+            continue
+        return True
+    return False
+
+
 def _preflight_git_restore(repo_root: Path, tx: dict[str, Any]) -> str:
     """Prove Git rollback eligibility without mutating HEAD, index, or worktree."""
     git_state = tx.get("git_state")
@@ -301,6 +317,15 @@ def _preflight_git_restore(repo_root: Path, tx: dict[str, Any]) -> str:
 
     initial_head = str(git_state.get("initial_head") or "").strip()
     applied_commit = str(git_state.get("applied_commit") or "").strip()
+    if str(git_state.get("rollback_scope") or "") == "paths-v1" and _has_other_repository_reservations(repo_root, tx):
+        if applied_commit:
+            raise RuntimeError(
+                "Refusing to rewind a committed transaction while another Devtool operation is active; "
+                "finish the other operation first or revert the recorded commit explicitly."
+            )
+        # The working-tree backup is path scoped. While another operation is
+        # active we intentionally leave shared HEAD/index state untouched.
+        return "path-scoped-concurrent"
     current_head = _current_git_head(repo_root)
     if applied_commit:
         if current_head != applied_commit:
@@ -353,6 +378,8 @@ def _preflight_git_restore(repo_root: Path, tx: dict[str, Any]) -> str:
 def _verify_git_state_restored(repo_root: Path, tx: dict[str, Any]) -> None:
     git_state = tx.get("git_state")
     if not isinstance(git_state, dict) or not bool(git_state.get("is_git_repo")):
+        return
+    if str(git_state.get("restored_mode") or "") == "path-scoped-concurrent":
         return
     expected_head = str(git_state.get("initial_head") or "").strip()
     current_head = _current_git_head(repo_root)
@@ -548,7 +575,13 @@ def _restore_git_state(repo_root: Path, tx: dict[str, Any]) -> str:
         _verify_git_state_restored(repo_root, tx)
         return "already-restored"
 
-    _preflight_git_restore(repo_root, tx)
+    eligibility = _preflight_git_restore(repo_root, tx)
+    if eligibility == "path-scoped-concurrent":
+        git_state["restored"] = True
+        git_state["restored_mode"] = eligibility
+        git_state["restored_at"] = _utc_now()
+        tx["git_state"] = git_state
+        return eligibility
     initial_head = str(git_state.get("initial_head") or "").strip()
     applied_commit = str(git_state.get("applied_commit") or "").strip()
 
@@ -663,7 +696,7 @@ def create_apply_transaction(
         entries.append(entry)
 
     tx = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "active",
         "transaction_id": transaction_id,
         "path": str(_transaction_file(tx_dir)),
@@ -679,9 +712,11 @@ def create_apply_transaction(
         "pid": os.getpid(),
         "process_start": _process_start_token(os.getpid()),
         "run_id": os.environ.get("DEVTOOL_RUN_ID", ""),
+        "target": os.environ.get("DEVTOOL_ACTIVE_TARGET", ""),
+        "reserved_paths": [str(item.get("path") or "") for item in entries],
         "affected_paths": entries,
         "preview_counts": preview.get("counts", {}),
-        "git_state": _capture_git_state(repo_root, tx_dir),
+        "git_state": {**_capture_git_state(repo_root, tx_dir), "rollback_scope": "paths-v1"},
     }
     _atomic_write_json(_transaction_file(tx_dir), tx)
 
@@ -696,18 +731,7 @@ def create_apply_transaction(
     tx["status"] = "backup-ready"
     tx["updated_at"] = _utc_now()
     _atomic_write_json(_transaction_file(tx_dir), tx)
-    _atomic_write_json(
-        _active_file(repo_root, transaction_id),
-        {
-            "transaction_id": transaction_id,
-            "path": str(_transaction_file(tx_dir)),
-            "status": "backup-ready",
-            "updated_at": _utc_now(),
-            "pid": os.getpid(),
-            "process_start": tx.get("process_start", ""),
-            "run_id": tx.get("run_id", ""),
-        },
-    )
+    _write_transaction_active_marker(_transaction_file(tx_dir), tx)
     return tx
 
 
@@ -715,11 +739,12 @@ def register_transaction_paths(
     transaction_path: str | Path,
     paths: list[str | Path],
 ) -> dict[str, Any]:
-    """Extend an active apply transaction before an auxiliary mutation.
+    """Extend an active transaction after atomically reserving new paths.
 
-    Auto-repair and other post-apply mutators must join the same rollback
-    boundary as the artifact.  This function snapshots each newly-owned path
-    before the caller writes it and checkpoints the journal/active marker.
+    The reservation is checked while holding the per-repository coordinator so
+    an auto-repair cannot silently expand into another live operation's write
+    set. The backup and journal checkpoint happen before the caller may mutate
+    any newly registered path.
     """
     path = Path(transaction_path)
     tx = _read_json(path)
@@ -728,9 +753,10 @@ def register_transaction_paths(
     status = str(tx.get("status") or "")
     if status not in {"backup-ready", "pending-validation", "validation-running", "validation-blocked", "validated"}:
         raise RuntimeError(f"Cannot extend apply transaction in state {status!r}.")
+
     entries = [item for item in tx.get("affected_paths", []) or [] if isinstance(item, dict)]
     known = {str(item.get("path") or "") for item in entries}
-    added: list[str] = []
+    planned: list[tuple[str, Path]] = []
     for raw in paths:
         candidate = Path(raw)
         if candidate.is_absolute():
@@ -739,45 +765,69 @@ def register_transaction_paths(
             except ValueError as exc:
                 raise RuntimeError(f"Transaction path escapes repository: {raw}") from exc
         rel = _safe_rel(str(candidate))
-        target = (repo_root / rel).resolve(strict=False)
+        target_path = (repo_root / rel).resolve(strict=False)
         try:
-            target.relative_to(repo_root)
+            target_path.relative_to(repo_root)
         except ValueError as exc:
             raise RuntimeError(f"Transaction path escapes repository: {raw}") from exc
         rel_text = str(rel)
-        if rel_text in known:
-            continue
-        existed = target.exists() or target.is_symlink()
-        entry = {
-            "path": rel_text,
-            "existed": existed,
-            "kind": _path_kind(target),
-            "restore_state": "pending",
-            "backup_sha256": "",
-            "restored_sha256": "",
-            "verified": False,
-            "staged_path": "",
-            "displaced_path": "",
-            "error": "",
-        }
-        if existed:
-            backup = backup_dir / rel
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            _delete_path(backup)
-            _copy_path(target, backup)
-            entry["backup_sha256"] = _hash_path(backup)
-            entry["backup_identity"] = _path_identity(backup)
-        entries.append(entry)
-        known.add(rel_text)
-        added.append(rel_text)
-    if added:
+        if rel_text not in known and all(existing != rel_text for existing, _ in planned):
+            planned.append((rel_text, target_path))
+
+    if not planned:
+        return tx
+
+    target_name = str(tx.get("target") or "").strip()
+    transaction_id = str(tx.get("transaction_id") or "")
+    run_id = os.environ.get("DEVTOOL_RUN_ID", "").strip() or str(tx.get("run_id") or "")
+    all_paths = [*known, *(item[0] for item in planned)]
+
+    with reservation_coordinator(repo_root):
+        try:
+            assert_reservation_available(
+                repo_root,
+                target=target_name,
+                paths=all_paths,
+                paths_known=int(tx.get("schema_version") or 0) >= 3,
+                exclude_run_id=run_id,
+                exclude_transaction_id=transaction_id,
+            )
+        except ReservationConflict as exc:
+            raise RuntimeError(f"Cannot extend transaction reservation: {exc}") from exc
+
+        added: list[str] = []
+        for rel_text, target_path in planned:
+            rel = _safe_rel(rel_text)
+            existed = target_path.exists() or target_path.is_symlink()
+            entry = {
+                "path": rel_text,
+                "existed": existed,
+                "kind": _path_kind(target_path),
+                "restore_state": "pending",
+                "backup_sha256": "",
+                "restored_sha256": "",
+                "verified": False,
+                "staged_path": "",
+                "displaced_path": "",
+                "error": "",
+            }
+            if existed:
+                backup = backup_dir / rel
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                _delete_path(backup)
+                _copy_path(target_path, backup)
+                entry["backup_sha256"] = _hash_path(backup)
+                entry["backup_identity"] = _path_identity(backup)
+            entries.append(entry)
+            added.append(rel_text)
+
         tx["affected_paths"] = entries
+        tx["reserved_paths"] = [str(item.get("path") or "") for item in entries]
         tx.setdefault("auxiliary_mutations", []).extend(added)
         tx["updated_at"] = _utc_now()
         _atomic_write_json(path, tx)
         _write_transaction_active_marker(path, tx)
     return tx
-
 
 def find_active_transactions(repo_root: Path, *, include_live: bool = False) -> list[Path]:
     repo_root = repo_root.resolve()
@@ -801,7 +851,8 @@ def find_active_transactions(repo_root: Path, *, include_live: bool = False) -> 
             live = _process_is_alive(pid, str(data.get("process_start") or ""))
             if live and not include_live:
                 continue
-            found.append(path)
+            if path not in found:
+                found.append(path)
         except Exception:
             if marker == legacy:
                 found.append(marker)
@@ -813,6 +864,65 @@ def find_active_transactions(repo_root: Path, *, include_live: bool = False) -> 
 def find_active_transaction(repo_root: Path) -> Path | None:
     stale = find_active_transactions(repo_root, include_live=False)
     return stale[0] if stale else None
+
+
+def list_active_transaction_records(repo_root: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for path in find_active_transactions(repo_root, include_live=True):
+        try:
+            tx = read_transaction(path)
+        except Exception:
+            continue
+        tx = dict(tx)
+        tx["path"] = str(path)
+        tx.setdefault("reserved_paths", [
+            str(item.get("path") or "")
+            for item in tx.get("affected_paths", []) or []
+            if isinstance(item, dict) and str(item.get("path") or "")
+        ])
+        records.append(tx)
+    records.sort(key=lambda item: str(item.get("updated_at") or item.get("started_at") or ""))
+    return records
+
+
+def resolve_active_transaction(
+    repo_root: Path,
+    selector: str = "",
+    *,
+    failed_only: bool = False,
+) -> Path:
+    records = list_active_transaction_records(repo_root)
+    if failed_only:
+        records = [item for item in records if str(item.get("status") or "") == "rollback-failed"]
+    if selector:
+        raw = Path(selector).expanduser()
+        matches = [
+            item for item in records
+            if selector == str(item.get("transaction_id") or "")
+            or raw == Path(str(item.get("path") or "")).expanduser()
+            or selector in str(item.get("transaction_id") or "")
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"Transaction selector {selector!r} matched {len(matches)} active transactions; "
+                "use `devtool rollback --list-transactions` and pass the full transaction ID."
+            )
+        records = matches
+    if not records:
+        kind = "rollback-failed " if failed_only else ""
+        raise RuntimeError(f"No active {kind}apply transaction is available for rollback.")
+    if len(records) > 1 and not selector:
+        raise RuntimeError(
+            "More than one active apply transaction exists; use `devtool rollback --list-transactions` "
+            "and select one with --transaction ID."
+        )
+    tx = records[-1]
+    pid = int(tx.get("pid", 0) or 0)
+    if _process_is_alive(pid, str(tx.get("process_start") or "")):
+        raise RuntimeError(
+            f"Refusing to roll back live transaction {tx.get('transaction_id') or '-'} owned by PID {pid}."
+        )
+    return Path(str(tx.get("path") or ""))
 
 
 def _cleanup_transaction_dir(path: Path) -> None:
@@ -934,7 +1044,7 @@ def rollback_transaction(
                 rel = _safe_rel(str(entry.get("path") or ""))
                 entry["resume_target_identity"] = _path_identity(repo_root / rel)
 
-        tx["schema_version"] = 2
+        tx["schema_version"] = max(2, int(tx.get("schema_version") or 0))
         tx["status"] = "rollback-requested"
         tx["rollback_reason"] = reason
         tx["rollback_started_at"] = str(tx.get("rollback_started_at") or _utc_now())
@@ -1193,10 +1303,24 @@ def _write_transaction_active_marker(path: Path, tx: dict[str, Any]) -> None:
         "pid": int(tx.get("pid", 0) or 0),
         "process_start": str(tx.get("process_start") or ""),
         "run_id": str(tx.get("run_id") or ""),
+        "target": str(tx.get("target") or ""),
+        "reserved_paths": list(tx.get("reserved_paths") or []),
         "validation_session_id": str(tx.get("validation_session_id") or ""),
         "next_validation_phase": str(tx.get("next_validation_phase") or ""),
     }
     _atomic_write_json(_active_file(repo_root, transaction_id), marker_payload)
+    # Keep the legacy singleton marker for older callers while it refers to the
+    # same transaction. Never overwrite it with a second concurrent transaction.
+    legacy = _active_file(repo_root)
+    write_legacy = not legacy.exists()
+    if not write_legacy:
+        try:
+            existing = _read_json(legacy)
+            write_legacy = str(existing.get("transaction_id") or "") == transaction_id
+        except Exception:
+            write_legacy = False
+    if write_legacy:
+        _atomic_write_json(legacy, marker_payload)
 
 
 def mark_transaction_validation_running(

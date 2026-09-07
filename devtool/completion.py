@@ -425,6 +425,7 @@ _devtool() {
     '--trace[emit architecture event traces and full exception tracebacks]' \
     '(-y --yes)'{-y,--yes}'[assume yes for confirmations]' \
     '(-f --force)'{-f,--force}'[force dangerous actions]' \
+    '--allow-pending-validation[allow a new operation while another artifact remains pending validation]' \
     '--dry-run[print commands without executing]' \
     '--no-build[for test, do not rebuild before dotnet test]' \
     '(-k --continue-on-error)'{-k,--continue-on-error}'[continue with the next independent step after an error]' \
@@ -437,6 +438,7 @@ _devtool() {
     '--no-clipboard[disable clipboard prompts and copy behavior]' \
     '--copy-via[preferred clipboard backend]:backend:(auto socket fifo termux x11 wayland)' \
     '--theme[summary theme]:theme:(auto plain)' \
+    '--log-dir[override command log directory]:directory:_files -/' \
     '--stdout-payload[select stdout content]:payload:(auto summary raw)' \
     '(--auto-hud --hud-auto --no-hud)'{--auto-hud,--hud-auto}'[auto-start or reuse the selected HUD]' \
     '(--auto-hud --hud-auto --no-hud)--no-hud[do not publish live HUD progress]' \
@@ -863,7 +865,7 @@ _devtool() {
           _arguments '--limit[maximum number of entries]:count:'
           ;;
         rollback)
-          _arguments '--last[rollback the last recorded commit]' '1:commit:'
+          _arguments '--last[rollback the last recorded commit]' '--transaction[resume rollback of a specific apply transaction]:transaction:' '--list-transactions[list active apply transactions and recovery state]' '1:commit:'
           ;;
         control-center|gui)
           _arguments \

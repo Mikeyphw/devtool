@@ -101,17 +101,28 @@ def _phone_log_mirror_dir() -> Path | None:
 
 
 def _all_log_paths() -> list[Path]:
+    # Authoritative state logs are cheap local/XDG storage. Shared phone storage
+    # is a durability mirror and can become very slow to enumerate on Android,
+    # so only scan it as a fallback when no authoritative logs are available.
     paths: list[Path] = []
     seen: set[Path] = set()
+    authoritative_dirs: list[Path] = [logs_dir()]
     for root in _candidate_state_roots():
+        candidate_dir = root / "logs"
+        if candidate_dir not in authoritative_dirs:
+            authoritative_dirs.append(candidate_dir)
+    for directory in authoritative_dirs:
         try:
-            candidates = sorted((root / "logs").glob("*.log"))
+            candidates = sorted(directory.glob("*.log"))
         except OSError:
             continue
         for path in candidates:
             if path not in seen:
                 seen.add(path)
                 paths.append(path)
+    if paths:
+        return sorted(paths, key=lambda item: (_safe_mtime(item), str(item)))
+
     phone_mirror = _phone_log_mirror_dir()
     if phone_mirror is not None:
         try:
@@ -278,7 +289,13 @@ def _format_run(run: ActiveRun, index: int, fallback_log: Path | None = None) ->
 def _choose_with_fzf(lines: list[str]) -> int | None:
     if not lines or shutil.which("fzf") is None or not sys.stdin.isatty():
         return None
-    result = subprocess.run(["fzf", "--prompt=devtool logs> "], input="\n".join(lines), text=True, capture_output=True, check=False)
+    result = subprocess.run(
+        ["fzf", "--prompt=devtool logs> "],
+        input="\n".join(lines),
+        text=True,
+        stdout=subprocess.PIPE,
+        check=False,
+    )
     if result.returncode != 0:
         return None
     selected = result.stdout.strip()
@@ -333,7 +350,7 @@ def open_log(path: Path, *, pager: str = "auto") -> int:
         viewer = pager
     argv = [viewer, str(path)]
     if viewer == "bat":
-        argv = [viewer, "--paging=always", str(path)]
+        argv = [viewer, "--paging=auto", str(path)]
     return subprocess.call(argv)
 
 

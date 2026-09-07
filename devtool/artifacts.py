@@ -438,8 +438,11 @@ def artifact_commit_policy(manifest: dict[str, Any]) -> tuple[bool, str, str]:
     """Return enabled, message, and strategy for artifact-driven commits."""
     apply = manifest.get("apply") if isinstance(manifest.get("apply"), dict) else {}
     commit = apply.get("commit") if isinstance(apply.get("commit"), dict) else {}
-    enabled = commit.get("enabled", False) is True
     message = str(commit.get("message") or manifest.get("commit_message") or "").strip()
+    enabled_value = commit.get("enabled") if "enabled" in commit else None
+    # A real commit message is itself an affirmative commit request. Explicit
+    # false remains a strong opt-out, and CLI --no-commit still wins later.
+    enabled = bool(message) if enabled_value is None else enabled_value is True
     strategy = str(commit.get("strategy") or "single").strip().lower() or "single"
     return enabled and bool(message), message, strategy
 

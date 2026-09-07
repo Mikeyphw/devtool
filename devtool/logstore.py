@@ -16,20 +16,38 @@ _DEFAULT_MAX_TOTAL_MB = 128.0
 _DEFAULT_MAX_FILE_MB = 12.0
 _MAX_IDENTIFIER = 128
 _MAX_SECRET_VALUE = 1024 * 1024
+_RUNTIME_LOG_DIR: Path | None = None
 
 
 def state_dir() -> Path:
     return _xdg_state_dir()
 
 
+def set_log_dir_override(path: str | Path | None) -> None:
+    global _RUNTIME_LOG_DIR
+    text = str(path or "").strip()
+    _RUNTIME_LOG_DIR = Path(text).expanduser() if text else None
+
+
 def logs_dir() -> Path:
-    path = state_dir() / "logs"
+    env_override = os.environ.get("DEVTOOL_LOG_DIR", "").strip()
+    path = _RUNTIME_LOG_DIR or (Path(env_override).expanduser() if env_override else state_dir() / "logs")
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def new_log_path() -> Path:
-    return logs_dir() / f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.log"
+def _safe_log_identifier(value: str | None) -> str:
+    text = Path(str(value or "").strip()).stem
+    text = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip(".-_")
+    return text[:96]
+
+
+def new_log_path(identifier: str | None = None) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    suffix = _safe_log_identifier(identifier)
+    return logs_dir() / f"{stamp}{'-' + suffix if suffix else ''}.log"
 
 
 def _is_phone_termux() -> bool:
@@ -87,7 +105,9 @@ def _mirror_log_to_phone(path: Path) -> None:
         logs_root = logs_dir().resolve(strict=False)
         if not (resolved == logs_root or logs_root in resolved.parents):
             return
-        _durable_copy(path, mirror_root / path.name)
+        mirrored = mirror_root / path.name
+        _durable_copy(path, mirrored)
+        _rotate_log_root(mirror_root, protected=mirrored)
     except OSError:
         # Mirroring is secondary persistence. The authoritative XDG log remains
         # available and callers should not lose a completed command because
@@ -144,8 +164,7 @@ def _bound_one_log(path: Path) -> None:
         return
 
 
-def _rotate_logs(*, protected: Path | None = None) -> None:
-    root = logs_dir()
+def _rotate_log_root(root: Path, *, protected: Path | None = None) -> None:
     try:
         files = [path for path in root.glob("*.log") if path.is_file()]
     except OSError:
@@ -212,6 +231,10 @@ def _rotate_logs(*, protected: Path | None = None) -> None:
         except OSError:
             break
         survivors.remove(victim)
+
+
+def _rotate_logs(*, protected: Path | None = None) -> None:
+    _rotate_log_root(logs_dir(), protected=protected)
 
 
 # Credential redaction is deliberately scanner-based rather than relying on
