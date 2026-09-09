@@ -2221,7 +2221,9 @@ def run_specs(
             if runtime_hint is not None:
                 result_metadata["runtime_failure_hint"] = {"kind": runtime_hint.kind, "detail": runtime_hint.detail}
                 output = (output.rstrip() + "\n" if output else "") + f"Devtool runtime diagnostic ({runtime_hint.kind}): {runtime_hint.detail}\n"
-                if failure_kind in {"command_failure", "unknown", ""}:
+                if runtime_hint.kind == "network-timeout":
+                    failure_kind = "network_timeout"
+                elif failure_kind in {"command_failure", "unknown", ""}:
                     failure_kind = "environment_failure"
         if any(
             issue.severity == "error"

@@ -854,6 +854,13 @@ def classify_failure(command_name: str, output: str, returncode: int) -> str:
         "devtool validation supervisor stopped process: interrupted:",
     )):
         return "interrupted"
+    if any(marker in text for marker in (
+        "java.net.sockettimeoutexception",
+        "connect timed out",
+        "connection timed out",
+        "network access timed out",
+    )):
+        return "network_timeout"
     compile_signal = (
         "compile" in name
         or "compile" in text

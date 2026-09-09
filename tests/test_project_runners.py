@@ -471,6 +471,154 @@ class DotnetBuildServerReuseTests(unittest.TestCase):
         self.assertIn("dotnet-build-server-shutdown", [item.name for item in stopped])
 
 
+class GradleLauncherResolutionTests(unittest.TestCase):
+    def _wrapper(self, root: Path, version: str = "9.7.1") -> Path:
+        wrapper = root / "gradlew"
+        wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        metadata = root / "gradle" / "wrapper"
+        metadata.mkdir(parents=True)
+        (metadata / "gradle-wrapper.properties").write_text(
+            f"distributionUrl=https\\://services.gradle.org/distributions/gradle-{version}-bin.zip\n",
+            encoding="utf-8",
+        )
+        return wrapper
+
+    def test_configured_gradle_command_is_authoritative_and_version_checked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._wrapper(root)
+            configured = root / "toolchains" / "gradle"
+            configured.parent.mkdir(parents=True)
+            configured.write_text("#!/bin/sh\n", encoding="utf-8")
+            configured.chmod(0o755)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="gradle",
+                runner_options={
+                    "tasks": {"build": ["build"]},
+                    "gradle": {
+                        "command": str(configured),
+                        "version": "9.7.1",
+                        "provider": "auto",
+                        "structured_events": False,
+                    },
+                },
+            )
+            with mock.patch("devtool.android_build.gradle_version", return_value="9.7.1"):
+                spec = build_specs(config, "build")[0]
+
+        self.assertEqual(spec.argv[0], str(configured.resolve()))
+        self.assertEqual(spec.metadata["gradle_launcher_source"], "explicit")
+
+    def test_auto_uses_matching_installed_gradle_instead_of_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = self._wrapper(root)
+            local = Path("/data/data/com.termux/files/usr/bin/gradle")
+            config = ProjectConfig(
+                repo_root=root,
+                kind="gradle",
+                runner_options={
+                    "tasks": {"build": ["build"]},
+                    "gradle": {
+                        "version": "9.7.1",
+                        "provider": "auto",
+                        "structured_events": False,
+                    },
+                },
+            )
+            with mock.patch("devtool.project_runners.shutil.which", return_value=str(local)), mock.patch(
+                "devtool.android_build.gradle_version", return_value="9.7.1"
+            ) as version_probe, mock.patch(
+                "devtool.android_build.executable_provider", return_value="termux"
+            ) as provider_probe:
+                spec = build_specs(config, "build")[0]
+
+        self.assertEqual(spec.argv[0], str(local))
+        self.assertNotEqual(spec.argv[0], str(wrapper))
+        version_probe.assert_called_once_with(local)
+        provider_probe.assert_called_once_with(local)
+        self.assertEqual(spec.metadata["gradle_launcher_source"], "termux")
+        self.assertEqual(spec.metadata["gradle_required_version"], "9.7.1")
+
+    def test_auto_keeps_wrapper_when_installed_gradle_version_mismatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = self._wrapper(root)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="gradle",
+                runner_options={
+                    "tasks": {"build": ["build"]},
+                    "gradle": {"version": "9.7.1", "provider": "auto", "structured_events": False},
+                },
+            )
+            with mock.patch("devtool.project_runners.shutil.which", return_value="/usr/bin/gradle"), mock.patch(
+                "devtool.android_build.gradle_version", return_value="9.6.0"
+            ), mock.patch(
+                "devtool.android_build.executable_provider", return_value="system"
+            ):
+                spec = build_specs(config, "build")[0]
+
+        self.assertEqual(spec.argv[0], str(wrapper))
+        self.assertEqual(spec.metadata["gradle_launcher_source"], "wrapper")
+
+    def test_explicit_wrapper_provider_remains_authoritative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = self._wrapper(root)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="gradle",
+                runner_options={
+                    "tasks": {"build": ["build"]},
+                    "gradle": {"version": "9.7.1", "provider": "wrapper", "structured_events": False},
+                },
+            )
+            with mock.patch("devtool.project_runners.shutil.which", return_value="/usr/bin/gradle"):
+                spec = build_specs(config, "build")[0]
+
+        self.assertEqual(spec.argv[0], str(wrapper))
+        self.assertEqual(spec.metadata["gradle_launcher_source"], "wrapper")
+
+    def test_generic_gradle_target_honors_configured_runtime_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = ProjectConfig(
+                repo_root=root,
+                kind="gradle",
+                runner_options={
+                    "tasks": {"build": [":desktopApp:compileKotlin"]},
+                    "gradle": {
+                        "max_workers": 1,
+                        "offline": True,
+                        "no_daemon": True,
+                        "parallel": True,
+                        "build_cache": True,
+                        "structured_events": False,
+                        "args": ["-Pkotlin.incremental=true"],
+                        "user_home": str(root / ".gradle-local"),
+                    },
+                },
+            )
+            with mock.patch("devtool.project_runners.shutil.which", return_value="/usr/bin/gradle"), mock.patch(
+                "devtool.android_build.gradle_version", return_value="9.7.1"
+            ), mock.patch(
+                "devtool.android_build.executable_provider", return_value="system"
+            ):
+                spec = build_specs(config, "build")[0]
+
+        self.assertEqual(spec.argv[0], "/usr/bin/gradle")
+        self.assertIn("--max-workers=1", spec.argv)
+        self.assertIn("--offline", spec.argv)
+        self.assertIn("--no-daemon", spec.argv)
+        self.assertIn("--parallel", spec.argv)
+        self.assertIn("--build-cache", spec.argv)
+        self.assertIn("-Pkotlin.incremental=true", spec.argv)
+        self.assertEqual(spec.env["GRADLE_USER_HOME"], str(root / ".gradle-local"))
+
+
 class GradleDaemonReuseTests(unittest.TestCase):
     def test_gradle_daemon_shutdown_is_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

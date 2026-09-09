@@ -2,6 +2,8 @@
 
 - Fix Python source-audit dependency ownership: project dependencies are enforced for package/project automation by default, while heterogeneous auxiliary scripts and captured pip console launchers are inventoried without being misclassified as package requirements; strict repository-wide enforcement remains opt-in via `[tool.devtool.python-audit] dependency-scope = "repository"`.
 ## 2026-08-29 - Go validation diagnostics and recovery reporting
+- Fixed generic Gradle/JVM `devtool build` launcher selection so `provider = "auto"` prefers an installed Gradle that exactly matches the configured/wrapper version instead of forcing `GradleWrapperMain` to download the same distribution; Gradle runtime flags are now honored and wrapper connect timeouts are classified as `network_timeout`.
+
 
 - Replaced coalesced Go validation with separate restore, real executable build/artifact verification, structured `go test -json`, and vet stages.
 - Added typed Go test/package diagnostics with package totals, exact test/file/line/message extraction, focused rerun commands, and human-readable durable logs without JSON envelope noise.

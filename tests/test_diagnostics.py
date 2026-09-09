@@ -17,6 +17,14 @@ class DiagnosticTests(unittest.TestCase):
 
         self.assertEqual(classify_failure("build", output, 2), "missing_sdk")
 
+    def test_classify_gradle_wrapper_connect_timeout_as_network_timeout(self) -> None:
+        output = (
+            'Exception in thread "main" java.net.SocketTimeoutException: Connect timed out\n'
+            '    at org.gradle.wrapper.GradleWrapperMain.main(GradleWrapperMain.java:34)\n'
+        )
+
+        self.assertEqual(classify_failure("build", output, 1), "network_timeout")
+
     def test_classify_kotlin_compile_error_before_generic_sdk_text(self) -> None:
         output = (
             "Project: /home/mike/Code/xdm/app/XDM.Android\n"

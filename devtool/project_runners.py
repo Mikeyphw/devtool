@@ -1294,6 +1294,164 @@ class AndroidGradleRunner(ProjectRunner):
 
 
 
+def _jvm_gradle_options(config: ProjectConfig) -> dict[str, object]:
+    raw = config.runner_options.get("gradle", {})
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _jvm_gradle_launcher(
+    config: ProjectConfig,
+    root: Path,
+    *,
+    options: dict[str, object] | None = None,
+) -> tuple[str, str, str | None]:
+    """Resolve a Gradle/JVM launcher without blindly preferring ``gradlew``.
+
+    Generic Gradle targets historically selected the project wrapper whenever
+    a ``gradlew`` file existed.  On Termux that can force GradleWrapperMain to
+    download a distribution even when the target pins the exact Gradle version
+    already installed on PATH.  Android builds already avoid that needless
+    bootstrap.  Keep the wrapper authoritative for the required version, but
+    allow an installed Gradle with the *same* version to execute it.
+
+    Returns ``(launcher, source, required_version)``.  Auto mode never downloads
+    during planning: a mismatching/unavailable local Gradle falls back to the
+    wrapper exactly as before.  Only an explicit ``provider=download`` delegates
+    to the canonical managed resolver.  Explicit ``provider=termux|system`` is
+    fail-closed instead of silently using another provider/version.
+    """
+
+    from . import android_build
+
+    gradle = dict(options or _jvm_gradle_options(config))
+    provider = str(gradle.get("provider") or "auto").strip().lower() or "auto"
+    if provider not in {"auto", "wrapper", "termux", "system", "download"}:
+        raise SystemExit(
+            f"Unsupported Gradle provider for Gradle/JVM target: {provider}. "
+            "Expected auto, wrapper, termux, system, or download."
+        )
+
+    wrapper = root / ("gradlew.bat" if os.name == "nt" else "gradlew")
+    wrapper_version = android_build.wrapper_distribution_version(root)
+    configured_version = str(gradle.get("version") or "").strip() or None
+    required_version = configured_version or wrapper_version
+
+    configured_command = str(gradle.get("command") or "").strip()
+    if configured_command:
+        candidate = Path(configured_command).expanduser()
+        if not candidate.is_absolute():
+            resolved = shutil.which(configured_command)
+            if not resolved:
+                raise SystemExit(f"Configured Gradle command not found: {configured_command}")
+            candidate = Path(resolved)
+        candidate = candidate.resolve(strict=False)
+        actual_version = android_build.gradle_version(candidate)
+        if required_version and not android_build.gradle_version_matches(actual_version, required_version):
+            raise SystemExit(
+                f"Configured Gradle command {candidate} reports {actual_version or 'an unknown version'}, "
+                f"but {required_version} is required."
+            )
+        return str(candidate), "explicit", required_version
+
+    if provider == "wrapper":
+        if not wrapper.is_file():
+            raise SystemExit(f"Gradle provider wrapper requested, but no wrapper exists at {wrapper}.")
+        return str(wrapper), "wrapper", required_version
+
+    # ``download`` is an explicit request for the managed provider.  Delegate
+    # to the existing canonical resolver so its cache/offline semantics stay
+    # identical to Android builds.
+    if provider == "download":
+        cache_root = android_build.devtool_cache_dir() / android_build.APP_NAME
+        gradle_user_home_value = str(gradle.get("user_home") or "").strip()
+        gradle_user_home = Path(gradle_user_home_value).expanduser() if gradle_user_home_value else None
+        selected = android_build.select_gradle(
+            root,
+            explicit=None,
+            version=configured_version,
+            cache_root=cache_root,
+            offline=bool(gradle.get("offline", False)),
+            force=False,
+            bootstrap_downloads="missing",
+            bootstrap_network="deny" if bool(gradle.get("offline", False)) else "allow",
+            gradle_user_home=gradle_user_home,
+            provider="download",
+            project=None,
+        )
+        return str(selected), "download", required_version
+
+    local = shutil.which("gradle")
+    if local:
+        # Keep the PATH-visible launcher in command specs so tests, clipboard
+        # output, and user logs identify the executable Devtool actually selected
+        # from PATH.  Use the resolved target only for capability/version probes;
+        # Termux often exposes /usr/bin/gradle as a symlink to /usr/opt/gradle.
+        local_candidate = Path(local).expanduser()
+        local_path = local_candidate.resolve(strict=False)
+        local_launcher = str(local_candidate)
+        actual_version = android_build.gradle_version(local_candidate)
+        local_provider = android_build.executable_provider(local_candidate)
+        provider_matches = provider == "auto" or provider == local_provider
+        version_matches = (
+            required_version is None
+            or android_build.gradle_version_matches(actual_version, required_version)
+        )
+        # With a complete wrapper/version pin, auto mode may use the local
+        # executable only when it is an exact version substitute.  For a
+        # wrapperless/unpinned project, preserve the historical PATH behavior.
+        if provider_matches and version_matches:
+            return local_launcher, local_provider, required_version
+
+        if provider in {"termux", "system"}:
+            if not provider_matches:
+                raise SystemExit(
+                    f"Gradle provider {provider} requested, but PATH resolves to {local_provider} Gradle at {local_launcher}."
+                )
+            raise SystemExit(
+                f"Gradle provider {provider} at {local_launcher} reports {actual_version or 'an unknown version'}, "
+                f"but {required_version or 'a usable Gradle version'} is required."
+            )
+    elif provider in {"termux", "system"}:
+        raise SystemExit(f"Gradle provider {provider} requested, but no gradle executable was found on PATH.")
+
+    if wrapper.is_file():
+        return str(wrapper), "wrapper", required_version
+    if local:
+        return str(Path(local).expanduser()), "path", required_version
+    return "gradle", "path", required_version
+
+
+def _configured_gradle_cli_args(options: dict[str, object]) -> list[str]:
+    """Translate generic ``[gradle]`` options into direct Gradle CLI args."""
+
+    argv: list[str] = []
+    max_workers = options.get("max_workers")
+    try:
+        workers = int(max_workers) if max_workers not in {None, "", "auto"} else 0
+    except (TypeError, ValueError):
+        workers = 0
+    if workers > 0:
+        argv.append(f"--max-workers={workers}")
+    if bool(options.get("offline", False)):
+        argv.append("--offline")
+    if bool(options.get("no_daemon", False)):
+        argv.append("--no-daemon")
+    if bool(options.get("parallel", False)):
+        argv.append("--parallel")
+    if "build_cache" in options:
+        if options.get("build_cache") is not False:
+            argv.append("--build-cache")
+        else:
+            argv.append("--no-build-cache")
+
+    raw_args = options.get("args", [])
+    if isinstance(raw_args, str):
+        raw_args = [raw_args]
+    if isinstance(raw_args, (list, tuple)):
+        argv.extend(str(item).strip() for item in raw_args if str(item).strip())
+    return argv
+
+
 class JvmGradleRunner(ProjectRunner):
     """Plain JVM Gradle runner with no Android capability inheritance."""
 
@@ -1341,11 +1499,14 @@ class JvmGradleRunner(ProjectRunner):
             if not tasks:
                 raise SystemExit(f"No Gradle {action} task is configured for this JVM project.")
             root = self._root(config)
-            wrapper = root / ("gradlew.bat" if os.name == "nt" else "gradlew")
-            gradle = str(wrapper) if wrapper.is_file() else (shutil.which("gradle") or "gradle")
-            argv = [gradle, *tasks]
-            gradle_options = config.runner_options.get("gradle", {})
-            gradle_options = dict(gradle_options) if isinstance(gradle_options, dict) else {}
+            gradle_options = _jvm_gradle_options(config)
+            gradle_user_home = str(gradle_options.get("user_home") or "").strip()
+            if gradle_user_home:
+                env["GRADLE_USER_HOME"] = str(Path(gradle_user_home).expanduser())
+            gradle, launcher_source, required_version = _jvm_gradle_launcher(
+                config, root, options=gradle_options
+            )
+            argv = [gradle, *tasks, *_configured_gradle_cli_args(gradle_options)]
             structured_events = bool(gradle_options.get("structured_events", True))
             if structured_events:
                 # Plain JVM Gradle participates in the same exact-output
@@ -1359,6 +1520,8 @@ class JvmGradleRunner(ProjectRunner):
                 action, argv, env=env, cwd=str(root),
                 metadata=_tool_metadata(
                     self.kind, root, gradle_tasks=list(tasks), gradle_direct=True,
+                    gradle_launcher=gradle, gradle_launcher_source=launcher_source,
+                    gradle_required_version=required_version or "",
                     progress_parser="gradle" if structured_events else "generic",
                     report_parser="gradle-junit" if action == "test" else "",
                     collect_artifacts=action in {"build", "package"}, verify_artifacts=action in {"build", "package"},

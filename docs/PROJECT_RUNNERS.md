@@ -130,6 +130,8 @@ stop_after_run = true
 Shared MSBuild/Roslyn servers are retained by default so later local or chroot
 builds can reuse them. Standalone `devtool test` behavior remains unchanged.
 
+For plain Gradle/JVM targets, `provider = "auto"` no longer launches `gradlew` blindly. If the target or wrapper pins a Gradle version and an installed `gradle` reports that exact version, Devtool uses the installed launcher directly and avoids a needless wrapper-distribution network bootstrap. A mismatching local Gradle still falls back to the wrapper, while explicit `provider = "wrapper"` remains authoritative. Generic Gradle builds also honor the target's `max_workers`, `offline`, daemon, parallel, build-cache, and extra `args` settings.
+
 Other first-class runners apply equivalent safe optimizations:
 
 - Cargo coalesces compile/test validation where safe. Go deliberately keeps restore, real executable build/artifact verification, structured tests, and vet as separate validation stages so `validate` exercises the same executable-output contract as `build`.

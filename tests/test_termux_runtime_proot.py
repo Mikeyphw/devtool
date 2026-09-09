@@ -116,6 +116,24 @@ class TermuxRuntimeTests(unittest.TestCase):
             self.assertEqual(run.call_args_list[0].args[0], ["/termux/termux-wake-lock"])
             self.assertEqual(run.call_args_list[-1].args[0], ["/termux/termux-wake-unlock"])
 
+    def test_gradle_wrapper_timeout_is_promoted_to_network_failure_kind(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = ProjectConfig(repo_root=root, kind="gradle", project_root=str(root))
+            spec = CommandSpec("build", ["./gradlew", "build"], cwd=str(root))
+            output = (
+                'Exception in thread "main" java.net.SocketTimeoutException: Connect timed out\n'
+                '    at org.gradle.wrapper.GradleWrapperMain.main(GradleWrapperMain.java:34)\n'
+            )
+            with patch("devtool.runners._run_process_live", return_value=(1, output)), patch(
+                "devtool.execution_environments.detect_current_environment", return_value=NATIVE_TERMUX
+            ):
+                results, _ = run_specs(config, [spec], verbose=False, shutdown_dotnet=False)
+
+        self.assertEqual(results[0].failure_kind, "network_timeout")
+        self.assertEqual(results[0].metadata["runtime_failure_hint"]["kind"], "network-timeout")
+        self.assertIn("Devtool runtime diagnostic (network-timeout)", results[0].output)
+
     def test_runtime_failure_classifies_tls_and_timeout(self):
         self.assertEqual(classify_runtime_failure("SSL certificate problem: certificate verify failed").kind, "tls")
         self.assertEqual(classify_runtime_failure("Connection timed out while downloading").kind, "network-timeout")
