@@ -243,6 +243,17 @@ def _candidate_backends(preferred: str = "auto") -> list[tuple[list[str], str]]:
 
 
 def copy_text(text: str, preferred: str = "auto") -> ClipboardResult:
+    # Clipboard data is often pasted into chats, issue trackers and logs.  Keep
+    # it on the same redaction boundary as durable logs even when callers pass
+    # raw in-memory command output.  Import lazily to avoid a module cycle during
+    # early CLI startup.
+    try:
+        from .logstore import redact_sensitive_text
+
+        text = redact_sensitive_text(str(text))
+    except Exception:
+        text = str(text)
+
     last_failure: ClipboardResult | None = None
 
     if preferred in {"auto", "socket"} and _socket_clipboard_path() is not None:

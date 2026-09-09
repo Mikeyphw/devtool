@@ -934,7 +934,7 @@ artifact-cleanup: ok exit=0 time=0.10s
         text = copied[0]
         self.assertIn("Overlay: xdm_android_handoff_screenshot_audit_overlay.zip [xdm_android]", text)
         self.assertIn("- Artifact: /home/mike/Downloads/xdm_android_handoff_screenshot_audit_overlay.zip", text)
-        self.assertIn("- Diagnostics: 0 warnings, 5 errors", text)
+        self.assertIn("- Diagnostics: 0 warnings, 2 errors", text)
         self.assertIn("- Gradle task failed: :app:testDebugUnitTest", text)
         self.assertIn("- com.mikeyphw.xdm.android.ArchitectureContractTest.browserAndShareHandoffsOpenDownloadWorkflows: java.lang.AssertionError: ShareSheet intake must inspect shared text and clip data", text)
         self.assertIn("Failed: android validation build", text)
@@ -1008,18 +1008,19 @@ artifact-cleanup: ok exit=0 time=0.10s
 
         self.assertEqual(len(copied), 1)
         text = copied[0]
-        self.assertIn("- Diagnostics: 3 warnings, 4 errors", text)
+        self.assertIn("- Diagnostics: 1 warnings, 1 errors", text)
         self.assertIn("Failure reason:", text)
         self.assertIn("android validation build failed with exit 1: app/src/main/kotlin/StructuredError.kt:4: FatalLint: Structured fatal lint error.", text)
         self.assertIn("Errors:", text)
         self.assertIn("app/src/main/kotlin/StructuredError.kt:4: FatalLint: Structured fatal lint error.", text)
-        self.assertIn("e: file:///repo/app/src/main/kotlin/Demo.kt:9:2 Unresolved reference: missingSymbol.", text)
+        self.assertNotIn("e: file:///repo/app/src/main/kotlin/Demo.kt:9:2 Unresolved reference: missingSymbol.", text.split("Errors:", 1)[1].split("Warnings:", 1)[0])
         self.assertIn("> Task :app:testDebugUnitTest FAILED", text)
         self.assertIn("FAILURE: Build failed with an exception.", text)
         self.assertIn("Warnings:", text)
         self.assertIn("app/src/main/kotlin/StructuredWarning.kt:3: NewApi: Requires API 33.", text)
-        self.assertIn("warning: SDK package fallback used for fixture device.", text)
-        self.assertIn("app/src/main/kotlin/Demo.kt:7:5: warning: Deprecated call.", text)
+        warning_section = text.split("Warnings:", 1)[1].split("Failed:", 1)[0]
+        self.assertNotIn("warning: SDK package fallback used for fixture device.", warning_section)
+        self.assertNotIn("app/src/main/kotlin/Demo.kt:7:5: warning: Deprecated call.", warning_section)
 
 
     def test_failure_reason_uses_raw_argparse_error_when_failure_kind_is_unknown(self) -> None:
@@ -1282,11 +1283,10 @@ artifact-cleanup: ok exit=0 time=0.10s
             _maybe_copy(raw_output, summary_text, json_text, args)
 
         self.assertEqual(len(copied), 1)
-        self.assertIn("- Diagnostics: 1 warnings, 0 errors", copied[0])
-        self.assertIn("Diagnostics: 1 warnings, 0 errors", copied[0])
-        self.assertIn("Warnings:", copied[0])
-        self.assertIn("warning: Failed to hardlink files; falling back to full copy.", copied[0])
-        self.assertNotIn("Diagnostics: 0 warnings, 0 errors", copied[0])
+        self.assertIn("- Diagnostics: 0 warnings, 0 errors", copied[0])
+        self.assertIn("Diagnostics: 0 warnings, 0 errors", copied[0])
+        self.assertNotIn("Warnings:", copied[0])
+        self.assertNotIn("warning: Failed to hardlink files; falling back to full copy.", copied[0])
 
     def test_auto_repair_rewrites_and_revalidates_when_it_reduces_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

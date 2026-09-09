@@ -163,12 +163,25 @@ def _find_flag_value(argv: list[str], flags: set[str]) -> str:
 
 
 def _copy_label(copy_mode: str) -> str:
-    return "Raw command output"
+    if copy_mode == "json":
+        return "JSON run summary"
+    if copy_mode == "raw":
+        return "Raw command output"
+    return "Run summary"
 
 
 def _clipboard_text_from_machine_payload(payload: dict, copy_mode: str) -> str:
     clipboard = payload.get("clipboard", {}) if isinstance(payload, dict) else {}
-    return str(clipboard.get("raw", "") or "")
+    if not isinstance(clipboard, dict):
+        return ""
+    if copy_mode == "json":
+        value = clipboard.get("json")
+        return json.dumps(value, indent=2, ensure_ascii=False) if value is not None else ""
+    if copy_mode == "raw":
+        # Retained only for tests/explicit internals; user-facing --copy uses
+        # the concise summary for parity with native Devtool.
+        return str(clipboard.get("raw", "") or clipboard.get("summary", "") or "")
+    return str(clipboard.get("summary", "") or clipboard.get("raw", "") or "")
 
 
 def _looks_like_path(value: str) -> bool:
@@ -233,7 +246,7 @@ def _parse_runner_args(argv: list[str], env: Mapping[str, str]) -> tuple[RunnerC
         elif token == "--chroot" or token.startswith("--chroot="):
             config.chroot_name = _take_value(config.chroot_name).strip() or config.chroot_name
         elif token in {"-p", "--copy"}:
-            config.copy_mode = "raw"
+            config.copy_mode = "summary"
         elif token == "--copy-via" or token.startswith("--copy-via="):
             value = _take_value(config.copy_via).strip() or config.copy_via
             config.copy_via = value

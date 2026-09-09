@@ -106,7 +106,7 @@ from .config import (
     resolve_config_dict,
 )
 from .log_commands import choose_active_log, format_log_entries, list_log_entries, open_log, resolve_log_path, tail_log
-from .logstore import latest_log, new_log_path, set_log_dir_override
+from .logstore import latest_log, new_log_path, redact_sensitive_text, set_log_dir_override, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
@@ -1108,16 +1108,29 @@ def _write_json_payload(path_text: str, json_payload: str) -> None:
     path.write_text(json_payload + ("" if json_payload.endswith("\n") else "\n"), encoding="utf-8")
     console.print(f"[green]Wrote JSON payload[/green] {path}")
 
-def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argparse.Namespace):
+def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argparse.Namespace, *, log_path: Path | str | None = None):
     if args.no_clipboard:
         return None
 
     import re as _re
 
+    raw_output = redact_sensitive_text(raw_output)
+    summary_text = redact_sensitive_text(summary_text)
+
+    def _redact_json_value(value):
+        if isinstance(value, str):
+            return redact_sensitive_text(value)
+        if isinstance(value, list):
+            return [_redact_json_value(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _redact_json_value(item) for key, item in value.items()}
+        return value
+
     try:
-        payload = json.loads(json_text)
+        payload = _redact_json_value(json.loads(json_text))
     except (TypeError, ValueError, json.JSONDecodeError):
         payload = {}
+    json_text = json.dumps(payload, indent=2, ensure_ascii=False) if payload else redact_sensitive_text(json_text)
     payload_ok = bool(payload.get("ok") or payload.get("completion", {}).get("ok"))
 
     suppression_patterns = (
@@ -1279,19 +1292,20 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             return normalized.casefold()
 
         compiler = _re.match(
-            r"^[ew]:\s+file:///.+?:\d+:\d+\s+(?P<message>.+)$",
+            r"^[ew]:\s+file:///(?P<file>.+?):(?P<line>\d+):(?P<column>\d+)\s+(?P<message>.+)$",
             cleaned,
             _re.IGNORECASE,
         )
         if compiler:
-            return normalize_message(compiler.group("message"))
+            location = f"{compiler.group('file')}:{compiler.group('line')}:{compiler.group('column')}"
+            return f"located:{location.casefold()}:{normalize_message(compiler.group('message'))}"
 
         located = _re.match(
-            r"^.+?:\d+(?::\d+)?:\s+(?:[A-Za-z][A-Za-z0-9_.-]*:\s+)?(?P<message>.+)$",
+            r"^(?P<location>.+?:\d+(?::\d+)?):\s+(?:[A-Za-z][A-Za-z0-9_.-]*:\s+)?(?P<message>.+)$",
             cleaned,
         )
         if located:
-            return normalize_message(located.group("message"))
+            return f"located:{located.group('location').casefold()}:{normalize_message(located.group('message'))}"
 
         coded = _re.match(
             r"^(?:GRADLE_ENVIRONMENT|GRADLE_MEMORY_GUARD|GRADLE_METASPACE_OOM|GRADLE_TASK|LOW_STORAGE|ADB_PROBE|KOTLIN|PYTEST_WARNING|PYTEST_FAILURE|PYTHON_DEPENDENCY|PYTHON_PLATFORM|PYTHON_IMPORT|PYTHON_UNDECLARED_IMPORT|PYTHON_PLATFORM_GLIBC):\s+(?P<message>.+)$",
@@ -1500,7 +1514,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         # Once pytest warnings were parsed into structured diagnostics they are
         # canonical.  Re-adding the raw warnings-summary lines would inflate the
         # clipboard count even though the HUD correctly counts one issue each.
-        raw = [] if _has_structured_issue_code("PYTEST_WARNING") else _raw_warning_details(raw_output)
+        raw = [] if warnings <= 0 or structured or _has_structured_issue_code("PYTEST_WARNING") else _raw_warning_details(raw_output)
         warning_lines = _merge_detail_lines(structured, raw)
         return warning_lines, len(warning_lines)
 
@@ -1575,10 +1589,21 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     go_package_totals = _go_package_totals()
     commit_hash = _commit_hash()
     warning_details, unique_warning_count = _warning_details()
-    effective_warning_count = max(warnings, unique_warning_count)
+    effective_warning_count = warnings
+
+    def _traceability_lines() -> list[str]:
+        trace: list[str] = []
+        run_id = str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")).strip()
+        if run_id:
+            trace.append(f"Run: {run_id}")
+        if log_path is not None:
+            trace.append(f"Log: {log_path}")
+        return trace
 
     overlay_summaries = payload.get("overlays") if isinstance(payload, dict) else None
-    success_lines = ["Devtool completed successfully.", ""]
+    success_lines = ["Devtool completed successfully."]
+    success_lines.extend(_traceability_lines())
+    success_lines.append("")
 
     if isinstance(overlay_summaries, list) and overlay_summaries:
         valid_overlays = [item for item in overlay_summaries if isinstance(item, dict)]
@@ -1608,8 +1633,6 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                     f"({int(tests_data.get('total') or 0)} total)"
                 )
             overlay_warning_count = int(overlay.get('warnings') or 0)
-            if len(valid_overlays) == 1:
-                overlay_warning_count = max(overlay_warning_count, unique_warning_count)
             success_lines.append(
                 f"- Diagnostics: {overlay_warning_count} warnings, "
                 f"{int(overlay.get('errors') or 0)} errors"
@@ -1746,7 +1769,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             )
             raw_errors = (
                 []
-                if _has_structured_issue_code("GRADLE_METASPACE_OOM") or authoritative_python or authoritative_go
+                if structured_errors or _has_structured_issue_code("GRADLE_METASPACE_OOM") or authoritative_python or authoritative_go
                 else _raw_error_details(raw_error_source)
             )
             error_lines = _merge_detail_lines(structured_errors, raw_errors)
@@ -1769,8 +1792,8 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 lines.append("Overlay: " + label_text + (f" [{target_text}]" if target_text else ""))
                 if artifact_text and artifact_text != label_text:
                     lines.append(f"- Artifact: {artifact_text}")
-                overlay_warning_count = max(int(overlay.get('warnings') or 0), int(detail_warnings or 0))
-                overlay_error_count = max(int(overlay.get('errors') or 0), int(detail_errors or 0))
+                overlay_warning_count = int(overlay.get('warnings') if overlay.get('warnings') is not None else (detail_warnings or 0))
+                overlay_error_count = int(overlay.get('errors') if overlay.get('errors') is not None else (detail_errors or 0))
                 lines.append(
                     f"- Diagnostics: {overlay_warning_count} warnings, "
                     f"{overlay_error_count} errors"
@@ -1882,7 +1905,13 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                     "PYTEST_FAILURE": 20,
                     "PYTEST": 21,
                     "GRADLE_TEST": 30,
-                    "GRADLE_TASK": 40,
+                    "KOTLIN": 24,
+                    "JAVA": 24,
+                    "JAVAC": 24,
+                    "AAPT": 24,
+                    "AAPT2": 24,
+                    "ANDROID_LINT": 25,
+                    "GRADLE_TASK": 70,
                     "GENERIC": 90,
                 }
                 if error_issues:
@@ -1947,6 +1976,9 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         if not headline and failed_steps:
             headline = failed_steps[0].capitalize() + " failed"
         lines = [headline or "Devtool failed."]
+        trace_lines = _traceability_lines()
+        if trace_lines:
+            lines.extend(trace_lines)
         overlay_lines = _overlay_failure_lines(
             detail_warnings=unique_failure_warning_count,
             detail_errors=unique_error_count,
@@ -6315,15 +6347,123 @@ def _record_transaction_commit_from_results(
         record_transaction_git_commit(transaction_path, latest_commit_hash(repo_root))
 
 
-def _log_identifier_for_args(args: argparse.Namespace) -> str:
+def _resolved_artifact_paths_for_args(args: argparse.Namespace) -> list[Path]:
     if str(getattr(args, "command", "") or "") not in APPLY_COMMANDS:
-        return ""
-    artifacts = _artifact_arg_list(getattr(args, "artifact", ""))
+        return []
+    resolved: list[Path] = []
+    for artifact in _artifact_arg_list(getattr(args, "artifact", "")):
+        try:
+            resolved.append(resolve_artifact_path(artifact))
+        except Exception:
+            resolved.append(Path(artifact).expanduser())
+    return resolved
+
+
+def _log_identifier_for_args(args: argparse.Namespace) -> str:
+    artifacts = _resolved_artifact_paths_for_args(args)
     if len(artifacts) == 1:
-        return Path(artifacts[0]).name
+        return artifacts[0].name
     if artifacts:
-        return Path(artifacts[0]).stem + "-bundle"
+        return artifacts[0].stem + "-bundle"
     return ""
+
+
+def _run_log_start_text(args: argparse.Namespace, config: ProjectConfig | None) -> str:
+    artifacts = _resolved_artifact_paths_for_args(args)
+    repo_root = config.repo_root if config is not None else Path(getattr(args, "repo", "") or Path.cwd()).resolve()
+    lines = [
+        "--- devtool run start ---",
+        f"Devtool run id: {_ensure_run_id(args)}",
+        f"Devtool command: {str(getattr(args, 'command', '') or 'devtool')}",
+        f"Devtool repository: {repo_root}",
+    ]
+    target = str((config.selected_target if config is not None else "") or getattr(args, "target", "") or "").strip()
+    if target:
+        lines.append(f"Devtool target: {target}")
+    for artifact in artifacts:
+        lines.append(f"Devtool artifact: {artifact}")
+    lines.append("Devtool status: running")
+    return "\n".join(lines)
+
+
+def _append_run_log_summary(
+    log_path: Path | str,
+    args: argparse.Namespace,
+    config: ProjectConfig | None,
+    totals: dict[str, int],
+    summary_text: str,
+    *,
+    started_at: datetime,
+    finished_at: datetime,
+    exit_code: int | None = None,
+    results: list[OperationResult] | None = None,
+) -> None:
+    failed = int(totals.get("failed", 0) or 0)
+    code = int(exit_code if exit_code is not None else (1 if failed else 0))
+    status = "failed" if code != 0 or failed else "ok"
+    duration = max(0.0, (finished_at - started_at).total_seconds())
+
+    def _first_matching_line(prefix: str) -> str:
+        for line in summary_text.splitlines():
+            cleaned = line.strip()
+            if cleaned.lower().startswith(prefix.lower()):
+                return cleaned.split(":", 1)[1].strip() if ":" in cleaned else cleaned
+        return ""
+
+    def _failure_kind() -> str:
+        for result in results or []:
+            if result.returncode != 0 and result.failure_kind:
+                return str(result.failure_kind)
+        return ""
+
+    def _rollback_state() -> str:
+        for result in results or []:
+            name = str(result.name or "").lower()
+            if name in {"rollback", "apply-rollback"}:
+                return "succeeded" if result.returncode == 0 else "failed"
+        recovery = _first_matching_line("Recovery:")
+        if "rollback succeeded" in recovery.lower():
+            return "succeeded"
+        if "rollback failed" in recovery.lower():
+            return "failed"
+        return ""
+
+    lines = [
+        "--- devtool run final ---",
+        f"Devtool run id: {_ensure_run_id(args)}",
+        f"Devtool status: {status}",
+        f"Devtool exit code: {code}",
+        f"Devtool command: {str(getattr(args, 'command', '') or 'devtool')}",
+        f"Devtool repository: {config.repo_root if config is not None else Path.cwd()}",
+        f"Devtool warnings: {int(totals.get('warnings', 0) or 0)}",
+        f"Devtool errors: {int(totals.get('errors', 0) or 0)}",
+        f"Devtool failed actions: {failed}",
+        f"Devtool skipped actions: {int(totals.get('skipped', 0) or 0)}",
+        f"Devtool started at: {started_at.isoformat()}",
+        f"Devtool finished at: {finished_at.isoformat()}",
+        f"Devtool duration: {duration:.3f}s",
+    ]
+    test_totals = _first_matching_line("Tests:")
+    if test_totals:
+        lines.append(f"Devtool tests: {test_totals}")
+    go_packages = _first_matching_line("Go packages:")
+    if go_packages:
+        lines.append(f"Devtool go packages: {go_packages}")
+    commit_hash = _first_matching_line("Git commit:")
+    if commit_hash:
+        lines.append(f"Devtool commit: {commit_hash}")
+    failure_kind = _failure_kind()
+    if failure_kind:
+        lines.append(f"Devtool failure kind: {failure_kind}")
+    rollback_state = _rollback_state()
+    if rollback_state:
+        lines.append(f"Devtool rollback: {rollback_state}")
+    artifacts = _resolved_artifact_paths_for_args(args)
+    for artifact in artifacts:
+        lines.append(f"Devtool artifact: {artifact}")
+    if summary_text.strip():
+        lines.extend(("", summary_text.strip()))
+    write_log("\n".join(lines), log_path, append=True)
 
 
 def _ensure_run_id(args: argparse.Namespace) -> str:
@@ -8984,7 +9124,7 @@ def _main_after_parse(
     if args.command in {"logs"}:
         logs_command = str(getattr(args, "logs_command", "") or "latest")
         if logs_command in {"latest"}:
-            path = latest_log()
+            path = resolve_log_path("latest", use_fzf=False)
             if not path:
                 console.print("[yellow]No logs found.[/yellow]")
                 return 0
@@ -9444,7 +9584,9 @@ def _main_after_parse(
         if args.command in {"commit", "ci"}:
             with _single_run_guard(repo, args):
                 _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="commit")
+                _ensure_run_id(args)
                 log_path = new_log_path()
+                write_log(_run_log_start_text(args, None), log_path)
                 started_at = datetime.now(timezone.utc)
                 results, raw_output = _git_commit_with_optional_log(repo, args.message, verbose=args.verbose, dry_run=args.dry_run, log_path=log_path)
                 finished_at = datetime.now(timezone.utc)
@@ -9461,8 +9603,10 @@ def _main_after_parse(
                 )
                 failed = totals["failed"]
                 _write_json_payload(args.machine_file, _machine_json_text)
-                _maybe_copy(raw_output, summary_text, json_text, args)
-                return 0 if failed == 0 else 1
+                _maybe_copy(raw_output, summary_text, json_text, args, log_path=log_path)
+                final_exit = 0 if failed == 0 else 1
+                _append_run_log_summary(log_path, args, None, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=final_exit, results=results)
+                return final_exit
         config = load_project_config(
             str(repo), args.config, variant_name=str(getattr(args, "variant", "") or ""), kind_override=str(getattr(args, "project_type", "auto") or "auto")
         )
@@ -9482,7 +9626,9 @@ def _main_after_parse(
             with _single_run_guard(repo, args):
                 _ensure_safe_repo(repo, force=args.force, yes=args.yes, command="tag")
                 specs = [CommandSpec("tag", ["git", "tag"] + (["-m", args.message] if args.message else []) + [args.name], destructive=True)]
+                _ensure_run_id(args)
                 log_path = new_log_path()
+                write_log(_run_log_start_text(args, config), log_path)
                 started_at = datetime.now(timezone.utc)
                 results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=False, log_path=log_path)
                 finished_at = datetime.now(timezone.utc)
@@ -9498,17 +9644,19 @@ def _main_after_parse(
                     machine_format="pretty",
                 )
                 _write_json_payload(args.machine_file, _machine_json_text)
-                _maybe_copy(raw_output, summary_text, json_text, args)
-                return 0 if totals["failed"] == 0 else 1
+                _maybe_copy(raw_output, summary_text, json_text, args, log_path=log_path)
+                final_exit = 0 if totals["failed"] == 0 else 1
+                _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=final_exit, results=results)
+                return final_exit
 
     config = _load_command_config(args)
     _apply_runner_cli_options(config, args)
     if args.command in {"test", "t"} and bool(getattr(args, "list_tests", False)):
         return _print_test_catalog(config, args, as_json=False)
     continue_on_error = (args.continue_on_error or args.command == "validate-all") and not args.fail_fast
-    log_path = new_log_path(_log_identifier_for_args(args))
-    log_path.touch(exist_ok=True)
     _ensure_run_id(args)
+    log_path = new_log_path(_log_identifier_for_args(args))
+    write_log(_run_log_start_text(args, config), log_path)
     _single_run_lock = _acquire_single_run_lock(config, args, log_path=log_path)
     tasker_progress = _live_progress_for_args(args, config)
     if tasker_progress is not None:
@@ -9578,7 +9726,8 @@ def _main_after_parse(
             )
             _write_json_payload(args.machine_file, machine_text)
             _finish_live_progress(tasker_progress, totals=totals, results=[pending_result])
-            _maybe_copy(pending_result.output, summary_text, json_text, args)
+            _maybe_copy(pending_result.output, summary_text, json_text, args, log_path=log_path)
+            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=results)
             _release_single_run_lock(args)
             return 1
 
@@ -9622,9 +9771,10 @@ def _main_after_parse(
             duration_seconds = sum(r.duration_seconds for r in results)
             _write_json_payload(args.machine_file, _machine_json_text)
             _finish_live_progress(tasker_progress, totals=totals, results=results)
-            _maybe_copy(raw_output, summary_text, json_text, args)
+            _maybe_copy(raw_output, summary_text, json_text, args, log_path=log_path)
             if args.command in APPLY_COMMANDS:
                 notify_apply_finished(args, config, results, totals)
+            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=results)
             _release_single_run_lock(args)
             return 1
 
@@ -9646,7 +9796,8 @@ def _main_after_parse(
             )
             _write_json_payload(args.machine_file, machine_text)
             _finish_live_progress(tasker_progress, totals=totals, results=[rollback_result])
-            _maybe_copy(recovery_output, summary_text, json_text, args)
+            _maybe_copy(recovery_output, summary_text, json_text, args, log_path=log_path)
+            _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=1, results=results)
             _release_single_run_lock(args)
             return 1
 
@@ -9879,7 +10030,10 @@ def _main_after_parse(
                 except ValidationSessionError:
                     pass
                 _emit_validation_control_payload(validation_control_error_response("finalize", exc, session), args)
-                _finish_live_progress(tasker_progress, totals={"passed": 0, "failed": 1, "skipped": 0}, results=[])
+                early_totals = {"warnings": 0, "errors": 1, "passed": 0, "failed": 1, "skipped": 0}
+                _finish_live_progress(tasker_progress, totals=early_totals, results=[])
+                early_finished = datetime.now(timezone.utc)
+                _append_run_log_summary(log_path, args, config, early_totals, f"Devtool failed.\n\nFailure reason:\n- {exc}", started_at=started_at, finished_at=early_finished, exit_code=exc.exit_code, results=[])
                 _release_single_run_lock(args)
                 return exc.exit_code
             results = [OperationResult(
@@ -9891,7 +10045,10 @@ def _main_after_parse(
             if _validation_json_requested(args):
                 error = ValidationControlError("invalid_request", str(exc), VALIDATION_EXIT_INVALID_REQUEST)
                 _emit_validation_control_payload(validation_control_error_response("finalize", error), args)
-                _finish_live_progress(tasker_progress, totals={"passed": 0, "failed": 1, "skipped": 0}, results=[])
+                early_totals = {"warnings": 0, "errors": 1, "passed": 0, "failed": 1, "skipped": 0}
+                _finish_live_progress(tasker_progress, totals=early_totals, results=[])
+                early_finished = datetime.now(timezone.utc)
+                _append_run_log_summary(log_path, args, config, early_totals, f"Devtool failed.\n\nFailure reason:\n- {error}", started_at=started_at, finished_at=early_finished, exit_code=error.exit_code, results=[])
                 _release_single_run_lock(args)
                 return error.exit_code
             results = [OperationResult(
@@ -9918,6 +10075,7 @@ def _main_after_parse(
         if getattr(args, "watch", False):
             def _run_once() -> int:
                 run_log_path = new_log_path()
+                write_log(_run_log_start_text(args, config), run_log_path)
                 run_started = datetime.now(timezone.utc)
                 run_specs_list = _validation_specs_for_args(config, args, parser)
                 run_results, run_raw = _run_specs_for_args(config, run_specs_list, args, continue_on_error=continue_on_error, log_path=run_log_path, tasker_progress=tasker_progress)
@@ -9934,8 +10092,10 @@ def _main_after_parse(
                     machine_format="pretty",
                 )
                 _write_json_payload(args.machine_file, run_machine)
-                _maybe_copy(run_raw, run_summary, run_json, args)
-                return 0 if run_totals["failed"] == 0 else 1
+                _maybe_copy(run_raw, run_summary, run_json, args, log_path=run_log_path)
+                run_exit = 0 if run_totals["failed"] == 0 else 1
+                _append_run_log_summary(run_log_path, args, config, run_totals, run_summary, started_at=run_started, finished_at=run_finished, exit_code=run_exit, results=run_results)
+                return run_exit
             try:
                 return watch_loop(config.repo_root, _run_once, interval=args.watch_interval)
             finally:
@@ -9964,7 +10124,10 @@ def _main_after_parse(
                     _emit_validation_control_payload(validation_control_error_response(
                         str(getattr(args, "_devtool_validation_api_action", "") or "run"), exc, session
                     ), args)
-                    _finish_live_progress(tasker_progress, totals={"passed": 0, "failed": 1, "skipped": 0}, results=[])
+                    early_totals = {"warnings": 0, "errors": 1, "passed": 0, "failed": 1, "skipped": 0}
+                    _finish_live_progress(tasker_progress, totals=early_totals, results=[])
+                    early_finished = datetime.now(timezone.utc)
+                    _append_run_log_summary(log_path, args, config, early_totals, f"Devtool failed.\n\nFailure reason:\n- {exc}", started_at=started_at, finished_at=early_finished, exit_code=exc.exit_code, results=[])
                     _release_single_run_lock(args)
                     return exc.exit_code
                 results = [OperationResult(
@@ -9978,7 +10141,10 @@ def _main_after_parse(
                     _emit_validation_control_payload(validation_control_error_response(
                         str(getattr(args, "_devtool_validation_api_action", "") or "run"), error
                     ), args)
-                    _finish_live_progress(tasker_progress, totals={"passed": 0, "failed": 1, "skipped": 0}, results=[])
+                    early_totals = {"warnings": 0, "errors": 1, "passed": 0, "failed": 1, "skipped": 0}
+                    _finish_live_progress(tasker_progress, totals=early_totals, results=[])
+                    early_finished = datetime.now(timezone.utc)
+                    _append_run_log_summary(log_path, args, config, early_totals, f"Devtool failed.\n\nFailure reason:\n- {error}", started_at=started_at, finished_at=early_finished, exit_code=error.exit_code, results=[])
                     _release_single_run_lock(args)
                     return error.exit_code
                 results = [OperationResult(
@@ -10034,15 +10200,22 @@ def _main_after_parse(
             },
         )
         _emit_validation_control_payload(payload, args)
+        api_counts = build_json_summary(results, repo_root=str(config.repo_root))
         totals = {
             "passed": sum(1 for item in results if item.returncode == 0 and not item.skipped),
-            "failed": sum(1 for item in results if item.returncode != 0),
-            "skipped": sum(1 for item in results if item.skipped),
+            "failed": int(api_counts.get("failed", 0) or 0),
+            "skipped": int(api_counts.get("skipped", 0) or 0),
+            "warnings": int(api_counts.get("warnings", 0) or 0),
+            "errors": int(api_counts.get("errors", 0) or 0),
         }
+        api_finished = datetime.now(timezone.utc)
         _finish_live_progress(tasker_progress, totals=totals, results=results)
-        _write_performance_report(args, results, started_at=started_at, finished_at=datetime.now(timezone.utc), config=config)
+        _write_performance_report(args, results, started_at=started_at, finished_at=api_finished, config=config)
+        api_exit = validation_control_exit_code(validation_api_session)
+        api_summary = _summary_text(results)
+        _append_run_log_summary(log_path, args, config, totals, api_summary, started_at=started_at, finished_at=api_finished, exit_code=api_exit, results=results)
         _release_single_run_lock(args)
-        return validation_control_exit_code(validation_api_session)
+        return api_exit
 
     finished_at = datetime.now(timezone.utc)
     totals, summary_text, json_text, _machine_json_text = _emit_summary(
@@ -10059,9 +10232,11 @@ def _main_after_parse(
     duration_seconds = sum(r.duration_seconds for r in results)
     _write_json_payload(args.machine_file, _machine_json_text)
     _finish_live_progress(tasker_progress, totals=totals, results=results)
-    _maybe_copy(raw_output, summary_text, json_text, args)
+    _maybe_copy(raw_output, summary_text, json_text, args, log_path=log_path)
     if args.command in APPLY_COMMANDS:
         notify_apply_finished(args, config, results, totals)
     _write_performance_report(args, results, started_at=started_at, finished_at=finished_at, config=config)
+    final_exit = 0 if totals["failed"] == 0 else 1
+    _append_run_log_summary(log_path, args, config, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=final_exit, results=results)
     _release_single_run_lock(args)
-    return 0 if totals["failed"] == 0 else 1
+    return final_exit

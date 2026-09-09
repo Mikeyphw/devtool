@@ -80,6 +80,10 @@ def test_latest_log_searches_all_configured_roots_deterministically(monkeypatch,
     old = first_root / "logs/20260815-100000-000001.log"; old.write_text("old", encoding="utf-8")
     new = second_root / "logs/20260815-110000-000001.log"; new.write_text("new", encoding="utf-8")
     os.utime(old, (10, 10)); os.utime(new, (20, 20))
+    # Isolate this unit test from real Devtool state logs created by the
+    # running apply/validate process on the host.  resolve_log_path("latest")
+    # intentionally considers the primary logs_dir plus configured roots.
+    monkeypatch.setattr(log_commands, "logs_dir", lambda: first_root / "logs")
     monkeypatch.setattr(log_commands, "_candidate_state_roots", lambda: [first_root, second_root])
     monkeypatch.setattr(log_commands, "_phone_log_mirror_dir", lambda: None)
     assert log_commands.resolve_log_path("latest") == new

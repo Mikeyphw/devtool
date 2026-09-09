@@ -37,7 +37,7 @@
       "skipped": 0,
       "warnings": 0
     },
-    "preferred": "json",
+    "preferred": "summary",
     "raw": "$ make\nok\n",
     "summary": "build ok"
   },

@@ -288,15 +288,41 @@ final class RootLogIndexer {
     static String classifySeverity(String text) {
         String clean = clean(text).toLowerCase(Locale.ROOT);
         if (clean.isEmpty()) return "info";
-        if (clean.matches(".*\\b0\\s+(errors?|failed)\\b.*") && !clean.matches(".*\\b[1-9]\\d*\\s+(errors?|failed)\\b.*")) {
-            if (clean.contains("warning") && !clean.matches(".*\\b0\\s+warnings?\\b.*")) return "warning";
+
+        // Explicit diagnostic prefixes are authoritative.  Check warnings
+        // before the body of the line so a warning such as an ADB probe that
+        // quotes "error: protocol fault" remains a warning.
+        if (clean.startsWith("warning:") || clean.startsWith("warn:") || clean.startsWith("w: ")
+                || clean.contains(": warning:") || clean.contains(": warn:")) return "warning";
+        if (clean.startsWith("fatal:") || clean.startsWith("f: ")) return "fatal";
+        if (clean.startsWith("error:") || clean.startsWith("e: ") || clean.contains(": error:")) return "error";
+
+        // Numeric summaries are stronger evidence than free-form words.
+        if (clean.matches(".*\\b[1-9]\\d*\\s+(errors?|failed)\\b.*")) return "error";
+        if (clean.matches(".*\\b0\\s+(errors?|failed)\\b.*")) {
+            if (clean.matches(".*\\b[1-9]\\d*\\s+warnings?\\b.*")) return "warning";
             return clean.contains("passed") || clean.contains("success") ? "success" : "info";
         }
-        if (clean.contains("fatal") || clean.contains("traceback") || clean.contains("exception")) return "fatal";
-        if (clean.matches(".*\\b(error|errors|failed|failure|not ok)\\b.*") || clean.startsWith("e: ")) return "error";
-        if (clean.matches(".*\\b(warn|warning|warnings|deprecated)\\b.*") || clean.startsWith("w: ")) return "warning";
+
+        // Tool-specific terminal failure shapes.  Do not classify arbitrary
+        // identifiers containing words such as error/failure (for example
+        // typed-ui-error, failure-mode=fail-fast, or failure recovery tests).
+        if (clean.startsWith("failure: build failed")
+                || clean.contains("execution failed for task")
+                || clean.matches("^>\\s*task\\s+.+\\s+failed$")
+                || clean.matches(".*\\sfailed$")
+                || clean.matches("^failed(?:\\s|:|$).*")
+                || clean.matches(".*\\bnot ok\\s+\\d+\\b.*")) return "error";
+
+        // A success marker wins over incidental vocabulary in a test/validator
+        // name, but only after the structured failure checks above.
         if (clean.contains("completed successfully") || clean.contains("validation passed")
                 || clean.matches(".*\\bpassed\\b.*") || clean.matches(".*\\bsucceeded\\b.*")) return "success";
+
+        if (clean.startsWith("traceback (most recent call last)")
+                || clean.startsWith("exception in thread") || clean.startsWith("caused by:")
+                || clean.matches("^[a-z0-9_.$]*(exception|error):(?:\\s.*)?$")) return "fatal";
+        if (clean.contains("deprecated") || clean.startsWith("warning ")) return "warning";
         return "info";
     }
 
@@ -320,6 +346,21 @@ final class RootLogIndexer {
         if (lower.startsWith("transaction backup:")) run.transactionBackup = afterColon(clean);
         if (lower.startsWith("git commit:")) run.commitHash = afterColon(clean);
         if (lower.startsWith("artifact:")) run.artifact = afterColon(clean);
+        if (lower.startsWith("devtool artifact:")) run.artifact = afterColon(clean);
+        if (lower.startsWith("devtool command:")) run.command = afterColon(clean);
+        if (lower.startsWith("devtool repository:")) { run.repo = afterColon(clean); run.workdir = run.repo; }
+        if (lower.startsWith("devtool target:")) run.target = afterColon(clean);
+        if (lower.startsWith("devtool status:")) {
+            String status = normalizeStatus(afterColon(clean));
+            if (!status.isEmpty()) {
+                run.status = status;
+                if (status.equals("ok")) run.progress = 100;
+                run.indeterminate = status.equals("running") || status.equals("waiting");
+            }
+        }
+        if (lower.startsWith("devtool exit code:")) run.exitCode = (int) parseLong(afterColon(clean), run.exitCode);
+        if (lower.startsWith("devtool errors:")) run.errors = Math.max(run.errors, (int) parseLong(afterColon(clean), 0));
+        if (lower.startsWith("devtool warnings:")) run.warnings = Math.max(run.warnings, (int) parseLong(afterColon(clean), 0));
         if (lower.startsWith("applied overlay:")) run.title = clean;
         if (lower.contains("devtool completed successfully")) {
             run.status = "ok"; run.progress = 100; run.indeterminate = false; run.exitCode = 0;

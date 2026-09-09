@@ -131,7 +131,7 @@ class TermuxChrootRunnerTests(unittest.TestCase):
                 env=env,
                 cwd=f"{home}/Code/demo",
             )
-            self.assertEqual(config.copy_mode, "raw")
+            self.assertEqual(config.copy_mode, "summary")
             self.assertEqual(config.copy_via, "termux")
             self.assertNotIn("--copy", forwarded)
             self.assertNotIn("--copy-via", forwarded)

@@ -42,7 +42,7 @@ from .npm_progress import NpmProgressTracker, npm_progress_plan
 from .gradle_progress import GradleProgressTracker
 from .gradle_reports import collect_report_metadata
 from .transactions import create_apply_transaction, rollback_transaction
-from .logstore import finalize_log, redact_sensitive_text, write_log
+from .logstore import StreamingLogRedactor, finalize_log, redact_sensitive_text, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .core.events import TaskFinished, TaskStarted, WarningDetected, publish_event
 from .xdg import state_dir
@@ -1193,11 +1193,12 @@ def _run_process_live(
         if live_log_handle is None:
             return
         try:
-            live_log_handle.write(redact_sensitive_text(line))
+            live_log_handle.write(live_log_redactor.redact(line))
             live_log_handle.flush()
         except OSError:
             pass
 
+    live_log_redactor = StreamingLogRedactor()
     live_log_finalized = False
 
     def _close_live_log() -> None:

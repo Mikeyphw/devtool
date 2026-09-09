@@ -240,7 +240,8 @@ def _rotate_logs(*, protected: Path | None = None) -> None:
 # Credential redaction is deliberately scanner-based rather than relying on
 # backtracking-heavy expressions. Every input character is visited a bounded
 # number of times and individual records are capped before inspection.
-_SECRET_WORDS = ("TOKEN", "PASSWORD", "PASSWD", "SECRET", "CREDENTIAL", "API_KEY", "AUTH", "PRIVATE_KEY")
+_SECRET_WORDS = {"TOKEN", "PASSWORD", "PASSWD", "SECRET", "CREDENTIAL", "CREDENTIALS", "AUTH", "APIKEY", "PRIVATEKEY", "AUTHTOKEN", "ACCESSTOKEN", "REFRESHTOKEN", "CLIENTSECRET"}
+_SECRET_PAIRS = {("API", "KEY"), ("AUTH", "TOKEN"), ("PRIVATE", "KEY"), ("ACCESS", "TOKEN"), ("REFRESH", "TOKEN")}
 _CLI_SECRET_FLAGS = ("--token", "--password", "--secret", "--api-key", "--auth-token")
 _MAX_REDACTION_RECORD = 2 * 1024 * 1024
 
@@ -269,8 +270,21 @@ def _identifier_char(ch: str) -> bool:
 
 
 def _secret_identifier(name: str) -> bool:
+    """Return True only for credential-like identifiers, not arbitrary substrings.
+
+    Log diagnostics frequently contain identifiers such as
+    ``managedDriveConfigurationIsCredentialFreeAtUiBoundary``.  Treating
+    ``CREDENTIAL`` as a substring in that identifier destroys useful failure
+    messages.  Secret matching therefore works on underscore/hyphen-delimited
+    identifier components and known component pairs.
+    """
     normalized = name.upper().replace("-", "_")
-    return any(word in normalized for word in _SECRET_WORDS)
+    parts = tuple(part for part in normalized.split("_") if part)
+    if not parts:
+        return False
+    if any(part in _SECRET_WORDS for part in parts):
+        return True
+    return any(pair in zip(parts, parts[1:]) for pair in _SECRET_PAIRS)
 
 
 def _redact_private_key_blocks(value: str) -> str:
@@ -467,6 +481,81 @@ def redact_sensitive_text(text: str) -> str:
         result.append(_redact_record(value[offset:end]))
         offset = end
     return "".join(result)
+
+
+class StreamingLogRedactor:
+    """Stateful redactor for line/chunk-oriented live subprocess output.
+
+    ``redact_sensitive_text`` safely handles complete private-key blocks, but
+    live command output reaches Devtool incrementally.  This redactor remembers
+    when a PEM/OpenSSH private-key block has started so body lines cannot leak
+    into the durable log before the closing marker arrives.
+    """
+
+    def __init__(self) -> None:
+        self._inside_private_key = False
+
+    @staticmethod
+    def _private_key_begin(line: str) -> int:
+        upper = line.upper()
+        marker = "-----BEGIN "
+        start = upper.find(marker)
+        if start < 0:
+            return -1
+        end = upper.find("-----", start + len(marker))
+        if end < 0:
+            return -1
+        return start if "PRIVATE KEY" in upper[start:end] else -1
+
+    @staticmethod
+    def _private_key_end(line: str) -> tuple[int, int] | None:
+        upper = line.upper()
+        marker = "-----END "
+        start = upper.find(marker)
+        if start < 0:
+            return None
+        end = upper.find("-----", start + len(marker))
+        if end < 0 or "PRIVATE KEY" not in upper[start:end]:
+            return None
+        return start, end + len("-----")
+
+    def redact(self, text: str) -> str:
+        value = str(text)
+        if not value:
+            return value
+        output: list[str] = []
+        for line in value.splitlines(keepends=True):
+            if self._inside_private_key:
+                closing = self._private_key_end(line)
+                if closing is None:
+                    continue
+                self._inside_private_key = False
+                suffix = line[closing[1]:]
+                if suffix:
+                    output.append(redact_sensitive_text(suffix))
+                continue
+
+            begin = self._private_key_begin(line)
+            if begin < 0:
+                output.append(redact_sensitive_text(line))
+                continue
+
+            prefix = line[:begin]
+            if prefix:
+                output.append(redact_sensitive_text(prefix))
+            output.append("<redacted:private-key>")
+            if line.endswith("\n"):
+                output.append("\n")
+            closing = self._private_key_end(line[begin:])
+            self._inside_private_key = closing is None
+            if closing is not None:
+                absolute_end = begin + closing[1]
+                suffix = line[absolute_end:]
+                if suffix and suffix != "\n":
+                    output.append(redact_sensitive_text(suffix))
+        # splitlines() returns [] for some edge cases only when value is empty,
+        # already handled above.  A chunk without a newline is still processed.
+        return "".join(output)
 
 def write_log(text: str, path: Path | str | None = None, *, append: bool = False) -> Path:
     target = Path(path) if path is not None else new_log_path()

@@ -17,6 +17,7 @@ from rich.pretty import Pretty
 
 from .console_utils import create_console, is_narrow_console
 from .models import Issue, OperationResult
+from .logstore import redact_sensitive_text
 from .rich_progress import compact_display_target
 from .repair_policy import build_repair_report, repair_summary_lines_from_results, applied_repair_findings_from_results
 
@@ -152,7 +153,15 @@ def _root_cause_issue(result: OperationResult) -> Issue | None:
         "PYTEST_FAILURE": 20,
         "PYTEST": 21,
         "GRADLE_TEST": 30,
-        "GRADLE_TASK": 40,
+        # Concrete compiler/resource diagnostics are the real root cause; the
+        # Gradle task wrapper only identifies the failed phase.
+        "KOTLIN": 24,
+        "JAVA": 24,
+        "JAVAC": 24,
+        "AAPT": 24,
+        "AAPT2": 24,
+        "ANDROID_LINT": 25,
+        "GRADLE_TASK": 70,
         "GENERIC": 90,
     }
     return min(
@@ -1069,6 +1078,9 @@ def build_runner_json(
         failed=totals["failed"],
     )
 
+    safe_raw_output = redact_sensitive_text(raw_output)
+    safe_summary_text = redact_sensitive_text(summary_text)
+
     return {
         "schema_version": 1,
         "ok": ok,
@@ -1092,10 +1104,10 @@ def build_runner_json(
             for result in results
         ],
         "clipboard": {
-            "preferred": "json",
-            "summary": summary_text,
+            "preferred": "summary",
+            "summary": safe_summary_text,
             "json": json_summary,
-            "raw": raw_output,
+            "raw": safe_raw_output,
         },
         "notification": {
             "should_notify": True,

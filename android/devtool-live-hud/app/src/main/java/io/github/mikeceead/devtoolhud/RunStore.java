@@ -449,12 +449,7 @@ final class RunStore {
     }
 
     private static String classifySeverity(String message) {
-        String lower = clean(message).toLowerCase(java.util.Locale.ROOT);
-        if (lower.contains("fatal") || lower.contains("exception") || lower.contains("error")
-                || lower.contains("failed")) return "error";
-        if (lower.contains("warn")) return "warning";
-        if (lower.contains("success") || lower.contains("passed")) return "success";
-        return "info";
+        return RootLogIndexer.classifySeverity(message);
     }
 
     private static String limit(String value) {
