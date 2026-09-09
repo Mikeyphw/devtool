@@ -37,6 +37,8 @@ def isolate_devtool_runtime_env(monkeypatch: pytest.MonkeyPatch, request: pytest
         "DEVTOOL_CLIPBOARD_FIFO",
         "DEVTOOL_PHONE_LOG_MIRROR_DIR",
         "DEVTOOL_GLOBAL_CONFIG",
+        "DEVTOOL_LOG_DIR",
+        "DEVTOOL_XDG_DIR",
         "DEVTOOL_TERMUX_CHROOT",
         "DEVTOOL_TERMUX_HOME",
         "DEVTOOL_BUILD_ENVIRONMENT",
@@ -47,6 +49,9 @@ def isolate_devtool_runtime_env(monkeypatch: pytest.MonkeyPatch, request: pytest
         "DEVTOOL_VALIDATION_MEMORY_GUARD_MB",
         "DEVTOOL_VALIDATION_RESOURCE_PROFILE",
         "DEVTOOL_ANDROID_SAFE_VALIDATION",
+        "XDG_STATE_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -54,9 +59,25 @@ def isolate_devtool_runtime_env(monkeypatch: pytest.MonkeyPatch, request: pytest
         if name.startswith(("DEVTOOL_PROJECT_", "DEVTOOL_ENV_")):
             monkeypatch.delenv(name, raising=False)
 
+    from devtool import logstore
+
+    # Several regression tests intentionally invoke Devtool commands or lower-level
+    # runners.  The real validation process may itself run under Termux with
+    # XDG_STATE_HOME and TZ inherited from a Python runner.  Without isolated XDG
+    # roots those nested test invocations can create user-visible logs in
+    # ~/.local/state/devtool/logs or the phone mirror, often stamped in UTC.
+    # Keep all test-created default logs inside pytest's tmp tree and reset the
+    # runtime override before/after each test so one test cannot leak its chosen
+    # log root into the next.
+    logstore.set_log_dir_override(None)
+    request.addfinalizer(lambda: logstore.set_log_dir_override(None))
+
     test_home = tmp_path / "home"
     test_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(test_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg-cache"))
     monkeypatch.setenv("PREFIX", "/usr")
 
     path = Path(str(request.node.fspath))

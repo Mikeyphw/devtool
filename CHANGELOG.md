@@ -179,3 +179,9 @@
 - Classify Python dependency, import, platform, and assertion failures separately.
 - Extend Python source audit to production Python/shebang scripts outside package roots, undeclared imports, and glibc-only `libc.so.6` loads.
 - Render Python JUnit failure categories and canonical testcase details in failure summaries.
+
+## 2026-09-08 - Devtool test log isolation follow-up
+
+- Isolate Devtool's own pytest-created logs into pytest temporary directories so validation runs no longer pollute the user's retained command log list or phone mirror with nested synthetic logs.
+- Reset the runtime log-dir override around every test and clear inherited XDG roots before installing test-local state/cache/data roots.
+- Added regression coverage for nested Devtool log creation staying out of `~/.local/state/devtool/logs` and `/sdcard/.logs/devtool`.
