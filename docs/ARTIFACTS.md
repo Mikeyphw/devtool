@@ -100,6 +100,36 @@ Embedded validator scripts are extracted to a private temporary directory but ex
 
 The legacy `files`, `.devtool-delete`, `repo_name`, and `validate_target` fields remain accepted.
 
+## Optional preflight hooks
+
+Artifacts may declare one preflight hook that runs either immediately before payload extraction or immediately after extraction, while the apply transaction is already active:
+
+```json
+{
+  "preflight": {
+    "phase": "before_extract",
+    "write_paths": [
+      "generated/",
+      "gradle.properties"
+    ],
+    "script": {
+      "path": ".devtool-artifact/preflight.sh",
+      "runner": "bash",
+      "sha256": "PREFLIGHT_SCRIPT_SHA256",
+      "timeout_seconds": 300
+    }
+  }
+}
+```
+
+`phase` accepts `before_extract` or `after_extract` (hyphenated `before-extract` / `after-extract` aliases are also accepted). The hook is optional at the artifact level, but when declared its nonzero exit status fails the apply and triggers transaction rollback.
+
+`write_paths` declares every repository-relative file or directory the hook is expected to mutate. These paths are added to preview, transaction backup, and path-reservation scope before the hook executes. Git metadata under `.git/`, absolute paths, and parent traversal are rejected.
+
+Checksum semantics are transactional rather than silently stale. Inventory source hashes are checked before the operation begins. A before-extract hook may intentionally change a checksummed source path only when that path is covered by `preflight.write_paths`; an undeclared source-hash change fails and rolls back. After extraction, the same rule applies to payload hashes: an after-extract hook may intentionally transform a payload path only when it is declared in `write_paths`, while an undeclared payload-hash or size change fails and rolls back. The artifact archive itself remains immutable: preflight receives a private temporary artifact copy through `DEVTOOL_ARTIFACT_PATH`, and Devtool also verifies that the real archive digest did not change around hook execution.
+
+Preflight scripts share the hardened embedded-script runner with validation scripts. They must live under `.devtool-artifact/`, use `bash`, `sh`, or `python3`, declare their own SHA-256 unless checksum verification is explicitly bypassed, run from a disposable private directory, and are never extracted into the repository. In addition to the common artifact-script environment, preflight receives `DEVTOOL_PREFLIGHT_PHASE` and `DEVTOOL_PREFLIGHT_TMPDIR`.
+
 ## Monorepos
 
 Use `workspace` for one monorepo project. Use `workspaces` for cross-project overlays. Paths remain repository-relative; workspace roots are for scope, display, and validator environment variables, not path prefixing.

@@ -6903,11 +6903,39 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
     if name in {"apply-overlays", "aos"}:
-        result = apply_overlay_bundle(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview, source_artifacts=source_artifacts or None)
+        result = apply_overlay_bundle(
+            config.repo_root,
+            artifact,
+            force=args.force,
+            yes=args.yes,
+            dry_run=args.dry_run,
+            log_path=log_path,
+            preview=preview,
+            source_artifacts=source_artifacts or None,
+            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+        )
     elif name.startswith("apply-overlay") or name == "ao":
-        result = apply_overlay(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
+        result = apply_overlay(
+            config.repo_root,
+            artifact,
+            force=args.force,
+            yes=args.yes,
+            dry_run=args.dry_run,
+            log_path=log_path,
+            preview=preview,
+            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+        )
     else:
-        result = apply_snapshot(config.repo_root, artifact, force=args.force, yes=args.yes, dry_run=args.dry_run, log_path=log_path, preview=preview)
+        result = apply_snapshot(
+            config.repo_root,
+            artifact,
+            force=args.force,
+            yes=args.yes,
+            dry_run=args.dry_run,
+            log_path=log_path,
+            preview=preview,
+            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+        )
     if result.returncode != 0 and not result.failure_kind:
         result.failure_kind = "artifact_failure"
     config_paths = result.metadata.get("config_paths", []) if result.metadata else []

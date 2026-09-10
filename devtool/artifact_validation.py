@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,8 @@ from typing import Any
 
 from .artifacts import (
     ARTIFACT_METADATA_DIRECTORY,
+    artifact_preflight_phase,
+    artifact_preflight_script,
     artifact_solution,
     artifact_target,
     artifact_validation_script,
@@ -48,8 +51,10 @@ def _run_validator_command_live(
     cwd: Path,
     env: dict[str, str],
     timeout_seconds: int,
+    activity_label: str = "artifact validator",
+    script_label: str = "Artifact validation",
 ) -> tuple[int, str]:
-    """Run an artifact validator with live output and no-output heartbeats."""
+    """Run an embedded artifact script with live output and no-output heartbeats."""
     started = time.monotonic()
     last_output_at = started
     last_heartbeat_at = started
@@ -90,7 +95,7 @@ def _run_validator_command_live(
         now = time.monotonic()
         timed_out = timeout_seconds > 0 and (now - started) >= timeout_seconds
         if timed_out and proc.poll() is None:
-            _append(f"\nArtifact validation script timed out after {timeout_seconds} seconds.\n")
+            _append(f"\n{script_label} script timed out after {timeout_seconds} seconds.\n")
             try:
                 proc.terminate()
             except Exception:
@@ -129,7 +134,7 @@ def _run_validator_command_live(
             elapsed = int(round(now - last_output_at))
             _append(
                 "\n"
-                f"Devtool heartbeat: artifact validator is still running after {elapsed}s without child output. "
+                f"Devtool heartbeat: {activity_label} is still running after {elapsed}s without child output. "
                 "The process was not stopped; set DEVTOOL_COMMAND_HEARTBEAT_SECONDS=0 to disable this heartbeat.\n"
             )
 
@@ -155,12 +160,12 @@ def _preferred_tmp_parent() -> str | None:
     return None
 
 
-def _safe_script_path(raw: str) -> Path:
+def _safe_script_path(raw: str, *, label: str) -> Path:
     path = Path(raw)
     if path.is_absolute() or ".." in path.parts:
-        raise RuntimeError(f"Unsafe validation script path: {raw}")
+        raise RuntimeError(f"Unsafe {label.lower()} script path: {raw}")
     if not path.parts or path.parts[0] != ARTIFACT_METADATA_DIRECTORY:
-        raise RuntimeError("Validation scripts must live under .devtool-artifact/.")
+        raise RuntimeError(f"{label} scripts must live under .devtool-artifact/.")
     return path
 
 
@@ -177,59 +182,73 @@ def _safe_repo_relative_path(repo_root: Path, raw: str, *, label: str) -> Path:
     return resolved
 
 
-def run_artifact_validation_script(
+def _run_embedded_artifact_script(
     repo_root: Path,
     artifact: str | Path,
     *,
-    manifest: dict[str, Any] | None = None,
+    manifest: dict[str, Any],
+    spec: dict[str, Any],
+    script_label: str,
+    operation_name: str,
+    temp_prefix: str,
+    temp_env_key: str,
     target: str = "",
     solution: str = "",
     run_id: str = "",
     dry_run: bool = False,
     log_path: Path | str | None = None,
     ignore_checksum: bool = False,
-) -> OperationResult | None:
-    """Run an embedded artifact validator from a disposable private directory."""
+    default_timeout_seconds: int = 900,
+    extra_env: dict[str, str] | None = None,
+    failure_kind: str = "validation_failure",
+    protect_artifact_path: bool = False,
+) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
-    manifest = manifest or read_artifact_manifest(artifact_path)
-    spec = artifact_validation_script(manifest)
-    if not spec:
-        return None
-
-    script_rel = _safe_script_path(str(spec.get("path") or "").strip())
+    script_rel = _safe_script_path(str(spec.get("path") or "").strip(), label=script_label)
     runner = str(spec.get("runner") or "bash").strip()
     if runner not in _ALLOWED_RUNNERS:
-        raise RuntimeError(f"Unsupported validation script runner: {runner!r}")
+        raise RuntimeError(f"Unsupported {script_label.lower()} script runner: {runner!r}")
     expected_sha = str(spec.get("sha256") or "").strip().lower()
     if not ignore_checksum and not expected_sha:
-        raise RuntimeError("validation.script.sha256 is required")
-    timeout_raw = spec.get("timeout_seconds", 900)
+        raise RuntimeError(f"{script_label.lower()}.script.sha256 is required")
+    timeout_raw = spec.get("timeout_seconds", default_timeout_seconds)
     if not isinstance(timeout_raw, int) or isinstance(timeout_raw, bool) or timeout_raw <= 0:
-        raise RuntimeError("validation.script.timeout_seconds must be a positive integer")
+        raise RuntimeError(f"{script_label.lower()}.script.timeout_seconds must be a positive integer")
     timeout_seconds = timeout_raw
 
     argv = [runner, str(script_rel)]
     if dry_run:
-        output = "$ " + " ".join(argv) + "\nArtifact validation script skipped during dry-run."
+        output = "$ " + " ".join(argv) + f"\n{script_label} script skipped during dry-run."
         path = str(write_log(output, log_path, append=log_path is not None))
-        return OperationResult("artifact-validate-script", argv, 0, 0.0, output, [], skipped=True, log_path=path)
+        return OperationResult(operation_name, argv, 0, 0.0, output, [], skipped=True, log_path=path)
 
     members = list_archive_members(artifact_path, include_data=True)
     member = next((item for item in members if item.name == script_rel.as_posix() and not item.is_dir), None)
     if member is None or member.data is None:
-        raise RuntimeError(f"Validation script is missing from archive: {script_rel.as_posix()}")
+        raise RuntimeError(f"{script_label} script is missing from archive: {script_rel.as_posix()}")
     if not ignore_checksum:
         actual_sha = hashlib.sha256(member.data).hexdigest().lower()
         if actual_sha != expected_sha:
-            raise RuntimeError("Validation script SHA-256 mismatch")
+            raise RuntimeError(f"{script_label} script SHA-256 mismatch")
 
     start = time.perf_counter()
     tmp_parent = _preferred_tmp_parent()
-    with tempfile.TemporaryDirectory(prefix="devtool-artifact-validation-", dir=tmp_parent) as tmp:
+    with tempfile.TemporaryDirectory(prefix=temp_prefix, dir=tmp_parent) as tmp:
         tmpdir = Path(tmp)
         script_path = tmpdir / script_rel.name
         script_path.write_bytes(member.data)
         script_path.chmod(0o700)
+
+        script_artifact_path = artifact_path.resolve()
+        if protect_artifact_path:
+            artifact_dir = tmpdir / "artifact"
+            artifact_dir.mkdir(mode=0o700)
+            script_artifact_path = artifact_dir / artifact_path.name
+            shutil.copy2(artifact_path, script_artifact_path)
+            # The hook receives a disposable private copy. Keep it owner-only but writable
+            # so preflight can inspect or mutate its sandbox copy without ever touching
+            # the source archive; source integrity is enforced separately by digest checks.
+            script_artifact_path.chmod(0o600)
 
         workspace_roots = artifact_workspace_roots(manifest)
         resolved_workspace_roots = [
@@ -248,12 +267,14 @@ def run_artifact_validation_script(
                 "DEVTOOL_WORKSPACE_ROOTS": os.pathsep.join(str(root) for root in resolved_workspace_roots),
                 "DEVTOOL_TARGET": target or artifact_target(manifest),
                 "DEVTOOL_SOLUTION": declared_solution,
-                "DEVTOOL_ARTIFACT_PATH": str(artifact_path.resolve()),
-                "DEVTOOL_VALIDATION_TMPDIR": str(tmpdir.resolve()),
+                "DEVTOOL_ARTIFACT_PATH": str(script_artifact_path),
+                temp_env_key: str(tmpdir.resolve()),
+                "DEVTOOL_ARTIFACT_SCRIPT_TMPDIR": str(tmpdir.resolve()),
                 "DEVTOOL_RUN_ID": run_id,
                 "TMPDIR": str(tmpdir.resolve()),
             }
         )
+        env.update(extra_env or {})
         command = [runner, str(script_path)]
         if runner == "python3":
             python_spec = spec.get("python") if isinstance(spec.get("python"), dict) else {}
@@ -294,12 +315,14 @@ def run_artifact_validation_script(
                 command.append("--unlocked")
             if bool(python_spec.get("offline", False)):
                 command.append("--offline")
-        print("==> Running artifact validation script", flush=True)
+        print(f"==> Running {script_label.lower()} script", flush=True)
         rc, output = _run_validator_command_live(
             command,
             cwd=repo_root.resolve(),
             env=env,
             timeout_seconds=timeout_seconds,
+            activity_label="artifact validator" if script_label == "Validation" else "artifact preflight",
+            script_label=f"Artifact {script_label.lower()}",
         )
 
     duration = time.perf_counter() - start
@@ -309,18 +332,110 @@ def run_artifact_validation_script(
     output = header + ("\n" + output.rstrip() if output.strip() else "")
     path = str(write_log(output, log_path, append=log_path is not None))
     issues: list[Issue] = []
-    failure_kind = ""
+    result_failure_kind = ""
     if rc != 0:
-        failure_kind = "validation_failure"
-        issues.append(Issue("error", "artifact-validate-script", script_rel.as_posix(), "exit-code", f"Validation script exited with code {rc}."))
+        result_failure_kind = failure_kind
+        issues.append(
+            Issue(
+                "error",
+                operation_name,
+                script_rel.as_posix(),
+                "exit-code",
+                f"{script_label} script exited with code {rc}.",
+            )
+        )
     return OperationResult(
-        "artifact-validate-script",
+        operation_name,
         [runner, script_rel.as_posix()],
         rc,
         duration,
         output,
         issues,
         log_path=path,
-        failure_kind=failure_kind,
+        failure_kind=result_failure_kind,
         metadata={"artifact_path": str(artifact_path), "temporary": True},
     )
+
+
+def run_artifact_validation_script(
+    repo_root: Path,
+    artifact: str | Path,
+    *,
+    manifest: dict[str, Any] | None = None,
+    target: str = "",
+    solution: str = "",
+    run_id: str = "",
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+    ignore_checksum: bool = False,
+) -> OperationResult | None:
+    """Run an embedded artifact validator from a disposable private directory."""
+    artifact_path = resolve_artifact_path(artifact)
+    manifest = manifest or read_artifact_manifest(artifact_path)
+    spec = artifact_validation_script(manifest)
+    if not spec:
+        return None
+    return _run_embedded_artifact_script(
+        repo_root,
+        artifact_path,
+        manifest=manifest,
+        spec=spec,
+        script_label="Validation",
+        operation_name="artifact-validate-script",
+        temp_prefix="devtool-artifact-validation-",
+        temp_env_key="DEVTOOL_VALIDATION_TMPDIR",
+        target=target,
+        solution=solution,
+        run_id=run_id,
+        dry_run=dry_run,
+        log_path=log_path,
+        ignore_checksum=ignore_checksum,
+        default_timeout_seconds=900,
+        failure_kind="validation_failure",
+    )
+
+
+def run_artifact_preflight_script(
+    repo_root: Path,
+    artifact: str | Path,
+    *,
+    phase: str,
+    manifest: dict[str, Any] | None = None,
+    target: str = "",
+    solution: str = "",
+    run_id: str = "",
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+    ignore_checksum: bool = False,
+) -> OperationResult | None:
+    """Run the optional embedded preflight hook for the requested extraction phase."""
+    artifact_path = resolve_artifact_path(artifact)
+    manifest = manifest or read_artifact_manifest(artifact_path)
+    declared_phase = artifact_preflight_phase(manifest)
+    if not declared_phase or declared_phase != phase:
+        return None
+    spec = artifact_preflight_script(manifest)
+    if not spec:
+        return None
+    result = _run_embedded_artifact_script(
+        repo_root,
+        artifact_path,
+        manifest=manifest,
+        spec=spec,
+        script_label="Preflight",
+        operation_name="artifact-preflight-script",
+        temp_prefix="devtool-artifact-preflight-",
+        temp_env_key="DEVTOOL_PREFLIGHT_TMPDIR",
+        target=target,
+        solution=solution,
+        run_id=run_id,
+        dry_run=dry_run,
+        log_path=log_path,
+        ignore_checksum=ignore_checksum,
+        default_timeout_seconds=300,
+        extra_env={"DEVTOOL_PREFLIGHT_PHASE": declared_phase},
+        failure_kind="preflight_failure",
+        protect_artifact_path=True,
+    )
+    result.metadata["preflight_phase"] = declared_phase
+    return result

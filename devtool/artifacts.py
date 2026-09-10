@@ -56,6 +56,18 @@ _VALIDATION_EXPECTED_OUTCOMES = {
     "errors",
 }
 _VALIDATION_TASK_KEYS = ("tasks", "gradle_tasks", "test_tasks", "test_task", "task")
+_PREFLIGHT_PHASE_ALIASES = {
+    "before": "before_extract",
+    "before_extract": "before_extract",
+    "before-extract": "before_extract",
+    "pre_extract": "before_extract",
+    "pre-extract": "before_extract",
+    "after": "after_extract",
+    "after_extract": "after_extract",
+    "after-extract": "after_extract",
+    "post_extract": "after_extract",
+    "post-extract": "after_extract",
+}
 
 
 def _durable_atomic_write_text(path: Path, text: str) -> None:
@@ -598,6 +610,57 @@ def artifact_validation_script(manifest: dict[str, Any]) -> dict[str, Any]:
     return dict(script) if isinstance(script, dict) else {}
 
 
+def artifact_preflight_policy(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Return the optional artifact preflight declaration."""
+    raw = manifest.get("preflight")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def artifact_preflight_phase(manifest: dict[str, Any]) -> str:
+    """Return the normalized preflight phase, or an empty string if absent."""
+    policy = artifact_preflight_policy(manifest)
+    if not policy:
+        return ""
+    raw = str(policy.get("phase") or "before_extract").strip().lower()
+    return _PREFLIGHT_PHASE_ALIASES.get(raw, raw)
+
+
+def artifact_preflight_script(manifest: dict[str, Any]) -> dict[str, Any]:
+    policy = artifact_preflight_policy(manifest)
+    script = policy.get("script")
+    return dict(script) if isinstance(script, dict) else {}
+
+
+def artifact_preflight_write_paths(manifest: dict[str, Any]) -> list[str]:
+    """Return normalized repo-relative paths a preflight hook may mutate."""
+    policy = artifact_preflight_policy(manifest)
+    raw = policy.get("write_paths")
+    if raw is None:
+        return []
+    values = [raw] if isinstance(raw, str) else raw
+    if not isinstance(values, list):
+        raise ValueError("preflight.write_paths must be a string or list of strings.")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError("preflight.write_paths entries must be strings.")
+        text = item.strip().replace("\\", "/")
+        if not text:
+            raise ValueError("preflight.write_paths entries must not be empty.")
+        try:
+            rel = _safe_rel(text)
+        except RuntimeError as exc:
+            raise ValueError(f"Unsafe preflight.write_paths path: {text}") from exc
+        if rel.parts and rel.parts[0] == ".git":
+            raise ValueError(f"preflight.write_paths may not target Git metadata: {text}")
+        value = rel.as_posix()
+        if value not in seen:
+            seen.add(value)
+            normalized.append(value)
+    return normalized
+
+
 def artifact_workspace_roots(manifest: dict[str, Any]) -> list[str]:
     roots: list[str] = []
     workspace = manifest.get("workspace")
@@ -771,6 +834,100 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
         if strategy not in {"per-overlay", "after-all", "both"}:
             ok = False
             messages.append(f"Unsupported bundle validation strategy: {strategy!r}.")
+    return ok
+
+
+def _validate_preflight_policy(manifest: dict[str, Any], messages: list[str]) -> bool:
+    raw = manifest.get("preflight")
+    if raw is None:
+        return True
+    if not isinstance(raw, dict):
+        messages.append("preflight must be an object.")
+        return False
+
+    ok = True
+    phase_raw = str(raw.get("phase") or "before_extract").strip().lower()
+    if phase_raw not in _PREFLIGHT_PHASE_ALIASES:
+        ok = False
+        messages.append("preflight.phase must be one of: before_extract, after_extract.")
+
+    script_value = raw.get("script")
+    if not isinstance(script_value, dict):
+        ok = False
+        messages.append("preflight.script must be an object.")
+        script: dict[str, Any] = {}
+    else:
+        script = script_value
+
+    try:
+        artifact_preflight_write_paths(manifest)
+    except (RuntimeError, ValueError) as exc:
+        ok = False
+        messages.append(str(exc))
+
+    if script:
+        script_path = str(script.get("path") or "").strip()
+        if not script_path:
+            ok = False
+            messages.append("preflight.script.path is required.")
+        else:
+            try:
+                rel = _safe_rel(script_path)
+                if not rel.parts or rel.parts[0] != ARTIFACT_METADATA_DIRECTORY:
+                    raise RuntimeError("Preflight scripts must live under .devtool-artifact/.")
+            except RuntimeError as exc:
+                ok = False
+                if script_path.startswith("../") or "/../" in script_path or Path(script_path).is_absolute():
+                    messages.append("Preflight scripts must live under .devtool-artifact/.")
+                else:
+                    messages.append(str(exc))
+
+        runner = str(script.get("runner") or "bash").strip()
+        if runner not in {"bash", "sh", "python3"}:
+            ok = False
+            messages.append(f"Unsupported preflight script runner: {runner!r}.")
+
+        timeout = script.get("timeout_seconds", 300)
+        if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+            ok = False
+            messages.append("preflight.script.timeout_seconds must be a positive integer.")
+
+        sha = str(script.get("sha256") or "").strip().lower()
+        if not sha:
+            ok = False
+            messages.append("preflight.script.sha256 is required.")
+        elif not _is_sha256(sha):
+            ok = False
+            messages.append("preflight.script.sha256 is not a valid SHA-256.")
+    return ok
+
+
+def _validate_embedded_script_member(
+    members: Iterable[ArchiveMember],
+    spec: dict[str, Any],
+    messages: list[str],
+    *,
+    label: str,
+    ignore_checksum: bool,
+) -> bool:
+    """Validate an embedded metadata script against the archive payload."""
+    if not spec:
+        return True
+    ok = True
+    script_path = str(spec.get("path") or "").strip()
+    if not script_path:
+        return False
+    member = next((item for item in members if item.name == script_path and not item.is_dir), None)
+    if member is None:
+        messages.append(f"{label} script is missing from archive: {script_path}")
+        return False
+    if not ignore_checksum:
+        expected = str(spec.get("sha256") or "").strip().lower()
+        if expected and member.data is not None:
+            actual = hashlib.sha256(member.data).hexdigest().lower()
+            if actual != expected:
+                ok = False
+                messages.append(f"{label} script SHA-256 mismatch.")
     return ok
 
 
@@ -1349,6 +1506,8 @@ def validate_overlay_bundle(
         ok = False
     if not _validate_validation_policy(manifest, messages, bundle=True):
         ok = False
+    if not _validate_preflight_policy(manifest, messages):
+        ok = False
     try:
         specs = _bundle_overlay_specs(bundle, manifest)
         order = [spec.path for spec in specs]
@@ -1475,6 +1634,17 @@ def validate_overlay_bundle(
         if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
             ok = False
             messages.append("validation.script.timeout_seconds must be a positive integer.")
+    preflight_script = artifact_preflight_script(manifest)
+    if preflight_script:
+        bundle_members_with_data = list_archive_members(bundle, include_data=True)
+        if not _validate_embedded_script_member(
+            bundle_members_with_data,
+            preflight_script,
+            messages,
+            label="Preflight",
+            ignore_checksum=ignore_checksum,
+        ):
+            ok = False
     if ignore_checksum:
         messages.append("Warning: checksum verification skipped by --ignore-checksum.")
     if ok:
@@ -1503,6 +1673,11 @@ def preview_overlay_bundle(repo_root: Path, bundle: str | Path) -> dict[str, Any
                 if entry.label:
                     updated["label"] = entry.label
                 changes.append(updated)
+    known_paths = {str(change.get("path") or "") for change in changes}
+    for write_path in artifact_preflight_write_paths(manifest):
+        if write_path not in known_paths:
+            changes.append({"kind": "preflight-write", "path": write_path, "overlay": "<bundle>"})
+            known_paths.add(write_path)
     return {
         "artifact": str(resolve_artifact_path(bundle)),
         "snapshot": False,
@@ -1918,7 +2093,11 @@ def validate_artifact(
     try:
         members = list_archive_members(
             artifact,
-            include_data=bool(artifact_inventory_entries(manifest) or artifact_validation_script(manifest)),
+            include_data=bool(
+                artifact_inventory_entries(manifest)
+                or artifact_validation_script(manifest)
+                or artifact_preflight_script(manifest)
+            ),
         )
     except Exception as exc:
         return ArtifactValidation(False, [str(exc)], manifest)
@@ -1934,6 +2113,8 @@ def validate_artifact(
     if check_repository_identity and not _validate_repository_identity(repo_root, manifest, messages):
         ok = False
     if not _validate_validation_policy(manifest, messages, bundle=False):
+        ok = False
+    if not _validate_preflight_policy(manifest, messages):
         ok = False
 
     expected_type = str(manifest.get("type") or manifest.get("artifact_type") or "").strip().lower()
@@ -2055,6 +2236,16 @@ def validate_artifact(
             ok = False
             messages.append("validation.script.timeout_seconds must be a positive integer.")
 
+    preflight_script = artifact_preflight_script(manifest)
+    if preflight_script and not _validate_embedded_script_member(
+        members,
+        preflight_script,
+        messages,
+        label="Preflight",
+        ignore_checksum=ignore_checksum,
+    ):
+        ok = False
+
     if ignore_checksum:
         messages.append("Warning: checksum verification skipped by --ignore-checksum.")
     if not messages:
@@ -2145,6 +2336,12 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
             changes.append({"kind": "modify", "path": str(rel)})
         else:
             changes.append({"kind": "unchanged", "path": str(rel)})
+
+    known_paths = {str(change.get("path") or "") for change in changes}
+    for write_path in artifact_preflight_write_paths(manifest):
+        if write_path not in known_paths:
+            changes.append({"kind": "preflight-write", "path": write_path})
+            known_paths.add(write_path)
 
     return {
         "artifact": str(resolve_artifact_path(artifact)),

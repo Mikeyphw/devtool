@@ -368,7 +368,7 @@ The JSON result includes artifact identity, repository/workspaces, validation, i
 
 ## Self-contained artifacts
 
-Artifact schema v2 can carry the repository identity, monorepo workspace, target, solution, file inventory, validation policy, disposable validation script, and final commit message. A normal apply can therefore be reduced to:
+Artifact schema v2 can carry the repository identity, monorepo workspace, target, solution, file inventory, an optional before/after-extraction preflight hook, validation policy, disposable validation script, and final commit message. A normal apply can therefore be reduced to:
 
 ```bash
 devtool \

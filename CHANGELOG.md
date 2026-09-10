@@ -5,6 +5,14 @@
 - `--fail-fast`, `[validation].fail_fast = true`, or `DEVTOOL_GRADLE_FAIL_FAST=true` still opt back into stop-on-first-failure behavior.
 - Android validation no longer injects `--fail-fast` unless an explicit fail-fast policy requests it.
 
+## 2026-09-10 - Transactional artifact preflight hooks
+
+- Added optional schema-v2 `preflight` scripts that run before or after extraction using the hardened embedded artifact-script runner.
+- Added declared `preflight.write_paths` to artifact previews, transaction backup, and scoped path reservations so hook side effects participate in rollback and concurrent-operation conflict protection.
+- Added checksum-boundary enforcement: declared hook writes may intentionally transform inventory source/payload files, undeclared checksum changes fail and roll back, and preflight receives a private artifact copy so the source archive remains immutable.
+- Fixed the private preflight artifact copy to use owner-only read/write mode (`0600`) rather than read-only `0400`, allowing hooks to mutate their disposable copy on Termux while preserving the original archive.
+- Added bundle and nested-overlay preflight sequencing, checksum-bypass propagation, environment/timeout/runner validation, and dedicated regression coverage.
+
 
 ## 2026-09-09 - Memory guard default and legacy commit-policy compatibility
 

@@ -19,7 +19,10 @@ from typing import Callable, Mapping, Sequence
 
 from .artifacts import (
     archive_suffix,
+    artifact_inventory_entries,
     artifact_inventory_metadata_payload_paths,
+    artifact_preflight_policy,
+    artifact_preflight_write_paths,
     is_skipped_artifact_payload_member,
     _is_skipped_artifact_payload_member,
     is_overlay_bundle,
@@ -33,8 +36,10 @@ from .artifacts import (
     artifact_target,
     read_delete_manifest,
     resolve_artifact_path,
+    sha256_file,
     validate_artifact,
 )
+from .artifact_validation import run_artifact_preflight_script
 from .config import ensure_artifact_target_config, generate_template
 from .console_utils import create_console, is_termux_environment, resolve_cli_path
 from .diagnostics import classify_failure, parse_issues
@@ -62,6 +67,197 @@ from .project_runners import (
 from .tasker import TaskerProgressSink
 
 console = create_console()
+
+
+class _ArtifactPreflightFailure(RuntimeError):
+    def __init__(self, result: OperationResult, phase: str) -> None:
+        self.result = result
+        self.phase = phase
+        super().__init__(f"Artifact preflight script failed during {phase} with exit {result.returncode}.")
+
+
+def _preflight_path_is_declared(path: str, write_paths: Sequence[str]) -> bool:
+    normalized = path.strip().replace("\\", "/").strip("/")
+    for raw in write_paths:
+        root = str(raw).strip().replace("\\", "/").strip("/")
+        if root and (normalized == root or normalized.startswith(root + "/")):
+            return True
+    return False
+
+
+def _preflight_path_fingerprint(repo_root: Path, path: str) -> tuple[str, int, str]:
+    target = repo_root / path
+    if not target.exists():
+        return ("missing", 0, "")
+    if target.is_file():
+        return ("file", target.stat().st_size, sha256_file(target).lower())
+    if target.is_dir():
+        return ("directory", 0, "")
+    return ("other", 0, "")
+
+
+def _preflight_checksum_watch(repo_root: Path, paths: Sequence[str]) -> dict[str, tuple[str, int, str]]:
+    watched: dict[str, tuple[str, int, str]] = {}
+    for raw in paths:
+        path = str(raw).strip().replace("\\", "/").strip("/")
+        if path and path not in watched:
+            watched[path] = _preflight_path_fingerprint(repo_root, path)
+    return watched
+
+
+def _preflight_undeclared_checksum_changes(
+    repo_root: Path,
+    before: Mapping[str, tuple[str, int, str]],
+    *,
+    write_paths: Sequence[str],
+) -> list[str]:
+    errors: list[str] = []
+    for path, prior in before.items():
+        current = _preflight_path_fingerprint(repo_root, path)
+        if current != prior and not _preflight_path_is_declared(path, write_paths):
+            errors.append(f"Preflight changed checksum/state for undeclared write path: {path}.")
+    return errors
+
+
+def _preflight_checksum_boundary_errors(
+    repo_root: Path,
+    manifest: dict,
+    *,
+    phase: str,
+    ignore_checksum: bool,
+) -> list[str]:
+    """Detect checksum-changing hook writes that were not explicitly declared.
+
+    Inventory source hashes are preconditions checked before the hook runs.  A
+    before-extract hook may intentionally change one of those files only when
+    the path is covered by preflight.write_paths.  Likewise, an after-extract
+    hook may intentionally transform an extracted payload only when declared.
+    Undeclared checksum changes fail the apply transaction.
+    """
+    if ignore_checksum:
+        return []
+    write_paths = artifact_preflight_write_paths(manifest)
+    errors: list[str] = []
+    apply = manifest.get("apply") if isinstance(manifest.get("apply"), dict) else {}
+    conflict_policy = str(apply.get("conflict_policy") or "fail").strip().lower()
+    for entry in artifact_inventory_entries(manifest):
+        path = str(entry.get("path") or "").strip().replace("\\", "/")
+        action = str(entry.get("action") or "").strip().lower()
+        if not path or _preflight_path_is_declared(path, write_paths):
+            continue
+        target = repo_root / path
+        if phase == "before_extract":
+            if action in {"modify", "delete"}:
+                expected = str(entry.get("source_sha256") or "").strip().lower()
+                if not target.is_file():
+                    errors.append(f"Preflight changed inventory source state for {path}: expected an existing file.")
+                elif expected and sha256_file(target).lower() != expected:
+                    errors.append(f"Preflight changed source SHA-256 for undeclared write path: {path}.")
+            elif action == "add" and target.exists() and conflict_policy == "fail":
+                errors.append(f"Preflight created an undeclared inventory add target: {path}.")
+            continue
+
+        if phase == "after_extract":
+            if action == "delete":
+                if target.exists():
+                    errors.append(f"Preflight recreated an undeclared deleted path: {path}.")
+                continue
+            expected = str(entry.get("sha256") or "").strip().lower()
+            expected_size = entry.get("size")
+            if not target.is_file():
+                errors.append(f"Preflight changed extracted payload state for {path}: expected a file.")
+                continue
+            if expected and sha256_file(target).lower() != expected:
+                errors.append(f"Preflight changed payload SHA-256 for undeclared write path: {path}.")
+            if isinstance(expected_size, int) and not isinstance(expected_size, bool) and target.stat().st_size != expected_size:
+                errors.append(f"Preflight changed payload size for undeclared write path: {path}.")
+    return errors
+
+
+def _preflight_integrity_failure(
+    artifact_path: Path,
+    *,
+    phase: str,
+    messages: Sequence[str],
+    log_path: Path | str | None,
+) -> _ArtifactPreflightFailure:
+    output = "\n".join(str(message) for message in messages if str(message).strip())
+    issues = [
+        Issue("error", "artifact-preflight-integrity", str(artifact_path), "checksum-boundary", message)
+        for message in messages
+        if str(message).strip()
+    ]
+    path = str(write_log(output, log_path, append=log_path is not None))
+    result = OperationResult(
+        "artifact-preflight-integrity",
+        ["preflight-integrity", str(artifact_path)],
+        1,
+        0.0,
+        output,
+        issues,
+        log_path=path,
+        failure_kind="preflight_failure",
+        metadata={"artifact_path": str(artifact_path), "preflight_phase": phase},
+    )
+    return _ArtifactPreflightFailure(result, phase)
+
+
+def _run_required_preflight(
+    repo_root: Path,
+    artifact_path: Path,
+    *,
+    phase: str,
+    manifest: dict,
+    target: str = "",
+    log_path: Path | str | None = None,
+    ignore_checksum: bool = False,
+    checksum_paths: Sequence[str] = (),
+) -> OperationResult | None:
+    if not artifact_preflight_policy(manifest):
+        return None
+    artifact_sha_before = sha256_file(artifact_path) if artifact_path.is_file() else ""
+    write_paths = artifact_preflight_write_paths(manifest)
+    checksum_watch_before = _preflight_checksum_watch(repo_root, checksum_paths)
+    result = run_artifact_preflight_script(
+        repo_root,
+        artifact_path,
+        phase=phase,
+        manifest=manifest,
+        target=target,
+        run_id=str(os.environ.get("DEVTOOL_RUN_ID", "") or ""),
+        log_path=log_path,
+        ignore_checksum=ignore_checksum,
+    )
+    artifact_sha_after = sha256_file(artifact_path) if artifact_path.is_file() else ""
+    integrity_errors: list[str] = []
+    if not ignore_checksum and artifact_sha_before and artifact_sha_after != artifact_sha_before:
+        integrity_errors.append("Preflight modified the artifact archive; artifact checksums are immutable during apply.")
+    if not ignore_checksum:
+        integrity_errors.extend(
+            _preflight_undeclared_checksum_changes(
+                repo_root,
+                checksum_watch_before,
+                write_paths=write_paths,
+            )
+        )
+    integrity_errors.extend(
+        _preflight_checksum_boundary_errors(
+            repo_root,
+            manifest,
+            phase=phase,
+            ignore_checksum=ignore_checksum,
+        )
+    )
+    if integrity_errors:
+        raise _preflight_integrity_failure(
+            artifact_path,
+            phase=phase,
+            messages=integrity_errors,
+            log_path=log_path,
+        )
+    if result is not None and result.returncode != 0:
+        raise _ArtifactPreflightFailure(result, phase)
+    return result
 
 
 def _format_report_issue_location(issue: Issue) -> str:
@@ -2429,12 +2625,12 @@ def _bundle_config_declarations(bundle: Path) -> list[dict[str, str]]:
     return declarations
 
 
-def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
+def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
     if is_overlay_bundle(artifact_path):
-        return apply_overlay_bundle(repo_root, artifact, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
+        return apply_overlay_bundle(repo_root, artifact, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
     argv = ["devtool", "extract-overlay", str(artifact_path), "-C", str(repo_root)]
-    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
+    return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
 
 
 def apply_overlay_bundle(
@@ -2447,6 +2643,7 @@ def apply_overlay_bundle(
     log_path: Path | str | None = None,
     preview: dict | None = None,
     source_artifacts: Sequence[str | Path] | None = None,
+    ignore_checksum: bool = False,
 ) -> OperationResult:
     raw_artifacts = [artifact] if isinstance(artifact, (str, Path)) else list(artifact)
     if not raw_artifacts:
@@ -2476,18 +2673,38 @@ def apply_overlay_bundle(
 
         transaction: dict | None = None
         rollback_result: OperationResult | None = None
+        issues: list[Issue] = []
+        failure_kind = ""
+        preflight_results: list[OperationResult] = []
         try:
+            bundle_manifest = read_artifact_manifest(artifact_path)
             declarations = _bundle_config_declarations(artifact_path)
             preview_data = _preview_with_config_registration(
                 preview or preview_overlay_bundle(repo_root, artifact_path),
                 declarations,
             )
+            checksum_paths = [
+                str(item.get("path") or "")
+                for item in preview_data.get("changes", [])
+                if isinstance(item, dict) and str(item.get("path") or "").strip()
+            ]
             transaction = create_apply_transaction(
                 repo_root,
                 artifact_path,
                 artifact_type="overlay_bundle",
                 preview=preview_data,
             )
+            top_before = _run_required_preflight(
+                repo_root,
+                artifact_path,
+                phase="before_extract",
+                manifest=bundle_manifest,
+                log_path=log_path,
+                ignore_checksum=ignore_checksum,
+                checksum_paths=checksum_paths,
+            )
+            if top_before is not None:
+                preflight_results.append(top_before)
             skipped_metadata = 0
             deleted_paths: list[str] = []
             applied: list[str] = []
@@ -2495,20 +2712,64 @@ def apply_overlay_bundle(
             with tempfile.TemporaryDirectory(prefix="devtool-bundle-apply-") as tmp:
                 _manifest, entries = materialize_overlay_bundle_entries(artifact_path, tmp)
                 for entry in entries:
-                    validation = validate_artifact(repo_root, entry.path, artifact_type="overlay", check_source_state=True)
+                    validation = validate_artifact(
+                        repo_root,
+                        entry.path,
+                        artifact_type="overlay",
+                        check_source_state=True,
+                        ignore_checksum=ignore_checksum,
+                    )
                     if not validation.ok:
                         label = entry.label or Path(entry.bundle_path).name
                         raise RuntimeError(f"Nested overlay validation failed for {label}: " + "; ".join(validation.messages))
+                    nested_before = _run_required_preflight(
+                        repo_root,
+                        entry.path,
+                        phase="before_extract",
+                        manifest=validation.manifest,
+                        target=entry.target,
+                        log_path=log_path,
+                        ignore_checksum=ignore_checksum,
+                        checksum_paths=checksum_paths,
+                    )
+                    if nested_before is not None:
+                        preflight_results.append(nested_before)
                     skipped_metadata += _extract_archive(entry.path, repo_root)
                     deleted_paths.extend(_apply_delete_manifest(repo_root, entry.path))
                     registration = _register_artifact_config(repo_root, validation.manifest, target_override=entry.target)
                     if registration:
                         registrations.append(registration)
+                    nested_after = _run_required_preflight(
+                        repo_root,
+                        entry.path,
+                        phase="after_extract",
+                        manifest=validation.manifest,
+                        target=entry.target,
+                        log_path=log_path,
+                        ignore_checksum=ignore_checksum,
+                        checksum_paths=checksum_paths,
+                    )
+                    if nested_after is not None:
+                        preflight_results.append(nested_after)
                     label = entry.label or Path(entry.bundle_path).name
                     target_note = f" target={entry.target}" if entry.target else ""
                     applied.append(f"[{entry.index}/{len(entries)}] {label}{target_note}")
+            top_after = _run_required_preflight(
+                repo_root,
+                artifact_path,
+                phase="after_extract",
+                manifest=bundle_manifest,
+                log_path=log_path,
+                ignore_checksum=ignore_checksum,
+                checksum_paths=checksum_paths,
+            )
+            if top_after is not None:
+                preflight_results.append(top_after)
             output = f"Applied overlay bundle from {artifact_path}"
             output += f"\nTransaction backup: {transaction.get('transaction_id')}"
+            if preflight_results:
+                phases = ", ".join(str((item.metadata or {}).get("preflight_phase") or "preflight") for item in preflight_results)
+                output += f"\nPreflight scripts passed: {phases}."
             if applied:
                 output += "\nApplied overlays:\n" + "\n".join(applied)
             if skipped_metadata:
@@ -2524,6 +2785,16 @@ def apply_overlay_bundle(
             if transaction:
                 rollback_result = rollback_transaction(transaction.get("path"), reason="interrupted during overlay bundle apply")
                 output += "\n" + rollback_result.output
+        except _ArtifactPreflightFailure as exc:
+            rc = exc.result.returncode or 1
+            failure_kind = "preflight_failure"
+            issues = list(exc.result.issues)
+            output = f"{exc}\n{exc.result.output}"
+            if transaction:
+                rollback_result = rollback_transaction(transaction.get("path"), reason=f"preflight failed during {exc.phase}")
+                output += "\n" + rollback_result.output
+                if rollback_result.returncode != 0:
+                    output += "\nRollback failed; manual intervention may be required."
         except BaseException as exc:
             output = f"{type(exc).__name__}: {exc}"
             rc = 1
@@ -2551,18 +2822,28 @@ def apply_overlay_bundle(
             if rollback_result is not None:
                 metadata["rollback_returncode"] = rollback_result.returncode
                 metadata["rolled_back_during_apply"] = True
-        return OperationResult("apply-overlays", argv, rc, duration, output, [], log_path=path, metadata=metadata)
+        return OperationResult(
+            "apply-overlays",
+            argv,
+            rc,
+            duration,
+            output,
+            issues,
+            log_path=path,
+            metadata=metadata,
+            failure_kind=failure_kind,
+        )
     finally:
         if temp_dir is not None:
             temp_dir.cleanup()
 
 
-def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
+def apply_snapshot(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
-    return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview)
+    return _apply_archive(repo_root, artifact_path, ["snapshot", str(artifact_path)], delete_artifact=True, snapshot=True, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
 
 
-def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None, preview: dict | None = None) -> OperationResult:
+def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, delete_artifact: bool, snapshot: bool, force: bool, yes: bool, dry_run: bool, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False) -> OperationResult:
     start = time.perf_counter()
     if dry_run:
         text = "$ " + " ".join(argv)
@@ -2577,6 +2858,9 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
     transaction: dict | None = None
     rollback_result: OperationResult | None = None
     registration: dict[str, str] = {}
+    issues: list[Issue] = []
+    failure_kind = ""
+    preflight_results: list[OperationResult] = []
     try:
         manifest = read_artifact_manifest(artifact_path) if not snapshot else {}
         declarations = [_artifact_config_declaration(manifest)] if manifest else []
@@ -2584,12 +2868,29 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
             preview or preview_artifact(repo_root, artifact_path, snapshot=snapshot),
             declarations,
         )
+        checksum_paths = [
+            str(item.get("path") or "")
+            for item in preview_data.get("changes", [])
+            if isinstance(item, dict) and str(item.get("path") or "").strip()
+        ]
         transaction = create_apply_transaction(
             repo_root,
             artifact_path,
             artifact_type="snapshot" if snapshot else "overlay",
             preview=preview_data,
         )
+        if not snapshot:
+            before = _run_required_preflight(
+                repo_root,
+                artifact_path,
+                phase="before_extract",
+                manifest=manifest,
+                log_path=log_path,
+                ignore_checksum=ignore_checksum,
+                checksum_paths=checksum_paths,
+            )
+            if before is not None:
+                preflight_results.append(before)
         skipped_metadata = 0
         deleted_paths: list[str] = []
         if snapshot:
@@ -2603,11 +2904,25 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
             skipped_metadata += _extract_archive(artifact_path, repo_root)
             deleted_paths = _apply_delete_manifest(repo_root, artifact_path)
             registration = _register_artifact_config(repo_root, manifest)
+            after = _run_required_preflight(
+                repo_root,
+                artifact_path,
+                phase="after_extract",
+                manifest=manifest,
+                log_path=log_path,
+                ignore_checksum=ignore_checksum,
+                checksum_paths=checksum_paths,
+            )
+            if after is not None:
+                preflight_results.append(after)
         # The original artifact is intentionally not deleted here.  Apply is now
         # transactional across extraction plus any later validation/commit steps,
         # so cleanup is deferred until the CLI knows no rollback happened.
         output = f"Applied {'snapshot' if snapshot else 'overlay'} from {artifact_path}"
         output += f"\nTransaction backup: {transaction.get('transaction_id')}"
+        if preflight_results:
+            phases = ", ".join(str((item.metadata or {}).get("preflight_phase") or "preflight") for item in preflight_results)
+            output += f"\nPreflight scripts passed: {phases}."
         if skipped_metadata:
             output += f"\nSkipped {skipped_metadata} metadata/cache file(s)."
         if deleted_paths:
@@ -2621,6 +2936,16 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         if transaction:
             rollback_result = rollback_transaction(transaction.get("path"), reason="interrupted during artifact apply")
             output += "\n" + rollback_result.output
+    except _ArtifactPreflightFailure as exc:
+        rc = exc.result.returncode or 1
+        failure_kind = "preflight_failure"
+        issues = list(exc.result.issues)
+        output = f"{exc}\n{exc.result.output}"
+        if transaction:
+            rollback_result = rollback_transaction(transaction.get("path"), reason=f"preflight failed during {exc.phase}")
+            output += "\n" + rollback_result.output
+            if rollback_result.returncode != 0:
+                output += "\nRollback failed; manual intervention may be required."
     except BaseException as exc:
         output = f"{type(exc).__name__}: {exc}"
         rc = 1
@@ -2645,7 +2970,17 @@ def _apply_archive(repo_root: Path, artifact_path: Path, argv: list[str], *, del
         if rollback_result is not None:
             metadata["rollback_returncode"] = rollback_result.returncode
             metadata["rolled_back_during_apply"] = True
-    return OperationResult("apply-snapshot" if snapshot else "apply-overlay", argv, rc, duration, output, [], log_path=path, metadata=metadata)
+    return OperationResult(
+        "apply-snapshot" if snapshot else "apply-overlay",
+        argv,
+        rc,
+        duration,
+        output,
+        issues,
+        log_path=path,
+        metadata=metadata,
+        failure_kind=failure_kind,
+    )
 
 
 
