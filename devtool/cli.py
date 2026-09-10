@@ -8192,6 +8192,30 @@ def _run_transaction_rollback(
     return result, raw
 
 
+
+def _continue_on_error_for_args(args: argparse.Namespace) -> bool:
+    """Return whether independent validation/workflow steps should keep running.
+
+    Devtool defaults validation to diagnostic collection now: plain validation
+    and apply-time validation continue through independent phases/tasks unless
+    the user explicitly passes --fail-fast. Non-validation workflows retain the
+    historical stop-on-first-failure behavior unless -k/--continue-on-error is
+    requested.
+    """
+    if bool(getattr(args, "fail_fast", False)):
+        return False
+    if bool(getattr(args, "continue_on_error", False)):
+        return True
+    command = str(getattr(args, "command", "") or "")
+    if command in {"validate", "v", "validate-all", "wine-validate", "wv"}:
+        return True
+    if command in APPLY_COMMANDS and (
+        bool(getattr(args, "validate", False))
+        or bool(getattr(args, "validate_only", False))
+    ):
+        return True
+    return False
+
 def _has_failed_after_apply(results: list[OperationResult]) -> bool:
     if not results:
         return False
@@ -8204,7 +8228,7 @@ def _has_failed_after_apply(results: list[OperationResult]) -> bool:
 def _handle_batch(config: ProjectConfig, args: argparse.Namespace, *, log_path: Path | str | None = None, tasker_progress: TaskerProgressSink | None = None) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw: list[str] = []
-    continue_on_error = args.continue_on_error and not args.fail_fast
+    continue_on_error = _continue_on_error_for_args(args)
 
     for step in args.steps:
         if "=" in step:
@@ -9630,7 +9654,7 @@ def _main_after_parse(
                 log_path = new_log_path()
                 write_log(_run_log_start_text(args, config), log_path)
                 started_at = datetime.now(timezone.utc)
-                results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=False, log_path=log_path)
+                results, raw_output = _run_specs_for_args(config, specs, args, continue_on_error=_continue_on_error_for_args(args), log_path=log_path)
                 finished_at = datetime.now(timezone.utc)
                 totals, summary_text, json_text, _machine_json_text = _emit_summary(
                     results,
@@ -9653,7 +9677,7 @@ def _main_after_parse(
     _apply_runner_cli_options(config, args)
     if args.command in {"test", "t"} and bool(getattr(args, "list_tests", False)):
         return _print_test_catalog(config, args, as_json=False)
-    continue_on_error = (args.continue_on_error or args.command == "validate-all") and not args.fail_fast
+    continue_on_error = _continue_on_error_for_args(args)
     _ensure_run_id(args)
     log_path = new_log_path(_log_identifier_for_args(args))
     write_log(_run_log_start_text(args, config), log_path)

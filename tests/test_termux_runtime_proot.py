@@ -81,6 +81,9 @@ class TermuxRuntimeTests(unittest.TestCase):
         self.assertLessEqual(balanced.max_workers, 2)
         self.assertLessEqual(performance.max_workers, 4)
         self.assertGreaterEqual(performance.gradle_heap_mb, balanced.gradle_heap_mb)
+        self.assertEqual(conservative.memory_guard_mb, 0)
+        self.assertEqual(balanced.memory_guard_mb, 0)
+        self.assertEqual(performance.memory_guard_mb, 0)
 
     def test_resource_defaults_do_not_override_explicit_values(self):
         options = {"gradle": {"max_workers": 7}, "validation": {"gradle_heap_mb": 999}}
@@ -88,7 +91,7 @@ class TermuxRuntimeTests(unittest.TestCase):
             apply_termux_resource_defaults(options, profile_name="balanced")
         self.assertEqual(options["gradle"]["max_workers"], 7)
         self.assertEqual(options["validation"]["gradle_heap_mb"], 999)
-        self.assertIn("memory_guard_mb", options["validation"])
+        self.assertEqual(options["validation"].get("memory_guard_mb"), 0)
 
     def test_termux_cache_root_is_backend_isolated(self):
         root = termux_cache_root({"HOME": "/data/data/com.termux/files/home"})

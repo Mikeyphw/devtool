@@ -101,3 +101,43 @@ def test_commit_message_implies_enabled_unless_explicitly_disabled() -> None:
     assert artifact_commit_policy({"apply": {"commit": {"message": "Apply it"}}})[:2] == (True, "Apply it")
     assert artifact_commit_policy({"commit_message": "Legacy apply"})[:2] == (True, "Legacy apply")
     assert artifact_commit_policy({"apply": {"commit": {"enabled": False, "message": "Do not apply"}}})[0] is False
+
+
+def test_commit_policy_accepts_legacy_top_level_commit_object() -> None:
+    assert artifact_commit_policy({"commit": {"enabled": True, "message": "Legacy object"}}) == (
+        True,
+        "Legacy object",
+        "single",
+    )
+
+
+def test_commit_policy_accepts_legacy_git_commit_object() -> None:
+    assert artifact_commit_policy({"git": {"commit": True, "message": "Legacy git"}}) == (
+        True,
+        "Legacy git",
+        "single",
+    )
+
+
+def test_commit_policy_precedence_prefers_apply_commit() -> None:
+    assert artifact_commit_policy({
+        "apply": {"commit": {"enabled": False, "message": "Apply wins"}},
+        "commit": {"enabled": True, "message": "Top-level loses"},
+        "git": {"commit": True, "message": "Git loses"},
+        "commit_message": "Fallback loses",
+    }) == (False, "Apply wins", "single")
+
+
+def test_commit_policy_prefers_top_level_commit_over_git_and_commit_message() -> None:
+    assert artifact_commit_policy({
+        "commit": {"enabled": True, "message": "Top-level wins", "strategy": "series"},
+        "git": {"commit": True, "message": "Git loses"},
+        "commit_message": "Fallback loses",
+    }) == (True, "Top-level wins", "series")
+
+
+def test_commit_policy_prefers_git_over_commit_message() -> None:
+    assert artifact_commit_policy({
+        "git": {"commit": True, "message": "Git wins"},
+        "commit_message": "Fallback loses",
+    }) == (True, "Git wins", "single")

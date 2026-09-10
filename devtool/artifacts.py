@@ -317,6 +317,7 @@ def is_artifact_metadata_member(name: str) -> bool:
     )
 
 
+
 def is_allowed_artifact_metadata_payload_member(name: str) -> bool:
     """Return True for repo-owned validator assets that overlays may update.
 
@@ -364,7 +365,6 @@ def _is_skipped_artifact_payload_member(
             and is_allowed_artifact_metadata_payload_member(name)
         )
     return False
-
 
 def is_ignored_artifact_payload_member(name: str) -> bool:
     """Return True for generated cache payloads that overlays should ignore."""
@@ -484,15 +484,73 @@ def artifact_solution(manifest: dict[str, Any]) -> str:
 
 
 def artifact_commit_policy(manifest: dict[str, Any]) -> tuple[bool, str, str]:
-    """Return enabled, message, and strategy for artifact-driven commits."""
-    apply = manifest.get("apply") if isinstance(manifest.get("apply"), dict) else {}
-    commit = apply.get("commit") if isinstance(apply.get("commit"), dict) else {}
-    message = str(commit.get("message") or manifest.get("commit_message") or "").strip()
-    enabled_value = commit.get("enabled") if "enabled" in commit else None
+    """Return enabled, message, and strategy for artifact-driven commits.
+
+    Devtool v2 overlays should declare commits under ``apply.commit``.  Older
+    hand-written overlays used either a top-level ``commit`` object, a ``git``
+    object, or the legacy ``commit_message`` string.  Keep accepting those
+    legacy fields so no-validation replay of older overlay series still
+    preserves the intended per-overlay Git history.
+    """
+
+    def _commit_dict(value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    def _message_from(value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        return ""
+
+    def _policy_from(mapping: dict[str, Any], *, message_keys: tuple[str, ...] = ("message",)) -> tuple[bool | None, str, str] | None:
+        message = ""
+        for key in message_keys:
+            message = _message_from(mapping.get(key))
+            if message:
+                break
+        has_enabled = "enabled" in mapping or "commit" in mapping
+        if "enabled" in mapping:
+            enabled_value = mapping.get("enabled") is True
+        elif "commit" in mapping:
+            enabled_value = mapping.get("commit") is True
+        else:
+            enabled_value = None
+        strategy = str(mapping.get("strategy") or "single").strip().lower() or "single"
+        if not message and not has_enabled and "strategy" not in mapping:
+            return None
+        return enabled_value, message, strategy
+
+    apply = _commit_dict(manifest.get("apply"))
+    candidates: list[tuple[bool | None, str, str]] = []
+
+    apply_commit = _commit_dict(apply.get("commit"))
+    policy = _policy_from(apply_commit)
+    if policy is not None:
+        candidates.append(policy)
+
+    top_commit = manifest.get("commit")
+    if isinstance(top_commit, dict):
+        policy = _policy_from(top_commit)
+        if policy is not None:
+            candidates.append(policy)
+    elif isinstance(top_commit, str):
+        candidates.append((None, top_commit.strip(), "single"))
+
+    git_commit = _commit_dict(manifest.get("git"))
+    policy = _policy_from(git_commit, message_keys=("message", "commit_message"))
+    if policy is not None:
+        candidates.append(policy)
+
+    commit_message = _message_from(manifest.get("commit_message"))
+    if commit_message:
+        candidates.append((None, commit_message, "single"))
+
+    if not candidates:
+        return False, "", "single"
+
+    enabled_value, message, strategy = candidates[0]
     # A real commit message is itself an affirmative commit request. Explicit
     # false remains a strong opt-out, and CLI --no-commit still wins later.
-    enabled = bool(message) if enabled_value is None else enabled_value is True
-    strategy = str(commit.get("strategy") or "single").strip().lower() or "single"
+    enabled = bool(message) if enabled_value is None else enabled_value
     return enabled and bool(message), message, strategy
 
 

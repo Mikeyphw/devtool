@@ -237,17 +237,17 @@ def select_termux_resource_profile(name: str = "balanced", *, available_mb: int 
         workers = 1
         heap = min(1024, max(512, memory // 3))
         meta = min(512, max(256, heap // 2))
-        guard = min(768, max(256, memory // 4))
+        guard = 0
     elif requested == "performance":
         workers = min(4, cores)
         heap = min(2048, max(768, memory // 2))
         meta = min(768, max(384, heap // 2))
-        guard = min(1024, max(256, memory // 5))
+        guard = 0
     else:
         workers = min(2, cores)
         heap = min(1280, max(640, memory * 2 // 5))
         meta = min(768, max(320, heap // 2))
-        guard = min(768, max(256, memory // 5))
+        guard = 0
     return TermuxResourceProfile(requested, workers, min(workers, 2), heap, meta, guard, workers)
 
 

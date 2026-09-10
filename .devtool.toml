@@ -37,7 +37,7 @@ no_daemon = false
 daemon_idle_timeout_ms = 900000
 build_cache = true
 structured_events = false
-fail_fast = true
+fail_fast = false
 offline = false
 args = [
   "-Dorg.gradle.parallel=true",
@@ -64,7 +64,7 @@ parallel = true
 no_daemon = false
 stop_daemon_after_phase = false
 low_priority = false
-memory_guard_mb = 512
+memory_guard_mb = 0
 gradle_heap_mb = 1152
 gradle_metaspace_mb = 512
 gradle_packaging_metaspace_mb = 640
@@ -74,15 +74,13 @@ affected_module_lint = true
 [targets.devtool.validation]
 python_safe = true
 low_priority = false
-memory_guard_mb = 256
-
-
+memory_guard_mb = 0
 [targets.android_hud.validation.phase_profiles.preflight]
 max_workers = 1
 cpu_limit = 1
 gradle_heap_mb = 768
 gradle_metaspace_mb = 512
-memory_guard_mb = 384
+memory_guard_mb = 0
 no_daemon = false
 low_priority = false
 
@@ -92,7 +90,7 @@ max_workers = 2
 cpu_limit = 2
 gradle_heap_mb = 1152
 gradle_metaspace_mb = 512
-memory_guard_mb = 512
+memory_guard_mb = 0
 no_daemon = false
 low_priority = false
 
@@ -102,7 +100,7 @@ max_workers = 2
 cpu_limit = 2
 gradle_heap_mb = 1152
 gradle_metaspace_mb = 512
-memory_guard_mb = 512
+memory_guard_mb = 0
 no_daemon = false
 low_priority = false
 
@@ -112,7 +110,7 @@ max_workers = 2
 cpu_limit = 2
 gradle_heap_mb = 1152
 gradle_metaspace_mb = 512
-memory_guard_mb = 512
+memory_guard_mb = 0
 no_daemon = false
 low_priority = false
 
@@ -122,7 +120,7 @@ max_workers = 2
 cpu_limit = 2
 gradle_heap_mb = 1152
 gradle_metaspace_mb = 512
-memory_guard_mb = 640
+memory_guard_mb = 0
 no_daemon = false
 low_priority = false
 
@@ -132,7 +130,7 @@ max_workers = 1
 cpu_limit = 2
 gradle_heap_mb = 1152
 gradle_metaspace_mb = 512
-memory_guard_mb = 640
+memory_guard_mb = 0
 no_daemon = false
 low_priority = false
 
@@ -142,7 +140,7 @@ max_workers = 1
 cpu_limit = 2
 gradle_heap_mb = 1024
 gradle_metaspace_mb = 512
-memory_guard_mb = 512
+memory_guard_mb = 0
 no_daemon = false
 low_priority = false
 

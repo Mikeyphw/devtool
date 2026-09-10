@@ -221,7 +221,11 @@ def resolve_android_validation_policy(config: ProjectConfig) -> AndroidValidatio
         allow_zero=True,
     )
     if guard is None:
-        guard = max(512, min(1024, int((total or 6400) * 0.10)))
+        # The memory guard is opt-in.  Android-safe validation still constrains
+        # workers, CPU, heap, daemon behavior, and phase splitting, but it no
+        # longer enables an implicit watchdog unless the user/config/env asks
+        # for a positive threshold.
+        guard = 0
 
     return AndroidValidationResourcePolicy(
         enabled=enabled,

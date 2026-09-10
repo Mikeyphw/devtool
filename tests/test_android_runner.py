@@ -1103,7 +1103,7 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         self.assertEqual(lint_args[lint_index + 1], "640")
         self.assertEqual(test_args[test_index + 1], "384")
 
-    def test_android_packaging_validation_gets_ksp_safe_metaspace_and_fail_fast(self) -> None:
+    def test_android_packaging_validation_gets_ksp_safe_metaspace_and_continues_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_android_project(root)
@@ -1125,6 +1125,28 @@ class AndroidProjectInspectionTests(unittest.TestCase):
 
         metaspace_index = args.index("--gradle-metaspace-mb")
         self.assertEqual(args[metaspace_index + 1], "768")
+        self.assertNotIn("--fail-fast", args)
+
+    def test_android_validation_can_explicitly_fail_fast_from_validation_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_android_project(root)
+            config = ProjectConfig(
+                repo_root=root,
+                project_root=str(root),
+                kind="android",
+                runner_options={
+                    "validation": {
+                        "android_safe": True,
+                        "fail_fast": True,
+                    }
+                },
+            )
+
+            args = android_builder_arguments_for_tasks(
+                config, [":app:assembleOfficialDebug"], scan_artifacts=True, validation=True
+            )
+
         self.assertIn("--fail-fast", args)
 
     def test_combined_android_validation_uses_higher_metaspace_floor(self) -> None:
@@ -2039,7 +2061,7 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             self.assertEqual(spec.env["DEVTOOL_VALIDATION_CPU_LIMIT"], "2")
             self.assertIn("-Dorg.gradle.workers.max=1", spec.env["GRADLE_OPTS"])
             self.assertIn("-XX:ActiveProcessorCount=2", spec.env["JAVA_TOOL_OPTIONS"])
-            self.assertGreaterEqual(spec.metadata["validation_memory_guard_mb"], 512)
+            self.assertEqual(spec.metadata["validation_memory_guard_mb"], 0)
 
     def test_android_builder_and_gradle_init_default_to_xdg_data_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

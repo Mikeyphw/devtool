@@ -223,7 +223,7 @@ Per-phase resource profiles may override the Android-safe defaults:
 max_workers = 1
 cpu_limit = 2
 gradle_heap_mb = 1536
-memory_guard_mb = 640
+memory_guard_mb = 0
 low_priority = true
 ```
 

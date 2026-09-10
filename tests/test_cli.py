@@ -704,7 +704,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertEqual(captured, [False])
 
-    def test_validate_remains_fail_fast_by_default(self) -> None:
+    def test_validate_continues_on_error_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
@@ -720,6 +720,26 @@ class CliTests(unittest.TestCase):
                 patch("devtool.cli.render_summary"),
             ):
                 rc = main(["--repo", str(root), "validate"])
+
+            self.assertEqual(rc, 1)
+            self.assertEqual(captured, [True])
+
+    def test_validate_fail_fast_overrides_continue_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / "App.sln").write_text("", encoding="utf-8")
+            captured: list[bool] = []
+
+            def fake_run_specs(config, specs, **kwargs):
+                captured.append(bool(kwargs.get("continue_on_error")))
+                return ([OperationResult("restore", ["dotnet", "restore"], 1, 0.0, "restore failed", [])], "validate output")
+
+            with (
+                patch("devtool.cli.run_specs", side_effect=fake_run_specs),
+                patch("devtool.cli.render_summary"),
+            ):
+                rc = main(["--repo", str(root), "--fail-fast", "validate"])
 
             self.assertEqual(rc, 1)
             self.assertEqual(captured, [False])

@@ -120,7 +120,7 @@ class ResourcePolicyTests(unittest.TestCase):
         self.assertTrue(policy.no_daemon)
         self.assertTrue(policy.low_priority)
         self.assertGreaterEqual(policy.gradle_heap_mb, 768)
-        self.assertGreaterEqual(policy.memory_guard_mb, 512)
+        self.assertEqual(policy.memory_guard_mb, 0)
 
     def test_android_validation_can_disable_only_the_memory_guard(self) -> None:
         config = ProjectConfig(

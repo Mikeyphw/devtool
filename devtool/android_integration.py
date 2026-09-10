@@ -894,7 +894,10 @@ def android_builder_arguments_for_tasks(
         )
         for note in android_validation_cli_resolution_notes(config, resolution_phase):
             _append_option(argv, "--resource-resolution", note)
-    fail_fast_default = bool(validation_policy is not None and validation_policy.enabled)
+    # Validation should collect as many independent Gradle/task diagnostics as
+    # possible by default. Explicit configuration, DEVTOOL_GRADLE_FAIL_FAST, or
+    # the top-level --fail-fast flag can still opt back into fail-fast mode.
+    fail_fast_default = False
     fail_fast_value: Any = None
     env_fail_fast = os.environ.get("DEVTOOL_GRADLE_FAIL_FAST", "").strip()
     if env_fail_fast:

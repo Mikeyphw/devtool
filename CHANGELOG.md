@@ -1,9 +1,17 @@
 
-## 2026-09-09 - Validator payload inventory compatibility
+## Devtool validation continue-by-default hotfix
 
-- Allowed inventory-declared overlays to add or modify repository-owned validator assets at `.devtool-artifact/validate.sh` and under `.devtool-artifact/validation/` while keeping manifests, delete metadata, `.devtool/`, and other `.devtool-artifact` metadata reserved.
-- Kept artifact validation scripts metadata-only unless they are explicitly declared as payload in the overlay inventory, preventing ordinary validation scripts from being copied into repositories by accident.
-- Added regression coverage for validation-directory payload extraction, legacy validator script payload extraction, metadata-only validation scripts, and continued rejection of unapproved artifact metadata targets.
+- Default validation now continues through independent phases/tasks so Android and Gradle runs collect as many diagnostics as possible in one pass.
+- `--fail-fast`, `[validation].fail_fast = true`, or `DEVTOOL_GRADLE_FAIL_FAST=true` still opt back into stop-on-first-failure behavior.
+- Android validation no longer injects `--fail-fast` unless an explicit fail-fast policy requests it.
+
+
+## 2026-09-09 - Memory guard default and legacy commit-policy compatibility
+
+- Disabled implicit Android/Termux memory guard defaults; the guard now remains off unless CLI, environment, project config, or a phase profile explicitly sets a positive `memory_guard_mb`.
+- Updated Devtool's own Android HUD validation profile to keep the guard disabled by default across phases.
+- Extended artifact commit policy parsing to honor legacy top-level `commit`, legacy `git.commit`, and `commit_message` manifests after the canonical `apply.commit` field.
+- Added regression tests covering old-style overlay commit manifests and no-guard Android/Termux validation defaults.
 
 
 - Fix Python source-audit dependency ownership: project dependencies are enforced for package/project automation by default, while heterogeneous auxiliary scripts and captured pip console launchers are inventoried without being misclassified as package requirements; strict repository-wide enforcement remains opt-in via `[tool.devtool.python-audit] dependency-scope = "repository"`.

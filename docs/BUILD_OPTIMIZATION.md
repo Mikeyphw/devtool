@@ -93,7 +93,7 @@ gradle_heap_mb = 1536
 gradle_metaspace_mb = 384
 gradle_packaging_metaspace_mb = 768
 gradle_lint_metaspace_mb = 640
-memory_guard_mb = 640
+memory_guard_mb = 0
 parallel = false
 affected_module_lint = true
 ```
@@ -113,12 +113,13 @@ Android packaging receives at least 768 MiB of bounded metaspace, and lint recei
 general validation metaspace cap because Kotlin/KSP packaging and Android lint load substantially more
 detector and model classes than compile or unit-test phases.
 
-The configured guard is an early-warning and cache-reclaim threshold, not an
-automatic abort line. Kotlin and KSP may remain healthy below it while zram and
-filesystem cache absorb a temporary burst. Devtool therefore stops sustained
-pressure only when low `MemAvailable` is corroborated by exhausted swap,
-kernel memory PSI stalls, or a clearly worsening memory trend. A separate lower
-hard floor still stops a genuine collapse quickly.
+The memory guard is disabled by default. When `memory_guard_mb` is set to a
+positive value, the configured guard is an early-warning and cache-reclaim
+threshold, not an automatic abort line. Kotlin and KSP may remain healthy below
+it while zram and filesystem cache absorb a temporary burst. Devtool therefore
+stops sustained pressure only when low `MemAvailable` is corroborated by
+exhausted swap, kernel memory PSI stalls, or a clearly worsening memory trend. A
+separate lower hard floor still stops a genuine collapse quickly.
 
 When Devtool can obtain root directly, through Termux `su`, or through
 passwordless `sudo`, the Android builder makes one conservative recovery
@@ -127,7 +128,7 @@ cache only; it does not kill applications, clear app data, change swap, or
 repeatedly reclaim caches. The parent Devtool process detects that the Android
 builder already owns the guard and does not run a second competing watchdog.
 
-Setting `memory_guard_mb = 0` disables only the emergency guard. Set
+Set `memory_guard_mb` to a positive value to opt in to the emergency guard. Set
 `android_safe = false` to restore the standard validation profile. Environment
 overrides are available as `DEVTOOL_ANDROID_SAFE_VALIDATION`,
 `DEVTOOL_VALIDATION_MAX_WORKERS`, `DEVTOOL_VALIDATION_CPU_LIMIT`,
@@ -205,5 +206,5 @@ the lower general validation heap.
 
 Constrained Android validation is fail-fast by default. This prevents a failed
 Kotlin/KSP task from being hidden by a later task that Gradle starts only to
-collect additional diagnostics. Set `[validation].fail_fast = false` only when
+collect additional diagnostics. Set `[validation].fail_fast = true` only when
 the complete multi-failure report is more important than a quick, precise stop.
