@@ -309,12 +309,61 @@ def artifact_cleanup_paths(artifact: str | Path) -> list[Path]:
 
 
 def is_artifact_metadata_member(name: str) -> bool:
-    """Return True for archive-side devtool metadata that must not be copied into repos."""
+    """Return True for archive-side devtool metadata that is protected by default."""
     path = Path(name)
     return (
         path.name in ARTIFACT_METADATA_NAMES
         or bool(path.parts and path.parts[0] in {ARTIFACT_METADATA_DIRECTORY, ".devtool"})
     )
+
+
+def is_allowed_artifact_metadata_payload_member(name: str) -> bool:
+    """Return True for repo-owned validator assets that overlays may update.
+
+    Most members under ``.devtool-artifact`` are artifact metadata and should
+    never be copied into the target repository. Some repositories intentionally
+    keep their own validation entrypoint under ``.devtool-artifact`` though, so
+    inventory-declared overlays may touch the validator script and the dedicated
+    validation directory without opening the rest of the artifact metadata
+    namespace.
+    """
+    try:
+        rel = _safe_rel(name)
+    except RuntimeError:
+        return False
+    parts = rel.parts
+    if parts == (ARTIFACT_METADATA_DIRECTORY, "validate.sh"):
+        return True
+    return len(parts) >= 3 and parts[0] == ARTIFACT_METADATA_DIRECTORY and parts[1] == "validation"
+
+
+def artifact_inventory_metadata_payload_paths(manifest: dict[str, Any]) -> set[str]:
+    """Return inventory-declared metadata paths that should be treated as payload."""
+    allowed: set[str] = set()
+    for entry in artifact_inventory_entries(manifest):
+        path = str(entry.get("path") or "").strip()
+        action = str(entry.get("action") or "").strip().lower()
+        if action == "delete":
+            continue
+        if path and is_allowed_artifact_metadata_payload_member(path):
+            allowed.add(path)
+    return allowed
+
+
+def _is_skipped_artifact_payload_member(
+    name: str,
+    *,
+    allowed_metadata_payloads: set[str] | None = None,
+) -> bool:
+    if is_ignored_artifact_payload_member(name):
+        return True
+    if is_artifact_metadata_member(name):
+        return not (
+            allowed_metadata_payloads
+            and name in allowed_metadata_payloads
+            and is_allowed_artifact_metadata_payload_member(name)
+        )
+    return False
 
 
 def is_ignored_artifact_payload_member(name: str) -> bool:
@@ -332,7 +381,7 @@ def is_ignored_artifact_payload_member(name: str) -> bool:
 
 def is_skipped_artifact_payload_member(name: str) -> bool:
     """Return True for archive members excluded from overlay payload handling."""
-    return is_artifact_metadata_member(name) or is_ignored_artifact_payload_member(name)
+    return _is_skipped_artifact_payload_member(name)
 
 
 @dataclass(slots=True)
@@ -1674,7 +1723,19 @@ def _validate_inventory(
         messages.append(f"Unsupported inventory format: {format_version}.")
         return False
 
-    member_map = {member.name: member for member in members if not member.is_dir and not is_skipped_artifact_payload_member(member.name)}
+    inventory_paths = {str(entry.get("path") or "").strip() for entry in entries}
+    allowed_metadata_payloads = {
+        path for path in inventory_paths if path and is_allowed_artifact_metadata_payload_member(path)
+    }
+    member_map = {
+        member.name: member
+        for member in members
+        if not member.is_dir
+        and not _is_skipped_artifact_payload_member(
+            member.name,
+            allowed_metadata_payloads=allowed_metadata_payloads,
+        )
+    }
     declared_payload: set[str] = set()
     seen: set[str] = set()
     apply = manifest.get("apply") if isinstance(manifest.get("apply"), dict) else {}
@@ -1693,7 +1754,7 @@ def _validate_inventory(
             ok = False
             messages.append(str(exc))
             continue
-        if is_artifact_metadata_member(path):
+        if is_artifact_metadata_member(path) and not is_allowed_artifact_metadata_payload_member(path):
             ok = False
             messages.append(f"Inventory entry cannot target reserved artifact metadata: {path}")
             continue
@@ -1985,9 +2046,18 @@ def _bytes_sha(data: bytes) -> str:
 def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = False) -> dict[str, Any]:
     if not snapshot and is_overlay_bundle(artifact):
         return preview_overlay_bundle(repo_root, artifact)
+    manifest = read_artifact_manifest(artifact) if not snapshot else {}
+    allowed_metadata_payloads = artifact_inventory_metadata_payload_paths(manifest)
     members = list_archive_members(artifact, include_data=True)
     file_members = [m for m in members if not m.is_dir]
-    incoming_files = {Path(m.name): m for m in file_members if not is_skipped_artifact_payload_member(m.name)}
+    incoming_files = {
+        Path(m.name): m
+        for m in file_members
+        if not _is_skipped_artifact_payload_member(
+            m.name,
+            allowed_metadata_payloads=allowed_metadata_payloads,
+        )
+    }
     changes: list[dict[str, str]] = []
 
     if snapshot:
@@ -2048,9 +2118,18 @@ def diff_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = Fal
     """Return a repo-relative unified diff for the payload changes in an artifact."""
     if not snapshot and is_overlay_bundle(artifact):
         return diff_overlay_bundle(repo_root, artifact, context=context, max_lines=max_lines)
+    manifest = read_artifact_manifest(artifact) if not snapshot else {}
+    allowed_metadata_payloads = artifact_inventory_metadata_payload_paths(manifest)
     members = list_archive_members(artifact, include_data=True)
     file_members = [m for m in members if not m.is_dir]
-    incoming_files = {Path(m.name): m for m in file_members if not is_skipped_artifact_payload_member(m.name)}
+    incoming_files = {
+        Path(m.name): m
+        for m in file_members
+        if not _is_skipped_artifact_payload_member(
+            m.name,
+            allowed_metadata_payloads=allowed_metadata_payloads,
+        )
+    }
     hunks: list[str] = []
     truncated = False
 

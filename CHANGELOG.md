@@ -1,4 +1,10 @@
 
+## 2026-09-09 - Validator payload inventory compatibility
+
+- Allowed inventory-declared overlays to add or modify repository-owned validator assets at `.devtool-artifact/validate.sh` and under `.devtool-artifact/validation/` while keeping manifests, delete metadata, `.devtool/`, and other `.devtool-artifact` metadata reserved.
+- Kept artifact validation scripts metadata-only unless they are explicitly declared as payload in the overlay inventory, preventing ordinary validation scripts from being copied into repositories by accident.
+- Added regression coverage for validation-directory payload extraction, legacy validator script payload extraction, metadata-only validation scripts, and continued rejection of unapproved artifact metadata targets.
+
 
 - Fix Python source-audit dependency ownership: project dependencies are enforced for package/project automation by default, while heterogeneous auxiliary scripts and captured pip console launchers are inventoried without being misclassified as package requirements; strict repository-wide enforcement remains opt-in via `[tool.devtool.python-audit] dependency-scope = "repository"`.
 ## 2026-08-29 - Go validation diagnostics and recovery reporting

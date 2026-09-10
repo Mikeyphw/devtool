@@ -19,7 +19,9 @@ from typing import Callable, Mapping, Sequence
 
 from .artifacts import (
     archive_suffix,
+    artifact_inventory_metadata_payload_paths,
     is_skipped_artifact_payload_member,
+    _is_skipped_artifact_payload_member,
     is_overlay_bundle,
     materialize_overlay_bundle_entries,
     open_tar_archive,
@@ -2654,24 +2656,34 @@ def _artifact_sidecars(artifact_path: Path) -> list[Path]:
     ]
 
 def _extract_archive(artifact_path: Path, target: Path) -> int:
+    manifest = read_artifact_manifest(artifact_path)
+    allowed_metadata_payloads = artifact_inventory_metadata_payload_paths(manifest)
     suffix = archive_suffix(artifact_path)
     if suffix == ".zip":
         with zipfile.ZipFile(artifact_path) as zf:
-            return _safe_extract_zip(zf, target)
+            return _safe_extract_zip(zf, target, allowed_metadata_payloads=allowed_metadata_payloads)
     if suffix and suffix != ".zip":
         with open_tar_archive(artifact_path) as tf:
-            return _safe_extract_tar(tf, target)
+            return _safe_extract_tar(tf, target, allowed_metadata_payloads=allowed_metadata_payloads)
     raise RuntimeError(f"Unsupported artifact type: {artifact_path}")
 
 
-def _safe_extract_zip(archive: zipfile.ZipFile, target: Path) -> int:
+def _safe_extract_zip(
+    archive: zipfile.ZipFile,
+    target: Path,
+    *,
+    allowed_metadata_payloads: set[str] | None = None,
+) -> int:
     target = target.resolve()
     skipped_metadata = 0
     for member in archive.infolist():
         mode = (member.external_attr >> 16) & 0o170000
         if mode == 0o120000:
             raise RuntimeError(f"Unsafe zip symlink member: {member.filename}")
-        if is_skipped_artifact_payload_member(member.filename):
+        if _is_skipped_artifact_payload_member(
+            member.filename,
+            allowed_metadata_payloads=allowed_metadata_payloads,
+        ):
             skipped_metadata += 1
             continue
         member_path = _safe_destination_path(target, Path(member.filename))
@@ -2684,11 +2696,19 @@ def _safe_extract_zip(archive: zipfile.ZipFile, target: Path) -> int:
     return skipped_metadata
 
 
-def _safe_extract_tar(archive: tarfile.TarFile, target: Path) -> int:
+def _safe_extract_tar(
+    archive: tarfile.TarFile,
+    target: Path,
+    *,
+    allowed_metadata_payloads: set[str] | None = None,
+) -> int:
     target = target.resolve()
     skipped_metadata = 0
     for member in archive.getmembers():
-        if is_skipped_artifact_payload_member(member.name):
+        if _is_skipped_artifact_payload_member(
+            member.name,
+            allowed_metadata_payloads=allowed_metadata_payloads,
+        ):
             skipped_metadata += 1
             continue
         if member.islnk() or member.issym() or member.isdev():
