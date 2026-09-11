@@ -62,8 +62,13 @@ show_completed_steps = true
 show_environment = "when-relevant"
 show_commands = "on-error"
 show_diagnostics = "expanded-on-error"
-confirm_destructive = true
-confirm_cancel = false
+
+[ui.confirmations]
+mode = "smart"
+cancel = "smart"
+rollback = "smart"
+delete_artifact = "smart"
+snapshot_overwrite = "smart"
 
 [ui.tui]
 density = "compact"
@@ -81,6 +86,8 @@ sidebar = "expanded"
 density = "compact"
 notification_detail = "normal"
 ```
+
+Legacy `[ui].confirm_destructive` and `[ui].confirm_cancel` remain supported only as migration shims. New configuration should use `[ui.confirmations]`; run `devtool config migrate --check` (or `--global`) to audit existing files.
 
 A repository may override only what it needs:
 

@@ -1,4 +1,4 @@
-.TH DEVTOOL 1 "2026-07-14" "devtool 1.1.0" "User Commands"
+.TH DEVTOOL 1 "2026-09-11" "devtool 1.1.0" "User Commands"
 .SH NAME
 devtool \- transactional multi-project build, test, validation, and artifact tool
 .SH SYNOPSIS
@@ -45,8 +45,10 @@ Runs explicitly configured restore, build, test, lint, package, clean, and valid
 commands.
 .PP
 Use
-.BR --project-type
-when automatic detection is ambiguous. An explicit target type in
+.BR --runner
+when automatic detection is ambiguous.
+.B --project-type
+remains a compatibility alias. An explicit target runner in
 .I .devtool.toml
 takes precedence over detection.
 .SH PRIMARY COMMANDS
@@ -275,7 +277,7 @@ and
 Create a starter
 .I .devtool.toml.
 .TP
-.B config path|show|defaults|init|edit|resolve|doctor
+.B config path|show|defaults|init|edit|resolve|explain|migrate|doctor
 Inspect, create, edit, resolve, and diagnose repository or global configuration. Use
 .B --global
 with
@@ -362,18 +364,33 @@ with targets, groups, ui-profiles, test-profiles, variants, jobs, workflows, pyt
 .B --format json
 for the complete versioned completion-state object.
 .TP
+.B compatibility " | " compat
+Audit the versioned backward-compatibility registry. Use
+.B --active-only
+to show entries currently used by the selected config,
+.B --category
+to filter the registry,
+.B --strict
+to exit non-zero when config migration remains, and
+.B --json
+for the machine contract. Use
+.B --global
+to audit the user config.
+.TP
 .B config explain
 Explain canonical runner/platform/target/workspace configuration, provenance, UI profiles, and migration opportunities.
 .TP
 .B config migrate
-Check or safely rewrite legacy project/target kind/type aliases.
+Check or safely rewrite legacy project/target kind/type aliases, legacy project default-target placement, and legacy UI confirmation booleans.
 .B --check
 is non-mutating;
 .B --write
-creates a .bak backup before canonicalizing runner/platform syntax.
+creates a .bak backup before canonicalizing runner/platform/workspace/UI policy syntax.
+.B --global
+performs the UI-preference migration against the sparse user config.
 .TP
 .B control-center " | " gui
-Launch the Qt 6 Devtool Control Center.
+Launch the GTK4 Devtool Control Center.
 .TP
 .B ipc-server
 Run or start the local Control Center IPC broker.
@@ -439,8 +456,8 @@ Exact solution path for restore/build/test.
 .BR --project " PATH"
 Exact project path for run or validation.
 .TP
-.BR --project-type " TYPE"
-Override detection. TYPE is
+.BR --runner " TYPE"
+Override runner detection. TYPE is
 .BR auto ,
 .BR dotnet ,
 .BR android ,
@@ -449,6 +466,9 @@ Override detection. TYPE is
 .BR command ,
 or
 .BR unknown .
+.B --project-type
+is retained as a compatibility alias for
+.BR --runner .
 .SH GLOBAL UI OPTIONS
 .TP
 .BI --ui-profile " NAME"
@@ -1347,8 +1367,13 @@ Controls HUD process reuse. The value
 .B kill
 replaces an older renderer when explicitly used.
 .TP
+.B DEVTOOL_PROJECT_RUNNER
+Override the detected project runner through environment configuration.
+.TP
 .B DEVTOOL_PROJECT_KIND
-Override detected project kind through environment configuration.
+Legacy compatibility alias for
+.BR DEVTOOL_PROJECT_RUNNER ;
+conflicting runner/kind values are rejected.
 .SH REMOVED OPTIONS
 The former standalone notification, Tasker, and multi-run lease options are not accepted:
 .BR --notify ,
@@ -1369,11 +1394,15 @@ Use
 .B devtool ui-contract --surface machine --json
 to inspect the schema/version contract.
 .SH CONFIGURATION MIGRATION
-Legacy [project].kind and [targets.*].type/kind aliases remain supported. Use
+Legacy [project].kind, [targets.*].type/kind, [project].default_target, and [ui] confirmation booleans remain supported. Use
+.B devtool compatibility --active-only
+and
 .B devtool config migrate --check
-to inspect safe migration opportunities and
+to inspect the active compatibility surface, then
 .B devtool config migrate --write
-to canonicalize them. The write mode creates a .devtool.toml.bak backup and never overwrites an existing canonical runner with a legacy alias.
+to canonicalize safe repository settings.
+.B devtool config migrate --global --write
+handles legacy user UI preferences. Write mode creates a .bak backup and refuses ambiguous canonical/legacy conflicts rather than guessing. New automation should prefer --runner, DEVTOOL_PROJECT_RUNNER, [workspace].default_target, machine schema v2, semantic IPC actions, and Tasker DEVTOOL_* fields.
 .SH AUTHOR
 OpenAI
 

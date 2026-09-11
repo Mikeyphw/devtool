@@ -50,7 +50,7 @@ automatic project-kind selection.
 - Exactly one repository-root marker wins over unrelated nested examples,
   demos, mobile apps, or tools.
 - Multiple root-local kinds, or multiple nested kinds with no root-local owner,
-  are ambiguous and require `[project].kind`, `--project-type`, or a typed
+  are ambiguous and require `[project].runner`, `--runner`, or a typed
   `--target`.
 - A typed target remains authoritative in a mixed workspace.
 

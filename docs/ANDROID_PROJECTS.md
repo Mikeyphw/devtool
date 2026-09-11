@@ -12,7 +12,8 @@ named target:
 
 ```toml
 [targets.mobile]
-type = "android"
+runner = "android"
+platform = "android"
 root = "apps/mobile"
 
 [targets.mobile.android]

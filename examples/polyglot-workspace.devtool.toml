@@ -1,0 +1,50 @@
+[project]
+runner = "python"
+platform = "server"
+
+[workspace]
+default_target = "api"
+
+[workspace.groups]
+frontend = ["web"]
+mobile = ["android"]
+release = ["api", "@frontend", "@mobile"]
+
+[workspace.scheduler]
+parallel = true
+max_parallel_nodes = 4
+max_gradle_nodes = 1
+
+[jobs.generate-client]
+runner = "node"
+root = "tools/openapi"
+command = ["npm", "run", "generate"]
+inputs = ["schema/**", "package.json"]
+outputs = ["generated/**"]
+
+[targets.api]
+runner = "python"
+platform = "server"
+root = "services/api"
+inputs = ["../../schemas/**"]
+outputs = ["dist/**"]
+
+[targets.api.workflows]
+validate = ["job:generate-client", "runner:python#validate"]
+
+[targets.web]
+runner = "node"
+platform = "web"
+root = "apps/web"
+inputs = ["../../schemas/**"]
+outputs = ["dist/**"]
+
+[targets.web.workflows]
+validate = ["target:api#build", "runner:node#validate"]
+
+[targets.android]
+runner = "android"
+platform = "android"
+root = "apps/android"
+inputs = ["../../schemas/**"]
+outputs = ["app/build/**"]

@@ -27,7 +27,8 @@ Malformed `pyproject.toml` files report their parse location and stop planning.
 
 ```toml
 [project]
-kind = "python"
+runner = "python"
+platform = "server"
 root = "."
 python = "python3.13"
 package_command = "" # honored when set

@@ -234,8 +234,6 @@ def minimal_global_config_template() -> str:
         "verbosity = \"normal\" # compact | normal | detailed | debug",
         "timestamps = \"relative\" # relative | absolute | off",
         "duration_format = \"human\" # human | precise",
-        "confirm_destructive = true",
-        "confirm_cancel = false",
         "show_completed_steps = true",
         "show_environment = \"when-relevant\" # never | when-relevant | always",
         "show_commands = \"on-error\" # never | on-error | always",
@@ -490,7 +488,7 @@ def _default_target_name(
         raise SystemExit(
             "Multiple targets are configured and none is the default:\n"
             f"{available}\n"
-            "Use --target <name> or set [project].default_target."
+            "Use --target <name> or set [workspace].default_target."
         )
     return ""
 
@@ -615,7 +613,7 @@ def load_project_config(
         named = ", ".join(sorted(targets)) or "<none>"
         raise SystemExit(
             "Mixed repository has no safe default project type "
-            f"({available}). Set [project].kind, pass --project-type, or select a typed --target. "
+            f"({available}). Set [project].runner, pass --runner, or select a typed --target. "
             f"Named targets: {named}."
         )
     selected_variant_name = (variant_name.strip() or str(project_section.get("variant", "")).strip())
@@ -1868,7 +1866,8 @@ build_directory = ".devtool/build/meson"
 # SIMSTOOLKIT_WINE_PATH = "wine"
 
 # Environment override rules:
-# DEVTOOL_PROJECT_KIND=python
+# DEVTOOL_PROJECT_RUNNER=python
+# DEVTOOL_PROJECT_KIND=python # legacy alias
 # DEVTOOL_PROJECT_BUILD_TARGET=pyproject.toml
 # DEVTOOL_PROJECT_RUN_TARGET=src/app.py
 # DEVTOOL_PROJECT_PYTHON=python3.12

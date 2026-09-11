@@ -78,6 +78,7 @@ final class DevtoolCommandImporter {
                     config.chrootName = requireValue(tokens, ++index, token);
                     index++;
                     continue;
+                case "--runner":
                 case "--project-type":
                     config.projectType = requireValue(tokens, ++index, token);
                     index++;

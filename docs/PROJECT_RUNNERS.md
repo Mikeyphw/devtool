@@ -2,9 +2,9 @@
 
 Devtool separates project command planning from process execution.
 
-- `devtool.project_runners` selects a project-type runner and converts an action into `CommandSpec` objects.
+- `devtool.project_runners` selects a project runner and converts an action into `CommandSpec` objects.
 - `devtool.runners` executes those specifications, streams progress, writes logs, and performs transactional artifact operations.
-- `ProjectConfig.kind` selects the runner. Ambiguous mixed repositories require an explicit kind or typed target; Devtool does not guess from nested projects.
+- `ProjectConfig.runner` is the canonical runner identity and `ProjectConfig.platform` is the independent product-surface identity. `ProjectConfig.kind` remains the compatibility runner field for older callers. Ambiguous mixed repositories require an explicit runner or typed target; Devtool does not guess from nested projects.
 
 Registered runners are:
 

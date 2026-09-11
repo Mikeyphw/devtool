@@ -1,0 +1,24 @@
+[project]
+runner = "python"
+platform = "server"
+python = "python3"
+
+[targets.api]
+runner = "python"
+platform = "server"
+root = "."
+inputs = ["pyproject.toml", "src/**", "tests/**"]
+outputs = ["dist/**", ".devtool/build/**"]
+
+[workspace]
+default_target = "api"
+
+[python]
+manager = "auto"
+test_framework = "pytest"
+groups = ["test", "dev"]
+locked = true
+fresh_dist = true
+
+[test_profiles.fast]
+select = ["unit"]

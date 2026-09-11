@@ -1,0 +1,28 @@
+[project]
+runner = "python"
+platform = "server"
+
+[targets.devtool]
+runner = "python"
+platform = "cli"
+root = "."
+inputs = ["devtool/**", "tests/**", "pyproject.toml"]
+outputs = ["dist/**"]
+
+[workspace]
+default_target = "devtool"
+
+[test_profiles.release]
+select = ["unit", "integration"]
+exclude_tag = ["manual"]
+
+[ui]
+profile = "developer"
+
+[ui.confirmations]
+rollback = "always"
+dirty_tree = "always"
+
+[ui.notifications]
+failure = true
+requires_action = true

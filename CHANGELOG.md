@@ -1,3 +1,11 @@
+## 2026-09-11 - FS01 + FS02 compatibility audit and documentation consolidation
+
+- Added a versioned compatibility registry and `compatibility|compat` audit command covering retained config, CLI, environment, Python API, machine, IPC, Tasker, Android bridge, HUD, and workflow compatibility boundaries.
+- Extended safe config migration to `[project].default_target` and legacy UI confirmation booleans, added global UI migration, and made migration operate on raw TOML so conflicts can be reported before normal config loading.
+- Added canonical `--runner`/`DEVTOOL_PROJECT_RUNNER` surfaces while retaining `--project-type`/`DEVTOOL_PROJECT_KIND` compatibility; detection now publishes canonical runner fields alongside legacy kind aliases.
+- Switched Devtool-generated desktop, validation-wizard, SSH/chroot, and Android companion commands to canonical `--runner` while preserving `--project-type` parsing/import compatibility.
+- Consolidated canonical configuration examples, rewrote the 1.1 migration guide, added the backward-compatibility contract and examples guide, and updated Python/runner/configuration/manpage documentation to teach modern runner/platform/workspace/UI syntax.
+
 ## 2026-09-11 - UI11 + UI12 machine/IPC/Tasker schema and completion/config UX
 
 - Added canonical machine schema v2 with workspace/selection, operation, workflow/test selection, progress, diagnostics, actions/navigation, notifications, presentation, capabilities and responsive intent while retaining legacy outer machine/HUD/Tasker fields.

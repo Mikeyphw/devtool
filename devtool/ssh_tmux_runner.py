@@ -43,7 +43,7 @@ _GLOBAL_VALUE_FLAGS = {
     "-r", "--repo", "-c", "--config", "--solution", "--project",
     "--machine-file", "--android-sdk-root", "--java-home", "--gradle-command",
     "--gradle-user-home", "-o", "--output", "--target", "--variant",
-    "--project-type", "--performance-file", "--copy-via", "--theme",
+    "--runner", "--project-type", "--performance-file", "--copy-via", "--theme",
     "--stdout-payload", "--hud-mode", "--chroot", "--execution-environment",
     "--matrix", "--matrix-mode", "--toolchain-profile",
 }

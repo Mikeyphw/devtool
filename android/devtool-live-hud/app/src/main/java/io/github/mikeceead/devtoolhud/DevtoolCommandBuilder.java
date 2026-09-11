@@ -30,7 +30,7 @@ final class DevtoolCommandBuilder {
 
         String projectType = clean(config.projectType, "auto");
         if (!projectType.equals("auto")) {
-            parts.add("--project-type");
+            parts.add("--runner");
             parts.add(shellLiteral(projectType));
         }
         String executionEnvironment = clean(config.executionEnvironment, "auto");

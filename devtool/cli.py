@@ -97,12 +97,14 @@ from .clipboard import copy_text
 from .console_utils import create_console, resolve_cli_path
 from .completion import ZSH_COMPLETION
 from .completion_state import build_completion_state, completion_values
+from .compatibility import compatibility_report, render_compatibility_text
 from .config_migration import analyze_config_migration, migrate_config_text, migration_report
 from .config import (
     detect_project_kind,
     discover_dotnet_candidates,
     global_config_doctor_entries,
     global_config_path,
+    find_config,
     load_global_config,
     load_project_config,
     minimal_global_config_template,
@@ -272,6 +274,7 @@ GLOBAL_OPTIONS_WITH_VALUE = {
     "--solution",
     "--project",
     "--project-type",
+    "--runner",
     "--performance-file",
     "--machine-file",
     "--copy-via",
@@ -435,10 +438,12 @@ def build_parser() -> argparse.ArgumentParser:
     project.add_argument("--solution", default="", help="Exact solution path for restore/build/test")
     project.add_argument("--project", default="", help="Exact project path for run/validation")
     project.add_argument(
+        "--runner",
         "--project-type",
+        dest="project_type",
         choices=["auto", "dotnet", "android", "gradle", "python", "node", "rust", "go", "maven", "cmake", "meson", "make", "command", "unknown"],
         default="auto",
-        help="Override project detection for this run",
+        help="Override the project runner for this run; --project-type remains a compatibility alias",
     )
 
     execution = parser.add_argument_group("Execution")
@@ -703,7 +708,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ai_prompt = subparsers.add_parser("ai-prompt", aliases=["ap"])
     ai_prompt.add_argument("--repo-name", required=True, help="Human-friendly repo name for the generated prompt")
-    ai_prompt.add_argument("--project-type", choices=["auto", "dotnet", "android", "gradle", "python", "node", "rust", "go", "maven", "cmake", "meson", "make", "command", "unknown"], default="auto")
+    ai_prompt.add_argument("--runner", "--project-type", dest="project_type", choices=["auto", "dotnet", "android", "gradle", "python", "node", "rust", "go", "maven", "cmake", "meson", "make", "command", "unknown"], default="auto")
     ai_prompt.add_argument("--build-target", default="")
     ai_prompt.add_argument("--run-target", default="")
     ai_prompt.add_argument("--target-name", default="", help="Named monorepo target/profile to reference")
@@ -855,6 +860,13 @@ def build_parser() -> argparse.ArgumentParser:
     completion_state.add_argument("--kind", choices=["targets", "groups", "ui-profiles", "test-profiles", "variants", "jobs", "workflows", "pytest-tests", "all"], default="all")
     completion_state.add_argument("--format", choices=["lines", "json"], default="lines")
 
+    compatibility_cmd = subparsers.add_parser("compatibility", aliases=["compat"], help="Audit retained legacy interfaces and migration paths")
+    compatibility_cmd.add_argument("--json", action="store_true", help="Emit the versioned compatibility report as JSON")
+    compatibility_cmd.add_argument("--active-only", action="store_true", help="Show only compatibility entries active in the selected config")
+    compatibility_cmd.add_argument("--category", choices=["config", "cli", "environment", "python-api", "machine", "ipc", "tasker", "android", "workflow"], default="", help="Filter compatibility entries by category")
+    compatibility_cmd.add_argument("--strict", action="store_true", help="Exit non-zero when the selected config still needs migration")
+    compatibility_cmd.add_argument("--global", dest="global_config", action="store_true", help="Audit the user global config instead of the repository config")
+
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
     cfg_path = cfg_sub.add_parser("path", help="Print the repo or global config path")
@@ -880,6 +892,7 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_mode.add_argument("--check", action="store_true", help="Check and report migration opportunities without changing files")
     migrate_mode.add_argument("--write", action="store_true", help="Rewrite safe legacy aliases in place and create a .bak backup")
     cfg_migrate.add_argument("--json", action="store_true", help="Emit machine-readable migration report")
+    cfg_migrate.add_argument("--global", dest="global_config", action="store_true", help="Migrate legacy UI preferences in the user global config")
     cfg_doctor = cfg_sub.add_parser("doctor")
     cfg_doctor.add_argument("--global", dest="global_config", action="store_true", help="Diagnose the user global config")
 
@@ -9694,6 +9707,46 @@ def _config_command(args: argparse.Namespace) -> int:
         print(config.config_path or "")
         return 0
 
+    # Migration works on raw TOML before loading the full project model. This
+    # keeps the migration command usable even when legacy/canonical keys
+    # conflict and normal configuration loading would intentionally fail.
+    if args.config_command == "migrate":
+        if getattr(args, "global_config", False):
+            path = global_config_path()
+        else:
+            repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
+            path = find_config(repo_root, getattr(args, "config", None)) or (repo_root / ".devtool.toml")
+        if not path.exists():
+            raise SystemExit(f"Config not found: {path}")
+        report = migration_report(path)
+        if bool(getattr(args, "write", False)) and report.get("needs_migration"):
+            if not report.get("safe_to_write", True):
+                unsafe = [item for item in report.get("findings", []) if not item.get("safe", True)]
+                detail = "; ".join(str(item.get("message") or item.get("compatibility_id") or "unsafe migration") for item in unsafe)
+                raise SystemExit(f"Config migration requires manual reconciliation before --write: {detail}")
+            original = path.read_text(encoding="utf-8")
+            migrated, findings = migrate_config_text(original)
+            backup = path.with_name(path.name + ".bak")
+            backup.write_text(original, encoding="utf-8")
+            path.write_text(migrated, encoding="utf-8")
+            report = migration_report(path)
+            report["written"] = True
+            report["backup"] = str(backup)
+            report["migrated_findings"] = [item.as_dict() for item in findings]
+        else:
+            report["written"] = False
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            rows = [("config", str(path)), ("status", "migration recommended" if report.get("needs_migration") else "canonical")]
+            for item in report.get("findings", []):
+                safety = "safe" if item.get("safe", True) else "manual"
+                rows.append((f"line {item.get('line')}", f"[{item.get('section')}] {item.get('key')} → {item.get('replacement_key')} ({safety})"))
+            if report.get("written"):
+                rows.append(("backup", str(report.get("backup") or "")))
+            render_status_table(rows)
+        return 0
+
     if getattr(args, "global_config", False):
         data, path = load_global_config()
         if args.config_command == "show":
@@ -9729,11 +9782,7 @@ def _config_command(args: argparse.Namespace) -> int:
         return 0
     if args.config_command == "defaults":
         from .config import generate_template
-
-        if getattr(args, "minimal", False):
-            print(generate_template(config.repo_root))
-        else:
-            print(generate_template(config.repo_root))
+        print(generate_template(config.repo_root))
         return 0
     if args.config_command == "init":
         target = write_template_config(config.repo_root, force=getattr(args, "force", False))
@@ -9742,8 +9791,7 @@ def _config_command(args: argparse.Namespace) -> int:
     if args.config_command == "edit":
         path = config.config_path or (config.repo_root / ".devtool.toml")
         if not path.exists():
-            target = write_template_config(config.repo_root, force=False)
-            path = target
+            path = write_template_config(config.repo_root, force=False)
         editor = _resolve_config_editor(str(getattr(args, "editor", "") or ""))
         return subprocess.run([*editor, str(path)], check=False).returncode
     if args.config_command == "resolve":
@@ -9759,15 +9807,16 @@ def _config_command(args: argparse.Namespace) -> int:
         return 0
     if args.config_command == "explain":
         path = config.config_path or (config.repo_root / ".devtool.toml")
-        migration = migration_report(path) if path.exists() else {"schema_version": 1, "path": str(path), "needs_migration": False, "findings": []}
+        migration = migration_report(path) if path.exists() else {"schema_version": 2, "path": str(path), "needs_migration": False, "safe_to_write": True, "findings": []}
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "config_path": str(path),
             "repo_root": str(config.repo_root),
             "project": {"runner": config.runner, "platform": config.platform, "selected_target": config.selected_target, "variant": config.variant},
             "workspace": workspace_as_dict(config.workspace, config.targets),
             "provenance": dict(sorted(config.config_provenance.items())),
             "migration": migration,
+            "compatibility": compatibility_report(path).get("summary", {}),
             "ui_profiles": build_completion_state(config).ui_profiles,
         }
         if bool(getattr(args, "json", False)):
@@ -9785,39 +9834,15 @@ def _config_command(args: argparse.Namespace) -> int:
             rows.extend((f"provenance.{key}", value) for key, value in sorted(config.config_provenance.items()))
             render_status_table(rows)
         return 0
-    if args.config_command == "migrate":
-        path = config.config_path or (config.repo_root / ".devtool.toml")
-        if not path.exists():
-            raise SystemExit(f"Repository config not found: {path}")
-        report = migration_report(path)
-        if bool(getattr(args, "write", False)) and report.get("needs_migration"):
-            original = path.read_text(encoding="utf-8")
-            migrated, findings = migrate_config_text(original)
-            backup = path.with_name(path.name + ".bak")
-            backup.write_text(original, encoding="utf-8")
-            path.write_text(migrated, encoding="utf-8")
-            report = migration_report(path)
-            report["written"] = True
-            report["backup"] = str(backup)
-            report["migrated_findings"] = [item.as_dict() for item in findings]
-        else:
-            report["written"] = False
-        if bool(getattr(args, "json", False)):
-            print(json.dumps(report, indent=2, ensure_ascii=False))
-        else:
-            rows = [("config", str(path)), ("status", "migration recommended" if report.get("needs_migration") else "canonical")]
-            for item in report.get("findings", []):
-                rows.append((f"line {item.get('line')}", f"[{item.get('section')}] {item.get('key')} → {item.get('replacement_key')}"))
-            if report.get("written"):
-                rows.append(("backup", str(report.get("backup") or "")))
-            render_status_table(rows)
-        return 0
     if args.config_command == "doctor":
+        migration = migration_report(config.config_path) if config.config_path and config.config_path.exists() else {"needs_migration": False}
         rows = [
             ("config_path", str(config.config_path) if config.config_path else "-"),
             ("global_config_path", str(config.global_config_path) if config.global_config_path else "-"),
             ("repo_root", str(config.repo_root)),
-            ("kind", config.kind),
+            ("runner", config.runner),
+            ("platform", config.platform or "-"),
+            ("compatibility_migration", "recommended" if migration.get("needs_migration") else "canonical"),
             ("build_target", config.build_target or "-"),
             ("run_target", config.run_target or "-"),
         ]
@@ -10289,6 +10314,25 @@ def _main_after_parse(
         else:
             for value in completion_values(config, kind):
                 print(value)
+        return 0
+
+    if args.command in {"compatibility", "compat"}:
+        if bool(getattr(args, "global_config", False)):
+            path = global_config_path()
+        else:
+            repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
+            path = find_config(repo_root, getattr(args, "config", None))
+        payload = compatibility_report(
+            path,
+            category=str(getattr(args, "category", "") or ""),
+            active_only=bool(getattr(args, "active_only", False)),
+        )
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(render_compatibility_text(payload))
+        if bool(getattr(args, "strict", False)) and payload.get("config_migration", {}).get("needs_migration"):
+            return 1
         return 0
 
     if args.command in {"logs"}:

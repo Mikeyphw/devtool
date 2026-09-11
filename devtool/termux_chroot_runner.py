@@ -49,7 +49,7 @@ _PATH_VALUE_FLAGS = {
 _FLAGS_WITH_VALUES = _PATH_VALUE_FLAGS | {
     "--target", "--hud-mode",
     "--theme", "--stdout-payload", "--copy-via", "--commit", "--watch-interval",
-    "--matrix", "--matrix-mode", "--format", "--repo-name", "--project-type",
+    "--matrix", "--matrix-mode", "--format", "--repo-name", "--runner", "--project-type",
     "--build-target", "--run-target", "--target-name", "--solution-target",
     "--delivery-mode", "--artifact-type", "--port", "--poll-interval",
     "--recent-events", "--from-ref", "--to-ref", "-m",

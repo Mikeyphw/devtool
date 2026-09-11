@@ -1,0 +1,31 @@
+[project]
+runner = "python"
+platform = "server"
+
+[ui]
+profile = "focused"
+theme = "auto"
+icons = "auto"
+
+[ui.profiles.focused]
+extends = "developer"
+density = "compact"
+show_commands = "on-error"
+show_completed_steps = false
+
+[ui.tui]
+density = "dense"
+
+[ui.hud]
+max_steps = 8
+
+[ui.confirmations]
+cancel = "smart"
+rollback = "always"
+apply_artifact = "smart"
+
+[ui.notifications]
+started = false
+success = true
+failure = true
+requires_action = true

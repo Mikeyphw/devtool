@@ -43,19 +43,7 @@ root = "apps/desktop"
 `desktop`, `shared`, and repository-specific slugs are valid). `runner` must
 resolve to a first-class Devtool runner.
 
-Legacy identity remains supported:
-
-```toml
-[project]
-kind = "python"
-
-[targets.api]
-type = "python"
-```
-
-`kind` and target `type`/`kind` are compatibility aliases for `runner`. New
-configuration should use `runner`. Conflicting canonical and legacy values are
-rejected instead of silently choosing one.
+Legacy `kind` and target `type`/`kind` identities remain supported for existing repositories, but new configuration should use `runner` and `platform`. Conflicting canonical and legacy values are rejected instead of silently choosing one. See [`BACKWARD_COMPATIBILITY.md`](BACKWARD_COMPATIBILITY.md) and use `devtool config migrate --check` for migration examples.
 
 ## Reusable jobs
 

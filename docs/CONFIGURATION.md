@@ -286,15 +286,20 @@ Use `devtool plan ACTION --explain` to inspect exactly why nodes may or may not 
 
 Use `devtool config resolve` for the effective configuration and `devtool config resolve --provenance` or `devtool config explain` to understand where target, runner, platform, execution environment, workspace groups and UI settings came from.
 
-Legacy repositories using `[project].kind` or `[targets.*].type/kind` continue to work. UI12 adds a safe migration assistant:
+Legacy repositories using `[project].kind`, `[targets.*].type/kind`, `[project].default_target`, or legacy `[ui]` confirmation booleans continue to work. FS01 extends the safe migration assistant across all of those config shims:
 
 ```sh
+devtool compatibility --active-only
 devtool config migrate --check
 devtool config migrate --check --json
 devtool config migrate --write
+devtool config migrate --global --check
+devtool config migrate --global --write
 ```
 
-`--write` rewrites safe legacy aliases to canonical `runner` syntax, adds an explicit migration-time `platform` when missing, and writes `.devtool.toml.bak` before modifying the configuration. Existing canonical `runner` values win; redundant legacy aliases are removed rather than creating duplicate keys.
+`--write` rewrites safe runner aliases, adds an explicit migration-time `platform` when missing, moves the default target to `[workspace]`, canonicalizes UI confirmation policy, and writes a `.bak` file before modifying configuration. Migration reads raw TOML first, so contradictory legacy/canonical values can be reported even when normal config loading would fail. Existing canonical values are never silently overwritten when reconciliation is ambiguous.
+
+Use `--runner` for one-run runner overrides. `--project-type` remains a compatibility alias. Likewise, `DEVTOOL_PROJECT_RUNNER` is canonical while `DEVTOOL_PROJECT_KIND` remains accepted. See [`BACKWARD_COMPATIBILITY.md`](BACKWARD_COMPATIBILITY.md).
 
 ## Completion metadata
 

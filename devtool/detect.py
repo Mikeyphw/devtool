@@ -87,6 +87,11 @@ def detect_repo(repo_root: Path) -> dict[str, Any]:
     return {
         "repo_root": str(repo_root),
         "repo_name": repo_root.name,
+        "runner": kind_details["kind"],
+        "runner_candidates": list(kind_details["candidates"]),
+        "root_runner_candidates": list(kind_details["root_candidates"]),
+        "runner_reason": kind_details["reason"],
+        # Compatibility aliases retained for 1.0/early-1.1 consumers.
         "kind": kind_details["kind"],
         "kind_candidates": list(kind_details["candidates"]),
         "root_kind_candidates": list(kind_details["root_candidates"]),
@@ -154,10 +159,10 @@ def render_detect_text(info: dict[str, Any]) -> str:
     gradle = info.get("gradle", {})
     lines = [
         f"repo: {info.get('repo_root', '-')}",
-        f"kind: {info.get('kind', '-')}",
-        f"kind_reason: {info.get('kind_reason', '-')}",
-        f"kind_candidates: {', '.join(info.get('kind_candidates', [])) or '-'}",
-        f"root_kind_candidates: {', '.join(info.get('root_kind_candidates', [])) or '-'}",
+        f"runner: {info.get('runner', info.get('kind', '-'))}",
+        f"runner_reason: {info.get('runner_reason', info.get('kind_reason', '-'))}",
+        f"runner_candidates: {', '.join(info.get('runner_candidates', info.get('kind_candidates', []))) or '-'}",
+        f"root_runner_candidates: {', '.join(info.get('root_runner_candidates', info.get('root_kind_candidates', []))) or '-'}",
         f"git: {'yes' if info.get('git') else 'no'} dirty={info.get('git_dirty')}",
         f"config: {info.get('config') or '-'}",
         f"solutions: {dotnet.get('solution_count', 0)}",

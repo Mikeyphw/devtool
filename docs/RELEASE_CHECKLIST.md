@@ -2,6 +2,17 @@
 
 ## Automated blockers
 
+## FS01/FS02 compatibility and documentation blockers
+
+- [ ] `devtool compatibility --strict` passes for the release repository.
+- [ ] `devtool config migrate --check` reports no active repository migrations.
+- [ ] `devtool config migrate --global --check` reports no active user-config migrations on the release host.
+- [ ] `python3 -m pytest tests/test_fs01_fs02_compatibility_docs.py` passes.
+- [ ] Every canonical TOML under `examples/` parses and uses `runner`/`platform` rather than legacy `kind`/`type`.
+- [ ] Generated/static completion parity and CLI/manpage contracts pass.
+- [ ] `docs/BACKWARD_COMPATIBILITY.md`, `docs/MIGRATION_1.1.md`, `docs/EXAMPLES.md`, README, and CHANGELOG agree on supported aliases and migration commands.
+- [ ] Machine/IPC/Tasker/Android compatibility shims remain additive; no legacy field is removed without an explicit migration boundary.
+
 - [ ] `python3 tools/release-qualify.py --require-qt --require-android --device-tests` passes.
 - [ ] GTK4 Control Center and HUD smoke/package gates pass.
 - [ ] Debian package metadata and checksum verification pass.

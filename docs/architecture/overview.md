@@ -45,3 +45,7 @@ UI09/UI10 complete GTK/Desktop and Android Live HUD migration onto UI Core. Rend
 ## External machine state and discoverability
 
 UI11/UI12 complete the shared UI contract at the automation boundary. Machine JSON, IPC and Tasker keep their legacy envelopes/fields for compatibility while publishing an additive schema-v2 semantic machine state covering workspace/selection, operation/workflow/test selection, progress, diagnostics, actions, navigation, notifications, presentation, capabilities and responsive intent. IPC protocol v2 adds generic semantic action dispatch while retaining the legacy cancellation path. Config-aware `completion-state` provides one authoritative discovery API for shells/editors, and `config explain`, provenance-aware `config resolve`, and conservative `config migrate` replace ad-hoc config scraping/migration. See [`ui-machine-completion-config.md`](ui-machine-completion-config.md).
+
+## Final compatibility/documentation pass
+
+FS01/FS02 make compatibility itself inspectable. `devtool compatibility --json` is the release-facing registry of retained legacy boundaries; `config migrate` canonicalizes every safe repository/global config shim found by the audit while refusing ambiguous rewrites. Canonical examples and migration documentation are consolidated under `docs/EXAMPLES.md`, `docs/MIGRATION_1.1.md`, and `docs/BACKWARD_COMPATIBILITY.md`. FS03 uses these contracts as final-seal inputs.

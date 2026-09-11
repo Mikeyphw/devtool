@@ -193,7 +193,7 @@ class ValidationDraft:
         _pair(argv, "--solution", self.solution)
         _pair(argv, "--project", self.project)
         if self.project_type and self.project_type != "auto":
-            _pair(argv, "--project-type", self.project_type)
+            _pair(argv, "--runner", self.project_type)
         if self.host:
             argv.append("--host")
         elif self.chroot:

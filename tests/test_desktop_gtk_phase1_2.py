@@ -43,7 +43,7 @@ def test_desktop_command_model_preserves_advanced_review_fields() -> None:
     )
 
     argv = draft.argv()
-    assert argv[:2] == ["/usr/bin/devtool", "--project-type"]
+    assert argv[:2] == ["/usr/bin/devtool", "--runner"]
     assert "--execution-environment" in argv
     assert "--copy-json" in argv
     assert "--auto-hud" in argv

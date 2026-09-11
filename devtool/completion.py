@@ -278,6 +278,8 @@ _devtool_commands() {
     'ap:alias for ai-prompt'
     'completion:print shell completion'
     'completion-state:emit config-aware completion values for shells and editors'
+    'compatibility:audit retained legacy interfaces and migration paths'
+    'compat:alias for compatibility'
     'hud:run a live HUD renderer'
     'android-hud-bridge:bridge Termux or chroot progress to Android'
     'termux-hud-bridge:alias for android-hud-bridge'
@@ -539,7 +541,7 @@ _devtool() {
     '--variant[build/test variant within the selected target]:variant:_devtool_variants' \
     '--solution[exact solution path for restore/build/test]:solution:_files' \
     '--project[exact project path for run/validation]:project:_files' \
-    '--project-type[override project detection]:type:(auto dotnet android gradle python node rust go maven cmake meson make command unknown)' \
+    '(--runner --project-type)'{--runner,--project-type}'[override project runner; --project-type is a compatibility alias]:runner:(auto dotnet android gradle python node rust go maven cmake meson make command unknown)' \
     '(-v --verbose)'{-v,--verbose}'[stream full command output]' \
     '(-q --quiet)'{-q,--quiet}'[suppress normal human output]' \
     '--trace[emit architecture event traces and full exception tracebacks]' \
@@ -930,7 +932,7 @@ _devtool() {
         ai-prompt|ap)
           _arguments \
             '--repo-name[human-friendly repository name]:name:' \
-            '--project-type[project type]:type:(auto dotnet android gradle python node rust go maven cmake meson make command unknown)' \
+            '(--runner --project-type)'{--runner,--project-type}'[project runner; --project-type is a compatibility alias]:runner:(auto dotnet android gradle python node rust go maven cmake meson make command unknown)' \
             '--build-target[build target]:path:_files' \
             '--run-target[run target]:path:_files' \
             '--target-name[named target/profile]:target:_devtool_targets' \
@@ -973,6 +975,9 @@ _devtool() {
         completion-state)
           _arguments '--kind[completion value category]:kind:(targets groups ui-profiles test-profiles variants jobs workflows pytest-tests all)' '--format[output format]:format:(lines json)'
           ;;
+        compatibility|compat)
+          _arguments '--json[emit versioned compatibility report]' '--active-only[show only compatibility entries active in selected config]' '--category[filter compatibility category]:category:(config cli environment python-api machine ipc tasker android workflow)' '--strict[fail when selected config still needs migration]' '--global[audit user global config]'
+          ;;
         config)
           if (( ${#line} < 2 )); then
             _values 'config action' path show defaults init edit resolve explain migrate doctor
@@ -988,7 +993,7 @@ _devtool() {
                 _arguments '--json[emit machine-readable configuration explanation]'
                 ;;
               migrate)
-                _arguments '(--check --write)--check[report migration opportunities without changes]' '(--check --write)--write[rewrite safe legacy aliases and create a backup]' '--json[emit machine-readable migration report]'
+                _arguments '(--check --write)--check[report migration opportunities without changes]' '(--check --write)--write[rewrite safe legacy aliases and create a backup]' '--json[emit machine-readable migration report]' '--global[migrate legacy user UI preferences]'
                 ;;
               init)
                 _arguments '--global[create the user global config]' '--minimal[write sparse global preferences]' '--force[overwrite existing config]'

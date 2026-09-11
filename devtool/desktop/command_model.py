@@ -203,7 +203,7 @@ class DevtoolCommandDraft:
         argv = [self.devtool]
         project_type = self.project_type.strip().lower()
         if project_type and project_type != "auto":
-            argv.extend(["--project-type", project_type])
+            argv.extend(["--runner", project_type])
         environment = self.execution_environment.strip().lower()
         if environment and environment != "auto":
             argv.extend(["--execution-environment", environment])
