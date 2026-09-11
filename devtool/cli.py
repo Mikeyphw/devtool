@@ -66,7 +66,7 @@ from .artifacts import (
     validate_overlay_bundle,
 )
 from .cache_cleanup import cleanup_devtool_caches
-from .artifact_validation import run_artifact_validation_script
+from .artifact_validation import run_artifact_finalize_script, run_artifact_validation_script
 from .artifact_inspection import inspect_artifact
 from .artifact_registry import load_registry, find_record, verify_record, prune_registry
 from .api_output import extract_universal_json_flag, run_json_invocation
@@ -6793,6 +6793,51 @@ def _maybe_commit_after_apply(
         return results, raw_output
 
     commit_paths = _artifact_commit_paths(args, config.repo_root)
+    manifest = dict(getattr(args, "_devtool_artifact_manifest", {}) or {})
+    artifact_value = getattr(args, "artifact", "")
+    artifact_path: Path | None = None
+    if isinstance(artifact_value, (str, Path)) and str(artifact_value):
+        try:
+            artifact_path = resolve_artifact_path(artifact_value)
+        except Exception:
+            artifact_path = None
+    if artifact_path is not None and manifest:
+        try:
+            finalize_result = run_artifact_finalize_script(
+                config.repo_root,
+                artifact_path,
+                phase="before_commit",
+                manifest=manifest,
+                target=str(getattr(args, "target", "") or artifact_target(manifest)),
+                solution=str(getattr(args, "solution", "") or artifact_solution(manifest)),
+                run_id=str(getattr(args, "_devtool_run_id", "") or ""),
+                dry_run=bool(getattr(args, "dry_run", False)),
+                log_path=log_path,
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+                validation_requested=bool(getattr(args, "validate", False) or getattr(args, "validate_only", False)),
+                validation_status="passed",
+                commit_requested=True,
+                commit_message=commit_message,
+                commit_paths=commit_paths,
+            )
+        except Exception as exc:
+            finalize_result = OperationResult(
+                "artifact-finalize-script",
+                ["artifact-finalize-script", str(artifact_path)],
+                1,
+                0.0,
+                f"{type(exc).__name__}: {exc}",
+                [Issue("error", "artifact-finalize-script", str(artifact_path), type(exc).__name__, str(exc))],
+                failure_kind="finalize_failure",
+                metadata={"finalize_phase": "before_commit"},
+            )
+        if finalize_result is not None:
+            results.append(finalize_result)
+            finalize_raw = "$ " + " ".join(finalize_result.argv) + "\n" + finalize_result.output
+            raw_output = raw_output + ("\n\n" if raw_output else "") + finalize_raw
+            if finalize_result.returncode != 0:
+                return results, raw_output
+
     commit_results, commit_raw = _git_commit_with_optional_log(
         config.repo_root,
         commit_message,
@@ -8401,6 +8446,41 @@ def _artifact_script_result(
         return None, ""
     if not artifact_validation_policy(manifest).get("script"):
         return None, ""
+    finalize_raw = ""
+    try:
+        finalize_result = run_artifact_finalize_script(
+            config.repo_root,
+            artifact,
+            phase="before_validation",
+            manifest=manifest,
+            target=target,
+            solution=solution,
+            run_id=str(getattr(args, "_devtool_run_id", "") or ""),
+            dry_run=bool(getattr(args, "dry_run", False)),
+            log_path=log_path,
+            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+            validation_requested=True,
+            validation_status="pending",
+            commit_requested=bool(str(getattr(args, "commit", "") or "").strip()),
+            commit_message=str(getattr(args, "commit", "") or ""),
+            commit_paths=_artifact_commit_paths(args, config.repo_root),
+        )
+        if finalize_result is not None:
+            finalize_raw = "$ " + " ".join(finalize_result.argv) + "\n" + finalize_result.output
+            if finalize_result.returncode != 0:
+                return finalize_result, finalize_raw
+    except Exception as exc:
+        failed = OperationResult(
+            "artifact-finalize-script",
+            ["artifact-finalize-script", str(artifact)],
+            1,
+            0.0,
+            f"{type(exc).__name__}: {exc}",
+            [Issue("error", "artifact-finalize-script", str(artifact), type(exc).__name__, str(exc))],
+            failure_kind="finalize_failure",
+            metadata={"finalize_phase": "before_validation"},
+        )
+        return failed, "$ " + " ".join(failed.argv) + "\n" + failed.output
     try:
         if tasker_progress is not None:
             tasker_progress.phase_started(
@@ -8433,8 +8513,13 @@ def _artifact_script_result(
     if result is not None and tasker_progress is not None:
         tasker_progress.phase_finished(result)
     if result is None:
-        return None, ""
-    return result, "$ " + " ".join(result.argv) + "\n" + result.output
+        return None, finalize_raw
+    validator_raw = "$ " + " ".join(result.argv) + "\n" + result.output
+    if finalize_raw:
+        result.metadata["finalize_before_validation"] = True
+        result.output = finalize_raw + "\n\n" + result.output
+        return result, finalize_raw + "\n\n" + validator_raw
+    return result, validator_raw
 
 
 def _validation_expectation_result(manifest: dict, results: list[OperationResult]) -> OperationResult | None:

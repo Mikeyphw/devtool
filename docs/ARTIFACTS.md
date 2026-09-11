@@ -130,6 +130,44 @@ Checksum semantics are transactional rather than silently stale. Inventory sourc
 
 Preflight scripts share the hardened embedded-script runner with validation scripts. They must live under `.devtool-artifact/`, use `bash`, `sh`, or `python3`, declare their own SHA-256 unless checksum verification is explicitly bypassed, run from a disposable private directory, and are never extracted into the repository. In addition to the common artifact-script environment, preflight receives `DEVTOOL_PREFLIGHT_PHASE` and `DEVTOOL_PREFLIGHT_TMPDIR`.
 
+## Optional finalization hooks
+
+Artifacts can declare one optional `finalize` hook for the post-apply boundary immediately before the embedded validator and/or immediately before the Git commit:
+
+```json
+{
+  "finalize": {
+    "phases": ["before_validation", "before_commit"],
+    "write_paths": ["generated/release-metadata.json"],
+    "script": {
+      "path": ".devtool-artifact/finalize.py",
+      "runner": "python3",
+      "protocol": "json-v1",
+      "sha256": "FINALIZE_SCRIPT_SHA256",
+      "timeout_seconds": 300
+    }
+  }
+}
+```
+
+`phases` accepts `before_validation` and `before_commit`; hyphenated and `before_validator` / `pre_commit` aliases normalize to those canonical names. A nonzero exit status or timeout blocks the next boundary. A failed `before_validation` hook prevents the artifact validator from running. A failed `before_commit` hook leaves the validated changes uncommitted.
+
+Finalization scripts receive a versioned JSON object on standard input and the same bytes in the owner-only file named by `DEVTOOL_HOOK_PAYLOAD_PATH`. `DEVTOOL_HOOK_PROTOCOL=json-v1` and `DEVTOOL_FINALIZE_PHASE` are also exported. The payload includes `schema_version`, `event`, `phase`, `run_id`, repository/target/solution identity, immutable artifact identity, validation state, commit intent/message/path scope, and declared `write_paths`. This makes Python hooks straightforward:
+
+```python
+import json
+import sys
+
+payload = json.load(sys.stdin)
+assert payload["schema_version"] == 1
+if payload["phase"] == "before_commit":
+    print(f"final checks for {payload['target']}")
+```
+
+Like preflight, the final hook receives a private copy through `DEVTOOL_ARTIFACT_PATH`; metadata scripts are never extracted into the repository. Repository mutations are denied unless covered by `finalize.write_paths`. Devtool fingerprints dirty/untracked Git paths across hook execution and falls back to a repository file snapshot when Git metadata is unavailable, so changing an already-dirty path does not bypass the boundary. Declared finalization writes are included in artifact preview/transaction scope.
+
+Use finalization for deterministic generated metadata, last-mile contract checks, or commit-time release assertions. Keep expensive compilation/tests in normal validation, and keep extraction prerequisites in `preflight` rather than overloading the final hook.
+
 ## Monorepos
 
 Use `workspace` for one monorepo project. Use `workspaces` for cross-project overlays. Paths remain repository-relative; workspace roots are for scope, display, and validator environment variables, not path prefixing.

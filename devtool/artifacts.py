@@ -56,6 +56,19 @@ _VALIDATION_EXPECTED_OUTCOMES = {
     "errors",
 }
 _VALIDATION_TASK_KEYS = ("tasks", "gradle_tasks", "test_tasks", "test_task", "task")
+_FINALIZE_PHASE_ALIASES = {
+    "before_validation": "before_validation",
+    "before-validation": "before_validation",
+    "before_validator": "before_validation",
+    "before-validator": "before_validation",
+    "pre_validation": "before_validation",
+    "pre-validation": "before_validation",
+    "before_commit": "before_commit",
+    "before-commit": "before_commit",
+    "pre_commit": "before_commit",
+    "pre-commit": "before_commit",
+}
+
 _PREFLIGHT_PHASE_ALIASES = {
     "before": "before_extract",
     "before_extract": "before_extract",
@@ -644,6 +657,70 @@ def artifact_validation_script(manifest: dict[str, Any]) -> dict[str, Any]:
     return dict(script) if isinstance(script, dict) else {}
 
 
+def artifact_finalize_policy(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Return the optional post-apply finalization hook declaration."""
+    raw = manifest.get("finalize")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def artifact_finalize_phases(manifest: dict[str, Any]) -> list[str]:
+    """Return normalized finalization phases in deterministic order."""
+    policy = artifact_finalize_policy(manifest)
+    if not policy:
+        return []
+    raw = policy.get("phases", policy.get("phase", "before_validation"))
+    values = [raw] if isinstance(raw, str) else raw
+    if not isinstance(values, list):
+        raise ValueError("finalize.phases must be a string or list of strings.")
+    normalized: list[str] = []
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError("finalize.phases entries must be strings.")
+        key = item.strip().lower()
+        phase = _FINALIZE_PHASE_ALIASES.get(key, key)
+        if phase not in {"before_validation", "before_commit"}:
+            raise ValueError(f"Unsupported finalize phase: {item!r}.")
+        if phase not in normalized:
+            normalized.append(phase)
+    return normalized
+
+
+def artifact_finalize_script(manifest: dict[str, Any]) -> dict[str, Any]:
+    policy = artifact_finalize_policy(manifest)
+    script = policy.get("script")
+    return dict(script) if isinstance(script, dict) else {}
+
+
+def artifact_finalize_write_paths(manifest: dict[str, Any]) -> list[str]:
+    """Return normalized repo-relative paths the final hook may mutate."""
+    policy = artifact_finalize_policy(manifest)
+    raw = policy.get("write_paths")
+    if raw is None:
+        return []
+    values = [raw] if isinstance(raw, str) else raw
+    if not isinstance(values, list):
+        raise ValueError("finalize.write_paths must be a string or list of strings.")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError("finalize.write_paths entries must be strings.")
+        text = item.strip().replace("\\", "/")
+        if not text:
+            raise ValueError("finalize.write_paths entries must not be empty.")
+        try:
+            rel = _safe_rel(text)
+        except RuntimeError as exc:
+            raise ValueError(f"Unsafe finalize.write_paths path: {text}") from exc
+        if rel.parts and rel.parts[0] == ".git":
+            raise ValueError(f"finalize.write_paths may not target Git metadata: {text}")
+        value = rel.as_posix()
+        if value not in seen:
+            seen.add(value)
+            normalized.append(value)
+    return normalized
+
+
 def artifact_preflight_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     """Return the optional artifact preflight declaration."""
     raw = manifest.get("preflight")
@@ -947,6 +1024,63 @@ def _validate_preflight_policy(manifest: dict[str, Any], messages: list[str]) ->
         elif not _is_sha256(sha):
             ok = False
             messages.append("preflight.script.sha256 is not a valid SHA-256.")
+    return ok
+
+
+def _validate_finalize_policy(manifest: dict[str, Any], messages: list[str]) -> bool:
+    raw = manifest.get("finalize")
+    if raw is None:
+        return True
+    if not isinstance(raw, dict):
+        messages.append("finalize must be an object.")
+        return False
+    ok = True
+    try:
+        artifact_finalize_phases(manifest)
+    except ValueError as exc:
+        ok = False
+        messages.append(str(exc))
+    try:
+        artifact_finalize_write_paths(manifest)
+    except (RuntimeError, ValueError) as exc:
+        ok = False
+        messages.append(str(exc))
+    script_value = raw.get("script")
+    if not isinstance(script_value, dict):
+        messages.append("finalize.script must be an object.")
+        return False
+    script = script_value
+    script_path = str(script.get("path") or "").strip()
+    if not script_path:
+        ok = False
+        messages.append("finalize.script.path is required.")
+    else:
+        try:
+            rel = _safe_rel(script_path)
+            if not rel.parts or rel.parts[0] != ARTIFACT_METADATA_DIRECTORY:
+                raise RuntimeError("Finalize scripts must live under .devtool-artifact/.")
+        except RuntimeError as exc:
+            ok = False
+            messages.append(str(exc))
+    runner = str(script.get("runner") or "python3").strip()
+    if runner not in {"bash", "sh", "python3"}:
+        ok = False
+        messages.append(f"Unsupported finalize script runner: {runner!r}.")
+    timeout = script.get("timeout_seconds", 300)
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+        ok = False
+        messages.append("finalize.script.timeout_seconds must be a positive integer.")
+    sha = str(script.get("sha256") or "").strip().lower()
+    if not sha:
+        ok = False
+        messages.append("finalize.script.sha256 is required.")
+    elif not _is_sha256(sha):
+        ok = False
+        messages.append("finalize.script.sha256 is not a valid SHA-256.")
+    protocol = str(script.get("protocol") or "json-v1").strip().lower()
+    if protocol != "json-v1":
+        ok = False
+        messages.append("finalize.script.protocol must be 'json-v1'.")
     return ok
 
 
@@ -1556,6 +1690,8 @@ def validate_overlay_bundle(
         ok = False
     if not _validate_preflight_policy(manifest, messages):
         ok = False
+    if not _validate_finalize_policy(manifest, messages):
+        ok = False
     try:
         specs = _bundle_overlay_specs(bundle, manifest)
         order = [spec.path for spec in specs]
@@ -1693,6 +1829,17 @@ def validate_overlay_bundle(
             ignore_checksum=ignore_checksum,
         ):
             ok = False
+    finalize_script = artifact_finalize_script(manifest)
+    if finalize_script:
+        bundle_members_with_data = list_archive_members(bundle, include_data=True)
+        if not _validate_embedded_script_member(
+            bundle_members_with_data,
+            finalize_script,
+            messages,
+            label="Finalize",
+            ignore_checksum=ignore_checksum,
+        ):
+            ok = False
     if ignore_checksum:
         messages.append("Warning: checksum verification skipped by --ignore-checksum.")
     if ok:
@@ -1725,6 +1872,10 @@ def preview_overlay_bundle(repo_root: Path, bundle: str | Path) -> dict[str, Any
     for write_path in artifact_preflight_write_paths(manifest):
         if write_path not in known_paths:
             changes.append({"kind": "preflight-write", "path": write_path, "overlay": "<bundle>"})
+            known_paths.add(write_path)
+    for write_path in artifact_finalize_write_paths(manifest):
+        if write_path not in known_paths:
+            changes.append({"kind": "finalize-write", "path": write_path, "overlay": "<bundle>"})
             known_paths.add(write_path)
     return {
         "artifact": str(resolve_artifact_path(bundle)),
@@ -2145,6 +2296,7 @@ def validate_artifact(
                 artifact_inventory_entries(manifest)
                 or artifact_validation_script(manifest)
                 or artifact_preflight_script(manifest)
+                or artifact_finalize_script(manifest)
             ),
         )
     except Exception as exc:
@@ -2163,6 +2315,8 @@ def validate_artifact(
     if not _validate_validation_policy(manifest, messages, bundle=False):
         ok = False
     if not _validate_preflight_policy(manifest, messages):
+        ok = False
+    if not _validate_finalize_policy(manifest, messages):
         ok = False
 
     expected_type = str(manifest.get("type") or manifest.get("artifact_type") or "").strip().lower()
@@ -2294,6 +2448,16 @@ def validate_artifact(
     ):
         ok = False
 
+    finalize_script = artifact_finalize_script(manifest)
+    if finalize_script and not _validate_embedded_script_member(
+        members,
+        finalize_script,
+        messages,
+        label="Finalize",
+        ignore_checksum=ignore_checksum,
+    ):
+        ok = False
+
     if ignore_checksum:
         messages.append("Warning: checksum verification skipped by --ignore-checksum.")
     if not messages:
@@ -2389,6 +2553,11 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
     for write_path in artifact_preflight_write_paths(manifest):
         if write_path not in known_paths:
             changes.append({"kind": "preflight-write", "path": write_path})
+            known_paths.add(write_path)
+
+    for write_path in artifact_finalize_write_paths(manifest):
+        if write_path not in known_paths:
+            changes.append({"kind": "finalize-write", "path": write_path})
             known_paths.add(write_path)
 
     return {

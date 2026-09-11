@@ -1,3 +1,12 @@
+## 2026-09-11 - Artifact preflight audit and JSON finalization hook
+
+- Added optional artifact `finalize` hooks at `before_validation` and `before_commit` boundaries.
+- Final hooks use a versioned `json-v1` payload on stdin plus an owner-only payload file, with commit/validation intent and artifact identity.
+- Added private artifact copies, timeout/checksum enforcement, declared-write boundaries, Git-aware dirty-path fingerprinting, and non-Git fallback snapshots for final hooks.
+- Final-hook failure blocks the embedded validator or Git commit as appropriate; declared writes enter preview/transaction scope.
+- Extended overlay/bundle manifest validation for final-hook path, runner, protocol, timeout, checksum, and embedded member integrity.
+- Documented a future compatibility-safe path for migrating preflight hooks from environment-only context toward the same JSON protocol.
+
 ## 2026-09-11 - FS03 repository-wide final release seal
 
 - FS03: mark the public `TestDiscoveryResult` model as non-collectable so the repository-wide pytest inventory is warning-free.

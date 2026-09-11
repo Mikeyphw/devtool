@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import queue
 import shutil
@@ -14,6 +15,9 @@ from typing import Any
 
 from .artifacts import (
     ARTIFACT_METADATA_DIRECTORY,
+    artifact_finalize_phases,
+    artifact_finalize_script,
+    artifact_finalize_write_paths,
     artifact_preflight_phase,
     artifact_preflight_script,
     artifact_solution,
@@ -53,6 +57,7 @@ def _run_validator_command_live(
     timeout_seconds: int,
     activity_label: str = "artifact validator",
     script_label: str = "Artifact validation",
+    stdin_text: str | None = None,
 ) -> tuple[int, str]:
     """Run an embedded artifact script with live output and no-output heartbeats."""
     started = time.monotonic()
@@ -69,6 +74,7 @@ def _run_validator_command_live(
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            stdin=subprocess.PIPE if stdin_text is not None else None,
             text=True,
             bufsize=1,
         )
@@ -85,6 +91,14 @@ def _run_validator_command_live(
 
     reader = threading.Thread(target=_reader, name=f"devtool-artifact-validator-{proc.pid}", daemon=True)
     reader.start()
+    if stdin_text is not None and proc.stdin is not None:
+        try:
+            proc.stdin.write(stdin_text)
+            if not stdin_text.endswith("\n"):
+                proc.stdin.write("\n")
+            proc.stdin.flush()
+        finally:
+            proc.stdin.close()
     reader_done = False
 
     def _append(text: str) -> None:
@@ -202,6 +216,7 @@ def _run_embedded_artifact_script(
     extra_env: dict[str, str] | None = None,
     failure_kind: str = "validation_failure",
     protect_artifact_path: bool = False,
+    stdin_payload: dict[str, Any] | None = None,
 ) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
     script_rel = _safe_script_path(str(spec.get("path") or "").strip(), label=script_label)
@@ -275,6 +290,14 @@ def _run_embedded_artifact_script(
             }
         )
         env.update(extra_env or {})
+        stdin_text: str | None = None
+        if stdin_payload is not None:
+            stdin_text = json.dumps(stdin_payload, sort_keys=True, separators=(",", ":"))
+            payload_path = tmpdir / "hook-payload.json"
+            payload_path.write_text(stdin_text + "\n", encoding="utf-8")
+            payload_path.chmod(0o600)
+            env["DEVTOOL_HOOK_PAYLOAD_PATH"] = str(payload_path.resolve())
+            env["DEVTOOL_HOOK_PROTOCOL"] = "json-v1"
         command = [runner, str(script_path)]
         if runner == "python3":
             python_spec = spec.get("python") if isinstance(spec.get("python"), dict) else {}
@@ -323,6 +346,7 @@ def _run_embedded_artifact_script(
             timeout_seconds=timeout_seconds,
             activity_label="artifact validator" if script_label == "Validation" else "artifact preflight",
             script_label=f"Artifact {script_label.lower()}",
+            stdin_text=stdin_text,
         )
 
     duration = time.perf_counter() - start
@@ -353,7 +377,11 @@ def _run_embedded_artifact_script(
         issues,
         log_path=path,
         failure_kind=result_failure_kind,
-        metadata={"artifact_path": str(artifact_path), "temporary": True},
+        metadata={
+            "artifact_path": str(artifact_path),
+            "temporary": True,
+            **({"hook_payload_schema": 1, "hook_phase": str(stdin_payload.get("phase") or "")} if stdin_payload else {}),
+        },
     )
 
 
@@ -393,6 +421,173 @@ def run_artifact_validation_script(
         default_timeout_seconds=900,
         failure_kind="validation_failure",
     )
+
+
+def _git_changed_paths(repo_root: Path) -> set[str] | None:
+    """Return tracked/untracked working-tree paths without touching the user's index."""
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    paths: set[str] = set()
+    for record in proc.stdout.split("\0"):
+        if len(record) < 4:
+            continue
+        raw = record[3:]
+        if " -> " in raw:
+            raw = raw.split(" -> ", 1)[1]
+        raw = raw.strip().replace("\\", "/")
+        if raw:
+            paths.add(raw)
+    return paths
+
+
+def _repo_file_states(repo_root: Path) -> dict[str, tuple[str, int, str]]:
+    """Fallback write-boundary snapshot for repositories without usable Git metadata."""
+    states: dict[str, tuple[str, int, str]] = {}
+    for path in repo_root.rglob("*"):
+        try:
+            rel_path = path.relative_to(repo_root)
+        except ValueError:
+            continue
+        if ".git" in rel_path.parts or not path.is_file():
+            continue
+        rel = rel_path.as_posix()
+        states[rel] = _path_state(repo_root, rel)
+    return states
+
+
+def _path_state(repo_root: Path, rel: str) -> tuple[str, int, str]:
+    path = repo_root / rel
+    if not path.exists():
+        return ("missing", 0, "")
+    if path.is_file():
+        return ("file", path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest())
+    if path.is_dir():
+        return ("directory", 0, "")
+    return ("other", 0, "")
+
+
+def _path_is_declared(rel: str, declared: list[str]) -> bool:
+    value = rel.strip().replace("\\", "/").strip("/")
+    return any(value == item or value.startswith(item.rstrip("/") + "/") for item in declared)
+
+
+def run_artifact_finalize_script(
+    repo_root: Path,
+    artifact: str | Path,
+    *,
+    phase: str,
+    manifest: dict[str, Any] | None = None,
+    target: str = "",
+    solution: str = "",
+    run_id: str = "",
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+    ignore_checksum: bool = False,
+    validation_requested: bool = False,
+    validation_status: str = "pending",
+    commit_requested: bool = False,
+    commit_message: str = "",
+    commit_paths: list[str] | None = None,
+) -> OperationResult | None:
+    """Run a post-apply final hook using a versioned JSON-v1 stdin contract."""
+    artifact_path = resolve_artifact_path(artifact)
+    manifest = manifest or read_artifact_manifest(artifact_path)
+    phases = artifact_finalize_phases(manifest)
+    if phase not in phases:
+        return None
+    spec = artifact_finalize_script(manifest)
+    if not spec:
+        return None
+    declared_writes = artifact_finalize_write_paths(manifest)
+    git_before = _git_changed_paths(repo_root)
+    fallback_before = _repo_file_states(repo_root) if git_before is None else None
+    before_paths = git_before or set()
+    before_state = {path: _path_state(repo_root, path) for path in before_paths}
+    payload = {
+        "schema_version": 1,
+        "event": "artifact_finalize",
+        "phase": phase,
+        "run_id": run_id,
+        "repo_root": str(repo_root.resolve()),
+        "target": target or artifact_target(manifest),
+        "solution": solution or artifact_solution(manifest),
+        "artifact": {
+            "path": str(artifact_path.resolve()),
+            "name": artifact_path.name,
+            "sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest() if artifact_path.is_file() else "",
+        },
+        "validation": {
+            "requested": bool(validation_requested),
+            "status": validation_status,
+        },
+        "commit": {
+            "requested": bool(commit_requested),
+            "message": commit_message,
+            "paths": list(commit_paths or []),
+        },
+        "write_paths": declared_writes,
+    }
+    result = _run_embedded_artifact_script(
+        repo_root,
+        artifact_path,
+        manifest=manifest,
+        spec=spec,
+        script_label="Finalize",
+        operation_name="artifact-finalize-script",
+        temp_prefix="devtool-artifact-finalize-",
+        temp_env_key="DEVTOOL_FINALIZE_TMPDIR",
+        target=target,
+        solution=solution,
+        run_id=run_id,
+        dry_run=dry_run,
+        log_path=log_path,
+        ignore_checksum=ignore_checksum,
+        default_timeout_seconds=300,
+        extra_env={"DEVTOOL_FINALIZE_PHASE": phase},
+        failure_kind="finalize_failure",
+        protect_artifact_path=True,
+        stdin_payload=payload,
+    )
+    result.metadata["finalize_phase"] = phase
+    if dry_run or result.returncode != 0:
+        return result
+    git_after = _git_changed_paths(repo_root)
+    if fallback_before is not None or git_after is None:
+        before_all = fallback_before if fallback_before is not None else _repo_file_states(repo_root)
+        after_all = _repo_file_states(repo_root)
+        changed_candidates = set(before_all) | set(after_all)
+        violations = [
+            path for path in sorted(changed_candidates)
+            if before_all.get(path, ("missing", 0, "")) != after_all.get(path, ("missing", 0, ""))
+            and not _path_is_declared(path, declared_writes)
+        ]
+    else:
+        changed_candidates = before_paths | git_after
+        violations = [
+            path for path in sorted(changed_candidates)
+            if _path_state(repo_root, path) != before_state.get(path, ("missing", 0, ""))
+            and not _path_is_declared(path, declared_writes)
+        ]
+    if violations:
+        message = "Finalize hook changed undeclared path(s): " + ", ".join(violations[:12])
+        if len(violations) > 12:
+            message += f" (and {len(violations) - 12} more)"
+        result.returncode = 1
+        result.failure_kind = "finalize_failure"
+        result.output = (result.output + "\n" + message).strip()
+        result.issues.append(Issue("error", "artifact-finalize-script", str(artifact_path), "write-boundary", message))
+    return result
 
 
 def run_artifact_preflight_script(
