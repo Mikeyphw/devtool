@@ -237,7 +237,7 @@ _devtool_commands() {
     'aff:alias for affected'
     'preflight:check expanded workflow roots, environments, runners, tools, and outputs'
     'pf:alias for preflight'
-    'ui-contract:inspect shared UI preferences, semantic state, tokens, icons, copy, actions, and navigation'
+    'ui-contract:inspect shared UI preferences, capabilities, responsive policy, progress/diagnostics, tokens, actions, and navigation'
     'uic:alias for ui-contract'
     'logs:list, open, or tail devtool logs'
     'history:list structured run history'
@@ -1007,7 +1007,10 @@ _devtool() {
         ui-contract|uic)
           _arguments \
             '--surface[frontend surface to inspect]:surface:(machine desktop tui android hud)' \
-            '--json[emit preferences, profiles, tokens, icons, copy, actions, and navigation as JSON]'
+            '--width[viewport width/terminal columns for responsive inspection]:width:' \
+            '--height[viewport height/terminal rows for responsive inspection]:height:' \
+            '*--require-capability[negotiate a required UI capability]:capability:(interactive rich_text tables tree_view notifications persistent_navigation dialogs hyperlinks keyboard touch mouse clipboard native_icons resize_events multi_pane)' \
+            '--json[emit preferences, capabilities, responsive policy, progress/diagnostic schemas, tokens, actions, and navigation as JSON]'
           ;;
         handoff)
           _arguments '(-o --output)'{-o,--output}'[write handoff to file]:file:_files'

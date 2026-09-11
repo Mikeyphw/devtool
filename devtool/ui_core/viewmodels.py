@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any, Iterable, Mapping
 
 from .actions import ActionContext, actions_for_context
+from .capabilities import capabilities_for_surface, negotiate_capabilities
+from .diagnostics import diagnostic_presentations, summarize_diagnostics
+from .progress import build_progress_tree, summarize_progress
+from .responsive import resolve_responsive_layout
 from .navigation import navigation_for_surface
 from .preferences import UIPreferences, resolve_ui_preferences, resolve_user_ui_preferences
 from .tokens import token_for_severity, token_for_status
@@ -73,6 +78,8 @@ def _diagnostics(raw: Mapping[str, Any]) -> list[UIDiagnosticState]:
     seen: set[tuple[str, str, str, str]] = set()
 
     def append(item: Any, *, phase: str = "", source: str = "runtime", default_severity: str = "info") -> None:
+        if isinstance(item, str):
+            item = {"message": item}
         if not isinstance(item, Mapping):
             return
         message = _text(item.get("message") or item.get("detail") or item.get("text") or item.get("summary"))
@@ -87,18 +94,61 @@ def _diagnostics(raw: Mapping[str, Any]) -> list[UIDiagnosticState]:
             severity = default_severity
         code = _text(item.get("code"))
         file_name = _text(item.get("file") or item.get("path"))
+        line = _integer(item.get("line"))
+        column = _integer(item.get("column"))
         item_phase = _text(item.get("phase") or phase)
-        key = (severity, code, file_name, re.sub(r"\s+", " ", message).casefold())
+        location = _text(item.get("location"))
+        if not location and file_name:
+            location = file_name
+            if line is not None:
+                location += f":{line}"
+            if column is not None:
+                location += f":{column}"
+        key = (severity, code, location or file_name, re.sub(r"\s+", " ", message).casefold())
         if key in seen:
             return
         seen.add(key)
-        result.append(UIDiagnosticState(severity=severity, message=message, token=token_for_severity(severity), code=code, phase=item_phase, file=file_name, source=source))
+        digest = hashlib.sha1("\x1f".join(key).encode("utf-8", "replace")).hexdigest()[:12]
+        summary = _text(item.get("summary")) or message.splitlines()[0][:240]
+        cause = _text(item.get("cause") or item.get("reason") or item.get("failure_reason"))
+        technical = _text(item.get("technical_details") or item.get("detail"))
+        related_node = _text(item.get("related_node") or item.get("node_id") or item.get("workflow_node"))
+        raw_actions = item.get("next_actions") or item.get("actions") or item.get("remediation") or []
+        if isinstance(raw_actions, str):
+            raw_actions = [raw_actions]
+        next_actions = _unique(raw_actions if isinstance(raw_actions, (list, tuple)) else [])
+        if not next_actions:
+            if severity == "error":
+                next_actions = ["logs.open", "operation.retry"]
+                if related_node or item_phase:
+                    next_actions.append("workflow.retry_node")
+            elif severity == "warning":
+                next_actions = ["logs.open"]
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), Mapping) else {}
+        result.append(UIDiagnosticState(
+            id=f"diag:{digest}", severity=severity, message=message,
+            token=token_for_severity(severity), code=code, phase=item_phase,
+            file=file_name, line=line, column=column, source=source,
+            summary=summary, cause=cause, location=location,
+            related_node=related_node, next_actions=next_actions,
+            technical_details=technical or message,
+            evidence=dict(evidence),
+        ))
 
     for item in raw.get("diagnostics", []) if isinstance(raw.get("diagnostics"), list) else []:
         append(item, phase=_phase_name(raw), source="state")
     for command_result in raw.get("results", []) if isinstance(raw.get("results"), list) else []:
         if not isinstance(command_result, Mapping):
             continue
+        phase = _text(command_result.get("name") or command_result.get("phase"))
+        for key in ("diagnostics", "issues", "errors", "warnings"):
+            values = command_result.get(key)
+            if isinstance(values, list):
+                severity = "error" if key == "errors" else "warning" if key == "warnings" else "info"
+                for item in values:
+                    append(item, phase=phase, source="result", default_severity=severity)
+    command_result = raw.get("result") if isinstance(raw.get("result"), Mapping) else None
+    if command_result is not None:
         phase = _text(command_result.get("name") or command_result.get("phase"))
         for key in ("diagnostics", "issues", "errors", "warnings"):
             values = command_result.get(key)
@@ -124,20 +174,43 @@ def _progress_nodes(raw: Mapping[str, Any]) -> list[UIProgressState]:
         current = _integer(item.get("current") if item.get("current") is not None else item.get("completed"))
         total = _integer(item.get("total"))
         percent = _percent(item.get("percent"), current, total)
+        duration_ms = _integer(item.get("duration_ms"))
+        if duration_ms is None and item.get("duration_s") is not None:
+            try:
+                duration_ms = int(round(float(item.get("duration_s")) * 1000))
+            except (TypeError, ValueError):
+                duration_ms = None
+        metrics = item.get("metrics") if isinstance(item.get("metrics"), Mapping) else {}
+        for metric_key in ("tests_passed", "tests_failed", "tests_skipped", "tests_total", "test_assemblies", "unit_label", "command"):
+            if metric_key in item:
+                metrics = {**dict(metrics), metric_key: item.get(metric_key)}
+        blocked_by = item.get("blocked_by") or []
+        dependencies = item.get("depends_on") or item.get("dependencies") or []
+        if isinstance(blocked_by, str): blocked_by = [blocked_by]
+        if isinstance(dependencies, str): dependencies = [dependencies]
         result.append(UIProgressState(
             id=phase_id,
             label=_text(item.get("display_name") or item.get("label") or item.get("name") or item.get("command")) or phase_id,
             status=_status(item.get("status") or "pending"),
             token=token_for_status(_status(item.get("status") or "pending")),
-            kind=_text(item.get("kind") or "phase"),
+            kind=_text(item.get("kind") or ("step" if item.get("parent_id") else "phase")),
             parent_id=_text(item.get("parent_id") or item.get("parent")),
             current=current,
             total=total,
             percent=percent,
             detail=_text(item.get("detail") or item.get("message")),
             target=_text(item.get("target") or item.get("workspace")),
+            workflow=_text(item.get("workflow") or item.get("workflow_name")),
             runner=_text(item.get("runner")),
             execution_environment=_text(item.get("execution_environment")),
+            started_at=_text(item.get("started_at")),
+            finished_at=_text(item.get("finished_at")),
+            duration_ms=duration_ms,
+            warnings=max(0, _integer(item.get("warnings")) or 0),
+            errors=max(0, _integer(item.get("errors")) or 0),
+            blocked_by=_unique(blocked_by if isinstance(blocked_by, (list, tuple)) else []),
+            dependencies=_unique(dependencies if isinstance(dependencies, (list, tuple)) else []),
+            metrics=dict(metrics),
         ))
     if result:
         return result
@@ -153,14 +226,19 @@ def _progress_nodes(raw: Mapping[str, Any]) -> list[UIProgressState]:
         label=label or "Current operation",
         status=_status(raw.get("status") or "running"),
         token=token_for_status(_status(raw.get("status") or "running")),
-        kind="phase",
+        kind=_text(phase.get("kind") or "phase"),
         current=current,
         total=total,
         percent=_percent(progress.get("percent") if progress else raw.get("percent"), current, total),
         detail=_text(progress.get("detail") or raw.get("message")),
         target=_text(progress.get("target") or phase.get("target") or raw.get("target")),
+        workflow=_text(phase.get("workflow") or phase.get("workflow_name")),
         runner=_text(phase.get("runner") or raw.get("runner")),
         execution_environment=_text(phase.get("execution_environment") or raw.get("execution_environment")),
+        started_at=_text(phase.get("started_at") or raw.get("started_at")),
+        finished_at=_text(phase.get("finished_at") or raw.get("finished_at")),
+        warnings=max(0, _integer(progress.get("warnings")) or 0),
+        errors=max(0, _integer(progress.get("errors")) or 0),
     )]
 
 
@@ -171,6 +249,8 @@ def runtime_state_to_ui_snapshot(
     workspace: Mapping[str, Any] | None = None,
     selection: Mapping[str, Any] | None = None,
     preferences: UIPreferences | Mapping[str, Any] | None = None,
+    viewport: Mapping[str, Any] | None = None,
+    requested_capabilities: Iterable[str] = (),
 ) -> UISnapshot:
     state = raw or {}
     workspace_override = workspace or {}
@@ -196,6 +276,7 @@ def runtime_state_to_ui_snapshot(
     selected_groups = _unique(selection_override.get("groups", []) if isinstance(selection_override.get("groups"), list) else [])
     selected_targets = _unique(selection_override.get("targets", []) if isinstance(selection_override.get("targets"), list) else targets)
     diagnostics = _diagnostics(state)
+    progress_nodes = _progress_nodes(state)
     status = _status(state.get("status"))
     command = _text(state.get("command"))
     completion = state.get("completion") if isinstance(state.get("completion"), Mapping) else {}
@@ -217,6 +298,26 @@ def runtime_state_to_ui_snapshot(
         finished_at=_text(state.get("finished_at")),
         log_path=_text(state.get("log_path")),
     )
+    capability_requirements = list(requested_capabilities)
+    if progress_nodes and "tree_view" not in capability_requirements:
+        capability_requirements.append("tree_view")
+    if diagnostics and "rich_text" not in capability_requirements:
+        capability_requirements.append("rich_text")
+    if str(surface or "machine") not in {"machine", "hud"} and "interactive" not in capability_requirements:
+        capability_requirements.append("interactive")
+    capabilities = capabilities_for_surface(surface)
+    negotiation = negotiate_capabilities(surface, capability_requirements)
+    viewport_state = viewport or (state.get("ui_viewport") if isinstance(state.get("ui_viewport"), Mapping) else {}) or {}
+    responsive = resolve_responsive_layout(
+        surface,
+        width=_integer(viewport_state.get("width")),
+        height=_integer(viewport_state.get("height")),
+        preferences=resolved_preferences,
+        capabilities=capabilities,
+    )
+    progress_summary = summarize_progress(progress_nodes)
+    diagnostic_summary = summarize_diagnostics(diagnostics)
+
     action_context = ActionContext(
         status=status,
         command=command,
@@ -245,7 +346,7 @@ def runtime_state_to_ui_snapshot(
             operation=_text(selection_override.get("operation") or command),
         ),
         operation=operation,
-        progress=_progress_nodes(state),
+        progress=progress_nodes,
         diagnostics=diagnostics,
         actions=actions_for_context(action_context),
         navigation=navigation_for_surface(surface),
@@ -253,5 +354,12 @@ def runtime_state_to_ui_snapshot(
             key: value for key, value in resolved_preferences.as_dict().items()
             if key not in {"surface"}
         }),
+        capabilities=capabilities.as_dict(),
+        capability_negotiation=negotiation.as_dict(),
+        responsive=responsive.as_dict(),
+        progress_summary=progress_summary.as_dict(),
+        progress_tree=[item.as_dict() for item in build_progress_tree(progress_nodes, operation)],
+        diagnostic_summary=diagnostic_summary.as_dict(),
+        diagnostic_presentations=[item.as_dict() for item in diagnostic_presentations(diagnostics)],
         surface=str(surface or "machine"),
     )

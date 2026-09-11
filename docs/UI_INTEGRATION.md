@@ -2,12 +2,20 @@
 
 ## Shared UI Core
 
-UI01-UI04 add `devtool.ui_core` as the common semantic boundary between runtime facts and frontend rendering. `UISnapshot` normalizes workspace/selection, operation state, progress, diagnostics, actions, navigation, and resolved presentation preferences. `ACTION_REGISTRY` and `NAVIGATION_REGISTRY` are the authoritative sources for stable action/navigation IDs. UI03/UI04 add shared profile/preferences resolution plus semantic token, icon, and copy registries.
+UI01-UI06 add `devtool.ui_core` as the common semantic boundary between runtime facts and frontend rendering. `UISnapshot` normalizes workspace/selection, operation state, progress, diagnostics, actions, navigation, and resolved presentation preferences. `ACTION_REGISTRY` and `NAVIGATION_REGISTRY` are the authoritative sources for stable action/navigation IDs. UI03/UI04 add shared profile/preferences resolution plus semantic token, icon, and copy registries.
 
 The boundary is intentionally not a universal widget toolkit. GTK remains GTK, the TUI remains terminal-native, and Android remains Android-native. Frontends may adapt density and layout, but they consume the same semantic state and do not independently redefine what “cancel”, “retry”, “open log”, or a navigation destination means.
 
 `devtool ui-contract --surface ... --json` exposes the registry contract for debugging and external integrations. Runtime Tasker state and IPC snapshots include an additive `ui` object; HUD snapshots preserve the same object; the Android HUD bridge receives serialized action/navigation metadata; desktop snapshots expose the desktop-resolved semantic state.
 
+
+### Capability and responsive transport
+
+Every semantic snapshot publishes the selected surface capability matrix, capability negotiation result, and responsive layout intent. Terminal dashboard width handling and GTK navigation consume the shared responsive policy directly. Android/HUD/IPC/Tasker receive the same fields additively so later renderer migrations can consume them without changing runtime semantics.
+
+### Progress and diagnostics transport
+
+`progress` and `diagnostics` remain backward-compatible flat fields. UI06 adds `progress_summary`, `progress_tree`, `diagnostic_summary`, and `diagnostic_presentations`. Workflow metadata (workflow name, node ID, runner, execution environment, dependencies, timing) is preserved by Tasker phase snapshots so cross-process frontends can render a truthful hierarchy. Live phase-failure results now carry structured diagnostics immediately instead of only at terminal completion.
 
 ### Presentation transport
 

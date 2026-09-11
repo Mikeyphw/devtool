@@ -72,6 +72,16 @@ _SPECS = (
     CopySpec("status.skipped", "Skipped", "Skipped"),
     CopySpec("status.cancelled", "Cancelled", "Cancelled"),
     CopySpec("status.blocked", "Blocked", "Blocked"),
+    CopySpec("diagnostic.what_happened", "What happened", "Problem"),
+    CopySpec("diagnostic.why", "Why", "Cause"),
+    CopySpec("diagnostic.where", "Where", "Location"),
+    CopySpec("diagnostic.next_actions", "What you can do", "Next actions"),
+    CopySpec("diagnostic.technical_details", "Technical details", "Details"),
+    CopySpec("progress.operation", "Operation", "Operation"),
+    CopySpec("progress.workflow", "Workflow", "Workflow"),
+    CopySpec("progress.target", "Target", "Target"),
+    CopySpec("progress.phase", "Phase", "Phase"),
+    CopySpec("progress.step", "Step", "Step"),
 )
 COPY_REGISTRY = {item.id: item for item in _SPECS}
 

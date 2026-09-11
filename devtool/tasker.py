@@ -464,6 +464,20 @@ def _result_status(result: OperationResult) -> str:
 
 
 def _result_to_json(result: OperationResult) -> dict[str, Any]:
+    diagnostics = []
+    for issue in result.issues:
+        diagnostics.append({
+            "severity": issue.severity,
+            "code": issue.code or "",
+            "message": issue.message,
+            "file": issue.file or "",
+            "line": issue.line,
+            "phase": result.name,
+            "cause": result.failure_kind or "",
+            "related_node": str((result.metadata or {}).get("workflow_node_key") or ""),
+            "technical_details": f"{result.name} exited {result.returncode}" if result.returncode else "",
+            "evidence": {"exit_code": result.returncode, "failure_kind": result.failure_kind or ""},
+        })
     return {
         "name": result.name,
         "status": _result_status(result),
@@ -472,6 +486,7 @@ def _result_to_json(result: OperationResult) -> dict[str, Any]:
         "log_path": result.log_path or None,
         "failure_kind": result.failure_kind or None,
         "metadata": result.metadata or {},
+        "diagnostics": diagnostics,
         "warnings": sum(1 for issue in result.issues if issue.severity == "warning"),
         "errors": sum(1 for issue in result.issues if issue.severity == "error"),
     }
@@ -605,6 +620,10 @@ def _completion_payload(*, ok: bool, totals: dict[str, int], results: list[Opera
                 "line": issue.line,
                 "phase": result.name,
                 "detail": detail,
+                "cause": result.failure_kind or str((result.metadata or {}).get("failure_reason") or ""),
+                "related_node": str((result.metadata or {}).get("workflow_node_key") or ""),
+                "technical_details": f"{result.name} exited {result.returncode}" if result.returncode else detail,
+                "evidence": {"exit_code": result.returncode, "failure_kind": result.failure_kind or ""},
             })
             if issue.severity == "warning":
                 warning_details.append(detail)
@@ -1001,6 +1020,12 @@ class TaskerProgressSink:
                 "target": target,
                 "workspace": workspace,
                 "workspace_root": str(item.get("workspace_root") or "").strip(),
+                "workflow": str(item.get("workflow") or item.get("workflow_name") or "").strip(),
+                "node_id": str(item.get("node_id") or item.get("workflow_node_key") or "").strip(),
+                "parent_id": str(item.get("parent_id") or "").strip(),
+                "runner": str(item.get("runner") or item.get("workflow_runner") or "").strip(),
+                "execution_environment": str(item.get("execution_environment") or "").strip(),
+                "depends_on": [str(value) for value in item.get("depends_on", []) or [] if str(value).strip()],
             })
         self.planned_phases = planned
         self.set_targets([str(item.get("target") or item.get("workspace") or "") for item in planned] + self.targets)
@@ -1036,8 +1061,16 @@ class TaskerProgressSink:
             "target": str(source.get("target") or ""),
             "workspace": str(source.get("workspace") or ""),
             "workspace_root": str(source.get("workspace_root") or ""),
+            "workflow": str(source.get("workflow") or ""),
+            "node_id": str(source.get("node_id") or ""),
+            "parent_id": str(source.get("parent_id") or ""),
+            "runner": str(source.get("runner") or ""),
+            "execution_environment": str(source.get("execution_environment") or ""),
+            "depends_on": [str(value) for value in source.get("depends_on", []) or [] if str(value).strip()],
             "index": source.get("index"),
             "phase_total": source.get("total"),
+            "started_at": str(source.get("started_at") or current.get("started_at") or ""),
+            "finished_at": str(source.get("finished_at") or current.get("finished_at") or ""),
         })
         if status is not None:
             current["status"] = status
@@ -1110,6 +1143,12 @@ class TaskerProgressSink:
             "target": target,
             "workspace": workspace,
             "workspace_root": str(metadata.get("workspace_root") or "").strip(),
+            "workflow": str(metadata.get("workflow_name") or "").strip(),
+            "node_id": str(metadata.get("workflow_node_key") or "").strip(),
+            "parent_id": str(metadata.get("workflow_parent_id") or "").strip(),
+            "runner": str(metadata.get("workflow_runner") or metadata.get("runner") or "").strip(),
+            "execution_environment": str(metadata.get("execution_environment") or metadata.get("effective_execution_environment") or "").strip(),
+            "depends_on": [str(value) for value in metadata.get("workflow_depends_on", []) or [] if str(value).strip()],
             "validation_session_id": str(metadata.get("validation_session_id") or "").strip(),
             "validation_phase_key": str(metadata.get("validation_phase_key") or "").strip(),
             "started_at": utc_now_iso(),

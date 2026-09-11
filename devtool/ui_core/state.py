@@ -55,20 +55,37 @@ class UIProgressState:
     percent: int | None = None
     detail: str = ""
     target: str = ""
+    workflow: str = ""
     runner: str = ""
     execution_environment: str = ""
-
+    started_at: str = ""
+    finished_at: str = ""
+    duration_ms: int | None = None
+    warnings: int = 0
+    errors: int = 0
+    blocked_by: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    metrics: dict[str, Any] = field(default_factory=dict)
 
 @dataclass(slots=True)
 class UIDiagnosticState:
     severity: str
     message: str
     token: str = "severity.info"
+    id: str = ""
     code: str = ""
     phase: str = ""
     file: str = ""
+    line: int | None = None
+    column: int | None = None
     source: str = "runtime"
-
+    summary: str = ""
+    cause: str = ""
+    location: str = ""
+    related_node: str = ""
+    next_actions: list[str] = field(default_factory=list)
+    technical_details: str = ""
+    evidence: dict[str, Any] = field(default_factory=dict)
 
 @dataclass(slots=True)
 class UIActionState:
@@ -131,6 +148,13 @@ class UISnapshot:
     actions: list[UIActionState] = field(default_factory=list)
     navigation: list[UINavigationState] = field(default_factory=list)
     presentation: UIPresentationState = field(default_factory=UIPresentationState)
+    capabilities: dict[str, Any] = field(default_factory=dict)
+    capability_negotiation: dict[str, Any] = field(default_factory=dict)
+    responsive: dict[str, Any] = field(default_factory=dict)
+    progress_summary: dict[str, Any] = field(default_factory=dict)
+    progress_tree: list[dict[str, Any]] = field(default_factory=list)
+    diagnostic_summary: dict[str, Any] = field(default_factory=dict)
+    diagnostic_presentations: list[dict[str, Any]] = field(default_factory=list)
     schema_version: int = UI_SCHEMA_VERSION
     surface: str = "machine"
 

@@ -16,6 +16,7 @@ from ..tasker import DEFAULT_TASKER_DIR
 from ..ui_core.actions import action_text
 from ..ui_core.navigation import navigation_icon_map, navigation_route_map
 from ..ui_core.preferences import resolve_user_ui_preferences
+from ..ui_core.responsive import resolve_responsive_layout
 from .control_center_model import DesktopControlCenterModel
 from .repository_store import DesktopRepositoryStore
 from .run_workflow import payload_from_mapping, review_payload, workflow_snapshot
@@ -346,7 +347,9 @@ class Gtk4ControlCenter:
                     preferences.compact_navigation = compact
                     preferences.save("control-center")
 
-            apply_compact_navigation(bool(preferences.compact_navigation or preferences.window_width < 980), persist=False)
+            initial_ui_preferences = resolve_user_ui_preferences(surface="desktop")
+            initial_layout = resolve_responsive_layout("desktop", width=preferences.window_width, height=preferences.window_height, preferences=initial_ui_preferences)
+            apply_compact_navigation(bool(preferences.compact_navigation or initial_layout.panes == 1), persist=False)
 
             def navigation_toggled(button: Any) -> None:
                 if navigation_state["syncing"]:
@@ -357,7 +360,10 @@ class Gtk4ControlCenter:
             def sync_navigation_width() -> bool:
                 if not navigation_state["manual"]:
                     with _suppress_exception():
-                        apply_compact_navigation(bool(preferences.compact_navigation or window.get_width() < 980), persist=False)
+                        responsive_layout = resolve_responsive_layout(
+                            "desktop", width=window.get_width(), height=window.get_height(), preferences=initial_ui_preferences
+                        )
+                        apply_compact_navigation(bool(preferences.compact_navigation or responsive_layout.panes == 1), persist=False)
                 return not bool(refresh_state.get("closed"))
 
             def current_snapshot() -> dict[str, Any]:
@@ -2374,6 +2380,12 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             "Shared UI profile",
             "Resolved from global/repository [ui], profile, surface defaults, environment, and per-run CLI overrides",
         )
+        responsive = semantic_ui.get("responsive", {}) if isinstance(semantic_ui.get("responsive"), dict) else {}
+        capabilities = semantic_ui.get("capabilities", {}) if isinstance(semantic_ui.get("capabilities"), dict) else {}
+        enabled_capabilities = [
+            key for key, value in capabilities.items()
+            if key not in {"surface", "schema_version"} and value is True
+        ]
         _append_rows(Gtk, shared_surface, [
             ("Profile", str(presentation.get("profile") or "standard")),
             ("Theme", str(presentation.get("theme") or "auto")),
@@ -2382,6 +2394,8 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             ("Motion", str(presentation.get("motion") or "auto")),
             ("Verbosity", str(presentation.get("verbosity") or "normal")),
             ("Diagnostics", str(presentation.get("show_diagnostics") or "expanded-on-error")),
+            ("Responsive layout", f"{responsive.get('mode', 'unknown')} · {responsive.get('panes', 1)} pane(s)"),
+            ("UI capabilities", ", ".join(enabled_capabilities) or "semantic-only"),
         ])
         box.append(shared_surface)
 

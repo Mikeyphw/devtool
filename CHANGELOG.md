@@ -1,3 +1,12 @@
+## 2026-09-11 - UI05 + UI06 capability negotiation, responsive policy, progress and diagnostics
+
+- Added a versioned frontend capability matrix for machine, desktop, TUI, HUD, and Android with explicit negotiation and canonical fallbacks for unavailable tree/dialog/notification/input/native-icon/multi-pane features.
+- Added renderer-neutral responsive layout policy with single/two/three-pane intent; the TUI terminal profile and GTK navigation now consume the shared policy directly while native renderers retain widget/layout ownership.
+- Added canonical hierarchical progress state (`Operation -> Workflow -> Target -> Phase/Step`), aggregate progress summaries, runner/environment/timing/dependency/test metrics, and compatibility flat progress rows.
+- Added structured diagnostic presentation with stable IDs, cause/location/related-node/evidence metadata, semantic next-action IDs, canonical What happened/Why/Where/What you can do/Technical details sections, and aggregate blocking/error/warning/info summaries.
+- Preserved workflow/node/runner/environment/dependency metadata through Tasker phase progress, published live result diagnostics before terminal completion, and extended HUD/Android bridge semantic payloads with UI05/UI06 schema/state fields.
+- Extended `ui-contract|uic` with `--width`, `--height`, repeatable `--require-capability`, capability/responsive/progress/diagnostic machine contracts, completion/manpage/docs, and dedicated UI05/UI06 regression coverage.
+
 ## 2026-09-11 - UI03 + UI04 shared preferences, profiles, semantic tokens/icons/copy
 
 - Added one shared UI preference resolver with built-in `minimal`, `standard`, `developer`, and `debug` profiles; custom inherited profiles; per-surface overrides; provenance; strict validation; global/repository merge; environment overrides; and per-run CLI overrides.

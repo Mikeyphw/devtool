@@ -1045,8 +1045,11 @@ def build_parser() -> argparse.ArgumentParser:
     affected_cmd.add_argument("--head", default="", help="Git head revision; with --base uses base...head")
     affected_cmd.add_argument("--explain", action="store_true", help="Explain why every target is selected")
     affected_cmd.add_argument("--json", action="store_true", help="Emit structured affected-target metadata")
-    ui_contract_cmd = subparsers.add_parser("ui-contract", aliases=["uic"], help="Inspect shared UI preferences, tokens, icons, copy, actions, and navigation")
-    ui_contract_cmd.add_argument("--surface", choices=["machine", "desktop", "tui", "android", "hud"], default="machine", help="Render navigation routes for one frontend surface")
+    ui_contract_cmd = subparsers.add_parser("ui-contract", aliases=["uic"], help="Inspect shared UI preferences, capabilities, responsive policy, progress/diagnostic schemas, tokens, actions, and navigation")
+    ui_contract_cmd.add_argument("--surface", choices=["machine", "desktop", "tui", "android", "hud"], default="machine", help="Render one frontend surface contract")
+    ui_contract_cmd.add_argument("--width", type=int, default=0, help="Viewport width/terminal columns for responsive-policy inspection")
+    ui_contract_cmd.add_argument("--height", type=int, default=0, help="Viewport height/terminal rows for responsive-policy inspection")
+    ui_contract_cmd.add_argument("--require-capability", action="append", default=[], help="Negotiate one required UI capability; repeatable")
     ui_contract_cmd.add_argument("--json", action="store_true", help="Emit the complete machine-readable UI Core contract")
 
     preflight_cmd = subparsers.add_parser("preflight", aliases=["pf"], help="Check expanded workflow roots, environments, runners, tools, and output safety")
@@ -7271,11 +7274,11 @@ def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
 
 
 
-def _ui_contract(*, surface: str = "machine", as_json: bool = False) -> None:
+def _ui_contract(*, surface: str = "machine", as_json: bool = False, width: int = 0, height: int = 0, required_capabilities: list[str] | None = None) -> None:
     from .ui_core import (
-        COPY_SCHEMA_VERSION, ICON_SCHEMA_VERSION, TOKEN_SCHEMA_VERSION, UI_SCHEMA_VERSION,
-        action_catalog, copy_catalog, icon_catalog, navigation_for_surface, profile_catalog,
-        resolve_ui_preferences, token_catalog,
+        CAPABILITY_SCHEMA_VERSION, COPY_SCHEMA_VERSION, DIAGNOSTIC_SCHEMA_VERSION, ICON_SCHEMA_VERSION, PROGRESS_SCHEMA_VERSION, RESPONSIVE_SCHEMA_VERSION, TOKEN_SCHEMA_VERSION, UI_SCHEMA_VERSION,
+        action_catalog, capability_catalog, capabilities_for_surface, copy_catalog, icon_catalog, navigation_for_surface, negotiate_capabilities, profile_catalog,
+        resolve_responsive_layout, responsive_policy_catalog, resolve_ui_preferences, token_catalog,
     )
 
     global_config, _ = load_global_config()
@@ -7290,14 +7293,28 @@ def _ui_contract(*, surface: str = "machine", as_json: bool = False) -> None:
         "section": item.section,
         "order": item.order,
     } for item in navigation_for_surface(surface)]
+    capabilities = capabilities_for_surface(surface)
+    negotiation = negotiate_capabilities(surface, required_capabilities or [])
+    responsive = resolve_responsive_layout(surface, width=width or None, height=height or None, preferences=preferences, capabilities=capabilities)
     payload = {
         "schema_version": UI_SCHEMA_VERSION,
+        "capability_schema_version": CAPABILITY_SCHEMA_VERSION,
+        "responsive_schema_version": RESPONSIVE_SCHEMA_VERSION,
+        "progress_schema_version": PROGRESS_SCHEMA_VERSION,
+        "diagnostic_schema_version": DIAGNOSTIC_SCHEMA_VERSION,
         "token_schema_version": TOKEN_SCHEMA_VERSION,
         "icon_schema_version": ICON_SCHEMA_VERSION,
         "copy_schema_version": COPY_SCHEMA_VERSION,
         "surface": surface,
         "preferences": preferences.as_dict(),
         "profiles": profile_catalog(ui_config),
+        "capabilities": capabilities.as_dict(),
+        "capability_negotiation": negotiation.as_dict(),
+        "responsive": responsive.as_dict(),
+        "capability_catalog": capability_catalog(),
+        "responsive_policy": responsive_policy_catalog(),
+        "progress_model": {"hierarchy": ["operation", "workflow", "target", "phase", "step"], "compatibility": "flat progress remains available with parent_id links"},
+        "diagnostic_model": {"sections": ["what_happened", "why", "where", "next_actions", "technical_details"], "compatibility": "legacy severity/message fields remain available"},
         "tokens": token_catalog(),
         "icons": icon_catalog(),
         "copy": copy_catalog(),
@@ -7314,6 +7331,9 @@ def _ui_contract(*, surface: str = "machine", as_json: bool = False) -> None:
         ("icons", preferences.icons),
         ("motion", preferences.motion),
         ("verbosity", preferences.verbosity),
+        ("layout", f"{responsive.mode} · panes={responsive.panes} · nav={responsive.navigation}"),
+        ("capabilities", ", ".join(capabilities.enabled()) or "semantic-only"),
+        ("fallbacks", ", ".join(f"{key}→{value}" for key, value in negotiation.fallbacks.items()) or "none"),
     ])
     console.print("[bold]Actions[/bold]")
     render_status_table([(item["id"], f"{item['label']} · intent={item['intent']}") for item in payload["actions"]])
@@ -10398,7 +10418,13 @@ def _main_after_parse(
         return run_validation_menu(config, args)
 
     if args.command in {"ui-contract", "uic"}:
-        _ui_contract(surface=str(getattr(args, "surface", "machine") or "machine"), as_json=bool(getattr(args, "json", False)))
+        _ui_contract(
+            surface=str(getattr(args, "surface", "machine") or "machine"),
+            as_json=bool(getattr(args, "json", False)),
+            width=int(getattr(args, "width", 0) or 0),
+            height=int(getattr(args, "height", 0) or 0),
+            required_capabilities=[str(item) for item in getattr(args, "require_capability", []) if str(item).strip()],
+        )
         return 0
     if args.command == "config":
         return _config_command(args)

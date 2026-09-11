@@ -30,7 +30,7 @@ from rich.text import Text
 
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, hud_disabled_by_environment, read_active_hud_directory
 from .android_live_hud import AndroidLiveHudBridge
-from .ui_core import COPY_SCHEMA_VERSION, ICON_SCHEMA_VERSION, TOKEN_SCHEMA_VERSION, UI_SCHEMA_VERSION
+from .ui_core import CAPABILITY_SCHEMA_VERSION, COPY_SCHEMA_VERSION, DIAGNOSTIC_SCHEMA_VERSION, ICON_SCHEMA_VERSION, PROGRESS_SCHEMA_VERSION, RESPONSIVE_SCHEMA_VERSION, TOKEN_SCHEMA_VERSION, UI_SCHEMA_VERSION
 from .ui_core.copy import copy_text
 from .ui_core.icons import resolve_icon
 from .ui_core.preferences import resolve_user_ui_preferences
@@ -2038,7 +2038,18 @@ class AndroidAppHud:
             "ui_token_schema_version": TOKEN_SCHEMA_VERSION,
             "ui_icon_schema_version": ICON_SCHEMA_VERSION,
             "ui_copy_schema_version": COPY_SCHEMA_VERSION,
+            "ui_capability_schema_version": CAPABILITY_SCHEMA_VERSION,
+            "ui_responsive_schema_version": RESPONSIVE_SCHEMA_VERSION,
+            "ui_progress_schema_version": PROGRESS_SCHEMA_VERSION,
+            "ui_diagnostic_schema_version": DIAGNOSTIC_SCHEMA_VERSION,
             "ui_presentation_json": json.dumps(semantic_android_ui.get("presentation", {}), separators=(",", ":")),
+            "ui_capabilities_json": json.dumps(semantic_android_ui.get("capabilities", {}), separators=(",", ":")),
+            "ui_capability_negotiation_json": json.dumps(semantic_android_ui.get("capability_negotiation", {}), separators=(",", ":")),
+            "ui_responsive_json": json.dumps(semantic_android_ui.get("responsive", {}), separators=(",", ":")),
+            "ui_progress_summary_json": json.dumps(semantic_android_ui.get("progress_summary", {}), separators=(",", ":")),
+            "ui_progress_tree_json": json.dumps(semantic_android_ui.get("progress_tree", []), separators=(",", ":")),
+            "ui_diagnostic_summary_json": json.dumps(semantic_android_ui.get("diagnostic_summary", {}), separators=(",", ":")),
+            "ui_diagnostics_json": json.dumps(semantic_android_ui.get("diagnostic_presentations", []), separators=(",", ":")),
             "ui_actions_json": json.dumps(semantic_android_ui.get("actions", []), separators=(",", ":")),
             "ui_navigation_json": json.dumps(semantic_android_ui.get("navigation", []), separators=(",", ":")),
             "started_at_ms": started_at,
@@ -2055,7 +2066,8 @@ class AndroidAppHud:
             payload.get("current"), payload.get("total"), payload.get("passed"),
             payload.get("failed"), payload.get("skipped"), payload.get("warnings"),
             payload.get("errors"), payload.get("steps_json"), payload.get("workspaces_json"),
-            payload.get("ui_presentation_json"), payload.get("heartbeat"),
+            payload.get("ui_presentation_json"), payload.get("ui_progress_summary_json"),
+            payload.get("ui_diagnostic_summary_json"), payload.get("ui_responsive_json"), payload.get("heartbeat"),
         )
         if signature == self.last_signature:
             return

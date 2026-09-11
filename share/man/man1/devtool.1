@@ -205,9 +205,15 @@ for Graphviz DOT.
 .B ui-contract " | " uic
 Inspect the shared semantic UI contract used by terminal, HUD, desktop, Android bridge, IPC, and Tasker-facing state. Use
 .BR --surface " machine|desktop|tui|android|hud"
-to resolve surface-specific navigation and
+to select a frontend,
+.BR --width " N"
+and
+.BR --height " N"
+to preview responsive layout intent, and repeat
+.BR --require-capability " NAME"
+to negotiate required frontend capabilities and inspect named fallbacks. Use
 .B --json
-to emit resolved preferences/profile provenance plus semantic token, icon, copy, action, and navigation registries for machine consumers.
+to emit resolved preferences/profile provenance, capability/responsive contracts, progress/diagnostic schemas, and semantic token, icon, copy, action, and navigation registries for machine consumers.
 .SH ARTIFACT COMMANDS
 .TP
 .B apply-overlay " | " ao " ARTIFACT"

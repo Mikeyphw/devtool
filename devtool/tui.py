@@ -29,6 +29,7 @@ from .console_utils import create_console, detect_console_width, is_termux_envir
 from .core.events import tui_event_snapshot
 from .ui_core.navigation import navigation_label_for_route, navigation_shortcut_map
 from .ui_core.preferences import resolve_user_ui_preferences
+from .ui_core.responsive import resolve_responsive_layout
 
 COMPACT_MAX = 60
 NARROW_MAX = 96
@@ -56,9 +57,10 @@ def terminal_profile(*, width: int | None = None, height: int | None = None) -> 
     detected = shutil.get_terminal_size(fallback=(100, 24))
     resolved_width = max(MIN_SUPPORTED_WIDTH, int(width or detect_console_width(detected.columns)))
     resolved_height = max(8, int(height or detected.lines))
-    mode = "compact" if resolved_width <= COMPACT_MAX else "narrow" if resolved_width <= NARROW_MAX else "wide"
-    density = resolve_user_ui_preferences(surface="tui").density
-    return TerminalProfile(resolved_width, resolved_height, mode, is_termux_environment(), density)
+    preferences = resolve_user_ui_preferences(surface="tui")
+    layout = resolve_responsive_layout("tui", width=resolved_width, height=resolved_height, preferences=preferences)
+    mode = {"single-pane": "compact", "two-pane": "narrow", "three-pane": "wide"}.get(layout.mode, "narrow")
+    return TerminalProfile(resolved_width, resolved_height, mode, is_termux_environment(), layout.effective_density)
 
 
 def _git(repo_root: Path, *args: str) -> str:

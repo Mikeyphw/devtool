@@ -4,11 +4,11 @@ This contract captures the accepted end state of the UI/UX polish roadmap for th
 
 ## Shared semantic UI contract
 
-UI01-UI04 define a renderer-independent semantic layer under `devtool.ui_core`. The domain/runtime remains authoritative for facts; UI Core converts those facts into a versioned `UISnapshot`, shared action semantics, and shared navigation semantics; each frontend remains responsible for native widgets and responsive layout.
+UI01-UI06 define a renderer-independent semantic layer under `devtool.ui_core`. The domain/runtime remains authoritative for facts; UI Core converts those facts into a versioned `UISnapshot`, shared action semantics, and shared navigation semantics; each frontend remains responsible for native widgets and responsive layout.
 
 The shared snapshot covers workspace/selection, operation lifecycle, hierarchical progress, diagnostics, available semantic actions, navigation, resolved presentation preferences, and semantic tokens. Action and navigation IDs are stable machine-facing identifiers; labels, short labels, notification labels, icon tokens, routes, and shortcuts are presentation metadata. Frontends must not duplicate business meaning simply because their layouts differ.
 
-`devtool ui-contract --surface machine|desktop|tui|android|hud --json` is the supported inspection surface for profiles, preferences, semantic tokens, icons, copy, actions, and navigation. Additive frontend-specific state may coexist with the semantic snapshot during migration, but it must not redefine action or navigation meaning.
+`devtool ui-contract --surface machine|desktop|tui|android|hud --json` is the supported inspection surface for profiles, preferences, capabilities, responsive intent, progress/diagnostic schemas, semantic tokens, icons, copy, actions, and navigation. `--width`/`--height` preview responsive intent and repeatable `--require-capability` shows explicit fallback negotiation. Additive frontend-specific state may coexist with the semantic snapshot during migration, but it must not redefine action or navigation meaning.
 
 ## Shared presentation policy
 
@@ -17,6 +17,16 @@ UI preferences resolve centrally from defaults -> profile -> surface defaults ->
 Semantic status/severity/action tokens express meaning but do not prescribe literal colors. The icon registry provides Nerd Font, Unicode, ASCII, and native symbolic fallbacks. Common action, navigation, and status wording comes from the shared copy registry while stable machine IDs remain unchanged.
 
 A renderer may adapt layout or choose a shorter registered copy variant, but it must not derive business meaning from a color, glyph, or display string.
+
+
+## Capability, responsive, progress, and diagnostic policy
+
+- Frontends declare capabilities; domain/runtime code must not grow `if gtk`, `if android`, or `if tui` branches to decide semantic behavior.
+- Missing capabilities have named fallbacks (for example tree -> indented list, dialog -> inline confirmation, notification -> status event).
+- Responsive policy communicates layout intent (`single-pane`, `two-pane`, `three-pane`) while native renderers own widgets and physical layout.
+- Progress is normalized as Operation -> Workflow -> Target -> Phase/Step with a compatibility flat list retained for existing consumers.
+- Diagnostics expose What happened, Why, Where, What you can do, and Technical details, plus stable semantic action IDs.
+- Live Tasker/IPC/HUD state carries this enriched semantic snapshot across process boundaries; renderers do not re-parse logs to rediscover hierarchy or error meaning.
 
 ## Shared principles
 

@@ -6,6 +6,10 @@ render GTK widgets, terminal controls, Android views, colors, typography, or
 layout; those remain frontend responsibilities.
 """
 
+from .capabilities import CAPABILITY_SCHEMA_VERSION, CAPABILITY_NAMES, CapabilityNegotiation, UICapabilities, capability_catalog, capabilities_for_surface, negotiate_capabilities
+from .diagnostics import DIAGNOSTIC_SCHEMA_VERSION, UIDiagnosticPresentation, UIDiagnosticSummary, diagnostic_presentations, summarize_diagnostics
+from .progress import PROGRESS_SCHEMA_VERSION, UIProgressSummary, UIProgressTreeNode, build_progress_tree, summarize_progress
+from .responsive import RESPONSIVE_SCHEMA_VERSION, ResponsiveLayout, resolve_responsive_layout, responsive_policy_catalog
 from .actions import ACTION_REGISTRY, ActionContext, ActionSpec, action_catalog, action_spec, action_text, actions_for_context
 from .copy import COPY_REGISTRY, COPY_SCHEMA_VERSION, CopySpec, copy_catalog, copy_spec, copy_text
 from .icons import ICON_REGISTRY, ICON_SCHEMA_VERSION, IconSpec, icon_catalog, icon_spec, resolve_icon
@@ -40,6 +44,8 @@ from .viewmodels import runtime_state_to_ui_snapshot
 
 __all__ = [
     "ACTION_REGISTRY", "COPY_REGISTRY", "ICON_REGISTRY", "NAVIGATION_REGISTRY", "TOKEN_REGISTRY",
+    "CAPABILITY_SCHEMA_VERSION", "DIAGNOSTIC_SCHEMA_VERSION", "PROGRESS_SCHEMA_VERSION", "RESPONSIVE_SCHEMA_VERSION",
+    "CAPABILITY_NAMES", "UICapabilities", "CapabilityNegotiation", "ResponsiveLayout", "UIProgressSummary", "UIProgressTreeNode", "UIDiagnosticSummary", "UIDiagnosticPresentation",
     "COPY_SCHEMA_VERSION", "ICON_SCHEMA_VERSION", "TOKEN_SCHEMA_VERSION", "UI_SCHEMA_VERSION",
     "UI_PROFILE_NAMES", "UI_SURFACES",
     "ActionContext", "ActionSpec", "CopySpec", "IconSpec", "NavigationSpec", "SemanticToken",
@@ -50,4 +56,6 @@ __all__ = [
     "navigation_catalog", "navigation_for_surface", "navigation_icon_map", "navigation_shortcut_map",
     "load_user_ui_config", "normalize_surface", "profile_catalog", "resolve_ui_preferences", "resolve_user_ui_preferences", "user_ui_config_path", "validate_ui_config",
     "runtime_state_to_ui_snapshot", "token_catalog", "token_for_severity", "token_for_status",
+    "capability_catalog", "capabilities_for_surface", "negotiate_capabilities", "resolve_responsive_layout", "responsive_policy_catalog",
+    "build_progress_tree", "summarize_progress", "diagnostic_presentations", "summarize_diagnostics",
 ]

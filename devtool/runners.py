@@ -2028,6 +2028,11 @@ def run_specs(
                 "target": str(spec.metadata.get("bundle_target") or spec.metadata.get("workflow_target") or spec.metadata.get("matrix") or ""),
                 "workspace": str(spec.metadata.get("workspace") or spec.metadata.get("workflow_workspace") or ""),
                 "workspace_root": str(spec.metadata.get("workspace_root") or ""),
+                "workflow": str(spec.metadata.get("workflow_name") or ""),
+                "node_id": str(spec.metadata.get("workflow_node_key") or ""),
+                "runner": str(spec.metadata.get("workflow_runner") or spec.metadata.get("runner") or ""),
+                "execution_environment": str(spec.metadata.get("execution_environment") or spec.metadata.get("effective_execution_environment") or ""),
+                "depends_on": [str(value) for value in spec.metadata.get("workflow_depends_on", []) or [] if str(value).strip()],
             }
             for spec in specs
         ])

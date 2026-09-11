@@ -36,4 +36,4 @@ See [`ui-core.md`](ui-core.md), [`core-runtime.md`](core-runtime.md), and the wo
 
 ## Shared presentation policy
 
-UI03/UI04 centralize frontend preferences/profiles plus semantic tokens, icons, and copy on top of the UI Core state/action/navigation contract. See [`../UI_PREFERENCES_AND_TOKENS.md`](../UI_PREFERENCES_AND_TOKENS.md) and [`ui-core.md`](ui-core.md).
+UI03/UI04 centralize frontend preferences/profiles plus semantic tokens, icons, and copy on top of the UI Core state/action/navigation contract. UI05/UI06 add capability/fallback negotiation, renderer-neutral responsive intent, canonical progress hierarchy, and structured diagnostic presentation. See [`../UI_PREFERENCES_AND_TOKENS.md`](../UI_PREFERENCES_AND_TOKENS.md), [`ui-capabilities-progress.md`](ui-capabilities-progress.md), and [`ui-core.md`](ui-core.md).
