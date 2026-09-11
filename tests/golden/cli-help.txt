@@ -40,12 +40,12 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET]
                [--native-cache {auto,ccache,off}]
                [--android-build-tools-provider {auto,commit451,none,sdk,termux}]
                [--aapt2-provider {auto,termux,sdk,revanced,none}]
-               {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,control-center,gui,ipc-server} ...
+               {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,jobs,jb,workflows,wf,control-center,gui,ipc-server} ...
 
 Apply artifacts, validate projects, and produce reviewable handoff commits.
 
 positional arguments:
-  {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,control-center,gui,ipc-server}
+  {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,jobs,jb,workflows,wf,control-center,gui,ipc-server}
     start-validation (sv)
                         Start a persistent sequential validation session
     resume-validation (rv)
@@ -97,6 +97,11 @@ positional arguments:
     validation-accept-plan-change (vapc)
                         Explicitly accept an incompatible validation plan
                         change
+    targets (tg)        List configured targets with platform, runner, and
+                        workflow metadata
+    jobs (jb)           List reusable polyglot jobs declared under [jobs.*]
+    workflows (wf)      List configured target workflows without executing
+                        them
     control-center (gui)
                         Launch the Devtool desktop Control Center
     ipc-server          Run or start the local Control Center IPC broker

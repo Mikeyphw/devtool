@@ -101,6 +101,25 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
 
     checks.append(DoctorCheck("project", "git", "ok" if (config.repo_root / ".git").exists() else "missing", str(config.repo_root / ".git")))
     checks.append(DoctorCheck("project", "config", "ok" if config.config_path else "optional", str(config.config_path) if config.config_path else "using detected defaults"))
+    runner_source = str(config.config_provenance.get("runner", "") or "")
+    if "legacy" in runner_source:
+        checks.append(DoctorCheck(
+            "project",
+            "identity-migration",
+            "optional",
+            'Legacy kind/type identity is still supported; prefer runner = "..." and platform = "..." for new configuration.',
+        ))
+    legacy_targets = [
+        name for name, item in sorted(config.targets.items())
+        if "runner" not in item.declared_fields and {"type", "kind"}.intersection(item.declared_fields)
+    ]
+    if legacy_targets:
+        checks.append(DoctorCheck(
+            "project",
+            "target-identity-migration",
+            "optional",
+            "Legacy target type/kind aliases: " + ", ".join(legacy_targets),
+        ))
     target = config.build_target or config.project_root or str(config.repo_root)
     checks.append(DoctorCheck("project", "build-target", "ok" if target else "optional", target or "not configured"))
     return checks
@@ -113,6 +132,15 @@ def doctor_payload(config: ProjectConfig) -> dict[str, Any]:
         "schema_version": 1,
         "repository": str(config.repo_root),
         "kind": config.kind,
+        "runner": config.runner,
+        "platform": config.platform,
+        "selected_target": config.selected_target,
+        "jobs": sorted(config.jobs),
+        "workflows": {
+            name: sorted(target.workflows)
+            for name, target in sorted(config.targets.items())
+            if target.workflows
+        },
         "healthy": not any(item.status == "missing" for item in checks),
         "features": features.to_dict(),
         "checks": [item.as_dict() for item in checks],

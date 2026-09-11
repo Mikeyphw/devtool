@@ -44,12 +44,68 @@ class OperationResult:
         return CommandResult.from_operation(self)
 
 
-@dataclass(slots=True)
-class DotnetTarget:
-    # Historical name retained for API compatibility. The target model is now
-    # language-neutral and can describe .NET, Android/Gradle, Python, or custom
-    # command targets.
+@dataclass(slots=True, frozen=True)
+class WorkflowStepRef:
+    """Normalized reference to one step in a configured target workflow.
+
+    MP01/MP02 deliberately models workflow intent without executing the graph.
+    MP03 consumes these references when the generic workflow DAG is introduced.
+    """
+
+    raw: str
+    kind: str
     name: str
+    action: str = ""
+
+
+@dataclass(slots=True)
+class WorkflowConfig:
+    name: str
+    steps: tuple[WorkflowStepRef, ...] = ()
+
+
+@dataclass(slots=True)
+class JobConfig:
+    """Reusable, runner-owned work declared under ``[jobs.*]``."""
+
+    name: str
+    runner: str
+    root: str = ""
+    action: str = ""
+    command: tuple[str, ...] = ()
+    shell_command: str = ""
+    env: dict[str, str] = field(default_factory=dict)
+    execution_environment: str = "auto"
+    chroot_name: str = ""
+    device_serial: str = ""
+    inputs: tuple[str, ...] = ()
+    outputs: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+    options: dict[str, Any] = field(default_factory=dict)
+    declared_fields: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def command_mode(self) -> str:
+        if self.command:
+            return "argv"
+        if self.shell_command:
+            return "shell"
+        return "runner-action"
+
+
+@dataclass(slots=True)
+class TargetConfig:
+    """Language-neutral target identity.
+
+    ``runner`` selects the command planner. ``platform`` describes the product
+    surface (server/web/android/tv/desktop/shared/etc.) and is intentionally
+    independent from the runner. ``kind`` remains a compatibility alias for
+    repositories written before MP01.
+    """
+
+    name: str
+    runner: str = ""
+    platform: str = ""
     kind: str = ""
     root: str = ""
     solution: str = ""
@@ -69,10 +125,23 @@ class DotnetTarget:
     device_serial: str = ""
     options: dict[str, Any] = field(default_factory=dict)
     variants: dict[str, dict[str, Any]] = field(default_factory=dict)
+    workflows: dict[str, WorkflowConfig] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     # Fields explicitly present in the target TOML table.  This preserves the
     # semantic difference between an absent setting and an explicit empty
     # value used to clear a lower-precedence value.
     declared_fields: frozenset[str] = field(default_factory=frozenset)
+
+    def __post_init__(self) -> None:
+        runner = str(self.runner or self.kind or "").strip().lower()
+        legacy_kind = str(self.kind or runner).strip().lower()
+        self.runner = runner
+        self.kind = legacy_kind
+        self.platform = str(self.platform or "").strip().lower()
+
+    @property
+    def effective_runner(self) -> str:
+        return self.runner or self.kind
 
     def effective_restore_target(self) -> str:
         return self.restore_target or self.solution or self.build_target
@@ -87,10 +156,18 @@ class DotnetTarget:
         return self.run_project or self.effective_build_target()
 
 
+# Historical public name retained for callers and plugins written before MP01.
+DotnetTarget = TargetConfig
+
+
 @dataclass(slots=True)
 class ProjectConfig:
     repo_root: Path
     kind: str
+    # MP01 canonical identity. ``kind`` remains the effective-runner
+    # compatibility field so existing runner code does not need a flag day.
+    runner: str = ""
+    platform: str = ""
     project_family: str = ""
     build_system: str = ""
     project_subtype: str = ""
@@ -109,7 +186,8 @@ class ProjectConfig:
     config_path: Path | None = None
     selected_target: str = ""
     variant: str = ""
-    targets: dict[str, DotnetTarget] = field(default_factory=dict)
+    targets: dict[str, TargetConfig] = field(default_factory=dict)
+    jobs: dict[str, JobConfig] = field(default_factory=dict)
     execution_environment: str = "auto"
     chroot_name: str = "androidos"
     device_serial: str = ""
@@ -118,6 +196,12 @@ class ProjectConfig:
     runner_options: dict[str, Any] = field(default_factory=dict)
     global_config_path: Path | None = None
     config_provenance: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        effective_runner = str(self.runner or self.kind or "unknown").strip().lower() or "unknown"
+        self.runner = effective_runner
+        self.kind = effective_runner
+        self.platform = str(self.platform or "").strip().lower()
 
     def resolve_repo_relative(self, value: str) -> str:
         if not value:

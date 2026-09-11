@@ -1,3 +1,12 @@
+## 2026-09-10 - MP01 + MP02 polyglot target identity and reusable workflows
+
+- Separated canonical target `runner` identity from independent `platform` identity while preserving `[project].kind` and target `type`/`kind` as compatibility aliases.
+- Replaced the language-specific target model name with `TargetConfig` and retained `DotnetTarget` as a strict compatibility alias.
+- Added reusable `[jobs.*]` declarations with runner ownership, structured argv or explicit shell execution, native runner actions, roots, environments, inputs/outputs, metadata, and runner-specific options.
+- Added `[targets.<name>.workflows]` with validated `job:<name>`, `runner:<runner>#<action>`, and `target:<target>#<action>` references, ready for MP03 graph execution.
+- Added `jobs`/`workflows` inspection commands, richer target/inspect/config/doctor/machine output, GTK target-card parity, migration diagnostics, canonical config-template output, completion, manpage, and documentation coverage.
+- Preserved all existing runner execution behavior when workflows are absent; MP03 remains the explicit boundary where declarations become an executable DAG.
+
 ## 2026-09-10 - TS00 full pytest test-selection parity
 
 - Added repeatable `--pytest-test` exact-node selection to test, validation, persistent validation, and artifact-validation command paths, with file/class/function/method/parametrized-node support.

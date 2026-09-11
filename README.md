@@ -199,6 +199,39 @@ Override one run with `DEVTOOL_MAX_WORKERS=3`. See
 [`docs/BUILD_OPTIMIZATION.md`](docs/BUILD_OPTIMIZATION.md) and
 [`docs/PROJECT_RUNNERS.md`](docs/PROJECT_RUNNERS.md).
 
+## Polyglot targets and reusable workflows
+
+Devtool now distinguishes the **platform a target represents** from the **runner that executes its primary work**. A TV target can use the Android runner, a desktop target can use Node or .NET, and a server target can remain Python without conflating product identity with toolchain identity. Existing `kind` and target `type` declarations remain compatible, while new configuration should prefer `runner` and `platform`.
+
+Reusable jobs can belong to any runner and be referenced by target workflows:
+
+```toml
+[project]
+runner = "python"
+platform = "server"
+default_target = "api"
+
+[jobs.generate-client]
+runner = "node"
+root = "tools/openapi"
+command = ["npm", "run", "generate:python"]
+inputs = ["schema/**"]
+outputs = ["services/api/generated/**"]
+
+[targets.api]
+runner = "python"
+platform = "server"
+root = "services/api"
+
+[targets.api.workflows]
+validate = [
+  "job:generate-client",
+  "runner:python#validate",
+]
+```
+
+Use `devtool targets`, `devtool jobs`, `devtool workflows`, and `devtool inspect` to inspect the normalized model. MP01+MP02 deliberately stop at validated representation; MP03 turns these declarations into the executable dependency graph, so existing runner behavior is unchanged until that graph runtime lands. See [`docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md`](docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md).
+
 ## Devtool 0.15.0: verified Android artifacts, device tests, selective tests, and Python pipelines
 
 Android and Gradle builds now verify newly produced APK, AAB, AAR, and JVM

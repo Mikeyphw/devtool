@@ -1477,7 +1477,8 @@ def _render_overview(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
         ("Branch", str(repo.get("branch") or "")),
         ("Head", str(repo.get("head") or "")),
         ("Working tree", "dirty" if repo.get("dirty") else "clean"),
-        ("Project", str(project.get("kind") or "auto")),
+        ("Platform", str(project.get("platform") or "-")),
+        ("Runner", str(project.get("runner") or project.get("kind") or "auto")),
         ("Target", str(project.get("selected_target") or "-")),
         ("Variant", str(project.get("variant") or "-")),
     ])
@@ -1796,7 +1797,7 @@ def _render_targets(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _append_heading(Gtk, box, "Targets")
     prefs = DesktopPreferences.load("control-center")
     targets = [item for item in payload.get("targets", []) if isinstance(item, dict)]
-    search = _append_search_bar(Gtk, box, "Filter targets by name, kind, environment, chroot")
+    search = _append_search_bar(Gtk, box, "Filter targets by name, platform, runner, workflow, environment, chroot")
     search.set_text(prefs.filter_value("targets", "query"))
     count_label = _append_inline_status(Gtk, box, "")
     list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -1818,8 +1819,14 @@ def _render_targets(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             return
         for target in visible:
             item_surface = _new_surface(Gtk, compact=True)
-            _append_section_heading(Gtk, item_surface, str(target.get("name") or "Target"), str(target.get("kind") or "auto"))
+            platform = str(target.get("platform") or "-")
+            runner = str(target.get("runner") or target.get("kind") or "auto")
+            _append_section_heading(Gtk, item_surface, str(target.get("name") or "Target"), f"{platform} · {runner}")
+            workflows = target.get("workflows") if isinstance(target.get("workflows"), list) else []
             _append_rows(Gtk, item_surface, [
+                ("Platform", platform),
+                ("Primary runner", runner),
+                ("Workflows", ", ".join(str(item) for item in workflows) or "-"),
                 ("Root", str(target.get("root") or "")),
                 ("Build", str(target.get("build") or "")),
                 ("Test", str(target.get("test") or "")),

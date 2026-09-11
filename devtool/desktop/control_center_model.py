@@ -29,6 +29,9 @@ from .repository_store import DesktopRepositoryStore, RepositorySummary
 class DesktopTargetSummary:
     name: str
     kind: str = ""
+    runner: str = ""
+    platform: str = ""
+    workflows: list[str] = field(default_factory=list)
     root: str = ""
     build: str = ""
     test: str = ""
@@ -144,6 +147,9 @@ class DesktopControlCenterModel:
             repository={**_repository_dict(repo), "state_dir": str(self.state_dir)},
             project={
                 "kind": config.kind,
+                "runner": config.runner,
+                "platform": config.platform,
+                "jobs": sorted(config.jobs),
                 "selected_target": config.selected_target,
                 "variant": config.variant,
                 "execution_environment": config.execution_environment,
@@ -192,6 +198,9 @@ def _target_summary_dict(name: str, target: Any) -> dict[str, Any]:
     return asdict(DesktopTargetSummary(
         name=name,
         kind=str(getattr(target, "kind", "") or ""),
+        runner=str(getattr(target, "effective_runner", "") or getattr(target, "runner", "") or getattr(target, "kind", "") or ""),
+        platform=str(getattr(target, "platform", "") or ""),
+        workflows=sorted(str(name) for name in getattr(target, "workflows", {}) or {}),
         root=str(getattr(target, "root", "") or ""),
         build=str(getattr(target, "build_target", "") or getattr(target, "build_command", "") or ""),
         test=str(getattr(target, "test_target", "") or getattr(target, "test_command", "") or ""),

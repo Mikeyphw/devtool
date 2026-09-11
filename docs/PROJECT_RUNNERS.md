@@ -144,6 +144,27 @@ Other first-class runners apply equivalent safe optimizations:
 All runners receive the shared desktop/Termux/chroot resource policy described
 in [`BUILD_OPTIMIZATION.md`](BUILD_OPTIMIZATION.md).
 
+## MP01/MP02 target identity and polyglot workflows
+
+A target now has two independent identities: `platform` describes the product surface and `runner` selects the command planner. Legacy target `type`/`kind` remains supported as an alias for `runner`. Reusable `[jobs.*]` may be owned by another runner and referenced from `[targets.<name>.workflows]`, so a Python server can declare Node code generation without teaching `PythonRunner` how npm works. The declarations are validated and inspectable in MP02; MP03/MP04 add graph execution.
+
+```toml
+[targets.api]
+runner = "python"
+platform = "server"
+root = "services/api"
+
+[jobs.generate-client]
+runner = "node"
+root = "tools/openapi"
+command = ["npm", "run", "generate:python"]
+
+[targets.api.workflows]
+validate = ["job:generate-client", "runner:python#validate"]
+```
+
+See [`POLYGLOT_TARGETS_AND_WORKFLOWS.md`](POLYGLOT_TARGETS_AND_WORKFLOWS.md) for the complete reference.
+
 ## Variants
 
 Targets select the project or app; variants select the build/test flavor inside
@@ -159,14 +180,16 @@ used by normal configuration:
 
 ```toml
 [targets.mobile]
-type = "android"
+runner = "android"
+platform = "android"
 root = "apps/android"
 
 [targets.mobile.variants.release.android]
 variant = "release"
 
 [targets.api]
-type = "dotnet"
+runner = "dotnet"
+platform = "desktop"
 solution = "src/App.sln"
 
 [targets.api.variants.release.dotnet]
@@ -185,7 +208,8 @@ runner, but individual packages use ad hoc packaging scripts:
 
 ```toml
 [targets.browser_extension]
-type = "command"
+runner = "command"
+platform = "extension"
 root = "extensions/browser-extension"
 build_command = "python3 build.py"
 test_command = "python3 -m pytest"

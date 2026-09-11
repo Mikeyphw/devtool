@@ -960,7 +960,12 @@ def build_parser() -> argparse.ArgumentParser:
     validation_accept.add_argument("--if-revision", type=int, default=-1, help="Apply only when the session revision matches")
     _add_validation_api_output_flags(validation_accept)
 
-    subparsers.add_parser("targets", aliases=["tg"])
+    targets_cmd = subparsers.add_parser("targets", aliases=["tg"], help="List configured targets with platform, runner, and workflow metadata")
+    targets_cmd.add_argument("--json", action="store_true", help="Emit structured target metadata")
+    jobs_cmd = subparsers.add_parser("jobs", aliases=["jb"], help="List reusable polyglot jobs declared under [jobs.*]")
+    jobs_cmd.add_argument("--json", action="store_true", help="Emit structured reusable-job metadata")
+    workflows_cmd = subparsers.add_parser("workflows", aliases=["wf"], help="List configured target workflows without executing them")
+    workflows_cmd.add_argument("--json", action="store_true", help="Emit structured workflow metadata")
 
     control_center = subparsers.add_parser("control-center", aliases=["gui"], help="Launch the Devtool desktop Control Center")
     control_center.add_argument("--backend", choices=["auto", "gtk4"], default="auto", help="Control Center backend; GTK4 is the only desktop backend")
@@ -1633,7 +1638,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
     go_package_totals = _go_package_totals()
     commit_hash = _commit_hash()
     warning_details, unique_warning_count = _warning_details()
-    effective_warning_count = warnings
+    effective_warning_count = max(warnings, unique_warning_count)
 
     def _traceability_lines() -> list[str]:
         trace: list[str] = []
@@ -1677,6 +1682,8 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                     f"({int(tests_data.get('total') or 0)} total)"
                 )
             overlay_warning_count = int(overlay.get('warnings') or 0)
+            if len(valid_overlays) == 1:
+                overlay_warning_count = max(overlay_warning_count, unique_warning_count)
             success_lines.append(
                 f"- Diagnostics: {overlay_warning_count} warnings, "
                 f"{int(overlay.get('errors') or 0)} errors"
@@ -1837,6 +1844,7 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
                 if artifact_text and artifact_text != label_text:
                     lines.append(f"- Artifact: {artifact_text}")
                 overlay_warning_count = int(overlay.get('warnings') if overlay.get('warnings') is not None else (detail_warnings or 0))
+                overlay_warning_count = max(overlay_warning_count, unique_warning_count)
                 overlay_error_count = int(overlay.get('errors') if overlay.get('errors') is not None else (detail_errors or 0))
                 lines.append(
                     f"- Diagnostics: {overlay_warning_count} warnings, "
@@ -2448,7 +2456,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             solution_override=solution,
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
-            allow_ambiguous_target=args.command in {"targets", "tg"} or allow_bundle_bootstrap,
+            allow_ambiguous_target=args.command in {"targets", "tg", "jobs", "jb", "workflows", "wf"} or allow_bundle_bootstrap,
         )
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
@@ -6759,22 +6767,82 @@ def _release_single_run_lock(args: argparse.Namespace) -> None:
     if run_id and os.environ.get("DEVTOOL_RUN_ID") == run_id:
         os.environ.pop("DEVTOOL_RUN_ID", None)
 
-def _targets(config: ProjectConfig) -> None:
+def _targets(config: ProjectConfig, *, as_json: bool = False) -> None:
+    if as_json:
+        payload = {
+            "schema_version": 1,
+            "targets": [
+                {
+                    "name": name,
+                    "platform": target.platform,
+                    "runner": target.effective_runner,
+                    "root": target.root or target.solution or target.build_target or target.restore_target or target.run_project,
+                    "workflows": {
+                        workflow_name: [step.raw for step in workflow.steps]
+                        for workflow_name, workflow in sorted(target.workflows.items())
+                    },
+                }
+                for name, target in sorted(config.targets.items())
+            ],
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
     rows: list[tuple[str, str]] = []
     if config.targets:
-        rows = [
-            (
+        for name, target in sorted(config.targets.items()):
+            location = target.root or target.solution or target.build_target or target.restore_target or target.run_project or "-"
+            workflows = ",".join(sorted(target.workflows)) or "-"
+            rows.append((
                 name,
-                target.solution or target.build_target or target.restore_target or target.run_project or "-"
-            )
-            for name, target in sorted(config.targets.items())
-        ]
+                f"platform={target.platform or '-'} runner={target.effective_runner or '-'} "
+                f"workflows={workflows} root={location}",
+            ))
     elif config.kind == "dotnet":
-        rows = [(candidate.stem, str(candidate.relative_to(config.repo_root))) for candidate in discover_dotnet_candidates(config.repo_root)]
+        rows = [(candidate.stem, f"platform={config.platform or 'dotnet'} runner=dotnet root={candidate.relative_to(config.repo_root)}") for candidate in discover_dotnet_candidates(config.repo_root)]
     if not rows:
         console.print("[yellow]No targets found.[/yellow]")
         return
-    render_status_table([("target", name) if path == "-" else (name, path) for name, path in rows])
+    render_status_table(rows)
+
+
+def _jobs(config: ProjectConfig, *, as_json: bool = False) -> None:
+    from .workflow_config import job_as_dict
+    if as_json:
+        print(json.dumps({
+            "schema_version": 1,
+            "jobs": {name: job_as_dict(job) for name, job in sorted(config.jobs.items())},
+        }, indent=2, ensure_ascii=False))
+        return
+    if not config.jobs:
+        console.print("[yellow]No reusable jobs configured.[/yellow]")
+        return
+    rows: list[tuple[str, str]] = []
+    for name, job in sorted(config.jobs.items()):
+        payload = job.action or " ".join(job.command) or job.shell_command
+        rows.append((name, f"runner={job.runner} mode={job.command_mode} root={job.root or '-'} {payload}".strip()))
+    render_status_table(rows)
+
+
+def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
+    payload = {
+        target_name: {
+            workflow_name: [step.raw for step in workflow.steps]
+            for workflow_name, workflow in sorted(target.workflows.items())
+        }
+        for target_name, target in sorted(config.targets.items())
+        if target.workflows
+    }
+    if as_json:
+        print(json.dumps({"schema_version": 1, "workflows": payload}, indent=2, ensure_ascii=False))
+        return
+    if not payload:
+        console.print("[yellow]No target workflows configured.[/yellow]")
+        return
+    rows: list[tuple[str, str]] = []
+    for target_name, workflows in payload.items():
+        for workflow_name, steps in workflows.items():
+            rows.append((f"{target_name}.{workflow_name}", " -> ".join(steps)))
+    render_status_table(rows)
 
 def _format_artifact_exception(exc: BaseException, *, artifact: str, artifact_type: str) -> str:
     message = str(exc).strip()
@@ -8477,7 +8545,8 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
     rows = [
         ("repo", str(config.repo_root)),
         ("kind", config.kind),
-        ("runner", runner.kind),
+        ("platform", config.platform or "-"),
+        ("runner", config.runner or runner.kind),
         ("runner_name", runner.display_name),
         ("capabilities", ", ".join(capabilities) if capabilities else "-"),
         ("execution_current", plan.current),
@@ -8525,7 +8594,8 @@ def _status(config: ProjectConfig, *, args: argparse.Namespace | None = None) ->
     rows = [
         ("repo", str(config.repo_root)),
         ("kind", config.kind),
-        ("runner", runner.kind),
+        ("platform", config.platform or "-"),
+        ("runner", config.runner or runner.kind),
         ("runner_name", runner.display_name),
         ("capabilities", ", ".join(capabilities) if capabilities else "-"),
         ("execution_current", plan.current),
@@ -8551,12 +8621,27 @@ def _inspect_project(config: ProjectConfig, *, args: argparse.Namespace | None =
     rows = [
         ("repo", str(config.repo_root)),
         ("kind", config.kind),
-        ("runner", runner.kind),
+        ("platform", config.platform or "-"),
+        ("runner", config.runner or runner.kind),
         ("runner_name", runner.display_name),
         ("project_root", config.project_root or str(config.repo_root)),
         ("selected_target", config.selected_target or "-"),
         ("variant", config.variant or "-"),
+        ("jobs", ", ".join(sorted(config.jobs)) or "-"),
     ]
+    if config.selected_target and config.selected_target in config.targets:
+        selected = config.targets[config.selected_target]
+        rows.extend([
+            ("target_platform", selected.platform or "-"),
+            ("target_runner", selected.effective_runner or "-"),
+            ("target_workflows", ", ".join(sorted(selected.workflows)) or "-"),
+        ])
+        for workflow_name, workflow in sorted(selected.workflows.items()):
+            rows.append((f"workflow.{workflow_name}", " -> ".join(step.raw for step in workflow.steps)))
+    for job_name, job in sorted(config.jobs.items()):
+        mode = job.command_mode
+        payload = job.action or " ".join(job.command) or job.shell_command
+        rows.append((f"job.{job_name}", f"runner={job.runner} mode={mode} {payload}".strip()))
     specific = runner.inspect_rows(config)
     if specific:
         existing = {name for name, _value in rows}
@@ -9557,7 +9642,15 @@ def _main_after_parse(
         return _config_command(args)
     if args.command in {"targets", "tg"}:
         config = _load_command_config(args)
-        _targets(config)
+        _targets(config, as_json=bool(getattr(args, "json", False)))
+        return 0
+    if args.command in {"jobs", "jb"}:
+        config = _load_command_config(args)
+        _jobs(config, as_json=bool(getattr(args, "json", False)))
+        return 0
+    if args.command in {"workflows", "wf"}:
+        config = _load_command_config(args)
+        _workflows(config, as_json=bool(getattr(args, "json", False)))
         return 0
 
 

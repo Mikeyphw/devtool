@@ -261,7 +261,21 @@ Detect project type; use
 .B --format text|json.
 .TP
 .B targets " | " tg
-List named targets.
+List named targets with platform, primary runner, configured workflows, and resolved root. Use
+.B --json
+for structured metadata.
+.TP
+.B jobs " | " jb
+List reusable polyglot jobs declared under
+.B [jobs.*]
+including runner, execution mode, and root. Use
+.B --json
+for structured metadata.
+.TP
+.B workflows " | " wf
+List normalized target workflow references without executing them. Use
+.B --json
+for structured metadata.
 .TP
 .B logs
 Show the latest saved command log; use
@@ -378,8 +392,8 @@ Devtool supports a sparse user preference file at
 .IR ~/.config/devtool/config.toml .
 It is merged as defaults only: built-in defaults, then global user preferences, then the repository
 .I .devtool.toml,
-then explicit CLI flags. The global file is intentionally not a shadow repository config. Keep
-project kind, targets, tasks, test profiles, artifact paths, and validation filters in
+then explicit CLI flags. For repository identity, `runner` is the canonical command planner and `platform` describes the product surface independently; legacy project `kind` and target `type`/`kind` remain runner aliases. Reusable jobs use structured `command = [..]` argv or explicit `shell_command`, and target workflows reference `job:`, `runner:#action`, or `target:#action`. The global file is intentionally not a shadow repository config. Keep
+project runner/platform identity, targets, reusable jobs/workflows, tasks, test profiles, artifact paths, and validation filters in
 .IR .devtool.toml .
 .PP
 Useful global sections are

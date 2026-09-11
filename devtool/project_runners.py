@@ -96,7 +96,7 @@ def resolve_validation_plan(
     tasks = tuple(dict.fromkeys(str(item).strip() for item in declared_tasks if str(item).strip()))
     steps = tuple(spec.name for spec in specs)
     return ResolvedValidationPlan(
-        runner=str(config.kind or "unknown"),
+        runner=str(config.runner or config.kind or "unknown"),
         source=source or "runner-default",
         tasks_declared=bool(tasks_declared),
         explicit_empty=bool(tasks_declared and not tasks),
@@ -3822,7 +3822,7 @@ class RunnerRegistry:
             if str(config_or_kind.build_system).lower() == "gradle":
                 kind = "android" if str(config_or_kind.project_subtype).lower() == "android" else "gradle"
             else:
-                kind = config_or_kind.kind
+                kind = config_or_kind.runner or config_or_kind.kind
         else:
             kind = str(config_or_kind)
         return self._runners.get(kind.strip().lower(), self._fallback)

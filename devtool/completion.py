@@ -189,8 +189,12 @@ _devtool_commands() {
     'init:alias for init-config'
     'config:inspect, initialize, edit, or diagnose configuration'
     'detect:detect project type and targets'
-    'targets:list named targets'
+    'targets:list named targets with platform, runner, and workflow metadata'
     'tg:alias for targets'
+    'jobs:list reusable polyglot jobs'
+    'jb:alias for jobs'
+    'workflows:list configured target workflows'
+    'wf:alias for workflows'
     'logs:list, open, or tail devtool logs'
     'history:list structured run history'
     'rollback:rollback a recorded commit'
@@ -853,6 +857,9 @@ _devtool() {
           ;;
         detect)
           _arguments '--format[output format]:format:(text json)'
+          ;;
+        targets|tg|jobs|jb|workflows|wf)
+          _arguments '--json[emit structured configuration metadata]'
           ;;
         handoff)
           _arguments '(-o --output)'{-o,--output}'[write handoff to file]:file:_files'

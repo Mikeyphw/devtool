@@ -90,9 +90,11 @@ aapt2_provider = "auto"
 aapt2_fallback_path = "/sdcard/Download/aapt2-arm64-v8a.bin"
 ```
 
-## Automatic project type
+## Automatic runner detection and platform identity
 
-`kind = "auto"` inspects the repository passed with `-r`, even when the active `.devtool.toml` lives in a parent workspace. One root-local marker wins over unrelated nested projects. Ambiguous root markers, or multiple nested project kinds with no root owner, are rejected until you choose `[project].kind`, `--project-type`, or a typed `--target`.
+`runner = "auto"` is the canonical MP01 form. It inspects the repository passed with `-r`, even when the active `.devtool.toml` lives in a parent workspace. `kind = "auto"` remains a compatibility alias. One root-local marker wins over unrelated nested projects. Ambiguous root markers, or multiple nested runner kinds with no root owner, are rejected until you choose `[project].runner`, the legacy `[project].kind`, `--project-type`, or a typed `--target`.
+
+`platform` is independent from `runner`: a TV app and phone app may both use the Android runner, while two desktop targets may use different runners. See [`POLYGLOT_TARGETS_AND_WORKFLOWS.md`](POLYGLOT_TARGETS_AND_WORKFLOWS.md).
 
 ## Android/Termux chroot project policy
 
@@ -124,10 +126,20 @@ Do not put these in global config:
 
 ```toml
 [project]
-kind = "python"
+runner = "python"
+platform = "server"
 
 [targets.app]
+runner = "python"
+platform = "server"
 root = "app"
+
+[jobs.generate-client]
+runner = "node"
+command = ["npm", "run", "generate"]
+
+[targets.app.workflows]
+validate = ["job:generate-client", "runner:python#validate"]
 
 [tasks]
 build = ["..."]
@@ -147,7 +159,7 @@ verify = true
 select = ["..."]
 ```
 
-Those sections describe a repository. Keep them in `.devtool.toml`.
+Those sections describe a repository. Keep them in `.devtool.toml`. Reusable `[jobs.*]` declarations are repo-scoped as well. `command = ["tool", "arg"]` is structured argv; use `shell_command = "..."` only when shell syntax is intentional.
 
 `devtool config doctor --global` warns when repo-scoped sections or command-scoped validation filters appear in the global file.
 

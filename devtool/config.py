@@ -9,7 +9,15 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from .models import DotnetTarget, ProjectConfig
+from .models import DotnetTarget, JobConfig, ProjectConfig, TargetConfig
+from .workflow_config import (
+    job_as_dict,
+    load_jobs,
+    load_target_workflows,
+    normalize_platform_name,
+    normalize_runner_name,
+    workflow_steps_as_strings,
+)
 from .toolchains import normalize_toolchain_manager
 from .execution_environments import normalize_execution_environment
 from .features import FEATURE_DEFAULTS, FeatureFlags, resolve_feature_flags
@@ -22,7 +30,7 @@ GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
     "bootstrap", "chroots", "features",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
-    "project", "targets", "tasks", "artifacts", "python", "node", "rust",
+    "project", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
     "go", "maven", "cmake", "meson", "make", "test_profiles", "variants",
 }
 GLOBAL_COMMAND_SCOPED_CLI_KEYS = {
@@ -274,6 +282,8 @@ SUPPORTED_PROJECT_KINDS = {
     "auto", "dotnet", "android", "gradle", "python", "node", "rust",
     "go", "maven", "cmake", "meson", "make", "command", "unknown",
 }
+# MP01 canonical name. Keep SUPPORTED_PROJECT_KINDS for public compatibility.
+SUPPORTED_RUNNERS = SUPPORTED_PROJECT_KINDS
 RUNNER_OPTION_SECTIONS = (
     "android", "gradle", "python", "dotnet", "node", "rust", "go",
     "maven", "cmake", "meson", "make", "build", "tasks", "artifacts",
@@ -447,17 +457,23 @@ def load_project_config(
     execution_section = _require_table(loaded, "execution", source=source_label)
     toolchain_section = _require_table(loaded, "toolchain", source=source_label)
     targets_raw = _require_table(loaded, "targets", source=source_label)
+    jobs_raw = _require_table(loaded, "jobs", source=source_label)
     project_section = _apply_project_env_overrides(dict(project_raw))
     env_section = _apply_runtime_env_overrides({str(k): str(v) for k, v in env_raw.items()})
     python_env_override = os.environ.get("DEVTOOL_PROJECT_PYTHON")
 
-    override_kind = str(kind_override or "").strip().lower()
-    config_kind = str(project_section.get("kind", "auto")).strip().lower() or "auto"
-    kind = override_kind if override_kind and override_kind != "auto" else config_kind
-    if kind == "generic":
-        kind = "command"
-    if kind not in SUPPORTED_PROJECT_KINDS:
-        raise SystemExit(f"Unsupported project type: {kind}")
+    override_kind = normalize_runner_name(kind_override)
+    legacy_kind = normalize_runner_name(project_section.get("kind", "auto")) or "auto"
+    canonical_runner = normalize_runner_name(project_section.get("runner", ""))
+    if canonical_runner and legacy_kind not in {"auto", "unknown"} and canonical_runner != legacy_kind:
+        raise SystemExit(
+            f"[project] declares conflicting runner={canonical_runner!r} and legacy kind={legacy_kind!r}. "
+            "Use runner as the canonical identity or keep both values equal during migration."
+        )
+    config_runner = canonical_runner or legacy_kind
+    kind = override_kind if override_kind and override_kind != "auto" else config_runner
+    if kind not in SUPPORTED_RUNNERS:
+        raise SystemExit(f"Unsupported project runner: {kind}")
     explicit_dotnet_intent = bool(
         solution_override.strip()
         or project_override.strip()
@@ -475,7 +491,15 @@ def load_project_config(
     else:
         detected_kind = kind
 
+    jobs = load_jobs(
+        config_root,
+        jobs_raw,
+        env_section,
+        supported_runners=SUPPORTED_RUNNERS,
+        runner_option_sections=RUNNER_OPTION_SECTIONS,
+    )
     targets = _load_named_targets(config_root, targets_raw, env_section)
+    load_target_workflows(targets_raw, targets, jobs, supported_runners=SUPPORTED_RUNNERS)
     selected_target_name = _default_target_name(
         project_section,
         targets,
@@ -485,8 +509,8 @@ def load_project_config(
         allow_ambiguous=allow_ambiguous_target,
     )
     selected_target_hint = targets.get(selected_target_name) if selected_target_name else None
-    if selected_target_hint is not None and selected_target_hint.kind:
-        detected_kind = selected_target_hint.kind
+    if selected_target_hint is not None and selected_target_hint.effective_runner:
+        detected_kind = selected_target_hint.effective_runner
     if detected_kind == "unknown" and len(kind_details.get("candidates", ())) > 1 and selected_target_hint is None:
         available = ", ".join(kind_details["candidates"])
         named = ", ".join(sorted(targets)) or "<none>"
@@ -657,9 +681,31 @@ def load_project_config(
         provenance["python_executable"] = "default"
 
     family, build_system, subtype = project_identity(detected_kind)
+    project_platform = normalize_platform_name(
+        (selected_target.platform if selected_target and selected_target.platform else (project_section.get("platform") or detected_kind)),
+        context="project.platform",
+    )
+    if selected_target is not None:
+        if "runner" in selected_target.declared_fields:
+            provenance["runner"] = "target"
+        elif {"type", "kind"}.intersection(selected_target.declared_fields):
+            provenance["runner"] = "target-legacy-alias"
+        else:
+            provenance["runner"] = "target-inherited"
+        provenance["platform"] = "target" if "platform" in selected_target.declared_fields else "inferred"
+    else:
+        if canonical_runner:
+            provenance["runner"] = "project"
+        elif legacy_kind not in {"auto", "unknown"}:
+            provenance["runner"] = "project-legacy-kind"
+        else:
+            provenance["runner"] = "detected"
+        provenance["platform"] = "project" if str(project_section.get("platform", "") or "").strip() else "inferred"
     return ProjectConfig(
         repo_root=repo_root,
         kind=detected_kind,
+        runner=detected_kind,
+        platform=project_platform,
         project_family=family,
         build_system=build_system,
         project_subtype=subtype,
@@ -699,6 +745,7 @@ def load_project_config(
         selected_target=resolved["selected_target"],
         variant=selected_variant_name,
         targets=targets,
+        jobs=jobs,
         execution_environment=execution_environment,
         chroot_name=chroot_name,
         device_serial=device_serial,
@@ -984,11 +1031,11 @@ def _normalize_target_execution(value: Any, target_name: str) -> str:
         raise SystemExit(f"Invalid execution environment for target {target_name!r}: {exc}") from exc
 
 
-def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str]) -> dict[str, DotnetTarget]:
+def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str]) -> dict[str, TargetConfig]:
     if not isinstance(section, dict):
         raise SystemExit("[targets] must be a TOML table")
 
-    targets: dict[str, DotnetTarget] = {}
+    targets: dict[str, TargetConfig] = {}
     for raw_name, raw_value in section.items():
         if not isinstance(raw_name, str) or not isinstance(raw_value, dict):
             raise SystemExit(f"Target {raw_name!r} must be a TOML table")
@@ -1010,15 +1057,32 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
         target_env = dict(base_env)
         for key, value in raw_value.get("env", {}).items() if isinstance(raw_value.get("env", {}), dict) else []:
             target_env[str(key)] = str(value)
-        target_kind = str(raw_value.get("type", raw_value.get("kind", ""))).strip().lower()
+        canonical_runner = normalize_runner_name(raw_value.get("runner", ""))
+        legacy_runner = normalize_runner_name(raw_value.get("type", raw_value.get("kind", "")))
+        if canonical_runner and legacy_runner and canonical_runner != legacy_runner:
+            raise SystemExit(
+                f"Target '{name}' declares conflicting runner={canonical_runner!r} and legacy type/kind={legacy_runner!r}. "
+                "Use one runner identity."
+            )
+        target_runner = canonical_runner or legacy_runner
+        if target_runner and target_runner not in SUPPORTED_RUNNERS:
+            raise SystemExit(f"Target '{name}' declares unsupported runner '{target_runner}'.")
+        target_platform = normalize_platform_name(
+            raw_value.get("platform", target_runner), context=f"targets.{name}.platform"
+        )
+        metadata_raw = raw_value.get("metadata", {})
+        if metadata_raw is not None and not isinstance(metadata_raw, dict):
+            raise SystemExit(f"[targets.{name}.metadata] must be a TOML table")
         options: dict[str, Any] = {}
         for option_name in RUNNER_OPTION_SECTIONS:
             option_value = raw_value.get(option_name, {})
             if isinstance(option_value, dict):
                 options[option_name] = dict(option_value)
-        targets[name] = DotnetTarget(
+        targets[name] = TargetConfig(
             name=name,
-            kind=target_kind,
+            runner=target_runner,
+            platform=target_platform,
+            kind=target_runner,
             root=target_root,
             solution=solution,
             restore_target=restore_target,
@@ -1037,6 +1101,7 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             device_serial=str(raw_value.get("device_serial", "")).strip(),
             options=options,
             variants=_load_target_variants(raw_value),
+            metadata=dict(metadata_raw) if isinstance(metadata_raw, dict) else {},
             declared_fields=frozenset(str(key) for key in raw_value),
         )
     return targets
@@ -1214,7 +1279,7 @@ def generate_template(repo_root: Path) -> str:
     if len(detected_kinds) > 1:
         ambiguity_note = (
             "# Mixed repository detected: " + ", ".join(detected_kinds) + ".\n"
-            "# Replace project.kind=auto or define/select typed targets before running commands.\n"
+            "# Replace project.runner=auto or define/select typed targets before running commands.\n"
         )
     build_target = _default_build_target(repo_root, kind, {})
     run_target = ""
@@ -1243,7 +1308,7 @@ def generate_template(repo_root: Path) -> str:
                 target_name = _unique_target_name(used_target_names, base_name, candidate)
                 run_project = _pick_run_project_for_solution(repo_root, candidate, app_candidates)
                 named_blocks.append(
-                    f"""\n[targets.{target_name}]\nsolution = "{candidate.relative_to(repo_root)}"\nrun_project = "{run_project}"\n"""
+                    f"""\n[targets.{target_name}]\nrunner = "dotnet"\nplatform = "desktop"\nsolution = "{candidate.relative_to(repo_root)}"\nrun_project = "{run_project}"\n"""
                 )
             target_blocks = '\n' + ''.join(named_blocks)
             build_target = ""
@@ -1258,7 +1323,7 @@ def generate_template(repo_root: Path) -> str:
                 base_name = _target_name_from_path(repo_root, candidate / "project.gradle")
                 target_name = _unique_target_name(used_target_names, base_name, candidate)
                 named_blocks.append(
-                    f"\n[targets.{target_name}]\ntype = \"{kind}\"\nroot = \"{candidate.relative_to(repo_root)}\"\n"
+                    f"\n[targets.{target_name}]\nrunner = \"{kind}\"\nplatform = \"{'android' if kind == 'android' else 'jvm'}\"\nroot = \"{candidate.relative_to(repo_root)}\"\n"
                 )
             target_blocks = "\n" + "".join(named_blocks)
             build_target = ""
@@ -1272,7 +1337,7 @@ def generate_template(repo_root: Path) -> str:
                 base_name = _target_name_from_path(repo_root, candidate / "pyproject.toml")
                 target_name = _unique_target_name(used_target_names, base_name, candidate)
                 named_blocks.append(
-                    f"\n[targets.{target_name}]\ntype = \"python\"\nroot = \"{candidate.relative_to(repo_root)}\"\n"
+                    f"\n[targets.{target_name}]\nrunner = \"python\"\nplatform = \"server\"\nroot = \"{candidate.relative_to(repo_root)}\"\n"
                 )
             target_blocks = "\n" + "".join(named_blocks)
             build_target = ""
@@ -1296,8 +1361,16 @@ def generate_template(repo_root: Path) -> str:
     elif kind == "node":
         node_manager = _detect_node_manager(repo_root)
 
+    default_platform = {
+        "android": "android", "gradle": "jvm", "python": "server", "node": "web",
+        "dotnet": "desktop", "rust": "native", "go": "native", "maven": "jvm",
+        "cmake": "native", "meson": "native", "make": "native", "command": "custom",
+    }.get(template_kind, template_kind if template_kind != "auto" else "")
+
     return f"""{ambiguity_note}[project]
-kind = "{template_kind}" # auto | dotnet | android | gradle | python | node | rust | go | maven | cmake | meson | make | command
+runner = "{template_kind}" # canonical runner: auto | dotnet | android | gradle | python | node | rust | go | maven | cmake | meson | make | command
+platform = "{default_platform}" # product surface; independent from runner (server, web, android, tv, desktop, shared, ...)
+# kind = "{template_kind}" # legacy alias for runner; retained for compatibility
 build_target = "{_display(repo_root, build_target)}"
 run_target = "{run_target}"
 variant = ""{target_blocks}
@@ -1308,6 +1381,19 @@ build_command = ""
 test_command = ""
 run_command = ""
 package_command = ""
+
+# Reusable polyglot job example (MP02):
+# [jobs.generate-client]
+# runner = "node"
+# root = "tools/openapi"
+# command = ["npm", "run", "generate"]
+# inputs = ["schema/**", "package.json", "package-lock.json"]
+# outputs = ["generated/**"]
+#
+# Attach jobs/runner actions to a named target without changing that target's
+# primary runner:
+# [targets.api.workflows]
+# validate = ["job:generate-client", "runner:python#validate"]
 
 [execution]
 environment = "auto" # auto | native-termux | chroot | proot-distro | desktop-linux | ssh | android-device | external-device
@@ -1772,16 +1858,18 @@ def ensure_artifact_target_config(
 
     text = original
     project_section = parsed.get("project") if isinstance(parsed.get("project"), dict) else {}
-    current_kind = str(project_section.get("kind", "auto")).strip().lower() or "auto"
-    if current_kind in {"auto", "unknown"}:
-        text = _insert_project_setting(text, "kind", "dotnet")
+    current_runner = normalize_runner_name(project_section.get("runner", project_section.get("kind", "auto"))) or "auto"
+    if current_runner in {"auto", "unknown"}:
+        text = _insert_project_setting(text, "runner", "dotnet")
+        if not str(project_section.get("platform", "") or "").strip():
+            text = _insert_project_setting(text, "platform", "desktop")
         try:
             parsed = tomllib.loads(text)
         except tomllib.TOMLDecodeError:
             return {}
         project_section = parsed.get("project") if isinstance(parsed.get("project"), dict) else {}
 
-    block = [f"[targets.{_toml_key(target_name)}]"]
+    block = [f"[targets.{_toml_key(target_name)}]", 'runner = "dotnet"', 'platform = "desktop"']
     if solution_rel:
         block.append(f"solution = {_toml_string(solution_rel)}")
     if project_rel:
@@ -1804,6 +1892,8 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
         "global_config_path": str(config.global_config_path) if config.global_config_path else "",
         "project": {
             "kind": config.kind,
+            "runner": config.runner,
+            "platform": config.platform,
             "project_root": config.project_root,
             "build_target": config.build_target,
             "restore_target": config.restore_target,
@@ -1826,6 +1916,8 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
         "targets": {
             name: {
                 "type": target.kind,
+                "runner": target.effective_runner,
+                "platform": target.platform,
                 "root": target.root,
                 "solution": target.solution,
                 "restore_target": target.restore_target,
@@ -1844,8 +1936,17 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
                 "device_serial": target.device_serial,
                 "options": target.options,
                 "variants": target.variants,
+                "metadata": target.metadata,
+                "workflows": {
+                    workflow_name: workflow_steps_as_strings(workflow)
+                    for workflow_name, workflow in sorted(target.workflows.items())
+                },
             }
             for name, target in sorted(config.targets.items())
+        },
+        "jobs": {
+            name: job_as_dict(job)
+            for name, job in sorted(config.jobs.items())
         },
         "env": dict(sorted(config.env.items())),
         "provenance": dict(sorted(config.config_provenance.items())),

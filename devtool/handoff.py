@@ -33,7 +33,9 @@ def render_handoff(config: ProjectConfig) -> str:
         "",
         "## Repo",
         f"- root: `{repo}`",
-        f"- kind: `{config.kind}`",
+        f"- kind (compat): `{config.kind}`",
+        f"- runner: `{config.runner}`",
+        f"- platform: `{config.platform or '-'}`",
         f"- selected target: `{config.selected_target or '-'}`",
         f"- config: `{config.config_path or '-'}`",
         "",
@@ -55,7 +57,18 @@ def render_handoff(config: ProjectConfig) -> str:
     ])
     if cfg.get("targets"):
         for name, target in cfg["targets"].items():
-            lines.append(f"- `{name}`: solution=`{target.get('solution') or '-'}` run=`{target.get('run_project') or '-'}`")
+            workflows = ", ".join(sorted((target.get("workflows") or {}).keys())) or "-"
+            lines.append(
+                f"- `{name}`: platform=`{target.get('platform') or '-'}` runner=`{target.get('runner') or target.get('type') or '-'}` "
+                f"workflows=`{workflows}` root=`{target.get('root') or target.get('solution') or '-'}`"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Reusable jobs"])
+    if cfg.get("jobs"):
+        for name, job in cfg["jobs"].items():
+            payload = job.get("action") or " ".join(job.get("command") or []) or job.get("shell_command") or "-"
+            lines.append(f"- `{name}`: runner=`{job.get('runner')}` mode=`{job.get('command_mode')}` command=`{payload}`")
     else:
         lines.append("- none")
     lines.extend(["", "## Recent artifact history"])
