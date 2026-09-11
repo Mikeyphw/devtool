@@ -1992,6 +1992,9 @@ def run_specs(
     supervisor_probe: Callable[[], tuple[str, str] | dict | str | None] | None = None,
     heartbeat_callback: Callable[[], None] | None = None,
     progress_callback: Callable[[dict], None] | None = None,
+    workflow_initial_statuses: dict[str, str] | None = None,
+    workflow_initial_fail_fast: bool = False,
+    workflow_initial_cancelled: bool = False,
 ) -> tuple[list[OperationResult], str]:
     results: list[OperationResult] = []
     raw_sections: list[str] = []
@@ -2014,16 +2017,16 @@ def run_specs(
     ), str(config.project_root or config.repo_root))
     dotnet_layout = _dotnet_phase_layout(specs, config)
     workflow_graph_active = any(bool(spec.metadata.get("workflow_graph")) for spec in specs)
-    workflow_node_status: dict[str, str] = {}
-    workflow_fail_fast = False
-    workflow_cancelled = False
+    workflow_node_status: dict[str, str] = dict(workflow_initial_statuses or {})
+    workflow_fail_fast = bool(workflow_initial_fail_fast)
+    workflow_cancelled = bool(workflow_initial_cancelled)
 
     if tasker_progress is not None and not dry_run:
         tasker_progress.plan_phases([
             {
                 "name": spec.name,
-                "target": str(spec.metadata.get("bundle_target") or spec.metadata.get("matrix") or ""),
-                "workspace": str(spec.metadata.get("workspace") or ""),
+                "target": str(spec.metadata.get("bundle_target") or spec.metadata.get("workflow_target") or spec.metadata.get("matrix") or ""),
+                "workspace": str(spec.metadata.get("workspace") or spec.metadata.get("workflow_workspace") or ""),
                 "workspace_root": str(spec.metadata.get("workspace_root") or ""),
             }
             for spec in specs

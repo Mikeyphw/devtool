@@ -550,7 +550,8 @@ def _specs_from_graph(
         metadata["workflow_graph_schema_version"] = 2
         metadata["workspace_targets"] = list(graph.targets or ((graph.target,) if graph.target != "workspace" else ()))
         spec.metadata = metadata
-    return specs
+    from .workflow_scheduler import annotate_specs_with_scopes
+    return annotate_specs_with_scopes(config, graph, specs)
 
 
 def build_workspace_specs(config: ProjectConfig, target_names: Sequence[str], action: str) -> list[CommandSpec]:

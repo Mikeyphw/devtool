@@ -1428,6 +1428,15 @@ package_command = ""
 [workspace]
 # default_target = "api"
 
+# MP09 safe workflow scheduler. Sequential execution remains the default;
+# parallel mode only overlaps DAG nodes when write/read scopes and resource
+# limits prove the overlap safe.
+[workspace.scheduler]
+# parallel = false
+# max_parallel_nodes = 4
+# max_gradle_nodes = 1
+# max_dotnet_nodes = 1
+
 [workspace.groups]
 # mobile = ["android", "tv"]
 # frontend = ["web", "desktop"]

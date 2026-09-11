@@ -1,3 +1,12 @@
+## 2026-09-11 - MP09 + MP10 safe workflow scheduling and graph observability
+
+- Added conservative dependency/scope-aware workflow scheduling with real parallel execution for proven-independent DAG nodes, sequential-by-default policy, total/Gradle/.NET concurrency caps, deterministic result ordering, dependency blocking, fail-fast propagation, and concurrency-safe live-progress routing.
+- Added target/job read/write scope normalization from `inputs`/`outputs`, write/write and write/read conflict detection, unknown-writer serialization, and repository-boundary safety.
+- Extended cross-process run reservations so workflows with complete known output sets reserve only those write scopes; workflows with unknown writes retain repository-exclusive fail-closed behavior.
+- Added `[workspace.scheduler]`, `--workflow-parallel`, `--no-workflow-parallel`, and `--workflow-max-workers`; validation `--parallel` also requests safe workflow-node concurrency unless explicitly overridden.
+- Added `plan|pl` with workspace/group/affected scope, human scheduling waves, JSON graph/schedule/command output, Graphviz DOT, read/write explanations, and resolved command inspection.
+- Upgraded `workflows --json`, `inspect`, run JSON summaries, Tasker/HUD target identity, desktop workspace state, config templates, completion, manpage, and documentation with scheduling/observability metadata.
+
 ## 2026-09-11 - MP07 + MP08 affected-target analysis and graph-aware toolchain preflight
 
 - Added dependency-aware `--affected` workspace selection for lifecycle commands, combining target-root ownership, explicit target `inputs`, reusable-job inputs, reverse cross-target dependency closure, Git working-tree/range analysis, group candidate filtering, and conservative fallback for unowned changed paths.

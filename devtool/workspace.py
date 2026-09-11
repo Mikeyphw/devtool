@@ -11,7 +11,7 @@ cycles/unknown members before execution starts.
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
-from .models import TargetConfig, TargetGroup, WorkspaceConfig
+from .models import TargetConfig, TargetGroup, WorkflowSchedulerConfig, WorkspaceConfig
 
 
 class WorkspaceConfigError(ValueError):
@@ -75,7 +75,31 @@ def load_workspace_config(
             )
         groups[name] = TargetGroup(name=name, members=_normalize_members(raw_members, group=name))
 
-    workspace = WorkspaceConfig(default_target=default_target, groups=groups)
+    raw_scheduler = section.get("scheduler", {})
+    if raw_scheduler is None:
+        raw_scheduler = {}
+    if not isinstance(raw_scheduler, dict):
+        raise WorkspaceConfigError("[workspace.scheduler] must be a TOML table")
+
+    def _non_negative_int(name: str, default: int) -> int:
+        raw = raw_scheduler.get(name, default)
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+            raise WorkspaceConfigError(f"workspace.scheduler.{name} must be a non-negative integer")
+        return int(raw)
+
+    def _bool(name: str, default: bool) -> bool:
+        raw = raw_scheduler.get(name, default)
+        if not isinstance(raw, bool):
+            raise WorkspaceConfigError(f"workspace.scheduler.{name} must be true or false")
+        return raw
+
+    scheduler = WorkflowSchedulerConfig(
+        parallel=_bool("parallel", False),
+        max_parallel_nodes=_non_negative_int("max_parallel_nodes", 0),
+        max_gradle_nodes=_non_negative_int("max_gradle_nodes", 1),
+        max_dotnet_nodes=_non_negative_int("max_dotnet_nodes", 1),
+    )
+    workspace = WorkspaceConfig(default_target=default_target, groups=groups, scheduler=scheduler)
     # Force complete validation, including nested groups and cycles.
     for name in groups:
         expand_workspace_group(workspace, targets, name)
@@ -182,6 +206,12 @@ def workspace_group_memberships(
 def workspace_as_dict(workspace: WorkspaceConfig, targets: Mapping[str, TargetConfig]) -> dict[str, object]:
     return {
         "default_target": workspace.default_target,
+        "scheduler": {
+            "parallel": workspace.scheduler.parallel,
+            "max_parallel_nodes": workspace.scheduler.max_parallel_nodes,
+            "max_gradle_nodes": workspace.scheduler.max_gradle_nodes,
+            "max_dotnet_nodes": workspace.scheduler.max_dotnet_nodes,
+        },
         "groups": {
             name: {
                 "members": list(group.members),

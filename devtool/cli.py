@@ -116,6 +116,11 @@ from .repair_policy import repair_summary_lines_from_payload, repair_summary_lin
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
 from .workspace import WorkspaceConfigError, resolve_workspace_targets, workspace_as_dict, workspace_group_memberships
 from .workflow_runtime import build_workspace_specs, build_workspace_validation_specs, plan_workspace_targets
+from .workflow_scheduler import (
+    WorkflowExecutionPlan,
+    build_execution_plan_from_specs,
+    run_workflow_specs,
+)
 from .summary import artifact_confirmation_text, build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_destination_toolchain_wrapper, apply_toolchain_wrapper, toolchain_doctor_rows
@@ -337,6 +342,7 @@ def _add_apply_validation_flags(cmd: argparse.ArgumentParser) -> None:
     _add_validation_skip_flags(cmd)
     _add_resumable_validation_flags(cmd)
     _add_validation_resource_override_flags(cmd)
+    _add_workflow_scheduler_flags(cmd)
 
 
 def _add_apply_policy_flags(cmd: argparse.ArgumentParser) -> None:
@@ -374,6 +380,30 @@ def _add_workspace_scope_flags(cmd: argparse.ArgumentParser, *, include_affected
         cmd.add_argument("--affected-base", default=argparse.SUPPRESS, help="Git base revision for affected selection")
         cmd.add_argument("--affected-head", default=argparse.SUPPRESS, help="Git head revision for affected selection")
     cmd.add_argument("--variant", default=argparse.SUPPRESS, help="Variant within the selected workspace target(s)")
+
+
+def _add_workflow_scheduler_flags(cmd: argparse.ArgumentParser) -> None:
+    group = cmd.add_mutually_exclusive_group()
+    group.add_argument(
+        "--workflow-parallel",
+        dest="workflow_parallel",
+        action="store_true",
+        default=None,
+        help="Run independent workflow DAG nodes concurrently only when dependency, read/write-scope, and resource checks prove it safe",
+    )
+    group.add_argument(
+        "--no-workflow-parallel",
+        dest="workflow_parallel",
+        action="store_false",
+        help="Force workflow DAG nodes to execute sequentially",
+    )
+    cmd.add_argument(
+        "--workflow-max-workers",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Maximum concurrent safe workflow nodes; 0 uses workspace policy/automatic default",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -522,6 +552,8 @@ def build_parser() -> argparse.ArgumentParser:
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
         _add_workspace_scope_flags(cmd)
+        if name in {"restore", "build", "test", "lint", "package", "validate", "validate-all", "wine-validate"}:
+            _add_workflow_scheduler_flags(cmd)
         if name in {"build", "package"}:
             cmd.add_argument(
                 "-o",
@@ -991,6 +1023,14 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_cmd.add_argument("--json", action="store_true", help="Emit structured reusable-job metadata")
     workflows_cmd = subparsers.add_parser("workflows", aliases=["wf"], help="List configured target workflows without executing them")
     workflows_cmd.add_argument("--json", action="store_true", help="Emit structured workflow metadata")
+    plan_cmd = subparsers.add_parser("plan", aliases=["pl"], help="Plan the expanded workflow DAG, safe scheduling waves, scopes, and commands without executing them")
+    _add_workspace_scope_flags(plan_cmd)
+    _add_workflow_scheduler_flags(plan_cmd)
+    plan_cmd.add_argument("action", nargs="?", default="validate", choices=["restore", "build", "test", "lint", "package", "run", "validate", "wine-validate"], help="Workflow/action to plan (default: validate)")
+    plan_cmd.add_argument("--json", action="store_true", help="Emit the complete graph and scheduling plan as JSON")
+    plan_cmd.add_argument("--dot", action="store_true", help="Emit Graphviz DOT instead of the human plan")
+    plan_cmd.add_argument("--explain", action="store_true", help="Show read/write scope and serialization reasons for every node")
+    plan_cmd.add_argument("--show-commands", action="store_true", help="Include resolved command argv/cwd in the human plan")
     affected_cmd = subparsers.add_parser("affected", aliases=["aff"], help="Show dependency-aware targets affected by Git changes")
     _add_workspace_scope_flags(affected_cmd, include_affected=False)
     affected_cmd.add_argument("--base", default="", help="Git base revision; default is the current working tree")
@@ -2521,7 +2561,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             solution_override=solution,
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
-            allow_ambiguous_target=args.command in {"targets", "tg", "groups", "gr", "jobs", "jb", "workflows", "wf", "affected", "aff", "preflight", "pf", "doctor", "dr"} or allow_bundle_bootstrap or workspace_selection,
+            allow_ambiguous_target=args.command in {"targets", "tg", "groups", "gr", "jobs", "jb", "workflows", "wf", "plan", "pl", "affected", "aff", "preflight", "pf", "doctor", "dr"} or allow_bundle_bootstrap or workspace_selection,
         )
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
@@ -4382,19 +4422,57 @@ def _run_specs_for_args(
     completed_successfully = False
     try:
         with termux_wake_lock(wake_mode):
-            results, raw = run_specs(
-                config,
-                prepared_specs,
-                verbose=args.verbose,
-                dry_run=args.dry_run,
-                continue_on_error=continue_on_error,
-                log_path=log_path,
-                tasker_progress=tasker_progress,
-                shutdown_dotnet=shutdown_dotnet,
-                supervisor_probe=supervisor_probe,
-                heartbeat_callback=heartbeat_callback,
-                progress_callback=progress_callback,
-            )
+            workflow_graph = any(bool(spec.metadata.get("workflow_graph")) for spec in prepared_specs)
+            if workflow_graph:
+                requested = getattr(args, "workflow_parallel", None)
+                # Validation's established --parallel flag keeps its Gradle
+                # meaning and additionally opts the DAG scheduler into safe
+                # parallel waves. It never bypasses scope/resource checks.
+                if requested is None and getattr(args, "validation_parallel", None) is True:
+                    requested = True
+                max_workers = int(getattr(args, "workflow_max_workers", 0) or 0)
+                if max_workers <= 0:
+                    max_workers = int(getattr(args, "max_workers", 0) or 0)
+                results, raw, workflow_plan = run_workflow_specs(
+                    config,
+                    prepared_specs,
+                    verbose=args.verbose,
+                    dry_run=args.dry_run,
+                    continue_on_error=continue_on_error,
+                    log_path=log_path,
+                    tasker_progress=tasker_progress,
+                    shutdown_dotnet=shutdown_dotnet,
+                    supervisor_probe=supervisor_probe,
+                    heartbeat_callback=heartbeat_callback,
+                    progress_callback=progress_callback,
+                    parallel_requested=requested,
+                    max_parallel_nodes=max_workers,
+                )
+                if workflow_plan is not None:
+                    args._devtool_workflow_execution_plan = workflow_plan
+                    for result in results:
+                        metadata = dict(result.metadata)
+                        metadata["workflow_schedule"] = {
+                            "parallel_requested": workflow_plan.parallel_requested,
+                            "parallel_effective": workflow_plan.parallel_effective,
+                            "wave_count": len(workflow_plan.waves),
+                            "max_parallel_nodes": workflow_plan.max_parallel_nodes,
+                        }
+                        result.metadata = metadata
+            else:
+                results, raw = run_specs(
+                    config,
+                    prepared_specs,
+                    verbose=args.verbose,
+                    dry_run=args.dry_run,
+                    continue_on_error=continue_on_error,
+                    log_path=log_path,
+                    tasker_progress=tasker_progress,
+                    shutdown_dotnet=shutdown_dotnet,
+                    supervisor_probe=supervisor_probe,
+                    heartbeat_callback=heartbeat_callback,
+                    progress_callback=progress_callback,
+                )
         completed_successfully = all(result.skipped or result.returncode == 0 for result in results)
         return results, raw
     finally:
@@ -6893,6 +6971,49 @@ def _single_run_reservation(config: ProjectConfig, args: argparse.Namespace) -> 
             except Exception:
                 return target, (), False, forced_pending_id
 
+    # MP09: ordinary executable workspace workflows can participate in the
+    # same scoped cross-process reservation protocol as artifact transactions.
+    # We only relax repository exclusivity when every workflow node proves its
+    # write set through explicit outputs/read-only metadata. Any ambiguity
+    # intentionally falls back to the historical exclusive lock.
+    if command in {"restore", "r", "build", "b", "test", "t", "lint", "l", "package", "p", "validate", "v", "validate-all", "wine-validate", "wv"} and config.targets:
+        try:
+            groups = tuple(str(item).strip() for item in getattr(args, "group", []) if str(item).strip())
+            if groups or bool(getattr(args, "all_targets", False)):
+                candidates = resolve_workspace_targets(
+                    config.workspace,
+                    config.targets,
+                    groups=groups,
+                    all_targets=bool(getattr(args, "all_targets", False)),
+                )
+            elif config.selected_target:
+                candidates = (config.selected_target,)
+            else:
+                candidates = tuple(config.targets)
+            if bool(getattr(args, "affected", False)):
+                selection = analyze_affected_targets(
+                    config,
+                    candidate_targets=candidates,
+                    base=str(getattr(args, "affected_base", "") or ""),
+                    head=str(getattr(args, "affected_head", "") or ""),
+                )
+                candidates = selection.targets
+            if candidates:
+                action = "validate" if command in {"validate", "v", "validate-all"} else ("wine-validate" if command in {"wine-validate", "wv"} else {"r": "restore", "b": "build", "t": "test", "l": "lint", "p": "package"}.get(command, command))
+                specs = (
+                    build_workspace_validation_specs(config, candidates, wine=action == "wine-validate")
+                    if action in {"validate", "wine-validate"}
+                    else build_workspace_specs(config, candidates, action)
+                )
+                workflow_plan = build_execution_plan_from_specs(config, specs, parallel_requested=False)
+                if workflow_plan is not None and workflow_plan.reservation_paths_known:
+                    identity = candidates[0] if len(candidates) == 1 else "workspace:" + ",".join(candidates)
+                    return identity, workflow_plan.reservation_paths, True, forced_pending_id
+        except Exception:
+            # Reservation derivation is a safety optimization. Never turn a
+            # planning/config edge case into permissive locking; fail closed.
+            return target, (), False, forced_pending_id
+
     return target, (), False, forced_pending_id
 
 
@@ -7075,8 +7196,24 @@ def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
         target_payload: dict[str, dict[str, object]] = {}
         for workflow_name, workflow in sorted(target.workflows.items()):
             declared = workflow_as_dict(target_name, workflow)
-            expanded = plan_workspace_targets(config, [target_name], workflow_name).as_dict()
+            expanded_graph = plan_workspace_targets(config, [target_name], workflow_name)
+            expanded = expanded_graph.as_dict()
             declared["expanded_graph"] = expanded
+            try:
+                if workflow_name in {"validate", "wine-validate"}:
+                    workflow_specs = build_workspace_validation_specs(config, [target_name], wine=workflow_name == "wine-validate")
+                else:
+                    workflow_specs = build_workspace_specs(config, [target_name], workflow_name)
+                workflow_schedule = build_execution_plan_from_specs(config, workflow_specs)
+                declared["schedule"] = workflow_schedule.as_dict() if workflow_schedule is not None else None
+                declared["schedule_error"] = ""
+            except (Exception, SystemExit) as exc:
+                # `workflows` remains a declaration/graph inspector even when a
+                # target's runner cannot yet produce executable specs (for
+                # example an unbootstrapped Node target). MP10 scheduling detail
+                # is additive and must not make MP02 inspection fail.
+                declared["schedule"] = None
+                declared["schedule_error"] = str(exc)
             target_payload[workflow_name] = declared
         payload[target_name] = target_payload
 
@@ -7102,7 +7239,13 @@ def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
                 dependencies = [str(value) for value in node.get("depends_on", []) or []]
                 short_dependencies = [value.rsplit(".", 1)[-1] for value in dependencies]
                 pieces.append(label + (f" <- {','.join(short_dependencies)}" if short_dependencies else ""))
-            rows.append((f"{target_name}.{workflow_name}", " | ".join(pieces)))
+            schedule = description.get("schedule") if isinstance(description, dict) else None
+            suffix = ""
+            if isinstance(schedule, dict):
+                waves = schedule.get("waves", []) if isinstance(schedule.get("waves"), list) else []
+                parallel = "parallel" if schedule.get("parallel_effective") else ("parallel-requested/serialized" if schedule.get("parallel_requested") else "sequential")
+                suffix = f" | schedule={parallel} waves={len(waves)}"
+            rows.append((f"{target_name}.{workflow_name}", " | ".join(pieces) + suffix))
     render_status_table(rows)
 
 
@@ -7215,6 +7358,138 @@ def _preflight(config: ProjectConfig, args: argparse.Namespace) -> int:
                 rows.append((f"{check.section}.{check.name}", f"{check.status}: {check.detail}"))
         render_status_table(rows)
     return 0 if report.healthy else 1
+
+
+def _workflow_plan_dot(graph, schedule: WorkflowExecutionPlan | None) -> str:
+    lines = ["digraph devtool_workflow {", '  rankdir="LR";', '  node [shape="box"];']
+    schedule_nodes = schedule.by_key if schedule is not None else {}
+    for node in graph.nodes:
+        scheduled = schedule_nodes.get(node.key)
+        runner = scheduled.runner if scheduled is not None else (node.runner or node.ref.kind)
+        label = f"{node.target}\\n{node.label}\\n{runner}"
+        lines.append(f'  "{node.key}" [label="{label}"];')
+    for node in graph.nodes:
+        for dependency in node.depends_on:
+            lines.append(f'  "{dependency}" -> "{node.key}";')
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _plan(config: ProjectConfig, args: argparse.Namespace) -> int:
+    action = str(getattr(args, "action", "validate") or "validate")
+    candidates = _candidate_targets_for_analysis(config, args)
+    affected_payload = None
+    if bool(getattr(args, "affected", False)):
+        try:
+            selection = analyze_affected_targets(
+                config,
+                candidate_targets=candidates,
+                base=str(getattr(args, "affected_base", "") or ""),
+                head=str(getattr(args, "affected_head", "") or ""),
+            )
+        except AffectedSelectionError as exc:
+            raise SystemExit(str(exc)) from exc
+        candidates = selection.targets
+        affected_payload = selection.as_dict()
+    if config.targets and not candidates:
+        payload = {
+            "schema_version": 1,
+            "action": action,
+            "targets": [],
+            "affected": affected_payload,
+            "message": "No targets selected; execution would be a successful no-op.",
+        }
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            render_status_table([("plan", payload["message"])])
+        return 0
+
+    if config.targets:
+        if not candidates:
+            raise SystemExit("No target selected. Use --target, --group, --all-targets, or configure [workspace].default_target.")
+        graph = plan_workspace_targets(config, candidates, action)
+        if action in {"validate", "wine-validate"}:
+            specs = build_workspace_validation_specs(config, candidates, wine=action == "wine-validate")
+        else:
+            specs = build_workspace_specs(config, candidates, action)
+        requested = getattr(args, "workflow_parallel", None)
+        plan = build_execution_plan_from_specs(
+            config,
+            specs,
+            parallel_requested=requested,
+            max_parallel_nodes=int(getattr(args, "workflow_max_workers", 0) or 0),
+        )
+        payload = {
+            "schema_version": 1,
+            "action": action,
+            "targets": list(candidates),
+            "affected": affected_payload,
+            "graph": graph.as_dict(),
+            "schedule": plan.as_dict() if plan is not None else None,
+            "commands": [
+                {
+                    "index": index,
+                    "name": spec.name,
+                    "argv": list(spec.argv),
+                    "cwd": str(spec.cwd or config.repo_root),
+                    "node": str(spec.metadata.get("workflow_node_key") or ""),
+                    "runner": str(spec.metadata.get("workflow_runner") or spec.metadata.get("runner") or ""),
+                }
+                for index, spec in enumerate(specs, 1)
+            ],
+        }
+        if bool(getattr(args, "dot", False)):
+            print(_workflow_plan_dot(graph, plan))
+            return 0
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            return 0
+        rows: list[tuple[str, str]] = [
+            ("action", action),
+            ("targets", ", ".join(candidates)),
+            ("parallel", "effective" if plan and plan.parallel_effective else ("requested/serialized" if plan and plan.parallel_requested else "sequential")),
+            ("waves", str(len(plan.waves) if plan else 0)),
+        ]
+        if plan is not None:
+            reservation = "known: " + (", ".join(plan.reservation_paths) or "read-only") if plan.reservation_paths_known else "unknown (exclusive repository reservation)"
+            rows.append(("reservation", reservation))
+            for wave in plan.waves:
+                detail = ", ".join(wave.nodes)
+                if wave.serialized_reason:
+                    detail += f" | {wave.serialized_reason}"
+                rows.append((f"wave {wave.index}", detail))
+        render_status_table(rows)
+        if bool(getattr(args, "explain", False)) and plan is not None:
+            render_status_table([
+                (
+                    node.key,
+                    f"runner={node.runner or '-'} resource={node.resource_class} reads=[{', '.join(node.reads) or '-'}] "
+                    f"writes=[{', '.join(node.writes) or '-'}] known={str(node.writes_known).lower()} | {node.scope_reason}",
+                )
+                for node in plan.nodes
+            ])
+        if bool(getattr(args, "show_commands", False)):
+            render_status_table([
+                (f"{index}:{spec.name}", f"cwd={spec.cwd or config.repo_root} | {' '.join(spec.argv)}")
+                for index, spec in enumerate(specs, 1)
+            ])
+        return 0
+
+    specs = build_validation_specs(config) if action == "validate" else build_specs(config, action)
+    payload = {
+        "schema_version": 1,
+        "action": action,
+        "targets": [],
+        "graph": None,
+        "schedule": None,
+        "commands": [{"index": i, "name": spec.name, "argv": list(spec.argv), "cwd": str(spec.cwd or config.repo_root)} for i, spec in enumerate(specs, 1)],
+    }
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        render_status_table([(f"{i}:{spec.name}", f"cwd={spec.cwd or config.repo_root} | {' '.join(spec.argv)}") for i, spec in enumerate(specs, 1)])
+    return 0
 
 def _format_artifact_exception(exc: BaseException, *, artifact: str, artifact_type: str) -> str:
     message = str(exc).strip()
@@ -9023,6 +9298,18 @@ def _inspect_project(config: ProjectConfig, *, args: argparse.Namespace | None =
         ])
         for workflow_name, workflow in sorted(selected.workflows.items()):
             rows.append((f"workflow.{workflow_name}", " -> ".join(step.raw for step in workflow.steps)))
+            try:
+                inspect_specs = (
+                    build_workspace_validation_specs(config, [config.selected_target], wine=workflow_name == "wine-validate")
+                    if workflow_name in {"validate", "wine-validate"}
+                    else build_workspace_specs(config, [config.selected_target], workflow_name)
+                )
+                inspect_schedule = build_execution_plan_from_specs(config, inspect_specs)
+            except Exception:
+                inspect_schedule = None
+            if inspect_schedule is not None:
+                mode = "parallel" if inspect_schedule.parallel_effective else ("parallel-requested/serialized" if inspect_schedule.parallel_requested else "sequential")
+                rows.append((f"workflow_plan.{workflow_name}", f"{mode}; waves={len(inspect_schedule.waves)}; reservation={'known' if inspect_schedule.reservation_paths_known else 'exclusive'}"))
     for job_name, job in sorted(config.jobs.items()):
         mode = job.command_mode
         payload = job.action or " ".join(job.command) or job.shell_command
@@ -10041,6 +10328,10 @@ def _main_after_parse(
         config = _load_command_config(args)
         _workflows(config, as_json=bool(getattr(args, "json", False)))
         return 0
+    if args.command in {"plan", "pl"}:
+        config = _load_command_config(args)
+        _apply_runner_cli_options(config, args)
+        return _plan(config, args)
     if args.command in {"affected", "aff"}:
         config = _load_command_config(args)
         return _affected(config, args)

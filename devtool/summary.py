@@ -966,6 +966,59 @@ def build_json_summary(results: list[OperationResult], *, repo_root: str) -> dic
             for result in results
         ],
     }
+    workflow_results = [
+        result for result in results
+        if isinstance(result.metadata, dict) and str(result.metadata.get("workflow_node_key") or "").strip()
+    ]
+    if workflow_results:
+        node_rows: dict[str, dict[str, object]] = {}
+        schedule: dict[str, object] = {}
+        targets: list[str] = []
+        workflows: list[str] = []
+        for result in workflow_results:
+            metadata = result.metadata if isinstance(result.metadata, dict) else {}
+            key = str(metadata.get("workflow_node_key") or "").strip()
+            if not key:
+                continue
+            target = str(metadata.get("workflow_target") or "").strip()
+            workflow = str(metadata.get("workflow_name") or "").strip()
+            if target and target not in targets:
+                targets.append(target)
+            if workflow and workflow not in workflows:
+                workflows.append(workflow)
+            state = str(metadata.get("workflow_state") or "").strip()
+            if not state:
+                if result.skipped:
+                    state = "skipped"
+                elif result.returncode:
+                    state = "failed"
+                else:
+                    state = "passed"
+            row = node_rows.setdefault(key, {
+                "key": key,
+                "target": target,
+                "workflow": workflow,
+                "runner": str(metadata.get("workflow_runner") or ""),
+                "action": str(metadata.get("workflow_action") or ""),
+                "depends_on": [str(value) for value in metadata.get("workflow_depends_on", []) or []],
+                "state": state,
+                "result_count": 0,
+                "duration_seconds": 0.0,
+            })
+            row["state"] = state
+            row["result_count"] = int(row.get("result_count") or 0) + 1
+            row["duration_seconds"] = round(float(row.get("duration_seconds") or 0.0) + float(result.duration_seconds or 0.0), 3)
+            candidate_schedule = metadata.get("workflow_schedule")
+            if isinstance(candidate_schedule, dict) and candidate_schedule:
+                schedule = dict(candidate_schedule)
+        data["workflow"] = {
+            "schema_version": 1,
+            "targets": targets,
+            "workflows": workflows,
+            "schedule": schedule,
+            "nodes": list(node_rows.values()),
+        }
+
     if (go_packages := _extract_go_package_totals(results)) is not None:
         passed, failed, skipped_count, no_tests, total = go_packages
         data["go_test"] = {

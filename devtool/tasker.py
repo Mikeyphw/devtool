@@ -1093,8 +1093,10 @@ class TaskerProgressSink:
         index = int(metadata.get("validation_phase_index") or index)
         total = int(metadata.get("validation_phase_total") or total)
         display_name = str(metadata.get("validation_phase_name") or name).strip() or name
-        target = str(metadata.get("bundle_target") or metadata.get("target") or metadata.get("matrix") or "").strip()
-        workspace = str(metadata.get("workspace") or "").strip()
+        target = str(metadata.get("bundle_target") or metadata.get("workflow_target") or metadata.get("target") or metadata.get("matrix") or "").strip()
+        workspace = str(metadata.get("workspace") or metadata.get("workflow_workspace") or "").strip()
+        if not workspace and isinstance(metadata.get("workspace_targets"), (list, tuple)):
+            workspace = ",".join(str(value) for value in metadata.get("workspace_targets") or [] if str(value).strip())
         if target:
             self.set_targets(self.targets + [target])
         self.current_phase = {

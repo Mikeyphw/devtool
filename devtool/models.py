@@ -107,6 +107,22 @@ class TargetGroup:
 class WorkspaceConfig:
     default_target: str = ""
     groups: dict[str, TargetGroup] = field(default_factory=dict)
+    scheduler: "WorkflowSchedulerConfig" = field(default_factory=lambda: WorkflowSchedulerConfig())
+
+
+@dataclass(slots=True)
+class WorkflowSchedulerConfig:
+    """Repository-level workflow scheduling policy.
+
+    Safe sequential execution remains the default. Parallel scheduling is an
+    opt-in and is still constrained by dependency, read/write-scope, and
+    resource-class conflicts calculated by MP09.
+    """
+
+    parallel: bool = False
+    max_parallel_nodes: int = 0
+    max_gradle_nodes: int = 1
+    max_dotnet_nodes: int = 1
 
 
 @dataclass(slots=True)

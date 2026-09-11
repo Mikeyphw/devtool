@@ -261,3 +261,8 @@ Android and Gradle runners share the self-contained builder documented in [`ANDR
 The common test catalog and selector translation are documented in
 [`TEST_SELECTION.md`](TEST_SELECTION.md). Python environment, lint, package, and
 validation behavior is documented in [`PYTHON_PROJECTS.md`](PYTHON_PROJECTS.md).
+
+
+## Workflow scheduler boundary
+
+Runners remain responsible for planning and executing their own command specs. MP09 does not teach one runner about another: it schedules already-planned workflow nodes. Node concurrency is permitted only when DAG dependencies, declared `inputs`/`outputs`, and shared-resource caps allow it. A node may contain multiple runner command specs; those specs remain sequential within that node. Use `devtool plan ACTION --explain` to inspect the resulting runner/resource/scope plan.

@@ -167,6 +167,12 @@ class DesktopControlCenterModel:
                 "jobs": sorted(config.jobs),
                 "workspace_default_target": config.workspace.default_target,
                 "workspace_groups": sorted(config.workspace.groups),
+                "workspace_scheduler": {
+                    "parallel": config.workspace.scheduler.parallel,
+                    "max_parallel_nodes": config.workspace.scheduler.max_parallel_nodes,
+                    "max_gradle_nodes": config.workspace.scheduler.max_gradle_nodes,
+                    "max_dotnet_nodes": config.workspace.scheduler.max_dotnet_nodes,
+                },
                 "selected_target": config.selected_target,
                 "variant": config.variant,
                 "execution_environment": config.execution_environment,

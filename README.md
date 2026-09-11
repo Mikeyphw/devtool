@@ -256,6 +256,10 @@ MP07 adds dependency-aware Git selection. `devtool validate --affected` owns cha
 
 MP08 makes toolchain checks graph-aware. `devtool preflight --group release --workflow validate` expands the same executable workspace DAG and aggregates every runner, real command executable, target/job root, execution environment, and declared output scope. `doctor` embeds this report as `workflow_preflight`; destination-only tools are deferred to the destination rather than falsely reported missing on the host. See [`docs/AFFECTED_TARGETS.md`](docs/AFFECTED_TARGETS.md) and [`docs/WORKFLOW_PREFLIGHT.md`](docs/WORKFLOW_PREFLIGHT.md).
 
+MP09 makes that DAG safely schedulable. Execution stays sequential by default; opt into `--workflow-parallel` (or `[workspace.scheduler].parallel = true`) and Devtool only overlaps ready nodes whose declared `inputs`/`outputs` prove there is no write/write or write/read collision, while enforcing total and Gradle/.NET-heavy concurrency caps. Complete write scopes also feed Devtool's cross-process repository reservation system; unknown writers remain repository-exclusive.
+
+MP10 adds `devtool plan`: inspect expanded DAGs, safe scheduling waves, read/write scopes, reservation paths, and resolved commands without executing them. Use `--json` for machine state, `--dot` for Graphviz, and `--explain` for serialization reasons. `workflows --json`, `inspect`, runtime JSON summaries, HUD/Tasker state, and desktop state carry the same scheduling/workflow semantics. See [`docs/WORKFLOW_SCHEDULING_AND_PLANNING.md`](docs/WORKFLOW_SCHEDULING_AND_PLANNING.md).
+
 ## Devtool 0.15.0: verified Android artifacts, device tests, selective tests, and Python pipelines
 
 Android and Gradle builds now verify newly produced APK, AAB, AAR, and JVM

@@ -16,3 +16,8 @@ Architecture feature flags live in `devtool.features` because `devtool.config` i
 ## JSON compatibility boundary
 
 Universal `--json` wraps ordinary commands in the schema-versioned invocation envelope. Commands that already emit Devtool's stable validation-control machine envelope (`api_version`, `accepted`, `action`, `data`) pass through unchanged. This prevents double envelopes and keeps machine-file/stdout equality stable while still giving every non-native command a consistent JSON surface.
+
+
+## MP09/MP10 execution planning
+
+The workspace workflow planner produces an expanded `ExecutionGraph`; runner planning turns its nodes into ordinary `CommandSpec` objects; `workflow_scheduler` then annotates read/write/resource scopes, produces safe scheduling waves, and executes independent nodes when enabled. The scheduler never bypasses runner-specific environment preparation or diagnostics. `devtool plan` serializes the same graph/schedule model used by runtime, keeping observability and execution on one truth source.

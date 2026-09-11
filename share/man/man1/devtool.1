@@ -188,6 +188,19 @@ for CI range analysis.
 .TP
 .B preflight " | " pf
 Expand selected workflows and check all required runners, concrete command tools, target/job roots, execution environments, and output-scope safety. Destination-only tools are deferred to destination preflight instead of tested against the host PATH.
+.TP
+.B plan " | " pl " [ACTION]"
+Expand the selected workspace workflow without executing it. The plan reports DAG dependencies, safe scheduling waves, read/write scopes, resource classes, reservation paths, and resolved commands. Use
+.B --workflow-parallel
+to plan safe node concurrency,
+.B --workflow-max-workers
+to cap concurrent nodes,
+.B --explain
+for serialization reasons,
+.B --json
+for machine output, or
+.B --dot
+for Graphviz DOT.
 .SH ARTIFACT COMMANDS
 .TP
 .B apply-overlay " | " ao " ARTIFACT"
@@ -358,6 +371,15 @@ Select every configured workspace target for supported lifecycle commands. Canno
 or
 .B --group.
 .TP
+.TP
+.B --workflow-parallel
+Request dependency-, scope-, and resource-safe workflow-node parallelism. Unknown writers and overlapping read/write scopes remain serialized. During validation, --parallel also requests this mode unless --no-workflow-parallel is explicit.
+.TP
+.B --no-workflow-parallel
+Force workflow nodes to execute sequentially even when workspace scheduler policy enables parallelism.
+.TP
+.BI --workflow-max-workers " COUNT"
+Cap concurrent workflow DAG nodes. This is independent of runner-internal worker counts and remains subject to Gradle/.NET-heavy resource caps.
 .B --affected
 Select only dependency-aware workspace targets affected by Git changes. Target roots, target
 .B inputs,

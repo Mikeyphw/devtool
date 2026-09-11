@@ -212,8 +212,10 @@ _devtool_commands() {
     'gr:alias for groups'
     'jobs:list reusable polyglot jobs'
     'jb:alias for jobs'
-    'workflows:list configured target workflows'
+    'workflows:list configured target workflows and safe scheduling metadata'
     'wf:alias for workflows'
+    'plan:plan expanded workflow DAG, safe scheduling waves, scopes, and commands'
+    'pl:alias for plan'
     'affected:show dependency-aware targets affected by Git changes'
     'aff:alias for affected'
     'preflight:check expanded workflow roots, environments, runners, tools, and outputs'
@@ -265,7 +267,10 @@ _devtool_test_args() {
     '--failed[rerun tests that failed in the previous structured run]' \
     '--changed[select tests related to changed files]' \
     '--changed-from[Git base for changed test selection]:revision:' \
-    '--instrumented[run Android instrumentation tests on a device]'
+    '--instrumented[run Android instrumentation tests on a device]' \
+    '(--workflow-parallel --no-workflow-parallel)--workflow-parallel[enable safe dependency/scope-aware workflow-node parallelism]' \
+    '(--workflow-parallel --no-workflow-parallel)--no-workflow-parallel[force sequential workflow-node execution]' \
+    '--workflow-max-workers[maximum concurrent workflow nodes]:count:'
 }
 
 _devtool_validation_menu_args() {
@@ -311,6 +316,9 @@ _devtool_validation_args() {
     '--changed[select tests related to changed files]' \
     '--changed-from[Git base for changed test selection]:revision:' \
     '--instrumented[run Android instrumentation tests on a device]' \
+    '(--workflow-parallel --no-workflow-parallel)--workflow-parallel[enable safe dependency/scope-aware workflow-node parallelism]' \
+    '(--workflow-parallel --no-workflow-parallel)--no-workflow-parallel[force sequential workflow-node execution]' \
+    '--workflow-max-workers[maximum concurrent workflow nodes]:count:' \
     '--watch[rerun validation when files change]' \
     '--watch-interval[seconds between watch polls]:seconds:' \
     '--matrix[comma-separated runtime IDs, target names, or variants]:matrix:' \
@@ -929,6 +937,24 @@ _devtool() {
           ;;
         targets|tg|groups|gr|jobs|jb|workflows|wf)
           _arguments '--json[emit structured configuration metadata]'
+          ;;
+        plan|pl)
+          _arguments \
+            '--target[named target/profile]:target:_devtool_targets' \
+            '*--group[workspace target group]:group:_devtool_groups' \
+            '--all-targets[select every workspace target]' \
+            '--affected[limit planning to dependency-aware affected targets]' \
+            '--affected-base[Git base revision for affected selection]:revision:' \
+            '--affected-head[Git head revision for affected selection]:revision:' \
+            '--variant[target variant]:variant:_devtool_variants' \
+            '(--workflow-parallel --no-workflow-parallel)--workflow-parallel[plan safe workflow-node parallelism]' \
+            '(--workflow-parallel --no-workflow-parallel)--no-workflow-parallel[plan sequential workflow-node execution]' \
+            '--workflow-max-workers[maximum concurrent workflow nodes]:count:' \
+            '--json[emit complete graph and scheduling plan as JSON]' \
+            '--dot[emit Graphviz DOT]' \
+            '--explain[show read/write scopes and serialization reasons]' \
+            '--show-commands[show resolved commands and working directories]' \
+            '1:workflow action:(restore build test lint package run validate wine-validate)'
           ;;
         affected|aff)
           _arguments \

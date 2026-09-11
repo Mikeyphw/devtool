@@ -233,3 +233,18 @@ For Python projects that declare `build-system.requires`, Devtool installs those
 When `[termux_chroot].project_kinds` includes `python`, Devtool plans Python validation for the selected chroot before building restore/test specs. The venv bootstrap phase is always emitted for chroot plans because host-side filesystem checks cannot prove that the guest venv exists. This keeps `venv`, `restore:test-tools`, `restore:build-system`, `restore:project`, tests, and source audit in one execution environment.
 
 For Python 3.14 Termux hosts, Devtool preserves the executable name (`python3.14`) when translating host Python paths into chroot bootstrap commands, so Linuxbrew/Ubuntu Python versions can match the active host interpreter where available.
+
+
+## Safe workflow scheduler (MP09)
+
+Workflow execution is sequential unless the workspace policy or CLI requests safe parallelism. `inputs` are read scopes; `outputs` are write scopes. Nodes with unknown write sets remain serialized and cross-process reservations remain repository-exclusive.
+
+```toml
+[workspace.scheduler]
+parallel = false
+max_parallel_nodes = 4
+max_gradle_nodes = 1
+max_dotnet_nodes = 1
+```
+
+Use `devtool plan ACTION --explain` to inspect exactly why nodes may or may not overlap. See `WORKFLOW_SCHEDULING_AND_PLANNING.md`.
