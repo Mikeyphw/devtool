@@ -66,3 +66,7 @@ the current notification or HUD state.
 UI07 adds confirmation/notification policy to the shared snapshot. Tasker/IPC notification payloads preserve old title/text/current/total fields and add semantic attention/delivery/action metadata. Apply notifications use the same policy before posting through Termux, Android bridge, root notification, or `notify-send`.
 
 UI08 migrates TUI and terminal HUD live rendering onto the semantic snapshot. The TUI still owns terminal-native interaction and layout; it does not duplicate runtime state interpretation. Graceful cancellation is sent through the shared IPC helper used by desktop HUD, and terminal clipboard/log/workflow behavior remains a surface adapter over central action IDs.
+
+## Desktop/Android renderer migration
+
+UI09/UI10 complete GTK/Desktop and Android Live HUD migration onto UI Core. Renderers consume semantic actions/navigation, presentation, capabilities/responsive intent, hierarchical progress, structured diagnostics and notification policy. Platform widgets/layout remain native, and legacy machine/bridge fields remain compatibility fallbacks. See `docs/architecture/ui-desktop-android-migration.md`.

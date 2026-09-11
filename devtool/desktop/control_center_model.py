@@ -24,6 +24,7 @@ from ..tasker import DEFAULT_TASKER_DIR
 from .history_store import DesktopHistoryStore
 from .hud_store import load_hud_snapshot
 from .ipc_client import DesktopIpcClient
+from .ui_semantics import build_desktop_semantic_view
 from .repository_store import DesktopRepositoryStore, RepositorySummary
 
 
@@ -80,6 +81,7 @@ class DesktopControlCenterSnapshot:
     ipc: dict[str, Any] = field(default_factory=dict)
     settings: dict[str, Any] = field(default_factory=dict)
     ui: dict[str, Any] = field(default_factory=dict)
+    desktop_ui: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +95,7 @@ class DesktopControlCenterSnapshot:
             "ipc": self.ipc,
             "settings": self.settings,
             "ui": self.ui,
+            "desktop_ui": self.desktop_ui,
         }
 
 
@@ -215,6 +218,7 @@ class DesktopControlCenterModel:
                 "follow_active": self.follow_active,
             },
             ui=semantic_ui,
+            desktop_ui=build_desktop_semantic_view(semantic_ui).as_dict(),
         )
 
 

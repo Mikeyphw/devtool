@@ -151,3 +151,7 @@ validate the release certificate with `apksigner`.
 Run now includes a Validation subsection backed by Devtool's durable API-v1 sessions. It supports next, through-checkpoint, selected-with-dependencies, and all-remaining scopes; attempt history and evidence; safe pause/stop/retry/reset/finalize controls; and confirmed keep-changes or journaled rollback handling. Wide screens use a timeline/detail split pane.
 
 Validation notifications reuse the normal custom layout with overall progress, previous/current/next phase context, state-specific controls, revision/attempt stale-action protection, and direct Workbench deep links. Rollback remains Workbench-only.
+
+## UI Core semantic bridge
+
+The companion now consumes Devtool UI Core semantic extras for operation presentation, progress trees, structured diagnostics, actions/navigation and notification policy while preserving bridge protocol v1 and all legacy fields. See `docs/UI_CORE_PROTOCOL.md`.

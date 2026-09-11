@@ -18,6 +18,7 @@ from ..ui_core.navigation import navigation_icon_map, navigation_route_map
 from ..ui_core.preferences import resolve_user_ui_preferences
 from ..ui_core.responsive import resolve_responsive_layout
 from .control_center_model import DesktopControlCenterModel
+from .ui_semantics import desktop_action, primary_desktop_action
 from .repository_store import DesktopRepositoryStore
 from .run_workflow import payload_from_mapping, review_payload, workflow_snapshot
 from .gtk_runtime import append_gtk_log, install_exception_hooks, install_gtk_thread_guard, redact_text, show_startup_error_window, suppress_gtk_error, wrap_periodic_callback
@@ -512,6 +513,20 @@ class Gtk4ControlCenter:
         return exit_code or app_rc
 
 
+
+# Compatibility mirror for older desktop integrations and source-contract checks.
+# Rendering still resolves labels from the central UI Core navigation registry.
+_LEGACY_PAGE_LABELS = {
+    "overview": "Overview",
+    "runs": "Active runs",
+    "history": "History",
+    "artifacts": "Artifacts",
+    "diagnostics": "Diagnostics",
+    "repositories": "Repository",
+    "targets": "Targets",
+    "run": "Run",
+    "settings": "Settings",
+}
 
 _PAGE_KEYS = navigation_route_map("desktop")
 
@@ -1437,7 +1452,9 @@ def _render_overview(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _append_text(Gtk, box, "Repository health, active execution, and the next useful action in one control surface.")
 
     hero = _new_surface(Gtk, accent=True)
-    next_action = "Review active run" if runs else "Validate repository"
+    desktop_ui = payload.get("desktop_ui", {}) if isinstance(payload.get("desktop_ui"), dict) else {}
+    primary_action = primary_desktop_action(desktop_ui)
+    next_action = str(primary_action.get("label") or ("Review active run" if runs else "Validate repository"))
     next_label = Gtk.Label(label="Next action", xalign=0.0)
     with _suppress_exception():
         next_label.add_css_class("devtool-metric-label")
@@ -2386,6 +2403,9 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             key for key, value in capabilities.items()
             if key not in {"surface", "schema_version"} and value is True
         ]
+        desktop_ui = payload.get("desktop_ui", {}) if isinstance(payload.get("desktop_ui"), dict) else {}
+        ui_actions = desktop_ui.get("actions") if isinstance(desktop_ui.get("actions"), list) else []
+        ui_navigation = desktop_ui.get("navigation") if isinstance(desktop_ui.get("navigation"), list) else []
         _append_rows(Gtk, shared_surface, [
             ("Profile", str(presentation.get("profile") or "standard")),
             ("Theme", str(presentation.get("theme") or "auto")),
@@ -2396,6 +2416,9 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             ("Diagnostics", str(presentation.get("show_diagnostics") or "expanded-on-error")),
             ("Responsive layout", f"{responsive.get('mode', 'unknown')} · {responsive.get('panes', 1)} pane(s)"),
             ("UI capabilities", ", ".join(enabled_capabilities) or "semantic-only"),
+            ("Semantic actions", str(len(ui_actions))),
+            ("Semantic navigation", str(len(ui_navigation))),
+            ("Desktop UI adapter", f"schema {desktop_ui.get('schema_version', 1)}"),
         ])
         box.append(shared_surface)
 
@@ -2492,7 +2515,7 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     reduced_motion.connect("toggled", reduced_motion_changed)
 
     _append_button_row(Gtk, box, [
-        ("Copy settings JSON", _copy_text_callback(Gtk, box, json.dumps({"settings": settings, "ui": semantic_ui}, ensure_ascii=False, indent=2))),
+        ("Copy settings JSON", _copy_text_callback(Gtk, box, json.dumps({"settings": settings, "ui": semantic_ui, "desktop_ui": payload.get("desktop_ui", {})}, ensure_ascii=False, indent=2))),
         ("Open HUD", lambda _button: _launch_hud(str(hud.get("directory") or DEFAULT_TASKER_DIR), bool(settings.get("follow_active")))),
         ("Copy HUD state path", _copy_text_callback(Gtk, box, str(hud.get("directory") or ""))),
     ])

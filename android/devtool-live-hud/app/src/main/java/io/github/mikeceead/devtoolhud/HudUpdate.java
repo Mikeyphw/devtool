@@ -50,6 +50,7 @@ final class HudUpdate {
     final long startedAtMs;
     final long durationMs;
     final boolean overlayRequested;
+    final UiSemanticState ui;
 
     private HudUpdate(
             String runId, long sequence, long updatedAtMs,
@@ -60,7 +61,7 @@ final class HudUpdate {
             boolean indeterminate,
             int passed, int failed, int skipped, int testTotal, int testAssemblies,
             int warnings, int errors,
-            String stepsJson, long startedAtMs, long durationMs, boolean overlayRequested) {
+            String stepsJson, long startedAtMs, long durationMs, boolean overlayRequested, UiSemanticState ui) {
         this.runId = safeRunId(runId);
         this.sequence = Math.max(0L, sequence);
         this.updatedAtMs = updatedAtMs > 0L ? updatedAtMs : System.currentTimeMillis();
@@ -95,8 +96,10 @@ final class HudUpdate {
         this.testAssemblies = Math.max(0, testAssemblies);
         this.warnings = Math.max(0, warnings);
         this.errors = Math.max(0, errors);
+        this.ui = ui == null ? UiSemanticState.empty() : ui;
         this.stepsJson = clean(stepsJson, "");
-        this.steps = parseSteps(this.stepsJson, this.phase, this.status, this.phaseProgress);
+        List<Step> semanticSteps = this.ui.progressSteps();
+        this.steps = semanticSteps.isEmpty() ? parseSteps(this.stepsJson, this.phase, this.status, this.phaseProgress) : semanticSteps;
         this.startedAtMs = startedAtMs > 0 ? startedAtMs : System.currentTimeMillis();
         this.durationMs = Math.max(0L, durationMs);
         this.overlayRequested = overlayRequested;
@@ -147,7 +150,7 @@ final class HudUpdate {
                 intent.getStringExtra("steps_json"),
                 intent.getLongExtra("started_at_ms", 0L),
                 intent.getLongExtra("duration_ms", 0L),
-                intent.getBooleanExtra("overlay", false));
+                intent.getBooleanExtra("overlay", false), UiSemanticState.fromIntent(intent));
     }
 
     static HudUpdate sample() {
@@ -157,7 +160,7 @@ final class HudUpdate {
                 "sims3tools", "dotnet", "native-termux", "S3Atelier.Modern.sln", "s3atelier_avalonia", 1, 2, "", 3, 4,
                 "", "", 72, 66, 2, 3, "test assemblies", false,
                 160, 0, 1, 161, 2, 2, 0,
-                sampleSteps(), System.currentTimeMillis() - 83000L, 0L, false);
+                sampleSteps(), System.currentTimeMillis() - 83000L, 0L, false, UiSemanticState.empty());
     }
 
     static HudUpdate sampleOverlay() {
@@ -169,7 +172,7 @@ final class HudUpdate {
                 sample.current, sample.total, sample.unitLabel, sample.indeterminate,
                 sample.passed, sample.failed, sample.skipped, sample.testTotal, sample.testAssemblies,
                 sample.warnings, sample.errors, sample.stepsJson, sample.startedAtMs,
-                sample.durationMs, true);
+                sample.durationMs, true, sample.ui);
     }
 
     static HudUpdate validation(ValidationSessionRecord session) {
@@ -216,7 +219,7 @@ final class HudUpdate {
                 current, total, "phases", focus != null && focus.running() && !focus.supportsProgress,
                 passed, session.blocked() ? 1 : 0, skipped, passed + skipped + (session.blocked() ? 1 : 0), 0,
                 session.state.equals("validated-uncommitted") ? 1 : 0, session.blocked() ? 1 : 0,
-                steps.toString(), session.createdAtMs, Math.max(0L, session.updatedAtMs - session.createdAtMs), false);
+                steps.toString(), session.createdAtMs, Math.max(0L, session.updatedAtMs - session.createdAtMs), false, UiSemanticState.empty());
     }
 
     private static int itemProgress(ValidationPhaseRecord phase) {
@@ -232,7 +235,7 @@ final class HudUpdate {
                 "waiting", "Starting Devtool", "", "Preparing",
                 "RunCommand request sent to Termux", "Termux", "auto", "native-termux", clean(workdir, "~/"), "", 0, 0, "", 0, 0,
                 "", clean(command, ""), 0, 0, -1, -1, "items", true,
-                0, 0, 0, 0, 0, 0, 0, "", System.currentTimeMillis(), 0L, overlay);
+                0, 0, 0, 0, 0, 0, 0, "", System.currentTimeMillis(), 0L, overlay, UiSemanticState.empty());
     }
 
     static HudUpdate commandWaiting(String runId, String command, String workdir,
@@ -243,7 +246,7 @@ final class HudUpdate {
                 "Termux is running in " + mode + " mode; no bridge update received yet",
                 "Termux", "auto", "native-termux", clean(workdir, "~/"), "", 0, 0, "", 0, 0,
                 "", clean(command, ""), 0, 0, -1, -1, "items", true,
-                0, 0, 0, 0, 0, 0, 0, "", startedAtMs, 0L, overlay);
+                0, 0, 0, 0, 0, 0, 0, "", startedAtMs, 0L, overlay, UiSemanticState.empty());
     }
 
     static HudUpdate commandFinished(String runId, int exitCode, String stdout, String stderr,
@@ -255,7 +258,7 @@ final class HudUpdate {
                 detail, "Termux", "auto", "native-termux", "exit " + exitCode, "", 0, 0, "", 0, 0,
                 "", "", 100, 100, -1, -1, "items", false,
                 0, ok ? 0 : 1, 0, ok ? 0 : 1, 0, 0, ok ? 0 : 1, "",
-                System.currentTimeMillis(), 0L, overlay);
+                System.currentTimeMillis(), 0L, overlay, UiSemanticState.empty());
     }
 
     private static String firstUseful(String first, String second, String third, String fallback) {
@@ -324,6 +327,21 @@ final class HudUpdate {
         boolean skipped() { return status.equals("skipped"); }
     }
 
+    String stepsJsonForStore() {
+        JSONArray array = new JSONArray();
+        for (Step step : steps) {
+            JSONObject item = new JSONObject();
+            try {
+                item.put("key", step.key);
+                item.put("label", step.label);
+                item.put("status", step.status);
+                item.put("progress", step.progress);
+                array.put(item);
+            } catch (JSONException ignored) {}
+        }
+        return array.length() > 0 ? array.toString() : stepsJson;
+    }
+
     static List<Step> parseSteps(String value, String phase, String status, int progress) {
         List<Step> result = new ArrayList<>();
         String raw = clean(value, "");
@@ -359,13 +377,18 @@ final class HudUpdate {
                 + "{\"key\":\"commit\",\"label\":\"Commit\",\"status\":\"pending\",\"progress\":0}]";
     }
 
-    boolean isTerminal() {
-        return status.equals("ok") || status.equals("failed") || status.equals("interrupted")
-                || status.equals("cancelled") || status.equals("skipped");
+    String effectiveStatus() {
+        return normalizeStatus(ui.operationStatus(status));
     }
 
-    boolean succeeded() { return status.equals("ok"); }
-    boolean failedState() { return status.equals("failed"); }
+    boolean isTerminal() {
+        String effective = effectiveStatus();
+        return effective.equals("ok") || effective.equals("failed") || effective.equals("interrupted")
+                || effective.equals("cancelled") || effective.equals("skipped");
+    }
+
+    boolean succeeded() { return effectiveStatus().equals("ok"); }
+    boolean failedState() { return effectiveStatus().equals("failed"); }
     boolean rollbackState() { return phase.toLowerCase(Locale.ROOT).contains("rollback"); }
 
     boolean isApplyOperation() {
@@ -385,6 +408,8 @@ final class HudUpdate {
     }
 
     int displayProgress() {
+        int semantic = ui.progressPercent(-1);
+        if (semantic >= 0) return semantic;
         if (succeeded()) return 100;
         return progress;
     }
@@ -395,6 +420,8 @@ final class HudUpdate {
     }
 
     String phaseLabel() {
+        String semantic = ui.operationPhase("");
+        if (!semantic.isEmpty()) return semantic;
         if (rollbackState()) return "Rollback";
         if (succeeded()) return "Completed";
         if (failedState()) return "Failed";
@@ -404,7 +431,8 @@ final class HudUpdate {
     }
 
     String title() {
-        return "Devtool · " + phaseLabel();
+        String semantic = ui.operationTitle("");
+        return semantic.isEmpty() ? "Devtool · " + phaseLabel() : semantic;
     }
 
     String taskTitle() {
@@ -419,6 +447,8 @@ final class HudUpdate {
     }
 
     String contentText() {
+        String semantic = ui.operationDetail("");
+        if (!semantic.isEmpty()) return semantic;
         String scope = scopeText();
         if (isTerminal()) {
             int tests = passed + failed + skipped;
@@ -510,6 +540,11 @@ final class HudUpdate {
 
 
     String notificationMode() {
+        String semanticStatus = ui.operationStatus("");
+        String attention = ui.attentionLevel();
+        if (attention.equals("critical")) return "failed";
+        if (attention.equals("important") && !semanticStatus.equals("failed")) return "warning";
+        if (attention.equals("success")) return "success";
         if (validationSession()) {
             ValidationSessionRecord session = ValidationNotificationContext.lookup(validationSessionId());
             if (session != null) {
@@ -557,6 +592,8 @@ final class HudUpdate {
     }
 
     String notificationTaskTitle() {
+        String semantic = ui.notificationTitle(ui.operationTitle(""));
+        if (!semantic.isEmpty()) return semantic;
         if (validationSession()) return task;
         if (rollbackState()) {
             if (succeeded()) return "Repository restored";
@@ -589,6 +626,8 @@ final class HudUpdate {
     }
 
     String notificationCompactStatus() {
+        String semantic = ui.notificationBody("");
+        if (!semantic.isEmpty()) return semantic;
         if (notificationMode().equals("recovered")) return scopeText() + " · Operation failed · all changes reverted";
         if (failedState() && rollbackState()) return scopeText() + " · Manual recovery may be required";
         if (failedState()) return scopeText() + " · " + phaseLabel() + " failed";
@@ -627,6 +666,8 @@ final class HudUpdate {
     }
 
     String notificationStatusDetail() {
+        String semantic = ui.operationDetail("");
+        if (!semantic.isEmpty()) return semantic;
         String mode = notificationMode();
         if (mode.equals("recovered")) return "Failure contained; repository restored";
         if (mode.equals("failed") && rollbackState()) return "Operation and rollback both failed";

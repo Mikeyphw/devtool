@@ -2090,6 +2090,7 @@ class AndroidAppHud:
             "ui_responsive_schema_version": RESPONSIVE_SCHEMA_VERSION,
             "ui_progress_schema_version": PROGRESS_SCHEMA_VERSION,
             "ui_diagnostic_schema_version": DIAGNOSTIC_SCHEMA_VERSION,
+            "ui_operation_json": json.dumps(semantic_android_ui.get("operation", {}), separators=(",", ":")),
             "ui_presentation_json": json.dumps(semantic_android_ui.get("presentation", {}), separators=(",", ":")),
             "ui_capabilities_json": json.dumps(semantic_android_ui.get("capabilities", {}), separators=(",", ":")),
             "ui_capability_negotiation_json": json.dumps(semantic_android_ui.get("capability_negotiation", {}), separators=(",", ":")),
@@ -2100,6 +2101,9 @@ class AndroidAppHud:
             "ui_diagnostics_json": json.dumps(semantic_android_ui.get("diagnostic_presentations", []), separators=(",", ":")),
             "ui_actions_json": json.dumps(semantic_android_ui.get("actions", []), separators=(",", ":")),
             "ui_navigation_json": json.dumps(semantic_android_ui.get("navigation", []), separators=(",", ":")),
+            "ui_confirmation_policy_json": json.dumps(semantic_android_ui.get("confirmation_policy", {}), separators=(",", ":")),
+            "ui_notification_policy_json": json.dumps(semantic_android_ui.get("notification_policy", {}), separators=(",", ":")),
+            "ui_notifications_json": json.dumps(semantic_android_ui.get("notifications", []), separators=(",", ":")),
             "started_at_ms": started_at,
             "duration_ms": duration_ms,
             "overlay": bool(state.raw.get("overlay", False)) if self.overlay is None else bool(self.overlay),
@@ -2115,7 +2119,8 @@ class AndroidAppHud:
             payload.get("failed"), payload.get("skipped"), payload.get("warnings"),
             payload.get("errors"), payload.get("steps_json"), payload.get("workspaces_json"),
             payload.get("ui_presentation_json"), payload.get("ui_progress_summary_json"),
-            payload.get("ui_diagnostic_summary_json"), payload.get("ui_responsive_json"), payload.get("heartbeat"),
+            payload.get("ui_diagnostic_summary_json"), payload.get("ui_responsive_json"),
+            payload.get("ui_operation_json"), payload.get("ui_actions_json"), payload.get("ui_notifications_json"), payload.get("heartbeat"),
         )
         if signature == self.last_signature:
             return

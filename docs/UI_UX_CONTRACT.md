@@ -118,3 +118,7 @@ Repository/global configuration may define `[ui.confirmations]` and `[ui.notific
 ## UI08 terminal contract
 
 TUI and terminal HUD consume the same `UISnapshot` as other frontends. Existing navigation shortcuts and legacy HUD state remain compatible, while live terminal rendering now derives status labels/icons, progress hierarchy, diagnostics, available actions, confirmation markers, and notification bells from UI Core.
+
+## UI09/UI10 renderer contract
+
+UI09/UI10 complete GTK/Desktop and Android Live HUD migration onto UI Core. Renderers consume semantic actions/navigation, presentation, capabilities/responsive intent, hierarchical progress, structured diagnostics and notification policy. Platform widgets/layout remain native, and legacy machine/bridge fields remain compatibility fallbacks. See `docs/architecture/ui-desktop-android-migration.md`.

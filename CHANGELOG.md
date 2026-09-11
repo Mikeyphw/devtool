@@ -1,5 +1,12 @@
 ## 2026-09-11 - UI05 + UI06 capability negotiation, responsive policy, progress and diagnostics
 
+## UI09 + UI10 — GTK/Desktop and Android UI Core migration
+
+- Added a renderer-facing desktop semantic adapter and migrated Control Center/HUD state, progress, diagnostics, navigation and actions to shared UI Core semantics with legacy fallback.
+- Added native Android `UiSemanticState` parsing for operation, presentation, capabilities, responsive state, progress tree, diagnostics, actions, navigation and notification/confirmation policy.
+- Android notifications now prefer UI Core action IDs and semantic title/status/progress; floating HUD uses semantic progress-tree steps and structured diagnostics.
+- Kept Android bridge protocol v1 and all legacy HUD/Tasker/IPC fields compatible; UI semantics are additive independently-versioned extras.
+
 - Added a versioned frontend capability matrix for machine, desktop, TUI, HUD, and Android with explicit negotiation and canonical fallbacks for unavailable tree/dialog/notification/input/native-icon/multi-pane features.
 - Added renderer-neutral responsive layout policy with single/two/three-pane intent; the TUI terminal profile and GTK navigation now consume the shared policy directly while native renderers retain widget/layout ownership.
 - Added canonical hierarchical progress state (`Operation -> Workflow -> Target -> Phase/Step`), aggregate progress summaries, runner/environment/timing/dependency/test metrics, and compatibility flat progress rows.

@@ -519,6 +519,24 @@ public final class OverlayHudService extends Service {
         metrics.append("\n").append(update.errors).append(" errors · ")
                 .append(update.warnings).append(" warnings");
         if (!update.commit.isEmpty()) metrics.append("\nCommit ").append(update.commit);
+        java.util.List<UiSemanticState.Diagnostic> semanticDiagnostics = update.ui.diagnosticItems(2);
+        if (!semanticDiagnostics.isEmpty()) {
+            TextView issuesHeading = label("Issues", UiTypography.Role.CAPTION, palette.muted);
+            issuesHeading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            issuesHeading.setPadding(0, dp(7), 0, dp(1));
+            card.addView(issuesHeading);
+            for (UiSemanticState.Diagnostic issue : semanticDiagnostics) {
+                StringBuilder issueText = new StringBuilder();
+                if (!issue.summary.isEmpty()) issueText.append(issue.summary);
+                if (!issue.cause.isEmpty()) issueText.append(issueText.length() == 0 ? "" : " · ").append(issue.cause);
+                if (!issue.location.isEmpty()) issueText.append(issueText.length() == 0 ? "" : " · ").append(issue.location);
+                int issueColor = issue.severity.equals("error") ? palette.red
+                        : issue.severity.equals("warning") ? palette.yellow : palette.muted;
+                TextView issueView = label(issueText.toString(), UiTypography.Role.CAPTION, issueColor);
+                issueView.setMaxLines(2);
+                card.addView(issueView);
+            }
+        }
         TextView metricsHeading = label("Metrics", UiTypography.Role.CAPTION, palette.muted);
         metricsHeading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         metricsHeading.setPadding(0, dp(7), 0, dp(1));

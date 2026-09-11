@@ -69,9 +69,12 @@ final class RunStore {
         long previousLastProgressAtMs = record.lastProgressAtMs;
         record.runId = update.runId;
         record.title = update.title();
-        record.status = update.status;
-        record.phase = update.phase;
-        record.detail = update.detail;
+        String effectiveStatus = update.effectiveStatus();
+        String effectivePhase = update.ui.operationPhase(update.phase);
+        String effectiveDetail = update.ui.operationDetail(update.detail);
+        record.status = effectiveStatus;
+        record.phase = effectivePhase;
+        record.detail = effectiveDetail;
         record.repo = update.repo;
         record.projectType = update.projectType;
         record.executionEnvironment = update.executionEnvironment;
@@ -85,37 +88,37 @@ final class RunStore {
         record.unitLabel = update.unitLabel;
         record.warnings = update.warnings;
         record.errors = update.errors;
-        record.stepsJson = update.stepsJson;
+        record.stepsJson = update.stepsJsonForStore();
         record.indeterminate = update.indeterminate;
         record.startedAtMs = update.startedAtMs;
         record.durationMs = update.durationMs;
         record.updatedAtMs = System.currentTimeMillis();
-        if (update.sequence > 0L || !update.status.equals("waiting") || !update.phase.equals("Termux")) {
+        if (update.sequence > 0L || !effectiveStatus.equals("waiting") || !effectivePhase.equals("Termux")) {
             record.lastProgressAtMs = update.updatedAtMs;
         }
-        boolean repositoryEvent = !previousPhase.equals(update.phase)
-                || !previousStatus.equals(update.status)
+        boolean repositoryEvent = !previousPhase.equals(effectivePhase)
+                || !previousStatus.equals(effectiveStatus)
                 || (update.isTerminal() && !terminalStatus(previousStatus));
         linkRepository(context, record, repositoryEvent);
         boolean meaningfulLog = repositoryEvent
                 || previousProgress / 10 != update.displayProgress() / 10;
         if (meaningfulLog) {
-            String message = "bridge seq=" + update.sequence + " phase=" + update.phase
+            String message = "bridge seq=" + update.sequence + " phase=" + effectivePhase
                     + " overall=" + update.displayProgress() + "% local=" + update.current + "/" + update.total;
             appendLine(record, message);
             addEntry(context, record, severityFor(record), "execution", "devtool", "event",
-                    update.detail.isEmpty() ? message : update.detail, message);
+                    effectiveDetail.isEmpty() ? message : effectiveDetail, message);
         }
         if (previousLastProgressAtMs <= 0L && record.lastProgressAtMs > 0L) {
             appendTraceCheckpoint(context, record, RunCommandTrace.FIRST_PROGRESS_EVENT_RECEIVED,
                     "First authenticated bridge progress received",
-                    DebugRecorder.details("sequence", update.sequence, "status", update.status,
-                            "phase", update.phase, "progress", record.progress));
+                    DebugRecorder.details("sequence", update.sequence, "status", effectiveStatus,
+                            "phase", effectivePhase, "progress", record.progress));
         }
-        if (!previousStatus.equals("running") && update.status.equals("running")) {
+        if (!previousStatus.equals("running") && effectiveStatus.equals("running")) {
             appendTraceCheckpoint(context, record, RunCommandTrace.RUN_ACTIVE,
                     "Run entered active execution state",
-                    DebugRecorder.details("sequence", update.sequence, "phase", update.phase,
+                    DebugRecorder.details("sequence", update.sequence, "phase", effectivePhase,
                             "progress", record.progress));
         }
         upsert(context, record);

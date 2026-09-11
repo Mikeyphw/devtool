@@ -100,7 +100,10 @@ final class NotificationController {
         builder.getExtras().putString("devtool.run_id", update.runId);
         builder.getExtras().putString("devtool.project_type", update.projectType);
         builder.getExtras().putString("devtool.execution_environment", update.executionEnvironment);
-        builder.getExtras().putString("devtool.notification_layout", "mock-v1");
+        builder.getExtras().putString("devtool.notification_layout", "semantic-v2");
+        builder.getExtras().putInt("devtool.ui_schema_version", update.ui.schemaVersion);
+        builder.getExtras().putString("devtool.attention", update.ui.attentionLevel());
+        builder.getExtras().putBoolean("devtool.should_notify", update.ui.shouldNotify(true));
 
         manager.notify(notificationId(update.runId), builder.build());
         refreshGroupSummary();
@@ -289,11 +292,17 @@ final class NotificationController {
     }
 
     private List<ActionSpec> actionsFor(HudUpdate update) {
+        List<ActionSpec> semantic = semanticActionsFor(update);
+        if (semantic.size() >= 3) return semantic.subList(0, 3);
         List<ActionSpec> result = new ArrayList<>(3);
+        result.addAll(semantic);
         if (update.validationSession()) {
             ValidationSessionRecord session = ValidationNotificationContext.lookup(update.validationSessionId());
             if (session == null) session = ValidationStore.find(context, update.validationSessionId());
-            if (session != null) return validationActions(session);
+            if (session != null) {
+                result.addAll(validationActions(session));
+                return normalizedActions(result, update);
+            }
         }
         String mode = update.notificationMode();
         if (mode.equals("running") || (mode.equals("warning") && !update.isTerminal())) {
@@ -324,6 +333,49 @@ final class NotificationController {
             result.add(new ActionSpec("Open log", openLogIntent(update.runId), false));
             result.add(new ActionSpec("Copy summary", copySummaryIntent(update, "Summary copied"), false));
             result.add(new ActionSpec("Dismiss", dismissIntent(update.runId), false));
+        }
+        return normalizedActions(result, update);
+    }
+
+    private List<ActionSpec> semanticActionsFor(HudUpdate update) {
+        List<ActionSpec> result = new ArrayList<>(3);
+        for (UiSemanticState.Action action : update.ui.actions) {
+            if (!action.enabled) continue;
+            PendingIntent intent = semanticPendingIntent(action.id, update);
+            if (intent == null) continue;
+            result.add(new ActionSpec(action.notificationLabel, intent, action.destructive));
+            if (result.size() >= 3) break;
+        }
+        return result;
+    }
+
+    private PendingIntent semanticPendingIntent(String actionId, HudUpdate update) {
+        if (actionId.equals("logs.open")) return openLogIntent(update.runId);
+        if (actionId.equals("summary.copy") || actionId.equals("diagnostics.copy"))
+            return copySummaryIntent(update, actionId.equals("diagnostics.copy") ? "Diagnostics copied" : "Summary copied");
+        if (actionId.equals("operation.cancel")) return cancelRunIntent(update.runId);
+        if (actionId.equals("operation.retry") || actionId.equals("operation.rerun") || actionId.equals("validation.retry_failed"))
+            return retryIntent(update.runId);
+        if (actionId.equals("validation.resume") && update.validationSession()) {
+            ValidationSessionRecord session = ValidationNotificationContext.lookup(update.validationSessionId());
+            if (session == null) session = ValidationStore.find(context, update.validationSessionId());
+            if (session != null) return validationActionIntent(session, ActionReceiver.ACTION_VALIDATION_RESUME);
+        }
+        return null;
+    }
+
+    private List<ActionSpec> normalizedActions(List<ActionSpec> values, HudUpdate update) {
+        List<ActionSpec> result = new ArrayList<>(3);
+        for (ActionSpec item : values) {
+            boolean duplicate = false;
+            for (ActionSpec existing : result) if (existing.label.equals(item.label)) duplicate = true;
+            if (!duplicate) result.add(item);
+            if (result.size() >= 3) break;
+        }
+        while (result.size() < 3) {
+            if (result.size() == 0) result.add(new ActionSpec("Open app", openRunIntent(update.runId), false));
+            else if (result.size() == 1) result.add(new ActionSpec("Open log", openLogIntent(update.runId), false));
+            else result.add(new ActionSpec("Dismiss", dismissIntent(update.runId), false));
         }
         return result;
     }

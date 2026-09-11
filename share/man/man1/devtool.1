@@ -1344,3 +1344,6 @@ and
 Zero indicates success or an accepted validation-control request. For the stable validation control API, 2 means invalid request, 3 stale session revision, 4 a blocked validation session, 5 recovery required, and 6 control unavailable in the current state. Other non-zero values indicate command failure, invalid configuration/artifact, unsupported execution environment, interruption, or rollback/recovery that requires the requested operation to be rerun.
 .SH AUTHOR
 OpenAI
+
+.SH UI CORE RENDERERS
+GTK Control Center/HUD and Android Live HUD consume the shared UI Core semantic contract. Renderer-specific widgets remain native; operation state, actions, navigation, progress hierarchy, diagnostics, confirmation and notification semantics are shared. Android carries these semantics as additive bridge-v1 extras.

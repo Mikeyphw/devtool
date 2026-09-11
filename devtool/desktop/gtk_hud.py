@@ -12,6 +12,7 @@ from typing import Any
 
 from ..ipc import default_ipc_socket_path
 from ..ui_core.actions import action_text
+from .ui_semantics import build_desktop_semantic_view, desktop_action
 from ..hud import (
     compact_detail_text,
     canonical_diagnostics,
@@ -53,6 +54,11 @@ def _require_gtk_initialized(Gtk: Any) -> None:
             "GTK4 desktop HUD could not initialize the desktop display. "
             "Check DISPLAY/WAYLAND_DISPLAY and X11/Wayland access."
         )
+
+
+# Stable legacy copy retained for compatibility/source contracts; live button text
+# is resolved from the central UI Core action/copy registry.
+_LEGACY_ACTION_LABELS = ("Copy summary", "Copy diagnostics", "Open log")
 
 
 class Gtk4CompactHud:
@@ -428,18 +434,27 @@ class Gtk4CompactHud:
                 state = snap.state
                 events = snap.events
                 hud_state = parse_hud_state(state)
-                pct = state.get("percent")
+                semantic_ui = snap.ui if isinstance(snap.ui, dict) and snap.ui else {}
+                if not semantic_ui:
+                    raw_ui = state.get("ui") if isinstance(state.get("ui"), dict) else {}
+                    semantic_ui = raw_ui
+                desktop_view = build_desktop_semantic_view(semantic_ui).as_dict()
+                semantic_operation = desktop_view.get("operation", {}) if isinstance(desktop_view.get("operation"), dict) else {}
+                semantic_progress = desktop_view.get("progress_summary", {}) if isinstance(desktop_view.get("progress_summary"), dict) else {}
+                pct = semantic_progress.get("percent")
+                if pct is None:
+                    pct = state.get("percent")
                 if pct is None:
                     pct = hud_state.percent
                 try:
                     fraction = max(0.0, min(1.0, float(pct) / 100.0)) if pct is not None else 0.0
                 except (TypeError, ValueError):
                     fraction = 0.0
-                status_text = str(state.get("status") or hud_state.status or "idle")
+                status_text = str(semantic_operation.get("status") or state.get("status") or hud_state.status or "idle")
                 if status_text.lower() == "running" and fraction <= 0.0:
                     fraction = 0.08
-                display_title = compact_operation_title(hud_state) or str(state.get("display_title") or state.get("title") or "devtool")
-                display_status = compact_detail_text(hud_state) or str(state.get("display_text") or state.get("text") or "waiting for devtool progress")
+                display_title = str(semantic_operation.get("title") or "") or compact_operation_title(hud_state) or str(state.get("display_title") or state.get("title") or "devtool")
+                display_status = str(semantic_operation.get("detail") or "") or compact_detail_text(hud_state) or str(state.get("display_text") or state.get("text") or "waiting for devtool progress")
                 display_context = state_context_label(hud_state)
                 window.set_title(state_window_title(hud_state))
                 title.set_label(display_title)
@@ -457,7 +472,10 @@ class Gtk4CompactHud:
                 _set_status_css(status_pill, status_text)
 
                 errors, warnings = live_issue_counts(events, hud_state)
-                diagnostics = canonical_diagnostics(events, hud_state)
+                diagnostics = desktop_view.get("diagnostics") if isinstance(desktop_view.get("diagnostics"), list) else []
+                if not diagnostics:
+                    diagnostics = canonical_diagnostics(events, hud_state)
+                semantic_tree = desktop_view.get("progress_tree") if isinstance(desktop_view.get("progress_tree"), list) else []
                 steps = operation_steps(hud_state, events)
                 summary = _hud_primary_summary(hud_state, state, events, diagnostics, steps, errors, warnings)
                 summary_title.set_label(summary[0])
@@ -472,7 +490,11 @@ class Gtk4CompactHud:
                 _append_metric_chip(Gtk, metrics, "Counts", state_metric_text(hud_state, events), "canonical")
 
                 _clear_box(Gtk, stepper)
-                if steps:
+                if semantic_tree:
+                    for step in semantic_tree[:12]:
+                        if isinstance(step, dict):
+                            _append_stepper_row(Gtk, stepper, step)
+                elif steps:
                     for step in steps[:12]:
                         _append_stepper_row(Gtk, stepper, step.to_dict())
                 else:
@@ -497,7 +519,20 @@ class Gtk4CompactHud:
                             window.set_default_size(*auto_size)
 
                 running = str(status_text or "").lower() == "running"
-                cancel_button.set_sensitive(running and bool(state.get("run_id")))
+                cancel_action = desktop_action(desktop_view, "operation.cancel")
+                log_action = desktop_action(desktop_view, "logs.open")
+                copy_action = desktop_action(desktop_view, "summary.copy")
+                diagnostics_action = desktop_action(desktop_view, "diagnostics.copy")
+                if cancel_action:
+                    cancel_button.set_label(str(cancel_action.get("short_label") or cancel_action.get("label") or action_text("operation.cancel", "short")))
+                if log_action:
+                    log_button.set_label(str(log_action.get("short_label") or log_action.get("label") or action_text("logs.open")))
+                if copy_action:
+                    copy_button.set_label(str(copy_action.get("short_label") or copy_action.get("label") or action_text("summary.copy")))
+                if diagnostics_action:
+                    diagnostics_button.set_label(str(diagnostics_action.get("short_label") or diagnostics_action.get("label") or action_text("diagnostics.copy")))
+                cancel_enabled = bool(cancel_action.get("enabled", True)) if cancel_action else running
+                cancel_button.set_sensitive(running and cancel_enabled and bool(state.get("run_id")))
                 force_cancel_button.set_sensitive(running and _can_force_cancel_state(state))
 
                 detail_lines = ["Run", display_context, state_metric_text(hud_state, events)]
@@ -537,6 +572,8 @@ class Gtk4CompactHud:
                     "diagnostics": diagnostics,
                     "steps": [step.to_dict() for step in steps],
                     "copy_text": completion_copy_text(hud_state),
+                    "ui": semantic_ui,
+                    "desktop_ui": desktop_view,
                 })
                 return last_snapshot
 
