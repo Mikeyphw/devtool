@@ -50,6 +50,16 @@ Tasker should prefer the structured `tasker.fields` / stable `DEVTOOL_*` values.
 
 The Android bridge intentionally remains protocol v1 because UI Core is carried as additive semantic extras. New companions prefer those semantic sections; older companions may keep using task/phase/status/progress extras.
 
+## Artifact, validation-session, and recovery formats
+
+Schema-v2 artifacts should use `repository.name`, `apply.commit`, and the strict `inventory` object. Devtool still accepts the older `repo`/`repo_name`/`expected_repo` repository names, top-level `commit`/`git`/`commit_message` commit intent, and the legacy `files` plus `.devtool-delete` inventory form so existing overlay archives remain replayable. New archives should not emit those older fields.
+
+Overlay bundles should declare a `devtool.overlay_bundle` manifest with object `apply_order` entries. Legacy wrapper archives containing only nested overlays and legacy string bundle entries remain accepted with archive order preserved. Repository-local artifact history/index formats remain readable beside the runtime operation-history schema v3.
+
+Validation sessions written with schemas v1 through v5 are upgraded in memory to schema v6 while preserving attempts and evidence. Transaction recovery also continues to read the legacy singleton `active.json` marker beside the current per-transaction `active/<transaction-id>.json` layout. These are automatic persisted-state migrations; no user rewrite command is required.
+
+`devtool logs --print` remains accepted as a compatibility form for `devtool logs latest --print`.
+
 ## Workflow syntax
 
 Ordered string workflow lists remain supported and are still the preferred concise form for a simple sequential workflow. Explicit DAG step tables are required only when branches, joins, or named dependencies are needed.

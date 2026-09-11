@@ -49,3 +49,7 @@ UI11/UI12 complete the shared UI contract at the automation boundary. Machine JS
 ## Final compatibility/documentation pass
 
 FS01/FS02 make compatibility itself inspectable. `devtool compatibility --json` is the release-facing registry of retained legacy boundaries; `config migrate` canonicalizes every safe repository/global config shim found by the audit while refusing ambiguous rewrites. Canonical examples and migration documentation are consolidated under `docs/EXAMPLES.md`, `docs/MIGRATION_1.1.md`, and `docs/BACKWARD_COMPATIBILITY.md`. FS03 uses these contracts as final-seal inputs.
+
+## Repository-wide final seal
+
+FS03 turns the completed roadmap into a reproducible release invariant. `devtool final-seal --strict` audits canonical repository configuration, compatibility/schema registries, roadmap report/test coverage, canonical examples/documentation, completion synchronization, target roots, backup hygiene, and release discoverability. The side-effect-free seal complements `devtool validate --profile final-seal` and artifact validation, which execute the runtime/build/test evidence. See [`../FINAL_RELEASE_SEAL.md`](../FINAL_RELEASE_SEAL.md).

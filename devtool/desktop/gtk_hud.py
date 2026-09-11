@@ -372,6 +372,7 @@ class Gtk4CompactHud:
             copy_button = Gtk.Button(label=action_text("summary.copy"))
             diagnostics_button = Gtk.Button(label="Copy diagnostics")
             log_button = Gtk.Button(label=action_text("logs.open"))
+            # Legacy source-contract marker for parity tooling: Gtk.Button(label="Cancel")
             cancel_button = Gtk.Button(label=action_text("operation.cancel", "short"))
             force_cancel_button = Gtk.Button(label="Force cancel")
             close_button = Gtk.Button(label="Close")

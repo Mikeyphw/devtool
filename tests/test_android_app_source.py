@@ -397,8 +397,9 @@ def test_android_builder_exposes_project_environment_and_selective_tests() -> No
     config = _java_source("DevtoolRunConfig.java")
     settings = _java_source("AppSettings.java")
     main = _java_source("MainActivity.java")
-    for token in ("--project-type", "--execution-environment", "--test-profile", "--select", "--tag", "--exclude-tag", "--instrumented", "--list-tests"):
+    for token in ("--runner", "--execution-environment", "--test-profile", "--select", "--tag", "--exclude-tag", "--instrumented", "--list-tests"):
         assert token in builder
+    assert "--project-type" not in builder
     for field in ("projectType", "executionEnvironment", "testProfile", "testSelectors", "instrumented"):
         assert field in config
         assert field in settings

@@ -6,7 +6,7 @@ FS01 performs the release-readiness compatibility audit after MP01–MP10 and UI
 
 ## Compatibility contract
 
-`devtool.compatibility` defines a versioned registry for every retained compatibility boundary audited in this pass: project/target runner aliases, workspace default target, UI confirmation booleans, `--project-type`, `DEVTOOL_PROJECT_KIND`, GTK HUD naming, the `DotnetTarget` Python alias, machine-v1 fields, IPC cancel, Tasker flat fields, Android bridge v1, and ordered workflow lists.
+`devtool.compatibility` defines a versioned registry for every retained compatibility boundary audited in this pass: project/target runner aliases, workspace default target, UI confirmation booleans, CLI/environment aliases, GTK HUD naming, the `DotnetTarget` Python alias, machine/IPC/Tasker/Android fallbacks, legacy artifact manifests/bundles/history, validation-session schemas, transaction recovery markers, and ordered workflow lists.
 
 `devtool compatibility|compat` exposes that registry in text/JSON, supports category and active-only filtering, and provides `--strict` as a release gate that fails only when the selected config still requires migration.
 
@@ -19,7 +19,7 @@ Config migration schema v2 operates on raw TOML before normal model resolution. 
 - `[project].default_target` -> `[workspace].default_target`;
 - legacy `[ui].confirm_destructive` and `[ui].confirm_cancel` -> `[ui.confirmations]`.
 
-`config migrate --global` covers user UI preferences. Writes create `.bak` backups. Conflicting legacy/canonical workspace defaults are reported as unsafe and `--write` refuses to guess.
+`config migrate --global` covers user UI preferences. Writes create `.bak` backups. Conflicting legacy/canonical workspace defaults are reported as unsafe and `--write` refuses to guess. Devtool's own release `.devtool.toml` is canonicalized too, so `devtool compatibility --strict` and `devtool config migrate --check` pass on the repository being released.
 
 ## Canonical command generation
 
@@ -43,7 +43,7 @@ Python, runner, Android, polyglot, validation, UI preference, configuration, arc
 
 ## Validation
 
-The final focused cumulative selector inventory is the prior UI11/UI12 55-suite contract plus `tests/test_fs01_fs02_compatibility_docs.py`, for 56 explicit pytest selectors with defaults disabled.
+The final focused cumulative selector inventory is the prior UI11/UI12 55-suite contract plus `tests/test_fs01_fs02_compatibility_docs.py`, for 56 explicit pytest selectors with defaults disabled. The compatibility registry contains 24 intentional entries after the persisted-format audit, and Devtool's release `.devtool.toml` reports zero active migrations.
 
 To avoid the local combined-command ceiling, it was run as two non-overlapping deterministic groups:
 
@@ -54,5 +54,7 @@ To avoid the local combined-command ceiling, it was run as two non-overlapping d
 Additional focused runs covered canonical internal command generation, raw-TOML unsafe migration, strict compatibility gating, chroot/SSH forwarding, desktop command generation, validation wizard behavior, release documentation, completion/manpage contracts, and config migration behavior.
 
 Static checks: `git diff --check` passes, changed Python modules compile, and generated/static zsh completion are byte-identical.
+
+Packaging proof uses the pre-FS Devtool against a detached post-UI11/UI12 base: strict artifact validation passes, atomic apply completes with zero diagnostics, all 38 payload files match the implementation tree byte-for-byte, and the applied tree passes the dedicated FS01/FS02 suite (18 tests + 10 subtests) plus `compatibility --strict`/`config migrate --check` with zero active migrations.
 
 The overlay manifest embeds the full 56-selector TS00 gate and declares both the `devtool` and `android_hud` workspaces because this pass also canonicalizes Android companion command generation/import.

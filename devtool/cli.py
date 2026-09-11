@@ -98,6 +98,7 @@ from .console_utils import create_console, resolve_cli_path
 from .completion import ZSH_COMPLETION
 from .completion_state import build_completion_state, completion_values
 from .compatibility import compatibility_report, render_compatibility_text
+from .final_seal import final_seal_report, render_final_seal_text
 from .config_migration import analyze_config_migration, migrate_config_text, migration_report
 from .config import (
     detect_project_kind,
@@ -863,9 +864,13 @@ def build_parser() -> argparse.ArgumentParser:
     compatibility_cmd = subparsers.add_parser("compatibility", aliases=["compat"], help="Audit retained legacy interfaces and migration paths")
     compatibility_cmd.add_argument("--json", action="store_true", help="Emit the versioned compatibility report as JSON")
     compatibility_cmd.add_argument("--active-only", action="store_true", help="Show only compatibility entries active in the selected config")
-    compatibility_cmd.add_argument("--category", choices=["config", "cli", "environment", "python-api", "machine", "ipc", "tasker", "android", "workflow"], default="", help="Filter compatibility entries by category")
+    compatibility_cmd.add_argument("--category", choices=["config", "cli", "environment", "python-api", "machine", "ipc", "tasker", "android", "artifact", "validation", "state", "workflow"], default="", help="Filter compatibility entries by category")
     compatibility_cmd.add_argument("--strict", action="store_true", help="Exit non-zero when the selected config still needs migration")
     compatibility_cmd.add_argument("--global", dest="global_config", action="store_true", help="Audit the user global config instead of the repository config")
+
+    final_seal_cmd = subparsers.add_parser("final-seal", aliases=["seal"], help="Run the FS03 repository-wide final release seal audit")
+    final_seal_cmd.add_argument("--json", action="store_true", help="Emit the versioned FS03 seal report as JSON")
+    final_seal_cmd.add_argument("--strict", action="store_true", help="Exit non-zero when any final-seal check fails")
 
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
@@ -1140,7 +1145,7 @@ def _add_resumable_validation_flags(cmd: argparse.ArgumentParser) -> None:
     daemon.add_argument("--stop-gradle-after-phase", action="store_true", help="Stop Gradle daemons after each completed phase")
     daemon.add_argument("--keep-gradle-daemon", action="store_true", help="Keep Gradle daemons available between phase invocations")
     cmd.add_argument("--resource-profile", dest="validation_resource_profile", choices=["automatic", "android-low-power", "standard"], default="automatic", help="Validation resource profile")
-    cmd.add_argument("--profile", dest="validation_workflow_profile", default="default", help="Named validation workflow profile (minimal, default, android-full, release, termux, or a repo-defined profile)")
+    cmd.add_argument("--profile", dest="validation_workflow_profile", default="default", help="Named validation workflow profile (minimal, default, android-full, release, termux, architecture-final, final-seal, or a repo-defined profile)")
     cmd.add_argument("--max-infrastructure-retries", type=int, default=1, metavar="COUNT", help="Automatically retry environment/tooling interruptions this many times per phase")
     cmd.add_argument("--max-resource-retries", type=int, default=1, metavar="COUNT", help="Automatically retry corroborated resource interruptions this many times per phase, using the recommended safe profile when available")
     cmd.add_argument("--no-auto-retry", action="store_true", help="Disable automatic infrastructure and resource retries for this session")
@@ -2321,7 +2326,7 @@ def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | No
     target = str(getattr(args, "target", "") or getattr(args, "solution", "") or getattr(args, "project", "") or "")
     if config is not None and (bool(getattr(args, "all_targets", False)) or bool(getattr(args, "group", [])) or bool(getattr(args, "affected", False))):
         try:
-            if bool(getattr(args, "affected", False)):
+            if getattr(args, "affected", False) is True:
                 candidate_targets = resolve_workspace_targets(
                     config.workspace,
                     config.targets,
@@ -7400,8 +7405,17 @@ def _ui_contract(*, surface: str = "machine", as_json: bool = False, width: int 
 
 
 def _candidate_targets_for_analysis(config: ProjectConfig, args: argparse.Namespace) -> tuple[str, ...]:
-    groups = [str(item).strip() for item in getattr(args, "group", []) if str(item).strip()]
-    all_targets = bool(getattr(args, "all_targets", False))
+    raw_groups = getattr(args, "group", [])
+    if isinstance(raw_groups, str):
+        group_values = [raw_groups]
+    elif isinstance(raw_groups, (list, tuple, set)):
+        group_values = list(raw_groups)
+    else:
+        # Programmatic callers and compatibility tests often pass a loose Mock/Namespace.
+        # Unknown attributes must behave like argparse defaults rather than truthy iterables.
+        group_values = []
+    groups = [str(item).strip() for item in group_values if str(item).strip()]
+    all_targets = getattr(args, "all_targets", False) is True
     if groups or all_targets:
         try:
             selected = resolve_workspace_targets(config.workspace, config.targets, groups=groups, all_targets=all_targets)
@@ -7461,7 +7475,7 @@ def _affected(config: ProjectConfig, args: argparse.Namespace) -> int:
 
 def _toolchain_report_for_args(config: ProjectConfig, args: argparse.Namespace):
     targets = _candidate_targets_for_analysis(config, args)
-    if bool(getattr(args, "affected", False)):
+    if getattr(args, "affected", False) is True:
         try:
             selection = analyze_affected_targets(
                 config,
@@ -10314,6 +10328,17 @@ def _main_after_parse(
         else:
             for value in completion_values(config, kind):
                 print(value)
+        return 0
+
+    if args.command in {"final-seal", "seal"}:
+        repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
+        payload = final_seal_report(repo_root)
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(render_final_seal_text(payload))
+        if bool(getattr(args, "strict", False)) and payload.get("status") != "pass":
+            return 1
         return 0
 
     if args.command in {"compatibility", "compat"}:

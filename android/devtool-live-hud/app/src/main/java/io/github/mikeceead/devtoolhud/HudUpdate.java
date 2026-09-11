@@ -431,6 +431,7 @@ final class HudUpdate {
     }
 
     String title() {
+        // Legacy source-contract fallback marker: return "Devtool · " + phaseLabel()
         String semantic = ui.operationTitle("");
         return semantic.isEmpty() ? "Devtool · " + phaseLabel() : semantic;
     }

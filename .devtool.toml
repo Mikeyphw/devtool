@@ -1,6 +1,9 @@
 [project]
-kind = "python"
+runner = "python"
+platform = "server"
 run_module = "devtool"
+
+[workspace]
 default_target = "devtool"
 [execution]
 environment = "auto"
@@ -14,12 +17,14 @@ install_project = true
 isolation = true
 
 [targets.devtool]
-type = "python"
+runner = "python"
+platform = "server"
 root = "."
 execution_environment = "native-termux"
 
 [targets.android_hud]
-type = "android"
+runner = "android"
+platform = "android"
 root = "android/devtool-live-hud"
 execution_environment = "chroot"
 chroot_name = "androidos"

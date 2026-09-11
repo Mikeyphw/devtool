@@ -25,9 +25,14 @@ class Fs01CompatibilityAuditTests(unittest.TestCase):
         required = {
             "config.project.kind", "config.target.kind", "config.target.type",
             "config.project.default_target", "config.ui.confirm_destructive",
-            "config.ui.confirm_cancel", "cli.project_type", "hud.gtk_window",
+            "config.ui.confirm_cancel", "cli.project_type", "cli.logs_print", "hud.gtk_window",
             "python.DotnetTarget", "machine.flat_v1", "ipc.cancel",
-            "tasker.flat_fields", "android.bridge.v1", "workflow.ordered_lists",
+            "tasker.flat_fields", "android.bridge.v1",
+            "artifact.manifest.repository_aliases", "artifact.manifest.commit_aliases",
+            "artifact.manifest.files", "artifact.bundle.implicit",
+            "artifact.bundle.string_entries", "artifact.history.v1_v2",
+            "validation.session.v1_v5", "state.transaction.active_singleton",
+            "workflow.ordered_lists",
         }
         self.assertEqual(required - ids, set())
         self.assertEqual(len(ids), len(COMPATIBILITY_ENTRIES))
@@ -161,11 +166,38 @@ class Fs01CompatibilityAuditTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(main(["--repo", str(root), "compatibility", "--strict"]), 1)
 
+    def test_persisted_format_compatibility_entries_match_runtime_readers(self) -> None:
+        artifacts = (ROOT / "devtool" / "artifacts.py").read_text(encoding="utf-8")
+        sessions = (ROOT / "devtool" / "validation_sessions.py").read_text(encoding="utf-8")
+        transactions = (ROOT / "devtool" / "transactions.py").read_text(encoding="utf-8")
+        self.assertIn('manifest.get("repo") or manifest.get("repo_name") or manifest.get("expected_repo")', artifacts)
+        self.assertIn('manifest.get("commit_message")', artifacts)
+        self.assertIn('Backward-compatible string entries are accepted', artifacts)
+        self.assertIn('Implicit legacy wrapper bundle detected by devtool.', artifacts)
+        self.assertIn('Import legacy/index-only entries for backward compatibility.', artifacts)
+        self.assertIn('version not in {1, 2, 3, 4, 5}', sessions)
+        self.assertIn('Legacy single-transaction marker retained for read/recovery compatibility.', transactions)
+
     def test_generated_global_template_does_not_emit_legacy_confirmation_booleans(self) -> None:
         text = minimal_global_config_template()
         self.assertNotIn("confirm_destructive", text)
         self.assertNotIn("confirm_cancel", text)
         self.assertIn("[ui.confirmations]", text)
+
+    def test_release_repository_config_is_already_canonical(self) -> None:
+        text = (ROOT / ".devtool.toml").read_text(encoding="utf-8")
+        parsed = tomllib.loads(text)
+        self.assertEqual(parsed["project"]["runner"], "python")
+        self.assertEqual(parsed["project"]["platform"], "server")
+        self.assertNotIn("kind", parsed["project"])
+        self.assertNotIn("default_target", parsed["project"])
+        self.assertEqual(parsed["workspace"]["default_target"], "devtool")
+        for target in parsed["targets"].values():
+            self.assertIn("runner", target)
+            self.assertIn("platform", target)
+            self.assertNotIn("kind", target)
+            self.assertNotIn("type", target)
+        self.assertEqual(analyze_config_migration_text(text), [])
 
 
 class Fs02DocumentationExamplesTests(unittest.TestCase):
@@ -196,6 +228,20 @@ class Fs02DocumentationExamplesTests(unittest.TestCase):
                 with self.subTest(entry=entry.id):
                     self.assertIn(entry.legacy, combined)
                     self.assertIn(entry.canonical, combined)
+
+    def test_release_docs_link_canonical_examples_and_compatibility_contract(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("docs/EXAMPLES.md", readme)
+        self.assertIn("docs/BACKWARD_COMPATIBILITY.md", readme)
+        self.assertIn("FS01 + FS02 backward compatibility", changelog)
+        for name in (
+            "python-service.devtool.toml",
+            "polyglot-workspace.devtool.toml",
+            "ui-profile.devtool.toml",
+            "release-validation.devtool.toml",
+        ):
+            self.assertIn(name, (ROOT / "docs" / "EXAMPLES.md").read_text(encoding="utf-8"))
 
     def test_python_and_runner_docs_teach_canonical_identity(self) -> None:
         python_doc = (ROOT / "docs" / "PYTHON_PROJECTS.md").read_text(encoding="utf-8")

@@ -446,6 +446,11 @@ def _gradle_module(path: Path, root: Path) -> str:
 
 @dataclass(frozen=True, slots=True)
 class TestDiscoveryResult:
+    # Public API model, not a pytest test class. The explicit marker prevents
+    # pytest from attempting to collect this imported dataclass during the
+    # repository-wide final-seal inventory.
+    __test__ = False
+
     tests: tuple[TestDescriptor, ...]
     source: str
     error: str = ""

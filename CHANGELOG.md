@@ -1,10 +1,19 @@
-## 2026-09-11 - FS01 + FS02 compatibility audit and documentation consolidation
+## 2026-09-11 - FS03 repository-wide final release seal
+
+- FS03: mark the public `TestDiscoveryResult` model as non-collectable so the repository-wide pytest inventory is warning-free.
+- Added `devtool final-seal` / `seal` with versioned JSON output and `--strict` release gating.
+- Added the release-strict `final-seal` validation workflow profile.
+- Final seal checks canonical config, compatibility/schema contracts, MP/UI/FS roadmap evidence, examples/docs, completion synchronization, target roots, tracked-backup hygiene, and release discoverability.
+- Added dedicated FS03 contracts, final release documentation, completion/manpage coverage, and the repository-wide final readiness report.
+
+## 2026-09-11 - FS01 + FS02 backward compatibility audit and documentation consolidation
 
 - Added a versioned compatibility registry and `compatibility|compat` audit command covering retained config, CLI, environment, Python API, machine, IPC, Tasker, Android bridge, HUD, and workflow compatibility boundaries.
 - Extended safe config migration to `[project].default_target` and legacy UI confirmation booleans, added global UI migration, and made migration operate on raw TOML so conflicts can be reported before normal config loading.
 - Added canonical `--runner`/`DEVTOOL_PROJECT_RUNNER` surfaces while retaining `--project-type`/`DEVTOOL_PROJECT_KIND` compatibility; detection now publishes canonical runner fields alongside legacy kind aliases.
 - Switched Devtool-generated desktop, validation-wizard, SSH/chroot, and Android companion commands to canonical `--runner` while preserving `--project-type` parsing/import compatibility.
 - Consolidated canonical configuration examples, rewrote the 1.1 migration guide, added the backward-compatibility contract and examples guide, and updated Python/runner/configuration/manpage documentation to teach modern runner/platform/workspace/UI syntax.
+- Preserved legacy artifact manifest/bundle/history readers, validation-session schema migration, transaction recovery markers, and `logs --print` as explicit compatibility inputs while keeping canonical producers modern.
 
 ## 2026-09-11 - UI11 + UI12 machine/IPC/Tasker schema and completion/config UX
 

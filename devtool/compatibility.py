@@ -6,6 +6,7 @@ from typing import Any, Iterable
 
 from .config_migration import migration_report
 from .ui_core.machine import IPC_PROTOCOL_VERSION, MACHINE_SCHEMA_VERSION, TASKER_SCHEMA_VERSION
+from .validation_sessions import SESSION_SCHEMA_VERSION
 
 COMPATIBILITY_SCHEMA_VERSION = 1
 
@@ -58,6 +59,10 @@ COMPATIBILITY_ENTRIES: tuple[CompatibilityEntry, ...] = (
         "supported-alias", "replace --project-type with --runner in scripts when convenient",
     ),
     CompatibilityEntry(
+        "cli.logs_print", "cli", "devtool logs --print", "devtool logs latest --print",
+        "supported-alias", "replace the top-level --print form with the logs latest subcommand",
+    ),
+    CompatibilityEntry(
         "env.project_kind", "environment", "DEVTOOL_PROJECT_KIND", "DEVTOOL_PROJECT_RUNNER",
         "supported-alias", "replace DEVTOOL_PROJECT_KIND with DEVTOOL_PROJECT_RUNNER in new automation",
         "Both map through the project environment override layer; conflicting values are rejected.",
@@ -86,6 +91,40 @@ COMPATIBILITY_ENTRIES: tuple[CompatibilityEntry, ...] = (
     CompatibilityEntry(
         "android.bridge.v1", "android", "Android bridge protocol v1 legacy task/phase/status/progress extras", "additive UI Core semantic extras",
         "supported-fallback", "new companions prefer UI Core extras; protocol v1 remains interoperable",
+    ),
+    CompatibilityEntry(
+        "artifact.manifest.repository_aliases", "artifact", "repo/repo_name/expected_repo", "repository.name",
+        "supported-fallback", "new schema-v2 artifacts should declare repository.name",
+        "Older overlay manifests remain inspectable/applicable when their legacy repository identity is unambiguous.",
+    ),
+    CompatibilityEntry(
+        "artifact.manifest.commit_aliases", "artifact", "top-level commit/git/commit_message", "apply.commit",
+        "supported-fallback", "new schema-v2 artifacts should declare apply.commit",
+        "Legacy commit intent remains honored so replaying older overlay series preserves history.",
+    ),
+    CompatibilityEntry(
+        "artifact.manifest.files", "artifact", "legacy files + .devtool-delete inventory", "schema-v2 inventory",
+        "supported-fallback", "regenerate new artifacts with the schema-v2 inventory",
+    ),
+    CompatibilityEntry(
+        "artifact.bundle.implicit", "artifact", "wrapper archives containing only ordered nested overlays", "devtool.overlay_bundle manifest + apply_order",
+        "supported-fallback", "regenerate bundles with an explicit bundle manifest",
+    ),
+    CompatibilityEntry(
+        "artifact.bundle.string_entries", "artifact", "string apply_order/overlays entries", "object apply_order entries",
+        "supported-fallback", "use object entries with path/id/target metadata in new bundles",
+    ),
+    CompatibilityEntry(
+        "artifact.history.v1_v2", "artifact", "repository-local artifact history/index records", "runtime operation history schema v3",
+        "supported-fallback", "no manual migration required; older history remains readable",
+    ),
+    CompatibilityEntry(
+        "validation.session.v1_v5", "validation", "validation session schemas v1-v5", f"validation session schema v{SESSION_SCHEMA_VERSION}",
+        "automatic-migration", "no manual migration required; sessions upgrade in memory while preserving evidence",
+    ),
+    CompatibilityEntry(
+        "state.transaction.active_singleton", "state", "legacy transaction active.json singleton marker", "per-transaction active/<transaction-id>.json markers",
+        "supported-fallback", "no manual migration required; recovery reads both layouts",
     ),
     CompatibilityEntry(
         "workflow.ordered_lists", "workflow", "ordered string workflow lists", "explicit DAG step tables when branching/joining is needed",

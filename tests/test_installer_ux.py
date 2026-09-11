@@ -84,10 +84,14 @@ def test_android_and_module_install_are_staged_below_tmpdir() -> None:
 
 def test_repo_config_declares_chroot_android_hud_target() -> None:
     data = tomllib.loads((ROOT / ".devtool.toml").read_text(encoding="utf-8"))
-    assert data["project"]["kind"] == "python"
+    assert data["project"]["runner"] == "python"
+    assert data["project"]["platform"] == "server"
+    assert "kind" not in data["project"]
     assert data["execution"]["chroot_name"] == "androidos"
     target = data["targets"]["android_hud"]
-    assert target["type"] == "android"
+    assert target["runner"] == "android"
+    assert target["platform"] == "android"
+    assert "type" not in target
     assert target["root"] == "android/devtool-live-hud"
     assert target["execution_environment"] == "chroot"
     assert target["chroot_name"] == "androidos"

@@ -34,7 +34,7 @@ def test_notification_uses_custom_collapsed_and_expanded_mock_layouts() -> None:
     assert ".setCustomContentView(compact)" in controller
     assert ".setCustomBigContentView(expanded)" in controller
     assert ".setCustomHeadsUpContentView(compact)" in controller
-    assert 'putString("devtool.notification_layout", "mock-v1")' in controller
+    assert 'putString("devtool.notification_layout", "semantic-v2")' in controller
 
 
 def test_expanded_layout_contains_mock_hierarchy() -> None:

@@ -29,7 +29,7 @@ class ResponsiveLayout:
 
 
 _BREAKPOINTS: dict[str, tuple[int, int]] = {
-    "tui": (60, 110),
+    "tui": (61, 97),
     "desktop": (980, 1400),
     "android": (600, 840),
     "hud": (520, 900),

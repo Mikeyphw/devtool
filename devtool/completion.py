@@ -280,6 +280,8 @@ _devtool_commands() {
     'completion-state:emit config-aware completion values for shells and editors'
     'compatibility:audit retained legacy interfaces and migration paths'
     'compat:alias for compatibility'
+    'final-seal:run the FS03 repository-wide final release audit'
+    'seal:alias for final-seal'
     'hud:run a live HUD renderer'
     'android-hud-bridge:bridge Termux or chroot progress to Android'
     'termux-hud-bridge:alias for android-hud-bridge'
@@ -398,7 +400,7 @@ _devtool_validation_args() {
     '--stop-below-disk-mb[pause when repository storage falls below this threshold]:mebibytes:' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phase invocations]' \
-    '--profile[validation workflow profile]:profile:(minimal default android-full release termux)' \
+    '--profile[validation workflow profile]:profile:(minimal default android-full release termux architecture-final final-seal)' \
     '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
     '--max-workers[override validation worker count for this invocation]:count:' \
     '--cpu-limit[override validation CPU limit for this invocation]:count:' \
@@ -495,7 +497,7 @@ _devtool_apply_args() {
     '--stop-below-disk-mb[pause when repository storage falls below this threshold]:mebibytes:' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--stop-gradle-after-phase[stop Gradle daemons after each phase]' \
     '(--stop-gradle-after-phase --keep-gradle-daemon)--keep-gradle-daemon[keep Gradle daemons between phases]' \
-    '--profile[validation workflow profile]:profile:(minimal default android-full release termux)' \
+    '--profile[validation workflow profile]:profile:(minimal default android-full release termux architecture-final final-seal)' \
     '--resource-profile[validation resource profile]:profile:(automatic android-low-power standard)' \
     '--max-workers[override validation worker count for this invocation]:count:' \
     '--cpu-limit[override validation CPU limit for this invocation]:count:' \
@@ -976,7 +978,10 @@ _devtool() {
           _arguments '--kind[completion value category]:kind:(targets groups ui-profiles test-profiles variants jobs workflows pytest-tests all)' '--format[output format]:format:(lines json)'
           ;;
         compatibility|compat)
-          _arguments '--json[emit versioned compatibility report]' '--active-only[show only compatibility entries active in selected config]' '--category[filter compatibility category]:category:(config cli environment python-api machine ipc tasker android workflow)' '--strict[fail when selected config still needs migration]' '--global[audit user global config]'
+          _arguments '--json[emit versioned compatibility report]' '--active-only[show only compatibility entries active in selected config]' '--category[filter compatibility category]:category:(config cli environment python-api machine ipc tasker android artifact validation state workflow)' '--strict[fail when selected config still needs migration]' '--global[audit user global config]'
+          ;;
+        final-seal|seal)
+          _arguments '--json[emit versioned FS03 final seal report]' '--strict[fail when any final-seal check fails]'
           ;;
         config)
           if (( ${#line} < 2 )); then

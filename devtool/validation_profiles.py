@@ -58,6 +58,19 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
         "android": {"instrumentation": "when-device-present"},
         "artifacts": {"external_verification": "optional"},
     },
+    "final-seal": {
+        "validation": {
+            "workflow_profile": "final-seal",
+            "android_safe": True,
+            "split_gradle": True,
+            "parallel": True,
+            "architecture_contracts": True,
+            "final_seal_contracts": True,
+        },
+        "gradle": {"parallel": True, "build_cache": True},
+        "android": {"instrumentation": "when-device-present"},
+        "artifacts": {"required": True, "external_verification": "required"},
+    },
 }
 
 

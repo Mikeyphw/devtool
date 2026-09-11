@@ -2,6 +2,17 @@
 
 ## Automated blockers
 
+## FS03 repository-wide final seal blockers
+
+- [ ] `devtool final-seal --strict` passes.
+- [ ] `devtool compatibility --strict` passes with no active repository migration.
+- [ ] `devtool config migrate --check` reports canonical repository configuration.
+- [ ] The complete Python regression inventory passes (all top-level and nested `tests/**/test_*.py`).
+- [ ] The Android HUD target runs its configured unit-test/lint/package gate in the release environment.
+- [ ] `git diff --check`, changed-Python compilation, CLI golden help, completion synchronization, manpage contracts, and canonical TOML examples pass.
+- [ ] The FS03 overlay passes strict source hashes, atomic apply/rollback semantics, full validation expectations, and post-apply final-seal checks.
+- [ ] `FS03_FINAL_RELEASE_SEAL_REPORT.md` records any latent regressions found by the complete suite and their fixes.
+
 ## FS01/FS02 compatibility and documentation blockers
 
 - [ ] `devtool compatibility --strict` passes for the release repository.
