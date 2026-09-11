@@ -70,3 +70,13 @@ UI08 migrates TUI and terminal HUD live rendering onto the semantic snapshot. Th
 ## Desktop/Android renderer migration
 
 UI09/UI10 complete GTK/Desktop and Android Live HUD migration onto UI Core. Renderers consume semantic actions/navigation, presentation, capabilities/responsive intent, hierarchical progress, structured diagnostics and notification policy. Platform widgets/layout remain native, and legacy machine/bridge fields remain compatibility fallbacks. See `docs/architecture/ui-desktop-android-migration.md`.
+
+## UI11 external semantic contract
+
+Live state keeps the historical outer state schema for compatibility and adds a canonical `machine` object with `schema_version = 2`. Machine v2 contains `workspace`, `selection`, `operation`, `workflow`, `test_selection`, `progress`, `diagnostics`, `actions`, `navigation`, `notifications`, `presentation`, `capabilities`, and `responsive`. IPC advertises protocol version 2 and machine schema version 2 in snapshots/acks while retaining legacy messages. Semantic `action` requests use stable UI Core action IDs; `operation.cancel` interoperates with the older cancel path.
+
+Tasker state includes a structured `tasker = {schema_version, fields}` object and a flat `tasker_fields` compatibility alias. Stable variables include `DEVTOOL_RUN_ID`, `DEVTOOL_OPERATION`, `DEVTOOL_STATUS`, `DEVTOOL_TARGET`, `DEVTOOL_PHASE`, `DEVTOOL_WORKFLOW`, `DEVTOOL_WORKFLOW_NODE`, `DEVTOOL_PROGRESS`, `DEVTOOL_WARNINGS`, `DEVTOOL_ERRORS`, and `DEVTOOL_ACTIONS`. Consumers should prefer these fields over parsing human notification text.
+
+## UI12 completion/config integration
+
+`devtool completion-state --kind ...` is the supported fast machine source for dynamic shell/editor completion. It resolves the repository with Devtool's real config loader rather than reimplementing TOML semantics in the shell. Zsh uses it first and falls back to simple file parsing if Devtool is unavailable during bootstrap. `pytest-tests` intentionally uses the source test catalog so tab completion stays side-effect free.

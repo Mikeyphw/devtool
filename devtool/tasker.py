@@ -25,6 +25,7 @@ from .ipc import IpcPublisher, ensure_ipc_server
 from .console_utils import resolve_cli_path
 from .models import OperationResult
 from .ui_core.viewmodels import runtime_state_to_ui_snapshot
+from .ui_core.machine import TASKER_SCHEMA_VERSION, machine_state_from_runtime, tasker_fields
 
 ANDROID_TASKER_DIR = "/sdcard/Tasker/devtool"
 
@@ -835,6 +836,7 @@ class TaskerProgressSink:
     targets: list[str] = field(default_factory=list)
     planned_phases: list[dict[str, Any]] = field(default_factory=list)
     ui_presentations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    test_selection: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     notify_progress: bool = False
     notification_id: str = DEFAULT_NOTIFICATION_ID
@@ -1379,6 +1381,7 @@ class TaskerProgressSink:
             "project_type": self.project_type,
             "execution_environment": self.execution_environment,
             "targets": list(self.targets),
+            "test_selection": dict(self.test_selection),
             "pipeline": list(self.planned_phases),
             "phase_progress": [dict(item) for item in self._phase_progress.values()],
             "overlay": self.overlay,
@@ -1412,9 +1415,20 @@ class TaskerProgressSink:
         if self.ui_presentations:
             state["ui_presentations"] = {key: dict(value) for key, value in self.ui_presentations.items()}
         machine_preferences = self.ui_presentations.get("machine") if self.ui_presentations else None
-        state["ui"] = runtime_state_to_ui_snapshot(
+        ui_snapshot = runtime_state_to_ui_snapshot(
             state, surface="machine", preferences=machine_preferences
-        ).as_dict()
+        )
+        state["ui"] = ui_snapshot.as_dict()
+        machine_state = machine_state_from_runtime(state, snapshot=ui_snapshot)
+        state["machine"] = machine_state.as_dict()
+        semantic_tasker_fields = tasker_fields(machine_state)
+        state["tasker"] = {
+            "schema_version": TASKER_SCHEMA_VERSION,
+            "fields": semantic_tasker_fields,
+        }
+        # Flat alias for Tasker JSON readers that cannot conveniently traverse
+        # nested objects. Kept additive beside the structured tasker contract.
+        state["tasker_fields"] = semantic_tasker_fields
         semantic_notifications = state["ui"].get("notifications") if isinstance(state["ui"], dict) else []
         if isinstance(semantic_notifications, list) and semantic_notifications and isinstance(semantic_notifications[0], dict):
             semantic_notification = semantic_notifications[0]
@@ -1498,6 +1512,7 @@ def build_tasker_sink(
     run_id: str = "",
     overlay: bool = False,
     ui_presentations: dict[str, dict[str, Any]] | None = None,
+    test_selection: dict[str, Any] | None = None,
 ) -> TaskerProgressSink | None:
     if not enabled:
         return None
@@ -1516,4 +1531,5 @@ def build_tasker_sink(
         run_id=run_id.strip() or _default_run_id(),
         overlay=overlay,
         ui_presentations={key: dict(value) for key, value in (ui_presentations or {}).items()},
+        test_selection=dict(test_selection or {}),
     )

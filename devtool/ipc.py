@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .ui_core.machine import IPC_PROTOCOL_VERSION, MACHINE_SCHEMA_VERSION, machine_state_from_runtime
 from .xdg import state_dir
 
 
@@ -64,6 +65,19 @@ def _state_is_newer(candidate: dict[str, Any], current: dict[str, Any] | None) -
     return True
 
 
+def _with_machine_state(state: dict[str, Any]) -> dict[str, Any]:
+    value = dict(state)
+    if not isinstance(value.get("machine"), dict):
+        try:
+            value["machine"] = machine_state_from_runtime(value).as_dict()
+        except Exception:
+            pass
+    return value
+
+def _ipc_meta() -> dict[str, Any]:
+    return {"protocol_version": IPC_PROTOCOL_VERSION, "machine_schema_version": MACHINE_SCHEMA_VERSION}
+
+
 @dataclass(eq=False)
 class _Peer:
     sock: socket.socket
@@ -110,6 +124,7 @@ class IpcBroker:
             except Exception:
                 continue
             if isinstance(value, dict) and value.get("run_id"):
+                value = _with_machine_state(value)
                 self.runs[str(value["run_id"])] = value
 
     def start(self) -> None:
@@ -183,7 +198,7 @@ class IpcBroker:
         if kind in {"subscribe", "hello"}:
             peer.role = "consumer"
             peer.subscribed = True
-            peer.send({"type": "snapshot", "runs": self._snapshot(), "socket": str(self.socket_path)})
+            peer.send({"type": "snapshot", "runs": self._snapshot(), "socket": str(self.socket_path), **_ipc_meta()})
             return
         if kind == "register":
             run_id = str(message.get("run_id") or "").strip()
@@ -194,10 +209,12 @@ class IpcBroker:
             peer.run_id = run_id
             self.producers[run_id] = peer
             state = message.get("state")
+            if isinstance(state, dict):
+                state = _with_machine_state(state)
             if isinstance(state, dict) and _state_is_newer(state, self.runs.get(run_id)):
                 self.runs[run_id] = state
-                self._broadcast({"type": "run_update", "run": state})
-            peer.send({"type": "registered", "run_id": run_id})
+                self._broadcast({"type": "run_update", "run": state, **_ipc_meta()})
+            peer.send({"type": "registered", "run_id": run_id, **_ipc_meta()})
             return
         if kind in {"publish", "run_update"}:
             state = message.get("state") or message.get("run")
@@ -207,16 +224,30 @@ class IpcBroker:
             if not run_id:
                 return
             state["run_id"] = run_id
+            state = _with_machine_state(state)
             if not _state_is_newer(state, self.runs.get(run_id)):
                 return
             self.runs[run_id] = state
-            self._broadcast({"type": "run_update", "run": state})
+            self._broadcast({"type": "run_update", "run": state, **_ipc_meta()})
             return
         if kind == "unregister":
             run_id = str(message.get("run_id") or peer.run_id or "").strip()
             if run_id and self.producers.get(run_id) is peer:
                 self.producers.pop(run_id, None)
             peer.send({"type": "unregistered", "run_id": run_id})
+            return
+        if kind == "action":
+            run_id = str(message.get("run_id") or "").strip()
+            action_id = str(message.get("action_id") or "").strip()
+            payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+            producer = self.producers.get(run_id)
+            if action_id == "operation.cancel":
+                accepted = bool(producer and producer.send({"type": "action", "run_id": run_id, "action_id": action_id, "payload": payload, "reason": str(message.get("reason") or "UI request"), **_ipc_meta()}))
+            else:
+                accepted = bool(producer and producer.send({"type": "action", "run_id": run_id, "action_id": action_id, "payload": payload, **_ipc_meta()}))
+            peer.send({"type": "action_ack", "run_id": run_id, "action_id": action_id, "accepted": accepted, **_ipc_meta()})
+            if accepted:
+                self._broadcast({"type": "action_requested", "run_id": run_id, "action_id": action_id, **_ipc_meta()})
             return
         if kind == "cancel":
             run_id = str(message.get("run_id") or "").strip()
@@ -232,7 +263,7 @@ class IpcBroker:
             self._broadcast({"type": "run_removed", "run_id": run_id})
             return
         if kind == "ping":
-            peer.send({"type": "pong", "time": time.time()})
+            peer.send({"type": "pong", "time": time.time(), **_ipc_meta()})
 
     def _read(self, peer: _Peer) -> None:
         try:
@@ -275,10 +306,11 @@ class IpcBroker:
 class IpcPublisher:
     """Persistent run producer with a cancellation listener."""
 
-    def __init__(self, run_id: str, *, socket_path: Path | None = None, on_cancel: Callable[[], None] | None = None) -> None:
+    def __init__(self, run_id: str, *, socket_path: Path | None = None, on_cancel: Callable[[], None] | None = None, on_action: Callable[[str, dict[str, Any]], None] | None = None) -> None:
         self.run_id = run_id
         self.socket_path = socket_path or default_ipc_socket_path()
         self.on_cancel = on_cancel
+        self.on_action = on_action
         self.sock: socket.socket | None = None
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
@@ -297,7 +329,7 @@ class IpcPublisher:
             return False
         sock.settimeout(None)
         self.sock = sock
-        self._send({"type": "register", "run_id": self.run_id, "pid": os.getpid(), "state": state or {}})
+        self._send({"type": "register", "run_id": self.run_id, "pid": os.getpid(), "state": _with_machine_state(state or {}), **_ipc_meta()})
         self.listener = threading.Thread(target=self._listen, name=f"devtool-ipc-{self.run_id[:8]}", daemon=True)
         self.listener.start()
         return True
@@ -317,7 +349,7 @@ class IpcPublisher:
     def publish(self, state: dict[str, Any]) -> bool:
         if self.sock is None and not self.connect(state):
             return False
-        return self._send({"type": "publish", "run_id": self.run_id, "state": state})
+        return self._send({"type": "publish", "run_id": self.run_id, "state": _with_machine_state(state), **_ipc_meta()})
 
     def _listen(self) -> None:
         sock = self.sock
@@ -336,9 +368,18 @@ class IpcPublisher:
                         message = json.loads(line.decode("utf-8"))
                     except Exception:
                         continue
-                    if isinstance(message, dict) and message.get("type") == "cancel" and str(message.get("run_id") or "") == self.run_id:
+                    if not isinstance(message, dict) or str(message.get("run_id") or "") != self.run_id:
+                        continue
+                    if message.get("type") == "cancel":
                         if self.on_cancel is not None:
                             self.on_cancel()
+                    elif message.get("type") == "action":
+                        action_id = str(message.get("action_id") or "")
+                        payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+                        if action_id == "operation.cancel" and self.on_cancel is not None:
+                            self.on_cancel()
+                        if self.on_action is not None:
+                            self.on_action(action_id, payload)
         except OSError:
             pass
         finally:
@@ -357,6 +398,36 @@ class IpcPublisher:
         with contextlib.suppress(OSError):
             sock.close()
 
+
+
+def request_run_action(run_id: str, action_id: str, *, payload: dict[str, Any] | None = None, reason: str = "UI request", socket_path: Path | None = None, timeout: float = 0.8) -> tuple[bool, str]:
+    run_id = str(run_id or "").strip()
+    action_id = str(action_id or "").strip()
+    if not run_id or not action_id:
+        return False, "A run identity and action ID are required."
+    path = socket_path or default_ipc_socket_path()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(str(path))
+        sock.sendall(_json_line({"type": "action", "run_id": run_id, "action_id": action_id, "payload": dict(payload or {}), "reason": reason, **_ipc_meta()}))
+        buffer = bytearray()
+        while b"\n" not in buffer:
+            chunk = sock.recv(8192)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+        line = bytes(buffer).split(b"\n", 1)[0]
+        response = json.loads(line.decode("utf-8")) if line else {}
+        accepted = bool(isinstance(response, dict) and response.get("type") == "action_ack" and response.get("accepted"))
+        if accepted:
+            return True, f"Action {action_id} requested for {run_id}."
+        return False, f"Action {action_id} was not accepted for {run_id}."
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return False, f"Action request failed: {exc}"
+    finally:
+        with contextlib.suppress(OSError):
+            sock.close()
 
 
 def request_run_cancel(run_id: str, *, reason: str = "UI request", socket_path: Path | None = None, timeout: float = 0.8) -> tuple[bool, str]:

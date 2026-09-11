@@ -20,6 +20,7 @@ from .models import Issue, OperationResult
 from .logstore import redact_sensitive_text
 from .rich_progress import compact_display_target
 from .repair_policy import build_repair_report, repair_summary_lines_from_results, applied_repair_findings_from_results
+from .ui_core.machine import MACHINE_SCHEMA_VERSION, machine_state_from_runtime
 
 console = create_console()
 
@@ -1133,9 +1134,33 @@ def build_runner_json(
 
     safe_raw_output = redact_sensitive_text(raw_output)
     safe_summary_text = redact_sensitive_text(summary_text)
+    status = "ok" if ok else "failed"
+    last = results[-1] if results else None
+    machine_raw = {
+        "producer": "devtool",
+        "status": status,
+        "command": command,
+        "repo_root": repo_root,
+        "repo_name": Path(repo_root).name,
+        "started_at": _iso(started_at) or "",
+        "finished_at": _iso(finished_at) or "",
+        "updated_at": _iso(finished_at) or _iso(started_at) or "",
+        "message": safe_summary_text,
+        "current": sum(1 for item in results if item.returncode == 0 or item.skipped),
+        "total": len(results),
+        "phase": ({"name": last.name} if last is not None else {}),
+        "results": [
+            {"name": item.name, "returncode": item.returncode, "skipped": item.skipped, "metadata": item.metadata or {}}
+            for item in results
+        ],
+        "totals": totals,
+    }
+    machine = machine_state_from_runtime(machine_raw).as_dict()
 
     return {
         "schema_version": 1,
+        "machine_schema_version": MACHINE_SCHEMA_VERSION,
+        "machine": machine,
         "ok": ok,
         "command": command,
         "repo": repo_root,

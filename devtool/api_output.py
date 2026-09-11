@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from .core.results import CommandResult
 from .core.events import collect_json_events
+from .ui_core.machine import IPC_PROTOCOL_VERSION, MACHINE_SCHEMA_VERSION, machine_state_from_runtime
 
 
 def extract_universal_json_flag(argv: list[str]) -> tuple[list[str], bool]:
@@ -53,8 +54,21 @@ def _native_machine_envelope(value: Any) -> bool:
 def invocation_envelope(*, command: str, repo: str, exit_code: int, stdout: str, stderr: str, started_at: datetime, duration_seconds: float, events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     data = _parsed_stdout(stdout)
     result = CommandResult(success=exit_code == 0, exit_code=exit_code, stdout="" if data is not None else stdout, stderr=stderr, duration=duration_seconds, metadata={"command": command, "repo": repo})
+    machine = machine_state_from_runtime({
+        "producer": "devtool",
+        "status": "ok" if exit_code == 0 else "failed",
+        "command": command,
+        "repo_root": repo,
+        "repo_name": repo.rstrip("/").rsplit("/", 1)[-1],
+        "started_at": started_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "message": stderr if exit_code else "",
+    }).as_dict()
     return {
         "schema_version": 1,
+        "machine_schema_version": MACHINE_SCHEMA_VERSION,
+        "ipc_protocol_version": IPC_PROTOCOL_VERSION,
+        "machine": machine,
         "ok": exit_code == 0,
         "command": command,
         "repo": repo,

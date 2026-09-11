@@ -355,6 +355,23 @@ Generate an implementation prompt with project, artifact, target, and commit met
 .B completion zsh
 Print the current zsh completion definition.
 .TP
+.B completion-state
+Emit resolved completion values for shells and editors. Use
+.B --kind
+with targets, groups, ui-profiles, test-profiles, variants, jobs, workflows, pytest-tests, or all; use
+.B --format json
+for the complete versioned completion-state object.
+.TP
+.B config explain
+Explain canonical runner/platform/target/workspace configuration, provenance, UI profiles, and migration opportunities.
+.TP
+.B config migrate
+Check or safely rewrite legacy project/target kind/type aliases.
+.B --check
+is non-mutating;
+.B --write
+creates a .bak backup before canonicalizing runner/platform syntax.
+.TP
 .B control-center " | " gui
 Launch the Qt 6 Devtool Control Center.
 .TP
@@ -1261,6 +1278,9 @@ or print it with:
 The completion covers all commands and aliases, global execution/output/HUD options,
 selective tests, validation profiles, Android/Gradle/Python project types, artifact apply and
 bundle operations, Control Center commands, and configuration-derived target/profile names.
+The generated zsh completion queries
+.B devtool completion-state
+first so targets, groups, profiles, variants and pytest node IDs use Devtool's resolved configuration semantics; simple TOML parsing remains as a bootstrap fallback.
 .SH RELEASE QUALIFICATION
 The source repository includes portable and native release gates. Run:
 .PP
@@ -1342,6 +1362,18 @@ and
 .BR --no-wait .
 .SH EXIT STATUS
 Zero indicates success or an accepted validation-control request. For the stable validation control API, 2 means invalid request, 3 stale session revision, 4 a blocked validation session, 5 recovery required, and 6 control unavailable in the current state. Other non-zero values indicate command failure, invalid configuration/artifact, unsupported execution environment, interruption, or rollback/recovery that requires the requested operation to be rerun.
+.SH MACHINE, IPC, AND TASKER CONTRACT
+UI11 adds canonical machine schema version 2 while retaining existing outer machine/HUD/Tasker fields. The semantic machine object contains workspace, selection, operation, workflow, test selection, progress, diagnostics, actions, navigation, notifications, presentation, capabilities, and responsive intent. IPC advertises protocol version 2 and supports stable semantic action IDs in addition to legacy cancellation. Tasker state exposes structured and flat DEVTOOL_* semantic fields so automations do not need to parse human-facing notification text.
+.PP
+Use
+.B devtool ui-contract --surface machine --json
+to inspect the schema/version contract.
+.SH CONFIGURATION MIGRATION
+Legacy [project].kind and [targets.*].type/kind aliases remain supported. Use
+.B devtool config migrate --check
+to inspect safe migration opportunities and
+.B devtool config migrate --write
+to canonicalize them. The write mode creates a .devtool.toml.bak backup and never overwrites an existing canonical runner with a legacy alias.
 .SH AUTHOR
 OpenAI
 

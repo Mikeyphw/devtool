@@ -41,3 +41,7 @@ UI03/UI04 centralize frontend preferences/profiles plus semantic tokens, icons, 
 ## UI renderer migration
 
 UI09/UI10 complete GTK/Desktop and Android Live HUD migration onto UI Core. Renderers consume semantic actions/navigation, presentation, capabilities/responsive intent, hierarchical progress, structured diagnostics and notification policy. Platform widgets/layout remain native, and legacy machine/bridge fields remain compatibility fallbacks. See `docs/architecture/ui-desktop-android-migration.md`.
+
+## External machine state and discoverability
+
+UI11/UI12 complete the shared UI contract at the automation boundary. Machine JSON, IPC and Tasker keep their legacy envelopes/fields for compatibility while publishing an additive schema-v2 semantic machine state covering workspace/selection, operation/workflow/test selection, progress, diagnostics, actions, navigation, notifications, presentation, capabilities and responsive intent. IPC protocol v2 adds generic semantic action dispatch while retaining the legacy cancellation path. Config-aware `completion-state` provides one authoritative discovery API for shells/editors, and `config explain`, provenance-aware `config resolve`, and conservative `config migrate` replace ad-hoc config scraping/migration. See [`ui-machine-completion-config.md`](ui-machine-completion-config.md).

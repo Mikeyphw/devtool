@@ -122,3 +122,11 @@ TUI and terminal HUD consume the same `UISnapshot` as other frontends. Existing 
 ## UI09/UI10 renderer contract
 
 UI09/UI10 complete GTK/Desktop and Android Live HUD migration onto UI Core. Renderers consume semantic actions/navigation, presentation, capabilities/responsive intent, hierarchical progress, structured diagnostics and notification policy. Platform widgets/layout remain native, and legacy machine/bridge fields remain compatibility fallbacks. See `docs/architecture/ui-desktop-android-migration.md`.
+
+## External machine contract (UI11)
+
+`UISnapshot` remains the renderer-oriented semantic model. External automation should use machine schema v2, which packages the same semantics into stable machine sections while legacy HUD/Tasker/machine fields remain additive aliases. IPC protocol v2 transports the same run objects and stable action IDs. Frontends must not infer an action from a label when an action ID is available.
+
+## Discoverability contract (UI12)
+
+Shells and editors should query `completion-state` rather than parse `.devtool.toml` directly. Configuration inspection should use `config resolve`/`config explain`; migration tooling should use `config migrate --check` before `--write`. Automated migration must preserve semantics, create a backup, and never couple product platform identity to runner selection beyond a one-time explicit migration default.

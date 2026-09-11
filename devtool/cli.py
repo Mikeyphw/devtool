@@ -96,6 +96,8 @@ from .watch import watch_loop
 from .clipboard import copy_text
 from .console_utils import create_console, resolve_cli_path
 from .completion import ZSH_COMPLETION
+from .completion_state import build_completion_state, completion_values
+from .config_migration import analyze_config_migration, migrate_config_text, migration_report
 from .config import (
     detect_project_kind,
     discover_dotnet_candidates,
@@ -849,6 +851,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     completion = subparsers.add_parser("completion")
     completion.add_argument("shell", choices=["zsh"])
+    completion_state = subparsers.add_parser("completion-state", help="Emit config-aware values for shell/editor completion")
+    completion_state.add_argument("--kind", choices=["targets", "groups", "ui-profiles", "test-profiles", "variants", "jobs", "workflows", "pytest-tests", "all"], default="all")
+    completion_state.add_argument("--format", choices=["lines", "json"], default="lines")
 
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
@@ -866,7 +871,15 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_edit = cfg_sub.add_parser("edit", help="Open config in an editor")
     cfg_edit.add_argument("--global", dest="global_config", action="store_true", help="Edit ~/.config/devtool/config.toml")
     cfg_edit.add_argument("--editor", default="", help="Editor command; defaults to DEVTOOL_EDITOR, VISUAL, EDITOR, then micro")
-    cfg_sub.add_parser("resolve")
+    cfg_resolve = cfg_sub.add_parser("resolve", help="Print the fully resolved repository configuration")
+    cfg_resolve.add_argument("--provenance", action="store_true", help="Include a top-level provenance explanation")
+    cfg_explain = cfg_sub.add_parser("explain", help="Explain canonical target/runner/UI configuration and provenance")
+    cfg_explain.add_argument("--json", action="store_true", help="Emit machine-readable explanation JSON")
+    cfg_migrate = cfg_sub.add_parser("migrate", help="Check or rewrite legacy kind/type aliases to canonical runner/platform syntax")
+    migrate_mode = cfg_migrate.add_mutually_exclusive_group()
+    migrate_mode.add_argument("--check", action="store_true", help="Check and report migration opportunities without changing files")
+    migrate_mode.add_argument("--write", action="store_true", help="Rewrite safe legacy aliases in place and create a .bak backup")
+    cfg_migrate.add_argument("--json", action="store_true", help="Emit machine-readable migration report")
     cfg_doctor = cfg_sub.add_parser("doctor")
     cfg_doctor.add_argument("--global", dest="global_config", action="store_true", help="Diagnose the user global config")
 
@@ -2274,6 +2287,22 @@ def _normalize_live_progress_args(args: argparse.Namespace) -> None:
         args.tasker_progress = False
 
 
+def _live_test_selection(args: argparse.Namespace) -> dict[str, object]:
+    values = {
+        "pytest_tests": _cli_string_list(getattr(args, "pytest_tests", None)),
+        "pytest_markers": _cli_string_list(getattr(args, "pytest_markers", None)),
+        "pytest_k": str(getattr(args, "pytest_k", "") or ""),
+        "pytest_args": _cli_string_list(getattr(args, "pytest_args", None)),
+        "pytest_include_defaults": bool(getattr(args, "pytest_include_defaults", False)),
+        "selectors": _cli_string_list(getattr(args, "selectors", None)),
+        "ids": _cli_string_list(getattr(args, "test_ids", None)),
+        "paths": _cli_string_list(getattr(args, "test_paths", None)),
+        "classes": _cli_string_list(getattr(args, "test_classes", None)),
+        "methods": _cli_string_list(getattr(args, "test_methods", None)),
+    }
+    return {key: value for key, value in values.items() if value not in ([], "", False, None)}
+
+
 def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | None = None, repo: Path | None = None) -> TaskerProgressSink | None:
     repo_root = (config.repo_root if config is not None else (repo or Path(args.repo or Path.cwd()))).resolve()
     target = str(getattr(args, "target", "") or getattr(args, "solution", "") or getattr(args, "project", "") or "")
@@ -2339,6 +2368,7 @@ def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | No
         run_id=str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")),
         overlay=bool(getattr(args, "hud_overlay", False)) and not bool(getattr(args, "hud_no_overlay", False)),
         ui_presentations=ui_presentations,
+        test_selection=_live_test_selection(args),
     )
 
     if sink is not None and enabled and bool(getattr(args, "auto_hud", False)):
@@ -7277,7 +7307,7 @@ def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
 def _ui_contract(*, surface: str = "machine", as_json: bool = False, width: int = 0, height: int = 0, required_capabilities: list[str] | None = None) -> None:
     from .ui_core import (
         CAPABILITY_SCHEMA_VERSION, CONFIRMATION_SCHEMA_VERSION, COPY_SCHEMA_VERSION, DIAGNOSTIC_SCHEMA_VERSION, ICON_SCHEMA_VERSION, NOTIFICATION_SCHEMA_VERSION, PROGRESS_SCHEMA_VERSION, RESPONSIVE_SCHEMA_VERSION, TOKEN_SCHEMA_VERSION, UI_SCHEMA_VERSION,
-        action_catalog, capability_catalog, capabilities_for_surface, confirmation_catalog, copy_catalog, icon_catalog, navigation_for_surface, negotiate_capabilities, notification_catalog, profile_catalog,
+        IPC_PROTOCOL_VERSION, MACHINE_SCHEMA_VERSION, TASKER_SCHEMA_VERSION, action_catalog, capability_catalog, capabilities_for_surface, confirmation_catalog, copy_catalog, icon_catalog, ipc_contract, navigation_for_surface, negotiate_capabilities, notification_catalog, profile_catalog,
         resolve_responsive_layout, responsive_policy_catalog, resolve_ui_preferences, token_catalog,
     )
 
@@ -7307,6 +7337,14 @@ def _ui_contract(*, surface: str = "machine", as_json: bool = False, width: int 
         "token_schema_version": TOKEN_SCHEMA_VERSION,
         "icon_schema_version": ICON_SCHEMA_VERSION,
         "copy_schema_version": COPY_SCHEMA_VERSION,
+        "machine_schema_version": MACHINE_SCHEMA_VERSION,
+        "ipc_protocol_version": IPC_PROTOCOL_VERSION,
+        "tasker_schema_version": TASKER_SCHEMA_VERSION,
+        "ipc": ipc_contract(),
+        "machine_model": {
+            "sections": ["workspace", "selection", "operation", "workflow", "test_selection", "progress", "diagnostics", "actions", "navigation", "notifications", "presentation", "capabilities", "responsive"],
+            "compatibility": "legacy machine/HUD/Tasker fields remain additive aliases",
+        },
         "surface": surface,
         "preferences": preferences.as_dict(),
         "profiles": profile_catalog(ui_config),
@@ -9709,7 +9747,70 @@ def _config_command(args: argparse.Namespace) -> int:
         editor = _resolve_config_editor(str(getattr(args, "editor", "") or ""))
         return subprocess.run([*editor, str(path)], check=False).returncode
     if args.config_command == "resolve":
-        print(json.dumps(resolve_config_dict(config), indent=2))
+        payload = resolve_config_dict(config)
+        if bool(getattr(args, "provenance", False)):
+            payload["explanation"] = {
+                "runner": config.runner,
+                "platform": config.platform,
+                "selected_target": config.selected_target,
+                "provenance": dict(sorted(config.config_provenance.items())),
+            }
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.config_command == "explain":
+        path = config.config_path or (config.repo_root / ".devtool.toml")
+        migration = migration_report(path) if path.exists() else {"schema_version": 1, "path": str(path), "needs_migration": False, "findings": []}
+        payload = {
+            "schema_version": 1,
+            "config_path": str(path),
+            "repo_root": str(config.repo_root),
+            "project": {"runner": config.runner, "platform": config.platform, "selected_target": config.selected_target, "variant": config.variant},
+            "workspace": workspace_as_dict(config.workspace, config.targets),
+            "provenance": dict(sorted(config.config_provenance.items())),
+            "migration": migration,
+            "ui_profiles": build_completion_state(config).ui_profiles,
+        }
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            rows = [
+                ("config", str(path)),
+                ("runner", config.runner),
+                ("platform", config.platform or "-"),
+                ("selected_target", config.selected_target or "-"),
+                ("workspace_targets", ", ".join(sorted(config.targets)) or "-"),
+                ("workspace_groups", ", ".join(sorted(config.workspace.groups)) or "-"),
+                ("migration", "recommended" if migration.get("needs_migration") else "canonical"),
+            ]
+            rows.extend((f"provenance.{key}", value) for key, value in sorted(config.config_provenance.items()))
+            render_status_table(rows)
+        return 0
+    if args.config_command == "migrate":
+        path = config.config_path or (config.repo_root / ".devtool.toml")
+        if not path.exists():
+            raise SystemExit(f"Repository config not found: {path}")
+        report = migration_report(path)
+        if bool(getattr(args, "write", False)) and report.get("needs_migration"):
+            original = path.read_text(encoding="utf-8")
+            migrated, findings = migrate_config_text(original)
+            backup = path.with_name(path.name + ".bak")
+            backup.write_text(original, encoding="utf-8")
+            path.write_text(migrated, encoding="utf-8")
+            report = migration_report(path)
+            report["written"] = True
+            report["backup"] = str(backup)
+            report["migrated_findings"] = [item.as_dict() for item in findings]
+        else:
+            report["written"] = False
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            rows = [("config", str(path)), ("status", "migration recommended" if report.get("needs_migration") else "canonical")]
+            for item in report.get("findings", []):
+                rows.append((f"line {item.get('line')}", f"[{item.get('section')}] {item.get('key')} → {item.get('replacement_key')}"))
+            if report.get("written"):
+                rows.append(("backup", str(report.get("backup") or "")))
+            render_status_table(rows)
         return 0
     if args.config_command == "doctor":
         rows = [
@@ -10178,6 +10279,17 @@ def _main_after_parse(
         if args.shell == "zsh":
             print(ZSH_COMPLETION)
             return 0
+
+    if args.command == "completion-state":
+        config = _load_command_config(args)
+        kind = str(getattr(args, "kind", "all") or "all")
+        if str(getattr(args, "format", "lines") or "lines") == "json":
+            state = build_completion_state(config, include_pytest=kind in {"pytest-tests", "all"})
+            print(json.dumps(state.as_dict(), indent=2, ensure_ascii=False))
+        else:
+            for value in completion_values(config, kind):
+                print(value)
+        return 0
 
     if args.command in {"logs"}:
         logs_command = str(getattr(args, "logs_command", "") or "latest")

@@ -1,3 +1,12 @@
+## 2026-09-11 - UI11 + UI12 machine/IPC/Tasker schema and completion/config UX
+
+- Added canonical machine schema v2 with workspace/selection, operation, workflow/test selection, progress, diagnostics, actions/navigation, notifications, presentation, capabilities and responsive intent while retaining legacy outer machine/HUD/Tasker fields.
+- Upgraded the local IPC contract to protocol v2 metadata, semantic `action`/`action_ack` dispatch, automatic machine-state normalization, and legacy `cancel` interoperability.
+- Added Tasker schema v2 semantic fields (`DEVTOOL_*`) plus a flat compatibility alias so automations no longer need to parse human notification text.
+- Embedded machine-v2 state into normal runner JSON summaries and exposed machine/IPC/Tasker schema versions through `ui-contract`.
+- Added config-aware `completion-state` for targets, groups, UI/test profiles, variants, jobs, workflows and pytest node IDs; zsh completion now prefers this API and retains bootstrap parsing fallbacks.
+- Added `config explain`, `config resolve --provenance`, and safe `config migrate --check|--write` with backup creation and canonical runner/platform migration.
+
 ## 2026-09-11 - UI05 + UI06 capability negotiation, responsive policy, progress and diagnostics
 
 ## UI09 + UI10 — GTK/Desktop and Android UI Core migration

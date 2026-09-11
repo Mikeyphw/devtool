@@ -62,3 +62,8 @@ __all__ = [
     "build_progress_tree", "summarize_progress", "diagnostic_presentations", "summarize_diagnostics",
     "confirmation_catalog", "confirmation_decision", "normalize_confirmation_policy", "notification_catalog", "notification_for_event", "normalize_notification_policy",
 ]
+
+from .machine import (
+    IPC_PROTOCOL_VERSION, MACHINE_SCHEMA_VERSION, TASKER_SCHEMA_VERSION, MachineState,
+    ipc_contract, machine_state_from_runtime, tasker_fields,
+)

@@ -29,13 +29,28 @@ _devtool_artifact_path() {
   fi
 }
 
+_devtool_completion_values() {
+  local kind=$1 repo target
+  repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
+  target=${opt_args[--target]:-}
+  local -a cmd
+  cmd=(devtool --repo "$repo")
+  if [[ -n $target ]]; then
+    cmd+=(--target "$target")
+  fi
+  "${cmd[@]}" completion-state --kind "$kind" 2>/dev/null
+}
+
 _devtool_targets() {
   local repo config
   local -a targets
   repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
   config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
   if [[ -r $config ]]; then
-    targets=(${(f)"$(sed -nE 's/^\[targets\.([^].]+)\].*/\1/p' "$config" 2>/dev/null)"})
+    targets=(${(f)"$(_devtool_completion_values targets)"})
+    if (( ! ${#targets} )); then
+      targets=(${(f)"$(sed -nE 's/^\[targets\.([^].]+)\].*/\1/p' "$config" 2>/dev/null)"})
+    fi
   fi
   if (( ${#targets} )); then
     _describe -t targets 'target' targets
@@ -49,7 +64,8 @@ _devtool_groups() {
   local -a groups
   repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
   config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
-  if [[ -r $config ]]; then
+  groups=(${(f)"$(_devtool_completion_values groups)"})
+  if (( ! ${#groups} )) && [[ -r $config ]]; then
     groups=(${(f)"$(awk '
       /^\[workspace\.groups\]$/ { in_groups=1; next }
       /^\[/ { in_groups=0 }
@@ -69,7 +85,8 @@ _devtool_ui_profiles() {
   repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
   config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
   global_config=${DEVTOOL_GLOBAL_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/devtool/config.toml}
-  profiles=(auto minimal standard developer debug)
+  profiles=(${(f)"$(_devtool_completion_values ui-profiles)"})
+  (( ${#profiles} )) || profiles=(auto minimal standard developer debug)
   if [[ -r $global_config ]]; then
     profiles+=(${(f)"$(sed -nE 's/^\[ui\.profiles\.([^].]+)\].*/\1/p' "$global_config" 2>/dev/null)"})
   fi
@@ -85,7 +102,8 @@ _devtool_test_profiles() {
   local -a profiles
   repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
   config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
-  if [[ -r $config ]]; then
+  profiles=(${(f)"$(_devtool_completion_values test-profiles)"})
+  if (( ! ${#profiles} )) && [[ -r $config ]]; then
     profiles=(${(fu)"$(sed -nE \
       -e 's/^\[test_profiles\.([^].]+)\].*/\1/p' \
       -e 's/^\[targets\.[^]]+\.test_profiles\.([^].]+)\].*/\1/p' \
@@ -103,7 +121,8 @@ _devtool_variants() {
   local -a variants
   repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
   config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
-  if [[ -r $config ]]; then
+  variants=(${(f)"$(_devtool_completion_values variants)"})
+  if (( ! ${#variants} )) && [[ -r $config ]]; then
     variants=(${(fu)"$(sed -nE \
       -e 's/^\[variants\.([^].]+)\].*/\1/p' \
       -e 's/^\[targets\.[^]]+\.variants\.([^].]+)(\.|]).*/\1/p' \
@@ -113,6 +132,16 @@ _devtool_variants() {
     _describe -t variants 'variant' variants
   else
     _message 'build/test variant'
+  fi
+}
+
+_devtool_pytest_tests() {
+  local -a tests
+  tests=(${(f)"$(_devtool_completion_values pytest-tests)"})
+  if (( ${#tests} )); then
+    _describe -t pytest-tests 'pytest node ID' tests
+  else
+    _message 'pytest node ID or file'
   fi
 }
 
@@ -248,6 +277,7 @@ _devtool_commands() {
     'ai-prompt:generate an implementation prompt'
     'ap:alias for ai-prompt'
     'completion:print shell completion'
+    'completion-state:emit config-aware completion values for shells and editors'
     'hud:run a live HUD renderer'
     'android-hud-bridge:bridge Termux or chroot progress to Android'
     'termux-hud-bridge:alias for android-hud-bridge'
@@ -271,7 +301,7 @@ _devtool_test_args() {
     '(--list --list-tests)'{--list,--list-tests}'[discover and list tests without executing]' \
     '--profile[saved test profile]:profile:_devtool_test_profiles' \
     '*--select[select a type, suite, tag, class, or name]:selector:' \
-    '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:' \
+    '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:_devtool_pytest_tests' \
     '*--pytest-marker[pytest -m marker expression]:marker expression:' \
     '--pytest-k[pytest -k keyword expression]:keyword expression:' \
     '*--pytest-arg[pass one structured argument directly to pytest]:pytest argument:' \
@@ -319,7 +349,7 @@ _devtool_validation_args() {
     '--skip-test[skip project tests]' \
     '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
     '*--select[select tests by type, suite, tag, class, or name]:selector:' \
-    '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:' \
+    '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:_devtool_pytest_tests' \
     '*--pytest-marker[pytest -m marker expression]:marker expression:' \
     '--pytest-k[pytest -k keyword expression]:keyword expression:' \
     '*--pytest-arg[pass one structured argument directly to pytest]:pytest argument:' \
@@ -414,7 +444,7 @@ _devtool_apply_args() {
     '--no-validate[disable validation requested by the artifact manifest]' \
     '--test-profile[saved test profile for artifact validation]:profile:_devtool_test_profiles' \
     '*--select[select tests by type, suite, tag, class, or name]:selector:' \
-    '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:' \
+    '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:_devtool_pytest_tests' \
     '*--pytest-marker[pytest -m marker expression]:marker expression:' \
     '--pytest-k[pytest -k keyword expression]:keyword expression:' \
     '*--pytest-arg[pass one structured argument directly to pytest]:pytest argument:' \
@@ -676,7 +706,7 @@ _devtool() {
             '--skip-test[skip project tests]' \
             '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
             '*--select[select tests by type, suite, tag, class, or name]:selector:' \
-            '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:' \
+            '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:_devtool_pytest_tests' \
     '*--pytest-marker[pytest -m marker expression]:marker expression:' \
     '--pytest-k[pytest -k keyword expression]:keyword expression:' \
     '*--pytest-arg[pass one structured argument directly to pytest]:pytest argument:' \
@@ -940,13 +970,25 @@ _devtool() {
         completion)
           _values 'shell' zsh
           ;;
+        completion-state)
+          _arguments '--kind[completion value category]:kind:(targets groups ui-profiles test-profiles variants jobs workflows pytest-tests all)' '--format[output format]:format:(lines json)'
+          ;;
         config)
           if (( ${#line} < 2 )); then
-            _values 'config action' path show defaults init edit resolve doctor
+            _values 'config action' path show defaults init edit resolve explain migrate doctor
           else
             case $line[2] in
               path|show|defaults|doctor)
                 _arguments '--global[use the user global config]' '--minimal[prefer sparse minimal defaults]'
+                ;;
+              resolve)
+                _arguments '--provenance[include provenance explanation]'
+                ;;
+              explain)
+                _arguments '--json[emit machine-readable configuration explanation]'
+                ;;
+              migrate)
+                _arguments '(--check --write)--check[report migration opportunities without changes]' '(--check --write)--write[rewrite safe legacy aliases and create a backup]' '--json[emit machine-readable migration report]'
                 ;;
               init)
                 _arguments '--global[create the user global config]' '--minimal[write sparse global preferences]' '--force[overwrite existing config]'

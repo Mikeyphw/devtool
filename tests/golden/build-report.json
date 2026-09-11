@@ -45,6 +45,431 @@
   "duration_s": 3.0,
   "exit_code": 0,
   "finished_at": "2026-08-25T12:00:03Z",
+  "machine": {
+    "actions": [
+      {
+        "category": "operation",
+        "confirmation_default": true,
+        "confirmation_mode": "never",
+        "confirmation_prompt": "Retry this operation?",
+        "confirmation_reason": "policy skips confirmation",
+        "destructive": false,
+        "disabled_reason": "",
+        "enabled": true,
+        "icon": "action.rerun",
+        "id": "operation.rerun",
+        "intent": "rerun",
+        "label": "Run again",
+        "notification_label": "Run again",
+        "payload": {},
+        "requires_confirmation": false,
+        "short_label": "Run again",
+        "shortcut": "",
+        "token": "action.secondary"
+      },
+      {
+        "category": "sharing",
+        "confirmation_default": true,
+        "confirmation_mode": "never",
+        "confirmation_prompt": "Retry this operation?",
+        "confirmation_reason": "policy skips confirmation",
+        "destructive": false,
+        "disabled_reason": "",
+        "enabled": true,
+        "icon": "action.copy",
+        "id": "summary.copy",
+        "intent": "copy-summary",
+        "label": "Copy summary",
+        "notification_label": "Copy summary",
+        "payload": {},
+        "requires_confirmation": false,
+        "short_label": "Copy",
+        "shortcut": "",
+        "token": "action.secondary"
+      }
+    ],
+    "capabilities": {
+      "negotiation": {
+        "fallbacks": {},
+        "missing": [],
+        "requested": [
+          "tree_view"
+        ],
+        "satisfied": true,
+        "schema_version": 1,
+        "supported": [
+          "tree_view"
+        ],
+        "surface": "machine"
+      },
+      "supported": {
+        "clipboard": false,
+        "dialogs": false,
+        "hyperlinks": true,
+        "interactive": false,
+        "keyboard": false,
+        "mouse": false,
+        "multi_pane": false,
+        "native_icons": false,
+        "notifications": false,
+        "persistent_navigation": false,
+        "resize_events": false,
+        "rich_text": false,
+        "schema_version": 1,
+        "surface": "machine",
+        "tables": true,
+        "touch": false,
+        "tree_view": true
+      },
+      "surface": "machine"
+    },
+    "diagnostics": {
+      "items": [],
+      "presentations": [],
+      "summary": {
+        "blocking": false,
+        "errors": 0,
+        "info": 0,
+        "primary_id": "",
+        "schema_version": 1,
+        "total": 0,
+        "warnings": 0
+      }
+    },
+    "navigation": [
+      {
+        "icon": "nav.dashboard",
+        "id": "dashboard",
+        "label": "Overview",
+        "order": 10,
+        "route": "dashboard",
+        "section": "primary",
+        "short_label": "Overview"
+      },
+      {
+        "icon": "nav.operations",
+        "id": "operations",
+        "label": "Active runs",
+        "order": 20,
+        "route": "operations",
+        "section": "primary",
+        "short_label": "Runs"
+      },
+      {
+        "icon": "nav.history",
+        "id": "history",
+        "label": "History",
+        "order": 30,
+        "route": "history",
+        "section": "primary",
+        "short_label": "History"
+      },
+      {
+        "icon": "nav.artifacts",
+        "id": "artifacts",
+        "label": "Artifacts",
+        "order": 40,
+        "route": "artifacts",
+        "section": "primary",
+        "short_label": "Artifacts"
+      },
+      {
+        "icon": "nav.diagnostics",
+        "id": "diagnostics",
+        "label": "Diagnostics",
+        "order": 50,
+        "route": "diagnostics",
+        "section": "primary",
+        "short_label": "Issues"
+      },
+      {
+        "icon": "nav.projects",
+        "id": "projects",
+        "label": "Repository",
+        "order": 60,
+        "route": "projects",
+        "section": "primary",
+        "short_label": "Repo"
+      },
+      {
+        "icon": "nav.targets",
+        "id": "targets",
+        "label": "Targets",
+        "order": 70,
+        "route": "targets",
+        "section": "primary",
+        "short_label": "Targets"
+      },
+      {
+        "icon": "nav.validation",
+        "id": "validation",
+        "label": "Run",
+        "order": 80,
+        "route": "validation",
+        "section": "primary",
+        "short_label": "Run"
+      },
+      {
+        "icon": "nav.workflows",
+        "id": "workflows",
+        "label": "Workflows",
+        "order": 90,
+        "route": "workflows",
+        "section": "primary",
+        "short_label": "Workflows"
+      },
+      {
+        "icon": "nav.logs",
+        "id": "logs",
+        "label": "Logs",
+        "order": 100,
+        "route": "logs",
+        "section": "primary",
+        "short_label": "Logs"
+      },
+      {
+        "icon": "nav.environment",
+        "id": "environment",
+        "label": "Environment",
+        "order": 110,
+        "route": "environment",
+        "section": "primary",
+        "short_label": "Environment"
+      },
+      {
+        "icon": "nav.settings",
+        "id": "settings",
+        "label": "Settings",
+        "order": 120,
+        "route": "settings",
+        "section": "secondary",
+        "short_label": "Settings"
+      }
+    ],
+    "notifications": [
+      {
+        "actions": [
+          "operation.rerun",
+          "summary.copy"
+        ],
+        "bell": false,
+        "body": "build ok",
+        "event": "success",
+        "id": "run:build",
+        "level": "success",
+        "schema_version": 1,
+        "should_emit": true,
+        "title": "build",
+        "token": "status.success"
+      }
+    ],
+    "operation": {
+      "command": "build",
+      "detail": "build ok",
+      "execution_environment": "",
+      "finished_at": "2026-08-25T12:00:03Z",
+      "log_path": "",
+      "phase": "build",
+      "run_id": "",
+      "runner": "",
+      "started_at": "2026-08-25T12:00:00Z",
+      "status": "ok",
+      "target": "",
+      "title": "build",
+      "token": "status.success",
+      "updated_at": "2026-08-25T12:00:03Z"
+    },
+    "presentation": {
+      "confirm_cancel": false,
+      "confirm_destructive": true,
+      "confirmation_policy": {
+        "apply_artifact": "smart",
+        "artifact_manifest": "smart",
+        "cancel": "smart",
+        "delete_artifact": "always",
+        "dirty_tree": "smart",
+        "retry": "never",
+        "rollback": "always",
+        "snapshot_overwrite": "always"
+      },
+      "density": "detailed",
+      "duration_format": "human",
+      "icons": "auto",
+      "max_steps": 0,
+      "motion": "auto",
+      "mouse": true,
+      "notification_detail": "normal",
+      "notification_policy": {
+        "bell_on_failure": true,
+        "bell_on_requires_action": false,
+        "failures": true,
+        "phase_changes": false,
+        "requires_action": true,
+        "started": false,
+        "success": true,
+        "warnings": true
+      },
+      "profile": "standard",
+      "provenance": {
+        "confirm_cancel": "default",
+        "confirm_destructive": "default",
+        "density": "surface:machine",
+        "duration_format": "default",
+        "icons": "default",
+        "max_steps": "default",
+        "motion": "default",
+        "mouse": "default",
+        "notification_detail": "default",
+        "show_commands": "default",
+        "show_completed_steps": "default",
+        "show_diagnostics": "default",
+        "show_environment": "default",
+        "sidebar": "default",
+        "theme": "default",
+        "timestamps": "default",
+        "verbosity": "default"
+      },
+      "show_commands": "on-error",
+      "show_completed_steps": true,
+      "show_diagnostics": "expanded-on-error",
+      "show_environment": "when-relevant",
+      "sidebar": "auto",
+      "theme": "auto",
+      "timestamps": "relative",
+      "verbosity": "normal"
+    },
+    "producer": "devtool",
+    "progress": {
+      "nodes": [
+        {
+          "blocked_by": [],
+          "current": 1,
+          "dependencies": [],
+          "detail": "build ok",
+          "duration_ms": null,
+          "errors": 0,
+          "execution_environment": "",
+          "finished_at": "2026-08-25T12:00:03Z",
+          "id": "build",
+          "kind": "phase",
+          "label": "build",
+          "metrics": {},
+          "parent_id": "",
+          "percent": 100,
+          "runner": "",
+          "started_at": "2026-08-25T12:00:00Z",
+          "status": "ok",
+          "target": "",
+          "token": "status.success",
+          "total": 1,
+          "warnings": 0,
+          "workflow": ""
+        }
+      ],
+      "summary": {
+        "active_ids": [],
+        "blocked_nodes": 0,
+        "cancelled_nodes": 0,
+        "completed_nodes": 1,
+        "failed_nodes": 0,
+        "overall_percent": 100,
+        "pending_nodes": 0,
+        "running_nodes": 0,
+        "schema_version": 1,
+        "skipped_nodes": 0,
+        "total_nodes": 1
+      },
+      "tree": [
+        {
+          "blocked_by": [],
+          "children": [
+            {
+              "blocked_by": [],
+              "children": [],
+              "current": 1,
+              "detail": "build ok",
+              "duration_ms": null,
+              "errors": 0,
+              "execution_environment": "",
+              "finished_at": "2026-08-25T12:00:03Z",
+              "id": "build",
+              "kind": "phase",
+              "label": "build",
+              "percent": 100,
+              "runner": "",
+              "started_at": "2026-08-25T12:00:00Z",
+              "status": "ok",
+              "target": "",
+              "token": "status.success",
+              "total": 1,
+              "warnings": 0,
+              "workflow": ""
+            }
+          ],
+          "current": null,
+          "detail": "build ok",
+          "duration_ms": null,
+          "errors": 0,
+          "execution_environment": "",
+          "finished_at": "2026-08-25T12:00:03Z",
+          "id": "operation:build",
+          "kind": "operation",
+          "label": "build",
+          "percent": 100,
+          "runner": "",
+          "started_at": "2026-08-25T12:00:00Z",
+          "status": "ok",
+          "target": "",
+          "token": "status.success",
+          "total": null,
+          "warnings": 0,
+          "workflow": ""
+        }
+      ]
+    },
+    "responsive": {
+      "diagnostic_detail": "all",
+      "effective_density": "detailed",
+      "height": null,
+      "inspector": "semantic",
+      "mode": "semantic",
+      "navigation": "semantic",
+      "panes": 1,
+      "progress_detail": "all",
+      "reason": "machine contract is renderer-neutral",
+      "schema_version": 1,
+      "surface": "machine",
+      "width": null
+    },
+    "run_id": "",
+    "schema_version": 2,
+    "selection": {
+      "groups": [],
+      "operation": "build",
+      "targets": [],
+      "variant": ""
+    },
+    "test_selection": {},
+    "workflow": {
+      "current_node": "build",
+      "detail": "build ok",
+      "execution_environment": "",
+      "name": "",
+      "phase_progress": [],
+      "pipeline": [],
+      "runner": "",
+      "target": "",
+      "targets": []
+    },
+    "workspace": {
+      "name": "repo",
+      "root": "/repo",
+      "selected_groups": [],
+      "selected_target": "",
+      "targets": []
+    }
+  },
+  "machine_schema_version": 2,
   "notification": {
     "body": "✅ PASS: repo: build • 0E 0W",
     "level": "success",

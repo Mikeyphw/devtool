@@ -1,5 +1,7 @@
-usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET]
-               [--variant VARIANT] [--solution SOLUTION] [--project PROJECT]
+usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET] [--group GROUP]
+               [--all-targets] [--affected] [--affected-base AFFECTED_BASE]
+               [--affected-head AFFECTED_HEAD] [--variant VARIANT]
+               [--solution SOLUTION] [--project PROJECT]
                [--project-type {auto,dotnet,android,gradle,python,node,rust,go,maven,cmake,meson,make,command,unknown}]
                [-v] [-q] [--trace] [-y] [-f] [--allow-pending-validation]
                [--dry-run] [--no-build] [-k] [--fail-fast] [--performance]
@@ -7,7 +9,12 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET]
                [--stdout-payload {auto,summary,raw}]
                [--machine-file MACHINE_FILE] [-p] [--no-clipboard]
                [--copy-via {auto,socket,fifo,termux,x11,wayland}]
-               [--theme {auto,plain}] [--log-dir LOG_DIR] [--auto-hud]
+               [--theme {auto,plain}] [--log-dir LOG_DIR]
+               [--ui-profile UI_PROFILE] [--ui-theme {auto,light,dark}]
+               [--ui-density {dense,compact,comfortable,detailed}]
+               [--ui-icons {auto,nerd,unicode,ascii,native}]
+               [--ui-motion {auto,full,reduced}]
+               [--ui-verbosity {compact,normal,detailed,debug}] [--auto-hud]
                [--no-hud] [--hud-mode HUD_MODE] [--hud-overlay |
                --hud-no-overlay] [--host | --chroot CHROOT | --ssh HOST |
                --proot-distro DISTRO |
@@ -40,12 +47,12 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET]
                [--native-cache {auto,ccache,off}]
                [--android-build-tools-provider {auto,commit451,none,sdk,termux}]
                [--aapt2-provider {auto,termux,sdk,revanced,none}]
-               {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,jobs,jb,workflows,wf,control-center,gui,ipc-server} ...
+               {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,completion-state,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,workflows,wf,plan,pl,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server} ...
 
 Apply artifacts, validate projects, and produce reviewable handoff commits.
 
 positional arguments:
-  {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,jobs,jb,workflows,wf,control-center,gui,ipc-server}
+  {restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,clean,cl,inspect,info,status,st,doctor,dr,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,tui,cleanup,batch,init-config,init,logs,tag,release-notes,completion,completion-state,config,bootstrap,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,workflows,wf,plan,pl,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server}
     start-validation (sv)
                         Start a persistent sequential validation session
     resume-validation (rv)
@@ -64,6 +71,7 @@ positional arguments:
     tui                 Open the responsive terminal dashboard
     cleanup             Archive historical repository backups and optionally
                         prune old backup history
+    completion-state    Emit config-aware values for shell/editor completion
     bootstrap           Provision reusable destination-specific build
                         toolchains
     termux              Inspect native Termux providers, packages, and PRoot
@@ -97,11 +105,22 @@ positional arguments:
     validation-accept-plan-change (vapc)
                         Explicitly accept an incompatible validation plan
                         change
-    targets (tg)        List configured targets with platform, runner, and
-                        workflow metadata
+    targets (tg)        List configured targets with platform, runner, group,
+                        and workflow metadata
+    groups (gr)         List workspace target groups and their expanded
+                        targets
     jobs (jb)           List reusable polyglot jobs declared under [jobs.*]
     workflows (wf)      List configured target workflows without executing
                         them
+    plan (pl)           Plan the expanded workflow DAG, safe scheduling waves,
+                        scopes, and commands without executing them
+    affected (aff)      Show dependency-aware targets affected by Git changes
+    ui-contract (uic)   Inspect shared UI preferences, capabilities,
+                        responsive policy, progress/diagnostics,
+                        confirmation/notification policy, tokens, actions, and
+                        navigation
+    preflight (pf)      Check expanded workflow roots, environments, runners,
+                        tools, and output safety
     control-center (gui)
                         Launch the Devtool desktop Control Center
     ipc-server          Run or start the local Control Center IPC broker
@@ -113,6 +132,18 @@ Project selection:
   -r, --repo REPO       Repository root
   -c, --config CONFIG   Config file path
   --target TARGET       Named target/profile from .devtool.toml
+  --group GROUP         Workspace target group from [workspace.groups];
+                        repeatable
+  --all-targets         Select every configured workspace target
+  --affected            Select workspace targets affected by current Git
+                        changes; may be combined with --group/--all-targets as
+                        a candidate filter
+  --affected-base AFFECTED_BASE
+                        Git base revision for --affected selection (default:
+                        staged/unstaged/untracked working tree)
+  --affected-head AFFECTED_HEAD
+                        Git head revision for --affected selection; with
+                        --affected-base uses base...head
   --variant VARIANT     Build/test variant within the selected target
   --solution SOLUTION   Exact solution path for restore/build/test
   --project PROJECT     Exact project path for run/validation
@@ -153,6 +184,23 @@ Output and clipboard:
   --theme {auto,plain}  Summary theme
   --log-dir LOG_DIR     Override the directory used for command logs (also
                         DEVTOOL_LOG_DIR)
+
+UI presentation:
+  --ui-profile UI_PROFILE
+                        UI profile: auto, minimal, standard, developer, debug,
+                        or a configured [ui.profiles.*] name
+  --ui-theme {auto,light,dark}
+                        Override the shared UI theme preference for this
+                        invocation
+  --ui-density {dense,compact,comfortable,detailed}
+                        Override shared information density for this
+                        invocation
+  --ui-icons {auto,nerd,unicode,ascii,native}
+                        Override semantic icon rendering mode
+  --ui-motion {auto,full,reduced}
+                        Override shared motion preference
+  --ui-verbosity {compact,normal,detailed,debug}
+                        Override shared information verbosity
 
 HUD and app bridge:
   --auto-hud, --hud-auto

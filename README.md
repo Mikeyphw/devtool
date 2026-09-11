@@ -863,3 +863,9 @@ UI07/UI08 centralize confirmation/notification behavior and complete the termina
 ### Shared GTK/Desktop and Android UI semantics
 
 GTK Control Center/HUD and Android Live HUD now consume the same UI Core contract as terminal surfaces. Desktop exposes a normalized `desktop_ui` renderer view; Android receives additive semantic bridge sections for operation state, hierarchical progress, structured diagnostics, actions/navigation and notification policy. Android bridge protocol v1 and legacy fields remain compatible. See `docs/architecture/ui-desktop-android-migration.md` and `android/devtool-live-hud/docs/UI_CORE_PROTOCOL.md`.
+
+### UI11/UI12: external state and discoverability
+
+UI11 adds a versioned semantic machine contract without breaking older clients. Live state files and IPC keep their legacy fields, while `machine.schema_version = 2` exposes workspace/selection, operation, workflow/test selection, hierarchical progress, structured diagnostics, semantic actions/navigation, notifications, presentation, capabilities and responsive intent. IPC advertises protocol v2 and supports semantic `action` requests while retaining legacy `cancel`; Tasker receives stable `DEVTOOL_*` semantic fields under both `tasker.fields` and the flat `tasker_fields` alias. Normal runner machine summaries also embed the same machine-v2 state.
+
+UI12 replaces shell completion's primary TOML scraping path with `devtool completion-state`, a config-aware completion API for targets, groups, UI/test profiles, variants, jobs, workflows and pytest node IDs. Zsh retains text-parsing fallbacks for bootstrap/older installations. Configuration UX also gains `devtool config explain` and `devtool config migrate --check|--write`; migration rewrites safe legacy `kind`/`type` aliases to canonical `runner`/`platform` syntax and creates a `.bak` backup before writing. See [`docs/architecture/ui-machine-completion-config.md`](docs/architecture/ui-machine-completion-config.md).

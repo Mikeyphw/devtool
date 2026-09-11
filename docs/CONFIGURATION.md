@@ -281,3 +281,21 @@ max_dotnet_nodes = 1
 ```
 
 Use `devtool plan ACTION --explain` to inspect exactly why nodes may or may not overlap. See `WORKFLOW_SCHEDULING_AND_PLANNING.md`.
+
+## Inspecting and migrating configuration
+
+Use `devtool config resolve` for the effective configuration and `devtool config resolve --provenance` or `devtool config explain` to understand where target, runner, platform, execution environment, workspace groups and UI settings came from.
+
+Legacy repositories using `[project].kind` or `[targets.*].type/kind` continue to work. UI12 adds a safe migration assistant:
+
+```sh
+devtool config migrate --check
+devtool config migrate --check --json
+devtool config migrate --write
+```
+
+`--write` rewrites safe legacy aliases to canonical `runner` syntax, adds an explicit migration-time `platform` when missing, and writes `.devtool.toml.bak` before modifying the configuration. Existing canonical `runner` values win; redundant legacy aliases are removed rather than creating duplicate keys.
+
+## Completion metadata
+
+`devtool completion-state --kind targets|groups|ui-profiles|test-profiles|variants|jobs|workflows|pytest-tests|all` exposes resolved values for shell/editor integration. This command uses Devtool's real config model, so target groups and inherited profiles match command execution semantics.
