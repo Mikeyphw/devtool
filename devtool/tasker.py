@@ -1415,6 +1415,18 @@ class TaskerProgressSink:
         state["ui"] = runtime_state_to_ui_snapshot(
             state, surface="machine", preferences=machine_preferences
         ).as_dict()
+        semantic_notifications = state["ui"].get("notifications") if isinstance(state["ui"], dict) else []
+        if isinstance(semantic_notifications, list) and semantic_notifications and isinstance(semantic_notifications[0], dict):
+            semantic_notification = semantic_notifications[0]
+            semantic_fields = {
+                "attention": semantic_notification.get("level"),
+                "should_notify": semantic_notification.get("should_emit"),
+                "bell": semantic_notification.get("bell"),
+                "notification_token": semantic_notification.get("token"),
+                "notification_actions": semantic_notification.get("actions") or [],
+            }
+            notification_payload.update(semantic_fields)
+            simple_notification.update(semantic_fields)
         event = dict(state)
         event["event_file"] = None
         event_file = self.events_dir / f"{timestamp.replace(':', '').replace('.', '-')}-{self.sequence:05d}-{_safe_name(event_type)}.json"

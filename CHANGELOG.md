@@ -293,3 +293,10 @@
 - Isolate Devtool's own pytest-created logs into pytest temporary directories so validation runs no longer pollute the user's retained command log list or phone mirror with nested synthetic logs.
 - Reset the runtime log-dir override around every test and clear inherited XDG roots before installing test-local state/cache/data roots.
 - Added regression coverage for nested Devtool log creation staying out of `~/.local/state/devtool/logs` and `/sdcard/.logs/devtool`.
+
+## UI07/UI08 — confirmation/notification policy and terminal UI Core migration
+
+- Added central `never|smart|always` confirmation policy with action-level confirmation metadata and compatibility shims for existing confirmation settings.
+- Added semantic notification attention/delivery/bell policy and propagated it through Tasker/IPC/apply notifications.
+- Migrated TUI live operation/progress/diagnostic/action rendering and terminal HUD rendering onto shared `UISnapshot` semantics.
+- Added shared IPC graceful-cancel helper used by terminal and desktop surfaces, config templates, `ui-contract` inspection, docs, and regression contracts.

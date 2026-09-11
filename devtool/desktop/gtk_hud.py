@@ -937,33 +937,8 @@ def _append_lane_row(Gtk: Any, box: Any, lane: str, steps: list[dict[str, Any]])
 
 
 def _request_ipc_cancel(run_id: str, *, socket_path: Path | None = None) -> tuple[bool, str]:
-    run_id = str(run_id or "").strip()
-    if not run_id:
-        return False, "No active run identity is available for cancellation."
-    path = socket_path or default_ipc_socket_path()
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(0.6)
-    try:
-        sock.connect(str(path))
-        payload = {"type": "cancel", "run_id": run_id, "reason": "Desktop HUD request"}
-        sock.sendall((json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
-        buffer = bytearray()
-        while b"\n" not in buffer:
-            chunk = sock.recv(8192)
-            if not chunk:
-                break
-            buffer.extend(chunk)
-        line = bytes(buffer).split(b"\n", 1)[0]
-        response = json.loads(line.decode("utf-8")) if line else {}
-        accepted = bool(isinstance(response, dict) and response.get("type") == "cancel_ack" and response.get("accepted"))
-        if accepted:
-            return True, f"Cancellation requested for {run_id}."
-        return False, f"The run {run_id} is not connected to the IPC broker; cancellation was not sent."
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        return False, f"Cancellation request failed: {exc}"
-    finally:
-        with _suppress_exception():
-            sock.close()
+    from ..ipc import request_run_cancel
+    return request_run_cancel(run_id, reason="Desktop HUD request", socket_path=socket_path)
 
 
 def _process_start_token(pid: int) -> str:

@@ -241,6 +241,26 @@ def minimal_global_config_template() -> str:
         "show_commands = \"on-error\" # never | on-error | always",
         "show_diagnostics = \"expanded-on-error\" # collapsed | expanded-on-error | all",
         "",
+        "[ui.confirmations]",
+        "cancel = \"smart\" # never | smart | always",
+        "rollback = \"always\"",
+        "delete_artifact = \"always\"",
+        "retry = \"never\"",
+        "apply_artifact = \"smart\"",
+        "artifact_manifest = \"smart\"",
+        "dirty_tree = \"smart\"",
+        "snapshot_overwrite = \"always\"",
+        "",
+        "[ui.notifications]",
+        "started = false",
+        "phase_changes = false",
+        "success = true",
+        "warnings = true",
+        "failures = true",
+        "requires_action = true",
+        "bell_on_failure = true",
+        "bell_on_requires_action = false",
+        "",
         "[ui.tui]",
         "density = \"compact\"",
         "sidebar = \"auto\"",
@@ -1550,6 +1570,20 @@ package_command = ""
 # show_environment = "when-relevant"
 # show_commands = "on-error"
 # show_diagnostics = "expanded-on-error"
+#
+# [ui.confirmations]
+# cancel = "smart"
+# rollback = "always"
+# retry = "never"
+#
+# [ui.notifications]
+# started = false
+# phase_changes = false
+# success = true
+# warnings = true
+# failures = true
+# requires_action = true
+# bell_on_failure = true
 #
 # [ui.tui]
 # density = "compact"

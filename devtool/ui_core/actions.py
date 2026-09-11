@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from .copy import copy_text
+from .confirmations import confirmation_decision
 from .state import UIActionState
 
 
@@ -26,7 +27,10 @@ class ActionSpec:
         enabled: bool = True,
         disabled_reason: str = "",
         payload: Mapping[str, Any] | None = None,
+        confirmation_policy: Mapping[str, Any] | None = None,
+        confirmation_context: Mapping[str, Any] | None = None,
     ) -> UIActionState:
+        decision = confirmation_decision(self.id, confirmation_policy, context={"destructive": self.destructive, **dict(confirmation_context or {})})
         return UIActionState(
             id=self.id,
             label=self.label,
@@ -37,6 +41,11 @@ class ActionSpec:
             intent=self.intent,
             enabled=enabled,
             destructive=self.destructive,
+            confirmation_mode=decision.mode,
+            requires_confirmation=decision.required,
+            confirmation_reason=decision.reason,
+            confirmation_prompt=decision.prompt,
+            confirmation_default=decision.default,
             disabled_reason=disabled_reason,
             shortcut=self.shortcut,
             payload=dict(payload or {}),
@@ -165,9 +174,20 @@ def available_action_ids(context: ActionContext) -> list[str]:
     return result
 
 
-def actions_for_context(context: ActionContext) -> list[UIActionState]:
+def actions_for_context(context: ActionContext, *, confirmation_policy: Mapping[str, Any] | None = None) -> list[UIActionState]:
     payload = _payload(context)
-    return [action_spec(action_id).present(payload=payload) for action_id in available_action_ids(context)]
+    confirmation_context = {
+        "destructive_phase_started": context.running and context.command in {"apply", "apply-overlay", "apply-snapshot", "package"},
+        "has_uncommitted_mutation": bool(context.payload.get("has_uncommitted_mutation")),
+    }
+    return [
+        action_spec(action_id).present(
+            payload=payload,
+            confirmation_policy=confirmation_policy,
+            confirmation_context=confirmation_context,
+        )
+        for action_id in available_action_ids(context)
+    ]
 
 
 def action_text(action_id: str, variant: str = "label") -> str:

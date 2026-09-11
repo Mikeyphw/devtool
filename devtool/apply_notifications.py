@@ -4,6 +4,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,9 @@ class ApplyNotification:
     title: str
     body: str
     toast: str
+    level: str = "success"
+    should_emit: bool = True
+    bell: bool = False
 
 
 def _falsey(value: str) -> bool:
@@ -137,7 +141,8 @@ def build_apply_notification(
 
     body = " · ".join(bits) if bits else status
     toast = f"{status}: {artifact or label}"
-    return ApplyNotification(title=title, body=body, toast=toast)
+    level = "critical" if failed or rolled_back else "important" if warnings or paused_result is not None else "success"
+    return ApplyNotification(title=title, body=body, toast=toast, level=level)
 
 
 def notify_apply_finished(
@@ -149,10 +154,37 @@ def notify_apply_finished(
     if not apply_notifications_enabled(args):
         return
     notification = build_apply_notification(args, config, results, totals)
-    post_apply_notification(notification)
+    from .ui_core.notifications import notification_for_event
+    from .ui_core.preferences import resolve_ui_preferences, resolve_user_ui_preferences
+    preferences = resolve_ui_preferences(config.ui_config, surface="android" if _prefer_android_side() else "desktop") if config is not None else resolve_user_ui_preferences(surface="android" if _prefer_android_side() else "desktop")
+    event = "failed" if notification.level == "critical" else "warning" if notification.level == "important" else "success"
+    semantic = notification_for_event(
+        event,
+        status="failed" if event == "failed" else "warning" if event == "warning" else "ok",
+        severity="error" if event == "failed" else "warning" if event == "warning" else "",
+        title=notification.title,
+        body=notification.body,
+        requires_action=bool(event == "failed" and any(result.name == "validation-paused" for result in results)),
+        policy=preferences.notification_policy,
+        actions=("logs.open", "operation.retry") if event == "failed" else ("logs.open",),
+        notification_id=f"apply:{_artifact_names(args, results) or _command_label(str(getattr(args, 'command', '') or ''))}",
+    )
+    notification.level = semantic.level
+    notification.should_emit = semantic.should_emit
+    notification.bell = semantic.bell
+    if notification.should_emit:
+        post_apply_notification(notification)
 
 
 def post_apply_notification(notification: ApplyNotification) -> None:
+    if not notification.should_emit:
+        return
+    if notification.bell and sys.stderr.isatty():
+        try:
+            sys.stderr.write("\a")
+            sys.stderr.flush()
+        except OSError:
+            pass
     if _prefer_android_side():
         _post_android(notification)
     else:
@@ -193,7 +225,7 @@ def _post_desktop(notification: ApplyNotification) -> None:
     _run_quiet([
         "notify-send",
         "--app-name=devtool",
-        "--urgency=normal",
+        f"--urgency={'critical' if notification.level == 'critical' else 'normal'}",
         "--expire-time=5000",
         "--hint=string:x-canonical-private-synchronous:devtool-apply",
         notification.title,

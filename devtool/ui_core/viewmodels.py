@@ -7,6 +7,8 @@ from typing import Any, Iterable, Mapping
 from .actions import ActionContext, actions_for_context
 from .capabilities import capabilities_for_surface, negotiate_capabilities
 from .diagnostics import diagnostic_presentations, summarize_diagnostics
+from .confirmations import confirmation_catalog
+from .notifications import notification_catalog, notification_for_event
 from .progress import build_progress_tree, summarize_progress
 from .responsive import resolve_responsive_layout
 from .navigation import navigation_for_surface
@@ -348,7 +350,7 @@ def runtime_state_to_ui_snapshot(
         operation=operation,
         progress=progress_nodes,
         diagnostics=diagnostics,
-        actions=actions_for_context(action_context),
+        actions=actions_for_context(action_context, confirmation_policy=resolved_preferences.confirmation_policy),
         navigation=navigation_for_surface(surface),
         presentation=UIPresentationState(**{
             key: value for key, value in resolved_preferences.as_dict().items()
@@ -361,5 +363,18 @@ def runtime_state_to_ui_snapshot(
         progress_tree=[item.as_dict() for item in build_progress_tree(progress_nodes, operation)],
         diagnostic_summary=diagnostic_summary.as_dict(),
         diagnostic_presentations=[item.as_dict() for item in diagnostic_presentations(diagnostics)],
+        confirmation_policy=confirmation_catalog(resolved_preferences.confirmation_policy),
+        notification_policy=notification_catalog(resolved_preferences.notification_policy),
+        notifications=[notification_for_event(
+            "failed" if status in {"failed", "cancelled", "interrupted"} else "success" if status == "ok" else "started" if status in {"running", "preparing"} else "phase_changed",
+            status=status,
+            severity="error" if diagnostic_summary.errors else "warning" if diagnostic_summary.warnings else "",
+            title=operation.title,
+            body=operation.detail,
+            requires_action=bool(diagnostic_summary.errors and status not in {"ok", "idle"}),
+            actions=tuple(item.id for item in actions_for_context(action_context, confirmation_policy=resolved_preferences.confirmation_policy)),
+            policy=resolved_preferences.notification_policy,
+            notification_id=f"run:{operation.run_id or command or 'devtool'}",
+        ).as_dict()],
         surface=str(surface or "machine"),
     )

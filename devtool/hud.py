@@ -1689,8 +1689,37 @@ class TerminalHud:
         self.console = console or Console()
         self.recent_events = recent_events
         self.title = title
+        self._last_bell_key = ""
+
+    def _ui_snapshot(self, state: HudState):
+        raw = state.raw if isinstance(state.raw, dict) else {}
+        presentations = raw.get("ui_presentations") if isinstance(raw.get("ui_presentations"), dict) else {}
+        preferences = presentations.get("hud") if isinstance(presentations.get("hud"), dict) else None
+        return runtime_state_to_ui_snapshot(
+            raw, surface="hud", preferences=preferences,
+            viewport={"width": self.console.width, "height": self.console.height},
+        )
+
+    def _maybe_bell(self, ui: Any) -> None:
+        if not ui.notifications:
+            return
+        note = ui.notifications[0]
+        if not isinstance(note, dict) or not note.get("should_emit") or not note.get("bell"):
+            return
+        key = f"{ui.operation.run_id}:{ui.operation.status}:{ui.operation.phase}:{note.get('event')}"
+        if key == self._last_bell_key:
+            return
+        self._last_bell_key = key
+        if self.console.is_terminal:
+            try:
+                self.console.file.write("\a")
+                self.console.file.flush()
+            except OSError:
+                pass
 
     def render(self, state: HudState, events: list[dict[str, Any]]) -> Panel:
+        ui = self._ui_snapshot(state)
+        self._maybe_bell(ui)
         table = Table.grid(expand=True)
         table.add_column(ratio=1)
         bar = render_ascii_bar(state.current, state.total, width=34)
@@ -1699,21 +1728,40 @@ class TerminalHud:
             progress_text = f"{state.current}/{state.total}"
             if state.percent is not None:
                 progress_text += f"  {state.percent}%"
-        title = Text(state.display_title, style="bold")
-        detail = Text(state.display_text or "waiting")
+        icon = resolve_icon(ui.operation.token, mode=ui.presentation.icons, surface="hud")
+        status_label = copy_text(ui.operation.token, surface="hud") if ui.operation.token in {
+            "status.success", "status.running", "status.pending", "status.failed", "status.warning", "status.skipped", "status.cancelled", "status.blocked"
+        } else human_status(state.status)
+        title = Text(f"{icon} {ui.operation.title or state.display_title}", style="bold")
+        detail = Text(ui.operation.detail or state.display_text or "waiting")
         table.add_row(title)
         table.add_row(Text(f"{bar}  {progress_text}"))
         table.add_row(detail)
-        summary_bits = [human_status(state.status)]
-        if state.phase_name:
-            summary_bits.append(human_phase_name(state.phase_name))
-        elif state.event_type:
-            summary_bits.append(human_event_type(state.event_type))
+        summary_bits = [status_label]
+        if ui.operation.phase:
+            summary_bits.append(human_phase_name(ui.operation.phase))
         if state.repo_name:
             summary_bits.append(state.repo_name)
         table.add_row(Text(" • ".join(bit for bit in summary_bits if bit), style="dim"))
+
+        visible = [node for node in ui.progress if ui.presentation.show_completed_steps or node.status not in {"ok", "skipped"}]
+        if ui.presentation.max_steps > 0:
+            visible = visible[: ui.presentation.max_steps]
+        for node in visible[:6]:
+            pct = f" {node.percent}%" if node.percent is not None else ""
+            table.add_row(Text(f"  {node.label}: {node.status}{pct}"[:180], style="dim"))
+
+        if ui.diagnostic_presentations:
+            table.add_row(Text("diagnostics", style="bold dim"))
+            for item in ui.diagnostic_presentations[:3]:
+                table.add_row(Text(f"! {item.get('what_happened') or item.get('summary') or 'Issue'}"[:180], style="dim"))
+
+        if ui.actions:
+            labels = [action.short_label + ("*" if action.requires_confirmation else "") for action in ui.actions[:5]]
+            table.add_row(Text("actions: " + " · ".join(labels), style="dim"))
+
         recent = events[-self.recent_events :]
-        if recent:
+        if recent and ui.presentation.verbosity in {"detailed", "debug"}:
             lines = [line for event in recent if (line := friendly_event_line(event))]
             if lines:
                 table.add_row(Text("recent", style="bold dim"))

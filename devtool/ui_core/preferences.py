@@ -7,6 +7,9 @@ from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
+from .confirmations import DEFAULT_CONFIRMATION_POLICY, normalize_confirmation_policy
+from .notifications import DEFAULT_NOTIFICATION_POLICY, normalize_notification_policy
+
 
 UI_PROFILE_NAMES = ("minimal", "standard", "developer", "debug")
 UI_SURFACES = ("machine", "desktop", "tui", "hud", "android")
@@ -82,7 +85,7 @@ _CHOICES: dict[str, set[str]] = {
 }
 _BOOL_KEYS = {"confirm_destructive", "confirm_cancel", "show_completed_steps", "mouse"}
 _INT_KEYS = {"max_steps"}
-_META_KEYS = {"profile", "profiles", *UI_SURFACES}
+_META_KEYS = {"profile", "profiles", "confirmations", "notifications", *UI_SURFACES}
 
 
 class UIPreferencesError(ValueError):
@@ -142,6 +145,22 @@ def validate_ui_config(config: Mapping[str, Any] | None) -> None:
         if key == "profile":
             if not str(value or "").strip():
                 raise UIPreferencesError("[ui].profile must not be empty")
+            continue
+        if key == "confirmations":
+            if not isinstance(value, Mapping):
+                raise UIPreferencesError("[ui.confirmations] must be a TOML table")
+            try:
+                normalize_confirmation_policy(value)
+            except ValueError as exc:
+                raise UIPreferencesError(str(exc)) from exc
+            continue
+        if key == "notifications":
+            if not isinstance(value, Mapping):
+                raise UIPreferencesError("[ui.notifications] must be a TOML table")
+            try:
+                normalize_notification_policy(value)
+            except ValueError as exc:
+                raise UIPreferencesError(str(exc)) from exc
             continue
         if key == "profiles":
             if not isinstance(value, Mapping):
@@ -206,6 +225,8 @@ class UIPreferences:
     mouse: bool = True
     max_steps: int = 0
     notification_detail: str = "normal"
+    confirmation_policy: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_CONFIRMATION_POLICY))
+    notification_policy: dict[str, bool] = field(default_factory=lambda: dict(DEFAULT_NOTIFICATION_POLICY))
     provenance: dict[str, str] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -281,7 +302,17 @@ def resolve_ui_preferences(
     _apply(values, provenance, _environment_overrides(environment), "environment")
     _apply(values, provenance, cli_overrides, "cli")
 
-    return UIPreferences(surface=resolved_surface, profile=profile, provenance=provenance, **values)
+    confirmation_policy = normalize_confirmation_policy(config.get("confirmations") if isinstance(config.get("confirmations"), Mapping) else None)
+    notification_policy = normalize_notification_policy(config.get("notifications") if isinstance(config.get("notifications"), Mapping) else None)
+    # Legacy booleans remain authoritative compatibility shims.
+    if not values.get("confirm_destructive", True):
+        confirmation_policy["rollback"] = "never"
+        confirmation_policy["delete_artifact"] = "never"
+        confirmation_policy["snapshot_overwrite"] = "never"
+    if values.get("confirm_cancel", False):
+        confirmation_policy["cancel"] = "always"
+
+    return UIPreferences(surface=resolved_surface, profile=profile, confirmation_policy=confirmation_policy, notification_policy=notification_policy, provenance=provenance, **values)
 
 
 

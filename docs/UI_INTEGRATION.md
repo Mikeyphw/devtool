@@ -60,3 +60,9 @@ Both frontends consume normalized devtool events. Overall pipeline progress,
 local runner progress, and test progress remain separate values. Events carry a
 run ID and increasing sequence number so output from an older run cannot replace
 the current notification or HUD state.
+
+## UI07/UI08 policy and terminal integration
+
+UI07 adds confirmation/notification policy to the shared snapshot. Tasker/IPC notification payloads preserve old title/text/current/total fields and add semantic attention/delivery/action metadata. Apply notifications use the same policy before posting through Termux, Android bridge, root notification, or `notify-send`.
+
+UI08 migrates TUI and terminal HUD live rendering onto the semantic snapshot. The TUI still owns terminal-native interaction and layout; it does not duplicate runtime state interpretation. Graceful cancellation is sent through the shared IPC helper used by desktop HUD, and terminal clipboard/log/workflow behavior remains a surface adapter over central action IDs.

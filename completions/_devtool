@@ -237,7 +237,7 @@ _devtool_commands() {
     'aff:alias for affected'
     'preflight:check expanded workflow roots, environments, runners, tools, and outputs'
     'pf:alias for preflight'
-    'ui-contract:inspect shared UI preferences, capabilities, responsive policy, progress/diagnostics, tokens, actions, and navigation'
+    'ui-contract:inspect shared UI preferences, capabilities, responsive policy, progress/diagnostics, confirmation/notification policy, tokens, actions, and navigation'
     'uic:alias for ui-contract'
     'logs:list, open, or tail devtool logs'
     'history:list structured run history'

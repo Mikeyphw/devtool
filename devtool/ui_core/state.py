@@ -97,6 +97,11 @@ class UIActionState:
     intent: str
     enabled: bool = True
     destructive: bool = False
+    confirmation_mode: str = "never"
+    requires_confirmation: bool = False
+    confirmation_reason: str = ""
+    confirmation_prompt: str = ""
+    confirmation_default: bool = True
     disabled_reason: str = ""
     notification_label: str = ""
     shortcut: str = ""
@@ -135,6 +140,8 @@ class UIPresentationState:
     mouse: bool = True
     max_steps: int = 0
     notification_detail: str = "normal"
+    confirmation_policy: dict[str, str] = field(default_factory=dict)
+    notification_policy: dict[str, bool] = field(default_factory=dict)
     provenance: dict[str, str] = field(default_factory=dict)
 
 
@@ -155,6 +162,9 @@ class UISnapshot:
     progress_tree: list[dict[str, Any]] = field(default_factory=list)
     diagnostic_summary: dict[str, Any] = field(default_factory=dict)
     diagnostic_presentations: list[dict[str, Any]] = field(default_factory=list)
+    confirmation_policy: dict[str, Any] = field(default_factory=dict)
+    notification_policy: dict[str, Any] = field(default_factory=dict)
+    notifications: list[dict[str, Any]] = field(default_factory=list)
     schema_version: int = UI_SCHEMA_VERSION
     surface: str = "machine"
 

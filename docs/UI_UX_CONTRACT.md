@@ -108,3 +108,13 @@ The finalization test suite must protect:
 - Notification status-line parity, 7 dp progress rails, dominant non-color state label, three-action model, and accessibility descriptions.
 - Typography/navigation polish, including Logs copy and compact Android page title.
 - Overview action-first layout and Run progressive disclosure.
+
+## UI07 confirmation and notification policy
+
+Confirmation semantics are centralized in `ui_core.confirmations`; notification attention/delivery semantics are centralized in `ui_core.notifications`. Frontends must consume `requires_confirmation`/`confirmation_mode` from action state rather than creating their own destructive-action rules. Notifications use semantic attention levels (`passive`, `info`, `important`, `critical`, `success`) and carry an explicit `should_emit` and `bell` decision.
+
+Repository/global configuration may define `[ui.confirmations]` and `[ui.notifications]`. `ui-contract --json` exposes both schemas and their resolved policy.
+
+## UI08 terminal contract
+
+TUI and terminal HUD consume the same `UISnapshot` as other frontends. Existing navigation shortcuts and legacy HUD state remain compatible, while live terminal rendering now derives status labels/icons, progress hierarchy, diagnostics, available actions, confirmation markers, and notification bells from UI Core.

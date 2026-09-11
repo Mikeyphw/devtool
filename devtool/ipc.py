@@ -358,6 +358,41 @@ class IpcPublisher:
             sock.close()
 
 
+
+def request_run_cancel(run_id: str, *, reason: str = "UI request", socket_path: Path | None = None, timeout: float = 0.8) -> tuple[bool, str]:
+    """Request graceful cancellation through the shared IPC broker.
+
+    Frontends should call this helper rather than reimplementing the wire
+    protocol. The producer remains authoritative about whether cancellation is
+    accepted.
+    """
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        return False, "No active run identity is available for cancellation."
+    path = socket_path or default_ipc_socket_path()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(str(path))
+        sock.sendall(_json_line({"type": "cancel", "run_id": run_id, "reason": reason}))
+        buffer = bytearray()
+        while b"\n" not in buffer:
+            chunk = sock.recv(8192)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+        line = bytes(buffer).split(b"\n", 1)[0]
+        response = json.loads(line.decode("utf-8")) if line else {}
+        accepted = bool(isinstance(response, dict) and response.get("type") == "cancel_ack" and response.get("accepted"))
+        if accepted:
+            return True, f"Cancellation requested for {run_id}."
+        return False, f"The run {run_id} is not connected to the IPC broker; cancellation was not sent."
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return False, f"Cancellation request failed: {exc}"
+    finally:
+        with contextlib.suppress(OSError):
+            sock.close()
+
 def broker_is_running(socket_path: Path | None = None) -> bool:
     path = socket_path or default_ipc_socket_path()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

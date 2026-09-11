@@ -1045,7 +1045,7 @@ def build_parser() -> argparse.ArgumentParser:
     affected_cmd.add_argument("--head", default="", help="Git head revision; with --base uses base...head")
     affected_cmd.add_argument("--explain", action="store_true", help="Explain why every target is selected")
     affected_cmd.add_argument("--json", action="store_true", help="Emit structured affected-target metadata")
-    ui_contract_cmd = subparsers.add_parser("ui-contract", aliases=["uic"], help="Inspect shared UI preferences, capabilities, responsive policy, progress/diagnostic schemas, tokens, actions, and navigation")
+    ui_contract_cmd = subparsers.add_parser("ui-contract", aliases=["uic"], help="Inspect shared UI preferences, capabilities, responsive policy, progress/diagnostics, confirmation/notification policy, tokens, actions, and navigation")
     ui_contract_cmd.add_argument("--surface", choices=["machine", "desktop", "tui", "android", "hud"], default="machine", help="Render one frontend surface contract")
     ui_contract_cmd.add_argument("--width", type=int, default=0, help="Viewport width/terminal columns for responsive-policy inspection")
     ui_contract_cmd.add_argument("--height", type=int, default=0, help="Viewport height/terminal rows for responsive-policy inspection")
@@ -6592,7 +6592,7 @@ def _rollback(config: ProjectConfig, args: argparse.Namespace) -> int:
         commit = str(entries[-1]["commit_hash"])
     if not commit:
         raise SystemExit("Pass a commit hash/--last, or use --transaction/--failed for an apply transaction.")
-    _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command="rollback")
+    _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command="rollback", ui_config=config.ui_config)
     specs = [CommandSpec("rollback", ["git", "revert", "--no-edit", commit], destructive=True)]
     results, raw = _run_specs_for_args(config, specs, args, log_path=new_log_path(f"rollback-{commit[:12]}"))
     totals, _, _, machine = _emit_summary(results, config, as_json=False, raw_output=raw, command="rollback")
@@ -7276,8 +7276,8 @@ def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
 
 def _ui_contract(*, surface: str = "machine", as_json: bool = False, width: int = 0, height: int = 0, required_capabilities: list[str] | None = None) -> None:
     from .ui_core import (
-        CAPABILITY_SCHEMA_VERSION, COPY_SCHEMA_VERSION, DIAGNOSTIC_SCHEMA_VERSION, ICON_SCHEMA_VERSION, PROGRESS_SCHEMA_VERSION, RESPONSIVE_SCHEMA_VERSION, TOKEN_SCHEMA_VERSION, UI_SCHEMA_VERSION,
-        action_catalog, capability_catalog, capabilities_for_surface, copy_catalog, icon_catalog, navigation_for_surface, negotiate_capabilities, profile_catalog,
+        CAPABILITY_SCHEMA_VERSION, CONFIRMATION_SCHEMA_VERSION, COPY_SCHEMA_VERSION, DIAGNOSTIC_SCHEMA_VERSION, ICON_SCHEMA_VERSION, NOTIFICATION_SCHEMA_VERSION, PROGRESS_SCHEMA_VERSION, RESPONSIVE_SCHEMA_VERSION, TOKEN_SCHEMA_VERSION, UI_SCHEMA_VERSION,
+        action_catalog, capability_catalog, capabilities_for_surface, confirmation_catalog, copy_catalog, icon_catalog, navigation_for_surface, negotiate_capabilities, notification_catalog, profile_catalog,
         resolve_responsive_layout, responsive_policy_catalog, resolve_ui_preferences, token_catalog,
     )
 
@@ -7300,6 +7300,8 @@ def _ui_contract(*, surface: str = "machine", as_json: bool = False, width: int 
         "schema_version": UI_SCHEMA_VERSION,
         "capability_schema_version": CAPABILITY_SCHEMA_VERSION,
         "responsive_schema_version": RESPONSIVE_SCHEMA_VERSION,
+        "confirmation_schema_version": CONFIRMATION_SCHEMA_VERSION,
+        "notification_schema_version": NOTIFICATION_SCHEMA_VERSION,
         "progress_schema_version": PROGRESS_SCHEMA_VERSION,
         "diagnostic_schema_version": DIAGNOSTIC_SCHEMA_VERSION,
         "token_schema_version": TOKEN_SCHEMA_VERSION,
@@ -7313,6 +7315,8 @@ def _ui_contract(*, surface: str = "machine", as_json: bool = False, width: int 
         "responsive": responsive.as_dict(),
         "capability_catalog": capability_catalog(),
         "responsive_policy": responsive_policy_catalog(),
+        "confirmation_policy": confirmation_catalog(preferences.confirmation_policy),
+        "notification_policy": notification_catalog(preferences.notification_policy),
         "progress_model": {"hierarchy": ["operation", "workflow", "target", "phase", "step"], "compatibility": "flat progress remains available with parent_id links"},
         "diagnostic_model": {"sections": ["what_happened", "why", "where", "next_actions", "technical_details"], "compatibility": "legacy severity/message fields remain available"},
         "tokens": token_catalog(),
@@ -7334,6 +7338,8 @@ def _ui_contract(*, surface: str = "machine", as_json: bool = False, width: int 
         ("layout", f"{responsive.mode} · panes={responsive.panes} · nav={responsive.navigation}"),
         ("capabilities", ", ".join(capabilities.enabled()) or "semantic-only"),
         ("fallbacks", ", ".join(f"{key}→{value}" for key, value in negotiation.fallbacks.items()) or "none"),
+        ("confirmations", ", ".join(f"{k}={v}" for k, v in preferences.confirmation_policy.items())),
+        ("notifications", ", ".join(k for k, v in preferences.notification_policy.items() if v) or "none"),
     ])
     console.print("[bold]Actions[/bold]")
     render_status_table([(item["id"], f"{item['label']} · intent={item['intent']}") for item in payload["actions"]])
@@ -7597,16 +7603,27 @@ def _format_artifact_exception(exc: BaseException, *, artifact: str, artifact_ty
     )
 
 
-def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict, *, confirm: bool = True) -> None:
+def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict, *, confirm: bool = True, ui_config: dict[str, Any] | None = None) -> None:
     if not manifest:
         return
     render_artifact_manifest(manifest, console_obj=console)
-    if not confirm:
+    if not confirm or getattr(args, "yes", False) or getattr(args, "force", False):
         return
-    if getattr(args, "yes", False) or getattr(args, "force", False):
+    from .ui_core.confirmations import confirmation_decision
+    from .ui_core.preferences import resolve_ui_preferences, resolve_user_ui_preferences
+    preferences = resolve_ui_preferences(ui_config, surface="tui") if ui_config is not None else resolve_user_ui_preferences(surface="tui")
+    inventory = manifest.get("inventory") if isinstance(manifest.get("inventory"), dict) else {}
+    entries = inventory.get("entries") if isinstance(inventory.get("entries"), list) else []
+    destructive = any(isinstance(item, dict) and str(item.get("action") or "") in {"delete", "remove"} for item in entries)
+    decision = confirmation_decision(
+        "artifact.apply", preferences.confirmation_policy,
+        context={"policy_key": "artifact_manifest", "manifest_confirmation": True, "destructive": destructive, "default": True},
+        prompt="Continue with this artifact?",
+    )
+    if not decision.required:
         return
     if console.is_interactive and sys.stdin.isatty():
-        if not Confirm.ask("Continue with this artifact?", default=True, console=console):
+        if not Confirm.ask(decision.prompt, default=decision.default, console=console):
             raise SystemExit(1)
         console.print(artifact_confirmation_text(manifest))
         return
@@ -7732,7 +7749,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     # or snapshot overwrite prompts.  --yes/-y confirms this prompt too.
     preview_only = getattr(args, "preview", False) or (getattr(args, "diff", False) and not getattr(args, "interactive", False))
     try:
-        _show_and_confirm_artifact_manifest(args, validation.manifest, confirm=not preview_only)
+        _show_and_confirm_artifact_manifest(args, validation.manifest, confirm=not preview_only, ui_config=config.ui_config)
     except SystemExit as exc:
         result = OperationResult(
             "artifact-cancelled",
@@ -7759,7 +7776,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + output)
 
     try:
-        _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=name)
+        _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=name, ui_config=config.ui_config)
     except SystemExit as exc:
         result = OperationResult(
             "apply-cancelled",
@@ -9241,25 +9258,41 @@ def _git_dirty(repo_root: Path) -> bool:
     return any(not _status_line_ignored(line) for line in proc.stdout.splitlines())
 
 
-def _ensure_safe_repo(repo_root: Path, *, force: bool, yes: bool, command: str) -> None:
+def _ensure_safe_repo(repo_root: Path, *, force: bool, yes: bool, command: str, ui_config: dict[str, Any] | None = None) -> None:
     if repo_root == Path("/"):
         raise SystemExit("Refusing to operate on '/'")
     if not (repo_root / ".git").exists() and not force:
         raise SystemExit("Repo root does not look like a git repository. Use --force to override.")
+    from .ui_core.confirmations import confirmation_decision
+    from .ui_core.preferences import resolve_ui_preferences, resolve_user_ui_preferences
+    preferences = resolve_ui_preferences(ui_config, surface="tui") if ui_config is not None else resolve_user_ui_preferences(surface="tui")
     if "snapshot" in command and not (yes or force):
-        if console.is_interactive and sys.stdin.isatty():
-            okay = Confirm.ask("Applying a snapshot may overwrite/delete files. Continue?", default=False, console=console)
-            if not okay:
-                raise SystemExit(1)
-        else:
-            raise SystemExit("Snapshot apply needs --yes or --force in non-interactive mode.")
-    if command.startswith("apply") and _git_dirty(repo_root) and not (yes or force):
-        if console.is_interactive and sys.stdin.isatty():
-            okay = Confirm.ask("Git tree is dirty. Continue?", default=True, console=console)
-            if not okay:
-                raise SystemExit(1)
-        else:
-            raise SystemExit("Git tree is dirty. Use --yes or --force to continue.")
+        decision = confirmation_decision(
+            "artifact.apply", preferences.confirmation_policy,
+            context={"policy_key": "snapshot_overwrite", "destructive": True, "overwrites": True, "default": False},
+            prompt="Applying a snapshot may overwrite/delete files. Continue?",
+        )
+        if decision.required:
+            if console.is_interactive and sys.stdin.isatty():
+                okay = Confirm.ask(decision.prompt, default=decision.default, console=console)
+                if not okay:
+                    raise SystemExit(1)
+            else:
+                raise SystemExit("Snapshot apply needs --yes or --force in non-interactive mode.")
+    dirty = command.startswith("apply") and _git_dirty(repo_root)
+    if dirty and not (yes or force):
+        decision = confirmation_decision(
+            "artifact.apply", preferences.confirmation_policy,
+            context={"policy_key": "dirty_tree", "dirty_tree": True, "default": True},
+            prompt="Git tree is dirty. Continue?",
+        )
+        if decision.required:
+            if console.is_interactive and sys.stdin.isatty():
+                okay = Confirm.ask(decision.prompt, default=decision.default, console=console)
+                if not okay:
+                    raise SystemExit(1)
+            else:
+                raise SystemExit("Git tree is dirty. Use --yes or --force to continue.")
 
 
 def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespace | None = None) -> None:
@@ -10866,7 +10899,7 @@ def _main_after_parse(
     if args.command == "batch":
         destructive_batch = any(step.split("=", 1)[0] in {"apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as", "commit", "ci", "tag"} for step in args.steps)
         if destructive_batch:
-            _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command)
+            _ensure_safe_repo(config.repo_root, force=args.force, yes=args.yes, command=args.command, ui_config=config.ui_config)
 
     if args.command in APPLY_COMMANDS:
         if bool(getattr(args, "static_validate", False)):

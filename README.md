@@ -857,3 +857,5 @@ with QEMU plus an auto-provisioned amd64 sysroot. See
 
 
 Final Termux/PRoot acceptance audit: `docs/TERMUX_PROOT_PROMISE_AUDIT.md`.
+
+UI07/UI08 centralize confirmation/notification behavior and complete the terminal migration onto UI Core. `[ui.confirmations]` chooses `never|smart|always` for cancellation, rollback, retry, dirty-tree and artifact/snapshot operations; `[ui.notifications]` controls started/phase/success/warning/failure/requires-action delivery and terminal bells. TUI and terminal HUD now render live status, hierarchical progress, structured diagnostics and actions from the same `UISnapshot` used by IPC/Tasker/Android/Desktop, while preserving existing routes, shortcuts and legacy state. See [`docs/architecture/ui-confirmations-terminal.md`](docs/architecture/ui-confirmations-terminal.md).

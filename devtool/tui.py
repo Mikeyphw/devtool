@@ -19,7 +19,7 @@ from typing import Any, Iterable
 from rich import box
 from rich.console import Console, Group
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
@@ -28,6 +28,10 @@ from .artifacts import load_history
 from .console_utils import create_console, detect_console_width, is_termux_environment
 from .core.events import tui_event_snapshot
 from .ui_core.navigation import navigation_label_for_route, navigation_shortcut_map
+from .ui_core.copy import copy_text
+from .ui_core.icons import resolve_icon
+from .ui_core.viewmodels import runtime_state_to_ui_snapshot
+from .ipc import request_run_cancel
 from .ui_core.preferences import resolve_user_ui_preferences
 from .ui_core.responsive import resolve_responsive_layout
 
@@ -116,6 +120,139 @@ def _repo_snapshot(repo_root: Path) -> dict[str, Any]:
     }
 
 
+
+_TERMINAL_ACTION_KEYS = {
+    "operation.cancel": "c",
+    "operation.retry": "y",
+    "operation.rerun": "y",
+    "validation.retry_failed": "f",
+    "validation.resume": "v",
+    "logs.open": "l",
+    "summary.copy": "s",
+    "diagnostics.copy": "x",
+    "workflow.inspect": "i",
+}
+
+
+def _semantic_snapshot(snapshot: dict[str, Any], profile: TerminalProfile):
+    live = snapshot.get("live") if isinstance(snapshot.get("live"), dict) else {}
+    if not live:
+        return None
+    presentations = live.get("ui_presentations") if isinstance(live.get("ui_presentations"), dict) else {}
+    preferences = presentations.get("tui") if isinstance(presentations.get("tui"), dict) else None
+    return runtime_state_to_ui_snapshot(
+        live, surface="tui", preferences=preferences,
+        viewport={"width": profile.width, "height": profile.height},
+    )
+
+
+def _action_key_map(ui_snapshot: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    if ui_snapshot is None:
+        return result
+    for action in ui_snapshot.actions:
+        key = _TERMINAL_ACTION_KEYS.get(action.id)
+        if key and action.enabled and key not in result:
+            result[key] = action
+    return result
+
+
+def _semantic_live_panels(snapshot: dict[str, Any], profile: TerminalProfile) -> list[Any]:
+    ui = _semantic_snapshot(snapshot, profile)
+    if ui is None or ui.operation.status == "idle":
+        return []
+    icon_mode = ui.presentation.icons
+    status_icon = resolve_icon(ui.operation.token, mode=icon_mode, surface="tui")
+    progress = ui.progress_summary
+    progress_text = "-"
+    if progress.get("percent") is not None:
+        progress_text = f"{progress['percent']}%"
+    if progress.get("completed") is not None and progress.get("total"):
+        progress_text += f" · {progress['completed']}/{progress['total']}"
+    rows: list[tuple[str, Any]] = [
+        ("Status", f"{status_icon} {copy_text(ui.operation.token, surface='tui') if ui.operation.token in {'status.success','status.running','status.pending','status.failed','status.warning','status.skipped','status.cancelled','status.blocked'} else ui.operation.status}"),
+        ("Phase", ui.operation.phase or "-"),
+        ("Progress", progress_text),
+    ]
+    if not profile.compact:
+        rows.extend([
+            ("Target", ui.operation.target or ", ".join(ui.selection.targets) or "-"),
+            ("Runner", ui.operation.runner or "-"),
+            ("Environment", ui.operation.execution_environment or "-"),
+            ("Detail", ui.operation.detail or "-"),
+        ])
+    panels: list[Any] = [_kv_panel("Live build/test run", rows, profile=profile)]
+
+    visible = [node for node in ui.progress if ui.presentation.show_completed_steps or node.status not in {"ok", "skipped"}]
+    if ui.presentation.max_steps > 0:
+        visible = visible[: ui.presentation.max_steps]
+    if visible:
+        step_rows = []
+        for node in visible[: (4 if profile.compact else 8)]:
+            pct = f" {node.percent}%" if node.percent is not None else ""
+            step_rows.append((node.label, f"{node.status}{pct}" + (f" · {node.detail}" if node.detail and not profile.compact else "")))
+        panels.append(_kv_panel("Progress", step_rows, profile=profile))
+
+    if ui.diagnostic_presentations:
+        diag_rows = []
+        for item in ui.diagnostic_presentations[: (2 if profile.compact else 4)]:
+            diag_rows.append((str(item.get("severity") or "info").upper(), item.get("what_happened") or item.get("summary") or "Issue"))
+        panels.append(_kv_panel("Diagnostics", diag_rows, profile=profile))
+
+    actions = _action_key_map(ui)
+    if actions:
+        panels.append(_kv_panel("Actions", [(key, action.short_label + (" · confirm" if action.requires_confirmation else "")) for key, action in actions.items()], profile=profile))
+    return panels
+
+
+def _copy_terminal_text(text: str) -> tuple[bool, str]:
+    text = str(text or "")
+    for argv in (["termux-clipboard-set"], ["wl-copy"], ["xclip", "-selection", "clipboard"]):
+        if shutil.which(argv[0]) is None:
+            continue
+        try:
+            subprocess.run(argv, input=text, text=True, timeout=2, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True, "Copied to clipboard."
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return False, "Clipboard integration unavailable; content printed below."
+
+
+def _dispatch_terminal_action(action: Any, ui: Any, *, console: Console) -> None:
+    if action.requires_confirmation:
+        prompt = action.confirmation_prompt or (action.label + "?")
+        if not Confirm.ask(prompt, default=bool(action.confirmation_default), console=console):
+            console.print("[dim]Action cancelled.[/dim]")
+            return
+    if action.id == "operation.cancel":
+        ok, message = request_run_cancel(ui.operation.run_id, reason="TUI request")
+        console.print(("[green]" if ok else "[yellow]") + message + ("[/green]" if ok else "[/yellow]"))
+        return
+    if action.id == "logs.open":
+        console.print(f"[bold]Log[/bold] {ui.operation.log_path or action.payload.get('log_path') or '-'}")
+        return
+    if action.id == "summary.copy":
+        text = f"{ui.operation.title}\nstatus={ui.operation.status}\nphase={ui.operation.phase}\ntarget={ui.operation.target}\ndetail={ui.operation.detail}\nlog={ui.operation.log_path}"
+        ok, message = _copy_terminal_text(text)
+        console.print(f"[green]{message}[/green]" if ok else f"[yellow]{message}[/yellow]\n{text}")
+        return
+    if action.id == "diagnostics.copy":
+        text = "\n\n".join(f"{d.severity.upper()}: {d.message}" + (f"\n{d.location}" if d.location else "") for d in ui.diagnostics)
+        ok, message = _copy_terminal_text(text)
+        console.print(f"[green]{message}[/green]" if ok else f"[yellow]{message}[/yellow]\n{text}")
+        return
+    if action.id == "workflow.inspect":
+        target = ui.operation.target or (ui.selection.targets[0] if ui.selection.targets else "")
+        console.print(f"[bold]Workflow[/bold] devtool workflows" + (f" --target {target}" if target else ""))
+        return
+    # Retry/resume actions are semantically exposed even when exact original
+    # argv is unavailable. Give an executable conservative command rather than
+    # inventing hidden state.
+    command = ui.operation.command or ui.selection.operation or "validate"
+    target = ui.operation.target or (ui.selection.targets[0] if ui.selection.targets else "")
+    hint = f"devtool {command}" + (f" --target {target}" if target else "")
+    console.print(f"[bold]{action.short_label}[/bold]: {hint}")
+
 def _kv_panel(title: str, rows: Iterable[tuple[str, Any]], *, profile: TerminalProfile) -> Panel:
     if profile.compact:
         body = Text()
@@ -168,27 +305,13 @@ def _dashboard(snapshot: dict[str, Any], profile: TerminalProfile) -> Group:
     return Group(
         _kv_panel("Repository", repo_rows, profile=profile),
         _kv_panel("Overview", summary_rows, profile=profile),
+        *_semantic_live_panels(snapshot, profile),
     )
 
 
 def _build_page(snapshot: dict[str, Any], profile: TerminalProfile) -> Group:
     panels: list[Any] = []
-    live = snapshot.get("live") if isinstance(snapshot.get("live"), dict) else {}
-    live_status = str(live.get("status") or "").strip()
-    if live_status and live_status != "idle":
-        progress = "-"
-        current, total = live.get("current"), live.get("total")
-        if isinstance(current, int) and isinstance(total, int) and total > 0:
-            progress = f"{current}/{total} ({round(current / total * 100)}%)"
-        live_rows = [
-            ("Status", live_status),
-            ("Phase", live.get("phase_name") or live.get("event_type") or "-"),
-            ("Progress", progress),
-        ]
-        if not profile.compact:
-            live_rows.append(("Command", live.get("command") or "-"))
-            live_rows.append(("Detail", live.get("text") or "-"))
-        panels.append(_kv_panel("Live build/test run", live_rows, profile=profile))
+    panels.extend(_semantic_live_panels(snapshot, profile))
 
     artifacts = snapshot["artifacts"][:8 if profile.mode == "wide" else 5 if profile.mode == "narrow" else 3]
     if not artifacts:
@@ -329,8 +452,13 @@ def run_tui(args: Any, *, repo_root: Path, console: Console | None = None) -> in
 
     while True:
         nav_shortcuts = navigation_shortcut_map("tui")
+        current_profile = terminal_profile(width=width_override or detect_console_width(console.width), height=console.height)
+        current_snapshot = _repo_snapshot(repo_root)
+        ui = _semantic_snapshot(current_snapshot, current_profile)
+        action_shortcuts = _action_key_map(ui)
+        choices = list(dict.fromkeys([*nav_shortcuts, *action_shortcuts, "r", "q"]))
         try:
-            choice = Prompt.ask("devtool", choices=[*nav_shortcuts, "r", "q"], default="r", console=console)
+            choice = Prompt.ask("devtool", choices=choices, default="r", console=console)
         except (EOFError, KeyboardInterrupt):
             console.print()
             return 0
@@ -338,6 +466,8 @@ def run_tui(args: Any, *, repo_root: Path, console: Console | None = None) -> in
             return 0
         if choice in nav_shortcuts:
             page = nav_shortcuts[choice]
+        elif choice in action_shortcuts and ui is not None:
+            _dispatch_terminal_action(action_shortcuts[choice], ui, console=console)
         # Do not clear the terminal. Appending a fresh frame is more reliable
         # on narrow/mobile terminals and preserves scrollback for diagnostics.
         draw()
