@@ -21,6 +21,7 @@ from typing import Any, Iterable
 
 from .build_optimization import android_validation_cli_resolution_notes, resolve_android_validation_phase_policy, resolve_android_validation_policy, resolve_build_policy
 from . import android_build
+from .android.capabilities import resolve_android_execution_context
 from .execution_environments import CHROOT, NATIVE_TERMUX, detect_current_environment
 from .models import ProjectConfig
 from .termux_toolchains import detect_runtime_identity, termux_native_provider, termux_cmake_probe, termux_ninja_probe, termux_ccache_probe, termux_android_tool_providers, classify_native_requirement
@@ -688,6 +689,9 @@ def android_builder_arguments_for_tasks(
     _append_non_default_option(argv, "--java-provider", java_options.get("provider") or android.get("java_provider", "auto"))
     _append_option(argv, "--sdk-root", android.get("sdk_root"))
     _append_non_default_option(argv, "--sdk-provider", android.get("sdk_provider", "auto"))
+    adb_options = android.get("adb", {}) if isinstance(android.get("adb", {}), dict) else {}
+    _append_non_default_option(argv, "--adb-provider", adb_options.get("provider") or android.get("adb_provider", "auto"))
+    _append_option(argv, "--adb-path", adb_options.get("path") or android.get("adb_path"))
     _append_option(argv, "--aapt2", android.get("aapt2"))
     requested_aapt2_provider = str(
         build_tools_options.get("aapt2_provider")
@@ -1081,8 +1085,9 @@ def android_doctor_rows(config: ProjectConfig) -> list[tuple[str, str]]:
         pass
 
     sdk, sdk_source = android_build.discover_sdk_root_with_source(None, project.root)
-    wrapper = project.root / "gradlew"
-    gradle_path = wrapper if wrapper.is_file() else (Path(shutil.which("gradle")) if shutil.which("gradle") else None)
+    execution_context = resolve_android_execution_context(config, project_root=project.root)
+    gradle_tool = execution_context.tool("gradle")
+    gradle_path = Path(gradle_tool.path) if gradle_tool.available and gradle_tool.path else None
     sdkmanager = android_build.find_sdkmanager(sdk) if sdk else None
     build_tools = android_build.installed_build_tools_versions(sdk) if sdk else []
 

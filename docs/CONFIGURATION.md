@@ -112,6 +112,13 @@ stop_after_run = true
 [android]
 aapt2_provider = "auto"
 aapt2_fallback_path = "/sdcard/Download/aapt2-arm64-v8a.bin"
+
+[android.adb]
+provider = "auto" # auto | sdk | termux | termux-adb | path | none
+device_policy = "exactly-one"
+# path = "/data/data/com.termux/files/usr/bin/termux-adb"
+# serial = "..."
+# preferred = "Pixel 8"
 ```
 
 

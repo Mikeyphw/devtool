@@ -1597,43 +1597,29 @@ def _parse_adb_device_states(output: str) -> dict[str, str]:
 def _adb_candidates_for_sdk(
     sdk_root: Path | None,
     env: Mapping[str, str] | None = None,
+    *,
+    provider: str = "auto",
+    explicit_path: str | os.PathLike[str] | None = None,
 ) -> list[Path]:
-    """Return usable ADB candidates, preferring the selected SDK."""
+    """Return the canonical ADB provider chosen by shared toolchain logic."""
 
-    env = env or os.environ
-    candidates: list[Path] = []
-
-    if sdk_root is not None:
-        candidates.append(
-            Path(sdk_root) / "platform-tools" / "adb"
+    env = dict(env or os.environ)
+    toolchains = _termux_toolchains_runtime_module()
+    try:
+        result = toolchains.resolve_adb_provider(
+            sdk_root=sdk_root,
+            provider=provider,
+            explicit_path=explicit_path,
+            env=env,
         )
-
-    resolved = shutil.which(
-        "adb",
-        path=str(env.get("PATH", "")),
-    )
-
-    if resolved:
-        candidates.append(Path(resolved))
-
-    unique: list[Path] = []
-    seen: set[str] = set()
-
-    for candidate in candidates:
-        key = str(candidate)
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-
-        if (
-            candidate.is_file()
-            and os.access(candidate, os.X_OK)
-        ):
-            unique.append(candidate)
-
-    return unique
+    except (ValueError, OSError) as exc:
+        warn(f"ADB provider resolution failed: {exc}")
+        return []
+    if result.path is not None and result.available and result.compatible is not False:
+        return [Path(result.path)]
+    if result.rejection_reason:
+        warn(f"ADB provider unavailable: {result.rejection_reason}")
+    return []
 
 
 def connected_android_devices(
@@ -1641,6 +1627,8 @@ def connected_android_devices(
     env: Mapping[str, str] | None = None,
     *,
     timeout: float = 8.0,
+    adb_provider: str = "auto",
+    adb_path: str | os.PathLike[str] | None = None,
 ) -> tuple[list[str], str, dict[str, str]]:
     """Return usable ADB devices for connected Android tests.
 
@@ -1653,7 +1641,9 @@ def connected_android_devices(
     last_adb = ""
     last_states: dict[str, str] = {}
 
-    for adb in _adb_candidates_for_sdk(sdk_root, env):
+    for adb in _adb_candidates_for_sdk(
+        sdk_root, env, provider=adb_provider, explicit_path=adb_path
+    ):
         last_adb = str(adb)
 
         try:
@@ -1788,6 +1778,8 @@ def filter_unavailable_connected_android_tests(
     sdk_root: Path | None,
     env: Mapping[str, str] | None = None,
     dry_run: bool = False,
+    adb_provider: str = "auto",
+    adb_path: str | os.PathLike[str] | None = None,
 ) -> tuple[list[str], list[str], str, dict[str, str]]:
     """Skip connected*AndroidTest tasks when no usable device exists."""
 
@@ -1812,6 +1804,8 @@ def filter_unavailable_connected_android_tests(
     devices, adb, states = connected_android_devices(
         sdk_root,
         env,
+        adb_provider=adb_provider,
+        adb_path=adb_path,
     )
 
     if devices:
@@ -8136,6 +8130,8 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
 
     parser.add_argument("-s", "--sdk-root", type=Path, help="Android SDK root")
     parser.add_argument("--sdk-provider", choices=sorted(ANDROID_SDK_PROVIDERS), default=os.environ.get("DEVTOOL_ANDROID_SDK_PROVIDER", "auto"), help="Android SDK provider: auto, termuxvoid, homuhomu, or managed")
+    parser.add_argument("--adb-provider", choices=("auto", "sdk", "termux", "termux-adb", "path", "none"), default=os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER", "auto"), help="ADB provider used for connected-device task availability")
+    parser.add_argument("--adb-path", default=os.environ.get("DEVTOOL_ANDROID_ADB_PATH", ""), help="Explicit ADB path used with --adb-provider path or as the first auto candidate")
     parser.add_argument("-P", "--android-platform", default="auto", help="android-36, 36, auto, or none")
     parser.add_argument("-B", "--build-tools", default="auto", help="Build Tools version, auto, or none")
     parser.add_argument("--ndk-version", default="auto", help="NDK version, auto, or none")
@@ -8983,6 +8979,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         sdk_root=sdk_root,
         env=env,
         dry_run=args.dry_run,
+        adb_provider=args.adb_provider,
+        adb_path=args.adb_path or None,
     )
 
     if skipped_connected_tasks:

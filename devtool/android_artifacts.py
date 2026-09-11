@@ -14,6 +14,7 @@ from typing import Any, Iterable
 import zipfile
 
 from .android.build import discover_artifacts, artifact_variant, slugify_name
+from .android.capabilities import resolved_android_tool
 from .diagnostics import relativize
 from .models import Issue, ProjectConfig
 
@@ -50,21 +51,8 @@ def _sha256(path: Path) -> str:
 
 
 def _tool_from_sdk(name: str) -> str | None:
-    direct = shutil.which(name)
-    if direct:
-        return direct
-    sdk_text = os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME") or ""
-    if not sdk_text:
-        return None
-    build_tools = Path(sdk_text).expanduser() / "build-tools"
-    if not build_tools.is_dir():
-        return None
-    versions = sorted((item for item in build_tools.iterdir() if item.is_dir()), reverse=True)
-    for version in versions:
-        candidate = version / name
-        if candidate.is_file():
-            return str(candidate)
-    return None
+    """Compatibility wrapper around the canonical Android capability resolver."""
+    return resolved_android_tool(name)
 
 
 def _run_tool(argv: list[str]) -> tuple[int, str]:

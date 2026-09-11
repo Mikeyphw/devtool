@@ -13,6 +13,9 @@ import subprocess
 import sys
 from typing import Iterable, Mapping, Sequence
 
+from .android.capabilities import resolve_android_execution_context
+from .android.devices import AndroidDeviceManager
+
 
 @dataclass(slots=True)
 class GateResult:
@@ -159,11 +162,11 @@ def sha256_file(path: Path) -> str:
 
 
 def android_sdk_available(environment: Mapping[str, str] | None = None) -> bool:
-    env = os.environ if environment is None else environment
-    sdk = env.get("ANDROID_SDK_ROOT") or env.get("ANDROID_HOME")
-    if not sdk:
+    env = dict(os.environ if environment is None else environment)
+    context = resolve_android_execution_context(None, env=env)
+    if not context.sdk_root:
         return False
-    root = Path(sdk)
+    root = Path(context.sdk_root)
     return (root / "platforms" / "android-36").is_dir() and (root / "build-tools" / "36.0.0").is_dir()
 
 
@@ -400,11 +403,12 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
         else:
             report.results.append(_skip("android-release", "release signing environment is incomplete", required=require_android))
         if run_device_tests:
-            adb = shutil.which("adb")
-            if adb:
+            android_context = resolve_android_execution_context(None, project_root=android_root)
+            device_report = AndroidDeviceManager(android_context.adb).doctor()
+            if device_report.status == "ok":
                 report.results.append(_run("android-instrumentation", [gradle, "--no-daemon", "connectedDebugAndroidTest"], android_root, logs, required=require_android))
             else:
-                report.results.append(_skip("android-instrumentation", "adb is unavailable", required=require_android))
+                report.results.append(_skip("android-instrumentation", f"{device_report.code}: {device_report.detail}", required=require_android))
     elif include_android:
         detail = "Android SDK platform 36 and build-tools 36.0.0 were not detected"
         for gate in ("android-lint", "android-unit", "android-release"):

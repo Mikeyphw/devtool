@@ -1246,6 +1246,32 @@ ARM-compatible AAPT2 handling, Build Tools/platform/NDK/CMake discovery, Termux-
 execution, and chroot fallback. In auto mode an incomplete project Wrapper is reported as
 an error instead of silently changing Gradle versions.
 .PP
+AOPS02 adds the canonical Android execution and device fabric.
+.B devtool android capabilities
+shows resolved SDK/build-tools, Java, Gradle, AAPT2, apksigner, zipalign, NDK, CMake, and ADB providers.
+.B devtool android devices
+lists normalized devices and supports deterministic
+.BR exactly-one ,
+.BR serial ,
+.BR preferred ,
+.BR first-physical ,
+.BR first-emulator ,
+and
+.B all
+selection policies.
+.B devtool android devices doctor
+and
+.B devtool android doctor
+report provider and transport health. ADB providers are
+.BR auto ,
+.BR sdk ,
+.BR termux ,
+.BR termux-adb ,
+.BR path ,
+and
+.BR none .
+The termux-adb provider diagnoses Termux:API/termux-usb readiness but does not silently install a third-party package repository.
+.PP
 Gradle is launched with a bundled init script that emits ordered run-scoped events. Terminal,
 desktop, and Android views consume the same task and test stream. Stale, wrong-run, invalid,
 or out-of-order events are rejected.

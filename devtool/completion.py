@@ -224,6 +224,7 @@ _devtool_commands() {
     'doctor:diagnose devtool and project prerequisites'
     'dr:alias for doctor'
     'bootstrap:provision reusable destination-specific toolchains'
+    'android:inspect Android capabilities, ADB providers, and connected devices'
     'termux:inspect native Termux providers, packages, and PRoot guests'
     'apply-overlay:transactionally apply one overlay'
     'ao:alias for apply-overlay'
@@ -793,6 +794,32 @@ _devtool() {
                 _arguments \
                   '--destination[target destination]:destination:(current termux linux-arm64 linux-amd64 chroot\:androidos chroot-arm64\:androidos chroot-amd64\:androidos)' \
                   '--format[output format]:format:(text json)'
+                ;;
+            esac
+          fi
+          ;;
+        android)
+          if (( ${#line} < 2 )); then
+            _values 'android action' capabilities devices doctor
+          else
+            case ${line[2]} in
+              capabilities|doctor)
+                _arguments \
+                  '--provider[ADB provider override]:provider:(auto sdk termux termux-adb path none)' \
+                  '--adb-path[explicit ADB executable path]:executable:_files' \
+                  '--format[output format]:format:(text json)'
+                ;;
+              devices)
+                _arguments \
+                  '1:device action:(list doctor)' \
+                  '--provider[ADB provider override]:provider:(auto sdk termux termux-adb path none)' \
+                  '--adb-path[explicit ADB executable path]:executable:_files' \
+                  '--format[output format]:format:(text json)' \
+                  '--enrich[query API ABI battery screen and boot metadata]' \
+                  '--policy[deterministic device selection policy]:policy:(exactly-one serial preferred first-physical first-emulator all)' \
+                  '--serial[device serial or transport ID]:serial:' \
+                  '--preferred[preferred serial model or device]:device:' \
+                  '--include-unusable[allow offline or unauthorized devices in explicit selection]'
                 ;;
             esac
           fi

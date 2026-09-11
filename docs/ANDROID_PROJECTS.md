@@ -1,7 +1,8 @@
 # Android and Gradle project support
 
 Devtool 0.15 uses the shared `build-apk` backend for Android and Gradle projects,
-then layers structured test, progress, and lint reporting on top.
+then layers structured test, progress, and lint reporting on top. AOPS02 adds the
+canonical Android execution/device fabric described in [`ANDROID_OPERATIONS.md`](ANDROID_OPERATIONS.md).
 
 ## Detection
 
@@ -21,6 +22,10 @@ variant = "debug"
 aapt2_provider = "auto"
 instrumentation = "when-device-present" # never | when-device-present | required
 install_command = "sudo pm install -r -t"
+
+[targets.mobile.android.adb]
+provider = "auto" # auto | sdk | termux | termux-adb | path | none
+device_policy = "exactly-one"
 
 [targets.mobile.gradle]
 max_workers = 4

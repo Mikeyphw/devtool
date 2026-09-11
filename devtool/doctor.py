@@ -12,6 +12,8 @@ from typing import Any
 
 from .models import ProjectConfig
 from .features import resolve_feature_flags
+from .android.capabilities import resolve_android_execution_context
+from .android.devices import AndroidDeviceManager
 
 @dataclass(slots=True)
 class DoctorCheck:
@@ -55,37 +57,37 @@ def collect_doctor_checks(config: ProjectConfig) -> list[DoctorCheck]:
         value = _package_version(package)
         checks.append(DoctorCheck("runtime", package, "ok" if value != "missing" else "missing", value))
 
-    java = shutil.which("java")
-    gradle = shutil.which("gradle")
-    cmake = shutil.which("cmake")
-    checks.append(DoctorCheck("android", "java", "ok" if java else "missing", _version(java, "-version") if java else "not on PATH"))
-    checks.append(DoctorCheck("android", "gradle", "ok" if gradle else "optional", _version(gradle, "--version") if gradle else "wrapper/project provider may be used"))
-    checks.append(DoctorCheck("android", "cmake", "ok" if cmake else "optional", _version(cmake, "--version") if cmake else "not on PATH"))
+    android_context = resolve_android_execution_context(config)
+    for name in ("java", "gradle", "build-tools", "cmake", "aapt2", "apksigner", "zipalign", "ndk"):
+        tool = android_context.tool(name)
+        if tool.available and tool.compatible is not False:
+            detail = tool.path
+            if tool.version:
+                detail += f" ({tool.version})"
+            if tool.provider:
+                detail += f" [{tool.provider}]"
+            checks.append(DoctorCheck("android", name, "ok", detail))
+        else:
+            detail = tool.rejection_reason or "not discovered"
+            checks.append(DoctorCheck("android", name, "optional", detail))
 
-    sdk_text = os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME") or ""
-    sdk = Path(sdk_text).expanduser() if sdk_text else None
-    sdk_ok = bool(sdk and sdk.is_dir())
-    checks.append(DoctorCheck("android", "sdk", "ok" if sdk_ok else "optional", str(sdk) if sdk else "ANDROID_SDK_ROOT/ANDROID_HOME unset"))
-    build_tools = _latest_dir(sdk / "build-tools") if sdk_ok and sdk else None
-    ndk = _latest_dir(sdk / "ndk") if sdk_ok and sdk else None
-    checks.append(DoctorCheck("android", "build-tools", "ok" if build_tools else "optional", str(build_tools) if build_tools else "not discovered"))
-    checks.append(DoctorCheck("android", "ndk", "ok" if ndk else "optional", str(ndk) if ndk else "not discovered"))
-
-    adb = shutil.which("adb")
-    devices = ""
-    device_status = "optional"
-    if adb:
-        try:
-            proc = subprocess.run([adb, "devices"], capture_output=True, text=True, timeout=5, check=False)
-            lines = [line.strip() for line in proc.stdout.splitlines()[1:] if line.strip()]
-            devices = ", ".join(lines) if lines else "no devices"
-            device_status = "ok" if lines else "optional"
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            devices = str(exc)
+    if android_context.sdk_root:
+        checks.append(DoctorCheck("android", "sdk", "ok", f"{android_context.sdk_root} [{android_context.sdk_source or 'discovered'}]"))
     else:
-        devices = "adb not on PATH"
-    checks.append(DoctorCheck("device", "adb", "ok" if adb else "optional", adb or "not on PATH"))
-    checks.append(DoctorCheck("device", "devices", device_status, devices))
+        checks.append(DoctorCheck("android", "sdk", "optional", "Android SDK not discovered"))
+
+    adb = android_context.adb
+    checks.append(DoctorCheck(
+        "device", "adb",
+        "ok" if adb.available and adb.compatible is not False else "optional",
+        (f"{adb.path} [{adb.provider}]" if adb.path else (adb.rejection_reason or "unavailable")),
+    ))
+    device_report = AndroidDeviceManager(adb).doctor()
+    checks.append(DoctorCheck(
+        "device", "devices",
+        "ok" if device_report.status == "ok" else "optional",
+        f"{device_report.code}: {device_report.detail}",
+    ))
 
     su = shutil.which("su")
     root_detail = "su unavailable"

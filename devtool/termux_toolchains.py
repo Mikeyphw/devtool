@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import platform
+import json
 import re
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 TERMUX_PREFIX_FALLBACK = Path('/data/data/com.termux/files/usr')
 VALID_JAVA_PROVIDERS = {'auto', 'termux', 'system'}
@@ -17,6 +18,7 @@ VALID_NATIVE_PROVIDERS = {'auto', 'termux-sysroot', 'ndk', 'system'}
 VALID_NATIVE_CACHE_PROVIDERS = {'auto', 'ccache', 'off'}
 VALID_ANDROID_BUILD_TOOLS_PROVIDERS = {'auto', 'termux', 'sdk', 'commit451', 'none'}
 VALID_ANDROID_SDK_PROVIDERS = {'auto', 'termuxvoid', 'homuhomu', 'managed'}
+VALID_ADB_PROVIDERS = {'auto', 'sdk', 'termux', 'termux-adb', 'path', 'none'}
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,20 @@ class ProviderDecisionEvidence:
     ninja: "ToolProvider"
     ccache: "ToolProvider"
     android_tools: tuple["ToolProvider", ...]
+
+
+@dataclass(frozen=True)
+class AdbProviderResult:
+    provider: str
+    available: bool
+    path: Path | None = None
+    version: str = ''
+    compatible: bool | None = None
+    selection_reason: str = ''
+    rejection_reason: str = ''
+    provenance: str = ''
+    runtime: RuntimeIdentity | None = None
+    metadata: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -500,6 +516,175 @@ def termux_native_provider(*, env: Mapping[str, str] | None = None, runtime: Run
         reason = 'Termux native tools failed runtime probes: ' + ', '.join(unusable)
         return ToolProvider('native-compiler', 'termux-sysroot', True, path=paths['clang'], version=version, package='ndk-sysroot', package_version=sysroot.version, package_manager=sysroot.manager, runtime=runtime, compatible=False, rejection_reason=reason, capabilities=required, reason=reason)
     return ToolProvider('native-compiler', 'termux-sysroot', True, path=paths['clang'], version=version, package='ndk-sysroot', package_version=sysroot.version, package_manager=sysroot.manager, runtime=runtime, compatible=True, selection_reason='Termux clang/lld with ndk-sysroot is complete', capabilities=required, reason='Termux clang/lld with ndk-sysroot is complete')
+
+
+
+def normalize_adb_provider(value: str | None) -> str:
+    normalized = str(value or 'auto').strip().lower() or 'auto'
+    normalized = {'termux_adb': 'termux-adb', 'off': 'none', 'disabled': 'none'}.get(normalized, normalized)
+    if normalized not in VALID_ADB_PROVIDERS:
+        valid = ', '.join(sorted(VALID_ADB_PROVIDERS))
+        raise ValueError(f'Unsupported ADB provider: {value}. Expected one of: {valid}')
+    return normalized
+
+
+def _probe_command(argv: Sequence[str], *, env: Mapping[str, str], timeout: float = 5.0) -> tuple[int, str]:
+    try:
+        result = subprocess.run(
+            [str(item) for item in argv], text=True, capture_output=True,
+            check=False, timeout=timeout, env=dict(env),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 127, str(exc)
+    return result.returncode, (result.stdout + '\n' + result.stderr).strip()
+
+
+def termux_usb_transport_probe(*, env: Mapping[str, str] | None = None, runtime: RuntimeIdentity | None = None) -> dict[str, Any]:
+    env = dict(env or os.environ)
+    runtime = runtime or detect_runtime_identity(env)
+    payload: dict[str, Any] = {
+        'runtime_termux': runtime.is_termux,
+        'termux_usb': '',
+        'termux_api_app': None,
+        'api_detail': '',
+        'list_status': 'unavailable',
+        'devices': [],
+        'detail': '',
+    }
+    if not runtime.is_termux:
+        payload['detail'] = 'not running in native Termux'
+        return payload
+    search_path = str(env.get('PATH', '') or '')
+    termux_usb_text = shutil.which('termux-usb', path=search_path)
+    termux_usb = Path(termux_usb_text) if termux_usb_text else ((runtime.prefix / 'bin' / 'termux-usb') if runtime.prefix else None)
+    if not termux_usb or not termux_usb.is_file() or not os.access(termux_usb, os.X_OK):
+        payload['detail'] = 'termux-usb is unavailable; install both the Termux:API app and command package'
+        return payload
+    payload['termux_usb'] = str(termux_usb)
+    pm_text = shutil.which('pm', path=search_path)
+    pm = Path(pm_text) if pm_text else Path('/system/bin/pm')
+    if pm.is_file():
+        rc, text = _probe_command([str(pm), 'path', 'com.termux.api'], env=env, timeout=3)
+        payload['termux_api_app'] = bool(rc == 0 and 'package:' in text)
+        payload['api_detail'] = 'Termux:API app installed' if payload['termux_api_app'] else (text.splitlines()[-1] if text else 'Termux:API app not installed')
+    rc, text = _probe_command([str(termux_usb), '-l'], env=env, timeout=5)
+    if rc != 0:
+        payload['list_status'] = 'failed'
+        payload['detail'] = text.splitlines()[-1] if text else f'termux-usb -l exited {rc}'
+        return payload
+    try:
+        decoded = json.loads(text or '[]')
+        devices = [str(item) for item in decoded] if isinstance(decoded, list) else []
+    except json.JSONDecodeError:
+        devices = [line.strip() for line in text.splitlines() if line.strip().startswith('/dev/')]
+    payload['list_status'] = 'ready'
+    payload['devices'] = devices
+    payload['detail'] = 'USB enumeration ready' if devices else 'USB enumeration ready; no USB devices visible'
+    return payload
+
+
+def _adb_provider_candidate(provider: str, path: Path | None, provenance: str, *, env: Mapping[str, str], runtime: RuntimeIdentity) -> AdbProviderResult:
+    if path is None or not path.is_file() or not os.access(path, os.X_OK):
+        return AdbProviderResult(provider, False, path=path, compatible=False, rejection_reason='executable unavailable', provenance=provenance, runtime=runtime, metadata={})
+    rc, version_text = _probe_command([str(path), 'version'], env=env, timeout=5)
+    if rc != 0:
+        return AdbProviderResult(provider, True, path=path, compatible=False, rejection_reason=version_text.splitlines()[-1] if version_text else f'exit {rc}', provenance=provenance, runtime=runtime, metadata={})
+    match = re.search(r'Version\s+([^\s]+)', version_text)
+    version = match.group(1) if match else next((line.strip() for line in version_text.splitlines() if line.strip()), '')
+    metadata: dict[str, Any] = {}
+    if provider == 'termux-adb':
+        usb = termux_usb_transport_probe(env=env, runtime=runtime)
+        metadata['termux_usb'] = usb
+        if usb.get('termux_api_app') is False or usb.get('list_status') != 'ready':
+            reason = str(usb.get('detail') or usb.get('api_detail') or 'Termux USB transport unavailable')
+            return AdbProviderResult(provider, True, path=path, version=version, compatible=False, rejection_reason=reason, provenance=provenance, runtime=runtime, metadata=metadata)
+    rc, devices_text = _probe_command([str(path), 'devices', '-l'], env=env, timeout=8)
+    metadata['devices_probe_exit'] = rc
+    metadata['devices_output'] = devices_text
+    if rc != 0:
+        return AdbProviderResult(provider, True, path=path, version=version, compatible=False, rejection_reason=devices_text.splitlines()[-1] if devices_text else f'adb devices exited {rc}', provenance=provenance, runtime=runtime, metadata=metadata)
+    return AdbProviderResult(provider, True, path=path, version=version, compatible=True, selection_reason=f'{provider} ADB passed version and devices probes', provenance=provenance, runtime=runtime, metadata=metadata)
+
+
+def resolve_adb_provider(
+    *,
+    sdk_root: Path | None = None,
+    provider: str = 'auto',
+    explicit_path: str | os.PathLike[str] | None = None,
+    env: Mapping[str, str] | None = None,
+    runtime: RuntimeIdentity | None = None,
+) -> AdbProviderResult:
+    env = dict(env or os.environ)
+    runtime = runtime or detect_runtime_identity(env)
+    provider = normalize_adb_provider(provider)
+    if provider == 'none':
+        return AdbProviderResult('none', False, compatible=False, rejection_reason='ADB disabled by configuration', runtime=runtime, metadata={})
+    prefix = runtime.prefix
+    explicit = Path(explicit_path).expanduser().resolve(strict=False) if explicit_path else None
+    sdk_adb = Path(sdk_root) / 'platform-tools' / 'adb' if sdk_root else None
+    termux_adb = prefix / 'bin' / 'termux-adb' if prefix else None
+    termux_plain = prefix / 'bin' / 'adb' if prefix else None
+    path_text = str(env.get('PATH', '') or '')
+    path_adb_text = shutil.which('adb', path=path_text)
+    path_adb = Path(path_adb_text) if path_adb_text else None
+    termux_adb_text = shutil.which('termux-adb', path=path_text)
+    if (termux_adb is None or not termux_adb.is_file()) and termux_adb_text:
+        termux_adb = Path(termux_adb_text)
+    definitions = {
+        'path': (explicit, 'android.adb.path'),
+        'sdk': (sdk_adb, 'Android SDK platform-tools'),
+        'termux-adb': (termux_adb, 'nohajc/termux-adb USB transport'),
+        'termux': (termux_plain if termux_plain and termux_plain.is_file() else path_adb, 'Termux android-tools/PATH'),
+    }
+    if provider != 'auto':
+        path, provenance = definitions[provider]
+        return _adb_provider_candidate(provider, path, provenance, env=env, runtime=runtime)
+    candidates: list[tuple[str, Path | None, str]] = []
+    if explicit is not None:
+        candidates.append(('path', explicit, 'android.adb.path'))
+    if runtime.is_termux:
+        # A project-resolved SDK root is stronger provenance than ambient
+        # Termux executables. Probe its platform-tools/adb first when present,
+        # then fall back to the native USB-capable providers if that binary is
+        # missing or incompatible with the native Termux runtime. This keeps
+        # tests/projects hermetic while still selecting termux-adb automatically
+        # when the SDK ships the usual non-Bionic platform-tools binary.
+        candidates.extend([
+            ('sdk', sdk_adb, 'Android SDK platform-tools'),
+            ('termux-adb', definitions['termux-adb'][0], definitions['termux-adb'][1]),
+            ('termux', definitions['termux'][0], definitions['termux'][1]),
+        ])
+    else:
+        candidates.extend([('sdk', sdk_adb, 'Android SDK platform-tools'), ('path', path_adb, 'PATH')])
+    seen: set[str] = set()
+    rejected: list[str] = []
+    first_available: AdbProviderResult | None = None
+    for candidate_provider, path, provenance in candidates:
+        if path is None:
+            continue
+        key = str(path.resolve(strict=False))
+        if key in seen:
+            continue
+        seen.add(key)
+        result = _adb_provider_candidate(candidate_provider, path, provenance, env=env, runtime=runtime)
+        if result.available and first_available is None:
+            first_available = result
+        if result.compatible:
+            if runtime.is_termux and candidate_provider == 'termux-adb':
+                return AdbProviderResult(
+                    result.provider, result.available, result.path, result.version, result.compatible,
+                    'native Termux USB-capable provider passed Termux:API and ADB probes', result.rejection_reason,
+                    result.provenance, result.runtime, result.metadata,
+                )
+            return result
+        rejected.append(f'{candidate_provider}: {result.rejection_reason or "unusable"}')
+    if first_available is not None:
+        return AdbProviderResult(
+            first_available.provider, first_available.available, first_available.path, first_available.version,
+            first_available.compatible, first_available.selection_reason, '; '.join(rejected),
+            first_available.provenance, first_available.runtime, first_available.metadata,
+        )
+    return AdbProviderResult('none', False, compatible=False, rejection_reason='; '.join(rejected) or 'no ADB provider found', runtime=runtime, metadata={})
 
 
 _TERMUX_ANDROID_TOOL_PACKAGES = {

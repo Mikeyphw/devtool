@@ -19,6 +19,8 @@ import sys
 from typing import Any, Sequence
 
 from . import android_build
+from .android.capabilities import locate_adb_path, resolve_adb, resolve_android_execution_context
+from .android.devices import AndroidDeviceError, AndroidDeviceManager
 
 
 class InstrumentationError(RuntimeError):
@@ -56,14 +58,17 @@ def _resolve_gradle(project: Path, configured: str) -> Path:
     if project_candidate.is_file() and os.access(project_candidate, os.X_OK):
         return project_candidate.resolve()
 
-    resolved = shutil.which(raw)
-    if resolved:
-        return Path(resolved).resolve()
-
-    if raw in {"./gradlew", "gradlew"}:
-        fallback = shutil.which("gradle")
-        if fallback:
-            return Path(fallback).resolve()
+    # Explicit non-wrapper commands retain normal PATH semantics. The default
+    # wrapper/system fallback is resolved through the canonical Android context.
+    if raw not in {"./gradlew", "gradlew"}:
+        resolved = shutil.which(raw)
+        if resolved:
+            return Path(resolved).resolve()
+    else:
+        context = resolve_android_execution_context(project_root=project)
+        gradle = context.tool("gradle")
+        if gradle.available and gradle.compatible is not False and gradle.path:
+            return Path(gradle.path).resolve()
 
     if project_candidate.exists() and not os.access(project_candidate, os.X_OK):
         raise InstrumentationError(
@@ -178,47 +183,36 @@ def _find_apks(project: Path, variant: str) -> tuple[Path, Path]:
     return app, test
 
 
+def _adb_resolution() -> object:
+    provider = str(os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER") or "auto").strip() or "auto"
+    explicit = str(os.environ.get("DEVTOOL_ANDROID_ADB_PATH") or "").strip() or None
+    sdk_text = str(os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME") or "").strip()
+    sdk_root = Path(sdk_text).expanduser() if sdk_text else None
+    return resolve_adb(sdk_root=sdk_root, provider=provider, explicit_path=explicit)
+
+
 def _device_prefix(serial: str) -> list[str]:
-    if serial:
-        adb = shutil.which("adb")
-        if not adb:
-            raise InstrumentationError("adb is required for --device-serial")
-        return [adb, "-s", serial]
-    return []
+    if not serial:
+        return []
+    provider = str(os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER") or "auto").strip() or "auto"
+    explicit = str(os.environ.get("DEVTOOL_ANDROID_ADB_PATH") or "").strip() or None
+    sdk_text = str(os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME") or "").strip()
+    sdk_root = Path(sdk_text).expanduser() if sdk_text else None
+    path = locate_adb_path(sdk_root=sdk_root, provider=provider, explicit_path=explicit)
+    if path is None:
+        raise InstrumentationError("ADB is required for --device-serial")
+    return [str(path), "-s", serial]
 
 
 def _connected_adb_devices() -> list[str]:
-    adb = shutil.which("adb")
-    if not adb:
+    resolution = _adb_resolution()
+    if not getattr(resolution, "path", "") or getattr(resolution, "compatible", False) is False:
         return []
-
+    manager = AndroidDeviceManager(resolution)
     try:
-        result = subprocess.run(
-            [adb, "devices"],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
+        return [device.serial for device in manager.list_devices() if device.usable]
+    except AndroidDeviceError:
         return []
-
-    if result.returncode != 0:
-        return []
-
-    devices: list[str] = []
-
-    for raw in result.stdout.splitlines():
-        line = raw.strip()
-
-        if not line or line.startswith("List of devices attached"):
-            continue
-
-        parts = line.split()
-
-        if len(parts) >= 2 and parts[1] == "device":
-            devices.append(parts[0])
-
-    return devices
 
 
 def _command_executable_available(command: str) -> bool:
@@ -436,6 +430,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aapt2-provider", default="auto")
     parser.add_argument("--gradle-arg", action="append", default=[])
     parser.add_argument("--device-serial", default="")
+    parser.add_argument("--adb-provider", choices=("auto", "sdk", "termux", "termux-adb", "path", "none"), default=os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER", "auto"))
+    parser.add_argument("--adb-path", default=os.environ.get("DEVTOOL_ANDROID_ADB_PATH", ""))
     parser.add_argument("--install-command", default="sudo pm install -r -t")
     parser.add_argument("--am-command", default="sudo am instrument")
     parser.add_argument("--runner", default="")
@@ -513,6 +509,13 @@ def main(raw_args: Sequence[str] | None = None) -> int:
         return 2
     variant_title = _variant_title(args.variant)
     installed_test_package = ""
+    old_adb_provider = os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER")
+    old_adb_path = os.environ.get("DEVTOOL_ANDROID_ADB_PATH")
+    os.environ["DEVTOOL_ANDROID_ADB_PROVIDER"] = str(args.adb_provider or "auto")
+    if args.adb_path:
+        os.environ["DEVTOOL_ANDROID_ADB_PATH"] = str(args.adb_path)
+    else:
+        os.environ.pop("DEVTOOL_ANDROID_ADB_PATH", None)
 
     try:
         try:
@@ -641,6 +644,14 @@ def main(raw_args: Sequence[str] | None = None) -> int:
                     f"Instrumentation cleanup warning: {cleanup_error}",
                     file=sys.stderr,
                 )
+        if old_adb_provider is None:
+            os.environ.pop("DEVTOOL_ANDROID_ADB_PROVIDER", None)
+        else:
+            os.environ["DEVTOOL_ANDROID_ADB_PROVIDER"] = old_adb_provider
+        if old_adb_path is None:
+            os.environ.pop("DEVTOOL_ANDROID_ADB_PATH", None)
+        else:
+            os.environ["DEVTOOL_ANDROID_ADB_PATH"] = old_adb_path
 
 
 if __name__ == "__main__":

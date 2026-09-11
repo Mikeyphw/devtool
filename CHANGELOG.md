@@ -1,3 +1,13 @@
+## 2026-09-11 - AOPS02 Android execution and device fabric
+
+- Added canonical `AndroidExecutionContext`/`AndroidOperations` models for SDK/build-tools, Java, Gradle, AAPT2, apksigner, zipalign, NDK, CMake, ADB provider, runtime/provenance, and device-transport evidence.
+- Added shared ADB providers `auto | sdk | termux | termux-adb | path | none`; the staged Android builder and host Devtool now share the same low-level provider resolver instead of inventing separate ADB selection rules.
+- Hardened native-Termux `auto` precedence so an explicitly resolved project SDK `platform-tools/adb` is probed before ambient Termux ADB, with automatic fallback to `termux-adb`/Termux ADB when the SDK binary is unavailable or incompatible; this preserves hermetic project/test behavior without losing USB-capable Termux fallback.
+- Added `AndroidDeviceManager` with normalized `adb devices -l` state/metadata, optional device enrichment, `ANDROID_SERIAL` compatibility, and deterministic exactly-one/serial/preferred/first-physical/first-emulator/all selection policies.
+- Added Termux USB/Termux:API-aware diagnostics with distinct missing-provider/API/USB/permission/authorization/offline/daemon/device states; diagnostics never silently add the third-party termux-adb repository.
+- Migrated Android instrumentation, artifact verification, doctor, release qualification, Android integration, and connected-test handling toward the shared execution/device layer.
+- Added `devtool android capabilities|devices|doctor`, JSON contracts, configuration/docs/completion, and AOPS02 regression/promise coverage.
+
 ## 2026-09-11 - HROPS01 complete embedded artifact hook runtime
 
 - Consolidated preflight, embedded validation, and finalization script execution behind one `devtool.hooks.EmbeddedHookEngine` with shared integrity, private-copy, timeout, logging, payload, structured-result, mutation-boundary, and history behavior.

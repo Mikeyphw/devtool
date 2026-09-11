@@ -941,6 +941,29 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_remove = bootstrap_sub.add_parser("remove", help="Remove the destination receipt without uninstalling shared system packages")
     add_bootstrap_destination(bootstrap_remove)
 
+    android_cmd = subparsers.add_parser("android", help="Inspect Android capabilities, ADB providers, and connected devices")
+    android_sub = android_cmd.add_subparsers(dest="android_command", required=True)
+
+    def add_android_adb_flags(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument("--provider", choices=("auto", "sdk", "termux", "termux-adb", "path", "none"), default="", help="ADB provider override")
+        sub.add_argument("--adb-path", default="", help="Explicit ADB executable path")
+        sub.add_argument("--format", choices=("text", "json"), default="text")
+
+    android_capabilities = android_sub.add_parser("capabilities", help="Show the resolved Android execution context and tool providers")
+    add_android_adb_flags(android_capabilities)
+
+    android_devices = android_sub.add_parser("devices", help="List connected Android devices or diagnose the active device transport")
+    add_android_adb_flags(android_devices)
+    android_devices.add_argument("device_action", nargs="?", choices=("list", "doctor"), default="list")
+    android_devices.add_argument("--enrich", action="store_true", help="Query usable devices for API, ABI, battery, screen, and boot metadata")
+    android_devices.add_argument("--policy", choices=("exactly-one", "serial", "preferred", "first-physical", "first-emulator", "all"), default="", help="Select devices using a deterministic policy")
+    android_devices.add_argument("--serial", default="", help="Select a device serial or transport ID (ANDROID_SERIAL remains supported)")
+    android_devices.add_argument("--preferred", default="", help="Preferred serial/model/device for --policy preferred")
+    android_devices.add_argument("--include-unusable", action="store_true", help="Allow offline/unauthorized devices in explicit selection")
+
+    android_doctor = android_sub.add_parser("doctor", help="Diagnose Android tools and the active ADB/device transport")
+    add_android_adb_flags(android_doctor)
+
     termux_cmd = subparsers.add_parser("termux", help="Inspect native Termux providers, packages, and PRoot guests")
     termux_sub = termux_cmd.add_subparsers(dest="termux_command", required=True)
     termux_doctor = termux_sub.add_parser("doctor", help="Run the detailed Termux/provider doctor")
@@ -10631,6 +10654,96 @@ def _main_after_parse(
         else:
             print(render_bootstrap_result(payload))
         return 0 if bool(payload.get("ok", False)) else 1
+
+    if args.command == "android":
+        from .android.cli import android_capabilities_payload, android_devices_payload, android_device_doctor_payload
+
+        repo = Path(args.repo or Path.cwd()).resolve()
+        config = load_project_config(
+            str(repo), args.config,
+            target_name=str(getattr(args, "target", "") or ""),
+            variant_name=str(getattr(args, "variant", "") or ""),
+            kind_override=str(getattr(args, "project_type", "auto") or "auto"),
+            allow_ambiguous_target=True,
+        )
+        action = str(getattr(args, "android_command", "") or "")
+        provider = str(getattr(args, "provider", "") or "")
+        adb_path = str(getattr(args, "adb_path", "") or "")
+        output_format = str(getattr(args, "format", "text") or "text")
+        if action == "capabilities":
+            payload = android_capabilities_payload(config, provider=provider, adb_path=adb_path)
+            if output_format == "json":
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("runtime", f"{payload['runtime']['environment']} / {payload['runtime']['arch']}"),
+                    ("sdk", payload["sdk"]["root"] or "not discovered"),
+                    ("adb_requested", payload["adb_provider_requested"]),
+                ]
+                for name, tool in payload["tools"].items():
+                    status = "ready" if tool.get("available") and tool.get("compatible") is not False else "unavailable"
+                    detail = tool.get("path") or tool.get("rejection_reason") or "-"
+                    rows.append((f"tool.{name}", f"{status}: {tool.get('provider') or 'none'}: {detail}"))
+                render_status_table(rows)
+            return 0
+        if action == "devices":
+            nested = str(getattr(args, "device_action", "list") or "list")
+            if nested == "doctor":
+                payload = android_device_doctor_payload(config, provider=provider, adb_path=adb_path)
+                report = payload["device_doctor"]
+                if output_format == "json":
+                    print(json.dumps(payload, indent=2, ensure_ascii=False))
+                else:
+                    rows = [
+                        ("status", report["status"]), ("code", report["code"]),
+                        ("provider", report["provider"]), ("adb", report["adb_path"] or "-"),
+                        ("detail", report["detail"]),
+                    ]
+                    if report.get("termux_usb"):
+                        usb = report["termux_usb"]
+                        rows.extend([(
+                            "termux_usb", str(usb.get("list_status") or "-"),
+                        ), ("usb_devices", ", ".join(usb.get("devices") or []) or "none")])
+                    render_status_table(rows)
+                return 1 if report["status"] == "error" else 0
+            payload = android_devices_payload(
+                config, provider=provider, adb_path=adb_path, enrich=bool(getattr(args, "enrich", False)),
+                policy=str(getattr(args, "policy", "") or ""), serial=str(getattr(args, "serial", "") or ""),
+                preferred=str(getattr(args, "preferred", "") or ""), include_unusable=bool(getattr(args, "include_unusable", False)),
+            )
+            if output_format == "json":
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [("adb", f"{payload['adb']['provider']}: {payload['adb']['path'] or payload['adb']['rejection_reason']}")]
+                if payload.get("error"):
+                    rows.append(("error", payload["error"]))
+                for item in payload["devices"]:
+                    detail = f"{item['state']} {item.get('model') or item.get('product') or ''} {item.get('connection_type') or ''}".strip()
+                    rows.append((item["serial"], detail))
+                if payload.get("selection"):
+                    rows.append(("selected", ", ".join(item["serial"] for item in payload["selection"])))
+                if payload.get("selection_error"):
+                    rows.append(("selection_error", payload["selection_error"]))
+                if not payload["devices"] and not payload.get("error"):
+                    rows.append(("devices", "none"))
+                render_status_table(rows)
+            return 1 if payload.get("error") or payload.get("selection_error") else 0
+        if action == "doctor":
+            payload = android_device_doctor_payload(config, provider=provider, adb_path=adb_path)
+            report = payload["device_doctor"]
+            if output_format == "json":
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [
+                    ("device_status", report["status"]), ("device_code", report["code"]),
+                    ("provider", report["provider"]), ("adb", report["adb_path"] or "-"),
+                    ("detail", report["detail"]),
+                ]
+                for name, tool in payload["context"]["tools"].items():
+                    rows.append((f"tool.{name}", f"{tool.get('provider')}: {tool.get('path') or tool.get('rejection_reason') or '-'}"))
+                render_status_table(rows)
+            return 1 if report["status"] == "error" else 0
+        parser.error(f"Unknown android command: {action}")
 
     if args.command == "termux":
         repo = Path(args.repo or Path.cwd()).resolve()

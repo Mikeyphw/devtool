@@ -121,6 +121,16 @@ stale revision, `4` blocked session, `5` recovery required, and `6` control
 unavailable. Use `--machine compact` for compact JSON or `--machine-file PATH`
 to mirror the exact envelope to a file.
 
+## Android Operations
+
+AOPS02 adds one Android execution/device fabric for Devtool. `devtool android capabilities` shows the resolved SDK/build-tools, Java/Gradle, AAPT2, apksigner, zipalign, NDK/CMake, and ADB provider with provenance and compatibility. `devtool android devices` uses the canonical device manager, and `devtool android devices doctor --provider termux-adb` diagnoses native Termux USB/Termux:API transport separately from ordinary ADB authorization/offline state. Providers are `auto`, `sdk`, `termux`, `termux-adb`, `path`, and `none`; Devtool never silently provisions the third-party termux-adb repository. See [`docs/ANDROID_OPERATIONS.md`](docs/ANDROID_OPERATIONS.md).
+
+```bash
+devtool --target app android capabilities
+devtool --target app android devices --policy first-physical
+devtool --target app android devices doctor --provider termux-adb --format json
+```
+
 ## Android Validation Workbench
 
 Phases 29–31 add a dedicated validation surface inside the Android Run destination. The app consumes the Phase 28 API-v1 envelopes, persists sessions/phases/attempts in SQLite, and sends revision-guarded controls through the original Termux or root execution environment.
