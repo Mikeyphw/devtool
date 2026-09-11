@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .copy import copy_text
+from .icons import resolve_icon
 from .state import UINavigationState
 
 
@@ -27,8 +29,8 @@ class NavigationSpec:
             return None
         return UINavigationState(
             id=self.id,
-            label=self.label,
-            short_label=self.short_label,
+            label=copy_text(f"nav.{self.id}", surface=surface),
+            short_label=copy_text(f"nav.{self.id}", "short", surface=surface),
             icon=self.icon,
             route=route,
             section=self.section,
@@ -36,42 +38,27 @@ class NavigationSpec:
         )
 
 
+def _nav(nav_id: str, icon: str, order: int, *, section: str = "primary", routes: tuple[tuple[str, str], ...] = (), shortcuts: tuple[tuple[str, str], ...] = ()) -> NavigationSpec:
+    copy_id = f"nav.{nav_id}"
+    return NavigationSpec(nav_id, copy_text(copy_id), copy_text(copy_id, "short"), icon, order, section, routes, shortcuts)
+
+
 NAVIGATION_REGISTRY: tuple[NavigationSpec, ...] = (
-    NavigationSpec("dashboard", "Overview", "Overview", "nav.dashboard", 10, routes=(("desktop", "overview"), ("tui", "dashboard"), ("android", "overview"), ("machine", "dashboard")), shortcuts=(("tui", "d"),)),
-    NavigationSpec("operations", "Active runs", "Runs", "nav.operations", 20, routes=(("desktop", "runs"), ("machine", "operations"))),
-    NavigationSpec("history", "History", "History", "nav.history", 30, routes=(("desktop", "history"), ("machine", "history"))),
-    NavigationSpec("artifacts", "Artifacts", "Artifacts", "nav.artifacts", 40, routes=(("desktop", "artifacts"), ("machine", "artifacts"))),
-    NavigationSpec("diagnostics", "Diagnostics", "Issues", "nav.diagnostics", 50, routes=(("desktop", "diagnostics"), ("machine", "diagnostics"))),
-    NavigationSpec("projects", "Repository", "Repo", "nav.projects", 60, routes=(("desktop", "repositories"), ("android", "repos"), ("machine", "projects"))),
-    NavigationSpec("targets", "Targets", "Targets", "nav.targets", 70, routes=(("desktop", "targets"), ("machine", "targets"))),
-    NavigationSpec("validation", "Run", "Run", "nav.validation", 80, routes=(("desktop", "run"), ("android", "run"), ("machine", "validation"))),
-    NavigationSpec("workflows", "Workflows", "Workflows", "nav.workflows", 90, routes=(("machine", "workflows"),)),
-    NavigationSpec("logs", "Logs", "Logs", "nav.logs", 100, routes=(("android", "logs"), ("machine", "logs"))),
-    NavigationSpec("environment", "Environment", "Environment", "nav.environment", 110, routes=(("machine", "environment"),)),
-    NavigationSpec("settings", "Settings", "Settings", "nav.settings", 120, section="secondary", routes=(("desktop", "settings"), ("android", "settings"), ("machine", "settings"))),
-    NavigationSpec("build", "Build", "Build", "nav.build", 130, routes=(("tui", "build"),), shortcuts=(("tui", "b"),)),
-    NavigationSpec("overlays", "Overlays", "Overlays", "nav.overlays", 140, routes=(("tui", "overlays"),), shortcuts=(("tui", "o"),)),
+    _nav("dashboard", "nav.dashboard", 10, routes=(("desktop", "overview"), ("tui", "dashboard"), ("android", "overview"), ("machine", "dashboard")), shortcuts=(("tui", "d"),)),
+    _nav("operations", "nav.operations", 20, routes=(("desktop", "runs"), ("machine", "operations"))),
+    _nav("history", "nav.history", 30, routes=(("desktop", "history"), ("machine", "history"))),
+    _nav("artifacts", "nav.artifacts", 40, routes=(("desktop", "artifacts"), ("machine", "artifacts"))),
+    _nav("diagnostics", "nav.diagnostics", 50, routes=(("desktop", "diagnostics"), ("machine", "diagnostics"))),
+    _nav("projects", "nav.projects", 60, routes=(("desktop", "repositories"), ("android", "repos"), ("machine", "projects"))),
+    _nav("targets", "nav.targets", 70, routes=(("desktop", "targets"), ("machine", "targets"))),
+    _nav("validation", "nav.validation", 80, routes=(("desktop", "run"), ("android", "run"), ("machine", "validation"))),
+    _nav("workflows", "nav.workflows", 90, routes=(("machine", "workflows"),)),
+    _nav("logs", "nav.logs", 100, routes=(("android", "logs"), ("machine", "logs"))),
+    _nav("environment", "nav.environment", 110, routes=(("machine", "environment"),)),
+    _nav("settings", "nav.settings", 120, section="secondary", routes=(("desktop", "settings"), ("android", "settings"), ("machine", "settings"))),
+    _nav("build", "nav.build", 130, routes=(("tui", "build"),), shortcuts=(("tui", "b"),)),
+    _nav("overlays", "nav.overlays", 140, routes=(("tui", "overlays"),), shortcuts=(("tui", "o"),)),
 )
-
-
-_SURFACE_LABEL_OVERRIDES = {
-    ("tui", "dashboard"): "Dashboard",
-}
-
-_SURFACE_ICON_FALLBACKS = {
-    "overview": "⌂",
-    "runs": "▶",
-    "history": "↺",
-    "artifacts": "◇",
-    "diagnostics": "!",
-    "repositories": "⌘",
-    "targets": "◎",
-    "run": "+",
-    "settings": "⚙",
-    "dashboard": "⌂",
-    "build": "▶",
-    "overlays": "◇",
-}
 
 
 def navigation_for_surface(surface: str) -> list[UINavigationState]:
@@ -88,19 +75,16 @@ def navigation_route_map(surface: str) -> dict[str, str]:
     return {item.route: item.label for item in navigation_for_surface(surface)}
 
 
-def navigation_icon_map(surface: str) -> dict[str, str]:
+def navigation_icon_map(surface: str, *, mode: str = "auto") -> dict[str, str]:
+    normalized = str(surface or "machine").strip().lower() or "machine"
     return {
-        item.route: _SURFACE_ICON_FALLBACKS.get(item.route, item.icon)
-        for item in navigation_for_surface(surface)
+        item.route: resolve_icon(item.icon, mode=mode, surface=normalized)
+        for item in navigation_for_surface(normalized)
     }
 
 
 def navigation_label_for_route(surface: str, route: str, *, default: str = "") -> str:
-    normalized_surface = str(surface or "machine").strip().lower() or "machine"
-    override = _SURFACE_LABEL_OVERRIDES.get((normalized_surface, route))
-    if override:
-        return override
-    return navigation_route_map(normalized_surface).get(route, default or str(route or "").replace("-", " ").title())
+    return navigation_route_map(surface).get(route, default or str(route or "").replace("-", " ").title())
 
 
 def navigation_shortcut_map(surface: str) -> dict[str, str]:

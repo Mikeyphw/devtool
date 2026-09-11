@@ -74,7 +74,19 @@ def nerd_font_enabled(env: Mapping[str, str] | None = None) -> bool:
     intentionally conservative because a missing Nerd Font renders tofu boxes.
     """
 
+    explicit_env = env is not None
     env = env or os.environ
+    ui_icon_mode = _env_flag(env.get("DEVTOOL_UI_ICONS"))
+    if not ui_icon_mode and not explicit_env:
+        try:
+            from .ui_core.preferences import resolve_user_ui_preferences
+            ui_icon_mode = resolve_user_ui_preferences(surface="tui").icons
+        except Exception:
+            ui_icon_mode = "auto"
+    if ui_icon_mode == "nerd":
+        return True
+    if ui_icon_mode in {"ascii", "unicode", "native"}:
+        return False
     if _env_flag(env.get("DEVTOOL_NO_NERD_FONT")) in _ENV_TRUE:
         return False
     configured = _env_flag(env.get("DEVTOOL_NERD_FONT"))

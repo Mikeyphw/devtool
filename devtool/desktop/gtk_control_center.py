@@ -15,6 +15,7 @@ from typing import Any
 from ..tasker import DEFAULT_TASKER_DIR
 from ..ui_core.actions import action_text
 from ..ui_core.navigation import navigation_icon_map, navigation_route_map
+from ..ui_core.preferences import resolve_user_ui_preferences
 from .control_center_model import DesktopControlCenterModel
 from .repository_store import DesktopRepositoryStore
 from .run_workflow import payload_from_mapping, review_payload, workflow_snapshot
@@ -215,6 +216,7 @@ class Gtk4ControlCenter:
                     app.quit()
 
         def _activate(app: Any) -> None:
+            ui_preferences = preferences.resolved_ui_preferences()
             if Adw is not None:
                 window = Adw.ApplicationWindow(application=app)
             else:
@@ -233,7 +235,7 @@ class Gtk4ControlCenter:
                 root.add_css_class("devtool-app-root")
                 if preferences.high_contrast:
                     root.add_css_class("devtool-high-contrast")
-                if preferences.compact_density:
+                if ui_preferences.density in {"dense", "compact"}:
                     root.add_css_class("devtool-compact-density")
             _install_control_center_css(Gtk, window)
             header = Gtk.HeaderBar()
@@ -507,7 +509,7 @@ class Gtk4ControlCenter:
 
 _PAGE_KEYS = navigation_route_map("desktop")
 
-_PAGE_ICONS = navigation_icon_map("desktop")
+_PAGE_ICONS = navigation_icon_map("desktop", mode=resolve_user_ui_preferences(surface="desktop").icons)
 
 
 def _update_header(repo_status: Any, ipc_status: Any, payload: dict[str, Any]) -> None:
@@ -859,7 +861,7 @@ def _apply_appearance_preference(Adw: Any, preferences: DesktopPreferences) -> N
         return
     with _suppress_exception():
         manager = Adw.StyleManager.get_default()
-        scheme = str(preferences.appearance or "system").lower()
+        scheme = str(preferences.resolved_ui_preferences().theme or "auto").lower()
         if scheme == "dark":
             manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
         elif scheme == "light":
@@ -920,7 +922,7 @@ def _prefers_reduced_motion(Gtk: Any) -> bool:
     if os.environ.get("DEVTOOL_REDUCED_MOTION", "").strip().lower() in {"1", "true", "yes", "on"}:
         return True
     with _suppress_exception():
-        if DesktopPreferences.load("control-center").reduced_motion:
+        if DesktopPreferences.load("control-center").resolved_ui_preferences().motion == "reduced":
             return True
     with _suppress_exception():
         settings = Gtk.Settings.get_default()
@@ -2362,6 +2364,27 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     ])
     box.append(paths_surface)
 
+    semantic_ui = payload.get("ui", {}) if isinstance(payload.get("ui"), dict) else {}
+    presentation = semantic_ui.get("presentation", {}) if isinstance(semantic_ui.get("presentation"), dict) else {}
+    if presentation:
+        shared_surface = _new_surface(Gtk)
+        _append_section_heading(
+            Gtk,
+            shared_surface,
+            "Shared UI profile",
+            "Resolved from global/repository [ui], profile, surface defaults, environment, and per-run CLI overrides",
+        )
+        _append_rows(Gtk, shared_surface, [
+            ("Profile", str(presentation.get("profile") or "standard")),
+            ("Theme", str(presentation.get("theme") or "auto")),
+            ("Density", str(presentation.get("density") or "comfortable")),
+            ("Icons", str(presentation.get("icons") or "auto")),
+            ("Motion", str(presentation.get("motion") or "auto")),
+            ("Verbosity", str(presentation.get("verbosity") or "normal")),
+            ("Diagnostics", str(presentation.get("show_diagnostics") or "expanded-on-error")),
+        ])
+        box.append(shared_surface)
+
     preferences = DesktopPreferences.load("control-center")
     appearance_surface = _new_surface(Gtk, accent=True)
     _append_section_heading(Gtk, appearance_surface, "Appearance", "System-aware theme, contrast, density, and motion preferences")
@@ -2455,7 +2478,7 @@ def _render_settings(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     reduced_motion.connect("toggled", reduced_motion_changed)
 
     _append_button_row(Gtk, box, [
-        ("Copy settings JSON", _copy_text_callback(Gtk, box, json.dumps(settings, ensure_ascii=False, indent=2))),
+        ("Copy settings JSON", _copy_text_callback(Gtk, box, json.dumps({"settings": settings, "ui": semantic_ui}, ensure_ascii=False, indent=2))),
         ("Open HUD", lambda _button: _launch_hud(str(hud.get("directory") or DEFAULT_TASKER_DIR), bool(settings.get("follow_active")))),
         ("Copy HUD state path", _copy_text_callback(Gtk, box, str(hud.get("directory") or ""))),
     ])

@@ -462,6 +462,14 @@ def build_parser() -> argparse.ArgumentParser:
     output.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
     output.add_argument("--log-dir", default="", help="Override the directory used for command logs (also DEVTOOL_LOG_DIR)")
 
+    presentation = parser.add_argument_group("UI presentation")
+    presentation.add_argument("--ui-profile", default="", help="UI profile: auto, minimal, standard, developer, debug, or a configured [ui.profiles.*] name")
+    presentation.add_argument("--ui-theme", choices=["auto", "light", "dark"], default="", help="Override the shared UI theme preference for this invocation")
+    presentation.add_argument("--ui-density", choices=["dense", "compact", "comfortable", "detailed"], default="", help="Override shared information density for this invocation")
+    presentation.add_argument("--ui-icons", choices=["auto", "nerd", "unicode", "ascii", "native"], default="", help="Override semantic icon rendering mode")
+    presentation.add_argument("--ui-motion", choices=["auto", "full", "reduced"], default="", help="Override shared motion preference")
+    presentation.add_argument("--ui-verbosity", choices=["compact", "normal", "detailed", "debug"], default="", help="Override shared information verbosity")
+
     hud = parser.add_argument_group("HUD and app bridge")
     hud.add_argument("--auto-hud", "--hud-auto", dest="auto_hud", action="store_true", default=None, help="Auto-start or reuse the selected HUD while progress is emitted (default)")
     hud.add_argument("--no-hud", dest="auto_hud", action="store_false", help="Do not publish live HUD progress for this command")
@@ -1037,7 +1045,7 @@ def build_parser() -> argparse.ArgumentParser:
     affected_cmd.add_argument("--head", default="", help="Git head revision; with --base uses base...head")
     affected_cmd.add_argument("--explain", action="store_true", help="Explain why every target is selected")
     affected_cmd.add_argument("--json", action="store_true", help="Emit structured affected-target metadata")
-    ui_contract_cmd = subparsers.add_parser("ui-contract", aliases=["uic"], help="Inspect the shared semantic UI state, action, and navigation contract")
+    ui_contract_cmd = subparsers.add_parser("ui-contract", aliases=["uic"], help="Inspect shared UI preferences, tokens, icons, copy, actions, and navigation")
     ui_contract_cmd.add_argument("--surface", choices=["machine", "desktop", "tui", "android", "hud"], default="machine", help="Render navigation routes for one frontend surface")
     ui_contract_cmd.add_argument("--json", action="store_true", help="Emit the complete machine-readable UI Core contract")
 
@@ -2307,6 +2315,14 @@ def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | No
         except Exception:
             pass
 
+    ui_presentations: dict[str, dict[str, object]] = {}
+    if config is not None:
+        from .ui_core.preferences import resolve_ui_preferences
+        ui_presentations = {
+            surface: resolve_ui_preferences(config.ui_config, surface=surface).as_dict()
+            for surface in ("machine", "desktop", "tui", "hud", "android")
+        }
+
     sink = build_tasker_sink(
         enabled=enabled,
         directory=str(directory),
@@ -2319,6 +2335,7 @@ def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | No
         notification_id=DEFAULT_NOTIFICATION_ID,
         run_id=str(getattr(args, "_devtool_run_id", "") or os.environ.get("DEVTOOL_RUN_ID", "")),
         overlay=bool(getattr(args, "hud_overlay", False)) and not bool(getattr(args, "hud_no_overlay", False)),
+        ui_presentations=ui_presentations,
     )
 
     if sink is not None and enabled and bool(getattr(args, "auto_hud", False)):
@@ -7255,9 +7272,16 @@ def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
 
 
 def _ui_contract(*, surface: str = "machine", as_json: bool = False) -> None:
-    from .ui_core import UI_SCHEMA_VERSION, action_catalog, navigation_for_surface
+    from .ui_core import (
+        COPY_SCHEMA_VERSION, ICON_SCHEMA_VERSION, TOKEN_SCHEMA_VERSION, UI_SCHEMA_VERSION,
+        action_catalog, copy_catalog, icon_catalog, navigation_for_surface, profile_catalog,
+        resolve_ui_preferences, token_catalog,
+    )
 
-    navigation = [item.__dict__ if hasattr(item, "__dict__") else {
+    global_config, _ = load_global_config()
+    ui_config = global_config.get("ui", {}) if isinstance(global_config.get("ui", {}), dict) else {}
+    preferences = resolve_ui_preferences(ui_config, surface=surface)
+    navigation = [{
         "id": item.id,
         "label": item.label,
         "short_label": item.short_label,
@@ -7268,14 +7292,30 @@ def _ui_contract(*, surface: str = "machine", as_json: bool = False) -> None:
     } for item in navigation_for_surface(surface)]
     payload = {
         "schema_version": UI_SCHEMA_VERSION,
+        "token_schema_version": TOKEN_SCHEMA_VERSION,
+        "icon_schema_version": ICON_SCHEMA_VERSION,
+        "copy_schema_version": COPY_SCHEMA_VERSION,
         "surface": surface,
+        "preferences": preferences.as_dict(),
+        "profiles": profile_catalog(ui_config),
+        "tokens": token_catalog(),
+        "icons": icon_catalog(),
+        "copy": copy_catalog(),
         "actions": action_catalog(),
         "navigation": navigation,
     }
     if as_json:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return
-    console.print(f"[bold]UI Core[/bold]  schema={UI_SCHEMA_VERSION} surface={surface}")
+    console.print(f"[bold]UI Core[/bold]  schema={UI_SCHEMA_VERSION} surface={surface} profile={preferences.profile}")
+    render_status_table([
+        ("theme", preferences.theme),
+        ("density", preferences.density),
+        ("icons", preferences.icons),
+        ("motion", preferences.motion),
+        ("verbosity", preferences.verbosity),
+    ])
+    console.print("[bold]Actions[/bold]")
     render_status_table([(item["id"], f"{item['label']} · intent={item['intent']}") for item in payload["actions"]])
     if navigation:
         console.print("[bold]Navigation[/bold]")
@@ -9927,6 +9967,20 @@ def _write_performance_report(
 
 
 
+def _apply_ui_cli_overrides(args: argparse.Namespace) -> None:
+    mapping = {
+        "ui_profile": "DEVTOOL_UI_PROFILE",
+        "ui_theme": "DEVTOOL_UI_THEME",
+        "ui_density": "DEVTOOL_UI_DENSITY",
+        "ui_icons": "DEVTOOL_UI_ICONS",
+        "ui_motion": "DEVTOOL_UI_MOTION",
+        "ui_verbosity": "DEVTOOL_UI_VERBOSITY",
+    }
+    for attr, env_key in mapping.items():
+        value = str(getattr(args, attr, "") or "").strip()
+        if value:
+            os.environ[env_key] = value
+
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -9934,6 +9988,7 @@ def main(argv: list[str] | None = None) -> int:
     parse_argv, universal_json = extract_universal_json_flag(parse_argv)
     parser = build_parser()
     args = parser.parse_args(parse_argv)
+    _apply_ui_cli_overrides(args)
     configure_logging(verbose=bool(getattr(args, "verbose", False)), quiet=bool(getattr(args, "quiet", False)), trace=bool(getattr(args, "trace", False)))
     console.quiet = bool(getattr(args, "quiet", False))
     configure_event_console(console, enabled=bool((getattr(args, "verbose", False) or getattr(args, "trace", False)) and not getattr(args, "quiet", False) and not universal_json))

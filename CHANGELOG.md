@@ -1,3 +1,11 @@
+## 2026-09-11 - UI03 + UI04 shared preferences, profiles, semantic tokens/icons/copy
+
+- Added one shared UI preference resolver with built-in `minimal`, `standard`, `developer`, and `debug` profiles; custom inherited profiles; per-surface overrides; provenance; strict validation; global/repository merge; environment overrides; and per-run CLI overrides.
+- Added `[ui]`, `[ui.tui]`, `[ui.hud]`, `[ui.desktop]`, `[ui.android]`, and `[ui.profiles.*]` configuration plus resolved presentation in `config resolve`, global config doctor/template support, and `--ui-profile/--ui-theme/--ui-density/--ui-icons/--ui-motion/--ui-verbosity`.
+- Added semantic status/severity/action/text/surface tokens, a central Nerd Font/Unicode/ASCII/native icon registry, and a shared action/navigation/status copy registry while preserving UI01/UI02 stable machine IDs.
+- Migrated UI Core snapshots, action/navigation metadata, TUI icon/density selection, HUD status/icon rendering, GTK theme/density/motion behavior and Settings summary, desktop semantic state, Android HUD bridge metadata, IPC/Tasker state, and live-state process-boundary presentation to the shared policy.
+- Extended `ui-contract|uic` with effective preferences/provenance, profile catalog, token/icon/copy registries and schema versions; added dynamic custom-profile zsh completion, manpage/README/config/UI architecture documentation, and dedicated UI03/UI04 regression coverage.
+
 ## 2026-09-11 - UI01 + UI02 shared semantic UI state and central action/navigation registries
 
 - Added versioned `UISnapshot` state with normalized workspace/selection, operation lifecycle, hierarchical progress, diagnostics, semantic actions, and navigation entries.

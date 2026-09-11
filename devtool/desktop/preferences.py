@@ -86,6 +86,25 @@ class DesktopPreferences:
             filters=clean_filters,
         )
 
+
+    def resolved_ui_preferences(self):
+        """Resolve shared UI03 preferences while preserving legacy desktop overrides.
+
+        Window geometry/navigation remain desktop-local state. Appearance, density,
+        and motion are now semantic UI Core preferences; legacy stored values act
+        only as explicit desktop-surface overrides for compatibility.
+        """
+        from ..ui_core.preferences import resolve_user_ui_preferences
+
+        overrides: dict[str, Any] = {}
+        if self.appearance in {"light", "dark"}:
+            overrides["theme"] = self.appearance
+        if self.compact_density:
+            overrides["density"] = "compact"
+        if self.reduced_motion:
+            overrides["motion"] = "reduced"
+        return resolve_user_ui_preferences(surface="desktop", overrides=overrides)
+
     def filter_value(self, page: str, name: str, default: str = "") -> str:
         return str(self.filters.get(f"{page}.{name}", default))
 

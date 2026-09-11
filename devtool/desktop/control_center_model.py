@@ -174,6 +174,7 @@ class DesktopControlCenterModel:
                 "targets": [config.selected_target] if config.selected_target else [],
                 "variant": config.variant,
             },
+            preferences=config.ui_config,
         ).as_dict()
         return DesktopControlCenterSnapshot(
             repository={**_repository_dict(repo), "state_dir": str(self.state_dir)},

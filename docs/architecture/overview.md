@@ -33,3 +33,7 @@ The polyglot workspace model separates target identity, product platform, runner
 UI01/UI02 add `devtool.ui_core`. Runtime/domain code owns facts, UI Core owns semantic presentation state, and individual frontends own native rendering. The versioned `UISnapshot` normalizes workspace/selection, operation lifecycle, progress, diagnostics, actions, and navigation. Central action/navigation registries assign stable IDs and presentation metadata so TUI, GTK, Android bridges, HUD, IPC, and Tasker do not independently redefine the same meaning.
 
 See [`ui-core.md`](ui-core.md), [`core-runtime.md`](core-runtime.md), and the workflow architecture documents for the detailed contracts.
+
+## Shared presentation policy
+
+UI03/UI04 centralize frontend preferences/profiles plus semantic tokens, icons, and copy on top of the UI Core state/action/navigation contract. See [`../UI_PREFERENCES_AND_TOKENS.md`](../UI_PREFERENCES_AND_TOKENS.md) and [`ui-core.md`](ui-core.md).

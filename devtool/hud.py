@@ -30,7 +30,10 @@ from rich.text import Text
 
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, hud_disabled_by_environment, read_active_hud_directory
 from .android_live_hud import AndroidLiveHudBridge
-from .ui_core import UI_SCHEMA_VERSION
+from .ui_core import COPY_SCHEMA_VERSION, ICON_SCHEMA_VERSION, TOKEN_SCHEMA_VERSION, UI_SCHEMA_VERSION
+from .ui_core.copy import copy_text
+from .ui_core.icons import resolve_icon
+from .ui_core.preferences import resolve_user_ui_preferences
 from .ui_core.viewmodels import runtime_state_to_ui_snapshot
 
 
@@ -477,13 +480,16 @@ def human_detail(value: str) -> str:
 
 def human_status(value: str) -> str:
     key = (value or "").strip().lower()
-    return {
-        "idle": "Waiting",
-        "running": "Running",
-        "ok": "Complete",
-        "failed": "Failed",
-        "skipped": "Skipped",
-    }.get(key, human_phase_name(value))
+    copy_key = {
+        "idle": "status.idle",
+        "running": "status.running",
+        "ok": "status.success",
+        "failed": "status.failed",
+        "skipped": "status.skipped",
+        "cancelled": "status.cancelled",
+        "blocked": "status.blocked",
+    }.get(key)
+    return copy_text(copy_key, surface="hud") if copy_key else human_phase_name(value)
 
 
 def human_event_type(value: str) -> str:
@@ -765,13 +771,19 @@ def event_severity(event: dict[str, Any]) -> str:
 
 
 def event_icon(event: dict[str, Any]) -> str:
-    return {
-        "error": "❌",
-        "warning": "⚠",
-        "success": "✓",
-        "running": "→",
-        "neutral": "•",
-    }.get(event_severity(event), "•")
+    severity = event_severity(event)
+    token = {
+        "error": "severity.error",
+        "warning": "severity.warning",
+        "success": "status.success",
+        "running": "status.running",
+        "neutral": "status.pending",
+    }.get(severity, "status.pending")
+    try:
+        mode = resolve_user_ui_preferences(surface="hud").icons
+    except Exception:
+        mode = "auto"
+    return resolve_icon(token, mode=mode, surface="hud")
 
 
 def hud_event_summary(events: Iterable[dict[str, Any]]) -> dict[str, int]:
@@ -1642,7 +1654,11 @@ def snapshot_from_directory(directory: Path, *, recent_events: int = DEFAULT_REC
     return {
         "version": 5,
         "state": state.to_dict(),
-        "ui": runtime_state_to_ui_snapshot(state.raw, surface="hud").as_dict(),
+        "ui": runtime_state_to_ui_snapshot(
+            state.raw,
+            surface="hud",
+            preferences=(state.raw.get("ui_presentations", {}) or {}).get("hud"),
+        ).as_dict(),
         "events": events,
         "paths": {
             "directory": str(directory),
@@ -1977,7 +1993,11 @@ class AndroidAppHud:
                 break
 
         overall_percent = self._pipeline_percent(steps, terminal_ok=status in {"ok", "skipped"})
-        semantic_android_ui = runtime_state_to_ui_snapshot(state.raw, surface="android").as_dict()
+        semantic_android_ui = runtime_state_to_ui_snapshot(
+            state.raw,
+            surface="android",
+            preferences=(state.raw.get("ui_presentations", {}) or {}).get("android"),
+        ).as_dict()
         payload: dict[str, Any] = {
             "run_id": run_id,
             "sequence": int(_coerce_int(state.raw.get("sequence")) or 0),
@@ -2015,6 +2035,10 @@ class AndroidAppHud:
             "commit": str(completion.get("commit_hash") or ""),
             "summary": completion_copy_text(state),
             "ui_schema_version": UI_SCHEMA_VERSION,
+            "ui_token_schema_version": TOKEN_SCHEMA_VERSION,
+            "ui_icon_schema_version": ICON_SCHEMA_VERSION,
+            "ui_copy_schema_version": COPY_SCHEMA_VERSION,
+            "ui_presentation_json": json.dumps(semantic_android_ui.get("presentation", {}), separators=(",", ":")),
             "ui_actions_json": json.dumps(semantic_android_ui.get("actions", []), separators=(",", ":")),
             "ui_navigation_json": json.dumps(semantic_android_ui.get("navigation", []), separators=(",", ":")),
             "started_at_ms": started_at,
@@ -2031,7 +2055,7 @@ class AndroidAppHud:
             payload.get("current"), payload.get("total"), payload.get("passed"),
             payload.get("failed"), payload.get("skipped"), payload.get("warnings"),
             payload.get("errors"), payload.get("steps_json"), payload.get("workspaces_json"),
-            payload.get("heartbeat"),
+            payload.get("ui_presentation_json"), payload.get("heartbeat"),
         )
         if signature == self.last_signature:
             return

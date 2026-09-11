@@ -262,6 +262,8 @@ MP10 adds `devtool plan`: inspect expanded DAGs, safe scheduling waves, read/wri
 
 UI01/UI02 add a shared semantic UI layer rather than another renderer-specific abstraction. `UISnapshot` normalizes workspace selection, operation state, hierarchical progress, diagnostics, available actions, and navigation; the central action/navigation registries provide stable IDs, labels, intent, routes, and surface-specific presentation. TUI/HUD, GTK Control Center/HUD, Tasker/IPC state, and the Android HUD bridge now publish or consume that shared contract while preserving their existing native layouts. Use `devtool ui-contract --surface desktop --json` (alias `uic`) to inspect the contract. See [`docs/architecture/ui-core.md`](docs/architecture/ui-core.md).
 
+UI03/UI04 add the shared presentation policy on top of that contract. `[ui]` and per-surface tables resolve through named/inherited profiles (`minimal`, `standard`, `developer`, `debug`), environment/CLI overrides, and provenance; semantic status/severity/action tokens, Nerd Font/Unicode/ASCII/native icons, and common action/navigation/status wording now come from central registries. Live HUD/Android state carries resolved per-surface presentation across the process boundary, while GTK/TUI/HUD keep their native rendering. Inspect registries with `devtool --ui-profile debug ui-contract --surface hud --json` and repository-merged values with `devtool config resolve --json`. See [`docs/UI_PREFERENCES_AND_TOKENS.md`](docs/UI_PREFERENCES_AND_TOKENS.md).
+
 ## Devtool 0.15.0: verified Android artifacts, device tests, selective tests, and Python pipelines
 
 Android and Gradle builds now verify newly produced APK, AAB, AAR, and JVM

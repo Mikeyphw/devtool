@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from .copy import copy_text
 from .state import UIActionState
 
 
@@ -39,6 +40,7 @@ class ActionSpec:
             disabled_reason=disabled_reason,
             shortcut=self.shortcut,
             payload=dict(payload or {}),
+            token="action.destructive" if self.destructive else "action.secondary",
         )
 
 
@@ -74,28 +76,50 @@ class ActionContext:
         return self.command in {"validate", "validation", "test"} or "validation" in self.command
 
 
+def _action(
+    action_id: str,
+    icon: str,
+    category: str,
+    intent: str,
+    destructive: bool = False,
+    shortcut: str = "",
+) -> ActionSpec:
+    return ActionSpec(
+        action_id,
+        copy_text(action_id),
+        copy_text(action_id, "short"),
+        copy_text(action_id, "notification"),
+        icon,
+        category,
+        intent,
+        destructive,
+        shortcut,
+        copy_text(action_id, "description"),
+    )
+
+
 ACTION_REGISTRY: dict[str, ActionSpec] = {
     spec.id: spec
     for spec in (
-        ActionSpec("operation.cancel", "Cancel operation", "Cancel", "Stop", "action.stop", "operation", "cancel", True, "Ctrl+C", "Request cancellation of the active run."),
-        ActionSpec("operation.retry", "Retry operation", "Retry", "Retry", "action.retry", "operation", "retry", False, "", "Retry the failed or cancelled operation."),
-        ActionSpec("operation.rerun", "Run again", "Run again", "Run again", "action.rerun", "operation", "rerun", False, "", "Repeat the completed operation with the same selection."),
-        ActionSpec("logs.open", "Open log", "Open log", "Open log", "action.logs", "logs", "open-log", False, "L", "Open the run log."),
-        ActionSpec("summary.copy", "Copy summary", "Copy", "Copy summary", "action.copy", "sharing", "copy-summary", False, "", "Copy the canonical run summary."),
-        ActionSpec("diagnostics.copy", "Copy diagnostics", "Copy issues", "Copy issues", "action.copy-diagnostics", "diagnostics", "copy-diagnostics", False, "", "Copy canonical diagnostics for the run."),
-        ActionSpec("artifact.apply", "Apply artifact", "Apply", "Apply", "action.apply", "artifact", "apply-artifact", False, "", "Apply the selected overlay or snapshot."),
-        ActionSpec("artifact.rollback", "Rollback changes", "Rollback", "Rollback", "action.rollback", "artifact", "rollback", True, "", "Restore the repository from the active apply transaction."),
-        ActionSpec("validation.retry_failed", "Retry failed validation", "Retry failed", "Retry failed", "action.retry-failed", "validation", "validation-retry-failed", False, "", "Retry only failed validation phases."),
-        ActionSpec("validation.resume", "Resume validation", "Resume", "Resume", "action.resume", "validation", "validation-resume", False, "", "Resume a paused or resumable validation session."),
-        ActionSpec("target.build", "Build target", "Build", "Build", "action.build", "target", "target-build"),
-        ActionSpec("target.test", "Test target", "Tests", "Tests", "action.test", "target", "target-test"),
-        ActionSpec("target.validate", "Validate target", "Validate", "Validate", "action.validate", "target", "target-validate"),
-        ActionSpec("target.package", "Package target", "Package", "Package", "action.package", "target", "target-package"),
-        ActionSpec("workflow.inspect", "Inspect workflow", "Inspect", "Inspect", "action.inspect", "workflow", "workflow-inspect"),
-        ActionSpec("workflow.retry_node", "Retry workflow node", "Retry node", "Retry node", "action.retry-node", "workflow", "workflow-retry-node"),
-        ActionSpec("tests.select", "Select tests", "Select tests", "Select tests", "action.tests", "tests", "tests-select"),
-        ActionSpec("tests.clear_selection", "Clear test selection", "Clear tests", "Clear", "action.clear", "tests", "tests-clear-selection"),
-        ActionSpec("tests.refresh_collection", "Refresh test collection", "Refresh tests", "Refresh", "action.refresh", "tests", "tests-refresh-collection"),
+        _action("operation.cancel", "action.stop", "operation", "cancel", True, "Ctrl+C"),
+        _action("operation.retry", "action.retry", "operation", "retry"),
+        _action("operation.rerun", "action.rerun", "operation", "rerun"),
+        _action("logs.open", "action.logs", "logs", "open-log", False, "L"),
+        _action("summary.copy", "action.copy", "sharing", "copy-summary"),
+        _action("diagnostics.copy", "action.copy-diagnostics", "diagnostics", "copy-diagnostics"),
+        _action("artifact.apply", "action.apply", "artifact", "apply-artifact"),
+        _action("artifact.rollback", "action.rollback", "artifact", "rollback", True),
+        _action("validation.retry_failed", "action.retry-failed", "validation", "validation-retry-failed"),
+        _action("validation.resume", "action.resume", "validation", "validation-resume"),
+        _action("target.build", "action.build", "target", "target-build"),
+        _action("target.test", "action.test", "target", "target-test"),
+        _action("target.validate", "action.validate", "target", "target-validate"),
+        _action("target.package", "action.package", "target", "target-package"),
+        _action("workflow.inspect", "action.inspect", "workflow", "workflow-inspect"),
+        _action("workflow.retry_node", "action.retry-node", "workflow", "workflow-retry-node"),
+        _action("tests.select", "action.tests", "tests", "tests-select"),
+        _action("tests.clear_selection", "action.clear", "tests", "tests-clear-selection"),
+        _action("tests.refresh_collection", "action.refresh", "tests", "tests-refresh-collection"),
     )
 }
 
@@ -146,15 +170,9 @@ def actions_for_context(context: ActionContext) -> list[UIActionState]:
     return [action_spec(action_id).present(payload=payload) for action_id in available_action_ids(context)]
 
 
-
-
 def action_text(action_id: str, variant: str = "label") -> str:
-    spec = action_spec(action_id)
-    if variant == "short":
-        return spec.short_label
-    if variant == "notification":
-        return spec.notification_label
-    return spec.label
+    return copy_text(action_id, variant)
+
 
 def action_catalog() -> list[dict[str, Any]]:
     return [

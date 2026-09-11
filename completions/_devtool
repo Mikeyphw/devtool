@@ -61,6 +61,23 @@ _devtool_groups() {
   fi
 }
 
+_devtool_ui_profiles() {
+  local repo config global_config
+  local -a profiles
+  repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
+  config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
+  global_config=${DEVTOOL_GLOBAL_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/devtool/config.toml}
+  profiles=(auto minimal standard developer debug)
+  if [[ -r $global_config ]]; then
+    profiles+=(${(f)"$(sed -nE 's/^\[ui\.profiles\.([^].]+)\].*/\1/p' "$global_config" 2>/dev/null)"})
+  fi
+  if [[ -r $config ]]; then
+    profiles+=(${(f)"$(sed -nE 's/^\[ui\.profiles\.([^].]+)\].*/\1/p' "$config" 2>/dev/null)"})
+  fi
+  profiles=(${(u)profiles})
+  _describe -t ui-profiles 'UI profile' profiles
+}
+
 _devtool_test_profiles() {
   local repo config
   local -a profiles
@@ -220,7 +237,7 @@ _devtool_commands() {
     'aff:alias for affected'
     'preflight:check expanded workflow roots, environments, runners, tools, and outputs'
     'pf:alias for preflight'
-    'ui-contract:inspect shared semantic UI state, actions, and navigation'
+    'ui-contract:inspect shared UI preferences, semantic state, tokens, icons, copy, actions, and navigation'
     'uic:alias for ui-contract'
     'logs:list, open, or tail devtool logs'
     'history:list structured run history'
@@ -509,6 +526,12 @@ _devtool() {
     '--no-clipboard[disable clipboard prompts and copy behavior]' \
     '--copy-via[preferred clipboard backend]:backend:(auto socket fifo termux x11 wayland)' \
     '--theme[summary theme]:theme:(auto plain)' \
+    '--ui-profile[shared UI profile]:profile:_devtool_ui_profiles' \
+    '--ui-theme[shared UI theme]:theme:(auto light dark)' \
+    '--ui-density[shared information density]:density:(dense compact comfortable detailed)' \
+    '--ui-icons[semantic icon rendering mode]:icons:(auto nerd unicode ascii native)' \
+    '--ui-motion[shared motion preference]:motion:(auto full reduced)' \
+    '--ui-verbosity[shared information verbosity]:verbosity:(compact normal detailed debug)' \
     '--log-dir[override command log directory]:directory:_files -/' \
     '--stdout-payload[select stdout content]:payload:(auto summary raw)' \
     '(--auto-hud --hud-auto --no-hud)'{--auto-hud,--hud-auto}'[auto-start or reuse the selected HUD]' \
@@ -984,7 +1007,7 @@ _devtool() {
         ui-contract|uic)
           _arguments \
             '--surface[frontend surface to inspect]:surface:(machine desktop tui android hud)' \
-            '--json[emit the shared semantic UI contract as JSON]'
+            '--json[emit preferences, profiles, tokens, icons, copy, actions, and navigation as JSON]'
           ;;
         handoff)
           _arguments '(-o --output)'{-o,--output}'[write handoff to file]:file:_files'

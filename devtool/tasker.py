@@ -815,6 +815,7 @@ class TaskerProgressSink:
     log_path: str = ""
     targets: list[str] = field(default_factory=list)
     planned_phases: list[dict[str, Any]] = field(default_factory=list)
+    ui_presentations: dict[str, dict[str, Any]] = field(default_factory=dict)
     enabled: bool = True
     notify_progress: bool = False
     notification_id: str = DEFAULT_NOTIFICATION_ID
@@ -1365,10 +1366,16 @@ class TaskerProgressSink:
                 "events_dir": str(self.events_dir),
             },
         }
-        # UI01/UI02: publish one semantic UI snapshot beside the legacy run
-        # fields. IPC, Tasker, HUD, desktop and Android can consume the same
-        # stable action/navigation/state contract without scraping display text.
-        state["ui"] = runtime_state_to_ui_snapshot(state, surface="machine").as_dict()
+        # UI01-UI04: publish one semantic UI snapshot beside the legacy run
+        # fields. Resolved per-surface presentation is carried across the
+        # process boundary so repo/global/profile overrides stay consistent in
+        # separately running HUD/Android consumers without reparsing config.
+        if self.ui_presentations:
+            state["ui_presentations"] = {key: dict(value) for key, value in self.ui_presentations.items()}
+        machine_preferences = self.ui_presentations.get("machine") if self.ui_presentations else None
+        state["ui"] = runtime_state_to_ui_snapshot(
+            state, surface="machine", preferences=machine_preferences
+        ).as_dict()
         event = dict(state)
         event["event_file"] = None
         event_file = self.events_dir / f"{timestamp.replace(':', '').replace('.', '-')}-{self.sequence:05d}-{_safe_name(event_type)}.json"
@@ -1439,6 +1446,7 @@ def build_tasker_sink(
     notification_id: str = DEFAULT_NOTIFICATION_ID,
     run_id: str = "",
     overlay: bool = False,
+    ui_presentations: dict[str, dict[str, Any]] | None = None,
 ) -> TaskerProgressSink | None:
     if not enabled:
         return None
@@ -1456,4 +1464,5 @@ def build_tasker_sink(
         notification_id=notification_id,
         run_id=run_id.strip() or _default_run_id(),
         overlay=overlay,
+        ui_presentations={key: dict(value) for key, value in (ui_presentations or {}).items()},
     )

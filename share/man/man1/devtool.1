@@ -207,7 +207,7 @@ Inspect the shared semantic UI contract used by terminal, HUD, desktop, Android 
 .BR --surface " machine|desktop|tui|android|hud"
 to resolve surface-specific navigation and
 .B --json
-to emit the versioned action/navigation schema for machine consumers.
+to emit resolved preferences/profile provenance plus semantic token, icon, copy, action, and navigation registries for machine consumers.
 .SH ARTIFACT COMMANDS
 .TP
 .B apply-overlay " | " ao " ARTIFACT"
@@ -426,6 +426,27 @@ Override detection. TYPE is
 .BR command ,
 or
 .BR unknown .
+.SH GLOBAL UI OPTIONS
+.TP
+.BI --ui-profile " NAME"
+Select the shared UI profile for this invocation. Built-ins are minimal, standard, developer, and debug; custom profiles come from [ui.profiles.*].
+.TP
+.BI --ui-theme " auto|light|dark"
+Override the shared theme preference for this invocation.
+.TP
+.BI --ui-density " dense|compact|comfortable|detailed"
+Override information/spacing density for this invocation.
+.TP
+.BI --ui-icons " auto|nerd|unicode|ascii|native"
+Select the semantic icon rendering mode. The registry provides Nerd Font, Unicode, ASCII-safe, and native symbolic forms.
+.TP
+.BI --ui-motion " auto|full|reduced"
+Override the shared motion preference.
+.TP
+.BI --ui-verbosity " compact|normal|detailed|debug"
+Override shared presentation verbosity.
+.PP
+UI resolution is built-in defaults, selected profile, surface defaults, merged global/repository [ui], surface override, DEVTOOL_UI_* environment values, then explicit CLI overrides.
 .SH GLOBAL EXECUTION OPTIONS
 .TP
 .BR -v , " --verbose"

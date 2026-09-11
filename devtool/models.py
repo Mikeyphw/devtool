@@ -223,6 +223,7 @@ class ProjectConfig:
     targets: dict[str, TargetConfig] = field(default_factory=dict)
     jobs: dict[str, JobConfig] = field(default_factory=dict)
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
+    ui_config: dict[str, Any] = field(default_factory=dict)
     execution_environment: str = "auto"
     chroot_name: str = "androidos"
     device_serial: str = ""

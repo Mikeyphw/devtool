@@ -58,6 +58,30 @@ stdout_payload = "auto"
 auto_hud = "auto"
 mode = "desktop"
 
+[ui]
+profile = "developer"
+theme = "auto"
+density = "comfortable"
+icons = "auto"
+motion = "auto"
+verbosity = "normal"
+show_environment = "when-relevant"
+show_commands = "on-error"
+show_diagnostics = "expanded-on-error"
+
+[ui.tui]
+density = "compact"
+
+[ui.hud]
+density = "dense"
+max_steps = 6
+
+[ui.desktop]
+sidebar = "expanded"
+
+[ui.android]
+notification_detail = "normal"
+
 [cli.apply]
 validate = true
 manifest_check = true
@@ -89,6 +113,15 @@ stop_after_run = true
 aapt2_provider = "auto"
 aapt2_fallback_path = "/sdcard/Download/aapt2-arm64-v8a.bin"
 ```
+
+
+## Shared UI preferences and profiles
+
+`[ui]` is valid in both the user-global config and a repository config. Repository values deep-merge over the global UI preference layer. The effective presentation for each frontend resolves as built-in defaults -> selected profile -> surface defaults -> merged `[ui]` -> `[ui.<surface>]` -> `DEVTOOL_UI_*` -> explicit CLI override.
+
+Built-in profiles are `minimal`, `standard`, `developer`, and `debug`. `profile = "auto"` resolves to `standard`. Custom profiles live under `[ui.profiles.<name>]` and may use `extends = "developer"`; invalid values and inheritance cycles fail during config loading.
+
+Common one-run overrides are `--ui-profile`, `--ui-theme`, `--ui-density`, `--ui-icons`, `--ui-motion`, and `--ui-verbosity`. Use `devtool ui-contract --surface desktop --json` to inspect the global contract, and `devtool config resolved --json` to inspect the repository-merged presentation for every surface. See [`UI_PREFERENCES_AND_TOKENS.md`](UI_PREFERENCES_AND_TOKENS.md).
 
 ## Automatic runner detection and platform identity
 

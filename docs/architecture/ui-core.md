@@ -1,6 +1,6 @@
 # UI Core architecture
 
-UI01/UI02 establish a shared semantic UI layer for Devtool. The objective is consistency of meaning across TUI, terminal HUD, GTK desktop, Android HUD/notification bridges, IPC, Tasker, and machine clients without forcing those surfaces to share widgets or layouts.
+UI01-UI04 establish a shared semantic UI layer for Devtool. The objective is consistency of meaning across TUI, terminal HUD, GTK desktop, Android HUD/notification bridges, IPC, Tasker, and machine clients without forcing those surfaces to share widgets or layouts.
 
 ## Boundary
 
@@ -11,6 +11,7 @@ Domain/runtime facts
    UI Core
   /   |   \
 state actions navigation
+preferences tokens icons copy
   \   |   /
    semantic snapshot
        |
@@ -30,9 +31,22 @@ Domain/runtime code owns execution truth. UI Core owns presentation semantics. S
 - hierarchical progress rows with status/count/percent metadata;
 - normalized diagnostics;
 - context-resolved semantic actions;
-- surface-resolved navigation entries.
+- surface-resolved navigation entries;
+- resolved presentation preferences and provenance;
+- semantic status/severity/action tokens.
 
 `runtime_state_to_ui_snapshot()` converts existing runtime/Tasker state without deleting legacy fields, allowing incremental frontend migration. The semantic snapshot is therefore additive during the UI roadmap.
+
+
+## Presentation preferences and profiles
+
+UI03 resolves one renderer-independent presentation policy for `machine`, `desktop`, `tui`, `hud`, and `android`. Resolution is layered: built-in defaults, selected profile, built-in surface defaults, merged global/repository `[ui]`, surface-specific `[ui.<surface>]`, environment overrides, then explicit CLI overrides. Built-ins are `minimal`, `standard`, `developer`, and `debug`; custom profiles may inherit other profiles and are cycle-checked.
+
+Resolved presentation is stored in `UISnapshot.presentation`. Live state also transports resolved per-surface presentation so a separate HUD/Android process sees repository overrides without reparsing raw project configuration.
+
+## Semantic tokens, icons, and copy
+
+UI04 centralizes status/severity/action/text tokens, semantic icon identities with Nerd Font/Unicode/ASCII/native fallbacks, and reusable action/navigation/status copy. Stable machine IDs remain independent from displayed wording. Renderers map semantic tokens into their native colors/widgets rather than UI Core prescribing literal CSS or Android resources.
 
 ## Action registry
 
@@ -65,7 +79,7 @@ devtool ui-contract --surface tui
 devtool ui-contract --surface android --json
 ```
 
-The command reports the registry schema; it does not require project configuration.
+The command reports resolved global presentation plus profile/token/icon/copy/action/navigation registries; it does not require project configuration. Repository-merged presentation is available through resolved config and live semantic snapshots.
 
 ## Compatibility policy
 

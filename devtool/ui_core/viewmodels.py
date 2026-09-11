@@ -5,6 +5,8 @@ from typing import Any, Iterable, Mapping
 
 from .actions import ActionContext, actions_for_context
 from .navigation import navigation_for_surface
+from .preferences import UIPreferences, resolve_ui_preferences, resolve_user_ui_preferences
+from .tokens import token_for_severity, token_for_status
 from .state import (
     UIDiagnosticState,
     UIOperationState,
@@ -12,6 +14,7 @@ from .state import (
     UISelectionState,
     UISnapshot,
     UIWorkspaceState,
+    UIPresentationState,
 )
 
 
@@ -89,7 +92,7 @@ def _diagnostics(raw: Mapping[str, Any]) -> list[UIDiagnosticState]:
         if key in seen:
             return
         seen.add(key)
-        result.append(UIDiagnosticState(severity, message, code, item_phase, file_name, source))
+        result.append(UIDiagnosticState(severity=severity, message=message, token=token_for_severity(severity), code=code, phase=item_phase, file=file_name, source=source))
 
     for item in raw.get("diagnostics", []) if isinstance(raw.get("diagnostics"), list) else []:
         append(item, phase=_phase_name(raw), source="state")
@@ -125,6 +128,7 @@ def _progress_nodes(raw: Mapping[str, Any]) -> list[UIProgressState]:
             id=phase_id,
             label=_text(item.get("display_name") or item.get("label") or item.get("name") or item.get("command")) or phase_id,
             status=_status(item.get("status") or "pending"),
+            token=token_for_status(_status(item.get("status") or "pending")),
             kind=_text(item.get("kind") or "phase"),
             parent_id=_text(item.get("parent_id") or item.get("parent")),
             current=current,
@@ -148,6 +152,7 @@ def _progress_nodes(raw: Mapping[str, Any]) -> list[UIProgressState]:
         id=_text(phase.get("phase_id") or phase.get("node_id") or phase.get("name") or raw.get("command")) or "current",
         label=label or "Current operation",
         status=_status(raw.get("status") or "running"),
+        token=token_for_status(_status(raw.get("status") or "running")),
         kind="phase",
         current=current,
         total=total,
@@ -165,10 +170,27 @@ def runtime_state_to_ui_snapshot(
     surface: str = "machine",
     workspace: Mapping[str, Any] | None = None,
     selection: Mapping[str, Any] | None = None,
+    preferences: UIPreferences | Mapping[str, Any] | None = None,
 ) -> UISnapshot:
     state = raw or {}
     workspace_override = workspace or {}
     selection_override = selection or {}
+    if isinstance(preferences, UIPreferences):
+        resolved_preferences = preferences
+    elif preferences is None:
+        resolved_preferences = resolve_user_ui_preferences(surface=surface)
+    elif isinstance(preferences, Mapping) and "provenance" in preferences and "surface" in preferences:
+        # Live-state producers may carry an already-resolved per-surface
+        # presentation across IPC/files. Rehydrate it rather than treating the
+        # resolved object as raw [ui] configuration.
+        fields = {
+            key: value for key, value in preferences.items()
+            if key in UIPreferences.__dataclass_fields__
+        }
+        fields["surface"] = surface
+        resolved_preferences = UIPreferences(**fields)
+    else:
+        resolved_preferences = resolve_ui_preferences(preferences, surface=surface)
     raw_targets = state.get("targets") if isinstance(state.get("targets"), list) else []
     targets = _unique([*raw_targets, state.get("target")])
     selected_groups = _unique(selection_override.get("groups", []) if isinstance(selection_override.get("groups"), list) else [])
@@ -184,6 +206,7 @@ def runtime_state_to_ui_snapshot(
         command=command,
         title=title,
         status=status,
+        token=token_for_status(status),
         detail=detail,
         phase=_phase_name(state),
         target=_text(state.get("target")),
@@ -226,5 +249,9 @@ def runtime_state_to_ui_snapshot(
         diagnostics=diagnostics,
         actions=actions_for_context(action_context),
         navigation=navigation_for_surface(surface),
+        presentation=UIPresentationState(**{
+            key: value for key, value in resolved_preferences.as_dict().items()
+            if key not in {"surface"}
+        }),
         surface=str(surface or "machine"),
     )

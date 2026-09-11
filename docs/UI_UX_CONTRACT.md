@@ -4,11 +4,19 @@ This contract captures the accepted end state of the UI/UX polish roadmap for th
 
 ## Shared semantic UI contract
 
-UI01/UI02 define a renderer-independent semantic layer under `devtool.ui_core`. The domain/runtime remains authoritative for facts; UI Core converts those facts into a versioned `UISnapshot`, shared action semantics, and shared navigation semantics; each frontend remains responsible for native widgets and responsive layout.
+UI01-UI04 define a renderer-independent semantic layer under `devtool.ui_core`. The domain/runtime remains authoritative for facts; UI Core converts those facts into a versioned `UISnapshot`, shared action semantics, and shared navigation semantics; each frontend remains responsible for native widgets and responsive layout.
 
-The shared snapshot covers workspace/selection, operation lifecycle, hierarchical progress, diagnostics, available semantic actions, and navigation. Action and navigation IDs are stable machine-facing identifiers; labels, short labels, notification labels, icon tokens, routes, and shortcuts are presentation metadata. Frontends must not duplicate business meaning simply because their layouts differ.
+The shared snapshot covers workspace/selection, operation lifecycle, hierarchical progress, diagnostics, available semantic actions, navigation, resolved presentation preferences, and semantic tokens. Action and navigation IDs are stable machine-facing identifiers; labels, short labels, notification labels, icon tokens, routes, and shortcuts are presentation metadata. Frontends must not duplicate business meaning simply because their layouts differ.
 
-`devtool ui-contract --surface machine|desktop|tui|android|hud --json` is the supported inspection surface for the current shared action/navigation schema. Additive frontend-specific state may coexist with the semantic snapshot during migration, but it must not redefine action or navigation meaning.
+`devtool ui-contract --surface machine|desktop|tui|android|hud --json` is the supported inspection surface for profiles, preferences, semantic tokens, icons, copy, actions, and navigation. Additive frontend-specific state may coexist with the semantic snapshot during migration, but it must not redefine action or navigation meaning.
+
+## Shared presentation policy
+
+UI preferences resolve centrally from defaults -> profile -> surface defaults -> merged global/repository `[ui]` -> surface override -> environment -> per-run CLI override. Built-in profiles are `minimal`, `standard`, `developer`, and `debug`; custom inherited profiles are validated for cycles and invalid values.
+
+Semantic status/severity/action tokens express meaning but do not prescribe literal colors. The icon registry provides Nerd Font, Unicode, ASCII, and native symbolic fallbacks. Common action, navigation, and status wording comes from the shared copy registry while stable machine IDs remain unchanged.
+
+A renderer may adapt layout or choose a shorter registered copy variant, but it must not derive business meaning from a color, glyph, or display string.
 
 ## Shared principles
 

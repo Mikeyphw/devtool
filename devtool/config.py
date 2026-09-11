@@ -24,13 +24,14 @@ from .workflow_config import (
 from .toolchains import normalize_toolchain_manager
 from .execution_environments import normalize_execution_environment
 from .features import FEATURE_DEFAULTS, FeatureFlags, resolve_feature_flags
+from .ui_core.preferences import UIPreferencesError, resolve_ui_preferences, validate_ui_config
 
 CONFIG_NAME = ".devtool.toml"
 
 GLOBAL_CONFIG_NAME = "config.toml"
 GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
     "cli", "environment", "termux_chroot", "termux", "proot", "android", "gradle", "dotnet", "terminal",
-    "bootstrap", "chroots", "features",
+    "bootstrap", "chroots", "features", "ui",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
     "project", "workspace", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
@@ -224,6 +225,44 @@ def minimal_global_config_template() -> str:
         "bind = []",
         "env = []",
         "",
+        "[ui]",
+        "profile = \"auto\" # auto | minimal | standard | developer | debug | custom profile",
+        "theme = \"auto\" # auto | light | dark",
+        "density = \"comfortable\" # dense | compact | comfortable | detailed",
+        "icons = \"auto\" # auto | nerd | unicode | ascii | native",
+        "motion = \"auto\" # auto | full | reduced",
+        "verbosity = \"normal\" # compact | normal | detailed | debug",
+        "timestamps = \"relative\" # relative | absolute | off",
+        "duration_format = \"human\" # human | precise",
+        "confirm_destructive = true",
+        "confirm_cancel = false",
+        "show_completed_steps = true",
+        "show_environment = \"when-relevant\" # never | when-relevant | always",
+        "show_commands = \"on-error\" # never | on-error | always",
+        "show_diagnostics = \"expanded-on-error\" # collapsed | expanded-on-error | all",
+        "",
+        "[ui.tui]",
+        "density = \"compact\"",
+        "sidebar = \"auto\"",
+        "mouse = true",
+        "",
+        "[ui.hud]",
+        "density = \"dense\"",
+        "max_steps = 6",
+        "",
+        "[ui.desktop]",
+        "density = \"comfortable\"",
+        "sidebar = \"expanded\"",
+        "",
+        "[ui.android]",
+        "density = \"compact\"",
+        "notification_detail = \"normal\"",
+        "",
+        "# Custom profiles can inherit built-ins:",
+        "# [ui.profiles.focused]",
+        "# extends = \"minimal\"",
+        "# show_diagnostics = \"expanded-on-error\"",
+        "",
         "[terminal]",
         "preferred = \"micro\"",
         "",
@@ -280,6 +319,18 @@ def global_config_doctor_entries(config: dict[str, Any]) -> list[tuple[str, str]
     env = cli.get("environment", {}) if isinstance(cli.get("environment", {}), dict) else {}
     if str(env.get("chroot", "") or "").strip():
         entries.append(("cli.environment.chroot", "forces every command into one chroot; prefer environment.default_chroot"))
+    ui_value = config.get("ui", {})
+    if ui_value is not None and not isinstance(ui_value, dict):
+        entries.append(("ui", f"invalid: [ui] must be a table, got {type(ui_value).__name__}"))
+    else:
+        ui = dict(ui_value or {})
+        try:
+            validate_ui_config(ui)
+            if ui:
+                resolved = resolve_ui_preferences(ui, surface="machine")
+                entries.append(("ui", f"ok; profile={resolved.profile} density={resolved.density} icons={resolved.icons}"))
+        except UIPreferencesError as exc:
+            entries.append(("ui", f"invalid: {exc}"))
     return entries
 SUPPORTED_PROJECT_KINDS = {
     "auto", "dotnet", "android", "gradle", "python", "node", "rust",
@@ -451,6 +502,20 @@ def load_project_config(
     global_defaults = _global_project_defaults(global_loaded)
     if global_defaults:
         loaded = _deep_merge_defaults(global_defaults, loaded)
+
+    global_ui_value = global_loaded.get("ui", {})
+    repo_ui_value = repo_loaded.get("ui", {})
+    if global_ui_value is not None and not isinstance(global_ui_value, dict):
+        raise SystemExit(f"Invalid config {global_path}: [ui] must be a TOML table, got {type(global_ui_value).__name__}.")
+    if repo_ui_value is not None and not isinstance(repo_ui_value, dict):
+        raise SystemExit(f"Invalid config {repo_source_label}: [ui] must be a TOML table, got {type(repo_ui_value).__name__}.")
+    global_ui = dict(global_ui_value or {})
+    repo_ui = dict(repo_ui_value or {})
+    ui_config = _deep_merge_defaults(global_ui, repo_ui) if global_ui or repo_ui else {}
+    try:
+        validate_ui_config(ui_config)
+    except UIPreferencesError as exc:
+        raise SystemExit(f"Invalid UI configuration: {exc}") from exc
 
     source_label = config_path or global_path
     repo_source_label = config_path or repo_root / CONFIG_NAME
@@ -761,6 +826,7 @@ def load_project_config(
         targets=targets,
         jobs=jobs,
         workspace=workspace,
+        ui_config=ui_config,
         execution_environment=execution_environment,
         chroot_name=chroot_name,
         device_serial=device_serial,
@@ -1472,6 +1538,33 @@ package_command = ""
 # outputs = ["build/**", "dist/**"]
 # `outputs` are also validated by MP08 preflight to stay within the repository.
 
+# UI03 shared presentation preferences. User-global [ui] values from
+# ~/.config/devtool/config.toml are inherited; repository values override them.
+# [ui]
+# profile = "developer" # auto | minimal | standard | developer | debug | custom
+# theme = "auto"
+# density = "comfortable"
+# icons = "auto"
+# motion = "auto"
+# verbosity = "normal"
+# show_environment = "when-relevant"
+# show_commands = "on-error"
+# show_diagnostics = "expanded-on-error"
+#
+# [ui.tui]
+# density = "compact"
+# [ui.hud]
+# density = "dense"
+# max_steps = 6
+# [ui.desktop]
+# sidebar = "expanded"
+# [ui.android]
+# notification_detail = "normal"
+#
+# [ui.profiles.focused]
+# extends = "minimal"
+# show_diagnostics = "expanded-on-error"
+
 [execution]
 environment = "auto" # auto | native-termux | chroot | proot-distro | desktop-linux | ssh | android-device | external-device
 chroot_name = "androidos"
@@ -1973,6 +2066,10 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
         "config_path": str(config.config_path) if config.config_path else "",
         "global_config_path": str(config.global_config_path) if config.global_config_path else "",
         "workspace": workspace_as_dict(config.workspace, config.targets),
+        "ui": {
+            "config": config.ui_config,
+            "resolved": {surface: resolve_ui_preferences(config.ui_config, surface=surface).as_dict() for surface in ("machine", "desktop", "tui", "hud", "android")},
+        },
         "project": {
             "kind": config.kind,
             "runner": config.runner,

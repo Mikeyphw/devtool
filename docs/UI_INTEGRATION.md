@@ -2,11 +2,18 @@
 
 ## Shared UI Core
 
-UI01/UI02 add `devtool.ui_core` as the common semantic boundary between runtime facts and frontend rendering. `UISnapshot` normalizes workspace/selection, operation state, progress, diagnostics, actions, and navigation. `ACTION_REGISTRY` and `NAVIGATION_REGISTRY` are the authoritative sources for stable action/navigation IDs and presentation metadata.
+UI01-UI04 add `devtool.ui_core` as the common semantic boundary between runtime facts and frontend rendering. `UISnapshot` normalizes workspace/selection, operation state, progress, diagnostics, actions, navigation, and resolved presentation preferences. `ACTION_REGISTRY` and `NAVIGATION_REGISTRY` are the authoritative sources for stable action/navigation IDs. UI03/UI04 add shared profile/preferences resolution plus semantic token, icon, and copy registries.
 
 The boundary is intentionally not a universal widget toolkit. GTK remains GTK, the TUI remains terminal-native, and Android remains Android-native. Frontends may adapt density and layout, but they consume the same semantic state and do not independently redefine what “cancel”, “retry”, “open log”, or a navigation destination means.
 
 `devtool ui-contract --surface ... --json` exposes the registry contract for debugging and external integrations. Runtime Tasker state and IPC snapshots include an additive `ui` object; HUD snapshots preserve the same object; the Android HUD bridge receives serialized action/navigation metadata; desktop snapshots expose the desktop-resolved semantic state.
+
+
+### Presentation transport
+
+Live-state producers resolve all supported surfaces from the merged repository/global UI policy and publish those resolved values additively. IPC/Tasker/HUD/Android consumers therefore do not need their own TOML merge implementation. Existing outer state fields remain compatible.
+
+Desktop legacy appearance/density/motion controls remain supported and are translated into explicit shared desktop overrides; geometry and high-contrast settings remain desktop-local. TUI icon selection honors the central `icons` policy while retaining the legacy Nerd Font environment switches.
 
 Devtool 1.0 exposes the runner, execution environment, validation profile, and
 selective-test model in both native frontends. The frontends build the same CLI
