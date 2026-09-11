@@ -100,21 +100,55 @@ Embedded validator scripts are extracted to a private temporary directory but ex
 
 The legacy `files`, `.devtool-delete`, `repo_name`, and `validate_target` fields remain accepted.
 
-## Optional preflight hooks
+## Embedded artifact hooks
 
-Artifacts may declare one preflight hook that runs either immediately before payload extraction or immediately after extraction, while the apply transaction is already active:
+Preflight, validator, and finalization scripts execute through one embedded-hook runtime. Scripts must live below `.devtool-artifact/`, use `bash`, `sh`, or `python3`, and declare a SHA-256 unless checksum verification is explicitly bypassed. Devtool runs the script from disposable storage, supplies a private artifact copy through `DEVTOOL_ARTIFACT_PATH`, enforces the configured timeout, captures combined output, and never extracts metadata scripts into the repository.
+
+Hooks may opt into the common structured protocol with `protocol: "json-v1"`. Devtool writes the same JSON object to stdin and the owner-only file named by `DEVTOOL_HOOK_PAYLOAD_PATH`. The payload contains versioned hook/run/artifact/repository/target/validation/commit/execution/capability context. The artifact object exposes the private-copy path and immutable identity, not the original source archive path. Initial finalizer compatibility aliases (`event`, `phase`, `run_id`, `target`, `solution`, and `write_paths`) remain part of JSON-v1.
+
+Every hook also receives `DEVTOOL_HOOK_RESULT_PATH`. Writing this file is optional. When present it must contain schema-v1 JSON such as:
+
+```json
+{
+  "schema_version": 1,
+  "status": "warn",
+  "summary": "Release metadata verified",
+  "warnings": ["Optional symbol bundle was not produced"],
+  "annotations": [
+    {"severity": "info", "code": "identity", "message": "Certificate identity matched"}
+  ],
+  "evidence": {"certificate_sha256": "..."}
+}
+```
+
+`status` is `pass`, `warn`, or `fail`. A structured `fail` fails the hook even when the process exits zero. Malformed result JSON also fails the hook. Stdout/stderr stay human-readable and are not used as the structured result channel.
+
+### Capabilities
+
+A hook policy may declare intent with:
+
+```json
+{
+  "capabilities": ["repo_read", "repo_write", "subprocess"]
+}
+```
+
+Supported capability names are `repo_read`, `repo_write`, `artifact_read`, `artifact_private_copy`, `subprocess`, `network`, `environment`, and `secrets`. Capability reporting distinguishes `enforced`, `partially_enforced`, `declared_only`, and `unavailable`. Declarations do not imply a sandbox: for example, Devtool reports network access as declared-only unless the current host can actually enforce a network boundary.
+
+### Preflight hooks
+
+Artifacts may run the same preflight script at either or both extraction boundaries:
 
 ```json
 {
   "preflight": {
-    "phase": "before_extract",
-    "write_paths": [
-      "generated/",
-      "gradle.properties"
-    ],
+    "phases": ["before_extract", "after_extract"],
+    "write_paths": ["generated/", "gradle.properties"],
+    "capabilities": ["repo_read", "repo_write", "subprocess"],
     "script": {
-      "path": ".devtool-artifact/preflight.sh",
-      "runner": "bash",
+      "path": ".devtool-artifact/preflight.py",
+      "runner": "python3",
+      "protocol": "json-v1",
       "sha256": "PREFLIGHT_SCRIPT_SHA256",
       "timeout_seconds": 300
     }
@@ -122,23 +156,31 @@ Artifacts may declare one preflight hook that runs either immediately before pay
 }
 ```
 
-`phase` accepts `before_extract` or `after_extract` (hyphenated `before-extract` / `after-extract` aliases are also accepted). The hook is optional at the artifact level, but when declared its nonzero exit status fails the apply and triggers transaction rollback.
+The singular legacy `phase` field remains accepted. Hyphenated aliases normalize to `before_extract` / `after_extract`. Existing environment-only hooks remain compatible: omitting `protocol` selects `legacy-env`, and all existing `DEVTOOL_PREFLIGHT_*` variables remain available indefinitely. JSON-v1 hooks receive those compatibility variables as well.
 
-`write_paths` declares every repository-relative file or directory the hook is expected to mutate. These paths are added to preview, transaction backup, and path-reservation scope before the hook executes. Git metadata under `.git/`, absolute paths, and parent traversal are rejected.
+`write_paths` declares every repository-relative path the preflight may mutate. These paths enter preview, transaction backup, and reservation scope before execution. Absolute paths, parent traversal, and `.git` paths are rejected. Source/payload checksum semantics remain transactional: a declared transformation may update a covered path; an undeclared checksummed transformation fails and rolls back.
 
-Checksum semantics are transactional rather than silently stale. Inventory source hashes are checked before the operation begins. A before-extract hook may intentionally change a checksummed source path only when that path is covered by `preflight.write_paths`; an undeclared source-hash change fails and rolls back. After extraction, the same rule applies to payload hashes: an after-extract hook may intentionally transform a payload path only when it is declared in `write_paths`, while an undeclared payload-hash or size change fails and rolls back. The artifact archive itself remains immutable: preflight receives a private temporary artifact copy through `DEVTOOL_ARTIFACT_PATH`, and Devtool also verifies that the real archive digest did not change around hook execution.
+### Validation hooks
 
-Preflight scripts share the hardened embedded-script runner with validation scripts. They must live under `.devtool-artifact/`, use `bash`, `sh`, or `python3`, declare their own SHA-256 unless checksum verification is explicitly bypassed, run from a disposable private directory, and are never extracted into the repository. In addition to the common artifact-script environment, preflight receives `DEVTOOL_PREFLIGHT_PHASE` and `DEVTOOL_PREFLIGHT_TMPDIR`.
+The existing embedded `validation.script` may now opt into `protocol: "json-v1"`, `capabilities`, and `write_paths` using the same hook contract. The default remains `legacy-env` so existing validators are unchanged. Python validators continue to use Devtool's project interpreter/dependency resolution.
 
-## Optional finalization hooks
+Historically validators may compile/test and create build outputs, therefore repository mutation enforcement is enabled for validators only when `validation.write_paths` is explicitly declared. New deterministic validators should declare their intended write scope. Declared validator writes appear in artifact preview as `validation-write`.
 
-Artifacts can declare one optional `finalize` hook for the post-apply boundary immediately before the embedded validator and/or immediately before the Git commit:
+### Finalization hooks
+
+Artifacts can declare one finalizer across the validation and commit boundaries:
 
 ```json
 {
   "finalize": {
-    "phases": ["before_validation", "before_commit"],
+    "phases": [
+      "before_validation",
+      "after_validation",
+      "before_commit",
+      "after_commit"
+    ],
     "write_paths": ["generated/release-metadata.json"],
+    "capabilities": ["repo_read", "repo_write", "subprocess"],
     "script": {
       "path": ".devtool-artifact/finalize.py",
       "runner": "python3",
@@ -150,23 +192,17 @@ Artifacts can declare one optional `finalize` hook for the post-apply boundary i
 }
 ```
 
-`phases` accepts `before_validation` and `before_commit`; hyphenated and `before_validator` / `pre_commit` aliases normalize to those canonical names. A nonzero exit status or timeout blocks the next boundary. A failed `before_validation` hook prevents the artifact validator from running. A failed `before_commit` hook leaves the validated changes uncommitted.
+Finalizers use JSON-v1. Hyphenated aliases plus `before_validator` and `pre_commit` compatibility aliases normalize to canonical phase names. `before_validation` can block the embedded validator; `after_validation` receives the validator outcome; `before_commit` can block automatic Git commit while leaving validated changes uncommitted.
 
-Finalization scripts receive a versioned JSON object on standard input and the same bytes in the owner-only file named by `DEVTOOL_HOOK_PAYLOAD_PATH`. `DEVTOOL_HOOK_PROTOCOL=json-v1` and `DEVTOOL_FINALIZE_PHASE` are also exported. The payload includes `schema_version`, `event`, `phase`, `run_id`, repository/target/solution identity, immutable artifact identity, validation state, commit intent/message/path scope, and declared `write_paths`. This makes Python hooks straightforward:
+`after_commit` is observational: the commit has already happened, so repository writes are not allowed even when earlier finalizer phases declare `write_paths`. Devtool detects and restores post-commit mutations where safely possible. A script failure is recorded as an observational warning without pretending the already-created commit never existed; an inability to restore an illegal mutation remains a repository-safety failure.
 
-```python
-import json
-import sys
+### Mutation detection and history
 
-payload = json.load(sys.stdin)
-assert payload["schema_version"] == 1
-if payload["phase"] == "before_commit":
-    print(f"final checks for {payload['target']}")
-```
+When a write boundary is active, Devtool detects newly created, modified, deleted, and symlinked paths. Already-dirty files are fingerprinted before execution so a hook cannot hide a new mutation inside existing dirt. Git repositories use Git state plus content fingerprints; non-Git repositories fall back to a repository file-state snapshot.
 
-Like preflight, the final hook receives a private copy through `DEVTOOL_ARTIFACT_PATH`; metadata scripts are never extracted into the repository. Repository mutations are denied unless covered by `finalize.write_paths`. Devtool fingerprints dirty/untracked Git paths across hook execution and falls back to a repository file snapshot when Git metadata is unavailable, so changing an already-dirty path does not bypass the boundary. Declared finalization writes are included in artifact preview/transaction scope.
+Apply history stores ordered `hook_events` with hook kind/phase, protocol, script SHA-256, runner, timestamps/duration, return code/status, declared/effective capabilities, declared/detected writes, restoration state, structured warnings/annotations/evidence, and no sensitive environment values.
 
-Use finalization for deterministic generated metadata, last-mile contract checks, or commit-time release assertions. Keep expensive compilation/tests in normal validation, and keep extraction prerequisites in `preflight` rather than overloading the final hook.
+`devtool inspect-artifact ARTIFACT` exposes a dedicated `hooks` object containing the configured preflight, validation, and finalize phases, protocols, runners, timeouts, checksums, capabilities, and write scopes.
 
 ## Monorepos
 
@@ -250,11 +286,11 @@ TMPDIR
 
 For `python3` validators, Devtool resolves the project interpreter and dependency manager, runs from the repository root, adds declared source roots to `PYTHONPATH`, and can use the optional `validation.script.python` table for groups, extras, validator-only dependencies, synchronization, offline mode, and editable project installation. Missing imports are reported as environment failures rather than opaque tracebacks.
 
-Exit code `0` passes. Any other exit code or timeout fails validation and triggers transaction rollback when `rollback_on_failure` is enabled.
+Exit code `0` passes unless a structured hook result reports `status: "fail"`. Any nonzero exit code, timeout, malformed structured result, or explicit structured failure fails validation and triggers transaction rollback when `rollback_on_failure` is enabled.
 
 ## Operation history
 
-Apply history uses an idempotent schema-v3 operation record keyed by the run/artifact identity. The durable runtime record is written atomically and captures artifact content identity, child/bundle outcomes, the resolved validation plan and contract evidence, commit outcome, and explicit rollback state. On POSIX, Devtool flushes and `fsync`s the replacement file before `os.replace()` and then `fsync`s its containing directory; transaction completion/rollback summaries use the same durable write path before active recovery markers are removed. Legacy repository-local history remains readable. Cached artifact SHA-256 **and size** are carried through deferred finalization so cleanup cannot erase the recorded content identity.
+Apply history uses an idempotent schema-v3 operation record keyed by the run/artifact identity. The durable runtime record is written atomically and captures artifact content identity, child/bundle outcomes, the resolved validation plan and contract evidence, ordered embedded-hook evidence, commit outcome, and explicit rollback state. On POSIX, Devtool flushes and `fsync`s the replacement file before `os.replace()` and then `fsync`s its containing directory; transaction completion/rollback summaries use the same durable write path before active recovery markers are removed. Legacy repository-local history remains readable. Cached artifact SHA-256 **and size** are carried through deferred finalization so cleanup cannot erase the recorded content identity.
 
 ## Precedence and opt-outs
 

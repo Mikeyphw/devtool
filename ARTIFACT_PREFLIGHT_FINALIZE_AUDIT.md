@@ -1,58 +1,47 @@
-# Artifact preflight and finalization audit
+# Artifact hook runtime audit
 
-Date: 2026-09-11
-Baseline: post-FS03 Devtool snapshot at commit `9072b0b`
+Date: 2026-09-11  
+Baseline: post-FS03 plus `devtool_artifact_preflight_finalize_json_hooks_v1`
 
-## Existing preflight strengths
+## Audit conclusion
 
-- Runs inside the active apply transaction and supports `before_extract` / `after_extract` phases.
-- Embedded hook bytes are checksum-verified and executed from disposable storage.
-- `DEVTOOL_ARTIFACT_PATH` points at a private copy, so the source archive is not handed to the hook for mutation.
-- `preflight.write_paths` scopes intentional writes and integrates with preview/transaction/reservation behavior.
-- Source/payload checksum boundaries detect undeclared transformations and failures roll back.
-- Timeouts, logs, live output, and Python project-environment execution are shared with the validator runner.
+The original artifact-script architecture had strong transaction and checksum behavior but three different lifecycle concepts—preflight, validator, and finalize—were still coupled to one monolithic runner and did not expose one complete public contract. HROPS01 finishes that convergence.
 
-## Gaps found
+All artifact-controlled scripts now execute through `devtool.hooks.EmbeddedHookEngine`. Preflight, validator, and finalize are thin lifecycle adapters. They share script integrity verification, private artifact copies, timeout/logging behavior, JSON payload transport, structured result handling, capability reporting, repository mutation detection, and history evidence.
 
-1. Hook context is primarily environment-variable based. It works, but adding fields creates namespace sprawl and makes typed Python hooks awkward.
-2. There was no artifact-owned lifecycle boundary after extraction but before the validator or commit.
-3. A last-mile script implemented outside Devtool would not automatically inherit artifact checksum, timeout, transaction, logging, and failure semantics.
-4. Preflight has phase-specific integrity checks, but there was no reusable JSON hook contract that future phases could share.
-5. Final commit-time checks could only be approximated by the validator, even when they logically depend on successful validation.
+## Completed improvements
 
-## Implemented design
+1. **JSON-v1 preflight.** `preflight.script.protocol = "json-v1"` uses the same versioned stdin/file payload as the other hooks. Existing environment-only preflight artifacts remain valid indefinitely; `DEVTOOL_PREFLIGHT_*` variables are preserved.
+2. **Generic embedded hook engine.** Preflight, validator, and finalize no longer own independent subprocess runners.
+3. **Declared capabilities.** Hooks may declare `repo_read`, `repo_write`, `artifact_read`, `artifact_private_copy`, `subprocess`, `network`, `environment`, and `secrets`. The runtime reports whether enforcement is `enforced`, `partially_enforced`, `declared_only`, or `unavailable`; it never claims an OS sandbox that is not present.
+4. **Structured results.** Every hook receives `DEVTOOL_HOOK_RESULT_PATH`. A schema-v1 result can publish status, summary, warnings, annotations, and evidence without turning stdout into a machine protocol.
+5. **History evidence.** Apply history records ordered hook events including kind/phase, protocol, script SHA-256, start/end/duration, return code, status, capabilities, declared/detected writes, restoration state, warnings/annotations, and structured evidence.
+6. **Artifact inspection.** `inspect-artifact` exposes hook phases, protocol, runner, timeout, checksum, capabilities, and write scope in a dedicated `hooks` object.
+7. **Unified integrity checks.** Overlay and bundle manifests validate hook runner/protocol/checksum/path/timeout/capabilities through the same manifest policy.
+8. **Extended lifecycle.** Preflight can run at both extraction boundaries; finalize supports `before_validation`, `after_validation`, `before_commit`, and observational `after_commit`.
 
-A separate top-level `finalize` policy keeps extraction preflight semantics unchanged and adds two explicit post-apply phases:
+## Security and mutation model
 
-- `before_validation`: executes directly before the embedded artifact validator.
-- `before_commit`: executes only when an automatic artifact commit is actually requested and validation/apply results are clean.
+Embedded scripts receive a private copy through `DEVTOOL_ARTIFACT_PATH`; the JSON payload does not disclose the original artifact filesystem path. Scripts still receive the artifact name, size, digest, and private-copy path needed for inspection.
 
-The hook uses `protocol: json-v1`. Devtool sends the payload over stdin and mirrors it to `DEVTOOL_HOOK_PAYLOAD_PATH`. Exit code 0 passes; nonzero/timeout blocks progression.
+Repository writes are bounded by explicit `write_paths` whenever the lifecycle enforces a write boundary. Devtool detects new, modified, deleted, and symlinked paths, including changes to files that were already dirty before hook execution. Git repositories use Git state plus content fingerprints; non-Git repositories use file-state snapshots. Absolute paths, parent traversal, and `.git` mutation declarations remain forbidden.
 
-The JSON payload carries:
+`after_commit` is observational. Repository mutations are not allowed even if the same finalizer has declared writes for an earlier phase. If an after-commit script changes the tree, Devtool restores the pre-hook state where safely possible and reports the violation without silently rewriting the completed commit.
 
-- schema/event/phase/run identity;
-- repository, target, and solution identity;
-- artifact path/name/SHA-256 (the path is a private copy inside the hook environment);
-- validation requested/status;
-- commit requested/message/path scope;
-- declared repository write paths.
+Validators retain backward compatibility: historically they may build and create output directories, so validator writes are constrained only when `validation.write_paths` is explicitly declared. New artifacts should declare write scope when deterministic validation outputs are expected.
 
-`finalize.write_paths` is mandatory for mutations. The runner fingerprints pre-existing dirty/untracked Git paths and all newly dirty paths, including content hashes, so an already-modified file cannot be changed invisibly. On non-Git repositories it falls back to a full file-state snapshot. `.git` targets, parent traversal, and absolute write declarations remain forbidden.
+## JSON-v1 contract
 
-## Recommended next preflight improvements
+The common envelope contains structured `hook`, `run`, `artifact`, `repository`, `target_context`, `validation`, `commit`, `execution`, `capabilities`, `declared_writes`, and `context` objects. Compatibility aliases such as `event`, `phase`, `run_id`, `target`, `solution`, and `write_paths` remain available for the initial finalize JSON-v1 contract.
 
-These are intentionally not breaking changes to the current preflight contract:
+The payload is delivered on stdin and mirrored to the owner-only path in `DEVTOOL_HOOK_PAYLOAD_PATH`. Structured output is written to `DEVTOOL_HOOK_RESULT_PATH`.
 
-1. **Add opt-in `preflight.script.protocol: json-v1`.** Reuse the final-hook payload transport while preserving all existing `DEVTOOL_PREFLIGHT_*` variables indefinitely for compatibility.
-2. **Generalize the embedded hook engine.** Move common checksum/private-copy/timeout/stdin/logging logic behind one internal hook runtime used by preflight, finalize, and validator adapters.
-3. **Add declared capabilities.** Optional `capabilities` such as `repo_read`, `repo_write`, `network`, and `subprocess` would make artifact intent reviewable even before OS-level sandboxing exists.
-4. **Add structured result files.** Keep stdout human-readable, but optionally accept `DEVTOOL_HOOK_RESULT_PATH` JSON for warnings, annotations, generated paths, and machine-readable evidence.
-5. **Capture hook evidence in artifact history.** Store phase, script SHA, payload schema, duration, declared writes, and result digest in the history record without storing sensitive environment values.
-6. **Expose hook dry-run inspection.** `inspect-artifact` should show hook phases, protocol, timeout, write scope, and checksum in a dedicated machine-readable section.
-7. **Unify bundle hook verification.** Bundle-level preflight/final hooks should use the same embedded-member checksum validator as overlays (the final-hook implementation extends this path for `finalize`).
-8. **Optional execution policy.** Future manifests could request no-network or read-only-repo execution; enforcement should be capability-detected rather than pretending a sandbox exists where it does not.
+## Remaining future hardening
 
-## Usage recommendation
+The remaining work is host isolation, not another hook API redesign. Future runtimes may enforce requested no-network, read-only repository, subprocess restrictions, or secret brokering when the host exposes trustworthy primitives. Until then, capability reports deliberately distinguish declaration from enforcement.
 
-Prefer `preflight` for prerequisites that must happen around extraction, the normal validation plan for tests/build/lint, `finalize.before_validation` for lightweight deterministic normalization or assertions immediately before the embedded validator, and `finalize.before_commit` for release metadata or assertions that only make sense after validation has succeeded.
+A future schema version may also add richer typed generated-artifact references to structured hook results. Such an extension should remain additive to JSON-v1.
+
+## Usage guidance
+
+Use `preflight` for prerequisites and transformations specifically tied to extraction, normal validation for build/test/lint work, `finalize.before_validation` / `after_validation` for deterministic validation-boundary checks, `finalize.before_commit` for last-mile commit/release assertions, and `finalize.after_commit` only for observational reporting.

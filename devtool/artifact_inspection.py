@@ -7,10 +7,21 @@ from typing import Any
 
 from .artifacts import (
     artifact_commit_policy,
+    artifact_finalize_phases,
+    artifact_finalize_policy,
+    artifact_finalize_script,
+    artifact_finalize_write_paths,
+    artifact_hook_capabilities,
     artifact_inventory_entries,
+    artifact_preflight_phases,
+    artifact_preflight_policy,
+    artifact_preflight_script,
+    artifact_preflight_write_paths,
     artifact_solution,
     artifact_target,
     artifact_validation_policy,
+    artifact_validation_script,
+    artifact_validation_write_paths,
     artifact_workspaces,
     diff_artifact,
     is_overlay_bundle,
@@ -120,6 +131,44 @@ def _bundle_inventory(path: Path) -> list[dict[str, str]]:
     return inventory
 
 
+
+def _hook_inspection(manifest: dict[str, Any]) -> dict[str, Any]:
+    def describe(kind: str, policy: dict[str, Any], script: dict[str, Any], phases: list[str], writes: list[str], default_protocol: str) -> dict[str, Any]:
+        if not policy or not script:
+            return {"enabled": False, "kind": kind, "phases": [], "capabilities": [], "write_paths": [], "script": {}}
+        protocol = str(script.get("protocol") or default_protocol).strip().lower().replace("_", "-")
+        return {
+            "enabled": True,
+            "kind": kind,
+            "phases": list(phases),
+            "capabilities": artifact_hook_capabilities(manifest, kind),
+            "write_paths": list(writes),
+            "script": {
+                "path": str(script.get("path") or ""),
+                "runner": str(script.get("runner") or ("python3" if kind == "finalize" else "bash")),
+                "protocol": protocol,
+                "sha256": str(script.get("sha256") or ""),
+                "timeout_seconds": script.get("timeout_seconds"),
+            },
+        }
+
+    validation_policy = artifact_validation_policy(manifest)
+    validation_script = artifact_validation_script(manifest)
+    return {
+        "preflight": describe(
+            "preflight", artifact_preflight_policy(manifest), artifact_preflight_script(manifest),
+            artifact_preflight_phases(manifest), artifact_preflight_write_paths(manifest), "legacy-env"
+        ),
+        "validation": describe(
+            "validation", validation_policy, validation_script, ["validate"] if validation_script else [],
+            artifact_validation_write_paths(manifest), "legacy-env"
+        ),
+        "finalize": describe(
+            "finalize", artifact_finalize_policy(manifest), artifact_finalize_script(manifest),
+            artifact_finalize_phases(manifest), artifact_finalize_write_paths(manifest), "json-v1"
+        ),
+    }
+
 def inspect_artifact(
     artifact: str | Path,
     *,
@@ -211,6 +260,7 @@ def inspect_artifact(
             "messages": ([str(manifest_probe["error"])] if manifest_probe["error"] else []) + list(validation.messages),
             "policy": validation_policy,
         },
+        "hooks": _hook_inspection(manifest),
         "commit": {
             "enabled": commit_enabled,
             "message": commit_message,

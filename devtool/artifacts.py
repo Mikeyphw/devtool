@@ -63,11 +63,28 @@ _FINALIZE_PHASE_ALIASES = {
     "before-validator": "before_validation",
     "pre_validation": "before_validation",
     "pre-validation": "before_validation",
+    "after_validation": "after_validation",
+    "after-validation": "after_validation",
+    "post_validation": "after_validation",
+    "post-validation": "after_validation",
+    "after_validator": "after_validation",
+    "after-validator": "after_validation",
     "before_commit": "before_commit",
     "before-commit": "before_commit",
     "pre_commit": "before_commit",
     "pre-commit": "before_commit",
+    "after_commit": "after_commit",
+    "after-commit": "after_commit",
+    "post_commit": "after_commit",
+    "post-commit": "after_commit",
 }
+
+_HOOK_CAPABILITIES = {
+    "repo_read", "repo_write", "artifact_read", "artifact_private_copy",
+    "subprocess", "network", "environment", "secrets",
+}
+_HOOK_PROTOCOLS = {"legacy-env", "json-v1"}
+
 
 _PREFLIGHT_PHASE_ALIASES = {
     "before": "before_extract",
@@ -657,10 +674,82 @@ def artifact_validation_script(manifest: dict[str, Any]) -> dict[str, Any]:
     return dict(script) if isinstance(script, dict) else {}
 
 
+def _artifact_hook_policy(manifest: dict[str, Any], kind: str) -> dict[str, Any]:
+    if kind == "validation":
+        return artifact_validation_policy(manifest)
+    raw = manifest.get(kind)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _artifact_hook_write_paths(manifest: dict[str, Any], kind: str) -> list[str]:
+    policy = _artifact_hook_policy(manifest, kind)
+    raw = policy.get("write_paths")
+    if raw is None:
+        return []
+    values = [raw] if isinstance(raw, str) else raw
+    if not isinstance(values, list):
+        raise ValueError(f"{kind}.write_paths must be a string or list of strings.")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError(f"{kind}.write_paths entries must be strings.")
+        text = item.strip().replace("\\", "/")
+        if not text:
+            raise ValueError(f"{kind}.write_paths entries must not be empty.")
+        try:
+            rel = _safe_rel(text)
+        except RuntimeError as exc:
+            raise ValueError(f"Unsafe {kind}.write_paths path: {text}") from exc
+        if rel.parts and rel.parts[0] == ".git":
+            raise ValueError(f"{kind}.write_paths may not target Git metadata: {text}")
+        value = rel.as_posix()
+        if value not in seen:
+            seen.add(value)
+            normalized.append(value)
+    return normalized
+
+
+def artifact_hook_capabilities(manifest: dict[str, Any], kind: str) -> list[str]:
+    """Return normalized declared capabilities for an embedded artifact hook."""
+    policy = _artifact_hook_policy(manifest, kind)
+    raw = policy.get("capabilities")
+    if raw is None:
+        return []
+    values = [raw] if isinstance(raw, str) else raw
+    if not isinstance(values, list):
+        raise ValueError(f"{kind}.capabilities must be a string or list of strings.")
+    normalized: list[str] = []
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError(f"{kind}.capabilities entries must be strings.")
+        value = item.strip().lower().replace("-", "_")
+        if not value:
+            raise ValueError(f"{kind}.capabilities entries must not be empty.")
+        if value not in _HOOK_CAPABILITIES:
+            raise ValueError(
+                f"Unsupported {kind}.capabilities capability {item!r}; expected one of: "
+                + ", ".join(sorted(_HOOK_CAPABILITIES)) + "."
+            )
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def artifact_hook_protocol(manifest: dict[str, Any], kind: str, *, default: str = "legacy-env") -> str:
+    policy = _artifact_hook_policy(manifest, kind)
+    script = policy.get("script") if isinstance(policy.get("script"), dict) else {}
+    value = str(script.get("protocol") or default).strip().lower().replace("_", "-")
+    return value
+
+
+def artifact_validation_write_paths(manifest: dict[str, Any]) -> list[str]:
+    return _artifact_hook_write_paths(manifest, "validation")
+
+
 def artifact_finalize_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     """Return the optional post-apply finalization hook declaration."""
-    raw = manifest.get("finalize")
-    return dict(raw) if isinstance(raw, dict) else {}
+    return _artifact_hook_policy(manifest, "finalize")
 
 
 def artifact_finalize_phases(manifest: dict[str, Any]) -> list[str]:
@@ -678,7 +767,7 @@ def artifact_finalize_phases(manifest: dict[str, Any]) -> list[str]:
             raise ValueError("finalize.phases entries must be strings.")
         key = item.strip().lower()
         phase = _FINALIZE_PHASE_ALIASES.get(key, key)
-        if phase not in {"before_validation", "before_commit"}:
+        if phase not in {"before_validation", "after_validation", "before_commit", "after_commit"}:
             raise ValueError(f"Unsupported finalize phase: {item!r}.")
         if phase not in normalized:
             normalized.append(phase)
@@ -692,48 +781,40 @@ def artifact_finalize_script(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def artifact_finalize_write_paths(manifest: dict[str, Any]) -> list[str]:
-    """Return normalized repo-relative paths the final hook may mutate."""
-    policy = artifact_finalize_policy(manifest)
-    raw = policy.get("write_paths")
-    if raw is None:
-        return []
-    values = [raw] if isinstance(raw, str) else raw
-    if not isinstance(values, list):
-        raise ValueError("finalize.write_paths must be a string or list of strings.")
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for item in values:
-        if not isinstance(item, str):
-            raise ValueError("finalize.write_paths entries must be strings.")
-        text = item.strip().replace("\\", "/")
-        if not text:
-            raise ValueError("finalize.write_paths entries must not be empty.")
-        try:
-            rel = _safe_rel(text)
-        except RuntimeError as exc:
-            raise ValueError(f"Unsafe finalize.write_paths path: {text}") from exc
-        if rel.parts and rel.parts[0] == ".git":
-            raise ValueError(f"finalize.write_paths may not target Git metadata: {text}")
-        value = rel.as_posix()
-        if value not in seen:
-            seen.add(value)
-            normalized.append(value)
-    return normalized
+    return _artifact_hook_write_paths(manifest, "finalize")
 
 
 def artifact_preflight_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     """Return the optional artifact preflight declaration."""
-    raw = manifest.get("preflight")
-    return dict(raw) if isinstance(raw, dict) else {}
+    return _artifact_hook_policy(manifest, "preflight")
+
+
+def artifact_preflight_phases(manifest: dict[str, Any]) -> list[str]:
+    """Return normalized extraction phases; legacy ``phase`` remains supported."""
+    policy = artifact_preflight_policy(manifest)
+    if not policy:
+        return []
+    raw = policy.get("phases", policy.get("phase", "before_extract"))
+    values = [raw] if isinstance(raw, str) else raw
+    if not isinstance(values, list):
+        raise ValueError("preflight.phases must be a string or list of strings.")
+    normalized: list[str] = []
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError("preflight.phases entries must be strings.")
+        key = item.strip().lower()
+        phase = _PREFLIGHT_PHASE_ALIASES.get(key, key)
+        if phase not in {"before_extract", "after_extract"}:
+            raise ValueError(f"Unsupported preflight phase: {item!r}.")
+        if phase not in normalized:
+            normalized.append(phase)
+    return normalized
 
 
 def artifact_preflight_phase(manifest: dict[str, Any]) -> str:
-    """Return the normalized preflight phase, or an empty string if absent."""
-    policy = artifact_preflight_policy(manifest)
-    if not policy:
-        return ""
-    raw = str(policy.get("phase") or "before_extract").strip().lower()
-    return _PREFLIGHT_PHASE_ALIASES.get(raw, raw)
+    """Backward-compatible singular phase accessor."""
+    phases = artifact_preflight_phases(manifest)
+    return phases[0] if phases else ""
 
 
 def artifact_preflight_script(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -743,33 +824,7 @@ def artifact_preflight_script(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def artifact_preflight_write_paths(manifest: dict[str, Any]) -> list[str]:
-    """Return normalized repo-relative paths a preflight hook may mutate."""
-    policy = artifact_preflight_policy(manifest)
-    raw = policy.get("write_paths")
-    if raw is None:
-        return []
-    values = [raw] if isinstance(raw, str) else raw
-    if not isinstance(values, list):
-        raise ValueError("preflight.write_paths must be a string or list of strings.")
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for item in values:
-        if not isinstance(item, str):
-            raise ValueError("preflight.write_paths entries must be strings.")
-        text = item.strip().replace("\\", "/")
-        if not text:
-            raise ValueError("preflight.write_paths entries must not be empty.")
-        try:
-            rel = _safe_rel(text)
-        except RuntimeError as exc:
-            raise ValueError(f"Unsafe preflight.write_paths path: {text}") from exc
-        if rel.parts and rel.parts[0] == ".git":
-            raise ValueError(f"preflight.write_paths may not target Git metadata: {text}")
-        value = rel.as_posix()
-        if value not in seen:
-            seen.add(value)
-            normalized.append(value)
-    return normalized
+    return _artifact_hook_write_paths(manifest, "preflight")
 
 
 def artifact_workspace_roots(manifest: dict[str, Any]) -> list[str]:
@@ -954,6 +1009,17 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
         if environment and environment not in {"auto", "native-termux", "chroot", "desktop-linux", "android-device", "external-device"}:
             ok = False
             messages.append(f"Unsupported validation.execution_environment: {environment!r}.")
+    try:
+        artifact_hook_capabilities(manifest, "validation")
+        artifact_validation_write_paths(manifest)
+    except ValueError as exc:
+        ok = False
+        messages.append(str(exc))
+    if script:
+        protocol = str(script.get("protocol") or "legacy-env").strip().lower().replace("_", "-")
+        if protocol not in _HOOK_PROTOCOLS:
+            ok = False
+            messages.append("validation.script.protocol must be one of: legacy-env, json-v1.")
     if bundle:
         strategy = str(raw.get("strategy") or "per-overlay").strip().lower()
         if strategy not in {"per-overlay", "after-all", "both"}:
@@ -971,10 +1037,19 @@ def _validate_preflight_policy(manifest: dict[str, Any], messages: list[str]) ->
         return False
 
     ok = True
-    phase_raw = str(raw.get("phase") or "before_extract").strip().lower()
-    if phase_raw not in _PREFLIGHT_PHASE_ALIASES:
+    try:
+        artifact_preflight_phases(manifest)
+    except ValueError as exc:
         ok = False
-        messages.append("preflight.phase must be one of: before_extract, after_extract.")
+        if "phase" in raw and "phases" not in raw:
+            messages.append("preflight.phase must be one of: before_extract, after_extract.")
+        else:
+            messages.append(str(exc))
+    try:
+        artifact_hook_capabilities(manifest, "preflight")
+    except ValueError as exc:
+        ok = False
+        messages.append(str(exc))
 
     script_value = raw.get("script")
     if not isinstance(script_value, dict):
@@ -1024,6 +1099,10 @@ def _validate_preflight_policy(manifest: dict[str, Any], messages: list[str]) ->
         elif not _is_sha256(sha):
             ok = False
             messages.append("preflight.script.sha256 is not a valid SHA-256.")
+        protocol = str(script.get("protocol") or "legacy-env").strip().lower().replace("_", "-")
+        if protocol not in _HOOK_PROTOCOLS:
+            ok = False
+            messages.append("preflight.script.protocol must be one of: legacy-env, json-v1.")
     return ok
 
 
@@ -1042,6 +1121,7 @@ def _validate_finalize_policy(manifest: dict[str, Any], messages: list[str]) -> 
         messages.append(str(exc))
     try:
         artifact_finalize_write_paths(manifest)
+        artifact_hook_capabilities(manifest, "finalize")
     except (RuntimeError, ValueError) as exc:
         ok = False
         messages.append(str(exc))
@@ -1077,7 +1157,7 @@ def _validate_finalize_policy(manifest: dict[str, Any], messages: list[str]) -> 
     elif not _is_sha256(sha):
         ok = False
         messages.append("finalize.script.sha256 is not a valid SHA-256.")
-    protocol = str(script.get("protocol") or "json-v1").strip().lower()
+    protocol = str(script.get("protocol") or "json-v1").strip().lower().replace("_", "-")
     if protocol != "json-v1":
         ok = False
         messages.append("finalize.script.protocol must be 'json-v1'.")
@@ -1873,6 +1953,10 @@ def preview_overlay_bundle(repo_root: Path, bundle: str | Path) -> dict[str, Any
         if write_path not in known_paths:
             changes.append({"kind": "preflight-write", "path": write_path, "overlay": "<bundle>"})
             known_paths.add(write_path)
+    for write_path in artifact_validation_write_paths(manifest):
+        if write_path not in known_paths:
+            changes.append({"kind": "validation-write", "path": write_path, "overlay": "<bundle>"})
+            known_paths.add(write_path)
     for write_path in artifact_finalize_write_paths(manifest):
         if write_path not in known_paths:
             changes.append({"kind": "finalize-write", "path": write_path, "overlay": "<bundle>"})
@@ -2553,6 +2637,11 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
     for write_path in artifact_preflight_write_paths(manifest):
         if write_path not in known_paths:
             changes.append({"kind": "preflight-write", "path": write_path})
+            known_paths.add(write_path)
+
+    for write_path in artifact_validation_write_paths(manifest):
+        if write_path not in known_paths:
+            changes.append({"kind": "validation-write", "path": write_path})
             known_paths.add(write_path)
 
     for write_path in artifact_finalize_write_paths(manifest):

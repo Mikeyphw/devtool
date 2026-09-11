@@ -1,3 +1,12 @@
+## 2026-09-11 - HROPS01 complete embedded artifact hook runtime
+
+- Consolidated preflight, embedded validation, and finalization script execution behind one `devtool.hooks.EmbeddedHookEngine` with shared integrity, private-copy, timeout, logging, payload, structured-result, mutation-boundary, and history behavior.
+- Added opt-in `json-v1` to preflight and validators while preserving legacy preflight environment variables and legacy validator behavior; the common payload no longer exposes the original artifact filesystem path.
+- Added schema-v1 `DEVTOOL_HOOK_RESULT_PATH` results with pass/warn/fail status, summaries, warnings, annotations, and evidence.
+- Added declared hook capabilities with truthful enforcement reporting plus explicit validator write scopes and preview integration.
+- Extended lifecycle support to both preflight extraction boundaries and finalizer `before_validation`, `after_validation`, `before_commit`, and observational `after_commit`, including safe restoration of illegal post-commit writes.
+- Added ordered hook evidence to artifact history and full hook policy visibility to `inspect-artifact`, plus HROPS01 contract coverage and updated artifact documentation/audit guidance.
+
 ## 2026-09-11 - Artifact preflight audit and JSON finalization hook
 
 - Added optional artifact `finalize` hooks at `before_validation` and `before_commit` boundaries.

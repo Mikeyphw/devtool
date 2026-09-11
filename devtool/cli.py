@@ -40,6 +40,7 @@ from .artifacts import (
     append_history,
     artifact_commit_policy,
     artifact_cleanup_paths,
+    artifact_finalize_phases,
     artifact_solution,
     artifact_target,
     artifact_validation_policy,
@@ -67,6 +68,7 @@ from .artifacts import (
 )
 from .cache_cleanup import cleanup_devtool_caches
 from .artifact_validation import run_artifact_finalize_script, run_artifact_validation_script
+from .hooks.history import collect_hook_events
 from .artifact_inspection import inspect_artifact
 from .artifact_registry import load_registry, find_record, verify_record, prune_registry
 from .api_output import extract_universal_json_flag, run_json_invocation
@@ -6496,6 +6498,9 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
             }
             for result in results
         ]
+        hook_events = collect_hook_events(results)
+        if hook_events:
+            entry["hook_events"] = hook_events
         transaction_path = _apply_transaction_path(results)
         if transaction_path:
             transaction_id = Path(transaction_path).parent.name
@@ -6851,6 +6856,60 @@ def _maybe_commit_after_apply(
         raw_output = raw_output + "\n\n" + commit_raw
     else:
         raw_output = commit_raw
+
+    commit_succeeded = any(result.name == "git-commit" and result.returncode == 0 for result in commit_results)
+    if commit_succeeded and artifact_path is not None and manifest:
+        try:
+            after_commit = run_artifact_finalize_script(
+                config.repo_root,
+                artifact_path,
+                phase="after_commit",
+                manifest=manifest,
+                target=str(getattr(args, "target", "") or artifact_target(manifest)),
+                solution=str(getattr(args, "solution", "") or artifact_solution(manifest)),
+                run_id=str(getattr(args, "_devtool_run_id", "") or ""),
+                dry_run=bool(getattr(args, "dry_run", False)),
+                log_path=log_path,
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+                validation_requested=bool(getattr(args, "validate", False) or getattr(args, "validate_only", False)),
+                validation_status="passed",
+                commit_requested=True,
+                commit_message=commit_message,
+                commit_paths=commit_paths,
+            )
+        except Exception as exc:
+            after_commit = OperationResult(
+                "artifact-finalize-script",
+                ["artifact-finalize-script", str(artifact_path)],
+                1,
+                0.0,
+                f"{type(exc).__name__}: {exc}",
+                [Issue("error", "artifact-finalize-script", str(artifact_path), type(exc).__name__, str(exc))],
+                failure_kind="finalize_failure",
+                metadata={"finalize_phase": "after_commit", "hook_phase": "after_commit", "hook_kind": "finalize"},
+            )
+        if after_commit is not None:
+            event = dict((after_commit.metadata or {}).get("hook_event") or {})
+            restoration_errors = [str(item) for item in event.get("write_restoration_errors") or []]
+            if after_commit.returncode != 0 and not restoration_errors:
+                # after_commit is observational. Its failure is durable evidence/warning,
+                # not a reason to pretend the already-created Git commit did not happen.
+                original_rc = after_commit.returncode
+                after_commit.metadata["observational_failure"] = True
+                after_commit.metadata["observational_returncode"] = original_rc
+                after_commit.returncode = 0
+                after_commit.failure_kind = ""
+                after_commit.issues = [
+                    Issue(
+                        "warning" if issue.severity == "error" else issue.severity,
+                        issue.command, issue.file, issue.code, issue.message, issue.line,
+                    )
+                    for issue in after_commit.issues
+                ]
+                after_commit.output += "\nPost-commit hook failure recorded as observational; Git commit was preserved."
+            results.append(after_commit)
+            after_raw = "$ " + " ".join(after_commit.argv) + "\n" + after_commit.output
+            raw_output = raw_output + ("\n\n" if raw_output else "") + after_raw
     return results, raw_output
 
 
@@ -8442,84 +8501,134 @@ def _artifact_script_result(
     log_path: Path | str | None,
     tasker_progress: TaskerProgressSink | None,
 ) -> tuple[OperationResult | None, str]:
+    """Run finalization/validator hooks as one lifecycle while preserving legacy return shape."""
     if getattr(args, "no_artifact_script", False):
         return None, ""
-    if not artifact_validation_policy(manifest).get("script"):
+    validation_script = artifact_validation_policy(manifest).get("script")
+    finalize_phases = set(artifact_finalize_phases(manifest))
+    if not validation_script and not ({"before_validation", "after_validation"} & finalize_phases):
         return None, ""
-    finalize_raw = ""
-    try:
-        finalize_result = run_artifact_finalize_script(
-            config.repo_root,
-            artifact,
-            phase="before_validation",
-            manifest=manifest,
-            target=target,
-            solution=solution,
-            run_id=str(getattr(args, "_devtool_run_id", "") or ""),
-            dry_run=bool(getattr(args, "dry_run", False)),
-            log_path=log_path,
-            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
-            validation_requested=True,
-            validation_status="pending",
-            commit_requested=bool(str(getattr(args, "commit", "") or "").strip()),
-            commit_message=str(getattr(args, "commit", "") or ""),
-            commit_paths=_artifact_commit_paths(args, config.repo_root),
-        )
-        if finalize_result is not None:
-            finalize_raw = "$ " + " ".join(finalize_result.argv) + "\n" + finalize_result.output
-            if finalize_result.returncode != 0:
-                return finalize_result, finalize_raw
-    except Exception as exc:
-        failed = OperationResult(
-            "artifact-finalize-script",
-            ["artifact-finalize-script", str(artifact)],
-            1,
-            0.0,
-            f"{type(exc).__name__}: {exc}",
-            [Issue("error", "artifact-finalize-script", str(artifact), type(exc).__name__, str(exc))],
-            failure_kind="finalize_failure",
-            metadata={"finalize_phase": "before_validation"},
-        )
-        return failed, "$ " + " ".join(failed.argv) + "\n" + failed.output
-    try:
-        if tasker_progress is not None:
-            tasker_progress.phase_started(
-                "artifact-validate-script",
-                index=1,
-                total=1,
-                argv=["artifact-validate-script", str(artifact)],
+
+    raw_sections: list[str] = []
+    executed: list[OperationResult] = []
+
+    def _raw(result: OperationResult) -> str:
+        return "$ " + " ".join(result.argv) + "\n" + result.output
+
+    def _finalize(phase: str, status: str) -> OperationResult | None:
+        try:
+            return run_artifact_finalize_script(
+                config.repo_root,
+                artifact,
+                phase=phase,
+                manifest=manifest,
+                target=target,
+                solution=solution,
+                run_id=str(getattr(args, "_devtool_run_id", "") or ""),
+                dry_run=bool(getattr(args, "dry_run", False)),
+                log_path=log_path,
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+                validation_requested=True,
+                validation_status=status,
+                commit_requested=bool(str(getattr(args, "commit", "") or "").strip()),
+                commit_message=str(getattr(args, "commit", "") or ""),
+                commit_paths=_artifact_commit_paths(args, config.repo_root),
             )
-        result = run_artifact_validation_script(
-            config.repo_root,
-            artifact,
-            manifest=manifest,
-            target=target,
-            solution=solution,
-            run_id=str(getattr(args, "_devtool_run_id", "") or ""),
-            dry_run=bool(getattr(args, "dry_run", False)),
-            log_path=log_path,
-            ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
-        )
-    except Exception as exc:
-        result = OperationResult(
-            "artifact-validate-script",
-            ["artifact-validate-script", str(artifact)],
-            1,
-            0.0,
-            f"{type(exc).__name__}: {exc}",
-            [Issue("error", "artifact-validate-script", str(artifact), type(exc).__name__, str(exc))],
-            failure_kind="validation_failure",
-        )
-    if result is not None and tasker_progress is not None:
-        tasker_progress.phase_finished(result)
-    if result is None:
-        return None, finalize_raw
-    validator_raw = "$ " + " ".join(result.argv) + "\n" + result.output
-    if finalize_raw:
-        result.metadata["finalize_before_validation"] = True
-        result.output = finalize_raw + "\n\n" + result.output
-        return result, finalize_raw + "\n\n" + validator_raw
-    return result, validator_raw
+        except Exception as exc:
+            return OperationResult(
+                "artifact-finalize-script",
+                ["artifact-finalize-script", str(artifact)],
+                1,
+                0.0,
+                f"{type(exc).__name__}: {exc}",
+                [Issue("error", "artifact-finalize-script", str(artifact), type(exc).__name__, str(exc))],
+                failure_kind="finalize_failure",
+                metadata={"finalize_phase": phase, "hook_phase": phase, "hook_kind": "finalize"},
+            )
+
+    before = _finalize("before_validation", "pending")
+    if before is not None:
+        executed.append(before)
+        raw_sections.append(_raw(before))
+        if before.returncode != 0:
+            return before, "\n\n".join(raw_sections)
+
+    validator: OperationResult | None = None
+    if validation_script:
+        try:
+            if tasker_progress is not None:
+                tasker_progress.phase_started(
+                    "artifact-validate-script",
+                    index=1,
+                    total=1,
+                    argv=["artifact-validate-script", str(artifact)],
+                )
+            validator = run_artifact_validation_script(
+                config.repo_root,
+                artifact,
+                manifest=manifest,
+                target=target,
+                solution=solution,
+                run_id=str(getattr(args, "_devtool_run_id", "") or ""),
+                dry_run=bool(getattr(args, "dry_run", False)),
+                log_path=log_path,
+                ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+            )
+        except Exception as exc:
+            validator = OperationResult(
+                "artifact-validate-script",
+                ["artifact-validate-script", str(artifact)],
+                1,
+                0.0,
+                f"{type(exc).__name__}: {exc}",
+                [Issue("error", "artifact-validate-script", str(artifact), type(exc).__name__, str(exc))],
+                failure_kind="validation_failure",
+                metadata={"hook_kind": "validation", "hook_phase": "validate"},
+            )
+        if validator is not None and tasker_progress is not None:
+            tasker_progress.phase_finished(validator)
+        if validator is not None:
+            executed.append(validator)
+            raw_sections.append(_raw(validator))
+
+    validation_status = "not-run" if validator is None else ("passed" if validator.returncode == 0 else "failed")
+    after = _finalize("after_validation", validation_status)
+    if after is not None:
+        executed.append(after)
+        raw_sections.append(_raw(after))
+
+    if not executed:
+        return None, ""
+
+    # Preserve the historical behavior of returning the validator as the main result
+    # whenever it ran, except when a successful validator is followed by a failing
+    # after-validation hook. Before-validation failure returned earlier unchanged.
+    if validator is not None and validator.returncode != 0:
+        primary = validator
+    elif after is not None and after.returncode != 0:
+        primary = after
+    elif validator is not None:
+        primary = validator
+    elif after is not None:
+        primary = after
+    else:
+        primary = before
+    assert primary is not None
+
+    hook_events = collect_hook_events(executed, dedupe=False)
+    if hook_events:
+        primary.metadata["hook_events"] = hook_events
+    if before is not None:
+        primary.metadata["finalize_before_validation"] = True
+    if after is not None:
+        primary.metadata["finalize_after_validation"] = True
+    if len(executed) > 1:
+        primary.output = "\n\n".join(raw_sections)
+        combined_issues: list[Issue] = []
+        for item in executed:
+            combined_issues.extend(item.issues)
+        primary.issues = combined_issues
+    return primary, "\n\n".join(raw_sections)
 
 
 def _validation_expectation_result(manifest: dict, results: list[OperationResult]) -> OperationResult | None:

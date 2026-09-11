@@ -443,11 +443,11 @@ Devtool exposes a machine-readable inspector used by the GTK4 Control Center:
 devtool -r /path/to/repo inspect-artifact overlay-or-bundle.zip --diff
 ```
 
-The JSON result includes artifact identity, repository/workspaces, validation, inventory, bundle dependencies, preview counts, manifest text, and an optional repository-relative diff.
+The JSON result includes artifact identity, repository/workspaces, validation, inventory, bundle dependencies, preview counts, manifest text, an optional repository-relative diff, and a dedicated `hooks` section describing preflight/validation/finalize phases, protocol, checksum, timeout, capabilities, and declared writes.
 
 ## Self-contained artifacts
 
-Artifact schema v2 can carry the repository identity, monorepo workspace, target, solution, file inventory, an optional before/after-extraction preflight hook, validation policy, a disposable validation script, an optional JSON-v1 finalization hook before validation and/or commit, and the final commit message. A normal apply can therefore be reduced to:
+Artifact schema v2 can carry the repository identity, monorepo workspace, target, solution, file inventory, optional before/after-extraction preflight phases, validation policy, a disposable validator, JSON-v1 finalization phases around validation/commit, declared hook capabilities/write scopes, structured hook evidence, and the final commit message. Preflight, validator, and finalizer scripts now share one embedded-hook runtime; preflight/validator can opt into JSON-v1 while legacy preflight environment variables and legacy validators remain compatible. A normal apply can therefore be reduced to:
 
 ```bash
 devtool \
