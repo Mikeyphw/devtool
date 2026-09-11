@@ -435,9 +435,13 @@ def _node_specs(config: ProjectConfig, node: WorkflowNode, *, validation_skip: t
         if job is None:
             raise WorkflowRuntimeError(f"Workflow references missing job {ref.name!r}.")
         specs = _job_specs(target_config, job)
-        execution_environment = job.execution_environment
-        chroot_name = job.chroot_name
-        device_serial = job.device_serial
+        execution_environment = (
+            job.execution_environment
+            if job.execution_environment and job.execution_environment != "auto"
+            else target_config.execution_environment
+        )
+        chroot_name = job.chroot_name or target_config.chroot_name
+        device_serial = job.device_serial or target_config.device_serial
         runner_options = _merge_options(target_config.runner_options, job.options)
         runner_name = job.runner
         effective_action = job.action

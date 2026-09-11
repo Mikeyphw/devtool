@@ -144,7 +144,7 @@ Other first-class runners apply equivalent safe optimizations:
 All runners receive the shared desktop/Termux/chroot resource policy described
 in [`BUILD_OPTIMIZATION.md`](BUILD_OPTIMIZATION.md).
 
-## MP01–MP06 target identity, workflow DAGs, cross-target composition, and groups
+## MP01–MP08 target identity, workflow DAGs, affected selection, and graph preflight
 
 A target has two independent identities: `platform` describes the product surface and `runner` selects its primary command planner. Legacy target `type`/`kind` remains supported as an alias for `runner`. Reusable `[jobs.*]` may be owned by another runner and referenced from `[targets.<name>.workflows]`, so a Python server can run Node code generation without teaching `PythonRunner` how npm works.
 
@@ -177,6 +177,8 @@ validate = [
 ```
 
 Runner composition is orchestration, not inheritance: `PythonRunner` never learns npm semantics and `NodeRunner` never learns pytest semantics. The workflow runtime selects the appropriate runner per node. MP05 applies the same rule across targets: `target:protocol#build` is flattened into the protocol target's own workflow/runner configuration, with its root, environment, runner options, and execution environment preserved. Shared target/action prerequisites are deduplicated. MP06 lets named workspace groups invoke multiple root targets through the same graph, so this composition model remains identical for one target or an entire release set.
+
+MP08 applies the same principle to prerequisites: doctor/preflight inspect the expanded graph and aggregate the actual runners and command executables instead of deriving requirements from the primary target runner. Tool availability is checked in the environment where a node will execute; destination-only tools are deferred to destination preflight rather than incorrectly tested against the host PATH.
 
 See [`POLYGLOT_TARGETS_AND_WORKFLOWS.md`](POLYGLOT_TARGETS_AND_WORKFLOWS.md) for the complete reference.
 

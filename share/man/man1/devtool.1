@@ -169,7 +169,25 @@ Diagnose devtool and project prerequisites. Use
 .B --fix
 to create safe devtool state/cache directories where supported. Use
 .B --explain
-on native Termux to include provider selection and rejection reasons.
+on native Termux to include provider selection and rejection reasons. Doctor also aggregates the selected expanded workflow graph; use
+.BR --workflow " ACTION"
+with
+.BR --target ,
+.BR --group ,
+.BR --all-targets ,
+or
+.B --affected
+to scope graph-aware runner, tool, root, environment, and output checks.
+.TP
+.B affected " | " aff
+Show dependency-aware workspace targets affected by Git changes. Use
+.B --explain
+to show root/input/job-input/dependency reasons, or
+.BR --base " REV " --head " REV"
+for CI range analysis.
+.TP
+.B preflight " | " pf
+Expand selected workflows and check all required runners, concrete command tools, target/job roots, execution environments, and output-scope safety. Destination-only tools are deferred to destination preflight instead of tested against the host PATH.
 .SH ARTIFACT COMMANDS
 .TP
 .B apply-overlay " | " ao " ARTIFACT"
@@ -339,6 +357,26 @@ Select every configured workspace target for supported lifecycle commands. Canno
 .B --target
 or
 .B --group.
+.TP
+.B --affected
+Select only dependency-aware workspace targets affected by Git changes. Target roots, target
+.B inputs,
+and reusable-job inputs provide direct ownership; reverse cross-target dependency closure adds consumers. Unknown ownership conservatively selects the candidate scope. May be combined with
+.B --group
+or
+.B --all-targets
+as a candidate filter, but not with an explicit
+.B --target.
+.TP
+.BR --affected-base " REV"
+Git base revision for affected selection. Without a base, staged, unstaged, and untracked working-tree paths are combined.
+.TP
+.BR --affected-head " REV"
+Git head revision used with
+.B --affected-base;
+together they select the
+.B base...head
+range.
 .TP
 .BR --variant " NAME"
 Build/test variant within the selected target.

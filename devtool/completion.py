@@ -216,6 +216,10 @@ _devtool_commands() {
     'jb:alias for jobs'
     'workflows:list configured target workflows'
     'wf:alias for workflows'
+    'affected:show dependency-aware targets affected by Git changes'
+    'aff:alias for affected'
+    'preflight:check expanded workflow roots, environments, runners, tools, and outputs'
+    'pf:alias for preflight'
     'logs:list, open, or tail devtool logs'
     'history:list structured run history'
     'rollback:rollback a recorded commit'
@@ -235,6 +239,13 @@ _devtool_commands() {
 
 _devtool_test_args() {
   _arguments \
+    '--target[named target/profile]:target:_devtool_targets' \
+    '*--group[workspace target group]:group:_devtool_groups' \
+    '--all-targets[select every workspace target]' \
+    '--affected[select dependency-aware affected targets]' \
+    '--affected-base[Git base revision for affected selection]:revision:' \
+    '--affected-head[Git head revision for affected selection]:revision:' \
+    '--variant[target variant]:variant:_devtool_variants' \
     '--no-build[do not rebuild before dotnet test]' \
     '(--list --list-tests)'{--list,--list-tests}'[discover and list tests without executing]' \
     '--profile[saved test profile]:profile:_devtool_test_profiles' \
@@ -272,6 +283,13 @@ _devtool_validation_menu_args() {
 
 _devtool_validation_args() {
   _arguments \
+    '--target[named target/profile]:target:_devtool_targets' \
+    '*--group[workspace target group]:group:_devtool_groups' \
+    '--all-targets[select every workspace target]' \
+    '--affected[select dependency-aware affected targets]' \
+    '--affected-base[Git base revision for affected selection]:revision:' \
+    '--affected-head[Git head revision for affected selection]:revision:' \
+    '--variant[target variant]:variant:_devtool_variants' \
     '--skip-restore[skip dependency restore]' \
     '--skip-build[skip project build]' \
     '--skip-test[skip project tests]' \
@@ -458,6 +476,9 @@ _devtool() {
     '--target[named target/profile from .devtool.toml]:target:_devtool_targets' \
     '*--group[workspace target group from [workspace.groups]]:group:_devtool_groups' \
     '--all-targets[select every configured workspace target]' \
+    '--affected[select dependency-aware targets affected by Git changes]' \
+    '--affected-base[Git base revision for affected selection]:revision:' \
+    '--affected-head[Git head revision for affected selection]:revision:' \
     '--variant[build/test variant within the selected target]:variant:_devtool_variants' \
     '--solution[exact solution path for restore/build/test]:solution:_files' \
     '--project[exact project path for run/validation]:project:_files' \
@@ -546,11 +567,28 @@ _devtool() {
       ;;
     args)
       case $line[1] in
+        restore|rs|lint|run|rn|clean|cl|inspect|info|status|st)
+          _arguments \
+            '--target[named target/profile]:target:_devtool_targets' \
+            '*--group[workspace target group]:group:_devtool_groups' \
+            '--all-targets[select every workspace target]' \
+            '--affected[select dependency-aware affected targets]' \
+            '--affected-base[Git base revision for affected selection]:revision:' \
+            '--affected-head[Git head revision for affected selection]:revision:' \
+            '--variant[target variant]:variant:_devtool_variants'
+          ;;
         test|t)
           _devtool_test_args
           ;;
         build|b|package|pkg)
           _arguments \
+            '--target[named target/profile]:target:_devtool_targets' \
+            '*--group[workspace target group]:group:_devtool_groups' \
+            '--all-targets[select every workspace target]' \
+            '--affected[select dependency-aware affected targets]' \
+            '--affected-base[Git base revision for affected selection]:revision:' \
+            '--affected-head[Git head revision for affected selection]:revision:' \
+            '--variant[target variant]:variant:_devtool_variants' \
             '(-o --artifact-output-dir --output-dir)'{-o,--artifact-output-dir,--output-dir}'[copy produced artifacts here]:directory:_files -/' \
             '(-n --artifact-output-name --output-name)'{-n,--artifact-output-name,--output-name}'[base filename for copied artifacts]:name:' \
             '--artifact-collision[managed artifact collision policy]:policy:(unique replace fail)' \
@@ -644,7 +682,17 @@ _devtool() {
             '(--daemon --no-daemon)--no-daemon[disable the Gradle daemon during validation]'
           ;;
         doctor|dr)
-          _arguments '--fix[create safe devtool state and cache directories]' '--explain[explain Termux provider selection and rejection reasons]' '--json[emit structured runtime, Android, device, and project health checks]'
+          _arguments \
+            '--target[named target/profile]:target:_devtool_targets' \
+            '*--group[workspace target group]:group:_devtool_groups' \
+            '--all-targets[select every workspace target]' \
+            '--affected[limit workflow preflight to affected targets]' \
+            '--affected-base[Git base revision for affected selection]:revision:' \
+            '--affected-head[Git head revision for affected selection]:revision:' \
+            '--workflow[workflow/action to analyze]:workflow:' \
+            '--fix[create safe devtool state and cache directories]' \
+            '--explain[explain Termux provider selection and rejection reasons]' \
+            '--json[emit structured runtime, device, project, and workflow preflight health checks]'
           ;;
         bootstrap)
           if (( ${#line} < 2 )); then
@@ -883,6 +931,29 @@ _devtool() {
           ;;
         targets|tg|groups|gr|jobs|jb|workflows|wf)
           _arguments '--json[emit structured configuration metadata]'
+          ;;
+        affected|aff)
+          _arguments \
+            '--target[named target/profile]:target:_devtool_targets' \
+            '*--group[candidate workspace target group]:group:_devtool_groups' \
+            '--all-targets[consider every workspace target]' \
+            '--variant[target variant]:variant:_devtool_variants' \
+            '--base[Git base revision]:revision:' \
+            '--head[Git head revision used with --base]:revision:' \
+            '--explain[explain why each target was selected]' \
+            '--json[emit structured affected-target metadata]'
+          ;;
+        preflight|pf)
+          _arguments \
+            '--target[named target/profile]:target:_devtool_targets' \
+            '*--group[workspace target group]:group:_devtool_groups' \
+            '--all-targets[select every workspace target]' \
+            '--affected[limit preflight to dependency-aware affected targets]' \
+            '--affected-base[Git base revision for affected selection]:revision:' \
+            '--affected-head[Git head revision for affected selection]:revision:' \
+            '--variant[target variant]:variant:_devtool_variants' \
+            '--workflow[workflow/action to inspect]:workflow:' \
+            '--json[emit structured graph-aware preflight metadata]'
           ;;
         handoff)
           _arguments '(-o --output)'{-o,--output}'[write handoff to file]:file:_files'

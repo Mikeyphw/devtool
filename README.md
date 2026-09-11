@@ -252,6 +252,10 @@ devtool groups --json
 
 Use `devtool targets`, `devtool groups`, `devtool jobs`, `devtool workflows`, and `devtool inspect` to inspect the normalized model. `devtool workflows --json` exposes both the declared local DAG and the expanded cross-target workspace DAG. Plain lists remain sequential, inline `{ id, ref, depends_on }` steps can branch/join, and each executable node is dispatched to its own first-class runner and execution environment. Failures block dependent nodes while preserving independent-branch semantics, and the same dependencies are bridged into resumable validation sessions. See [`docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md`](docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md) and [`docs/WORKSPACE_GROUPS.md`](docs/WORKSPACE_GROUPS.md).
 
+MP07 adds dependency-aware Git selection. `devtool validate --affected` owns changes by target roots, explicit target `inputs`, and reusable-job inputs, then follows reverse cross-target dependencies. Unknown ownership conservatively selects the candidate workspace instead of dropping validation. Use `--affected-base origin/main --affected-head HEAD` for CI ranges or `devtool affected --explain` to see why each target was selected.
+
+MP08 makes toolchain checks graph-aware. `devtool preflight --group release --workflow validate` expands the same executable workspace DAG and aggregates every runner, real command executable, target/job root, execution environment, and declared output scope. `doctor` embeds this report as `workflow_preflight`; destination-only tools are deferred to the destination rather than falsely reported missing on the host. See [`docs/AFFECTED_TARGETS.md`](docs/AFFECTED_TARGETS.md) and [`docs/WORKFLOW_PREFLIGHT.md`](docs/WORKFLOW_PREFLIGHT.md).
+
 ## Devtool 0.15.0: verified Android artifacts, device tests, selective tests, and Python pipelines
 
 Android and Gradle builds now verify newly produced APK, AAB, AAR, and JVM

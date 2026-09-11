@@ -202,6 +202,22 @@ everything = ["*"]
 
 Legacy `[project].default_target` remains accepted. A canonical and legacy value may coexist only when they are equal. Group names must not collide with target names. Groups are validated eagerly, including unknown members and nested-group cycles. Use `devtool --group release validate`, repeated `--group`, or `--all-targets`; `--target`, target matrices, and workspace-group selection are mutually exclusive scopes.
 
+### Affected ownership and graph preflight (MP07–MP08)
+
+Target roots are automatic Git-change ownership boundaries. Add `inputs` for extra source/config paths that affect a target and `outputs` for generated/write paths:
+
+```toml
+[targets.api]
+runner = "python"
+root = "services/api"
+inputs = ["../../packages/protocol/**", "../../schemas/**"]
+outputs = ["build/**", "dist/**"]
+```
+
+Reusable-job `inputs` also make every referencing target an owner of those paths. `devtool validate --affected` computes direct ownership plus reverse `target:` dependency closure; unowned paths conservatively select the candidate workspace. `--affected` may be combined with `--group`/`--all-targets` as a candidate filter and supports `--affected-base`/`--affected-head` for Git ranges.
+
+`devtool preflight` and the workflow section of `devtool doctor` expand selected workflows and aggregate their runners, concrete command executables, effective execution environments, roots, and output safety. Job `execution_environment = "auto"` inherits the target execution destination. See `AFFECTED_TARGETS.md` and `WORKFLOW_PREFLIGHT.md`.
+
 `devtool config doctor --global` warns when repo-scoped sections or command-scoped validation filters appear in the global file.
 
 ## Python projects in Termux chroot policy

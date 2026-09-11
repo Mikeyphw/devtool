@@ -1,6 +1,6 @@
-# Polyglot targets, reusable jobs, and executable workflow DAGs (MP01–MP06)
+# Polyglot targets, reusable jobs, and executable workflow DAGs (MP01–MP08)
 
-MP01–MP06 separate **what a repository component is** from **which tool executes
+MP01–MP08 separate **what a repository component is** from **which tool executes
 one piece of work**, then turn target workflows into a validated dependency DAG
 that can compose multiple first-class runners in one lifecycle action.
 
@@ -338,7 +338,7 @@ devtool inspect
 devtool config resolve
 ```
 
-`devtool workflows --json` now uses schema version 2 and exposes:
+`devtool workflows --json` uses schema version 3 and exposes both declared workflows and their expanded workspace graph:
 
 ```text
 step reference
@@ -383,23 +383,20 @@ Runner capabilities also treat an explicitly declared target workflow as
 support for that lifecycle action, even if the target's primary runner alone
 would not advertise it.
 
-## Roadmap boundary after MP06
+## Roadmap boundary after MP08
 
-MP01–MP06 now deliver the complete target identity, reusable-job, generic-DAG,
-and cross-runner execution foundation.
+MP01–MP08 now deliver target identity, reusable jobs, executable cross-runner/cross-target DAGs, workspace groups, dependency-aware affected selection, and aggregate graph-aware preflight.
 
-Delivered in this series:
+Delivered in this stage:
 
-- **MP05:** executable cross-target dependency expansion, cycle detection, and deduplication
-- **MP06:** workspace target groups and shared multi-target planning
+- **MP07:** target-root/input/job-input ownership, Git working-tree or base/head range selection, reverse dependency propagation, conservative unknown-path handling, `--affected`, and `affected --explain`.
+- **MP08:** expanded-graph runner/tool/environment aggregation, root/output-scope checks, destination-aware tool availability, `preflight`, and `doctor.workflow_preflight`.
+
+Target declarations may use `inputs` for source ownership outside their root and `outputs` for generated/write scopes. Reusable-job inputs participate in MP07 ownership automatically.
 
 Still intentionally later:
 
-- **MP07:** affected-target analysis
-- **MP08:** aggregate toolchain doctor/preflight for the resolved graph
 - **MP09:** input/output-aware safe parallel scheduling and reservations
 - **MP10:** richer graph planning/inspection UX
 
-The important architectural boundary is already in place: runners plan their own
-commands, Workflow Core composes them, and execution environments remain
-independent from runner identity.
+The architectural boundary remains strict: runners plan native commands, Workflow Core composes them, affected selection chooses workspace roots from repository changes, preflight derives requirements from the resulting expanded graph, and execution environments remain independent from runner identity.

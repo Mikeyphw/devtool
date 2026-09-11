@@ -34,6 +34,8 @@ class DesktopTargetSummary:
     platform: str = ""
     workflows: list[str] = field(default_factory=list)
     groups: list[str] = field(default_factory=list)
+    inputs: list[str] = field(default_factory=list)
+    outputs: list[str] = field(default_factory=list)
     default: bool = False
     root: str = ""
     build: str = ""
@@ -223,6 +225,8 @@ def _target_summary_dict(
         platform=str(getattr(target, "platform", "") or ""),
         workflows=sorted(str(name) for name in getattr(target, "workflows", {}) or {}),
         groups=[str(item) for item in groups],
+        inputs=[str(item) for item in getattr(target, "inputs", ()) or ()],
+        outputs=[str(item) for item in getattr(target, "outputs", ()) or ()],
         default=bool(is_default),
         root=str(getattr(target, "root", "") or ""),
         build=str(getattr(target, "build_target", "") or getattr(target, "build_command", "") or ""),

@@ -24,6 +24,7 @@ from pathlib import Path
 from rich.prompt import Confirm
 
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
+from .affected import AffectedSelectionError, analyze_affected_targets
 from .apply_notifications import notify_apply_finished
 from .bootstrap import (
     apply_registered_bootstrap_policy,
@@ -118,6 +119,7 @@ from .workflow_runtime import build_workspace_specs, build_workspace_validation_
 from .summary import artifact_confirmation_text, build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_destination_toolchain_wrapper, apply_toolchain_wrapper, toolchain_doctor_rows
+from .toolchain_requirements import analyze_toolchain_requirements
 from .termux_toolchains import (
     VALID_GRADLE_PROVIDERS, VALID_JAVA_PROVIDERS, VALID_NATIVE_PROVIDERS,
     VALID_ANDROID_SDK_PROVIDERS,
@@ -362,6 +364,18 @@ def _add_apply_command_flags(cmd: argparse.ArgumentParser, *, name: str) -> None
     _add_apply_policy_flags(cmd)
 
 
+def _add_workspace_scope_flags(cmd: argparse.ArgumentParser, *, include_affected: bool = True) -> None:
+    """Allow workspace selectors after a subcommand without overriding global values."""
+    cmd.add_argument("--target", default=argparse.SUPPRESS, help="Named target/profile from .devtool.toml")
+    cmd.add_argument("--group", action="append", default=argparse.SUPPRESS, help="Workspace target group; repeatable")
+    cmd.add_argument("--all-targets", action="store_true", default=argparse.SUPPRESS, help="Select every configured workspace target")
+    if include_affected:
+        cmd.add_argument("--affected", action="store_true", default=argparse.SUPPRESS, help="Select dependency-aware targets affected by Git changes")
+        cmd.add_argument("--affected-base", default=argparse.SUPPRESS, help="Git base revision for affected selection")
+        cmd.add_argument("--affected-head", default=argparse.SUPPRESS, help="Git head revision for affected selection")
+    cmd.add_argument("--variant", default=argparse.SUPPRESS, help="Variant within the selected workspace target(s)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="devtool",
@@ -382,6 +396,9 @@ def build_parser() -> argparse.ArgumentParser:
     project.add_argument("--target", default="", help="Named target/profile from .devtool.toml")
     project.add_argument("--group", action="append", default=[], help="Workspace target group from [workspace.groups]; repeatable")
     project.add_argument("--all-targets", action="store_true", help="Select every configured workspace target")
+    project.add_argument("--affected", action="store_true", help="Select workspace targets affected by current Git changes; may be combined with --group/--all-targets as a candidate filter")
+    project.add_argument("--affected-base", default="", help="Git base revision for --affected selection (default: staged/unstaged/untracked working tree)")
+    project.add_argument("--affected-head", default="", help="Git head revision for --affected selection; with --affected-base uses base...head")
     project.add_argument("--variant", default="", help="Build/test variant within the selected target")
     project.add_argument("--solution", default="", help="Exact solution path for restore/build/test")
     project.add_argument("--project", default="", help="Exact project path for run/validation")
@@ -504,6 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("doctor", ["dr"]),
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
+        _add_workspace_scope_flags(cmd)
         if name in {"build", "package"}:
             cmd.add_argument(
                 "-o",
@@ -545,7 +563,8 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "doctor":
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
             cmd.add_argument("--explain", action="store_true", help="Explain Termux provider selection and rejection reasons")
-            cmd.add_argument("--json", action="store_true", help="Emit structured runtime, Android, device, and project health checks")
+            cmd.add_argument("--json", action="store_true", help="Emit structured runtime, Android, device, project, and expanded-workflow health checks")
+            cmd.add_argument("--workflow", default="all", help="Workflow/action to analyze across the selected target scope; default: all declared workflows")
         if name == "clean":
             cmd.add_argument("--caches", action="store_true", help="Also prune repository-scoped devtool-managed caches and transient state")
             cmd.add_argument("--space", action="store_true", help="Prune safe global Android/toolchain caches managed by Devtool")
@@ -972,6 +991,16 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_cmd.add_argument("--json", action="store_true", help="Emit structured reusable-job metadata")
     workflows_cmd = subparsers.add_parser("workflows", aliases=["wf"], help="List configured target workflows without executing them")
     workflows_cmd.add_argument("--json", action="store_true", help="Emit structured workflow metadata")
+    affected_cmd = subparsers.add_parser("affected", aliases=["aff"], help="Show dependency-aware targets affected by Git changes")
+    _add_workspace_scope_flags(affected_cmd, include_affected=False)
+    affected_cmd.add_argument("--base", default="", help="Git base revision; default is the current working tree")
+    affected_cmd.add_argument("--head", default="", help="Git head revision; with --base uses base...head")
+    affected_cmd.add_argument("--explain", action="store_true", help="Explain why every target is selected")
+    affected_cmd.add_argument("--json", action="store_true", help="Emit structured affected-target metadata")
+    preflight_cmd = subparsers.add_parser("preflight", aliases=["pf"], help="Check expanded workflow roots, environments, runners, tools, and output safety")
+    _add_workspace_scope_flags(preflight_cmd)
+    preflight_cmd.add_argument("--workflow", default="all", help="Workflow/action to inspect; default: all declared workflows")
+    preflight_cmd.add_argument("--json", action="store_true", help="Emit structured graph-aware preflight metadata")
 
     control_center = subparsers.add_parser("control-center", aliases=["gui"], help="Launch the Devtool desktop Control Center")
     control_center.add_argument("--backend", choices=["auto", "gtk4"], default="auto", help="Control Center backend; GTK4 is the only desktop backend")
@@ -2193,17 +2222,32 @@ def _normalize_live_progress_args(args: argparse.Namespace) -> None:
 def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | None = None, repo: Path | None = None) -> TaskerProgressSink | None:
     repo_root = (config.repo_root if config is not None else (repo or Path(args.repo or Path.cwd()))).resolve()
     target = str(getattr(args, "target", "") or getattr(args, "solution", "") or getattr(args, "project", "") or "")
-    if config is not None and (bool(getattr(args, "all_targets", False)) or bool(getattr(args, "group", []))):
+    if config is not None and (bool(getattr(args, "all_targets", False)) or bool(getattr(args, "group", [])) or bool(getattr(args, "affected", False))):
         try:
-            selected_targets = resolve_workspace_targets(
-                config.workspace,
-                config.targets,
-                groups=tuple(getattr(args, "group", []) or ()),
-                all_targets=bool(getattr(args, "all_targets", False)),
-            )
+            if bool(getattr(args, "affected", False)):
+                candidate_targets = resolve_workspace_targets(
+                    config.workspace,
+                    config.targets,
+                    groups=tuple(getattr(args, "group", []) or ()),
+                    all_targets=bool(getattr(args, "all_targets", False)),
+                ) if (getattr(args, "group", []) or getattr(args, "all_targets", False)) else tuple(config.targets)
+                selection = analyze_affected_targets(
+                    config,
+                    candidate_targets=candidate_targets,
+                    base=str(getattr(args, "affected_base", "") or ""),
+                    head=str(getattr(args, "affected_head", "") or ""),
+                )
+                selected_targets = selection.targets
+            else:
+                selected_targets = resolve_workspace_targets(
+                    config.workspace,
+                    config.targets,
+                    groups=tuple(getattr(args, "group", []) or ()),
+                    all_targets=bool(getattr(args, "all_targets", False)),
+                )
             if selected_targets:
                 target = ",".join(selected_targets)
-        except WorkspaceConfigError:
+        except (WorkspaceConfigError, AffectedSelectionError):
             # Argument/config validation reports the actionable error later. HUD
             # publication must not turn a parser error into a progress crash.
             pass
@@ -2441,7 +2485,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
     project = args.project
     manifest: dict[str, object] | None = None
 
-    workspace_selection = bool(getattr(args, "group", []) or getattr(args, "all_targets", False))
+    workspace_selection = bool(getattr(args, "group", []) or getattr(args, "all_targets", False) or getattr(args, "affected", False))
     if args.command in LEGACY_APPLY_VALIDATE_COMMANDS:
         manifest = _read_artifact_manifest(_single_artifact_arg(getattr(args, "artifact", "")))
         if not target_name and not workspace_selection:
@@ -2477,7 +2521,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             solution_override=solution,
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
-            allow_ambiguous_target=args.command in {"targets", "tg", "groups", "gr", "jobs", "jb", "workflows", "wf"} or allow_bundle_bootstrap or workspace_selection,
+            allow_ambiguous_target=args.command in {"targets", "tg", "groups", "gr", "jobs", "jb", "workflows", "wf", "affected", "aff", "preflight", "pf", "doctor", "dr"} or allow_bundle_bootstrap or workspace_selection,
         )
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
@@ -4119,24 +4163,43 @@ def _workspace_target_names_for_args(
 ) -> tuple[str, ...]:
     groups = [str(item).strip() for item in getattr(args, "group", []) if str(item).strip()]
     all_targets = bool(getattr(args, "all_targets", False))
-    if not groups and not all_targets:
+    affected = bool(getattr(args, "affected", False))
+    if not groups and not all_targets and not affected:
         return ()
     if str(getattr(args, "target", "") or "").strip():
-        parser.error("--target cannot be combined with --group or --all-targets; select one workspace scope")
+        scope = "--affected" if affected else "--group or --all-targets"
+        parser.error(f"--target cannot be combined with {scope}; select one workspace scope")
     if all_targets and groups:
         parser.error("--all-targets cannot be combined with --group because it already selects the complete workspace")
     if str(getattr(args, "matrix", "") or "").strip():
-        parser.error("--matrix cannot be combined with --group/--all-targets; workspace groups are the target-selection graph")
+        parser.error("--matrix cannot be combined with workspace --group/--all-targets/--affected selection")
     try:
-        selected = resolve_workspace_targets(
-            config.workspace,
-            config.targets,
-            groups=groups,
-            all_targets=all_targets,
-        )
-    except WorkspaceConfigError as exc:
+        if groups or all_targets:
+            candidates = resolve_workspace_targets(
+                config.workspace,
+                config.targets,
+                groups=groups,
+                all_targets=all_targets,
+            )
+        else:
+            candidates = tuple(config.targets)
+        if affected:
+            selection = analyze_affected_targets(
+                config,
+                candidate_targets=candidates,
+                base=str(getattr(args, "affected_base", "") or ""),
+                head=str(getattr(args, "affected_head", "") or ""),
+            )
+            setattr(args, "_devtool_affected_selection", selection)
+            selected = selection.targets
+        else:
+            selected = candidates
+    except (WorkspaceConfigError, AffectedSelectionError) as exc:
         parser.error(str(exc))
     if not selected:
+        if affected:
+            setattr(args, "_devtool_affected_empty", True)
+            return ()
         parser.error("Workspace target selection resolved to no targets")
     if str(getattr(args, "variant", "") or "").strip():
         variant = str(args.variant).strip()
@@ -4145,11 +4208,21 @@ def _workspace_target_names_for_args(
             parser.error(
                 f"--variant {variant!r} is not declared by workspace target(s): {', '.join(missing)}"
             )
-    return selected
+    return tuple(selected)
+
+
+def _workspace_selection_metadata(args: argparse.Namespace) -> tuple[str, list[str]]:
+    if bool(getattr(args, "affected", False)):
+        return "affected", [str(item) for item in getattr(args, "group", []) if str(item).strip()]
+    if bool(getattr(args, "all_targets", False)):
+        return "all", []
+    return "group", [str(item) for item in getattr(args, "group", []) if str(item).strip()]
 
 
 def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
     workspace_targets = _workspace_target_names_for_args(config, args, parser)
+    if bool(getattr(args, "affected", False)) and bool(getattr(args, "_devtool_affected_empty", False)):
+        return []
     if workspace_targets:
         if _exclusive_validation_task_values(args):
             parser.error("Explicit --task Gradle validation selection cannot be combined with workspace --group/--all-targets; declare per-target workflows instead")
@@ -4164,8 +4237,13 @@ def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, 
         )
         for spec in specs:
             metadata = dict(spec.metadata)
-            metadata["workspace_selection"] = "all" if bool(getattr(args, "all_targets", False)) else "group"
-            metadata["workspace_groups"] = [str(item) for item in getattr(args, "group", []) if str(item).strip()]
+            selection_kind, selection_groups = _workspace_selection_metadata(args)
+            metadata["workspace_selection"] = selection_kind
+            metadata["workspace_groups"] = selection_groups
+            affected_selection = getattr(args, "_devtool_affected_selection", None)
+            if affected_selection is not None:
+                metadata["affected_changed_paths"] = list(affected_selection.changed_paths)
+                metadata["affected_targets"] = list(affected_selection.targets)
             spec.metadata = metadata
         return _annotate_resolved_validation_plan(config, args, specs)
 
@@ -6919,6 +6997,8 @@ def _targets(config: ProjectConfig, *, as_json: bool = False) -> None:
                     "groups": list(memberships.get(name, ())),
                     "default": name == config.workspace.default_target,
                     "root": target.root or target.solution or target.build_target or target.restore_target or target.run_project,
+                    "inputs": list(target.inputs),
+                    "outputs": list(target.outputs),
                     "workflows": {
                         workflow_name: [step.raw for step in workflow.steps]
                         for workflow_name, workflow in sorted(target.workflows.items())
@@ -6939,7 +7019,7 @@ def _targets(config: ProjectConfig, *, as_json: bool = False) -> None:
             rows.append((
                 name,
                 f"platform={target.platform or '-'} runner={target.effective_runner or '-'} "
-                f"groups={groups} workflows={workflows} root={location}{default}",
+                f"groups={groups} workflows={workflows} inputs={len(target.inputs)} outputs={len(target.outputs)} root={location}{default}",
             ))
     elif config.kind == "dotnet":
         rows = [(candidate.stem, f"platform={config.platform or 'dotnet'} runner=dotnet root={candidate.relative_to(config.repo_root)}") for candidate in discover_dotnet_candidates(config.repo_root)]
@@ -7025,6 +7105,116 @@ def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
             rows.append((f"{target_name}.{workflow_name}", " | ".join(pieces)))
     render_status_table(rows)
 
+
+
+def _candidate_targets_for_analysis(config: ProjectConfig, args: argparse.Namespace) -> tuple[str, ...]:
+    groups = [str(item).strip() for item in getattr(args, "group", []) if str(item).strip()]
+    all_targets = bool(getattr(args, "all_targets", False))
+    if groups or all_targets:
+        try:
+            selected = resolve_workspace_targets(config.workspace, config.targets, groups=groups, all_targets=all_targets)
+        except WorkspaceConfigError as exc:
+            raise SystemExit(str(exc)) from exc
+        if not selected:
+            raise SystemExit("Workspace target selection resolved to no targets")
+        return selected
+    if config.selected_target and config.selected_target in config.targets:
+        return (config.selected_target,)
+    return tuple(config.targets)
+
+
+def _requested_environment_for_analysis(args: argparse.Namespace) -> str:
+    if bool(getattr(args, "host", False)):
+        return detect_current_environment()
+    if str(getattr(args, "chroot", "") or "").strip():
+        return EXECUTION_CHROOT
+    if str(getattr(args, "ssh", "") or "").strip():
+        return EXECUTION_SSH
+    if str(getattr(args, "proot_distro", "") or "").strip():
+        return EXECUTION_PROOT_DISTRO
+    return str(getattr(args, "execution_environment", EXECUTION_AUTO) or EXECUTION_AUTO)
+
+
+def _affected(config: ProjectConfig, args: argparse.Namespace) -> int:
+    candidates = _candidate_targets_for_analysis(config, args)
+    base = str(getattr(args, "base", "") or getattr(args, "affected_base", "") or "")
+    head = str(getattr(args, "head", "") or getattr(args, "affected_head", "") or "")
+    try:
+        selection = analyze_affected_targets(config, candidate_targets=candidates, base=base, head=head)
+    except AffectedSelectionError as exc:
+        raise SystemExit(str(exc)) from exc
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(selection.as_dict(), indent=2, ensure_ascii=False))
+        return 0
+    rows: list[tuple[str, str]] = [
+        ("source", selection.source),
+        ("changed", str(len(selection.changed_paths))),
+        ("affected", ", ".join(selection.targets) or "none"),
+    ]
+    if selection.uncertain_paths:
+        rows.append(("uncertain", ", ".join(selection.uncertain_paths)))
+    render_status_table(rows)
+    if bool(getattr(args, "explain", False)):
+        explanation: list[tuple[str, str]] = []
+        for target in selection.targets:
+            reasons = selection.reasons.get(target, ())
+            detail = "; ".join(
+                f"{item.kind}: {item.path or item.source} ({item.detail})" for item in reasons
+            ) or "selected"
+            explanation.append((target, detail))
+        if explanation:
+            render_status_table(explanation)
+    return 0
+
+
+def _toolchain_report_for_args(config: ProjectConfig, args: argparse.Namespace):
+    targets = _candidate_targets_for_analysis(config, args)
+    if bool(getattr(args, "affected", False)):
+        try:
+            selection = analyze_affected_targets(
+                config,
+                candidate_targets=targets,
+                base=str(getattr(args, "affected_base", "") or ""),
+                head=str(getattr(args, "affected_head", "") or ""),
+            )
+        except AffectedSelectionError as exc:
+            raise SystemExit(str(exc)) from exc
+        targets = selection.targets
+        setattr(args, "_devtool_affected_selection", selection)
+    if not targets:
+        return None
+    return analyze_toolchain_requirements(
+        config,
+        targets,
+        workflow=str(getattr(args, "workflow", "all") or "all"),
+        requested_environment=_requested_environment_for_analysis(args),
+    )
+
+
+def _preflight(config: ProjectConfig, args: argparse.Namespace) -> int:
+    report = _toolchain_report_for_args(config, args)
+    if report is None:
+        payload = {"schema_version": 1, "healthy": True, "targets": [], "message": "No affected targets."}
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            render_status_table([("preflight", "No affected targets; nothing to check")])
+        return 0
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(report.as_dict(), indent=2, ensure_ascii=False))
+    else:
+        rows: list[tuple[str, str]] = [
+            ("targets", ", ".join(report.targets)),
+            ("runners", ", ".join(report.runners) or "-"),
+            ("environments", ", ".join(report.environments) or "-"),
+        ]
+        for tool in report.tools:
+            rows.append((f"tool.{tool.executable}", f"{tool.status}: {tool.detail}"))
+        for check in report.checks:
+            if check.status not in {"ready", "ok"}:
+                rows.append((f"{check.section}.{check.name}", f"{check.status}: {check.detail}"))
+        render_status_table(rows)
+    return 0 if report.healthy else 1
 
 def _format_artifact_exception(exc: BaseException, *, artifact: str, artifact_type: str) -> str:
     message = str(exc).strip()
@@ -8755,6 +8945,16 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
     ]
     health_checks = collect_doctor_checks(config)
     rows.extend((f"health.{item.section}.{item.name}", f"{item.status}: {item.detail}") for item in health_checks)
+    workflow_report = _toolchain_report_for_args(config, args or argparse.Namespace())
+    if workflow_report is not None:
+        rows.append(("workflow_targets", ", ".join(workflow_report.targets)))
+        rows.append(("workflow_runners", ", ".join(workflow_report.runners) or "-"))
+        rows.append(("workflow_environments", ", ".join(workflow_report.environments) or "-"))
+        for tool in workflow_report.tools:
+            rows.append((f"workflow_tool.{tool.executable}", f"{tool.status}: {tool.detail}"))
+        for check in workflow_report.checks:
+            if check.status not in {"ready", "ok"}:
+                rows.append((f"workflow.{check.section}.{check.name}", f"{check.status}: {check.detail}"))
     rows.extend(toolchain_doctor_rows(config))
     rows.extend(termux_integration_doctor_rows(
         config,
@@ -8764,7 +8964,10 @@ def _doctor(config: ProjectConfig, *, fix: bool = False, args: argparse.Namespac
     rows.extend(runner.doctor_rows(config))
     json_requested = args is not None and getattr(args, "json", False) is True
     if json_requested:
-        print(json.dumps(doctor_payload(config), indent=2, ensure_ascii=False))
+        payload = doctor_payload(config)
+        payload["workflow_preflight"] = workflow_report.as_dict() if workflow_report is not None else {"healthy": True, "targets": []}
+        payload["healthy"] = bool(payload.get("healthy", True)) and bool(workflow_report is None or workflow_report.healthy)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
     else:
         render_status_table(rows)
 
@@ -9838,6 +10041,12 @@ def _main_after_parse(
         config = _load_command_config(args)
         _workflows(config, as_json=bool(getattr(args, "json", False)))
         return 0
+    if args.command in {"affected", "aff"}:
+        config = _load_command_config(args)
+        return _affected(config, args)
+    if args.command in {"preflight", "pf"}:
+        config = _load_command_config(args)
+        return _preflight(config, args)
 
 
     if args.command == "detect":
@@ -10047,9 +10256,12 @@ def _main_after_parse(
                 final_exit = 0 if failed == 0 else 1
                 _append_run_log_summary(log_path, args, None, totals, summary_text, started_at=started_at, finished_at=finished_at, exit_code=final_exit, results=results)
                 return final_exit
-        config = load_project_config(
-            str(repo), args.config, variant_name=str(getattr(args, "variant", "") or ""), kind_override=str(getattr(args, "project_type", "auto") or "auto")
-        )
+        if args.command in {"doctor", "dr", "status", "st", "inspect", "info"}:
+            config = _load_command_config(args)
+        else:
+            config = load_project_config(
+                str(repo), args.config, variant_name=str(getattr(args, "variant", "") or ""), kind_override=str(getattr(args, "project_type", "auto") or "auto")
+            )
         if args.command in {"doctor", "dr"}:
             _doctor(config, fix=getattr(args, "fix", False), args=args)
             return 0
@@ -10600,14 +10812,21 @@ def _main_after_parse(
     else:
         planning_config = _config_for_validation_planning(config, args)
         workspace_targets = _workspace_target_names_for_args(planning_config, args, parser)
-        if workspace_targets:
+        if bool(getattr(args, "affected", False)) and bool(getattr(args, "_devtool_affected_empty", False)):
+            specs = []
+        elif workspace_targets:
             if args.command in {"run", "rn"} and len(workspace_targets) > 1:
                 parser.error("run cannot target multiple workspace members because the first long-running process would block later targets")
             specs = build_workspace_specs(planning_config, workspace_targets, args.command)
             for spec in specs:
                 metadata = dict(spec.metadata)
-                metadata["workspace_selection"] = "all" if bool(getattr(args, "all_targets", False)) else "group"
-                metadata["workspace_groups"] = [str(item) for item in getattr(args, "group", []) if str(item).strip()]
+                selection_kind, selection_groups = _workspace_selection_metadata(args)
+                metadata["workspace_selection"] = selection_kind
+                metadata["workspace_groups"] = selection_groups
+                affected_selection = getattr(args, "_devtool_affected_selection", None)
+                if affected_selection is not None:
+                    metadata["affected_changed_paths"] = list(affected_selection.changed_paths)
+                    metadata["affected_targets"] = list(affected_selection.targets)
                 spec.metadata = metadata
         else:
             specs = build_specs(planning_config, args.command)

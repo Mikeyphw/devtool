@@ -1100,6 +1100,18 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
         metadata_raw = raw_value.get("metadata", {})
         if metadata_raw is not None and not isinstance(metadata_raw, dict):
             raise SystemExit(f"[targets.{name}.metadata] must be a TOML table")
+        def target_paths(field: str) -> tuple[str, ...]:
+            value = raw_value.get(field)
+            if value in (None, ""):
+                return ()
+            if not isinstance(value, list):
+                raise SystemExit(f"[targets.{name}] {field} must be a TOML array of non-empty strings")
+            items: list[str] = []
+            for index, item in enumerate(value):
+                if not isinstance(item, str) or not item.strip():
+                    raise SystemExit(f"[targets.{name}] {field}[{index}] must be a non-empty string")
+                items.append(item.strip())
+            return tuple(items)
         options: dict[str, Any] = {}
         for option_name in RUNNER_OPTION_SECTIONS:
             option_value = raw_value.get(option_name, {})
@@ -1128,6 +1140,8 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             device_serial=str(raw_value.get("device_serial", "")).strip(),
             options=options,
             variants=_load_target_variants(raw_value),
+            inputs=target_paths("inputs"),
+            outputs=target_paths("outputs"),
             metadata=dict(metadata_raw) if isinstance(metadata_raw, dict) else {},
             declared_fields=frozenset(str(key) for key in raw_value),
         )
@@ -1441,6 +1455,13 @@ package_command = ""
 # ]
 # Cross-target dependencies are executable and deduplicated (MP05):
 # build = ["target:protocol#build", "runner:python#build"]
+#
+# MP07 affected selection uses target roots automatically. Declare additional
+# ownership when files outside the target root should affect this target:
+# [targets.api]
+# inputs = ["../../packages/protocol/**", "../../schemas/openapi.json"]
+# outputs = ["build/**", "dist/**"]
+# `outputs` are also validated by MP08 preflight to stay within the repository.
 
 [execution]
 environment = "auto" # auto | native-termux | chroot | proot-distro | desktop-linux | ssh | android-device | external-device
@@ -1989,6 +2010,8 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
                 "device_serial": target.device_serial,
                 "options": target.options,
                 "variants": target.variants,
+                "inputs": list(target.inputs),
+                "outputs": list(target.outputs),
                 "metadata": target.metadata,
                 "workflows": {
                     workflow_name: workflow_steps_as_strings(workflow)

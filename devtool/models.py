@@ -142,6 +142,8 @@ class TargetConfig:
     options: dict[str, Any] = field(default_factory=dict)
     variants: dict[str, dict[str, Any]] = field(default_factory=dict)
     workflows: dict[str, WorkflowConfig] = field(default_factory=dict)
+    inputs: tuple[str, ...] = ()
+    outputs: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
     # Fields explicitly present in the target TOML table.  This preserves the
     # semantic difference between an absent setting and an explicit empty

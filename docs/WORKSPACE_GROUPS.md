@@ -109,3 +109,14 @@ both declared group members and fully expanded target lists.
 HUD/progress metadata uses each graph node's `workflow_target`; grouped root
 selection is also published so frontends can represent workspace operations
 without inferring targets from command text.
+
+## Affected group scope
+
+MP07 allows a workspace group to act as the candidate scope for dependency-aware Git selection:
+
+```bash
+devtool validate --group frontend --affected
+devtool affected --group mobile --explain
+```
+
+Ownership is still computed across the repository before the final candidate filter, so a changed shared dependency outside the group can select an in-group consumer. Unknown/unowned paths conservatively select every target in the candidate group.

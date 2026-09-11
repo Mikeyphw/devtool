@@ -1,3 +1,13 @@
+## 2026-09-11 - MP07 + MP08 affected-target analysis and graph-aware toolchain preflight
+
+- Added dependency-aware `--affected` workspace selection for lifecycle commands, combining target-root ownership, explicit target `inputs`, reusable-job inputs, reverse cross-target dependency closure, Git working-tree/range analysis, group candidate filtering, and conservative fallback for unowned changed paths.
+- Added `affected|aff` with `--explain`, `--base`, `--head`, and JSON output; no-change affected lifecycle runs now remain successful no-ops rather than falling back to the default target.
+- Added target `inputs`/`outputs` to canonical configuration, resolved configuration, targets machine output, config templates, and desktop target summaries.
+- Added expanded-graph toolchain aggregation that derives all runners, concrete command executables, effective execution environments, target/job roots, and output scopes from real workspace workflow plans.
+- Added `preflight|pf` plus graph-aware `doctor --workflow`; destination-only tools are deferred to destination checks instead of being falsely reported missing from the host.
+- Added root/output safety diagnostics, structured machine reports, post-subcommand workspace-scope flags, zsh completion, manpage/README/config/runner documentation, and dedicated MP07/08 regression coverage.
+- Fixed reusable jobs whose execution environment is `auto` to inherit the owning target's effective environment/chroot/device metadata, matching actual execution semantics and keeping preflight truthful.
+
 ## 2026-09-11 - MP05 + MP06 cross-target workspace graphs and target groups
 
 - Made `target:<name>#<action>` workflow references executable by flattening referenced target workflows or primary-runner fallbacks into one workspace DAG; no recursive Devtool subprocesses are used.
