@@ -607,6 +607,29 @@ Select by type, suite, tag, class, or name. Repeatable.
 .BR --id " TEST-ID"
 Select an exact framework test ID. Repeatable.
 .TP
+.BR --pytest-test " NODE-ID"
+Select an exact pytest file, class, function, method, or parametrized node ID. Repeatable.
+When at least one value is supplied, configured, default, and affected pytest targets are
+suppressed so pytest executes only the requested selectors, unless
+.B --pytest-include-defaults
+is also supplied.
+.TP
+.BR --pytest-marker " EXPR"
+Add a pytest marker expression. Repeatable expressions are combined with logical AND.
+.TP
+.BR --pytest-k " EXPR"
+Apply a pytest keyword expression.
+.TP
+.BR --pytest-arg " ARG"
+Append one structured pytest argument without shell interpolation. Repeatable. Arguments
+beginning with a dash are most reliably written as, for example,
+.BR --pytest-arg=--maxfail=1 .
+.TP
+.B --pytest-include-defaults
+With explicit
+.B --pytest-test
+selectors, also keep the configured/default/affected pytest targets.
+.TP
 .BR --tag " TAG"
 Include a tag, marker, or trait. Repeatable.
 .TP
@@ -959,9 +982,18 @@ The validation skip flags,
 and test selection flags such as
 .BR --class ,
 .BR --filter ,
+.BR --tag ,
+and the pytest-specific
+.BR --pytest-test / --pytest-marker / --pytest-k / --pytest-arg
+flags also apply to artifact validation. Artifact manifests may declare structured
+.B validation.pytest_tests ,
+.B validation.pytest_markers ,
+.B validation.pytest_k ,
+.B validation.pytest_args ,
 and
-.B --tag
-also apply to artifact validation. Supplying
+.B validation.pytest_include_defaults
+values; explicit CLI pytest fields take precedence and deferred validation preserves the
+resolved selection. Supplying
 .B --task
 instead creates an exclusive validation plan and suppresses all other validation phases,
 including embedded artifact validation scripts. Gradle targets use Gradle task names;

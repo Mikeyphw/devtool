@@ -31,6 +31,8 @@ GLOBAL_COMMAND_SCOPED_CLI_KEYS = {
     ("validation", "select"), ("validation", "id"), ("validation", "tag"),
     ("validation", "exclude_tag"), ("validation", "path"), ("validation", "class"),
     ("validation", "method"), ("validation", "filter"), ("validation", "task"),
+    ("validation", "pytest_test"), ("validation", "pytest_marker"),
+    ("validation", "pytest_k"), ("validation", "pytest_arg"),
     ("validation", "failed"), ("validation", "changed"),
 }
 
@@ -1421,6 +1423,14 @@ clean_categories = ["artifacts", "caches"]
 # service_commands = []
 # security_commands = []
 
+[python.pytest]
+# Exact pytest selectors used when no higher-precedence profile/artifact/CLI selection exists.
+# tests = ["tests/unit"]
+# markers = ["not slow"]
+# k = ""
+# args = ["--maxfail=1"]
+# include_defaults = false
+
 [python.coverage]
 minimum_total = 0
 minimum_changed_lines = 0
@@ -1524,6 +1534,11 @@ build_directory = ".devtool/build/meson"
 # [test_profiles.quick]
 # include = ["unit", "smoke"]
 # exclude_tags = ["slow", "network"]
+# pytest_tests = ["tests/test_auth.py::test_login"]
+# pytest_markers = ["not network"]
+# pytest_k = "authentication"
+# pytest_args = ["--maxfail=1"]
+# pytest_include_defaults = false
 
 [validation]
 # test_profile = "full"

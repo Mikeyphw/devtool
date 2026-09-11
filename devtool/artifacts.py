@@ -130,6 +130,24 @@ def _normalize_validation_tasks(value: Any) -> list[str]:
     raise ValueError("validation.tasks must be a string or list of strings.")
 
 
+def _normalize_validation_string_list(value: Any, field: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, (list, tuple)):
+        values: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError(f"validation.{field} entries must be strings.")
+            text = item.strip()
+            if text:
+                values.append(text)
+        return list(dict.fromkeys(values))
+    raise ValueError(f"validation.{field} must be a string or list of strings.")
+
+
 def _validation_tasks_from_mapping(mapping: dict[str, Any]) -> list[str]:
     for key in _VALIDATION_TASK_KEYS:
         if key in mapping:
@@ -597,7 +615,23 @@ def artifact_validation_policy(manifest: dict[str, Any]) -> dict[str, Any]:
     tasks = _validation_tasks_from_mapping(policy)
     if tasks:
         policy["tasks"] = tasks
+    for key in ("pytest_tests", "pytest_markers", "pytest_args"):
+        if key in policy:
+            policy[key] = _normalize_validation_string_list(policy.get(key), key)
+    if "pytest_k" in policy:
+        policy["pytest_k"] = str(policy.get("pytest_k") or "").strip()
+    if "pytest_include_defaults" in policy:
+        policy["pytest_include_defaults"] = bool(policy.get("pytest_include_defaults"))
     return policy
+
+
+def artifact_validation_pytest_selection(manifest: dict[str, Any]) -> dict[str, Any]:
+    policy = artifact_validation_policy(manifest)
+    payload: dict[str, Any] = {}
+    for key in ("pytest_tests", "pytest_markers", "pytest_k", "pytest_args", "pytest_include_defaults"):
+        if key in policy:
+            payload[key] = policy[key]
+    return payload
 
 
 def artifact_validation_tasks(manifest: dict[str, Any]) -> list[str]:
@@ -816,6 +850,20 @@ def _validate_validation_policy(manifest: dict[str, Any], messages: list[str], *
     if "test_profile" in raw and not isinstance(raw.get("test_profile"), str):
         ok = False
         messages.append("validation.test_profile must be a string.")
+    for key in ("pytest_tests", "pytest_markers", "pytest_args"):
+        if key not in raw:
+            continue
+        try:
+            _normalize_validation_string_list(raw.get(key), key)
+        except ValueError as exc:
+            ok = False
+            messages.append(str(exc))
+    if "pytest_k" in raw and not isinstance(raw.get("pytest_k"), str):
+        ok = False
+        messages.append("validation.pytest_k must be a string.")
+    if "pytest_include_defaults" in raw and not isinstance(raw.get("pytest_include_defaults"), bool):
+        ok = False
+        messages.append("validation.pytest_include_defaults must be a boolean.")
     for key in _VALIDATION_TASK_KEYS:
         if key not in raw:
             continue

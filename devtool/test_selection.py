@@ -60,6 +60,16 @@ class TestSelection:
     changed: bool = False
     changed_from: str = "HEAD"
     instrumented: bool = False
+    # Pytest-native selection. ``pytest_tests`` is intentionally distinct from
+    # the language-neutral ``ids`` field: its presence means Devtool must treat
+    # the listed node IDs/files as the complete pytest execution scope unless
+    # ``pytest_include_defaults`` is explicitly enabled.
+    pytest_tests: list[str] = field(default_factory=list)
+    pytest_markers: list[str] = field(default_factory=list)
+    pytest_k: str = ""
+    pytest_args: list[str] = field(default_factory=list)
+    pytest_include_defaults: bool = False
+    pytest_source: str = ""
 
     def active(self) -> bool:
         return any((
@@ -77,7 +87,15 @@ class TestSelection:
             self.failed,
             self.changed,
             self.instrumented,
+            self.pytest_tests,
+            self.pytest_markers,
+            self.pytest_k,
+            self.pytest_args,
         ))
+
+    def exact_pytest(self) -> bool:
+        """Whether pytest has an explicit complete selector list."""
+        return bool(self.pytest_tests)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -92,8 +110,14 @@ def _list(value: Any) -> list[str]:
 
 
 def resolve_test_selection(config: ProjectConfig) -> TestSelection:
-    raw = config.runner_options.get("test_selection", {})
-    raw = dict(raw) if isinstance(raw, dict) else {}
+    raw_value = config.runner_options.get("test_selection", {})
+    raw = dict(raw_value) if isinstance(raw_value, dict) else {}
+
+    python_options = config.runner_options.get("python", {})
+    python_options = dict(python_options) if isinstance(python_options, dict) else {}
+    pytest_defaults = python_options.get("pytest", {})
+    pytest_defaults = dict(pytest_defaults) if isinstance(pytest_defaults, dict) else {}
+
     selection = TestSelection(
         profile=str(raw.get("profile") or "").strip(),
         selectors=_list(raw.get("selectors") or raw.get("select")),
@@ -110,6 +134,12 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
         changed=bool(raw.get("changed", False)),
         changed_from=str(raw.get("changed_from") or "HEAD").strip() or "HEAD",
         instrumented=bool(raw.get("instrumented", False)),
+        pytest_tests=_list(pytest_defaults.get("tests")),
+        pytest_markers=_list(pytest_defaults.get("markers") or pytest_defaults.get("marker")),
+        pytest_k=str(pytest_defaults.get("k") or "").strip(),
+        pytest_args=_list(pytest_defaults.get("args")),
+        pytest_include_defaults=bool(pytest_defaults.get("include_defaults", False)),
+        pytest_source="project-config" if _list(pytest_defaults.get("tests")) else "",
     )
 
     profiles = config.runner_options.get("test_profiles", {})
@@ -135,6 +165,32 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
         selection.changed = selection.changed or str(profile.get("selection") or "").strip().lower() == "changed"
         selection.changed_from = str(profile.get("base") or selection.changed_from).strip() or "HEAD"
         selection.instrumented = selection.instrumented or bool(profile.get("instrumented", False))
+        if "pytest_tests" in profile:
+            selection.pytest_tests = _list(profile.get("pytest_tests"))
+            selection.pytest_source = f"profile:{selection.profile}" if selection.pytest_tests else ""
+        if "pytest_markers" in profile:
+            selection.pytest_markers = _list(profile.get("pytest_markers"))
+        if "pytest_k" in profile:
+            selection.pytest_k = str(profile.get("pytest_k") or "").strip()
+        if "pytest_args" in profile:
+            selection.pytest_args = _list(profile.get("pytest_args"))
+        if "pytest_include_defaults" in profile:
+            selection.pytest_include_defaults = bool(profile.get("pytest_include_defaults"))
+
+    # Invocation/artifact selection is deliberately applied after profiles and
+    # project defaults. This gives explicit requests the same precedence model
+    # as repeated Gradle --task values.
+    if "pytest_tests" in raw:
+        selection.pytest_tests = _list(raw.get("pytest_tests"))
+        selection.pytest_source = str(raw.get("pytest_source") or "explicit").strip() or "explicit"
+    if "pytest_markers" in raw:
+        selection.pytest_markers = _list(raw.get("pytest_markers"))
+    if "pytest_k" in raw:
+        selection.pytest_k = str(raw.get("pytest_k") or "").strip()
+    if "pytest_args" in raw:
+        selection.pytest_args = _list(raw.get("pytest_args"))
+    if "pytest_include_defaults" in raw:
+        selection.pytest_include_defaults = bool(raw.get("pytest_include_defaults"))
 
     if selection.failed:
         failed_ids = load_failed_test_ids(config.repo_root)
@@ -148,7 +204,10 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
         selection.paths.extend(changed)
 
     # Stable de-duplication keeps generated commands deterministic.
-    for name in ("selectors", "ids", "tags", "exclude_tags", "paths", "classes", "methods", "tasks"):
+    for name in (
+        "selectors", "ids", "tags", "exclude_tags", "paths", "classes",
+        "methods", "tasks", "pytest_tests", "pytest_markers", "pytest_args",
+    ):
         values = getattr(selection, name)
         setattr(selection, name, list(dict.fromkeys(values)))
     selection.task = selection.tasks[0] if selection.tasks else ""
@@ -385,6 +444,108 @@ def _gradle_module(path: Path, root: Path) -> str:
     return ":".join(parts[:index]) or root.name
 
 
+@dataclass(frozen=True, slots=True)
+class TestDiscoveryResult:
+    tests: tuple[TestDescriptor, ...]
+    source: str
+    error: str = ""
+
+
+def _parse_pytest_collect_output(root: Path, text: str) -> list[TestDescriptor]:
+    """Parse ``pytest --collect-only -q`` node IDs without depending on plugins."""
+    source_catalog = {item.id: item for item in discover_python_tests(root)}
+    tests: list[TestDescriptor] = []
+    seen: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or "::" not in line or line.startswith(("=", "<", "ERROR", "WARNING")):
+            continue
+        # Quiet collection output is one nodeid per line. Strip optional status
+        # prefixes emitted by a few plugins but never reinterpret whitespace
+        # inside parametrized IDs.
+        nodeid = line
+        if nodeid.startswith(("PASSED ", "FAILED ", "SKIPPED ")):
+            nodeid = nodeid.split(" ", 1)[1].strip()
+        if "::" not in nodeid or nodeid in seen:
+            continue
+        file_part = nodeid.split("::", 1)[0].replace("\\", "/")
+        if not file_part.endswith(".py"):
+            continue
+        seen.add(nodeid)
+        source = source_catalog.get(nodeid)
+        parts = nodeid.split("::")
+        name = parts[-1]
+        # Parametrization suffix belongs to the executable node ID but not the
+        # display name used for search/grouping.
+        display_name = name.split("[", 1)[0]
+        suite_parts = parts[1:-1]
+        suite = ".".join([file_part[:-3].replace("/", "."), *suite_parts])
+        tests.append(TestDescriptor(
+            id=nodeid,
+            name=source.name if source else display_name,
+            suite=source.suite if source else suite,
+            project=root.name,
+            framework="pytest",
+            test_type=source.test_type if source else "unit",
+            tags=source.tags if source else (),
+            file=source.file if source else file_part,
+            line=source.line if source else None,
+        ))
+    return tests
+
+
+def discover_pytest_runtime(config: ProjectConfig) -> TestDiscoveryResult:
+    """Collect pytest's real executable node IDs using the configured Python runner.
+
+    Collection is intentionally an opt-in UI/list operation; normal command
+    planning remains side-effect free and continues to use the source catalog
+    only for safe filter translation.
+    """
+    try:
+        from .project_runners import get_project_runner
+        runner = get_project_runner(config)
+        builder = getattr(runner, "build_test_collection_spec", None)
+        if not callable(builder):
+            return TestDiscoveryResult(tuple(discover_tests(config)), "source", "runner does not support native test collection")
+        spec = builder(config)
+        completed = subprocess.run(
+            list(spec.argv),
+            cwd=spec.cwd or str(config.repo_root),
+            env={**__import__("os").environ, **config.env, **spec.env},
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=90,
+        )
+        root = Path(config.project_root or config.repo_root).expanduser().resolve()
+        tests = _parse_pytest_collect_output(root, completed.stdout or "")
+        if completed.returncode in {0, 5} and tests:
+            return TestDiscoveryResult(tuple(sorted(tests, key=lambda item: item.id)), "pytest-collect")
+        source = tuple(discover_python_tests(root))
+        detail = (completed.stdout or "").strip()
+        if len(detail) > 2000:
+            detail = detail[-2000:]
+        return TestDiscoveryResult(source, "source-fallback", detail or f"pytest collection exited {completed.returncode}")
+    except (OSError, subprocess.TimeoutExpired, SystemExit) as exc:
+        root = Path(config.project_root or config.repo_root).expanduser().resolve()
+        return TestDiscoveryResult(tuple(discover_python_tests(root)), "source-fallback", str(exc))
+
+
+def discover_tests_for_ui(config: ProjectConfig) -> TestDiscoveryResult:
+    if config.kind == "python":
+        try:
+            from .project_runners import get_project_runner
+            runner = get_project_runner(config)
+            info_fn = getattr(runner, "_info", None)
+            framework = str(info_fn(config).framework if callable(info_fn) else "").strip().lower()
+        except (OSError, SystemExit, ValueError):
+            framework = ""
+        if framework == "pytest":
+            return discover_pytest_runtime(config)
+    return TestDiscoveryResult(tuple(discover_tests(config)), "source")
+
+
 def discover_tests(config: ProjectConfig) -> list[TestDescriptor]:
     root = Path(config.project_root or config.repo_root).resolve()
     if config.kind == "python":
@@ -531,7 +692,7 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
         # Selection syntax is framework-specific. Never append pytest's -k/-m
         # switches to tox, nox, unittest, or an arbitrary custom command.
         if framework == "pytest":
-            direct = [*selection.ids]
+            direct = [*selection.pytest_tests, *selection.ids]
             if selection.paths:
                 if catalog and not selected_catalog:
                     raise SystemExit("Python test selection matched zero discovered tests; refusing to run the full suite.")
@@ -542,19 +703,33 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
             if selected_catalog and (selection.classes or selection.methods):
                 direct.extend(item.id for item in selected_catalog)
             argv.extend(dict.fromkeys(direct))
-            expressions = [*selection.selectors, *selection.classes, *selection.methods]
+
+            generic_expressions = [*selection.selectors, *selection.classes, *selection.methods]
             if selection.native_filter:
-                expressions.append(selection.native_filter)
-            if expressions:
-                argv.extend(["-k", " or ".join(f"({value})" for value in expressions)])
+                generic_expressions.append(selection.native_filter)
+            generic_k = " or ".join(f"({value})" for value in generic_expressions if value)
+            if generic_k and selection.pytest_k:
+                argv.extend(["-k", f"({generic_k}) and ({selection.pytest_k})"])
+            elif generic_k:
+                argv.extend(["-k", generic_k])
+            elif selection.pytest_k:
+                argv.extend(["-k", selection.pytest_k])
+
             positive_markers = [value for value in selection.tags if value]
             negative_markers = [value for value in selection.exclude_tags if value]
             marker_parts: list[str] = []
             if positive_markers:
                 marker_parts.append("(" + " or ".join(positive_markers) + ")")
             marker_parts.extend(f"not {value}" for value in negative_markers)
+            marker_parts.extend(f"({value})" for value in selection.pytest_markers if value)
             if marker_parts:
                 argv.extend(["-m", " and ".join(marker_parts)])
+            argv.extend(selection.pytest_args)
+            metadata["pytest_selection_mode"] = "explicit" if selection.exact_pytest() else "filtered"
+            metadata["pytest_selected_tests"] = list(selection.pytest_tests)
+            metadata["pytest_selected_count"] = len(selection.pytest_tests)
+            metadata["pytest_selection_source"] = selection.pytest_source
+            metadata["pytest_include_defaults"] = bool(selection.pytest_include_defaults)
         else:
             raise SystemExit(
                 f"Test selection is not implemented safely for Python framework '{framework}'; "

@@ -87,6 +87,11 @@ _GCC_CLANG = re.compile(
     re.IGNORECASE,
 )
 _PYTEST_FAILURE = re.compile(r"^FAILED\s+(?P<file>[^:]+)(?:::(?P<node>.+))?\s+-\s+(?P<message>.+)$")
+_PYTEST_SELECTOR_NOT_FOUND = re.compile(
+    r"^ERROR:\s+(?:file or directory not found|not found):\s+(?P<selector>.+)$",
+    re.IGNORECASE,
+)
+_PYTEST_NO_TESTS = re.compile(r"^no tests ran(?: in .+)?$", re.IGNORECASE)
 _PYTEST_WARNING = re.compile(
     r"^(?P<file>.+?):(?P<line>\d+):\s+"
     r"(?P<category>[A-Za-z_][A-Za-z0-9_.]*Warning):\s+(?P<message>.+)$"
@@ -248,6 +253,30 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
                 ))
                 index += 1
                 continue
+
+        selector_missing = _PYTEST_SELECTOR_NOT_FOUND.match(stripped)
+        if selector_missing:
+            selector = selector_missing.group("selector").strip()
+            issues.append(Issue(
+                "error",
+                command_name,
+                relative_path(selector.split("::", 1)[0]),
+                "PYTEST_SELECTOR_NOT_FOUND",
+                f"Pytest selector did not match an executable test: {selector}",
+            ))
+            index += 1
+            continue
+
+        if _PYTEST_NO_TESTS.match(stripped):
+            issues.append(Issue(
+                "error",
+                command_name,
+                "-",
+                "PYTEST_NO_TESTS",
+                "Pytest collected no tests for the requested selection.",
+            ))
+            index += 1
+            continue
 
         # Pytest's warnings summary uses a source-location form rather than a
         # literal ``warning:`` prefix.  Parse it into the same structured issue

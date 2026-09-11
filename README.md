@@ -220,8 +220,9 @@ The runner builds the app and androidTest APKs, installs both through `pm` (or
 ADB for an external serial), resolves AndroidJUnitRunner, emits structured test
 results, and removes the temporary test package unless configured otherwise.
 
-Test selection is now shared by .NET, Gradle, Android instrumentation, and
-Python:
+Test selection is shared by .NET, Gradle, Android instrumentation, and
+Python. Pytest additionally supports repeatable exact node selection, including
+files, classes, functions, methods, and parametrized node IDs:
 
 ```bash
 devtool test --list-tests
@@ -229,7 +230,18 @@ devtool test --profile quick
 devtool test --select parser --exclude-tag slow
 devtool test --failed
 devtool test --changed --changed-from origin/main
+
+devtool validate \
+  --pytest-test tests/test_auth.py::test_login \
+  --pytest-test tests/test_api.py::TestUsers::test_create
 ```
+
+Exact `--pytest-test` selection suppresses configured/default/affected pytest
+targets unless `--pytest-include-defaults` is explicitly supplied. Pytest
+markers, `-k` expressions, and structured extra argv are available through
+`--pytest-marker`, `--pytest-k`, and repeatable `--pytest-arg`. The validation
+cockpit can refresh native `pytest --collect-only -q` results and multi-select
+executable node IDs.
 
 Python projects now receive reproducible manager-aware environments, strict
 configuration parsing, affected-file tests and lint, validator dependency

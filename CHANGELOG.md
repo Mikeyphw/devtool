@@ -1,3 +1,12 @@
+## 2026-09-10 - TS00 full pytest test-selection parity
+
+- Added repeatable `--pytest-test` exact-node selection to test, validation, persistent validation, and artifact-validation command paths, with file/class/function/method/parametrized-node support.
+- Exact pytest selection is exclusive by default: configured/default/affected pytest targets are suppressed unless `--pytest-include-defaults` is explicitly requested.
+- Added structured `--pytest-marker`, `--pytest-k`, and repeatable `--pytest-arg` handling without shell-string construction.
+- Added `[python.pytest]` defaults, profile-level pytest selection, schema-v2 artifact pytest-selection metadata, CLI-over-artifact precedence, and deferred-validation persistence.
+- Added native `pytest --collect-only -q` discovery with source-catalog fallback, terminal multi-select/refresh controls, GTK command-model fields, completion, machine metadata, and structured pytest selection/empty-collection diagnostics.
+- Added TS00 regression coverage and expanded test-selection documentation.
+
 
 ## Devtool validation continue-by-default hotfix
 

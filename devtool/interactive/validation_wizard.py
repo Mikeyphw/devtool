@@ -78,6 +78,11 @@ class ValidationDraft:
     classes: list[str] = field(default_factory=list)
     methods: list[str] = field(default_factory=list)
     test_filter: str = ""
+    pytest_tests: list[str] = field(default_factory=list)
+    pytest_markers: list[str] = field(default_factory=list)
+    pytest_k: str = ""
+    pytest_args: list[str] = field(default_factory=list)
+    pytest_include_defaults: bool = False
     tasks: list[str] = field(default_factory=list)
     failed_tests: bool = False
     changed_tests: bool = False
@@ -330,6 +335,12 @@ class ValidationDraft:
         _repeat(argv, "--class", self.classes)
         _repeat(argv, "--method", self.methods)
         _pair(argv, "--filter", self.test_filter)
+        _repeat(argv, "--pytest-test", self.pytest_tests)
+        _repeat(argv, "--pytest-marker", self.pytest_markers)
+        _pair(argv, "--pytest-k", self.pytest_k)
+        _repeat(argv, "--pytest-arg", self.pytest_args)
+        if self.pytest_include_defaults:
+            argv.append("--pytest-include-defaults")
         _repeat(argv, "--task", self.tasks)
         if self.failed_tests:
             argv.append("--failed")
@@ -519,7 +530,7 @@ class ValidationDraft:
 
     def summary_rows(self) -> list[tuple[str, Any]]:
         scope = self.validation_scope or ("exact " + self.phase_only if self.phase_only else "-")
-        tests = self.test_profile or ", ".join(self.tasks or self.selectors or self.test_ids) or (
+        tests = self.test_profile or ", ".join(self.tasks or self.pytest_tests or self.selectors or self.test_ids) or (
             "failed" if self.failed_tests else "changed" if self.changed_tests else "all configured"
         )
         return [

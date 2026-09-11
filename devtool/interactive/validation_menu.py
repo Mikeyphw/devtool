@@ -601,6 +601,71 @@ def _configure_phase_scope(ui: TerminalUI, draft: ValidationDraft, catalog: Vali
     return True
 
 
+def _configure_pytest(ui: TerminalUI, draft: ValidationDraft, catalog: ValidationCatalog) -> bool:
+    """Configure pytest-native selection without perturbing the legacy test-menu numbering."""
+    while True:
+        selected = ui.choose([
+            Choice("tests", "Exact pytest tests", _list_label(draft.pytest_tests)),
+            Choice("refresh", "Refresh pytest collection", catalog.pytest_discovery_source or "collect executable pytest node IDs"),
+            Choice("markers", "Marker expressions", _list_label(draft.pytest_markers)),
+            Choice("k", "-k expression", draft.pytest_k or "none"),
+            Choice("args", "Additional pytest arguments", _list_label(draft.pytest_args)),
+            Choice(
+                "defaults",
+                "Include configured/default pytest targets",
+                "enabled" if draft.pytest_include_defaults else "disabled (exact selection only)",
+                disabled=not draft.pytest_tests,
+            ),
+            Choice("done", "Done", "Return to test selection."),
+        ], prompt="pytest", header="Configure pytest-native selection")
+        if selected is None or selected.key == "done":
+            return True
+        if selected.key == "tests":
+            if not catalog.pytest_tests:
+                refreshed = build_catalog(catalog.config, include_runtime_tests=True)
+                catalog.pytest_tests = refreshed.pytest_tests
+                catalog.pytest_discovery_source = refreshed.pytest_discovery_source
+                catalog.pytest_discovery_error = refreshed.pytest_discovery_error
+            if catalog.pytest_discovery_error:
+                ui.page(
+                    "# Pytest collection notice\n\n"
+                    f"Source: `{catalog.pytest_discovery_source or 'unknown'}`\n\n"
+                    f"```text\n{catalog.pytest_discovery_error}\n```"
+                )
+            if catalog.pytest_tests:
+                value = ui.choose(
+                    [Choice(item, item, "pytest executable node ID") for item in catalog.pytest_tests],
+                    prompt="pytest tests",
+                    multi=True,
+                )
+                if value:
+                    draft.pytest_tests = list(value.keys)
+                    draft.pytest_include_defaults = False
+            else:
+                draft.pytest_tests = _ask_csv(ui, "Pytest node IDs/files", draft.pytest_tests)
+                if draft.pytest_tests:
+                    draft.pytest_include_defaults = False
+        elif selected.key == "refresh":
+            refreshed = build_catalog(catalog.config, include_runtime_tests=True)
+            catalog.pytest_tests = refreshed.pytest_tests
+            catalog.pytest_discovery_source = refreshed.pytest_discovery_source
+            catalog.pytest_discovery_error = refreshed.pytest_discovery_error
+            if catalog.pytest_discovery_error:
+                ui.page(
+                    "# Pytest collection notice\n\n"
+                    f"Source: `{catalog.pytest_discovery_source or 'unknown'}`\n\n"
+                    f"```text\n{catalog.pytest_discovery_error}\n```"
+                )
+        elif selected.key == "markers":
+            draft.pytest_markers = _ask_csv(ui, "Pytest -m expressions", draft.pytest_markers)
+        elif selected.key == "k":
+            draft.pytest_k = ui.ask("Pytest -k expression", default=draft.pytest_k)
+        elif selected.key == "args":
+            draft.pytest_args = _ask_csv(ui, "Additional pytest argv values", draft.pytest_args)
+        elif selected.key == "defaults":
+            draft.pytest_include_defaults = not draft.pytest_include_defaults
+
+
 def _configure_tests(ui: TerminalUI, draft: ValidationDraft, catalog: ValidationCatalog) -> bool:
     selected = ui.choose([
         Choice("all", "All configured tests", "Clear interactive selectors and use repository defaults."),
@@ -617,6 +682,9 @@ def _configure_tests(ui: TerminalUI, draft: ValidationDraft, catalog: Validation
         Choice("changed", "Tests related to changes", f"enabled from {draft.changed_from}" if draft.changed_tests else "disabled"),
         Choice("instrumented", "Android instrumentation", "enabled" if draft.instrumented else "disabled"),
         Choice("done", "Done", "Keep the current test selection."),
+        # Deliberately placed after Done so the established numbered-fallback
+        # positions remain stable for scripted/keyboard users.
+        Choice("pytest", "Pytest selection", _list_label(draft.pytest_tests) if draft.pytest_tests else "native exact tests and filters", disabled=catalog.config.kind != "python"),
     ], prompt="tests", header="Choose a test selector to configure")
     if selected is None:
         return False
@@ -660,6 +728,8 @@ def _configure_tests(ui: TerminalUI, draft: ValidationDraft, catalog: Validation
             draft.changed_from = ui.ask("Changed-from Git revision", default=draft.changed_from or "HEAD")
     elif key == "instrumented":
         draft.instrumented = not draft.instrumented
+    elif key == "pytest":
+        _configure_pytest(ui, draft, catalog)
     if key != "done":
         return _configure_tests(ui, draft, catalog)
     return True
@@ -1334,6 +1404,11 @@ def _clear_test_selection(draft: ValidationDraft) -> None:
     draft.classes = []
     draft.methods = []
     draft.test_filter = ""
+    draft.pytest_tests = []
+    draft.pytest_markers = []
+    draft.pytest_k = ""
+    draft.pytest_args = []
+    draft.pytest_include_defaults = False
     draft.tasks = []
     draft.failed_tests = False
     draft.changed_tests = False

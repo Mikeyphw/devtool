@@ -70,6 +70,11 @@ class DevtoolCommandDraft:
     test_class: str = ""
     test_method: str = ""
     test_filter: str = ""
+    pytest_tests: list[str] = field(default_factory=list)
+    pytest_markers: list[str] = field(default_factory=list)
+    pytest_k: str = ""
+    pytest_args: list[str] = field(default_factory=list)
+    pytest_include_defaults: bool = False
     test_tasks: list[str] = field(default_factory=list)
     list_tests: bool = False
     failed: bool = False
@@ -165,6 +170,19 @@ class DevtoolCommandDraft:
                 argv.extend(["--method", self.test_method.strip()])
             if self.test_filter.strip():
                 argv.extend(["--filter", self.test_filter.strip()])
+            for value in self.pytest_tests:
+                if value:
+                    argv.extend(["--pytest-test", value])
+            for value in self.pytest_markers:
+                if value:
+                    argv.extend(["--pytest-marker", value])
+            if self.pytest_k.strip():
+                argv.extend(["--pytest-k", self.pytest_k.strip()])
+            for value in self.pytest_args:
+                if value:
+                    argv.extend(["--pytest-arg", value])
+            if self.pytest_include_defaults:
+                argv.append("--pytest-include-defaults")
             for value in self.test_tasks:
                 if value:
                     argv.extend(["--task", value])

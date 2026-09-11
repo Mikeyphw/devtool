@@ -42,6 +42,7 @@ from .artifacts import (
     artifact_solution,
     artifact_target,
     artifact_validation_policy,
+    artifact_validation_pytest_selection,
     artifact_validation_task_declaration,
     artifact_validation_tasks,
     artifact_workspaces,
@@ -563,7 +564,8 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if name == "test":
             cmd.add_argument("--no-build", action="store_true", default=argparse.SUPPRESS, help="Pass --no-build to dotnet test")
-            cmd.add_argument("--list-tests", "--list", action="store_true", help="Discover and list tests without executing them")
+            cmd.add_argument("--list-tests", "--list", action="store_true", help="Discover and list tests without executing them; pytest uses native --collect-only discovery")
+            _add_pytest_selection_flags(cmd)
             cmd.add_argument("--profile", default="", help="Saved test profile from .devtool.toml")
             cmd.add_argument("--select", action="append", default=[], help="Select a type, suite, tag, class, or name; repeatable")
             cmd.add_argument("--id", dest="test_ids", action="append", default=[], help="Select an exact framework test ID; repeatable")
@@ -1071,7 +1073,49 @@ def _add_validation_resource_override_flags(cmd: argparse.ArgumentParser) -> Non
     daemon.add_argument("--no-daemon", dest="validation_daemon", action="store_false", help="Disable the Gradle daemon during validation")
 
 
+def _add_pytest_selection_flags(cmd: argparse.ArgumentParser) -> None:
+    """Add pytest-native selectors shared by test/validation/apply surfaces."""
+    cmd.add_argument(
+        "--pytest-test",
+        dest="pytest_tests",
+        action="append",
+        default=[],
+        metavar="NODEID",
+        help="Run exactly this pytest file/node ID; repeatable. Suppresses default/affected pytest targets unless --pytest-include-defaults is set.",
+    )
+    cmd.add_argument(
+        "--pytest-marker",
+        dest="pytest_markers",
+        action="append",
+        default=[],
+        metavar="EXPR",
+        help="Add a pytest -m marker expression; repeatable expressions are combined with AND.",
+    )
+    cmd.add_argument(
+        "--pytest-k",
+        dest="pytest_k",
+        default="",
+        metavar="EXPR",
+        help="Apply a pytest -k expression in addition to explicit pytest tests/selectors.",
+    )
+    cmd.add_argument(
+        "--pytest-arg",
+        dest="pytest_args",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help="Pass one structured argument directly to pytest; repeatable (for example --pytest-arg=--maxfail=1).",
+    )
+    cmd.add_argument(
+        "--pytest-include-defaults",
+        dest="pytest_include_defaults",
+        action="store_true",
+        help="Keep configured/affected default pytest targets in addition to explicit --pytest-test selectors.",
+    )
+
+
 def _add_validation_test_selection_flags(cmd: argparse.ArgumentParser) -> None:
+    _add_pytest_selection_flags(cmd)
     cmd.add_argument("--select", action="append", default=[], help="Select tests by type, suite, tag, class, or name during validation; repeatable")
     cmd.add_argument("--id", dest="test_ids", action="append", default=[], help="Select an exact framework test ID during validation; repeatable")
     cmd.add_argument("--tag", action="append", default=[], help="Include tests with this tag/trait/annotation during validation; repeatable")
@@ -2463,6 +2507,26 @@ def _apply_declared_validation_tasks(args: argparse.Namespace, manifest: dict, *
     args._devtool_validation_task_source = "artifact-manifest"
 
 
+def _apply_declared_pytest_selection(args: argparse.Namespace, manifest: dict, *, active: bool) -> None:
+    """Apply artifact-declared pytest selectors without overriding explicit CLI fields."""
+    if not active:
+        return
+    declared = artifact_validation_pytest_selection(manifest)
+    if not declared:
+        return
+    if "pytest_tests" in declared and not bool(getattr(args, "_devtool_cli_pytest_test_explicit", False)):
+        args.pytest_tests = list(declared.get("pytest_tests") or [])
+        args._devtool_pytest_selection_source = "artifact-manifest"
+    if "pytest_markers" in declared and not bool(getattr(args, "_devtool_cli_pytest_marker_explicit", False)):
+        args.pytest_markers = list(declared.get("pytest_markers") or [])
+    if "pytest_k" in declared and not bool(getattr(args, "_devtool_cli_pytest_k_explicit", False)):
+        args.pytest_k = str(declared.get("pytest_k") or "")
+    if "pytest_args" in declared and not bool(getattr(args, "_devtool_cli_pytest_arg_explicit", False)):
+        args.pytest_args = list(declared.get("pytest_args") or [])
+    if bool(declared.get("pytest_include_defaults", False)) and not bool(getattr(args, "pytest_include_defaults", False)):
+        args.pytest_include_defaults = True
+
+
 def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
     """Apply manifest defaults while preserving explicit CLI precedence."""
     cli_requested_validation = _validation_is_requested_by_args(args)
@@ -2500,6 +2564,7 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
             if not bool(validation.get("test", True)):
                 args.skip_test = True
         _apply_declared_validation_tasks(args, manifest, active=_validation_is_requested_by_args(args))
+        _apply_declared_pytest_selection(args, manifest, active=_validation_is_requested_by_args(args))
     if getattr(args, "no_validate", False) or getattr(args, "defer_validate", False):
         args.validate = False
 
@@ -3245,6 +3310,22 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
         values = getattr(args, attr, None)
         if values:
             selection[key] = list(values)
+    pytest_tests = _cli_string_list(getattr(args, "pytest_tests", None))
+    if pytest_tests:
+        selection["pytest_tests"] = pytest_tests
+        selection["pytest_source"] = "cli" if bool(getattr(args, "_devtool_cli_pytest_test_explicit", False)) else str(getattr(args, "_devtool_pytest_selection_source", "explicit") or "explicit")
+    pytest_markers = _cli_string_list(getattr(args, "pytest_markers", None))
+    if pytest_markers:
+        selection["pytest_markers"] = pytest_markers
+    pytest_k = str(getattr(args, "pytest_k", "") or "").strip()
+    if pytest_k:
+        selection["pytest_k"] = pytest_k
+    pytest_args = _cli_string_list(getattr(args, "pytest_args", None))
+    if pytest_args:
+        selection["pytest_args"] = pytest_args
+    if bool(getattr(args, "pytest_include_defaults", False)):
+        selection["pytest_include_defaults"] = True
+
     filter_value = str(getattr(args, "test_filter", "") or "").strip()
     if filter_value:
         selection["filter"] = filter_value
@@ -3265,8 +3346,9 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
 
 
 def _print_test_catalog(config: ProjectConfig, args: argparse.Namespace, *, as_json: bool) -> int:
-    from .test_selection import discover_tests, resolve_test_selection, select_catalog
-    catalog = discover_tests(config)
+    from .test_selection import discover_tests_for_ui, resolve_test_selection, select_catalog
+    discovery = discover_tests_for_ui(config)
+    catalog = list(discovery.tests)
     selected = select_catalog(catalog, resolve_test_selection(config))
     if as_json:
         print(json.dumps({
@@ -3275,13 +3357,18 @@ def _print_test_catalog(config: ProjectConfig, args: argparse.Namespace, *, as_j
             "variant": config.variant,
             "discovered": len(catalog),
             "selected": len(selected),
+            "discovery_source": discovery.source,
+            "discovery_error": discovery.error,
+            "test_selection": resolve_test_selection(config).as_dict(),
             "tests": [item.as_dict() for item in selected],
         }, indent=None if getattr(args, "machine", "") == "compact" else 2, ensure_ascii=False))
         return 0
     if not catalog:
         console.print("[yellow]No source-discoverable tests found.[/yellow]")
         return 0
-    console.print(f"[bold]Tests[/bold]  selected {len(selected)} of {len(catalog)}")
+    console.print(f"[bold]Tests[/bold]  selected {len(selected)} of {len(catalog)} [dim]({discovery.source})[/dim]")
+    if discovery.error:
+        console.print(f"[yellow]Native discovery fallback:[/yellow] {discovery.error.splitlines()[-1]}")
     for item in selected:
         tags = f" [{', '.join(item.tags)}]" if item.tags else ""
         location = f"{item.file}:{item.line}" if item.line else item.file
@@ -4304,6 +4391,12 @@ def _validation_apply_context(args: argparse.Namespace, *, transaction_path: str
         "exclusive_validation_tasks": list(exclusive_tasks),
         "validation_tasks_declared": bool(getattr(args, "_devtool_validation_tasks_declared", False) or getattr(args, "_devtool_cli_test_task_explicit", False)),
         "validation_task_source": ("cli" if bool(getattr(args, "_devtool_cli_test_task_explicit", False)) else str(getattr(args, "_devtool_validation_task_source", "") or "artifact-manifest")),
+        "pytest_tests": _cli_string_list(getattr(args, "pytest_tests", None)),
+        "pytest_markers": _cli_string_list(getattr(args, "pytest_markers", None)),
+        "pytest_k": str(getattr(args, "pytest_k", "") or ""),
+        "pytest_args": _cli_string_list(getattr(args, "pytest_args", None)),
+        "pytest_include_defaults": bool(getattr(args, "pytest_include_defaults", False)),
+        "pytest_selection_source": ("cli" if bool(getattr(args, "_devtool_cli_pytest_test_explicit", False)) else str(getattr(args, "_devtool_pytest_selection_source", "") or "artifact-manifest")),
         "artifact_script_in_plan": bool(validation_policy.get("script")) and not bool(getattr(args, "no_artifact_script", False)) and not exclusive_tasks,
         "target": str(getattr(args, "target", "") or artifact_target(manifest)),
         "solution": str(getattr(args, "solution", "") or artifact_solution(manifest)),
@@ -4360,6 +4453,18 @@ def _rehydrate_apply_validation_context(
         args._devtool_manifest_validation_tasks = list(context_tasks)
         args._devtool_validation_tasks_declared = True
         args._devtool_validation_task_source = str(context.get("validation_task_source") or "artifact-manifest")
+
+    if not bool(getattr(args, "_devtool_cli_pytest_test_explicit", False)) and context.get("pytest_tests") is not None:
+        args.pytest_tests = _cli_string_list(context.get("pytest_tests"))
+        args._devtool_pytest_selection_source = str(context.get("pytest_selection_source") or "stored-apply-context")
+    if not bool(getattr(args, "_devtool_cli_pytest_marker_explicit", False)) and context.get("pytest_markers") is not None:
+        args.pytest_markers = _cli_string_list(context.get("pytest_markers"))
+    if not bool(getattr(args, "_devtool_cli_pytest_k_explicit", False)) and context.get("pytest_k") is not None:
+        args.pytest_k = str(context.get("pytest_k") or "")
+    if not bool(getattr(args, "_devtool_cli_pytest_arg_explicit", False)) and context.get("pytest_args") is not None:
+        args.pytest_args = _cli_string_list(context.get("pytest_args"))
+    if bool(context.get("pytest_include_defaults", False)):
+        args.pytest_include_defaults = True
 
     if manifest:
         manifest_declared, manifest_tasks = artifact_validation_task_declaration(dict(manifest))
@@ -9120,6 +9225,10 @@ def _main_after_parse(
     args._devtool_cli_target_explicit = bool(str(getattr(args, "target", "") or "").strip())
     args._devtool_cli_solution_explicit = bool(str(getattr(args, "solution", "") or "").strip())
     args._devtool_cli_test_task_explicit = _argv_contains_option(parse_argv, ("--task", "--test-task"))
+    args._devtool_cli_pytest_test_explicit = _argv_contains_option(parse_argv, ("--pytest-test",))
+    args._devtool_cli_pytest_marker_explicit = _argv_contains_option(parse_argv, ("--pytest-marker",))
+    args._devtool_cli_pytest_k_explicit = _argv_contains_option(parse_argv, ("--pytest-k",))
+    args._devtool_cli_pytest_arg_explicit = _argv_contains_option(parse_argv, ("--pytest-arg",))
     _apply_artifact_manifest_defaults(args)
     _validate_apply_args(args, parser)
     effective_payload, _copy_mode = _validate_output_flags(args, parser)

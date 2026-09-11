@@ -1840,15 +1840,38 @@ class PythonRunner(ProjectRunner):
         values = [str(item) for item in changed] if isinstance(changed, (list, tuple, set)) else []
         return python_validation_scope(config.repo_root, values, self._info(config))
 
+    def build_test_collection_spec(self, config: ProjectConfig) -> CommandSpec:
+        """Plan native pytest collection for interactive/list-test discovery."""
+        info = self._info(config)
+        if info.framework != "pytest":
+            raise SystemExit(f"Native test collection is available only for pytest projects, not {info.framework or 'unknown'}.")
+        root = self._root(config)
+        argv = self._module(config, "pytest", "--collect-only", "-q")
+        return CommandSpec(
+            "test-collect",
+            argv,
+            env=self._env(config, isolated=True),
+            cwd=str(root),
+            metadata={
+                **_tool_metadata(self.kind, root, test_framework="pytest"),
+                "test_collection": True,
+                "test_collection_provider": "pytest",
+            },
+        )
+
     def _pytest_spec(self, config: ProjectConfig, *, targets: Iterable[str] = ()) -> CommandSpec:
-        from .test_selection import apply_test_selection
+        from .test_selection import apply_test_selection, resolve_test_selection
         root = self._root(config)
         options = self._options(config)
         report = root / ".devtool" / "reports" / "pytest.xml"
         coverage = options.get("coverage", {})
         coverage = dict(coverage) if isinstance(coverage, dict) else {}
         argv = self._module(config, "pytest", f"--junitxml={report}")
+        selection = resolve_test_selection(config)
         target_values = list(dict.fromkeys(str(item) for item in targets if str(item)))
+        defaults_suppressed = bool(selection.exact_pytest() and not selection.pytest_include_defaults)
+        if defaults_suppressed:
+            target_values = []
         argv.extend(target_values)
         if coverage:
             source = str(coverage.get("source") or ".")
@@ -1875,6 +1898,8 @@ class PythonRunner(ProjectRunner):
                 "coverage_report": str(root / ".devtool" / "reports" / "coverage.xml"),
                 "test_framework": "pytest",
                 "affected_test_targets": target_values,
+                "pytest_defaults_suppressed": defaults_suppressed,
+                "pytest_selection_mode": "explicit" if selection.exact_pytest() else "default",
             },
         )
         return apply_test_selection(config, spec)

@@ -1954,6 +1954,10 @@ def _render_run_workflow(
     add_entry("test_class", "Test class", str(draft.get("test_class") or ""))
     add_entry("test_method", "Test method", str(draft.get("test_method") or ""))
     add_entry("test_filter", "Native filter", str(draft.get("test_filter") or ""))
+    add_entry("pytest_tests", "Pytest tests", str(draft.get("pytest_tests") or ""), placeholder="exact node IDs/files; shell-split")
+    add_entry("pytest_markers", "Pytest markers", str(draft.get("pytest_markers") or ""), placeholder="pytest -m expressions")
+    add_entry("pytest_k", "Pytest -k", str(draft.get("pytest_k") or ""), placeholder="keyword expression")
+    add_entry("pytest_args", "Pytest arguments", str(draft.get("pytest_args") or ""), placeholder="e.g. --maxfail=1 -x")
     add_entry("environment", "Environment", str(draft.get("environment") or ""), placeholder="NAME=value OTHER='two words'")
     add_entry("extra_global_args", "Extra global args", str(draft.get("extra_global_args") or ""))
     add_entry("extra_operation_args", "Extra operation args", str(draft.get("extra_operation_args") or ""))
@@ -1991,6 +1995,7 @@ def _render_run_workflow(
     add_check("keep_artifact", "Keep artifact", bool(draft.get("keep_artifact", False)))
     add_check("no_manifest_check", "Skip manifest check", bool(draft.get("no_manifest_check", False)))
     add_check("list_tests", "List tests", bool(draft.get("list_tests", False)))
+    add_check("pytest_include_defaults", "Pytest + defaults", bool(draft.get("pytest_include_defaults", False)))
     add_check("failed", "Failed tests", bool(draft.get("failed", False)))
     add_check("changed", "Changed tests", bool(draft.get("changed", False)))
     add_check("instrumented", "Instrumented", bool(draft.get("instrumented", False)))
@@ -2108,6 +2113,11 @@ def _render_run_workflow(
             "test_class": entry_text("test_class"),
             "test_method": entry_text("test_method"),
             "test_filter": entry_text("test_filter"),
+            "pytest_tests": entry_text("pytest_tests"),
+            "pytest_markers": entry_text("pytest_markers"),
+            "pytest_k": entry_text("pytest_k"),
+            "pytest_args": entry_text("pytest_args"),
+            "pytest_include_defaults": check_value("pytest_include_defaults"),
             "test_tasks": entry_text("test_tasks"),
             "list_tests": check_value("list_tests"),
             "failed": check_value("failed"),

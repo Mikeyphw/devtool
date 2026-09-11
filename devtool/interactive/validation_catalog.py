@@ -26,6 +26,9 @@ class ValidationCatalog:
     configured_tasks: list[str] = field(default_factory=list)
     detected_tasks: list[str] = field(default_factory=list)
     task_error: str = ""
+    pytest_tests: list[str] = field(default_factory=list)
+    pytest_discovery_source: str = ""
+    pytest_discovery_error: str = ""
     plan_error: str = ""
 
     @property
@@ -56,7 +59,12 @@ class ValidationCatalog:
         return [item for item in self.phases if str(item.get("status")) in {"failed", "blocked", "interrupted"}]
 
 
-def build_catalog(config: ProjectConfig, *, include_runtime_tasks: bool = False) -> ValidationCatalog:
+def build_catalog(
+    config: ProjectConfig,
+    *,
+    include_runtime_tasks: bool = False,
+    include_runtime_tests: bool = False,
+) -> ValidationCatalog:
     session_payload: dict[str, Any] = {}
     plan: dict[str, Any] = {}
     plan_error = ""
@@ -92,6 +100,20 @@ def build_catalog(config: ProjectConfig, *, include_runtime_tasks: bool = False)
         runtime, task_error = runtime_gradle_tasks(config)
     tasks = sorted(dict.fromkeys([*configured, *detected, *runtime]))
 
+    pytest_tests: list[str] = []
+    pytest_discovery_source = ""
+    pytest_discovery_error = ""
+    if config.kind == "python":
+        from ..test_selection import discover_tests, discover_tests_for_ui
+        if include_runtime_tests:
+            discovery = discover_tests_for_ui(config)
+            pytest_tests = [item.id for item in discovery.tests if item.framework == "pytest"]
+            pytest_discovery_source = discovery.source
+            pytest_discovery_error = discovery.error
+        else:
+            pytest_tests = [item.id for item in discover_tests(config) if item.framework == "pytest"]
+            pytest_discovery_source = "source" if pytest_tests else ""
+
     return ValidationCatalog(
         config=config,
         session=session_payload,
@@ -103,6 +125,9 @@ def build_catalog(config: ProjectConfig, *, include_runtime_tasks: bool = False)
         configured_tasks=configured,
         detected_tasks=detected,
         task_error=task_error,
+        pytest_tests=pytest_tests,
+        pytest_discovery_source=pytest_discovery_source,
+        pytest_discovery_error=pytest_discovery_error,
         plan_error=plan_error,
     )
 
@@ -151,6 +176,7 @@ def refresh_catalog(
     project: str = "",
     project_type: str = "auto",
     include_runtime_tasks: bool = False,
+    include_runtime_tests: bool = False,
 ) -> ValidationCatalog:
     """Reload project context, durable status, plan, and task catalogs in-place."""
     fresh_config = load_project_config(
@@ -162,7 +188,11 @@ def refresh_catalog(
         project_override=project,
         kind_override=project_type or "auto",
     )
-    fresh = build_catalog(fresh_config, include_runtime_tasks=include_runtime_tasks)
+    fresh = build_catalog(
+        fresh_config,
+        include_runtime_tasks=include_runtime_tasks,
+        include_runtime_tests=include_runtime_tests,
+    )
     for name in ValidationCatalog.__dataclass_fields__:
         setattr(catalog, name, getattr(fresh, name))
     return catalog

@@ -212,6 +212,11 @@ _devtool_test_args() {
     '(--list --list-tests)'{--list,--list-tests}'[discover and list tests without executing]' \
     '--profile[saved test profile]:profile:_devtool_test_profiles' \
     '*--select[select a type, suite, tag, class, or name]:selector:' \
+    '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:' \
+    '*--pytest-marker[pytest -m marker expression]:marker expression:' \
+    '--pytest-k[pytest -k keyword expression]:keyword expression:' \
+    '*--pytest-arg[pass one structured argument directly to pytest]:pytest argument:' \
+    '--pytest-include-defaults[keep configured or affected default pytest targets with explicit pytest tests]' \
     '*--id[select an exact framework test ID]:test id:' \
     '*--tag[include a test tag or trait]:tag:' \
     '*--exclude-tag[exclude a test tag or trait]:tag:' \
@@ -245,6 +250,11 @@ _devtool_validation_args() {
     '--skip-test[skip project tests]' \
     '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
     '*--select[select tests by type, suite, tag, class, or name]:selector:' \
+    '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:' \
+    '*--pytest-marker[pytest -m marker expression]:marker expression:' \
+    '--pytest-k[pytest -k keyword expression]:keyword expression:' \
+    '*--pytest-arg[pass one structured argument directly to pytest]:pytest argument:' \
+    '--pytest-include-defaults[keep configured or affected default pytest targets with explicit pytest tests]' \
     '*--id[select an exact framework test ID]:test id:' \
     '*--tag[include a test tag or trait]:tag:' \
     '*--exclude-tag[exclude a test tag or trait]:tag:' \
@@ -332,6 +342,11 @@ _devtool_apply_args() {
     '--no-validate[disable validation requested by the artifact manifest]' \
     '--test-profile[saved test profile for artifact validation]:profile:_devtool_test_profiles' \
     '*--select[select tests by type, suite, tag, class, or name]:selector:' \
+    '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:' \
+    '*--pytest-marker[pytest -m marker expression]:marker expression:' \
+    '--pytest-k[pytest -k keyword expression]:keyword expression:' \
+    '*--pytest-arg[pass one structured argument directly to pytest]:pytest argument:' \
+    '--pytest-include-defaults[keep configured or affected default pytest targets with explicit pytest tests]' \
     '*--id[select an exact framework test ID]:test id:' \
     '*--tag[include a test tag or trait]:tag:' \
     '*--exclude-tag[exclude a test tag or trait]:tag:' \
@@ -561,7 +576,12 @@ _devtool() {
             '--skip-test[skip project tests]' \
             '--test-profile[saved test profile used by validation]:profile:_devtool_test_profiles' \
             '*--select[select tests by type, suite, tag, class, or name]:selector:' \
-            '*--id[select an exact framework test ID]:test id:' \
+            '*--pytest-test[run exactly this pytest file or node ID]:pytest node id:' \
+    '*--pytest-marker[pytest -m marker expression]:marker expression:' \
+    '--pytest-k[pytest -k keyword expression]:keyword expression:' \
+    '*--pytest-arg[pass one structured argument directly to pytest]:pytest argument:' \
+    '--pytest-include-defaults[keep configured or affected default pytest targets with explicit pytest tests]' \
+    '*--id[select an exact framework test ID]:test id:' \
             '*--tag[include a test tag or trait]:tag:' \
             '*--exclude-tag[exclude a test tag or trait]:tag:' \
             '*--path[select tests below a source path or package]:path:_files' \
