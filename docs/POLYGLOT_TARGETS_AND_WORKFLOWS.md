@@ -1,6 +1,6 @@
-# Polyglot targets, reusable jobs, and executable workflow DAGs (MP01–MP04)
+# Polyglot targets, reusable jobs, and executable workflow DAGs (MP01–MP06)
 
-MP01–MP04 separate **what a repository component is** from **which tool executes
+MP01–MP06 separate **what a repository component is** from **which tool executes
 one piece of work**, then turn target workflows into a validated dependency DAG
 that can compose multiple first-class runners in one lifecycle action.
 
@@ -197,7 +197,7 @@ Important compatibility rules:
 - topological ordering is stable by declaration order when multiple nodes are
   ready at the same time.
 
-The runtime is sequential in MP03/MP04 even when the graph exposes independent
+The runtime remains sequential through MP06 even when the graph exposes independent
 branches. MP09 is the roadmap step that enables conflict-safe parallel graph
 scheduling. The DAG is still meaningful now because failure propagation and
 persistent validation dependencies follow the real graph rather than list
@@ -234,11 +234,21 @@ rather than pretending validation is one generic command.
 
 ### `target:<target>#<action>`
 
-Cross-target references are represented and validated by MP03. MP04 refuses to
-execute them implicitly and reports that MP05 is required. This is deliberate:
-MP05 owns cross-target dependency expansion and deduplication, so MP04 does not
-create a hidden recursive `devtool` subprocess contract that would later need to
-be undone.
+MP05 makes cross-target references executable. `target:<name>#<action>` expands
+into the referenced target's declared workflow when present, or into that
+target's primary runner action as a fallback. Expansion happens inside one
+workspace DAG; Devtool never shells out to a recursive `devtool` process. The
+referenced target keeps its own root, runner options, environment, execution
+environment, and compatible variant, while command-line runtime overrides such
+as TS00 pytest selection remain inherited. Repeated references to the same
+`(target, action)` invocation are deduplicated, and cross-target cycles are
+rejected during config loading with the complete target/action cycle path.
+
+MP06 adds `[workspace]` and `[workspace.groups]`. Groups are ordered target sets,
+may nest other groups using `@name` or `group:name`, and may use `*` to include
+every configured target. Repeated `--group` selections are unioned with stable
+deduplication; `--all-targets` selects the whole workspace. Group execution
+plans one shared graph, so common prerequisites execute once.
 
 ## Failure and dependency semantics
 
@@ -373,15 +383,18 @@ Runner capabilities also treat an explicitly declared target workflow as
 support for that lifecycle action, even if the target's primary runner alone
 would not advertise it.
 
-## Roadmap boundary after MP04
+## Roadmap boundary after MP06
 
-MP01–MP04 now deliver the complete target identity, reusable-job, generic-DAG,
+MP01–MP06 now deliver the complete target identity, reusable-job, generic-DAG,
 and cross-runner execution foundation.
+
+Delivered in this series:
+
+- **MP05:** executable cross-target dependency expansion, cycle detection, and deduplication
+- **MP06:** workspace target groups and shared multi-target planning
 
 Still intentionally later:
 
-- **MP05:** cross-target dependency expansion and deduplication
-- **MP06:** workspace target groups
 - **MP07:** affected-target analysis
 - **MP08:** aggregate toolchain doctor/preflight for the resolved graph
 - **MP09:** input/output-aware safe parallel scheduling and reservations

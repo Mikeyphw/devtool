@@ -18,6 +18,7 @@ from ..hud import (
     state_metric_text,
 )
 from ..models import ProjectConfig
+from ..workspace import workspace_group_memberships
 from ..tasker import DEFAULT_TASKER_DIR
 from .history_store import DesktopHistoryStore
 from .hud_store import load_hud_snapshot
@@ -32,6 +33,8 @@ class DesktopTargetSummary:
     runner: str = ""
     platform: str = ""
     workflows: list[str] = field(default_factory=list)
+    groups: list[str] = field(default_factory=list)
+    default: bool = False
     root: str = ""
     build: str = ""
     test: str = ""
@@ -125,6 +128,7 @@ class DesktopControlCenterModel:
             self.config_path,
             target_name=self.target,
             variant_name=self.variant,
+            allow_ambiguous_target=not bool(self.target),
         )
 
     def snapshot(self) -> DesktopControlCenterSnapshot:
@@ -142,7 +146,16 @@ class DesktopControlCenterModel:
             diagnostic_runs = _raw_runs_from_ipc_or_hud(ipc, raw_state)
         active_runs = [_run_summary_dict(item) for item in raw_runs]
         diagnostics = _diagnostics_from_runs_and_events(diagnostic_runs, hud.events)
-        targets = [_target_summary_dict(name, target) for name, target in sorted(config.targets.items())]
+        memberships = workspace_group_memberships(config.workspace, config.targets)
+        targets = [
+            _target_summary_dict(
+                name,
+                target,
+                groups=memberships.get(name, ()),
+                is_default=name == config.workspace.default_target,
+            )
+            for name, target in sorted(config.targets.items())
+        ]
         return DesktopControlCenterSnapshot(
             repository={**_repository_dict(repo), "state_dir": str(self.state_dir)},
             project={
@@ -150,6 +163,8 @@ class DesktopControlCenterModel:
                 "runner": config.runner,
                 "platform": config.platform,
                 "jobs": sorted(config.jobs),
+                "workspace_default_target": config.workspace.default_target,
+                "workspace_groups": sorted(config.workspace.groups),
                 "selected_target": config.selected_target,
                 "variant": config.variant,
                 "execution_environment": config.execution_environment,
@@ -194,13 +209,21 @@ def _repository_dict(summary: RepositorySummary) -> dict[str, Any]:
     }
 
 
-def _target_summary_dict(name: str, target: Any) -> dict[str, Any]:
+def _target_summary_dict(
+    name: str,
+    target: Any,
+    *,
+    groups: tuple[str, ...] | list[str] = (),
+    is_default: bool = False,
+) -> dict[str, Any]:
     return asdict(DesktopTargetSummary(
         name=name,
         kind=str(getattr(target, "kind", "") or ""),
         runner=str(getattr(target, "effective_runner", "") or getattr(target, "runner", "") or getattr(target, "kind", "") or ""),
         platform=str(getattr(target, "platform", "") or ""),
         workflows=sorted(str(name) for name in getattr(target, "workflows", {}) or {}),
+        groups=[str(item) for item in groups],
+        default=bool(is_default),
         root=str(getattr(target, "root", "") or ""),
         build=str(getattr(target, "build_target", "") or getattr(target, "build_command", "") or ""),
         test=str(getattr(target, "test_target", "") or getattr(target, "test_command", "") or ""),

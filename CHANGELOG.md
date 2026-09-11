@@ -1,3 +1,12 @@
+## 2026-09-11 - MP05 + MP06 cross-target workspace graphs and target groups
+
+- Made `target:<name>#<action>` workflow references executable by flattening referenced target workflows or primary-runner fallbacks into one workspace DAG; no recursive Devtool subprocesses are used.
+- Preserved referenced-target roots, runner options, environments, execution environments, chroot/device settings, and compatible variants while inheriting CLI-time runtime overrides such as TS00 pytest selectors.
+- Added workspace-level `(target, action)` deduplication so shared prerequisites execute once and feed every dependent target, plus eager cross-target cycle rejection with complete target/action paths.
+- Added canonical `[workspace].default_target` with compatibility for legacy `[project].default_target`, plus validated `[workspace.groups]` with ordered target members, nested `@group`/`group:` references, and `*` expansion.
+- Added repeatable `--group` and `--all-targets` execution scopes, shared multi-target build/test/lint/validate/package planning, explicit target/matrix/group conflict diagnostics, and rejection of ambiguous multi-target `run`.
+- Added `groups|gr`, workspace membership/default metadata to `targets`, expanded cross-target graph inspection in `workflows --json` schema v3, GTK target-card workspace membership, HUD grouped-target labeling, zsh completion, config-template examples, manpage coverage, and workspace documentation.
+
 ## 2026-09-10 - MP03 + MP04 executable workflow DAG and cross-runner composition
 
 - Promoted target workflows from validated declarations to a generic executable DAG with stable node identity, dependency closure, deterministic topological ordering, branch/join support, and early cycle/unknown-dependency rejection.

@@ -113,6 +113,8 @@ from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
 from .repair_policy import repair_summary_lines_from_payload, repair_summary_lines_from_results
 from .runners import apply_overlay, apply_overlay_bundle, apply_snapshot, add_no_build_to_dotnet_test_specs, build_specs, build_validation_specs, dotnet_build_server_shutdown_enabled, get_project_runner, git_commit, run_specs, runner_capabilities, shutdown_dotnet_build_server, write_template_config
+from .workspace import WorkspaceConfigError, resolve_workspace_targets, workspace_as_dict, workspace_group_memberships
+from .workflow_runtime import build_workspace_specs, build_workspace_validation_specs, plan_workspace_targets
 from .summary import artifact_confirmation_text, build_json_summary, build_runner_json, render_artifact_manifest, render_status_table, render_summary, summarize_failure_output
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, TaskerProgressSink, build_tasker_sink, hud_disabled_by_environment, start_auto_hud
 from .toolchains import apply_destination_toolchain_wrapper, apply_toolchain_wrapper, toolchain_doctor_rows
@@ -378,6 +380,8 @@ def build_parser() -> argparse.ArgumentParser:
     project.add_argument("-r", "--repo", default=None, help="Repository root")
     project.add_argument("-c", "--config", default=None, help="Config file path")
     project.add_argument("--target", default="", help="Named target/profile from .devtool.toml")
+    project.add_argument("--group", action="append", default=[], help="Workspace target group from [workspace.groups]; repeatable")
+    project.add_argument("--all-targets", action="store_true", help="Select every configured workspace target")
     project.add_argument("--variant", default="", help="Build/test variant within the selected target")
     project.add_argument("--solution", default="", help="Exact solution path for restore/build/test")
     project.add_argument("--project", default="", help="Exact project path for run/validation")
@@ -960,8 +964,10 @@ def build_parser() -> argparse.ArgumentParser:
     validation_accept.add_argument("--if-revision", type=int, default=-1, help="Apply only when the session revision matches")
     _add_validation_api_output_flags(validation_accept)
 
-    targets_cmd = subparsers.add_parser("targets", aliases=["tg"], help="List configured targets with platform, runner, and workflow metadata")
+    targets_cmd = subparsers.add_parser("targets", aliases=["tg"], help="List configured targets with platform, runner, group, and workflow metadata")
     targets_cmd.add_argument("--json", action="store_true", help="Emit structured target metadata")
+    groups_cmd = subparsers.add_parser("groups", aliases=["gr"], help="List workspace target groups and their expanded targets")
+    groups_cmd.add_argument("--json", action="store_true", help="Emit structured workspace-group metadata")
     jobs_cmd = subparsers.add_parser("jobs", aliases=["jb"], help="List reusable polyglot jobs declared under [jobs.*]")
     jobs_cmd.add_argument("--json", action="store_true", help="Emit structured reusable-job metadata")
     workflows_cmd = subparsers.add_parser("workflows", aliases=["wf"], help="List configured target workflows without executing them")
@@ -2187,6 +2193,20 @@ def _normalize_live_progress_args(args: argparse.Namespace) -> None:
 def _live_progress_for_args(args: argparse.Namespace, config: ProjectConfig | None = None, repo: Path | None = None) -> TaskerProgressSink | None:
     repo_root = (config.repo_root if config is not None else (repo or Path(args.repo or Path.cwd()))).resolve()
     target = str(getattr(args, "target", "") or getattr(args, "solution", "") or getattr(args, "project", "") or "")
+    if config is not None and (bool(getattr(args, "all_targets", False)) or bool(getattr(args, "group", []))):
+        try:
+            selected_targets = resolve_workspace_targets(
+                config.workspace,
+                config.targets,
+                groups=tuple(getattr(args, "group", []) or ()),
+                all_targets=bool(getattr(args, "all_targets", False)),
+            )
+            if selected_targets:
+                target = ",".join(selected_targets)
+        except WorkspaceConfigError:
+            # Argument/config validation reports the actionable error later. HUD
+            # publication must not turn a parser error into a progress crash.
+            pass
     directory = resolve_cli_path(DEFAULT_TASKER_DIR)
     enabled = bool(getattr(args, "tasker_progress", False))
     hud_mode = str(getattr(args, "hud_mode", "desktop") or "desktop")
@@ -2421,9 +2441,10 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
     project = args.project
     manifest: dict[str, object] | None = None
 
+    workspace_selection = bool(getattr(args, "group", []) or getattr(args, "all_targets", False))
     if args.command in LEGACY_APPLY_VALIDATE_COMMANDS:
         manifest = _read_artifact_manifest(_single_artifact_arg(getattr(args, "artifact", "")))
-        if not target_name:
+        if not target_name and not workspace_selection:
             target_name = artifact_target(manifest)
         if not solution:
             solution = artifact_solution(manifest)
@@ -2456,7 +2477,7 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             solution_override=solution,
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
-            allow_ambiguous_target=args.command in {"targets", "tg", "jobs", "jb", "workflows", "wf"} or allow_bundle_bootstrap,
+            allow_ambiguous_target=args.command in {"targets", "tg", "groups", "gr", "jobs", "jb", "workflows", "wf"} or allow_bundle_bootstrap or workspace_selection,
         )
     except SystemExit as exc:
         # An overlay may introduce both the named target and .devtool.toml. Allow
@@ -3107,6 +3128,23 @@ def _apply_validation_resource_overrides(config: ProjectConfig, args: argparse.N
         gradle["no_daemon"] = no_daemon
 
 
+def _runner_option_delta(base: dict, current: dict) -> dict:
+    """Return only runtime changes layered on top of configured runner options."""
+    delta: dict = {}
+    for key, value in current.items():
+        if key not in base:
+            delta[key] = copy.deepcopy(value)
+            continue
+        base_value = base.get(key)
+        if isinstance(base_value, dict) and isinstance(value, dict):
+            nested = _runner_option_delta(base_value, value)
+            if nested:
+                delta[key] = nested
+        elif value != base_value:
+            delta[key] = copy.deepcopy(value)
+    return delta
+
+
 def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -> None:
     if str(getattr(args, "proot_distro", "") or "").strip():
         config.execution_environment = EXECUTION_PROOT_DISTRO
@@ -3351,6 +3389,10 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
         config.runner_options["test_selection"] = selection
 
     apply_registered_bootstrap_policy(config, args)
+    config.runtime_runner_overrides = _runner_option_delta(
+        dict(config.configured_runner_options or {}),
+        dict(config.runner_options or {}),
+    )
 
 
 def _print_test_catalog(config: ProjectConfig, args: argparse.Namespace, *, as_json: bool) -> int:
@@ -4070,7 +4112,63 @@ def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec]
     return specs
 
 
+def _workspace_target_names_for_args(
+    config: ProjectConfig,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> tuple[str, ...]:
+    groups = [str(item).strip() for item in getattr(args, "group", []) if str(item).strip()]
+    all_targets = bool(getattr(args, "all_targets", False))
+    if not groups and not all_targets:
+        return ()
+    if str(getattr(args, "target", "") or "").strip():
+        parser.error("--target cannot be combined with --group or --all-targets; select one workspace scope")
+    if all_targets and groups:
+        parser.error("--all-targets cannot be combined with --group because it already selects the complete workspace")
+    if str(getattr(args, "matrix", "") or "").strip():
+        parser.error("--matrix cannot be combined with --group/--all-targets; workspace groups are the target-selection graph")
+    try:
+        selected = resolve_workspace_targets(
+            config.workspace,
+            config.targets,
+            groups=groups,
+            all_targets=all_targets,
+        )
+    except WorkspaceConfigError as exc:
+        parser.error(str(exc))
+    if not selected:
+        parser.error("Workspace target selection resolved to no targets")
+    if str(getattr(args, "variant", "") or "").strip():
+        variant = str(args.variant).strip()
+        missing = [name for name in selected if variant not in config.targets[name].variants]
+        if missing:
+            parser.error(
+                f"--variant {variant!r} is not declared by workspace target(s): {', '.join(missing)}"
+            )
+    return selected
+
+
 def _validation_specs_for_args(config: ProjectConfig, args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[CommandSpec]:
+    workspace_targets = _workspace_target_names_for_args(config, args, parser)
+    if workspace_targets:
+        if _exclusive_validation_task_values(args):
+            parser.error("Explicit --task Gradle validation selection cannot be combined with workspace --group/--all-targets; declare per-target workflows instead")
+        skip_restore, skip_build, skip_test = _validation_skip_values(args)
+        specs = build_workspace_validation_specs(
+            config,
+            workspace_targets,
+            wine=args.command in {"wine-validate", "wv"},
+            skip_restore=skip_restore,
+            skip_build=skip_build,
+            skip_test=skip_test,
+        )
+        for spec in specs:
+            metadata = dict(spec.metadata)
+            metadata["workspace_selection"] = "all" if bool(getattr(args, "all_targets", False)) else "group"
+            metadata["workspace_groups"] = [str(item) for item in getattr(args, "group", []) if str(item).strip()]
+            spec.metadata = metadata
+        return _annotate_resolved_validation_plan(config, args, specs)
+
     bundle_targets = [str(item).strip() for item in getattr(args, "_devtool_bundle_targets", []) if str(item).strip()]
     workspace_validations = [item for item in getattr(args, "_devtool_workspace_validations", []) if isinstance(item, dict)]
     items = _matrix_items(args)
@@ -6808,14 +6906,18 @@ def _release_single_run_lock(args: argparse.Namespace) -> None:
         os.environ.pop("DEVTOOL_RUN_ID", None)
 
 def _targets(config: ProjectConfig, *, as_json: bool = False) -> None:
+    memberships = workspace_group_memberships(config.workspace, config.targets)
     if as_json:
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
+            "workspace": workspace_as_dict(config.workspace, config.targets),
             "targets": [
                 {
                     "name": name,
                     "platform": target.platform,
                     "runner": target.effective_runner,
+                    "groups": list(memberships.get(name, ())),
+                    "default": name == config.workspace.default_target,
                     "root": target.root or target.solution or target.build_target or target.restore_target or target.run_project,
                     "workflows": {
                         workflow_name: [step.raw for step in workflow.steps]
@@ -6832,10 +6934,12 @@ def _targets(config: ProjectConfig, *, as_json: bool = False) -> None:
         for name, target in sorted(config.targets.items()):
             location = target.root or target.solution or target.build_target or target.restore_target or target.run_project or "-"
             workflows = ",".join(sorted(target.workflows)) or "-"
+            groups = ",".join(memberships.get(name, ())) or "-"
+            default = " default" if name == config.workspace.default_target else ""
             rows.append((
                 name,
                 f"platform={target.platform or '-'} runner={target.effective_runner or '-'} "
-                f"workflows={workflows} root={location}",
+                f"groups={groups} workflows={workflows} root={location}{default}",
             ))
     elif config.kind == "dotnet":
         rows = [(candidate.stem, f"platform={config.platform or 'dotnet'} runner=dotnet root={candidate.relative_to(config.repo_root)}") for candidate in discover_dotnet_candidates(config.repo_root)]
@@ -6844,6 +6948,24 @@ def _targets(config: ProjectConfig, *, as_json: bool = False) -> None:
         return
     render_status_table(rows)
 
+
+def _groups(config: ProjectConfig, *, as_json: bool = False) -> None:
+    payload = workspace_as_dict(config.workspace, config.targets)
+    if as_json:
+        print(json.dumps({"schema_version": 1, "workspace": payload}, indent=2, ensure_ascii=False))
+        return
+    groups = payload.get("groups", {}) if isinstance(payload, dict) else {}
+    if not groups:
+        console.print("[yellow]No workspace groups configured.[/yellow]")
+        return
+    rows: list[tuple[str, str]] = []
+    for name, value in sorted(groups.items()):
+        if not isinstance(value, dict):
+            continue
+        members = ", ".join(str(item) for item in value.get("members", [])) or "-"
+        targets = ", ".join(str(item) for item in value.get("targets", [])) or "-"
+        rows.append((name, f"members=[{members}] targets=[{targets}]"))
+    render_status_table(rows)
 
 def _jobs(config: ProjectConfig, *, as_json: bool = False) -> None:
     from .workflow_config import job_as_dict
@@ -6866,16 +6988,20 @@ def _jobs(config: ProjectConfig, *, as_json: bool = False) -> None:
 def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
     from .workflow_config import workflow_as_dict
 
-    payload = {
-        target_name: {
-            workflow_name: workflow_as_dict(target_name, workflow)
-            for workflow_name, workflow in sorted(target.workflows.items())
-        }
-        for target_name, target in sorted(config.targets.items())
-        if target.workflows
-    }
+    payload: dict[str, dict[str, dict[str, object]]] = {}
+    for target_name, target in sorted(config.targets.items()):
+        if not target.workflows:
+            continue
+        target_payload: dict[str, dict[str, object]] = {}
+        for workflow_name, workflow in sorted(target.workflows.items()):
+            declared = workflow_as_dict(target_name, workflow)
+            expanded = plan_workspace_targets(config, [target_name], workflow_name).as_dict()
+            declared["expanded_graph"] = expanded
+            target_payload[workflow_name] = declared
+        payload[target_name] = target_payload
+
     if as_json:
-        print(json.dumps({"schema_version": 2, "workflows": payload}, indent=2, ensure_ascii=False))
+        print(json.dumps({"schema_version": 3, "workflows": payload}, indent=2, ensure_ascii=False))
         return
     if not payload:
         console.print("[yellow]No target workflows configured.[/yellow]")
@@ -6883,13 +7009,16 @@ def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
     rows: list[tuple[str, str]] = []
     for target_name, workflows in payload.items():
         for workflow_name, description in workflows.items():
-            graph = description.get("graph", {}) if isinstance(description, dict) else {}
+            graph = description.get("expanded_graph", {}) if isinstance(description, dict) else {}
             node_rows = graph.get("nodes", []) if isinstance(graph, dict) else []
             pieces: list[str] = []
             for node in node_rows if isinstance(node_rows, list) else []:
                 if not isinstance(node, dict):
                     continue
                 label = str(node.get("id") or node.get("ref") or node.get("key") or "step")
+                node_target = str(node.get("target") or "")
+                if node_target and node_target != target_name:
+                    label = f"{node_target}:{label}"
                 dependencies = [str(value) for value in node.get("depends_on", []) or []]
                 short_dependencies = [value.rsplit(".", 1)[-1] for value in dependencies]
                 pieces.append(label + (f" <- {','.join(short_dependencies)}" if short_dependencies else ""))
@@ -9697,6 +9826,10 @@ def _main_after_parse(
         config = _load_command_config(args)
         _targets(config, as_json=bool(getattr(args, "json", False)))
         return 0
+    if args.command in {"groups", "gr"}:
+        config = _load_command_config(args)
+        _groups(config, as_json=bool(getattr(args, "json", False)))
+        return 0
     if args.command in {"jobs", "jb"}:
         config = _load_command_config(args)
         _jobs(config, as_json=bool(getattr(args, "json", False)))
@@ -10466,7 +10599,18 @@ def _main_after_parse(
         results, raw_output = _handle_batch(config, args, log_path=log_path, tasker_progress=tasker_progress)
     else:
         planning_config = _config_for_validation_planning(config, args)
-        specs = build_specs(planning_config, args.command)
+        workspace_targets = _workspace_target_names_for_args(planning_config, args, parser)
+        if workspace_targets:
+            if args.command in {"run", "rn"} and len(workspace_targets) > 1:
+                parser.error("run cannot target multiple workspace members because the first long-running process would block later targets")
+            specs = build_workspace_specs(planning_config, workspace_targets, args.command)
+            for spec in specs:
+                metadata = dict(spec.metadata)
+                metadata["workspace_selection"] = "all" if bool(getattr(args, "all_targets", False)) else "group"
+                metadata["workspace_groups"] = [str(item) for item in getattr(args, "group", []) if str(item).strip()]
+                spec.metadata = metadata
+        else:
+            specs = build_specs(planning_config, args.command)
         specs = _maybe_apply_test_no_build_flag(specs, args, parser)
         results, raw_output = _run_specs_for_args(planning_config, specs, args, continue_on_error=continue_on_error, log_path=log_path, tasker_progress=tasker_progress)
 

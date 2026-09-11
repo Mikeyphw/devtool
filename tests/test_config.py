@@ -508,7 +508,11 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(text.count("[targets.apps_One]"), 1)
             self.assertEqual(text.count("[targets.apps_Two]"), 1)
-            self.assertNotIn("default_target", text)
+            # MP06 documents the canonical workspace default in the generated
+            # template, but auto-detection must not activate one for an
+            # ambiguous multi-target repository.
+            self.assertNotIn('default_target = "apps_', text)
+            self.assertIn('# default_target = "api"', text)
 
     def test_generate_template_picks_nearest_run_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

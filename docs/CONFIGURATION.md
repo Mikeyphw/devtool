@@ -161,7 +161,7 @@ select = ["..."]
 
 Those sections describe a repository. Keep them in `.devtool.toml`. Reusable `[jobs.*]` declarations are repo-scoped as well. `command = ["tool", "arg"]` is structured argv; use `shell_command = "..."` only when shell syntax is intentional.
 
-### Executable workflow DAGs (MP03/MP04)
+### Executable workspace workflow DAGs (MP03–MP06)
 
 A workflow declared as a list of strings remains sequential for compatibility:
 
@@ -185,7 +185,22 @@ validate = [
 ]
 ```
 
-Every referenced dependency must name a step with an explicit `id`; duplicate IDs, unknown dependencies, self-dependencies, and dependency cycles are configuration errors. MP04 dispatches each executable node through its declared runner and preserves that runner's native planning/progress/diagnostic behavior. A job can also choose its own `execution_environment`, `chroot_name`, `device_serial`, and runner options. `target:<name>#<action>` references are validated and visible in plans but are intentionally not executed until MP05 adds cross-target orchestration.
+Every referenced dependency must name a step with an explicit `id`; duplicate IDs, unknown dependencies, self-dependencies, and dependency cycles are configuration errors. MP04 dispatches each executable node through its declared runner and preserves that runner's native planning/progress/diagnostic behavior. A job can also choose its own `execution_environment`, `chroot_name`, `device_serial`, and runner options. MP05 expands `target:<name>#<action>` into the referenced target's workflow or primary-runner action inside the same DAG, deduplicates shared target/action prerequisites, and rejects cross-target cycles during config loading.
+
+MP06 makes `[workspace]` the canonical home for a repository's default target and persistent target groups:
+
+```toml
+[workspace]
+default_target = "api"
+
+[workspace.groups]
+mobile = ["android", "tv"]
+frontend = ["web", "desktop"]
+release = ["api", "@frontend", "@mobile"]
+everything = ["*"]
+```
+
+Legacy `[project].default_target` remains accepted. A canonical and legacy value may coexist only when they are equal. Group names must not collide with target names. Groups are validated eagerly, including unknown members and nested-group cycles. Use `devtool --group release validate`, repeated `--group`, or `--all-targets`; `--target`, target matrices, and workspace-group selection are mutually exclusive scopes.
 
 `devtool config doctor --global` warns when repo-scoped sections or command-scoped validation filters appear in the global file.
 

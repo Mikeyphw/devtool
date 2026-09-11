@@ -44,6 +44,25 @@ _devtool_targets() {
   fi
 }
 
+_devtool_groups() {
+  local repo config
+  local -a groups
+  repo=${opt_args[--repo]:-${opt_args[-r]:-.}}
+  config=${opt_args[--config]:-${opt_args[-c]:-$repo/.devtool.toml}}
+  if [[ -r $config ]]; then
+    groups=(${(f)"$(awk '
+      /^\[workspace\.groups\]$/ { in_groups=1; next }
+      /^\[/ { in_groups=0 }
+      in_groups && $0 ~ /^[[:space:]]*[A-Za-z0-9_.-]+[[:space:]]*=/ { line=$0; sub(/^[[:space:]]*/, "", line); sub(/[[:space:]]*=.*/, "", line); print line }
+    ' "$config" 2>/dev/null)"})
+  fi
+  if (( ${#groups} )); then
+    _describe -t groups 'workspace group' groups
+  else
+    _message 'workspace group from [workspace.groups]'
+  fi
+}
+
 _devtool_test_profiles() {
   local repo config
   local -a profiles
@@ -191,6 +210,8 @@ _devtool_commands() {
     'detect:detect project type and targets'
     'targets:list named targets with platform, runner, and workflow metadata'
     'tg:alias for targets'
+    'groups:list workspace target groups and expanded members'
+    'gr:alias for groups'
     'jobs:list reusable polyglot jobs'
     'jb:alias for jobs'
     'workflows:list configured target workflows'
@@ -435,6 +456,8 @@ _devtool() {
     '(-r --repo)'{-r,--repo}'[repository root]:repo:_devtool_repo_path' \
     '(-c --config)'{-c,--config}'[configuration file]:config:_files' \
     '--target[named target/profile from .devtool.toml]:target:_devtool_targets' \
+    '*--group[workspace target group from [workspace.groups]]:group:_devtool_groups' \
+    '--all-targets[select every configured workspace target]' \
     '--variant[build/test variant within the selected target]:variant:_devtool_variants' \
     '--solution[exact solution path for restore/build/test]:solution:_files' \
     '--project[exact project path for run/validation]:project:_files' \
@@ -858,7 +881,7 @@ _devtool() {
         detect)
           _arguments '--format[output format]:format:(text json)'
           ;;
-        targets|tg|jobs|jb|workflows|wf)
+        targets|tg|groups|gr|jobs|jb|workflows|wf)
           _arguments '--json[emit structured configuration metadata]'
           ;;
         handoff)

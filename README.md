@@ -209,7 +209,13 @@ Reusable jobs can belong to any runner and be referenced by target workflows:
 [project]
 runner = "python"
 platform = "server"
+
+[workspace]
 default_target = "api"
+
+[workspace.groups]
+backend = ["api", "worker"]
+release = ["@backend", "web", "android"]
 
 [jobs.generate-client]
 runner = "node"
@@ -223,14 +229,28 @@ runner = "python"
 platform = "server"
 root = "services/api"
 
+[targets.protocol]
+runner = "python"
+platform = "shared"
+root = "packages/protocol"
+
 [targets.api.workflows]
 validate = [
+  "target:protocol#build",
   "job:generate-client",
   "runner:python#validate",
 ]
 ```
 
-Use `devtool targets`, `devtool jobs`, `devtool workflows`, and `devtool inspect` to inspect the normalized model. MP03+MP04 now execute those declarations as a validated DAG: plain lists remain sequential, inline `{ id, ref, depends_on }` steps can branch/join, and each node is dispatched to its own first-class runner and execution environment. Failures block dependent nodes while preserving independent-branch semantics, and the same dependencies are bridged into resumable validation sessions. Cross-target `target:<name>#<action>` execution remains the explicit MP05 boundary. See [`docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md`](docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md).
+MP05 expands `target:<name>#<action>` references into one workspace DAG. The referenced target keeps its own root, runner, options, environment, and variant configuration; shared target/action prerequisites are deduplicated. MP06 adds named workspace groups, nested `@group` references, and `*` for all configured targets. Use repeated `--group`, `--all-targets`, or `devtool groups` to select/inspect persistent workspace scopes. For example:
+
+```bash
+devtool --group release validate
+devtool --all-targets build
+devtool groups --json
+```
+
+Use `devtool targets`, `devtool groups`, `devtool jobs`, `devtool workflows`, and `devtool inspect` to inspect the normalized model. `devtool workflows --json` exposes both the declared local DAG and the expanded cross-target workspace DAG. Plain lists remain sequential, inline `{ id, ref, depends_on }` steps can branch/join, and each executable node is dispatched to its own first-class runner and execution environment. Failures block dependent nodes while preserving independent-branch semantics, and the same dependencies are bridged into resumable validation sessions. See [`docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md`](docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md) and [`docs/WORKSPACE_GROUPS.md`](docs/WORKSPACE_GROUPS.md).
 
 ## Devtool 0.15.0: verified Android artifacts, device tests, selective tests, and Python pipelines
 

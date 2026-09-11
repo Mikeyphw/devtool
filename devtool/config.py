@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import difflib
 import os
 import json
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import DotnetTarget, JobConfig, ProjectConfig, TargetConfig
+from .workspace import WorkspaceConfigError, load_workspace_config, workspace_as_dict
 from .workflow_config import (
     job_as_dict,
     load_jobs,
@@ -31,7 +33,7 @@ GLOBAL_SAFE_TOP_LEVEL_SECTIONS = {
     "bootstrap", "chroots", "features",
 }
 GLOBAL_REPO_SCOPED_SECTIONS = {
-    "project", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
+    "project", "workspace", "targets", "jobs", "tasks", "artifacts", "python", "node", "rust",
     "go", "maven", "cmake", "meson", "make", "test_profiles", "variants",
 }
 GLOBAL_COMMAND_SCOPED_CLI_KEYS = {
@@ -381,6 +383,7 @@ def _default_target_name(
     project_section: dict[str, Any],
     targets: dict[str, DotnetTarget],
     *,
+    workspace_default: str = "",
     requested: str,
     explicit_solution: str,
     explicit_project: str,
@@ -397,7 +400,7 @@ def _default_target_name(
     if str(explicit_solution or "").strip() or str(explicit_project or "").strip():
         return ""
 
-    configured_default = str(project_section.get("default_target", "") or "").strip()
+    configured_default = str(workspace_default or project_section.get("default_target", "") or "").strip()
     if configured_default:
         if configured_default not in targets:
             available = ", ".join(sorted(targets)) or "<none>"
@@ -454,6 +457,7 @@ def load_project_config(
     repo_project_raw = _require_table(repo_loaded, "project", source=repo_source_label)
     repo_execution_section = _require_table(repo_loaded, "execution", source=repo_source_label)
     project_raw = _require_table(loaded, "project", source=source_label)
+    workspace_raw = _require_table(loaded, "workspace", source=source_label)
     env_raw = _require_table(loaded, "env", source=source_label)
     execution_section = _require_table(loaded, "execution", source=source_label)
     toolchain_section = _require_table(loaded, "toolchain", source=source_label)
@@ -501,9 +505,18 @@ def load_project_config(
     )
     targets = _load_named_targets(config_root, targets_raw, env_section)
     load_target_workflows(targets_raw, targets, jobs, supported_runners=SUPPORTED_RUNNERS)
+    try:
+        workspace = load_workspace_config(
+            workspace_raw,
+            targets,
+            legacy_default_target=str(project_section.get("default_target", "") or "").strip(),
+        )
+    except WorkspaceConfigError as exc:
+        raise SystemExit(str(exc)) from exc
     selected_target_name = _default_target_name(
         project_section,
         targets,
+        workspace_default=workspace.default_target,
         requested=target_name,
         explicit_solution=solution_override,
         explicit_project=project_override,
@@ -702,7 +715,7 @@ def load_project_config(
         else:
             provenance["runner"] = "detected"
         provenance["platform"] = "project" if str(project_section.get("platform", "") or "").strip() else "inferred"
-    return ProjectConfig(
+    config_result = ProjectConfig(
         repo_root=repo_root,
         kind=detected_kind,
         runner=detected_kind,
@@ -747,6 +760,7 @@ def load_project_config(
         variant=selected_variant_name,
         targets=targets,
         jobs=jobs,
+        workspace=workspace,
         execution_environment=execution_environment,
         chroot_name=chroot_name,
         device_serial=device_serial,
@@ -755,8 +769,20 @@ def load_project_config(
         runner_options=runner_options,
         global_config_path=global_path if global_loaded else None,
         config_provenance=provenance,
+        configured_runner_options=copy.deepcopy(runner_options),
     )
 
+    # MP05 validates the complete configured cross-target workspace graph at
+    # config-load time. Local workflow DAG syntax is already validated while
+    # parsing; this second pass catches target-to-target cycles before an
+    # operation starts rather than failing half-way through execution.
+    if any(target.workflows for target in targets.values()):
+        from .workflow_runtime import WorkflowRuntimeError, validate_workspace_workflows
+        try:
+            validate_workspace_workflows(config_result)
+        except WorkflowRuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+    return config_result
 
 
 def project_identity(kind: str) -> tuple[str, str, str]:
@@ -1383,6 +1409,17 @@ test_command = ""
 run_command = ""
 package_command = ""
 
+# Canonical multi-target workspace identity (MP05/MP06). Legacy
+# [project].default_target remains accepted for compatibility.
+[workspace]
+# default_target = "api"
+
+[workspace.groups]
+# mobile = ["android", "tv"]
+# frontend = ["web", "desktop"]
+# release = ["api", "@frontend", "@mobile"]
+# everything = ["*"]
+
 # Reusable polyglot job example (MP02):
 # [jobs.generate-client]
 # runner = "node"
@@ -1402,6 +1439,8 @@ package_command = ""
 #   {{ id = "python", ref = "runner:python#validate", depends_on = ["generate"] }},
 #   {{ id = "node", ref = "runner:node#test", depends_on = ["generate"] }},
 # ]
+# Cross-target dependencies are executable and deduplicated (MP05):
+# build = ["target:protocol#build", "runner:python#build"]
 
 [execution]
 environment = "auto" # auto | native-termux | chroot | proot-distro | desktop-linux | ssh | android-device | external-device
@@ -1893,11 +1932,17 @@ def ensure_artifact_target_config(
     }
 
 
+def _expanded_workflow_graph_dict(config: ProjectConfig, target_name: str, action: str) -> dict[str, Any]:
+    from .workflow_runtime import plan_workspace_targets
+    return plan_workspace_targets(config, [target_name], action).as_dict()
+
+
 def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
     return {
         "repo_root": str(config.repo_root),
         "config_path": str(config.config_path) if config.config_path else "",
         "global_config_path": str(config.global_config_path) if config.global_config_path else "",
+        "workspace": workspace_as_dict(config.workspace, config.targets),
         "project": {
             "kind": config.kind,
             "runner": config.runner,
@@ -1952,6 +1997,10 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
                 "workflow_graphs": {
                     workflow_name: workflow_as_dict(name, workflow)
                     for workflow_name, workflow in sorted(target.workflows.items())
+                },
+                "expanded_workflow_graphs": {
+                    workflow_name: _expanded_workflow_graph_dict(config, name, workflow_name)
+                    for workflow_name in sorted(target.workflows)
                 },
             }
             for name, target in sorted(config.targets.items())

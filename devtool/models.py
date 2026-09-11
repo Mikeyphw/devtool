@@ -97,6 +97,18 @@ class JobConfig:
         return "runner-action"
 
 
+@dataclass(slots=True, frozen=True)
+class TargetGroup:
+    name: str
+    members: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class WorkspaceConfig:
+    default_target: str = ""
+    groups: dict[str, TargetGroup] = field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class TargetConfig:
     """Language-neutral target identity.
@@ -192,6 +204,7 @@ class ProjectConfig:
     variant: str = ""
     targets: dict[str, TargetConfig] = field(default_factory=dict)
     jobs: dict[str, JobConfig] = field(default_factory=dict)
+    workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     execution_environment: str = "auto"
     chroot_name: str = "androidos"
     device_serial: str = ""
@@ -200,6 +213,8 @@ class ProjectConfig:
     runner_options: dict[str, Any] = field(default_factory=dict)
     global_config_path: Path | None = None
     config_provenance: dict[str, str] = field(default_factory=dict)
+    configured_runner_options: dict[str, Any] = field(default_factory=dict)
+    runtime_runner_overrides: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         effective_runner = str(self.runner or self.kind or "unknown").strip().lower() or "unknown"

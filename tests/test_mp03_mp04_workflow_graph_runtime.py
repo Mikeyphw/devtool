@@ -305,28 +305,30 @@ build = ["job:argv", "job:shell"]
             self.assertTrue(specs[1].metadata["explicit_shell"])
             self.assertIn("printf shell-ok", specs[1].argv[-1])
 
-    def test_target_reference_is_represented_but_runtime_refuses_until_mp05(self):
+    def test_target_reference_is_expanded_by_mp05_runtime(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             cfg = WorkflowRepo(root).write(
                 '''
 [project]
-runner = "python"
+runner = "command"
 default_target = "api"
 [targets.protocol]
-runner = "python"
+runner = "command"
+build_command = "printf protocol"
 root = "."
 [targets.api]
-runner = "python"
+runner = "command"
 root = "."
 [targets.api.workflows]
 build = ["target:protocol#build"]
 '''
             )
             graph = plan_selected_workflow(cfg, "build")
-            self.assertEqual(graph.nodes[0].ref.kind, "target")
-            with self.assertRaisesRegex(WorkflowRuntimeError, "MP05"):
-                build_workflow_specs(cfg, "build")
+            self.assertEqual(graph.nodes[0].target, "protocol")
+            self.assertEqual(graph.nodes[0].ref.kind, "runner")
+            specs = build_workflow_specs(cfg, "build")
+            self.assertEqual(specs[0].metadata["workflow_target"], "protocol")
 
     def test_unconfigured_actions_keep_legacy_runner_behavior(self):
         with tempfile.TemporaryDirectory() as td:
@@ -515,8 +517,11 @@ build = ["job:a"]
             with redirect_stdout(out):
                 _workflows(cfg, as_json=True)
             payload = json.loads(out.getvalue())
-            self.assertEqual(payload["schema_version"], 2)
-            self.assertIn("graph", payload["workflows"]["api"]["build"])
+            self.assertEqual(payload["schema_version"], 3)
+            workflow = payload["workflows"]["api"]["build"]
+            self.assertIn("graph", workflow)
+            self.assertIn("expanded_graph", workflow)
+            self.assertEqual(workflow["expanded_graph"]["targets"], ["api"])
 
 
     def test_matrix_expansion_isolates_workflow_node_and_validation_identity_per_lane(self):

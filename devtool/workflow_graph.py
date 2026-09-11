@@ -62,6 +62,7 @@ class ExecutionGraph:
     target: str
     workflow: str
     nodes: tuple[WorkflowNode, ...]
+    targets: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_nodes(self.nodes)
@@ -150,8 +151,9 @@ class ExecutionGraph:
     def as_dict(self) -> dict[str, object]:
         ordered = self.topological_order()
         return {
-            "schema_version": 1,
+            "schema_version": 2 if self.targets else 1,
             "target": self.target,
+            "targets": list(self.targets),
             "workflow": self.workflow,
             "roots": [node.key for node in self.roots],
             "leaves": [node.key for node in self.leaves],

@@ -1797,7 +1797,7 @@ def _render_targets(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     _append_heading(Gtk, box, "Targets")
     prefs = DesktopPreferences.load("control-center")
     targets = [item for item in payload.get("targets", []) if isinstance(item, dict)]
-    search = _append_search_bar(Gtk, box, "Filter targets by name, platform, runner, workflow, environment, chroot")
+    search = _append_search_bar(Gtk, box, "Filter targets by name, platform, runner, group, workflow, environment, chroot")
     search.set_text(prefs.filter_value("targets", "query"))
     count_label = _append_inline_status(Gtk, box, "")
     list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
