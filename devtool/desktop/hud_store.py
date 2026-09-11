@@ -11,6 +11,7 @@ class DesktopHudSnapshot:
     events: list[dict[str, Any]]
     phase_highlights: list[dict[str, Any]]
     directory: Path
+    ui: dict[str, Any]
 
 
 def load_hud_snapshot(directory: Path | str, *, follow_active: bool = False, recent_events: int = 8) -> DesktopHudSnapshot:
@@ -25,4 +26,5 @@ def load_hud_snapshot(directory: Path | str, *, follow_active: bool = False, rec
         events=[dict(item) for item in events if isinstance(item, dict)],
         phase_highlights=last_phase_highlights(events),
         directory=resolved,
+        ui=dict(payload.get("ui") or {}),
     )

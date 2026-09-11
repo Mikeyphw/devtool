@@ -27,6 +27,7 @@ from .artifact_registry import load_registry
 from .artifacts import load_history
 from .console_utils import create_console, detect_console_width, is_termux_environment
 from .core.events import tui_event_snapshot
+from .ui_core.navigation import navigation_label_for_route, navigation_shortcut_map
 
 COMPACT_MAX = 60
 NARROW_MAX = 96
@@ -289,7 +290,7 @@ def render_page(repo_root: Path, *, page: str, width: int | None = None, height:
 
 
 def _header(page: str, profile: TerminalProfile) -> Text:
-    label = {"dashboard": "Dashboard", "build": "Build", "overlays": "Overlays"}.get(page, page.title())
+    label = navigation_label_for_route("tui", page, default=page.title())
     suffix = " · Termux" if profile.termux else ""
     return Text(f"Devtool · {label}{suffix}", style="bold")
 
@@ -308,10 +309,13 @@ def run_tui(args: Any, *, repo_root: Path, console: Console | None = None) -> in
         renderable, profile = render_page(repo_root, page=page, width=current_width, height=console.height, artifact=artifact)
         console.print(_header(page, profile))
         console.print(renderable)
+        nav_shortcuts = navigation_shortcut_map("tui")
         if profile.compact:
-            console.print(Text("d dash · b build · o ovl · q quit", style="dim"))
+            bits = [f"{key} {navigation_label_for_route('tui', route).lower()[:5]}" for key, route in nav_shortcuts.items()]
+            console.print(Text(" · ".join([*bits, "q quit"]), style="dim"))
         else:
-            console.print("[dim]d dashboard · b build · o overlays · r refresh · q quit[/dim]")
+            bits = [f"{key} {navigation_label_for_route('tui', route).lower()}" for key, route in nav_shortcuts.items()]
+            console.print("[dim]" + " · ".join([*bits, "r refresh", "q quit"]) + "[/dim]")
         return profile
 
     draw()
@@ -319,19 +323,16 @@ def run_tui(args: Any, *, repo_root: Path, console: Console | None = None) -> in
         return 0
 
     while True:
+        nav_shortcuts = navigation_shortcut_map("tui")
         try:
-            choice = Prompt.ask("devtool", choices=["d", "b", "o", "r", "q"], default="r", console=console)
+            choice = Prompt.ask("devtool", choices=[*nav_shortcuts, "r", "q"], default="r", console=console)
         except (EOFError, KeyboardInterrupt):
             console.print()
             return 0
         if choice == "q":
             return 0
-        if choice == "d":
-            page = "dashboard"
-        elif choice == "b":
-            page = "build"
-        elif choice == "o":
-            page = "overlays"
+        if choice in nav_shortcuts:
+            page = nav_shortcuts[choice]
         # Do not clear the terminal. Appending a fresh frame is more reliable
         # on narrow/mobile terminals and preserves scrollback for diagnostics.
         draw()

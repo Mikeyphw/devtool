@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ipc import default_ipc_socket_path
+from ..ui_core.actions import action_text
 from ..hud import (
     compact_detail_text,
     canonical_diagnostics,
@@ -362,10 +363,10 @@ class Gtk4CompactHud:
             actions.set_margin_end(14)
             with _suppress_exception():
                 actions.add_css_class("devtool-action-row")
-            copy_button = Gtk.Button(label="Copy summary")
+            copy_button = Gtk.Button(label=action_text("summary.copy"))
             diagnostics_button = Gtk.Button(label="Copy diagnostics")
-            log_button = Gtk.Button(label="Open log")
-            cancel_button = Gtk.Button(label="Cancel")
+            log_button = Gtk.Button(label=action_text("logs.open"))
+            cancel_button = Gtk.Button(label=action_text("operation.cancel", "short"))
             force_cancel_button = Gtk.Button(label="Force cancel")
             close_button = Gtk.Button(label="Close")
             for button in (copy_button, diagnostics_button, log_button, cancel_button, force_cancel_button, close_button):

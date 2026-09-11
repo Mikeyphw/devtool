@@ -1,3 +1,11 @@
+## 2026-09-11 - UI01 + UI02 shared semantic UI state and central action/navigation registries
+
+- Added versioned `UISnapshot` state with normalized workspace/selection, operation lifecycle, hierarchical progress, diagnostics, semantic actions, and navigation entries.
+- Added one central action registry with stable IDs, labels/short labels/notification labels, semantic icon tokens, intents, categories, destructive metadata, shortcuts, and context-aware action resolution.
+- Added one central navigation registry with stable destinations plus surface-specific routes/icons/labels/shortcuts for desktop, TUI, Android, HUD, and machine consumers.
+- Migrated TUI navigation labels/shortcuts, GTK Control Center page routes/icons, GTK common action labels, desktop HUD storage, Tasker/IPC state, terminal HUD snapshots, and the Android HUD bridge to the shared semantic contract without replacing native layouts.
+- Added `ui-contract|uic --surface ... [--json]` for contract inspection plus zsh completion, manpage, README/UI-contract/integration architecture documentation, and dedicated cross-surface regression coverage.
+
 ## 2026-09-11 - MP09 + MP10 safe workflow scheduling and graph observability
 
 - Added conservative dependency/scope-aware workflow scheduling with real parallel execution for proven-independent DAG nodes, sequential-by-default policy, total/Gradle/.NET concurrency caps, deterministic result ordering, dependency blocking, fail-fast propagation, and concurrency-safe live-progress routing.

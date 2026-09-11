@@ -201,6 +201,13 @@ for serialization reasons,
 for machine output, or
 .B --dot
 for Graphviz DOT.
+.TP
+.B ui-contract " | " uic
+Inspect the shared semantic UI contract used by terminal, HUD, desktop, Android bridge, IPC, and Tasker-facing state. Use
+.BR --surface " machine|desktop|tui|android|hud"
+to resolve surface-specific navigation and
+.B --json
+to emit the versioned action/navigation schema for machine consumers.
 .SH ARTIFACT COMMANDS
 .TP
 .B apply-overlay " | " ao " ARTIFACT"

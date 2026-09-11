@@ -222,6 +222,8 @@ _devtool_commands() {
     'aff:alias for affected'
     'preflight:check expanded workflow roots, environments, runners, tools, and outputs'
     'pf:alias for preflight'
+    'ui-contract:inspect shared semantic UI state, actions, and navigation'
+    'uic:alias for ui-contract'
     'logs:list, open, or tail devtool logs'
     'history:list structured run history'
     'rollback:rollback a recorded commit'
@@ -980,6 +982,11 @@ _devtool() {
             '--variant[target variant]:variant:_devtool_variants' \
             '--workflow[workflow/action to inspect]:workflow:' \
             '--json[emit structured graph-aware preflight metadata]'
+          ;;
+        ui-contract|uic)
+          _arguments \
+            '--surface[frontend surface to inspect]:surface:(machine desktop tui android hud)' \
+            '--json[emit the shared semantic UI contract as JSON]'
           ;;
         handoff)
           _arguments '(-o --output)'{-o,--output}'[write handoff to file]:file:_files'

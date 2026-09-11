@@ -1,14 +1,35 @@
-# Devtool Architecture Migration
+# Devtool architecture overview
 
-## Overlay 01
+Devtool is organized around a compatibility-first runtime whose public CLI remains stable while internal models become increasingly structured.
 
-This phase introduces internal foundations without changing CLI behavior.
+## Core execution layers
 
-Added:
+```text
+CLI / config
+    ↓
+Workspace + targets + jobs
+    ↓
+Workflow planner / ExecutionGraph
+    ↓
+Safe scheduler + reservations
+    ↓
+Runner registry / execution environments
+    ↓
+Command results + runtime events
+    ↓
+UI Core semantic state
+    ↓
+TUI / HUD / GTK / Android bridge / IPC / Tasker
+```
 
-- structured command results
-- internal event bus
-- migration documentation
-- compatibility-first architecture groundwork
+The polyglot workspace model separates target identity, product platform, runner, and execution environment. Reusable jobs and target workflows expand into one dependency graph, including cross-target prerequisites and named workspace groups. Affected-target analysis and graph-aware preflight operate on that same model. Safe scheduling is sequential by default and only overlaps dependency-ready nodes whose declared scopes prove compatibility.
 
-Future migrations will consume these primitives incrementally.
+## Structured runtime boundary
+
+`devtool.core.CommandResult` is the canonical lightweight command-result boundary; detailed runner results remain compatible through adapters. The event bus publishes build/task/warning/artifact/overlay lifecycle data to JSON/API, TUI, logging, and trace consumers. Universal `--json` provides a versioned invocation envelope while preserving stable native machine envelopes for validation-control APIs.
+
+## Semantic UI boundary
+
+UI01/UI02 add `devtool.ui_core`. Runtime/domain code owns facts, UI Core owns semantic presentation state, and individual frontends own native rendering. The versioned `UISnapshot` normalizes workspace/selection, operation lifecycle, progress, diagnostics, actions, and navigation. Central action/navigation registries assign stable IDs and presentation metadata so TUI, GTK, Android bridges, HUD, IPC, and Tasker do not independently redefine the same meaning.
+
+See [`ui-core.md`](ui-core.md), [`core-runtime.md`](core-runtime.md), and the workflow architecture documents for the detailed contracts.

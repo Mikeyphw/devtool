@@ -19,6 +19,7 @@ from ..hud import (
 )
 from ..models import ProjectConfig
 from ..workspace import workspace_group_memberships
+from ..ui_core.viewmodels import runtime_state_to_ui_snapshot
 from ..tasker import DEFAULT_TASKER_DIR
 from .history_store import DesktopHistoryStore
 from .hud_store import load_hud_snapshot
@@ -78,6 +79,7 @@ class DesktopControlCenterSnapshot:
     hud: dict[str, Any] = field(default_factory=dict)
     ipc: dict[str, Any] = field(default_factory=dict)
     settings: dict[str, Any] = field(default_factory=dict)
+    ui: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +92,7 @@ class DesktopControlCenterSnapshot:
             "hud": self.hud,
             "ipc": self.ipc,
             "settings": self.settings,
+            "ui": self.ui,
         }
 
 
@@ -158,6 +161,20 @@ class DesktopControlCenterModel:
             )
             for name, target in sorted(config.targets.items())
         ]
+        semantic_ui = runtime_state_to_ui_snapshot(
+            raw_state or {},
+            surface="desktop",
+            workspace={
+                "name": config.repo_root.name,
+                "root": str(config.repo_root),
+                "targets": sorted(config.targets),
+                "selected_target": config.selected_target or config.workspace.default_target,
+            },
+            selection={
+                "targets": [config.selected_target] if config.selected_target else [],
+                "variant": config.variant,
+            },
+        ).as_dict()
         return DesktopControlCenterSnapshot(
             repository={**_repository_dict(repo), "state_dir": str(self.state_dir)},
             project={
@@ -196,6 +213,7 @@ class DesktopControlCenterModel:
                 "recent_events": self.recent_events,
                 "follow_active": self.follow_active,
             },
+            ui=semantic_ui,
         )
 
 

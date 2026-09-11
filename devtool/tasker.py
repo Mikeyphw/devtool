@@ -24,6 +24,7 @@ from .ipc import IpcPublisher, ensure_ipc_server
 
 from .console_utils import resolve_cli_path
 from .models import OperationResult
+from .ui_core.viewmodels import runtime_state_to_ui_snapshot
 
 ANDROID_TASKER_DIR = "/sdcard/Tasker/devtool"
 
@@ -1364,6 +1365,10 @@ class TaskerProgressSink:
                 "events_dir": str(self.events_dir),
             },
         }
+        # UI01/UI02: publish one semantic UI snapshot beside the legacy run
+        # fields. IPC, Tasker, HUD, desktop and Android can consume the same
+        # stable action/navigation/state contract without scraping display text.
+        state["ui"] = runtime_state_to_ui_snapshot(state, surface="machine").as_dict()
         event = dict(state)
         event["event_file"] = None
         event_file = self.events_dir / f"{timestamp.replace(':', '').replace('.', '-')}-{self.sequence:05d}-{_safe_name(event_type)}.json"

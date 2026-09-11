@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..ui_core.actions import action_text
+
 import os
 import re
 import subprocess
@@ -145,7 +147,7 @@ def show_startup_error_window(
 
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         copy_button = Gtk.Button(label="Copy details")
-        open_button = Gtk.Button(label="Open log")
+        open_button = Gtk.Button(label=action_text("logs.open"))
         quit_button = Gtk.Button(label="Quit")
         actions.append(copy_button)
         actions.append(open_button)

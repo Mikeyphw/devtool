@@ -260,6 +260,8 @@ MP09 makes that DAG safely schedulable. Execution stays sequential by default; o
 
 MP10 adds `devtool plan`: inspect expanded DAGs, safe scheduling waves, read/write scopes, reservation paths, and resolved commands without executing them. Use `--json` for machine state, `--dot` for Graphviz, and `--explain` for serialization reasons. `workflows --json`, `inspect`, runtime JSON summaries, HUD/Tasker state, and desktop state carry the same scheduling/workflow semantics. See [`docs/WORKFLOW_SCHEDULING_AND_PLANNING.md`](docs/WORKFLOW_SCHEDULING_AND_PLANNING.md).
 
+UI01/UI02 add a shared semantic UI layer rather than another renderer-specific abstraction. `UISnapshot` normalizes workspace selection, operation state, hierarchical progress, diagnostics, available actions, and navigation; the central action/navigation registries provide stable IDs, labels, intent, routes, and surface-specific presentation. TUI/HUD, GTK Control Center/HUD, Tasker/IPC state, and the Android HUD bridge now publish or consume that shared contract while preserving their existing native layouts. Use `devtool ui-contract --surface desktop --json` (alias `uic`) to inspect the contract. See [`docs/architecture/ui-core.md`](docs/architecture/ui-core.md).
+
 ## Devtool 0.15.0: verified Android artifacts, device tests, selective tests, and Python pipelines
 
 Android and Gradle builds now verify newly produced APK, AAB, AAR, and JVM

@@ -1,5 +1,13 @@
 # Multi-project UI integration
 
+## Shared UI Core
+
+UI01/UI02 add `devtool.ui_core` as the common semantic boundary between runtime facts and frontend rendering. `UISnapshot` normalizes workspace/selection, operation state, progress, diagnostics, actions, and navigation. `ACTION_REGISTRY` and `NAVIGATION_REGISTRY` are the authoritative sources for stable action/navigation IDs and presentation metadata.
+
+The boundary is intentionally not a universal widget toolkit. GTK remains GTK, the TUI remains terminal-native, and Android remains Android-native. Frontends may adapt density and layout, but they consume the same semantic state and do not independently redefine what “cancel”, “retry”, “open log”, or a navigation destination means.
+
+`devtool ui-contract --surface ... --json` exposes the registry contract for debugging and external integrations. Runtime Tasker state and IPC snapshots include an additive `ui` object; HUD snapshots preserve the same object; the Android HUD bridge receives serialized action/navigation metadata; desktop snapshots expose the desktop-resolved semantic state.
+
 Devtool 1.0 exposes the runner, execution environment, validation profile, and
 selective-test model in both native frontends. The frontends build the same CLI
 command that is shown in the preview; they do not maintain a second execution

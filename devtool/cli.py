@@ -1037,6 +1037,10 @@ def build_parser() -> argparse.ArgumentParser:
     affected_cmd.add_argument("--head", default="", help="Git head revision; with --base uses base...head")
     affected_cmd.add_argument("--explain", action="store_true", help="Explain why every target is selected")
     affected_cmd.add_argument("--json", action="store_true", help="Emit structured affected-target metadata")
+    ui_contract_cmd = subparsers.add_parser("ui-contract", aliases=["uic"], help="Inspect the shared semantic UI state, action, and navigation contract")
+    ui_contract_cmd.add_argument("--surface", choices=["machine", "desktop", "tui", "android", "hud"], default="machine", help="Render navigation routes for one frontend surface")
+    ui_contract_cmd.add_argument("--json", action="store_true", help="Emit the complete machine-readable UI Core contract")
+
     preflight_cmd = subparsers.add_parser("preflight", aliases=["pf"], help="Check expanded workflow roots, environments, runners, tools, and output safety")
     _add_workspace_scope_flags(preflight_cmd)
     preflight_cmd.add_argument("--workflow", default="all", help="Workflow/action to inspect; default: all declared workflows")
@@ -7250,6 +7254,34 @@ def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
 
 
 
+def _ui_contract(*, surface: str = "machine", as_json: bool = False) -> None:
+    from .ui_core import UI_SCHEMA_VERSION, action_catalog, navigation_for_surface
+
+    navigation = [item.__dict__ if hasattr(item, "__dict__") else {
+        "id": item.id,
+        "label": item.label,
+        "short_label": item.short_label,
+        "icon": item.icon,
+        "route": item.route,
+        "section": item.section,
+        "order": item.order,
+    } for item in navigation_for_surface(surface)]
+    payload = {
+        "schema_version": UI_SCHEMA_VERSION,
+        "surface": surface,
+        "actions": action_catalog(),
+        "navigation": navigation,
+    }
+    if as_json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]UI Core[/bold]  schema={UI_SCHEMA_VERSION} surface={surface}")
+    render_status_table([(item["id"], f"{item['label']} · intent={item['intent']}") for item in payload["actions"]])
+    if navigation:
+        console.print("[bold]Navigation[/bold]")
+        render_status_table([(item["route"], f"{item['label']} · id={item['id']}") for item in navigation])
+
+
 def _candidate_targets_for_analysis(config: ProjectConfig, args: argparse.Namespace) -> tuple[str, ...]:
     groups = [str(item).strip() for item in getattr(args, "group", []) if str(item).strip()]
     all_targets = bool(getattr(args, "all_targets", False))
@@ -10310,6 +10342,9 @@ def _main_after_parse(
         from .interactive.validation_menu import run_validation_menu
         return run_validation_menu(config, args)
 
+    if args.command in {"ui-contract", "uic"}:
+        _ui_contract(surface=str(getattr(args, "surface", "machine") or "machine"), as_json=bool(getattr(args, "json", False)))
+        return 0
     if args.command == "config":
         return _config_command(args)
     if args.command in {"targets", "tg"}:

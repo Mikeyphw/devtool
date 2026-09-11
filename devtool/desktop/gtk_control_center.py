@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from ..tasker import DEFAULT_TASKER_DIR
+from ..ui_core.actions import action_text
+from ..ui_core.navigation import navigation_icon_map, navigation_route_map
 from .control_center_model import DesktopControlCenterModel
 from .repository_store import DesktopRepositoryStore
 from .run_workflow import payload_from_mapping, review_payload, workflow_snapshot
@@ -503,30 +505,9 @@ class Gtk4ControlCenter:
 
 
 
-_PAGE_KEYS = {
-    "overview": "Overview",
-    "runs": "Active runs",
-    "history": "History",
-    "artifacts": "Artifacts",
-    "diagnostics": "Diagnostics",
-    "repositories": "Repository",
-    "targets": "Targets",
-    "run": "Run",
-    "settings": "Settings",
-}
+_PAGE_KEYS = navigation_route_map("desktop")
 
-
-_PAGE_ICONS = {
-    "overview": "⌂",
-    "runs": "▶",
-    "history": "↺",
-    "artifacts": "◇",
-    "diagnostics": "!",
-    "repositories": "⌘",
-    "targets": "◎",
-    "run": "+",
-    "settings": "⚙",
-}
+_PAGE_ICONS = navigation_icon_map("desktop")
 
 
 def _update_header(repo_status: Any, ipc_status: Any, payload: dict[str, Any]) -> None:
@@ -1328,7 +1309,7 @@ def _run_again_callback(Gtk: Any, parent: Any, command: str, cwd: str) -> Any | 
         scroller.set_vexpand(True)
         outer.append(scroller)
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        cancel = Gtk.Button(label="Cancel")
+        cancel = Gtk.Button(label=action_text("operation.cancel", "short"))
         launch = Gtk.Button(label="Launch reviewed argv")
         row.append(cancel)
         row.append(launch)
@@ -1582,7 +1563,7 @@ def _render_history(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
             _append_button_row(Gtk, item_surface, [
                 ("Copy command", _copy_text_callback(Gtk, item_surface, command)),
                 ("Inspect artifact", _copy_text_callback(Gtk, item_surface, json.dumps(item, ensure_ascii=False, indent=2))),
-                ("Run again", _run_again_callback(Gtk, item_surface, command, repo_path)),
+                (action_text("operation.rerun"), _run_again_callback(Gtk, item_surface, command, repo_path)),
                 ("Open artifact folder", _open_path_callback(artifact_path)),
             ])
             list_box.append(item_surface)
@@ -1715,7 +1696,7 @@ def _render_diagnostics(Gtk: Any, box: Any, payload: dict[str, Any]) -> None:
     ]
     open_log_cb = _open_file_callback(log_path)
     if open_log_cb is not None:
-        diagnostic_actions.append(("Open log", open_log_cb))
+        diagnostic_actions.append((action_text("logs.open"), open_log_cb))
     show_run_cb = _show_active_run_callback(Gtk, list_box, payload)
     if show_run_cb is not None:
         diagnostic_actions.append(("Show active run", show_run_cb))

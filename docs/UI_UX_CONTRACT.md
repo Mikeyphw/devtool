@@ -2,9 +2,18 @@
 
 This contract captures the accepted end state of the UI/UX polish roadmap for the desktop Control Center, desktop HUD, Android app, Android floating HUD, and Android notification.
 
+## Shared semantic UI contract
+
+UI01/UI02 define a renderer-independent semantic layer under `devtool.ui_core`. The domain/runtime remains authoritative for facts; UI Core converts those facts into a versioned `UISnapshot`, shared action semantics, and shared navigation semantics; each frontend remains responsible for native widgets and responsive layout.
+
+The shared snapshot covers workspace/selection, operation lifecycle, hierarchical progress, diagnostics, available semantic actions, and navigation. Action and navigation IDs are stable machine-facing identifiers; labels, short labels, notification labels, icon tokens, routes, and shortcuts are presentation metadata. Frontends must not duplicate business meaning simply because their layouts differ.
+
+`devtool ui-contract --surface machine|desktop|tui|android|hud --json` is the supported inspection surface for the current shared action/navigation schema. Additive frontend-specific state may coexist with the semantic snapshot during migration, but it must not redefine action or navigation meaning.
+
 ## Shared principles
 
 - Preserve operational detail where users already rely on it, especially in HUDs.
+- Centralize semantic state, action meaning, and navigation identity while keeping renderer-native widgets and layout.
 - Improve hierarchy before removing information.
 - Keep the default path short while leaving power-user controls available.
 - Prefer human workflow labels over implementation labels.

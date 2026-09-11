@@ -21,3 +21,10 @@ Universal `--json` wraps ordinary commands in the schema-versioned invocation en
 ## MP09/MP10 execution planning
 
 The workspace workflow planner produces an expanded `ExecutionGraph`; runner planning turns its nodes into ordinary `CommandSpec` objects; `workflow_scheduler` then annotates read/write/resource scopes, produces safe scheduling waves, and executes independent nodes when enabled. The scheduler never bypasses runner-specific environment preparation or diagnostics. `devtool plan` serializes the same graph/schedule model used by runtime, keeping observability and execution on one truth source.
+
+
+## UI01/UI02 semantic UI boundary
+
+Runtime results and live progress are presentation-independent facts. `devtool.ui_core` converts those facts into a versioned `UISnapshot` and resolves common actions/navigation from central registries. This layer deliberately contains no GTK widgets, ANSI rendering, Android views, colors, typography, or responsive layout. Frontends consume the semantic contract while retaining native rendering behavior.
+
+Tasker state and IPC transport the additive `ui` snapshot, terminal HUD snapshots publish it, desktop Control Center/HUD state preserves it, and the Android HUD bridge receives serialized action/navigation metadata. `devtool ui-contract` exposes the registry contract for debugging and integrations.

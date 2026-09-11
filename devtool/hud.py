@@ -30,6 +30,8 @@ from rich.text import Text
 
 from .tasker import DEFAULT_NOTIFICATION_ID, DEFAULT_TASKER_DIR, hud_disabled_by_environment, read_active_hud_directory
 from .android_live_hud import AndroidLiveHudBridge
+from .ui_core import UI_SCHEMA_VERSION
+from .ui_core.viewmodels import runtime_state_to_ui_snapshot
 
 
 DEFAULT_HUD_POLL_INTERVAL = 0.10
@@ -1640,6 +1642,7 @@ def snapshot_from_directory(directory: Path, *, recent_events: int = DEFAULT_REC
     return {
         "version": 5,
         "state": state.to_dict(),
+        "ui": runtime_state_to_ui_snapshot(state.raw, surface="hud").as_dict(),
         "events": events,
         "paths": {
             "directory": str(directory),
@@ -1974,6 +1977,7 @@ class AndroidAppHud:
                 break
 
         overall_percent = self._pipeline_percent(steps, terminal_ok=status in {"ok", "skipped"})
+        semantic_android_ui = runtime_state_to_ui_snapshot(state.raw, surface="android").as_dict()
         payload: dict[str, Any] = {
             "run_id": run_id,
             "sequence": int(_coerce_int(state.raw.get("sequence")) or 0),
@@ -2010,6 +2014,9 @@ class AndroidAppHud:
             "steps_json": json.dumps([step.to_dict() for step in steps], separators=(",", ":")),
             "commit": str(completion.get("commit_hash") or ""),
             "summary": completion_copy_text(state),
+            "ui_schema_version": UI_SCHEMA_VERSION,
+            "ui_actions_json": json.dumps(semantic_android_ui.get("actions", []), separators=(",", ":")),
+            "ui_navigation_json": json.dumps(semantic_android_ui.get("navigation", []), separators=(",", ":")),
             "started_at_ms": started_at,
             "duration_ms": duration_ms,
             "overlay": bool(state.raw.get("overlay", False)) if self.overlay is None else bool(self.overlay),
