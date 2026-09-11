@@ -35,6 +35,7 @@ class AndroidArtifactRecord:
     target_sdk: str = ""
     launchable_activity: str = ""
     signed: bool | None = None
+    signer_sha256: str = ""
     abis: list[str] = field(default_factory=list)
     checks: list[dict[str, Any]] = field(default_factory=list)
 
@@ -118,6 +119,7 @@ def verify_apk(
     external_tools: bool = True,
     external_required: bool = False,
     external_skip_reason: str = "",
+    expected_cert_sha256: str = "",
 ) -> None:
     names = _zip_check(record, path, required=("AndroidManifest.xml",))
     if not external_tools:
@@ -147,10 +149,15 @@ def verify_apk(
 
         apksigner = _tool_from_sdk("apksigner")
         if apksigner:
-            rc, output = _run_tool([apksigner, "verify", "--verbose", str(path)])
+            rc, output = _run_tool([apksigner, "verify", "--verbose", "--print-certs", str(path)])
             record.signed = rc == 0
+            digest = re.search(r"certificate\s+SHA-256\s+digest:\s*([^\r\n]+)", output, re.I)
+            record.signer_sha256 = re.sub(r"[^0-9A-Fa-f]", "", digest.group(1)).lower() if digest else ""
             if rc == 0:
                 _check(record, "signature", "passed")
+                if expected_cert_sha256:
+                    expected = re.sub(r"[^0-9A-Fa-f]", "", expected_cert_sha256).lower()
+                    _check(record, "signer_identity", "passed" if record.signer_sha256 == expected else "failed", record.signer_sha256 or "certificate digest unavailable")
             else:
                 detail = output.splitlines()[-1] if output else f"exit {rc}"
                 strict_signature = external_required or _is_release_artifact(path, record)
@@ -176,8 +183,19 @@ def verify_apk(
         _check(record, "release_signing", "failed", "Release artifact name indicates an unsigned APK")
 
 
-def verify_aab(path: Path, record: AndroidArtifactRecord) -> None:
+def verify_aab(path: Path, record: AndroidArtifactRecord, *, expected_cert_sha256: str = "") -> None:
     _zip_check(record, path, required=("BundleConfig.pb", "base/manifest/AndroidManifest.xml"))
+    if expected_cert_sha256:
+        try:
+            from .android.signing import AndroidSigningManager
+            verification = AndroidSigningManager().verify_artifact(path, expected_sha256=expected_cert_sha256)
+            if verification.identity:
+                record.signer_sha256 = verification.identity.sha256
+            record.signed = verification.signed
+            _check(record, "signer_identity", "passed" if verification.ok else "failed", verification.detail)
+        except Exception as exc:
+            record.signed = None
+            _check(record, "signer_identity", "failed", str(exc))
 
 
 def verify_aar(path: Path, record: AndroidArtifactRecord) -> None:
@@ -196,6 +214,7 @@ def verify_android_artifact(
     external_tools: bool = True,
     external_required: bool = False,
     external_skip_reason: str = "",
+    expected_cert_sha256: str = "",
 ) -> tuple[AndroidArtifactRecord, list[Issue]]:
     path = path.resolve()
     suffix = path.suffix.lower().lstrip(".") or "file"
@@ -227,9 +246,10 @@ def verify_android_artifact(
                 external_tools=external_tools,
                 external_required=external_required,
                 external_skip_reason=external_skip_reason,
+                expected_cert_sha256=expected_cert_sha256,
             )
         elif suffix == "aab":
-            verify_aab(path, record)
+            verify_aab(path, record, expected_cert_sha256=expected_cert_sha256)
         elif suffix == "aar":
             verify_aar(path, record)
         elif suffix in {"jar", "war", "zip"}:
@@ -386,6 +406,12 @@ def collect_and_verify_android_artifacts(
         unique = _filter_cached_artifacts_for_tasks(cached, tasks)
         used_cached_outputs = bool(unique)
     external_tools, external_required, external_skip_reason, external_mode = _external_verification_policy(config)
+    expected_cert_sha256 = ""
+    try:
+        from .android.signing import signing_profile
+        expected_cert_sha256 = signing_profile(config).expected_cert_sha256
+    except Exception:
+        expected_cert_sha256 = ""
     records: list[AndroidArtifactRecord] = []
     issues: list[Issue] = []
     for path in unique:
@@ -397,6 +423,7 @@ def collect_and_verify_android_artifacts(
                 external_tools=external_tools,
                 external_required=external_required,
                 external_skip_reason=external_skip_reason,
+                expected_cert_sha256=expected_cert_sha256 if "release" in artifact_variant(path).lower() or "release" in path.name.lower() else "",
             )
             records.append(record)
             issues.extend(record_issues)

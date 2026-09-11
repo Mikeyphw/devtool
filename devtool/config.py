@@ -312,6 +312,30 @@ def minimal_global_config_template() -> str:
         "provider = \"auto\" # auto | termux | sdk | commit451 | none",
         "aapt2_provider = \"auto\" # auto | termux | sdk | revanced | none",
         "",
+        "[android.adb]",
+        "provider = \"auto\" # auto | sdk | termux | termux-adb | path | none",
+        "device_policy = \"exactly-one\" # exactly-one | serial | preferred | first-physical | first-emulator | all",
+        "# serial = \"\"",
+        "",
+        "[android.instrumentation]",
+        "policy = \"when-device-present\" # disabled | when-device-present | required",
+        "keep_installed = false",
+        "cleanup_app = false",
+        "wait_timeout_seconds = 30",
+        "capture_logcat_on_failure = true",
+        "capture_screenshot_on_failure = true",
+        "# size = \"small\" # small | medium | large",
+        "",
+        "[android.signing.release]",
+        "mode = \"project\" # devtool | project | external",
+        "policy = \"optional\" # optional | release-required | external",
+        "# keystore = \"~/.config/myapp/signing/release.p12\"",
+        "# alias = \"release\"",
+        "# store_password_env = \"MYAPP_RELEASE_STORE_PASSWORD\"",
+        "# key_password_env = \"MYAPP_RELEASE_KEY_PASSWORD\"",
+        "# expected_cert_sha256 = \"...\"",
+        "# Never store password values in TOML; use env/fd/stdin/prompt/external secret sources.",
+        "",
         "[gradle]",
         "provider = \"auto\" # auto | wrapper | termux | system | download",
         "",
@@ -1679,6 +1703,30 @@ cache = "auto" # auto | ccache | off
 [android.build_tools]
 provider = "auto" # auto | termux | sdk | commit451 | none
 aapt2_provider = "auto" # auto | termux | sdk | revanced | none
+
+[android.adb]
+provider = "auto" # auto | sdk | termux | termux-adb | path | none
+device_policy = "exactly-one" # exactly-one | serial | preferred | first-physical | first-emulator | all
+# serial = ""
+
+[android.instrumentation]
+policy = "when-device-present" # disabled | when-device-present | required
+keep_installed = false
+cleanup_app = false
+wait_timeout_seconds = 30
+capture_logcat_on_failure = true
+capture_screenshot_on_failure = true
+# size = "small" # small | medium | large
+
+[android.signing.release]
+mode = "project" # devtool | project | external
+policy = "optional" # optional | release-required | external
+# keystore = "~/.config/myapp/signing/release.p12"
+# alias = "release"
+# store_password_env = "MYAPP_RELEASE_STORE_PASSWORD"
+# key_password_env = "MYAPP_RELEASE_KEY_PASSWORD"
+# expected_cert_sha256 = "..."
+# Never store password values in TOML; use env/fd/stdin/prompt/external secret sources.
 
 [gradle]
 provider = "auto" # auto | wrapper | termux | system | download

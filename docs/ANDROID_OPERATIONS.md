@@ -38,8 +38,7 @@ selection policy.
 - `none` — disable ADB.
 
 `auto` uses capability probes (`version` and `devices -l`), not just the first
-matching filename. On native Termux it considers a healthy `termux-adb` first,
-then ordinary Termux ADB, then SDK ADB. On non-Termux hosts it considers SDK ADB
+matching filename. On native Termux it probes an explicitly resolved project SDK `platform-tools/adb` first, then falls back to `termux-adb` and ordinary Termux ADB when that SDK binary is unavailable or incompatible. On non-Termux hosts it considers SDK ADB
 then PATH ADB. An explicit configured path wins when present.
 
 Devtool never installs or adds a third-party package repository merely because
@@ -151,5 +150,37 @@ AndroidDeviceManager
 
 Do not add another high-level `shutil.which("adb")`, another `adb devices`
 parser, or another device-selection policy in a release/test/doctor command.
-AOPS03 will build signing, instrumentation orchestration, and lifecycle device
-operations on these services.
+AOPS03 builds signing, instrumentation orchestration, and lifecycle device operations on these services.
+
+## AOPS03 signing and release-task policy
+
+`devtool android signing create|list|inspect|verify|compare|import|export-certificate` uses `AndroidSigningManager`. Devtool-managed signing is task-scoped: only release-producing tasks require release credentials. Generated Gradle init scripts contain no secret values. Password values are resolved only at the final native process-spawn boundary and are excluded from planned command specs and resumable-validation state. Backends that would have to serialize those values into shell argv fail closed.
+
+```toml
+[targets.app.android.signing.release]
+mode = "devtool"
+policy = "release-required"
+keystore = "~/.config/myapp/signing/release.p12"
+alias = "release"
+store_password_env = "MYAPP_RELEASE_STORE_PASSWORD"
+key_password_env = "MYAPP_RELEASE_KEY_PASSWORD"
+expected_cert_sha256 = "..."
+```
+
+## AOPS03 instrumentation policy
+
+Instrumentation and connected-test admission share `disabled`, `when-device-present`, and `required`. Required mode treats missing transport, offline devices, and unauthorized devices as release-blocking conditions rather than silently disabling connected tests. Instrumentation assembly uses the staged Android builder; device selection/install/runner execution uses `AndroidDeviceOperations`.
+
+```toml
+[targets.app.android.instrumentation]
+policy = "required"
+keep_installed = false
+capture_logcat_on_failure = true
+capture_screenshot_on_failure = true
+```
+
+Selectors cover class, method, annotation, excluded annotation, size, and runner KEY=VALUE arguments.
+
+## AOPS03 lifecycle operations and smoke gates
+
+The Android Operations CLI provides install/replace/uninstall, launch/stop/restart/clear-data, permissions, shell, push/pull, logcat, and screenshot operations. `devtool android smoke` adds install, upgrade, cold-start, restart, restore-restart, process-death, and signed-artifact gates. All device-facing operations consume the AOPS02 device manager and provider selection instead of resolving ADB independently.

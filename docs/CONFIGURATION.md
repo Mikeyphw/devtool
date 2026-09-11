@@ -311,3 +311,31 @@ Use `--runner` for one-run runner overrides. `--project-type` remains a compatib
 ## Completion metadata
 
 `devtool completion-state --kind targets|groups|ui-profiles|test-profiles|variants|jobs|workflows|pytest-tests|all` exposes resolved values for shell/editor integration. This command uses Devtool's real config model, so target groups and inherited profiles match command execution semantics.
+
+## Android Operations signing and instrumentation (AOPS03)
+
+Per-target Android configuration can declare ADB/device policy, instrumentation admission, and release signing:
+
+```toml
+[targets.app.android.adb]
+provider = "auto"
+device_policy = "exactly-one"
+
+[targets.app.android.instrumentation]
+policy = "required"
+keep_installed = false
+capture_logcat_on_failure = true
+capture_screenshot_on_failure = true
+
+[targets.app.android.signing.release]
+mode = "devtool"
+policy = "release-required"
+keystore = "~/.config/app/signing/release.p12"
+alias = "release"
+store_password_env = "APP_RELEASE_STORE_PASSWORD"
+key_password_env = "APP_RELEASE_KEY_PASSWORD"
+expected_cert_sha256 = "..."
+```
+
+Persist only secret source names (or FD/provider configuration), never password values. Project `[env]` is deliberately rejected as storage for signing passwords because validation plans and execution wrappers may serialize project configuration. Devtool-managed signing is task-scoped, so debug/lint/unit tasks do not require release credentials.
+

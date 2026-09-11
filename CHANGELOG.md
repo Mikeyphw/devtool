@@ -1,3 +1,12 @@
+## 2026-09-11 - AOPS03 Android signing, instrumentation, and device operations
+
+- Added the canonical Android signing identity manager with PKCS12/JKS creation/import, alias listing, certificate export, SHA-256 identity/expiry inspection, APK/AAB/JAR verification, and signer comparison.
+- Added task-scoped signing policies and Devtool-managed Gradle signing injection; release credentials are required only for release-producing tasks.
+- Hardened secret transport so planned command specs and resumable validation state never contain signing password values; credentials materialize only at the final native execution boundary and unsafe shell-wrapped backends fail closed.
+- Converged instrumentation onto the canonical AOPS02 device manager and staged Android builder, with explicit disabled/when-device-present/required policies, selectors, cleanup, and failure evidence.
+- Added reusable install/uninstall/launch/stop/restart/clear-data/permission/shell/push/pull/logcat/screenshot operations and install/upgrade/cold-start/restart/restore-restart/process-death/signed-artifact smoke gates.
+- Added Android signing/instrumentation/device-operation configuration, CLI, completion, manpage, documentation, and AOPS03 contract coverage.
+
 ## 2026-09-11 - AOPS02 Android execution and device fabric
 
 - Added canonical `AndroidExecutionContext`/`AndroidOperations` models for SDK/build-tools, Java, Gradle, AAPT2, apksigner, zipalign, NDK, CMake, ADB provider, runtime/provenance, and device-transport evidence.

@@ -3,6 +3,12 @@
 Devtool applies project overlays, validates builds and tests, records transactions, produces handoff summaries, and can publish one live run to the desktop HUD or the Android Devtool Frontend.
 
 
+## Android Operations — AOPS03 signing, instrumentation, and device lifecycle
+
+AOPS03 makes signing and device execution first-class Android Operations services. `devtool android signing create|list|inspect|verify|compare|import|export-certificate` manages release identities without persisting password values. Release-producing tasks can use Devtool-managed Gradle signing injection; debug, lint, compile, and unit-test tasks remain signing-independent. Signing credentials are materialized only at the final native child-process execution boundary, are stripped from resumable validation state, and fail closed for execution backends that cannot transport them without exposing values in shell argv.
+
+Instrumentation uses the AOPS02 device manager and the staged Android builder, supports `disabled`, `when-device-present`, and `required` device-test policies, and accepts class/method/annotation/size/runner-argument selectors. Device Operations also provides install/replace/uninstall, launch/stop/restart/clear-data, permissions, shell/push/pull/logcat/screenshot, plus install, upgrade, cold-start, restart, restore-restart, process-death, and signed-artifact smoke gates.
+
 ## Interactive validation cockpit
 
 Open the validation-only terminal UI with either command:

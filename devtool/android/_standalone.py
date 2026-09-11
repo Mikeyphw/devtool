@@ -1772,6 +1772,21 @@ gradle.beforeProject { project ->
     return path
 
 
+ANDROID_DEVICE_TEST_POLICIES = {"disabled", "when-device-present", "required"}
+
+
+def normalize_android_device_test_policy(value: object, *, default: str = "when-device-present") -> str:
+    policy = str(value or default).strip().lower()
+    aliases = {"never": "disabled", "off": "disabled", "none": "disabled", "always": "required", "device": "when-device-present"}
+    policy = aliases.get(policy, policy)
+    if policy not in ANDROID_DEVICE_TEST_POLICIES:
+        raise BuildError(
+            f"Unsupported connected device-test policy: {policy}. "
+            "Expected disabled, when-device-present, or required."
+        )
+    return policy
+
+
 def filter_unavailable_connected_android_tests(
     tasks: Sequence[str],
     *,
@@ -1780,8 +1795,14 @@ def filter_unavailable_connected_android_tests(
     dry_run: bool = False,
     adb_provider: str = "auto",
     adb_path: str | os.PathLike[str] | None = None,
+    device_test_policy: str = "when-device-present",
 ) -> tuple[list[str], list[str], str, dict[str, str]]:
-    """Skip connected*AndroidTest tasks when no usable device exists."""
+    """Apply the connected-device test policy to Gradle tasks.
+
+    ``when-device-present`` preserves the historical documented skip.
+    ``required`` makes missing/unusable transport a hard failure.
+    ``disabled`` suppresses explicit and transitive connected Android tests.
+    """
 
     requested = [
         str(task)
@@ -1795,8 +1816,15 @@ def filter_unavailable_connected_android_tests(
         if is_connected_android_test_task(task)
     ]
 
+    policy = normalize_android_device_test_policy(device_test_policy)
+
     if dry_run:
         return requested, [], "", {}
+
+    if policy == "disabled":
+        skipped_set = set(connected)
+        retained = [task for task in requested if task not in skipped_set]
+        return retained, connected, "", {}
 
     # Probe even when no connected*AndroidTest task was requested directly.
     # A release/qualification/seal task may depend on a connected test
@@ -1810,6 +1838,13 @@ def filter_unavailable_connected_android_tests(
 
     if devices:
         return requested, [], adb, states
+
+    if policy == "required":
+        state_summary = ", ".join(f"{serial}={state}" for serial, state in sorted(states.items())) or "none"
+        raise BuildError(
+            "Android connected-device tests are required, but no usable device is available. "
+            f"ADB={adb or 'unavailable'} states={state_summary}"
+        )
 
     # There may be no explicitly requested connected task, while one of
     # the requested seal/qualification tasks pulls it into Gradle's task
@@ -8132,6 +8167,7 @@ def parse_args(raw_args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sdk-provider", choices=sorted(ANDROID_SDK_PROVIDERS), default=os.environ.get("DEVTOOL_ANDROID_SDK_PROVIDER", "auto"), help="Android SDK provider: auto, termuxvoid, homuhomu, or managed")
     parser.add_argument("--adb-provider", choices=("auto", "sdk", "termux", "termux-adb", "path", "none"), default=os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER", "auto"), help="ADB provider used for connected-device task availability")
     parser.add_argument("--adb-path", default=os.environ.get("DEVTOOL_ANDROID_ADB_PATH", ""), help="Explicit ADB path used with --adb-provider path or as the first auto candidate")
+    parser.add_argument("--device-test-policy", choices=("disabled", "when-device-present", "required"), default=os.environ.get("DEVTOOL_ANDROID_DEVICE_TEST_POLICY", "when-device-present"), help="Connected Android test policy: disabled, conditional, or required")
     parser.add_argument("-P", "--android-platform", default="auto", help="android-36, 36, auto, or none")
     parser.add_argument("-B", "--build-tools", default="auto", help="Build Tools version, auto, or none")
     parser.add_argument("--ndk-version", default="auto", help="NDK version, auto, or none")
@@ -8981,6 +9017,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dry_run=args.dry_run,
         adb_provider=args.adb_provider,
         adb_path=args.adb_path or None,
+        device_test_policy=args.device_test_policy,
     )
 
     if skipped_connected_tasks:
@@ -9088,7 +9125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         info(
             "Gradle connected-device policy: "
-            "connected*AndroidTest tasks are disabled for this invocation"
+            f"{args.device_test_policy}; connected*AndroidTest tasks are disabled for this invocation"
         )
 
     if args.clean and "clean" not in tasks:

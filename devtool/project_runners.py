@@ -108,6 +108,29 @@ def _optimized_env(config: ProjectConfig, kind: str) -> dict[str, str]:
     return optimized_build_env(config, kind, config.env)
 
 
+def _android_env_for_tasks(config: ProjectConfig, tasks: list[str], *, validation: bool = False) -> dict[str, str]:
+    """Return the non-secret planned Android child environment.
+
+    AOPS03 intentionally defers Devtool-managed signing passwords until the
+    final process execution boundary; planned ``CommandSpec`` objects must stay
+    safe to serialize, wrap, inspect and resume.
+    """
+    base = optimized_validation_env(config, "android") if validation else _optimized_env(config, "android")
+    from .android.signing import strip_configured_signing_source_values
+    return strip_configured_signing_source_values(config, base)
+
+
+def _android_signing_metadata(
+    config: ProjectConfig,
+    tasks: list[str],
+    *,
+    validation: bool = False,
+) -> dict[str, object]:
+    base = optimized_validation_env(config, "android") if validation else _optimized_env(config, "android")
+    from .android.signing import signing_plan_metadata
+    return dict(signing_plan_metadata(config, tasks, env={**os.environ, **base}))
+
+
 def _project_root(config: ProjectConfig) -> Path:
     return Path(config.project_root or config.repo_root).expanduser().resolve()
 
@@ -680,13 +703,24 @@ class AndroidGradleRunner(ProjectRunner):
             android = config.runner_options.get("android", {})
             android = dict(android) if isinstance(android, dict) else {}
             root = android_project_root(config)
+            variant_name = str(config.variant or android.get("variant") or "debug")
+            variant_title = variant_name[:1].upper() + variant_name[1:]
+            instrumentation_build_tasks = [f"assemble{variant_title}", f"assemble{variant_title}AndroidTest"]
+            instrumentation_env = _android_env_for_tasks(config, instrumentation_build_tasks)
             argv = [
                 sys.executable, "-m", "devtool.android_instrumentation", str(root),
-                "--variant", str(config.variant or android.get("variant") or "debug"),
+                "--variant", variant_name,
                 "--device-serial", str(config.device_serial or android.get("device_serial") or ""),
                 "--install-command", str(android.get("install_command") or "sudo pm install -r -t"),
                 "--am-command", str(android.get("am_command") or "sudo am instrument"),
+                "--canonical",
             ]
+            from .android.instrumentation import instrumentation_config, resolve_instrumentation_policy
+            ins_cfg = instrumentation_config(config)
+            adb_cfg = android.get("adb", {}) if isinstance(android.get("adb", {}), dict) else {}
+            serial = str(config.device_serial or adb_cfg.get("serial") or android.get("device_serial") or "")
+            device_policy = str(adb_cfg.get("device_policy") or ("serial" if serial else "exactly-one"))
+            argv.extend(["--policy", resolve_instrumentation_policy(config), "--device-policy", device_policy])
             build_tools_value = android.get("build_tools", {})
             build_tools_options = build_tools_value if isinstance(build_tools_value, dict) else {}
             configured_aapt2 = str(android.get("aapt2") or "").strip()
@@ -707,19 +741,31 @@ class AndroidGradleRunner(ProjectRunner):
                 for value in configured_gradle_args:
                     item = str(value).strip()
                     if item:
-                        # Gradle arguments commonly begin with "-" (-D, -P, --...).
-                        # Passing the value as a separate argv token makes argparse
-                        # interpret it as another option instead of the value for
-                        # --gradle-arg.  The --option=value form is unambiguous.
                         argv.append(f"--gradle-arg={item}")
-            runner = str(android.get("test_runner") or "").strip()
-            target_package = str(android.get("target_package") or "").strip()
+            # The generated init script contains only non-secret signing
+            # configuration and reads passwords from the child environment.
+            from .android.signing import signing_gradle_args_for_tasks
+            for value in signing_gradle_args_for_tasks(config, instrumentation_build_tasks, env={**os.environ, **instrumentation_env}):
+                argv.append(f"--gradle-arg={value}")
+            runner = str(ins_cfg.get("test_runner") or "").strip()
+            target_package = str(ins_cfg.get("target_package") or "").strip()
             if runner:
                 argv.extend(["--runner", runner])
             if target_package:
                 argv.extend(["--target-package", target_package])
-            if bool(android.get("keep_installed", False)):
+            size = str(ins_cfg.get("size") or "").strip().lower()
+            if size in {"small", "medium", "large"}:
+                argv.extend(["--size", size])
+            runner_args = ins_cfg.get("runner_args", {})
+            if isinstance(runner_args, dict):
+                for key, value in sorted(runner_args.items()):
+                    argv.extend(["--runner-arg", f"{key}={value}"])
+            if bool(ins_cfg.get("keep_installed", False)):
                 argv.append("--keep-installed")
+            if not bool(ins_cfg.get("capture_logcat_on_failure", True)):
+                argv.append("--no-logcat-on-failure")
+            if not bool(ins_cfg.get("capture_screenshot_on_failure", True)):
+                argv.append("--no-screenshot-on-failure")
             if selection is not None:
                 for value in selection.classes:
                     argv.extend(["--class", value])
@@ -729,16 +775,19 @@ class AndroidGradleRunner(ProjectRunner):
                     argv.extend(["--annotation", value])
                 for value in selection.exclude_tags:
                     argv.extend(["--not-annotation", value])
+            metadata: dict[str, object] = {
+                "runner": self.kind,
+                "project_type": self.kind,
+                "project_root": str(root),
+                "gradle_tasks": list(instrumentation_build_tasks),
+                "progress_parser": "gradle",
+                "report_parser": "android-instrumentation",
+                "execution_environment": "android-device",
+                "instrumentation_uses_canonical_build": True,
+            }
+            metadata.update(_android_signing_metadata(config, instrumentation_build_tasks))
             spec = CommandSpec(
-                "instrumentation", argv, env=_optimized_env(config, self.kind), cwd=str(root),
-                metadata={
-                    "runner": self.kind,
-                    "project_type": self.kind,
-                    "project_root": str(root),
-                    "progress_parser": "gradle",
-                    "report_parser": "android-instrumentation",
-                    "execution_environment": "android-device",
-                },
+                "instrumentation", argv, env=instrumentation_env, cwd=str(root), metadata=metadata
             )
             return [apply_test_selection(config, spec)]
 
@@ -790,7 +839,7 @@ class AndroidGradleRunner(ProjectRunner):
             CommandSpec(
                 action,
                 argv,
-                env=_optimized_env(config, self.kind),
+                env=_android_env_for_tasks(config, list(tasks if action == "package" else plan.default_tasks)),
                 cwd=str(plan.project_root),
                 metadata={
                     "runner": self.kind,
@@ -806,6 +855,9 @@ class AndroidGradleRunner(ProjectRunner):
                 },
             )
         ]
+        for spec in specs:
+            planned_tasks = [str(item) for item in spec.metadata.get("gradle_tasks", []) or []]
+            spec.metadata.update(_android_signing_metadata(config, planned_tasks))
         if action == "test":
             specs = [apply_test_selection(config, spec) for spec in specs]
         return specs
@@ -913,7 +965,7 @@ class AndroidGradleRunner(ProjectRunner):
                         validation_phase=phase,
                     ),
                 ],
-                env=optimized_validation_env(config, self.kind),
+                env=_android_env_for_tasks(config, unique_tasks, validation=True),
                 cwd=str(plan.project_root),
                 metadata=metadata,
             )
@@ -967,11 +1019,9 @@ class AndroidGradleRunner(ProjectRunner):
         if lint_tasks and phase_enabled("lint"):
             specs.append(gradle_phase("lint", phase_tasks("lint", lint_tasks), report_parsers=["android-lint"]))
 
-        instrumentation_policy = str(android_options.get("instrumentation") or "never").strip().lower()
-        run_instrumentation = not skip_test and (
-            instrumentation_policy in {"required", "always"}
-            or (instrumentation_policy == "when-device-present" and (shutil.which("pm") or shutil.which("adb")))
-        )
+        from .android.instrumentation import resolve_instrumentation_policy
+        instrumentation_policy = resolve_instrumentation_policy(config)
+        run_instrumentation = not skip_test and instrumentation_policy != "disabled"
         if run_instrumentation and phase_enabled("instrumentation"):
             selection_options = dict(config.runner_options.get("test_selection", {}) or {})
             selection_options["instrumented"] = True
@@ -1118,7 +1168,8 @@ class AndroidGradleRunner(ProjectRunner):
             if resource.enabled:
                 validation_env = optimized_validation_env(config, self.kind)
                 for spec in specs:
-                    spec.env = dict(validation_env)
+                    gradle_tasks_for_spec = [str(item) for item in spec.metadata.get("gradle_tasks", [])] if isinstance(spec.metadata.get("gradle_tasks", []), (list, tuple)) else []
+                    spec.env = _android_env_for_tasks(config, gradle_tasks_for_spec, validation=True) if gradle_tasks_for_spec else dict(validation_env)
                     phase_name = str(spec.metadata.get("validation_phase_name") or "").strip()
                     phase_policy = (
                         resolve_android_validation_phase_policy(config, phase_name)
@@ -1234,7 +1285,7 @@ class AndroidGradleRunner(ProjectRunner):
                             validation_phase=validation_phase,
                         ),
                     ],
-                    env=optimized_validation_env(config, self.kind),
+                    env=_android_env_for_tasks(config, unique_tasks, validation=True),
                     cwd=str(plan.project_root),
                     metadata=metadata,
                 )
@@ -1244,8 +1295,9 @@ class AndroidGradleRunner(ProjectRunner):
 
         android_options = config.runner_options.get("android", {})
         android_options = dict(android_options) if isinstance(android_options, dict) else {}
-        instrumentation_policy = str(android_options.get("instrumentation") or "never").strip().lower()
-        if not skip_test and instrumentation_policy in {"required", "always"}:
+        from .android.instrumentation import resolve_instrumentation_policy
+        instrumentation_policy = resolve_instrumentation_policy(config)
+        if not skip_test and instrumentation_policy == "required":
             selection_options = dict(config.runner_options.get("test_selection", {}) or {})
             selection_options["instrumented"] = True
             original = config.runner_options.get("test_selection")
@@ -1258,18 +1310,19 @@ class AndroidGradleRunner(ProjectRunner):
                 else:
                     config.runner_options["test_selection"] = original
         elif not skip_test and instrumentation_policy == "when-device-present":
-            if shutil.which("pm") or shutil.which("adb"):
-                selection_options = dict(config.runner_options.get("test_selection", {}) or {})
-                selection_options["instrumented"] = True
-                original = config.runner_options.get("test_selection")
-                config.runner_options["test_selection"] = selection_options
-                try:
-                    specs.extend(self.build_specs(config, "instrumentation"))
-                finally:
-                    if original is None:
-                        config.runner_options.pop("test_selection", None)
-                    else:
-                        config.runner_options["test_selection"] = original
+            # The orchestrator owns device availability. It emits a documented
+            # skip when no usable target is present instead of planning based on PATH.
+            selection_options = dict(config.runner_options.get("test_selection", {}) or {})
+            selection_options["instrumented"] = True
+            original = config.runner_options.get("test_selection")
+            config.runner_options["test_selection"] = selection_options
+            try:
+                specs.extend(self.build_specs(config, "instrumentation"))
+            finally:
+                if original is None:
+                    config.runner_options.pop("test_selection", None)
+                else:
+                    config.runner_options["test_selection"] = original
 
         if not specs:
             raise SystemExit("Validation would run no Android/Gradle commands. Clear a skip flag.")
@@ -1289,6 +1342,9 @@ class AndroidGradleRunner(ProjectRunner):
                 "lint_scope": metadata.get("lint_scope", lint_scope),
                 "lint_modules": metadata.get("lint_modules", list(lint_modules)),
             })
+            planned_tasks = [str(item) for item in metadata.get("gradle_tasks", []) or []]
+            if planned_tasks:
+                metadata.update(_android_signing_metadata(config, planned_tasks, validation=True))
             spec.metadata = metadata
         return specs
 

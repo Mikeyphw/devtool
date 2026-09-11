@@ -517,12 +517,18 @@ def _json_safe(value: Any) -> Any:
 
 
 def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
-    """Serialize an executable validation command into durable session state."""
+    """Serialize an executable validation command into durable session state.
 
+    Android signing passwords are execution-boundary secrets and must never be
+    durable even if a third-party caller accidentally placed them in spec.env.
+    """
+
+    from .android.signing import strip_signing_secrets
+    safe_env = strip_signing_secrets(spec.env)
     return {
         "name": str(spec.name),
         "argv": [str(item) for item in spec.argv],
-        "env": {str(key): str(value) for key, value in spec.env.items()},
+        "env": {str(key): str(value) for key, value in safe_env.items()},
         "cwd": None if spec.cwd is None else str(spec.cwd),
         "destructive": bool(spec.destructive),
         "metadata": _json_safe(dict(spec.metadata)),
@@ -1092,7 +1098,11 @@ def spec_fingerprint(spec: CommandSpec) -> str:
         "name": spec.name,
         "argv": list(spec.argv),
         "cwd": str(spec.cwd or ""),
-        "env": {str(key): str(value) for key, value in sorted(spec.env.items())},
+        "env": {
+            str(key): str(value)
+            for key, value in sorted(spec.env.items())
+            if str(key) not in {"DEVTOOL_ANDROID_SIGNING_STORE_PASSWORD", "DEVTOOL_ANDROID_SIGNING_KEY_PASSWORD"}
+        },
         "metadata": {key: spec.metadata.get(key) for key in metadata_keys if key in spec.metadata},
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")

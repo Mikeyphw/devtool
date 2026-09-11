@@ -964,6 +964,124 @@ def build_parser() -> argparse.ArgumentParser:
     android_doctor = android_sub.add_parser("doctor", help="Diagnose Android tools and the active ADB/device transport")
     add_android_adb_flags(android_doctor)
 
+    def add_android_device_selection_flags(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument("--serial", default="", help="Android device serial/transport ID")
+        sub.add_argument("--policy", choices=("exactly-one", "serial", "preferred", "first-physical", "first-emulator"), default="", help="Device selection policy")
+        sub.add_argument("--format", choices=("text", "json"), default="text")
+
+    android_signing = android_sub.add_parser("signing", help="Create, inspect, verify, compare, import, and export Android signing identities")
+    signing_sub = android_signing.add_subparsers(dest="signing_action", required=True)
+    signing_create = signing_sub.add_parser("create", help="Create a Devtool-managed Android signing keystore")
+    signing_create.add_argument("--keystore", default="")
+    signing_create.add_argument("--alias", default="")
+    signing_create.add_argument("--store-password-env", default="")
+    signing_create.add_argument("--key-password-env", default="")
+    signing_create.add_argument("--dname", default="CN=Devtool Android Release")
+    signing_create.add_argument("--overwrite", action="store_true")
+    signing_create.add_argument("--format", choices=("text", "json"), default="text")
+    signing_list = signing_sub.add_parser("list", help="List aliases and certificate identities in a signing keystore")
+    signing_list.add_argument("--keystore", default="")
+    signing_list.add_argument("--store-password-env", default="")
+    signing_list.add_argument("--format", choices=("text", "json"), default="text")
+    signing_inspect = signing_sub.add_parser("inspect", help="Inspect configured keystore alias and certificate identity")
+    signing_inspect.add_argument("--keystore", default="")
+    signing_inspect.add_argument("--alias", default="")
+    signing_inspect.add_argument("--store-password-env", default="")
+    signing_inspect.add_argument("--format", choices=("text", "json"), default="text")
+    signing_verify = signing_sub.add_parser("verify", help="Verify the configured identity or a signed APK/AAB")
+    signing_verify.add_argument("artifact", nargs="?", default="")
+    signing_verify.add_argument("--keystore", default="")
+    signing_verify.add_argument("--alias", default="")
+    signing_verify.add_argument("--store-password-env", default="")
+    signing_verify.add_argument("--format", choices=("text", "json"), default="text")
+    signing_compare = signing_sub.add_parser("compare", help="Compare signer certificate identities of two APK/AAB artifacts")
+    signing_compare.add_argument("artifact")
+    signing_compare.add_argument("other_artifact")
+    signing_compare.add_argument("--format", choices=("text", "json"), default="text")
+    signing_import = signing_sub.add_parser("import", help="Import/migrate a keystore, including JKS to PKCS12")
+    signing_import.add_argument("source")
+    signing_import.add_argument("destination")
+    signing_import.add_argument("--alias", default="")
+    signing_import.add_argument("--source-password-env", required=True)
+    signing_import.add_argument("--destination-password-env", required=True)
+    signing_import.add_argument("--overwrite", action="store_true")
+    signing_import.add_argument("--format", choices=("text", "json"), default="text")
+    signing_export = signing_sub.add_parser("export-certificate", help="Export configured signing certificate as PEM")
+    signing_export.add_argument("--destination", required=True)
+    signing_export.add_argument("--keystore", default="")
+    signing_export.add_argument("--alias", default="")
+    signing_export.add_argument("--store-password-env", default="")
+    signing_export.add_argument("--format", choices=("text", "json"), default="text")
+
+    android_install = android_sub.add_parser("install", help="Install an APK on the selected Android device")
+    android_install.add_argument("apk")
+    add_android_device_selection_flags(android_install)
+    android_install.add_argument("--no-replace", action="store_true")
+    android_install.add_argument("--downgrade", action="store_true")
+    android_uninstall = android_sub.add_parser("uninstall", help="Uninstall a package from the selected device")
+    android_uninstall.add_argument("package")
+    add_android_device_selection_flags(android_uninstall)
+    android_uninstall.add_argument("--keep-data", action="store_true")
+    for _name, _help in (("launch", "Launch an Android package"), ("stop", "Force-stop an Android package"), ("restart", "Force-stop and relaunch an Android package"), ("clear-data", "Clear an Android package's app data")):
+        _sub = android_sub.add_parser(_name, help=_help)
+        _sub.add_argument("package")
+        if _name in {"launch", "restart"}:
+            _sub.add_argument("--activity", default="")
+        add_android_device_selection_flags(_sub)
+    android_shell = android_sub.add_parser("shell", help="Run an adb shell command on the selected device")
+    android_shell.add_argument("shell_args", nargs=argparse.REMAINDER)
+    add_android_device_selection_flags(android_shell)
+    android_push = android_sub.add_parser("push", help="Push a file/directory to the selected device")
+    android_push.add_argument("source")
+    android_push.add_argument("destination")
+    add_android_device_selection_flags(android_push)
+    android_pull = android_sub.add_parser("pull", help="Pull a file/directory from the selected device")
+    android_pull.add_argument("source")
+    android_pull.add_argument("destination")
+    add_android_device_selection_flags(android_pull)
+    android_logcat = android_sub.add_parser("logcat", help="Capture recent logcat from the selected device")
+    android_logcat.add_argument("--lines", type=int, default=400)
+    add_android_device_selection_flags(android_logcat)
+    android_screenshot = android_sub.add_parser("screenshot", help="Capture a PNG screenshot from the selected device")
+    android_screenshot.add_argument("destination")
+    add_android_device_selection_flags(android_screenshot)
+    android_permission = android_sub.add_parser("permission", help="Grant or revoke a runtime permission")
+    permission_sub = android_permission.add_subparsers(dest="permission_action", required=True)
+    for _name in ("grant", "revoke"):
+        _sub = permission_sub.add_parser(_name)
+        _sub.add_argument("package")
+        _sub.add_argument("permission")
+        add_android_device_selection_flags(_sub)
+
+    android_instrumentation_cmd = android_sub.add_parser("instrumentation", help="Run Android instrumentation through the canonical device orchestrator")
+    android_instrumentation_cmd.add_argument("--class", dest="instrumentation_classes", action="append", default=[])
+    android_instrumentation_cmd.add_argument("--method", dest="instrumentation_methods", action="append", default=[])
+    android_instrumentation_cmd.add_argument("--annotation", dest="instrumentation_annotations", action="append", default=[])
+    android_instrumentation_cmd.add_argument("--not-annotation", dest="instrumentation_not_annotations", action="append", default=[])
+    android_instrumentation_cmd.add_argument("--size", dest="instrumentation_size", choices=("small", "medium", "large"), default="")
+    android_instrumentation_cmd.add_argument("--runner-arg", dest="instrumentation_runner_args", action="append", default=[])
+    android_instrumentation_cmd.add_argument("--skip-build", action="store_true")
+    android_instrumentation_cmd.add_argument("--format", choices=("text", "json"), default="text")
+
+    android_smoke = android_sub.add_parser("smoke", help="Run reusable Android install/upgrade/lifecycle/signature smoke gates")
+    android_smoke.add_argument("gate", choices=("install", "upgrade", "cold-start", "restart", "restore-restart", "process-death", "signed-artifact"))
+    android_smoke.add_argument("--apk", default="")
+    android_smoke.add_argument("--old-apk", default="")
+    android_smoke.add_argument("--package", default="")
+    android_smoke.add_argument("--activity", default="")
+    android_smoke.add_argument("--expected-cert-sha256", default="")
+    add_android_device_selection_flags(android_smoke)
+
+    instrumentation_cmd = subparsers.add_parser("instrumentation", help="Run Android instrumentation for the selected target")
+    instrumentation_cmd.add_argument("--class", dest="instrumentation_classes", action="append", default=[])
+    instrumentation_cmd.add_argument("--method", dest="instrumentation_methods", action="append", default=[])
+    instrumentation_cmd.add_argument("--annotation", dest="instrumentation_annotations", action="append", default=[])
+    instrumentation_cmd.add_argument("--not-annotation", dest="instrumentation_not_annotations", action="append", default=[])
+    instrumentation_cmd.add_argument("--size", dest="instrumentation_size", choices=("small", "medium", "large"), default="")
+    instrumentation_cmd.add_argument("--runner-arg", dest="instrumentation_runner_args", action="append", default=[])
+    instrumentation_cmd.add_argument("--skip-build", action="store_true")
+    instrumentation_cmd.add_argument("--format", choices=("text", "json"), default="text")
+
     termux_cmd = subparsers.add_parser("termux", help="Inspect native Termux providers, packages, and PRoot guests")
     termux_sub = termux_cmd.add_subparsers(dest="termux_command", required=True)
     termux_doctor = termux_sub.add_parser("doctor", help="Run the detailed Termux/provider doctor")
@@ -10743,7 +10861,112 @@ def _main_after_parse(
                     rows.append((f"tool.{name}", f"{tool.get('provider')}: {tool.get('path') or tool.get('rejection_reason') or '-'}"))
                 render_status_table(rows)
             return 1 if report["status"] == "error" else 0
+        if action == "signing":
+            from .android.cli import android_signing_payload
+            signing_action = str(getattr(args, "signing_action", "") or "")
+            try:
+                payload = android_signing_payload(
+                    config, action=signing_action,
+                    keystore=str(getattr(args, "keystore", "") or ""), alias=str(getattr(args, "alias", "") or ""),
+                    artifact=str(getattr(args, "artifact", "") or ""), other_artifact=str(getattr(args, "other_artifact", "") or ""),
+                    destination=str(getattr(args, "destination", "") or ""), source=str(getattr(args, "source", "") or ""),
+                    store_password_env=str(getattr(args, "store_password_env", "") or ""), key_password_env=str(getattr(args, "key_password_env", "") or ""),
+                    source_password_env=str(getattr(args, "source_password_env", "") or ""), destination_password_env=str(getattr(args, "destination_password_env", "") or ""),
+                    overwrite=bool(getattr(args, "overwrite", False)), distinguished_name=str(getattr(args, "dname", "CN=Devtool Android Release") or "CN=Devtool Android Release"),
+                )
+            except Exception as exc:
+                if output_format == "json":
+                    print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2))
+                else:
+                    print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            if output_format == "json":
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                rows = [("action", signing_action)]
+                identity = payload.get("identity") or (payload.get("verification") or {}).get("identity") or {}
+                if identity:
+                    rows.extend([("alias", str(identity.get("alias") or "-")), ("sha256", str(identity.get("sha256") or "-")), ("subject", str(identity.get("subject") or "-"))])
+                for index, listed_identity in enumerate(payload.get("identities") or [], start=1):
+                    rows.extend([
+                        (f"alias.{index}", str(listed_identity.get("alias") or "-")),
+                        (f"sha256.{index}", str(listed_identity.get("sha256") or "-")),
+                        (f"expires.{index}", str(listed_identity.get("valid_until") or "-")),
+                    ])
+                if "same_identity" in payload:
+                    rows.append(("same_identity", str(bool(payload["same_identity"])).lower()))
+                verification = payload.get("verification") or {}
+                if verification:
+                    rows.extend([("status", str(verification.get("status") or "-")), ("detail", str(verification.get("detail") or "-"))])
+                render_status_table(rows)
+            return 0 if payload.get("ok", True) is not False and (payload.get("verification") or {}).get("status", "passed") != "failed" else 1
+        if action in {"install", "uninstall", "launch", "stop", "restart", "clear-data", "shell", "push", "pull", "logcat", "screenshot", "permission"}:
+            from .android.cli import android_device_operation_payload
+            op_action = str(getattr(args, "permission_action", "") or action) if action == "permission" else action
+            try:
+                payload = android_device_operation_payload(
+                    config, action=op_action, serial=str(getattr(args, "serial", "") or ""), policy=str(getattr(args, "policy", "") or ""),
+                    apk=str(getattr(args, "apk", "") or ""), package=str(getattr(args, "package", "") or ""), activity=str(getattr(args, "activity", "") or ""),
+                    source=str(getattr(args, "source", "") or ""), destination=str(getattr(args, "destination", "") or ""), permission=str(getattr(args, "permission", "") or ""),
+                    shell_args=list(getattr(args, "shell_args", []) or []), replace=not bool(getattr(args, "no_replace", False)), downgrade=bool(getattr(args, "downgrade", False)),
+                    keep_data=bool(getattr(args, "keep_data", False)), lines=int(getattr(args, "lines", 400) or 400),
+                )
+            except Exception as exc:
+                if output_format == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2))
+                else: print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            if output_format == "json":
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                results = payload.get("results") or ([payload.get("result")] if payload.get("result") else [])
+                rows = [("operation", op_action)]
+                for item in results:
+                    rows.extend([("status", str(item.get("status") or "-")), ("device", str(item.get("serial") or "-"))])
+                    if item.get("detail"): rows.append(("detail", str(item["detail"])))
+                    if op_action in {"shell", "logcat"} and item.get("stdout"): print(str(item["stdout"]), end="" if str(item["stdout"]).endswith("\n") else "\n")
+                render_status_table(rows)
+            results = payload.get("results") or ([payload.get("result")] if payload.get("result") else [])
+            return 0 if all(bool(item.get("ok", item.get("status") == "passed")) for item in results) else 1
+        if action == "instrumentation":
+            from .android.cli import android_instrumentation_payload
+            try:
+                payload = android_instrumentation_payload(config, classes=list(getattr(args, "instrumentation_classes", []) or []), methods=list(getattr(args, "instrumentation_methods", []) or []), annotations=list(getattr(args, "instrumentation_annotations", []) or []), not_annotations=list(getattr(args, "instrumentation_not_annotations", []) or []), size=str(getattr(args, "instrumentation_size", "") or ""), runner_args={str(item).split("=", 1)[0]: str(item).split("=", 1)[1] for item in list(getattr(args, "instrumentation_runner_args", []) or []) if "=" in str(item)}, skip_build=bool(getattr(args, "skip_build", False)))
+            except Exception as exc:
+                if output_format == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2))
+                else: print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            result = payload["result"]
+            if output_format == "json": print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else: render_status_table([("status", result.get("status", "-")), ("device", result.get("device_serial") or "-"), ("passed", str(result.get("passed", 0))), ("failed", str(result.get("failed", 0))), ("reason", result.get("reason") or "-")])
+            return 0 if result.get("ok") else 1
+        if action == "smoke":
+            from .android.cli import android_smoke_payload
+            try:
+                payload = android_smoke_payload(config, gate=str(args.gate), apk=str(args.apk or ""), old_apk=str(args.old_apk or ""), package=str(args.package or ""), activity=str(args.activity or ""), serial=str(args.serial or ""), policy=str(args.policy or ""), expected_cert_sha256=str(args.expected_cert_sha256 or ""))
+            except Exception as exc:
+                if output_format == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2))
+                else: print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            result = payload["result"]
+            if output_format == "json": print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else: render_status_table([("gate", result.get("gate", "-")), ("status", result.get("status", "-")), ("device", result.get("serial") or "-"), ("package", result.get("package") or "-"), ("detail", result.get("detail") or "-")])
+            return 0 if result.get("ok") else 1
         parser.error(f"Unknown android command: {action}")
+
+    if args.command == "instrumentation":
+        from .android.cli import android_instrumentation_payload
+        repo = Path(args.repo or Path.cwd()).resolve()
+        config = load_project_config(str(repo), args.config, target_name=str(getattr(args, "target", "") or ""), variant_name=str(getattr(args, "variant", "") or ""), kind_override=str(getattr(args, "project_type", "auto") or "auto"), allow_ambiguous_target=True)
+        try:
+            payload = android_instrumentation_payload(config, classes=list(getattr(args, "instrumentation_classes", []) or []), methods=list(getattr(args, "instrumentation_methods", []) or []), annotations=list(getattr(args, "instrumentation_annotations", []) or []), not_annotations=list(getattr(args, "instrumentation_not_annotations", []) or []), size=str(getattr(args, "instrumentation_size", "") or ""), runner_args={str(item).split("=", 1)[0]: str(item).split("=", 1)[1] for item in list(getattr(args, "instrumentation_runner_args", []) or []) if "=" in str(item)}, skip_build=bool(getattr(args, "skip_build", False)))
+        except Exception as exc:
+            if str(getattr(args, "format", "text")) == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2))
+            else: print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        result = payload["result"]
+        if str(getattr(args, "format", "text")) == "json": print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else: render_status_table([("status", result.get("status", "-")), ("device", result.get("device_serial") or "-"), ("passed", str(result.get("passed", 0))), ("failed", str(result.get("failed", 0))), ("reason", result.get("reason") or "-")])
+        return 0 if result.get("ok") else 1
 
     if args.command == "termux":
         repo = Path(args.repo or Path.cwd()).resolve()

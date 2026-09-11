@@ -10,6 +10,9 @@ from .build import BuildError, JavaRequirement, ProjectInfo, inspect_project, ma
 from .capabilities import AndroidExecutionContext, AndroidToolResolution, resolve_android_execution_context
 from .devices import AndroidDevice, AndroidDeviceManager, AndroidDeviceError
 from .operations import AndroidOperations, resolve_android_operations
+from .signing import AndroidSigningError, AndroidSigningManager, SigningIdentity, SigningProfile, SigningVerification
+from .device_ops import AndroidDeviceOperationError, AndroidDeviceOperations, DeviceOperationResult, SmokeGateResult
+from .instrumentation import AndroidInstrumentationOrchestrator, InstrumentationRequest, InstrumentationResult, resolve_instrumentation_policy
 
 __all__ = [
     "BuildError",
@@ -20,5 +23,8 @@ __all__ = [
     "AndroidExecutionContext", "AndroidToolResolution", "resolve_android_execution_context",
     "AndroidDevice", "AndroidDeviceManager", "AndroidDeviceError",
     "AndroidOperations", "resolve_android_operations",
+    "AndroidSigningError", "AndroidSigningManager", "SigningIdentity", "SigningProfile", "SigningVerification",
+    "AndroidDeviceOperationError", "AndroidDeviceOperations", "DeviceOperationResult", "SmokeGateResult",
+    "AndroidInstrumentationOrchestrator", "InstrumentationRequest", "InstrumentationResult", "resolve_instrumentation_policy",
     "standalone_main",
 ]

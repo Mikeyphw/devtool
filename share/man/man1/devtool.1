@@ -1272,6 +1272,40 @@ and
 .BR none .
 The termux-adb provider diagnoses Termux:API/termux-usb readiness but does not silently install a third-party package repository.
 .PP
+AOPS03 adds task-scoped Android signing, instrumentation orchestration, and reusable device lifecycle operations.
+.B devtool android signing
+can create/import PKCS12 identities, list aliases with .B signing list , inspect aliases and certificate expiry, export certificates, verify APK/AAB/JAR signers, and compare artifact identities. Signing passwords are supplied through prompt/environment/file-descriptor/stdin/external-secret sources; password values are not written to project TOML, generated Gradle init scripts, command arguments, reports, or artifact history.
+.PP
+With
+.B android.signing.release.mode=devtool
+Devtool injects an ephemeral Gradle init script only for release-producing tasks such as assembleRelease, bundleRelease, packaging, or publication. Debug, lint, compile, and unit-test tasks do not require release credentials merely because the project is release-capable.
+.PP
+.B devtool instrumentation
+and
+.B devtool android instrumentation
+use the canonical device manager and the explicit
+.BR disabled ,
+.BR when-device-present ,
+and
+.B required
+device-test policies. Required tests fail when transport/device readiness is missing; optional tests record a skip. Class, method, annotation, excluded-annotation, size, and runner KEY=VALUE selectors are supported. Failure evidence can include logcat, screenshot, package state, and the raw instrumentation result.
+.PP
+Reusable device commands include
+.BR install ,
+.BR uninstall ,
+.BR launch ,
+.BR stop ,
+.BR restart ,
+.BR clear-data ,
+.BR shell ,
+.BR push ,
+.BR pull ,
+.BR logcat ,
+.BR screenshot ,
+and permission grant/revoke.
+.B devtool android smoke
+provides install, upgrade, cold-start, restart, restore-restart, process-death, and signed-artifact gates.
+.PP
 Gradle is launched with a bundled init script that emits ordered run-scoped events. Terminal,
 desktop, and Android views consume the same task and test stream. Stale, wrong-run, invalid,
 or out-of-order events are rejected.

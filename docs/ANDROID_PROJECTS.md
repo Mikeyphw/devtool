@@ -2,7 +2,7 @@
 
 Devtool 0.15 uses the shared `build-apk` backend for Android and Gradle projects,
 then layers structured test, progress, and lint reporting on top. AOPS02 adds the
-canonical Android execution/device fabric described in [`ANDROID_OPERATIONS.md`](ANDROID_OPERATIONS.md).
+canonical Android execution/device fabric and AOPS03 adds task-scoped signing, canonical instrumentation, and lifecycle/smoke operations described in [`ANDROID_OPERATIONS.md`](ANDROID_OPERATIONS.md).
 
 ## Detection
 
@@ -57,6 +57,32 @@ devtool -r "$HOME/Code/project" --target mobile lint
 devtool -r "$HOME/Code/project" --target mobile clean
 devtool -r "$HOME/Code/project" --target mobile validate
 ```
+
+
+## AOPS03 signing and device-test configuration
+
+A release signing profile is metadata plus secret *sources*, never password values:
+
+```toml
+[targets.mobile.android.signing.release]
+mode = "devtool" # devtool | project | external
+policy = "release-required"
+keystore = "~/.config/example/release.p12"
+alias = "release"
+store_password_env = "EXAMPLE_RELEASE_STORE_PASSWORD"
+key_password_env = "EXAMPLE_RELEASE_KEY_PASSWORD"
+expected_cert_sha256 = "..."
+
+[targets.mobile.android.instrumentation]
+policy = "when-device-present" # disabled | when-device-present | required
+keep_installed = false
+capture_logcat_on_failure = true
+capture_screenshot_on_failure = true
+```
+
+Use `devtool android signing list|inspect|verify` to inspect identity state. Devtool-managed release credentials are materialized only at the native execution boundary; they are not included in planned command specs, durable validation session files, generated Gradle scripts, reports, or command-line arguments.
+
+`devtool instrumentation` uses the staged Android builder for app/test APK assembly and the canonical device manager for install/run/cleanup. Use `required` for gates where absence or authorization failure must fail the run rather than produce a documented skip.
 
 ## Validation pipeline
 

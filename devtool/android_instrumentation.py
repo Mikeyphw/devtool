@@ -432,6 +432,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device-serial", default="")
     parser.add_argument("--adb-provider", choices=("auto", "sdk", "termux", "termux-adb", "path", "none"), default=os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER", "auto"))
     parser.add_argument("--adb-path", default=os.environ.get("DEVTOOL_ANDROID_ADB_PATH", ""))
+    parser.add_argument("--canonical", action="store_true", help="Run through the AOPS03 canonical device/instrumentation orchestrator")
+    parser.add_argument("--policy", choices=("disabled", "when-device-present", "required"), default="when-device-present")
+    parser.add_argument("--device-policy", choices=("exactly-one", "serial", "preferred", "first-physical", "first-emulator"), default="exactly-one")
     parser.add_argument("--install-command", default="sudo pm install -r -t")
     parser.add_argument("--am-command", default="sudo am instrument")
     parser.add_argument("--runner", default="")
@@ -440,7 +443,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--method", dest="methods", action="append", default=[])
     parser.add_argument("--annotation", action="append", default=[])
     parser.add_argument("--not-annotation", action="append", default=[])
+    parser.add_argument("--size", choices=("small", "medium", "large"), default="")
+    parser.add_argument("--runner-arg", action="append", default=[])
     parser.add_argument("--keep-installed", action="store_true")
+    parser.add_argument("--wait-timeout-seconds", type=float, default=0.0)
+    parser.add_argument("--cleanup-app", action="store_true")
+    parser.add_argument("--no-logcat-on-failure", action="store_true")
+    parser.add_argument("--no-screenshot-on-failure", action="store_true")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--report", type=Path, default=None)
     return parser
@@ -507,6 +516,50 @@ def main(raw_args: Sequence[str] | None = None) -> int:
     if not project.is_dir():
         print(f"Instrumentation project does not exist: {project}", file=sys.stderr)
         return 2
+    if args.canonical:
+        from .android.device_ops import AndroidDeviceOperations
+        from .android.instrumentation import AndroidInstrumentationOrchestrator, InstrumentationRequest
+        from .models import ProjectConfig
+        android_cfg = {
+            "adb": {"provider": args.adb_provider, "path": args.adb_path, "device_policy": args.device_policy, "serial": args.device_serial},
+            "instrumentation": {
+                "policy": args.policy,
+                "test_runner": args.runner,
+                "target_package": args.target_package,
+                "keep_installed": args.keep_installed,
+                "capture_logcat_on_failure": True,
+                "capture_screenshot_on_failure": True,
+                "size": args.size,
+                "wait_timeout_seconds": args.wait_timeout_seconds,
+                "cleanup_app": args.cleanup_app,
+            },
+            "aapt2": args.aapt2,
+            "aapt2_provider": args.aapt2_provider,
+        }
+        cfg = ProjectConfig(repo_root=project, project_root=str(project), kind="android", runner="android", variant=args.variant, device_serial=args.device_serial, runner_options={"android": android_cfg})
+        try:
+            device_ops = AndroidDeviceOperations.from_config(cfg)
+            orchestrator = AndroidInstrumentationOrchestrator(device_ops, config=cfg)
+            request = InstrumentationRequest(
+                project=project, variant=args.variant, policy=args.policy, serial=args.device_serial, device_policy=args.device_policy,
+                runner=args.runner, target_package=args.target_package, classes=list(args.classes), methods=list(args.methods),
+                annotations=list(args.annotation), not_annotations=list(args.not_annotation), size=args.size,
+                runner_args={item.split("=", 1)[0]: item.split("=", 1)[1] for item in args.runner_arg if "=" in item},
+                gradle=args.gradle, gradle_args=list(args.gradle_arg),
+                aapt2=args.aapt2, aapt2_provider=args.aapt2_provider, skip_build=args.skip_build, keep_installed=args.keep_installed,
+                wait_timeout_seconds=args.wait_timeout_seconds, cleanup_app=args.cleanup_app,
+                capture_logcat_on_failure=not args.no_logcat_on_failure, capture_screenshot_on_failure=not args.no_screenshot_on_failure, report=args.report,
+            )
+            result = orchestrator.run(request)
+            print("DEVTOOL_INSTRUMENTATION_RESULT " + json.dumps(result.as_dict(), separators=(",", ":")))
+            if result.status == "skipped":
+                print(f"Instrumentation skipped: {result.reason}")
+            elif result.status == "failed":
+                print(f"Instrumentation failed: {result.reason or f'{result.failed} test(s) failed'}", file=sys.stderr)
+            return 0 if result.ok else (result.returncode or 1)
+        except Exception as exc:
+            print(f"Instrumentation failed: {exc}", file=sys.stderr)
+            return 1
     variant_title = _variant_title(args.variant)
     installed_test_package = ""
     old_adb_provider = os.environ.get("DEVTOOL_ANDROID_ADB_PROVIDER")

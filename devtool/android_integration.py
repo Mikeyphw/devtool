@@ -692,6 +692,13 @@ def android_builder_arguments_for_tasks(
     adb_options = android.get("adb", {}) if isinstance(android.get("adb", {}), dict) else {}
     _append_non_default_option(argv, "--adb-provider", adb_options.get("provider") or android.get("adb_provider", "auto"))
     _append_option(argv, "--adb-path", adb_options.get("path") or android.get("adb_path"))
+    if "instrumentation" in android:
+        from .android.instrumentation import normalize_instrumentation_policy
+        _append_non_default_option(
+            argv, "--device-test-policy",
+            normalize_instrumentation_policy(android.get("instrumentation")),
+            default="when-device-present",
+        )
     _append_option(argv, "--aapt2", android.get("aapt2"))
     requested_aapt2_provider = str(
         build_tools_options.get("aapt2_provider")
@@ -933,6 +940,13 @@ def android_builder_arguments_for_tasks(
     # The staged init script emits the exact task/test lifecycle consumed by
     # terminal and native HUD progress, avoiding percentage guesses.
     gradle_args: list[str] = []
+    # AOPS03 signing injection is task-scoped: only release-producing tasks
+    # materialize a Devtool signing init script. Debug/lint/unit work never
+    # requires release credentials merely because a release profile exists.
+    from .android.signing import signing_gradle_args_for_tasks
+    signing_env = dict(os.environ)
+    signing_env.update({str(k): str(v) for k, v in config.env.items()})
+    gradle_args.extend(signing_gradle_args_for_tasks(config, list(seen_tasks), env=signing_env))
     structured_events = bool(gradle.get("structured_events", True))
     if structured_events:
         gradle_args.extend([

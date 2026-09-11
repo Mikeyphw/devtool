@@ -2148,6 +2148,12 @@ def run_specs(
         structured_process_state: dict[str, object] = {}
         command_line = "$ " + " ".join(shlex.quote(a) for a in effective_argv)
         try:
+            # AOPS03 secret boundary: signing password values are deliberately
+            # absent from CommandSpec/env/session state and are resolved only
+            # now, after all execution-backend wrapping has finished. Backends
+            # that serialize env assignments into argv fail closed here.
+            from .android.signing import signing_environment_for_execution
+            env = signing_environment_for_execution(config, spec.metadata, env=env)
             cwd = spec.cwd or str(config.repo_root)
             progress_argv = list(spec.metadata.get("progress_argv") or effective_argv)
             progress_cwd = str(spec.metadata.get("progress_cwd") or cwd)

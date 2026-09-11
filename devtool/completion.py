@@ -800,7 +800,7 @@ _devtool() {
           ;;
         android)
           if (( ${#line} < 2 )); then
-            _values 'android action' capabilities devices doctor
+            _values 'android action' capabilities devices doctor signing install uninstall launch stop restart clear-data shell push pull logcat screenshot permission instrumentation smoke
           else
             case ${line[2]} in
               capabilities|doctor)
@@ -820,6 +820,68 @@ _devtool() {
                   '--serial[device serial or transport ID]:serial:' \
                   '--preferred[preferred serial model or device]:device:' \
                   '--include-unusable[allow offline or unauthorized devices in explicit selection]'
+                ;;
+              signing)
+                if (( ${#line} < 3 )); then
+                  _values 'signing action' create list inspect verify compare import export-certificate
+                else
+                  case ${line[3]} in
+                    create)
+                      _arguments '--keystore[keystore path]:file:_files' '--alias[key alias]:alias:' '--store-password-env[store password environment variable]:name:' '--key-password-env[key password environment variable]:name:' '--dname[certificate distinguished name]:dn:' '--overwrite[replace an existing keystore]' '--format[output format]:format:(text json)'
+                      ;;
+                    list)
+                      _arguments '--keystore[keystore path]:file:_files' '--store-password-env[store password environment variable]:name:' '--format[output format]:format:(text json)'
+                      ;;
+                    inspect)
+                      _arguments '--keystore[keystore path]:file:_files' '--alias[key alias]:alias:' '--store-password-env[store password environment variable]:name:' '--format[output format]:format:(text json)'
+                      ;;
+                    verify)
+                      _arguments '--artifact[APK/AAB/JAR to verify]:file:_files' '--keystore[keystore path]:file:_files' '--alias[key alias]:alias:' '--store-password-env[store password environment variable]:name:' '--format[output format]:format:(text json)'
+                      ;;
+                    compare)
+                      _arguments '1:first signed artifact:_files' '2:second signed artifact:_files' '--format[output format]:format:(text json)'
+                      ;;
+                    import)
+                      _arguments '--source[source JKS/keystore]:file:_files' '--destination[destination PKCS12/keystore]:file:_files' '--alias[optional alias]:alias:' '--source-password-env[source password environment variable]:name:' '--destination-password-env[destination password environment variable]:name:' '--overwrite[replace destination]' '--format[output format]:format:(text json)'
+                      ;;
+                    export-certificate)
+                      _arguments '--destination[PEM certificate destination]:file:_files' '--keystore[keystore path]:file:_files' '--alias[key alias]:alias:' '--store-password-env[store password environment variable]:name:' '--format[output format]:format:(text json)'
+                      ;;
+                  esac
+                fi
+                ;;
+              install)
+                _arguments '1:APK:_files' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)' '--no-replace[install without -r]' '--downgrade[allow version downgrade]'
+                ;;
+              uninstall)
+                _arguments '1:package:package:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)' '--keep-data[preserve package data/cache]'
+                ;;
+              launch|restart)
+                _arguments '1:package:package:' '--activity[activity/component]:activity:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
+                ;;
+              stop|clear-data)
+                _arguments '1:package:package:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
+                ;;
+              shell)
+                _arguments '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)' '*:adb shell argument:'
+                ;;
+              push|pull)
+                _arguments '1:source:_files' '2:destination:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
+                ;;
+              logcat)
+                _arguments '--lines[number of recent logcat lines]:count:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
+                ;;
+              screenshot)
+                _arguments '1:PNG destination:_files' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
+                ;;
+              permission)
+                _arguments '1:permission action:(grant revoke)' '2:package:package:' '3:permission:permission:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
+                ;;
+              instrumentation)
+                _arguments '--class[test class]:class:' '--method[test method]:method:' '--annotation[required annotation]:annotation:' '--not-annotation[excluded annotation]:annotation:' '--size[test size]:size:(small medium large)' '--runner-arg[instrumentation runner KEY=VALUE]:argument:' '--skip-build[reuse existing app/test APKs]' '--format[output format]:format:(text json)'
+                ;;
+              smoke)
+                _arguments '1:smoke gate:(install upgrade cold-start restart restore-restart process-death signed-artifact)' '--apk[APK/artifact path]:file:_files' '--old-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[activity/component]:activity:' '--expected-cert-sha256[expected signing certificate SHA-256]:digest:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
                 ;;
             esac
           fi
