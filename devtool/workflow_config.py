@@ -161,20 +161,18 @@ def load_jobs(
     return jobs
 
 
-def parse_workflow_step(
-    raw_step: object,
+def _parse_workflow_reference(
+    raw: str,
     *,
     target_name: str,
     workflow_name: str,
     jobs: Mapping[str, JobConfig],
     targets: Mapping[str, TargetConfig],
     supported_runners: set[str],
+    step_id: str = "",
+    depends_on: tuple[str, ...] = (),
+    depends_on_declared: bool = False,
 ) -> WorkflowStepRef:
-    if not isinstance(raw_step, str) or not raw_step.strip():
-        raise SystemExit(
-            f"Workflow targets.{target_name}.workflows.{workflow_name} contains a non-string or empty step."
-        )
-    raw = raw_step.strip()
     prefix, separator, payload = raw.partition(":")
     kind = prefix.strip().lower()
     payload = payload.strip()
@@ -192,7 +190,14 @@ def parse_workflow_step(
             raise SystemExit(
                 f"Workflow target '{target_name}' references unknown job '{payload}'. Available jobs: {available}"
             )
-        return WorkflowStepRef(raw=raw, kind="job", name=payload)
+        return WorkflowStepRef(
+            raw=raw,
+            kind="job",
+            name=payload,
+            step_id=step_id,
+            depends_on=depends_on,
+            depends_on_declared=depends_on_declared,
+        )
 
     name, hash_sep, action = payload.partition("#")
     name = name.strip()
@@ -206,15 +211,103 @@ def parse_workflow_step(
         runner = normalize_runner_name(name)
         if runner not in supported_runners or runner in {"auto", "unknown"}:
             raise SystemExit(f"Workflow target '{target_name}' references unsupported runner '{runner}'.")
-        return WorkflowStepRef(raw=raw, kind="runner", name=runner, action=action)
+        return WorkflowStepRef(
+            raw=raw,
+            kind="runner",
+            name=runner,
+            action=action,
+            step_id=step_id,
+            depends_on=depends_on,
+            depends_on_declared=depends_on_declared,
+        )
 
     if name not in targets:
         available = ", ".join(sorted(targets)) or "<none>"
         raise SystemExit(
             f"Workflow target '{target_name}' references unknown target '{name}'. Available targets: {available}"
         )
-    return WorkflowStepRef(raw=raw, kind="target", name=name, action=action)
+    return WorkflowStepRef(
+        raw=raw,
+        kind="target",
+        name=name,
+        action=action,
+        step_id=step_id,
+        depends_on=depends_on,
+        depends_on_declared=depends_on_declared,
+    )
 
+
+def parse_workflow_step(
+    raw_step: object,
+    *,
+    target_name: str,
+    workflow_name: str,
+    jobs: Mapping[str, JobConfig],
+    targets: Mapping[str, TargetConfig],
+    supported_runners: set[str],
+) -> WorkflowStepRef:
+    """Normalize one workflow step.
+
+    MP02 string references remain valid. MP03 adds an inline-table form:
+
+        { id = "test", ref = "runner:python#test", depends_on = ["generate"] }
+
+    ``depends_on`` refers to step IDs, not raw reference strings. Omitting it
+    preserves sequential-list behavior; declaring an empty list creates a new
+    DAG root.
+    """
+
+    if isinstance(raw_step, str):
+        raw = raw_step.strip()
+        if not raw:
+            raise SystemExit(
+                f"Workflow targets.{target_name}.workflows.{workflow_name} contains an empty step."
+            )
+        return _parse_workflow_reference(
+            raw,
+            target_name=target_name,
+            workflow_name=workflow_name,
+            jobs=jobs,
+            targets=targets,
+            supported_runners=supported_runners,
+        )
+
+    if not isinstance(raw_step, dict):
+        raise SystemExit(
+            f"Workflow targets.{target_name}.workflows.{workflow_name} contains an invalid step; "
+            "expected a reference string or inline table."
+        )
+    raw = str(raw_step.get("ref", "") or "").strip()
+    if not raw:
+        raise SystemExit(
+            f"Workflow targets.{target_name}.workflows.{workflow_name} inline step must declare ref = \"...\"."
+        )
+    step_id = str(raw_step.get("id", "") or "").strip()
+    if step_id and not _WORKFLOW_ACTION_RE.fullmatch(step_id):
+        raise SystemExit(
+            f"Workflow targets.{target_name}.workflows.{workflow_name} has invalid step id {step_id!r}."
+        )
+    depends_on_declared = "depends_on" in raw_step
+    depends_on = _string_tuple(
+        raw_step.get("depends_on"),
+        context=f"targets.{target_name}.workflows.{workflow_name}.depends_on",
+    ) if depends_on_declared else ()
+    if depends_on_declared and not step_id:
+        raise SystemExit(
+            f"Workflow targets.{target_name}.workflows.{workflow_name} step {raw!r} declares depends_on "
+            "but has no id. Give DAG steps stable ids when declaring dependencies."
+        )
+    return _parse_workflow_reference(
+        raw,
+        target_name=target_name,
+        workflow_name=workflow_name,
+        jobs=jobs,
+        targets=targets,
+        supported_runners=supported_runners,
+        step_id=step_id,
+        depends_on=depends_on,
+        depends_on_declared=depends_on_declared,
+    )
 
 def load_target_workflows(
     raw_targets: object,
@@ -240,7 +333,9 @@ def load_target_workflows(
             if not action or not _WORKFLOW_ACTION_RE.fullmatch(action):
                 raise SystemExit(f"Target '{name}' has invalid workflow name {raw_action!r}.")
             if not isinstance(raw_steps, list):
-                raise SystemExit(f"targets.{name}.workflows.{action} must be a TOML array of step references")
+                raise SystemExit(
+                    f"targets.{name}.workflows.{action} must be a TOML array of step references or inline step tables"
+                )
             refs = tuple(
                 parse_workflow_step(
                     step,
@@ -254,12 +349,42 @@ def load_target_workflows(
             )
             if not refs:
                 raise SystemExit(f"Target '{name}' workflow '{action}' cannot be empty.")
-            workflows[action] = WorkflowConfig(name=action, steps=refs)
+            workflow = WorkflowConfig(name=action, steps=refs)
+            # Validate ids/dependencies/cycles while loading config so malformed
+            # DAGs fail before any build/test command is planned.
+            from .workflow_graph import WorkflowGraphError, graph_from_workflow
+            try:
+                graph_from_workflow(name, workflow)
+            except WorkflowGraphError as exc:
+                raise SystemExit(str(exc)) from exc
+            workflows[action] = workflow
         target.workflows = workflows
 
 
 def workflow_steps_as_strings(workflow: WorkflowConfig) -> list[str]:
     return [step.raw for step in workflow.steps]
+
+
+def workflow_step_as_dict(step: WorkflowStepRef) -> dict[str, Any]:
+    return {
+        "ref": step.raw,
+        "kind": step.kind,
+        "name": step.name,
+        "action": step.action,
+        "id": step.step_id,
+        "depends_on": list(step.depends_on),
+        "depends_on_declared": step.depends_on_declared,
+    }
+
+
+def workflow_as_dict(target_name: str, workflow: WorkflowConfig) -> dict[str, Any]:
+    from .workflow_graph import graph_from_workflow
+    graph = graph_from_workflow(target_name, workflow)
+    return {
+        "name": workflow.name,
+        "steps": [workflow_step_as_dict(step) for step in workflow.steps],
+        "graph": graph.as_dict(),
+    }
 
 
 def job_as_dict(job: JobConfig) -> dict[str, Any]:

@@ -161,6 +161,32 @@ select = ["..."]
 
 Those sections describe a repository. Keep them in `.devtool.toml`. Reusable `[jobs.*]` declarations are repo-scoped as well. `command = ["tool", "arg"]` is structured argv; use `shell_command = "..."` only when shell syntax is intentional.
 
+### Executable workflow DAGs (MP03/MP04)
+
+A workflow declared as a list of strings remains sequential for compatibility:
+
+```toml
+[targets.app.workflows]
+validate = [
+  "job:generate-client",
+  "runner:python#validate",
+]
+```
+
+MP03 also accepts inline step tables when a branch or join is needed. `id` is the stable dependency name and `depends_on` references other step IDs. Omitting `depends_on` preserves sequential semantics; declaring `depends_on = []` explicitly creates a root node.
+
+```toml
+[targets.app.workflows]
+validate = [
+  { id = "generate", ref = "job:generate-client", depends_on = [] },
+  { id = "python", ref = "runner:python#validate", depends_on = ["generate"] },
+  { id = "web", ref = "runner:node#test", depends_on = ["generate"] },
+  { id = "join", ref = "job:package-metadata", depends_on = ["python", "web"] },
+]
+```
+
+Every referenced dependency must name a step with an explicit `id`; duplicate IDs, unknown dependencies, self-dependencies, and dependency cycles are configuration errors. MP04 dispatches each executable node through its declared runner and preserves that runner's native planning/progress/diagnostic behavior. A job can also choose its own `execution_environment`, `chroot_name`, `device_serial`, and runner options. `target:<name>#<action>` references are validated and visible in plans but are intentionally not executed until MP05 adds cross-target orchestration.
+
 `devtool config doctor --global` warns when repo-scoped sections or command-scoped validation filters appear in the global file.
 
 ## Python projects in Termux chroot policy

@@ -273,9 +273,15 @@ including runner, execution mode, and root. Use
 for structured metadata.
 .TP
 .B workflows " | " wf
-List normalized target workflow references without executing them. Use
+Inspect normalized target workflow DAGs without executing them. Sequential string lists and explicit inline
+.BR "{ id, ref, depends_on }"
+steps are both shown. Use
 .B --json
-for structured metadata.
+for graph roots, leaves, stable topological order, node dependencies, and reference metadata. Lifecycle commands such as
+.B build
+and
+.B validate
+execute a matching selected-target workflow automatically.
 .TP
 .B logs
 Show the latest saved command log; use

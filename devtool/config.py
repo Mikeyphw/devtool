@@ -16,6 +16,7 @@ from .workflow_config import (
     load_target_workflows,
     normalize_platform_name,
     normalize_runner_name,
+    workflow_as_dict,
     workflow_steps_as_strings,
 )
 from .toolchains import normalize_toolchain_manager
@@ -1391,9 +1392,16 @@ package_command = ""
 # outputs = ["generated/**"]
 #
 # Attach jobs/runner actions to a named target without changing that target's
-# primary runner:
+# primary runner. A plain string list is sequential:
 # [targets.api.workflows]
 # validate = ["job:generate-client", "runner:python#validate"]
+#
+# MP03 explicit DAG form (depends_on names stable step ids):
+# validate = [
+#   {{ id = "generate", ref = "job:generate-client", depends_on = [] }},
+#   {{ id = "python", ref = "runner:python#validate", depends_on = ["generate"] }},
+#   {{ id = "node", ref = "runner:node#test", depends_on = ["generate"] }},
+# ]
 
 [execution]
 environment = "auto" # auto | native-termux | chroot | proot-distro | desktop-linux | ssh | android-device | external-device
@@ -1939,6 +1947,10 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
                 "metadata": target.metadata,
                 "workflows": {
                     workflow_name: workflow_steps_as_strings(workflow)
+                    for workflow_name, workflow in sorted(target.workflows.items())
+                },
+                "workflow_graphs": {
+                    workflow_name: workflow_as_dict(name, workflow)
                     for workflow_name, workflow in sorted(target.workflows.items())
                 },
             }

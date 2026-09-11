@@ -230,7 +230,7 @@ validate = [
 ]
 ```
 
-Use `devtool targets`, `devtool jobs`, `devtool workflows`, and `devtool inspect` to inspect the normalized model. MP01+MP02 deliberately stop at validated representation; MP03 turns these declarations into the executable dependency graph, so existing runner behavior is unchanged until that graph runtime lands. See [`docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md`](docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md).
+Use `devtool targets`, `devtool jobs`, `devtool workflows`, and `devtool inspect` to inspect the normalized model. MP03+MP04 now execute those declarations as a validated DAG: plain lists remain sequential, inline `{ id, ref, depends_on }` steps can branch/join, and each node is dispatched to its own first-class runner and execution environment. Failures block dependent nodes while preserving independent-branch semantics, and the same dependencies are bridged into resumable validation sessions. Cross-target `target:<name>#<action>` execution remains the explicit MP05 boundary. See [`docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md`](docs/POLYGLOT_TARGETS_AND_WORKFLOWS.md).
 
 ## Devtool 0.15.0: verified Android artifacts, device tests, selective tests, and Python pipelines
 

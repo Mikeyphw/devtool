@@ -97,6 +97,28 @@ def apply_matrix(specs: list[CommandSpec], matrix_items: list[str], *, mode: str
             metadata = dict(spec.metadata)
             metadata["matrix"] = item
             metadata["matrix_mode"] = mode
+            # Workflow DAG identity must be isolated per matrix lane. Without
+            # this, two matrix copies of the same workflow node share status
+            # and validation phase keys, so one lane can incorrectly satisfy,
+            # block, or overwrite another lane.
+            if metadata.get("workflow_graph"):
+                lane = f"matrix:{mode}:{item}"
+                node_key = str(metadata.get("workflow_node_key") or "").strip()
+                if node_key:
+                    metadata["workflow_matrix_base_node_key"] = node_key
+                    metadata["workflow_node_key"] = f"{node_key}[{lane}]"
+                deps = [str(value) for value in (metadata.get("workflow_depends_on") or [])]
+                if deps:
+                    metadata["workflow_matrix_base_depends_on"] = list(deps)
+                    metadata["workflow_depends_on"] = [f"{value}[{lane}]" for value in deps]
+                phase_key = str(metadata.get("validation_phase_key") or "").strip()
+                if phase_key:
+                    metadata["workflow_matrix_base_validation_phase_key"] = phase_key
+                    metadata["validation_phase_key"] = f"{phase_key}[{lane}]"
+                phase_deps = [str(value) for value in (metadata.get("validation_depends_on") or [])]
+                if phase_deps:
+                    metadata["workflow_matrix_base_validation_depends_on"] = list(phase_deps)
+                    metadata["validation_depends_on"] = [f"{value}[{lane}]" for value in phase_deps]
             if mode == "rid" and argv and argv[0] == "dotnet" and spec.name in {"restore", "build", "test", "wine-test", "run"}:
                 if "-r" not in argv and "--runtime" not in argv:
                     argv.extend(["-r", item])

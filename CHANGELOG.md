@@ -1,3 +1,16 @@
+## 2026-09-10 - MP03 + MP04 executable workflow DAG and cross-runner composition
+
+- Promoted target workflows from validated declarations to a generic executable DAG with stable node identity, dependency closure, deterministic topological ordering, branch/join support, and early cycle/unknown-dependency rejection.
+- Added inline workflow steps (`{ id, ref, depends_on }`) while preserving MP02 plain-list sequential semantics; explicit `depends_on = []` creates a DAG root.
+- Added runner composition so reusable jobs and `runner:<runner>#<action>` nodes are planned by their native Python/Node/Gradle/Android/Go/etc. runners rather than shell-special-cased by the target's primary runner.
+- Added per-node execution-environment, chroot/device, environment, runner-option, input/output, progress-parser, and machine metadata propagation through the existing execution preparation pipeline.
+- Added dependency-aware workflow execution states: failed nodes block dependents, continue mode may run independent branches, fail-fast marks independent pending nodes skipped, cancellation is terminal, and multi-command nodes pass only after their last command succeeds.
+- Bridged workflow dependencies into persistent validation-session phase keys/dependencies so resume/retry/closure semantics match direct workflow execution.
+- Isolated workflow node and validation-phase identity per matrix lane, preventing one RID/target/variant expansion from satisfying or blocking another, and publish terminal progress snapshots for synthetic blocked/skipped/cancelled nodes.
+- Upgraded `workflows --json` to schema v2 with full graph metadata and added `workflow_graphs` to resolved configuration while retaining legacy raw workflow lists.
+- Kept cross-target references representable/validated but explicitly non-executable until MP05, avoiding recursive Devtool subprocess orchestration that would bypass later deduplication.
+- Preserved TS00 exact pytest selection inside Python workflow nodes and legacy runner behavior for target actions that do not declare a workflow.
+
 ## 2026-09-10 - MP01 + MP02 polyglot target identity and reusable workflows
 
 - Separated canonical target `runner` identity from independent `platform` identity while preserving `[project].kind` and target `type`/`kind` as compatibility aliases.

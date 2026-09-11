@@ -48,14 +48,18 @@ class OperationResult:
 class WorkflowStepRef:
     """Normalized reference to one step in a configured target workflow.
 
-    MP01/MP02 deliberately models workflow intent without executing the graph.
-    MP03 consumes these references when the generic workflow DAG is introduced.
+    A plain string step keeps the MP02 ordered-list contract. MP03 also accepts
+    inline step tables with stable ``id`` and ``depends_on`` fields so the same
+    configuration can express branches and joins without shell orchestration.
     """
 
     raw: str
     kind: str
     name: str
     action: str = ""
+    step_id: str = ""
+    depends_on: tuple[str, ...] = ()
+    depends_on_declared: bool = False
 
 
 @dataclass(slots=True)

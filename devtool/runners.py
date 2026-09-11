@@ -671,10 +671,26 @@ def get_project_runner(config: ProjectConfig):
 
 
 def runner_capabilities(config: ProjectConfig):
-    return get_project_runner(config).capabilities_for(config)
+    capabilities = get_project_runner(config).capabilities_for(config)
+    target = config.targets.get(config.selected_target) if config.selected_target else None
+    if target is None or not target.workflows:
+        return capabilities
+    values = capabilities.as_dict()
+    for action in target.workflows:
+        capability = {
+            "wine-validate": "validate",
+            "wine-test": "test",
+        }.get(action, action)
+        if capability in values:
+            values[capability] = True
+    return type(capabilities)(**values)
 
 
 def build_specs(config: ProjectConfig, action: str) -> list[CommandSpec]:
+    from .workflow_runtime import build_workflow_specs, has_selected_workflow
+
+    if has_selected_workflow(config, action):
+        return _apply_config_metadata(config, build_workflow_specs(config, action))
     runner = get_project_runner(config)
     if action == "validate":
         return _apply_config_metadata(config, runner.build_validation_specs(config))
@@ -691,6 +707,16 @@ def build_validation_specs(
     skip_build: bool = False,
     skip_test: bool = False,
 ) -> list[CommandSpec]:
+    from .workflow_runtime import build_workflow_specs, has_selected_workflow
+
+    workflow_action = "wine-validate" if wine else "validate"
+    if has_selected_workflow(config, workflow_action):
+        if skip_restore or skip_build or skip_test:
+            raise SystemExit(
+                "Validation skip flags cannot rewrite an explicit target workflow. "
+                "Select a different workflow/profile or remove --skip-restore/--skip-build/--skip-test."
+            )
+        return _apply_config_metadata(config, build_workflow_specs(config, workflow_action))
     return _apply_config_metadata(config, get_project_runner(config).build_validation_specs(
         config,
         wine=wine,
@@ -1926,6 +1952,33 @@ def dotnet_build_server_shutdown_enabled(config: ProjectConfig) -> bool:
     return bool(options.get("stop_after_run", False))
 
 
+def _workflow_synthetic_result(
+    spec: CommandSpec,
+    *,
+    state: str,
+    reason: str,
+    log_path: Path | str | None,
+) -> tuple[OperationResult, str]:
+    metadata = dict(spec.metadata)
+    metadata["workflow_node_state"] = state
+    metadata["workflow_skip_reason"] = reason
+    output = f"Devtool workflow node {state}: {reason}\n"
+    log_file = str(write_log(output, log_path, append=log_path is not None))
+    result = OperationResult(
+        spec.name,
+        list(spec.argv),
+        0,
+        0.0,
+        output,
+        [],
+        skipped=True,
+        log_path=log_file,
+        failure_kind="dependency_blocked" if state == "blocked" else "workflow_" + state,
+        metadata=metadata,
+    )
+    return result, output
+
+
 def run_specs(
     config: ProjectConfig,
     specs: list[CommandSpec],
@@ -1960,6 +2013,10 @@ def run_specs(
            or any(Path(str(value)).name in {"gradle", "gradlew"} for value in spec.argv)
     ), str(config.project_root or config.repo_root))
     dotnet_layout = _dotnet_phase_layout(specs, config)
+    workflow_graph_active = any(bool(spec.metadata.get("workflow_graph")) for spec in specs)
+    workflow_node_status: dict[str, str] = {}
+    workflow_fail_fast = False
+    workflow_cancelled = False
 
     if tasker_progress is not None and not dry_run:
         tasker_progress.plan_phases([
@@ -1973,6 +2030,67 @@ def run_specs(
         ])
 
     for spec_index, spec in enumerate(specs, start=1):
+        workflow_node_key = str(spec.metadata.get("workflow_node_key") or "")
+        workflow_dependencies = [
+            str(value) for value in (spec.metadata.get("workflow_depends_on") or []) if str(value).strip()
+        ]
+        workflow_part_index = int(spec.metadata.get("workflow_node_spec_index") or 1)
+        workflow_part_total = int(spec.metadata.get("workflow_node_spec_total") or 1)
+        if workflow_node_key:
+            blocked_dependencies = [
+                key for key in workflow_dependencies
+                if workflow_node_status.get(key) in {"failed", "blocked", "cancelled", "skipped"}
+            ]
+            prior_state = workflow_node_status.get(workflow_node_key, "")
+            synthetic_state = ""
+            synthetic_reason = ""
+            if workflow_cancelled:
+                synthetic_state = "cancelled"
+                synthetic_reason = "an earlier workflow node was cancelled"
+            elif blocked_dependencies:
+                synthetic_state = "blocked"
+                synthetic_reason = "dependency failed or was blocked: " + ", ".join(blocked_dependencies)
+            elif prior_state in {"failed", "blocked", "cancelled", "skipped"}:
+                synthetic_state = "skipped"
+                synthetic_reason = f"workflow node already ended as {prior_state}"
+            elif workflow_fail_fast and prior_state != "running":
+                synthetic_state = "skipped"
+                synthetic_reason = "workflow fail-fast stopped independent nodes after an earlier failure"
+
+            if synthetic_state:
+                if workflow_part_index == 1 or prior_state not in {"failed", "blocked", "cancelled", "skipped"}:
+                    workflow_node_status[workflow_node_key] = synthetic_state
+                if tasker_progress is not None and not dry_run:
+                    tasker_progress.phase_started(spec.name, index=spec_index, total=len(specs), argv=spec.argv, metadata=spec.metadata)
+                publish_event(TaskStarted(task=spec.name, metadata={"index": spec_index, "total": len(specs), "argv": list(spec.argv), **dict(spec.metadata)}))
+                synthetic_result, synthetic_raw = _workflow_synthetic_result(
+                    spec,
+                    state=synthetic_state,
+                    reason=synthetic_reason,
+                    log_path=log_path,
+                )
+                synthetic_result.metadata["workflow_node_statuses"] = dict(workflow_node_status)
+                if progress_callback is not None:
+                    try:
+                        progress_callback({
+                            "force": True,
+                            "final": True,
+                            "skipped": True,
+                            "workflow_node_key": workflow_node_key,
+                            "workflow_node_state": synthetic_state,
+                            "workflow_skip_reason": synthetic_reason,
+                            "workflow_node_statuses": dict(workflow_node_status),
+                        })
+                    except Exception:
+                        pass
+                results.append(synthetic_result)
+                raw_sections.append(synthetic_raw)
+                publish_event(TaskFinished(task=spec.name, success=True, metadata={"skipped": True, "workflow_state": synthetic_state, "returncode": 0}))
+                if tasker_progress is not None and not dry_run:
+                    tasker_progress.phase_finished(synthetic_result)
+                continue
+            workflow_node_status.setdefault(workflow_node_key, "running")
+
         effective_argv, cleanup_dir = _prepare_termux_dotnet(spec.argv)
         last_progress_snapshot: dict[str, object] = {}
 
@@ -1991,7 +2109,12 @@ def run_specs(
         if dry_run:
             output = "$ " + " ".join(effective_argv)
             log_file = str(write_log(output, log_path, append=log_path is not None))
-            dry_result = OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file, metadata=dict(spec.metadata))
+            dry_metadata = dict(spec.metadata)
+            if workflow_node_key:
+                workflow_node_status[workflow_node_key] = "ready"
+                dry_metadata["workflow_node_state"] = "ready"
+                dry_metadata["workflow_node_statuses"] = dict(workflow_node_status)
+            dry_result = OperationResult(spec.name, effective_argv, 0, 0.0, output, [], skipped=True, log_path=log_file, metadata=dry_metadata)
             results.append(dry_result)
             publish_event(TaskFinished(task=spec.name, success=True, metadata={"skipped": True, "dry_run": True, "returncode": 0}))
             raw_sections.append(output)
@@ -2528,6 +2651,24 @@ def run_specs(
             log_file = str(log_path)
         else:
             log_file = str(write_log(raw_text, log_path, append=False))
+        if workflow_node_key:
+            if returncode == 130:
+                workflow_node_status[workflow_node_key] = "cancelled"
+                workflow_cancelled = True
+                result_metadata["workflow_node_state"] = "cancelled"
+            elif returncode != 0:
+                workflow_node_status[workflow_node_key] = "failed"
+                result_metadata["workflow_node_state"] = "failed"
+                if not continue_on_error:
+                    workflow_fail_fast = True
+            elif workflow_part_index >= workflow_part_total:
+                workflow_node_status[workflow_node_key] = "passed"
+                result_metadata["workflow_node_state"] = "passed"
+            else:
+                workflow_node_status[workflow_node_key] = "running"
+                result_metadata["workflow_node_state"] = "running"
+            result_metadata["workflow_node_statuses"] = dict(workflow_node_status)
+
         result = OperationResult(spec.name, effective_argv, returncode, duration, output, issues, log_path=log_file, failure_kind=failure_kind, metadata=result_metadata)
         results.append(result)
         for issue in issues:
@@ -2542,7 +2683,12 @@ def run_specs(
         # ordinary phase failure. Never advance to later phases merely because
         # continue_on_error was requested.
         if returncode == 130 or (returncode != 0 and not continue_on_error):
-            break
+            if not workflow_graph_active:
+                break
+            # A workflow graph keeps walking the already-planned node list so
+            # dependents receive explicit blocked/skipped states. No later
+            # command is executed after cancellation or fail-fast failure.
+            continue
 
     gradle_options = config.runner_options.get("gradle", {})
     gradle_options = dict(gradle_options) if isinstance(gradle_options, dict) else {}

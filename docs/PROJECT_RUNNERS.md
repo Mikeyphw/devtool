@@ -144,9 +144,11 @@ Other first-class runners apply equivalent safe optimizations:
 All runners receive the shared desktop/Termux/chroot resource policy described
 in [`BUILD_OPTIMIZATION.md`](BUILD_OPTIMIZATION.md).
 
-## MP01/MP02 target identity and polyglot workflows
+## MP01–MP04 target identity, workflow DAGs, and runner composition
 
-A target now has two independent identities: `platform` describes the product surface and `runner` selects the command planner. Legacy target `type`/`kind` remains supported as an alias for `runner`. Reusable `[jobs.*]` may be owned by another runner and referenced from `[targets.<name>.workflows]`, so a Python server can declare Node code generation without teaching `PythonRunner` how npm works. The declarations are validated and inspectable in MP02; MP03/MP04 add graph execution.
+A target has two independent identities: `platform` describes the product surface and `runner` selects its primary command planner. Legacy target `type`/`kind` remains supported as an alias for `runner`. Reusable `[jobs.*]` may be owned by another runner and referenced from `[targets.<name>.workflows]`, so a Python server can run Node code generation without teaching `PythonRunner` how npm works.
+
+MP03 normalizes each selected lifecycle workflow into a validated DAG. Plain string lists retain sequential semantics; inline `{ id, ref, depends_on }` steps opt into explicit branching/joining. MP04 executes each node by asking that node's native `ProjectRunner` for `CommandSpec` objects, so runner-specific progress parsers, validation behavior, toolchain metadata, and execution-environment preparation remain authoritative. A workflow node that expands to several commands becomes a chain inside the same graph node, and Devtool bridges those commands into the persistent validation-session dependency graph.
 
 ```toml
 [targets.api]
@@ -162,6 +164,19 @@ command = ["npm", "run", "generate:python"]
 [targets.api.workflows]
 validate = ["job:generate-client", "runner:python#validate"]
 ```
+
+Branching is explicit when needed:
+
+```toml
+[targets.api.workflows]
+validate = [
+  { id = "generate", ref = "job:generate-client", depends_on = [] },
+  { id = "python", ref = "runner:python#validate", depends_on = ["generate"] },
+  { id = "node", ref = "runner:node#test", depends_on = ["generate"] },
+]
+```
+
+Runner composition is orchestration, not inheritance: `PythonRunner` never learns npm semantics and `NodeRunner` never learns pytest semantics. The workflow runtime selects the appropriate runner per node. Cross-target `target:` references remain the MP05 boundary.
 
 See [`POLYGLOT_TARGETS_AND_WORKFLOWS.md`](POLYGLOT_TARGETS_AND_WORKFLOWS.md) for the complete reference.
 

@@ -3847,9 +3847,49 @@ def _execution_plan_for_args(config: ProjectConfig, args: argparse.Namespace):
 
 
 def _prepare_specs_for_execution(config: ProjectConfig, specs: list[CommandSpec], args: argparse.Namespace) -> list[CommandSpec]:
-    items = _matrix_items(args)
-    if items and getattr(args, "matrix_mode", "rid") == "rid":
-        specs = apply_matrix(specs, items, mode="rid")
+    workflow_scoped = bool(getattr(args, "_devtool_workflow_scoped_execution", False))
+    if not workflow_scoped:
+        items = _matrix_items(args)
+        if items and getattr(args, "matrix_mode", "rid") == "rid":
+            specs = apply_matrix(specs, items, mode="rid")
+
+        # MP04 workflows may intentionally mix runners and execution
+        # environments. Reuse this proven execution-preparation path one spec
+        # at a time so each node gets its own toolchain/env/chroot/device
+        # semantics while preserving the graph's topological order. Explicit
+        # CLI environment flags still win because the cloned Namespace keeps
+        # them unchanged.
+        if any(bool(spec.metadata.get("workflow_graph")) for spec in specs):
+            def merge_options(base: dict, extra: dict) -> dict:
+                merged = copy.deepcopy(base)
+                for key, value in extra.items():
+                    if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                        merged[key] = merge_options(dict(merged[key]), value)
+                    else:
+                        merged[key] = copy.deepcopy(value)
+                return merged
+
+            prepared: list[CommandSpec] = []
+            for spec in specs:
+                metadata = spec.metadata if isinstance(spec.metadata, dict) else {}
+                requested = str(metadata.get("workflow_execution_environment") or "auto").strip()
+                if requested in {"", "auto"}:
+                    requested = config.execution_environment
+                scoped_options = metadata.get("workflow_runner_options")
+                scoped_config = replace(
+                    config,
+                    execution_environment=requested,
+                    chroot_name=str(metadata.get("workflow_chroot_name") or config.chroot_name),
+                    device_serial=str(metadata.get("workflow_device_serial") or config.device_serial),
+                    runner_options=merge_options(
+                        config.runner_options,
+                        dict(scoped_options) if isinstance(scoped_options, dict) else {},
+                    ),
+                )
+                scoped_args = copy.copy(args)
+                setattr(scoped_args, "_devtool_workflow_scoped_execution", True)
+                prepared.extend(_prepare_specs_for_execution(scoped_config, [spec], scoped_args))
+            return prepared
 
     plan = _execution_plan_for_args(config, args)
 
@@ -6824,25 +6864,38 @@ def _jobs(config: ProjectConfig, *, as_json: bool = False) -> None:
 
 
 def _workflows(config: ProjectConfig, *, as_json: bool = False) -> None:
+    from .workflow_config import workflow_as_dict
+
     payload = {
         target_name: {
-            workflow_name: [step.raw for step in workflow.steps]
+            workflow_name: workflow_as_dict(target_name, workflow)
             for workflow_name, workflow in sorted(target.workflows.items())
         }
         for target_name, target in sorted(config.targets.items())
         if target.workflows
     }
     if as_json:
-        print(json.dumps({"schema_version": 1, "workflows": payload}, indent=2, ensure_ascii=False))
+        print(json.dumps({"schema_version": 2, "workflows": payload}, indent=2, ensure_ascii=False))
         return
     if not payload:
         console.print("[yellow]No target workflows configured.[/yellow]")
         return
     rows: list[tuple[str, str]] = []
     for target_name, workflows in payload.items():
-        for workflow_name, steps in workflows.items():
-            rows.append((f"{target_name}.{workflow_name}", " -> ".join(steps)))
+        for workflow_name, description in workflows.items():
+            graph = description.get("graph", {}) if isinstance(description, dict) else {}
+            node_rows = graph.get("nodes", []) if isinstance(graph, dict) else []
+            pieces: list[str] = []
+            for node in node_rows if isinstance(node_rows, list) else []:
+                if not isinstance(node, dict):
+                    continue
+                label = str(node.get("id") or node.get("ref") or node.get("key") or "step")
+                dependencies = [str(value) for value in node.get("depends_on", []) or []]
+                short_dependencies = [value.rsplit(".", 1)[-1] for value in dependencies]
+                pieces.append(label + (f" <- {','.join(short_dependencies)}" if short_dependencies else ""))
+            rows.append((f"{target_name}.{workflow_name}", " | ".join(pieces)))
     render_status_table(rows)
+
 
 def _format_artifact_exception(exc: BaseException, *, artifact: str, artifact_type: str) -> str:
     message = str(exc).strip()

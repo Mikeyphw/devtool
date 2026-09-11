@@ -1,14 +1,27 @@
-# Polyglot targets and reusable workflows (MP01 + MP02)
+# Polyglot targets, reusable jobs, and executable workflow DAGs (MP01–MP04)
 
-MP01 and MP02 separate **what a repository component is** from **which tool
-executes work for it** and add a declarative, reusable workflow configuration
-model. These releases intentionally stop before graph execution: MP03 will turn
-the normalized declarations into a dependency DAG.
+MP01–MP04 separate **what a repository component is** from **which tool executes
+one piece of work**, then turn target workflows into a validated dependency DAG
+that can compose multiple first-class runners in one lifecycle action.
+
+The central rule is:
+
+```text
+Target = product/component
+Platform = what that product represents
+Runner = tool-aware command planner for one node
+Execution environment = where that node executes
+Workflow = dependency graph that composes nodes
+```
+
+A Python server target can therefore run Node code generation before pytest, or
+an Android target can run a Python metadata generator before Gradle, without
+teaching PythonRunner about npm or AndroidRunner about Python.
 
 ## Target identity: platform is not runner
 
-Use `runner` for the primary Devtool runner and `platform` for the product
-surface:
+Use `runner` for the target's primary Devtool runner and `platform` for the
+product surface:
 
 ```toml
 [project]
@@ -27,10 +40,10 @@ root = "apps/desktop"
 ```
 
 `platform` is an open lowercase slug (`server`, `web`, `android`, `tv`,
-`desktop`, `shared`, and repository-specific slugs are all valid). `runner`
-must resolve to a first-class Devtool runner.
+`desktop`, `shared`, and repository-specific slugs are valid). `runner` must
+resolve to a first-class Devtool runner.
 
-The older forms remain supported:
+Legacy identity remains supported:
 
 ```toml
 [project]
@@ -41,16 +54,15 @@ type = "python"
 ```
 
 `kind` and target `type`/`kind` are compatibility aliases for `runner`. New
-configuration should use `runner`. Declaring conflicting canonical and legacy
-values is rejected instead of silently choosing one.
-
-`devtool doctor` reports optional migration hints when a loaded repository still
-uses legacy identity aliases.
+configuration should use `runner`. Conflicting canonical and legacy values are
+rejected instead of silently choosing one.
 
 ## Reusable jobs
 
 A job is runner-owned work that can be referenced by one or more target
 workflows.
+
+### Structured argv
 
 ```toml
 [jobs.generate-python-client]
@@ -62,16 +74,15 @@ outputs = ["services/api/generated/**"]
 
 [jobs.generate-python-client.env]
 NODE_ENV = "production"
-
-[jobs.generate-python-client.metadata]
-purpose = "OpenAPI client generation"
 ```
 
-Structured argv is the default command representation. A string in `command`
-is rejected so quoting cannot silently change across native Termux, chroot,
-PROot, SSH, or desktop execution.
+Structured argv is preferred. A string in `command` is rejected so quoting does
+not silently change across native Termux, chroot, PRoot, SSH, or desktop
+execution.
 
-Use an explicit shell command only when shell syntax is required:
+### Explicit shell
+
+Use shell syntax only when it is intentional:
 
 ```toml
 [jobs.legacy-pack]
@@ -79,13 +90,22 @@ runner = "command"
 shell_command = "npm run bundle && python3 tools/finalize.py"
 ```
 
-A job may instead delegate to a native runner action:
+Devtool executes this through an explicit shell boundary. Set
+`DEVTOOL_WORKFLOW_SHELL` to override the default `sh` executable.
+
+### Native runner action
+
+A job may delegate to a first-class runner action:
 
 ```toml
-[jobs.python-unit]
-runner = "python"
-action = "test"
+[jobs.web-build]
+runner = "node"
+root = "web"
+action = "build"
 ```
+
+This is not converted into a generic shell command. NodeRunner still owns npm
+script discovery, progress parsing, tool metadata, and Node-specific behavior.
 
 Exactly one of `action`, `command`, or `shell_command` is required.
 
@@ -102,12 +122,17 @@ metadata
 runner-specific option tables
 ```
 
-The input/output declarations are configuration truth in MP02. MP09 later uses
-them for conflict-safe scheduling and reservations.
+MP04 applies the job's runner options and execution-environment request at the
+node boundary. A CLI environment override (`--host`, `--chroot`, `--ssh`,
+`--proot-distro`, or `--execution-environment`) remains authoritative.
 
-## Target workflows
+The `inputs`/`outputs` declarations are already attached to graph-node metadata;
+MP09 later consumes them for write-conflict reservations and safe parallel
+scheduling.
 
-A named target can declare lifecycle workflows:
+## Sequential workflows
+
+The MP02 ordered-list syntax remains valid and is now executable:
 
 ```toml
 [targets.api]
@@ -116,23 +141,71 @@ platform = "server"
 root = "services/api"
 
 [targets.api.workflows]
-build = [
-  "job:generate-python-client",
-  "runner:python#build",
-]
-
-test = [
-  "job:generate-python-client",
-  "runner:python#test",
-]
-
 validate = [
   "job:generate-python-client",
   "runner:python#validate",
 ]
 ```
 
-Three normalized reference forms are accepted:
+A plain list preserves its historical meaning: each step depends on the
+previous step.
+
+Running:
+
+```bash
+devtool --target api validate
+```
+
+plans the Node job first and then the Python validation node. PythonRunner never
+learns npm semantics; the workflow runtime asks NodeRunner and PythonRunner to
+plan their own commands and then composes the resulting `CommandSpec` objects.
+
+TS00 selection remains native inside the Python node:
+
+```bash
+devtool --target api validate \
+  --pytest-test tests/test_auth.py::test_login \
+  --pytest-test tests/test_api.py::TestUsers::test_create
+```
+
+The prerequisite Node job still runs, while the Python pytest command receives
+only the explicit TS00 selectors.
+
+## Branching and joining DAGs
+
+MP03 adds inline step tables with stable IDs and explicit dependencies:
+
+```toml
+[targets.api.workflows]
+validate = [
+  { id = "generate", ref = "job:generate-python-client", depends_on = [] },
+  { id = "lint", ref = "runner:python#lint", depends_on = ["generate"] },
+  { id = "test", ref = "runner:python#test", depends_on = ["generate"] },
+  { id = "package", ref = "runner:python#package", depends_on = ["lint", "test"] },
+]
+```
+
+`depends_on` refers to **step IDs**, not raw reference strings.
+
+Important compatibility rules:
+
+- omitting `depends_on` keeps sequential-list behavior;
+- `depends_on = []` explicitly creates a root node;
+- a step that declares `depends_on` must declare an `id`;
+- duplicate IDs, unknown dependencies, self-dependencies, and cycles fail while
+  loading configuration, before any command is launched;
+- topological ordering is stable by declaration order when multiple nodes are
+  ready at the same time.
+
+The runtime is sequential in MP03/MP04 even when the graph exposes independent
+branches. MP09 is the roadmap step that enables conflict-safe parallel graph
+scheduling. The DAG is still meaningful now because failure propagation and
+persistent validation dependencies follow the real graph rather than list
+position.
+
+## Workflow references
+
+Three normalized reference forms are supported:
 
 ```text
 job:<job-name>
@@ -140,82 +213,180 @@ runner:<runner-name>#<action>
 target:<target-name>#<action>
 ```
 
-All references are validated when configuration loads. Unknown jobs, targets,
-runners, malformed actions, and malformed references fail early with an
-actionable configuration error.
+### `job:<name>`
 
-Cross-target references are representable now so configuration does not need to
-change again. MP05 adds their dependency execution semantics; MP03 adds the
-generic graph runtime that consumes all workflow declarations.
+Executes a reusable job through its declared runner, command mode, root,
+environment, and node-specific execution settings.
 
-## Inspection
+### `runner:<runner>#<action>`
 
-Configuration can be inspected before graph execution exists:
+Runs a first-class runner action at the selected target root. Examples:
+
+```text
+runner:python#test
+runner:node#build
+runner:android#package
+runner:go#test
+```
+
+`validate` and `wine-validate` invoke the runner's native validation planner
+rather than pretending validation is one generic command.
+
+### `target:<target>#<action>`
+
+Cross-target references are represented and validated by MP03. MP04 refuses to
+execute them implicitly and reports that MP05 is required. This is deliberate:
+MP05 owns cross-target dependency expansion and deduplication, so MP04 does not
+create a hidden recursive `devtool` subprocess contract that would later need to
+be undone.
+
+## Failure and dependency semantics
+
+Workflow command specs carry stable node identity and dependency metadata.
+During execution Devtool tracks node state and distinguishes:
+
+```text
+ready
+running
+passed
+failed
+blocked
+skipped
+cancelled
+```
+
+If a node fails:
+
+- dependent nodes are marked `blocked` and are not launched;
+- with continue-on-error behavior, independent branches may continue;
+- with fail-fast behavior, independent not-yet-started nodes are marked
+  `skipped` while dependents remain `blocked`;
+- cancellation prevents later graph commands from launching and reports
+  cancelled state rather than ordinary failure.
+
+A runner action may expand to several commands. The node becomes `passed` only
+when its final command succeeds. Later commands within the same node are not
+run after an earlier command in that node fails.
+
+## Persistent validation-session bridge
+
+Workflow DAGs also populate Devtool's durable validation dependency metadata.
+When a node expands to several commands:
+
+```text
+node A: part 1 -> part 2
+node B depends on A
+```
+
+Devtool records:
+
+```text
+A part 2 depends on A part 1
+B first part depends on A final part
+```
+
+so resumable validation, retry, dependency closure, and plan fingerprints retain
+the same dependency truth as direct workflow execution.
+
+An explicit `[targets.<name>.workflows].validate` workflow is authoritative.
+The legacy `--skip-restore`, `--skip-build`, and `--skip-test` flags are not
+allowed to silently rewrite that explicit DAG; Devtool asks the user to select a
+different workflow/profile or remove the skip flag instead.
+
+## Per-node execution environments
+
+Jobs can choose different execution environments in one target workflow:
+
+```toml
+[jobs.generate]
+runner = "node"
+execution_environment = "native-termux"
+command = ["npm", "run", "generate"]
+
+[jobs.linux-package]
+runner = "python"
+execution_environment = "chroot"
+chroot_name = "androidos"
+action = "package"
+```
+
+The CLI execution-preparation layer scopes toolchain/environment preparation per
+workflow command while preserving graph order. Existing path translation,
+chroot/PRoot/SSH preflight, toolchain wrapping, and native-Termux safety checks
+are reused instead of duplicated in Workflow Core.
+
+## Inspection and machine state
+
+Use:
 
 ```bash
 devtool targets
-devtool targets --json
-
 devtool jobs
-devtool jobs --json
-
 devtool workflows
 devtool workflows --json
-
 devtool inspect
 devtool config resolve
 ```
 
-`targets` reports platform, primary runner, configured workflow names, and the
-resolved target root. `jobs` reports runner, execution mode, and root.
-`workflows` prints normalized step order. JSON output uses Devtool's normal
-machine-output envelope when machine output is enabled by the CLI.
+`devtool workflows --json` now uses schema version 2 and exposes:
 
-The GTK Control Center target cards consume the same normalized model and show
-platform, primary runner, and configured workflows instead of treating project
-`kind` as both product type and execution tool.
-
-## Compatibility examples
-
-A legacy repository remains valid:
-
-```toml
-[project]
-kind = "python"
-
-[targets.api]
-type = "python"
-root = "services/api"
+```text
+step reference
+stable step id
+dependency keys
+roots
+leaves
+stable topological order
+full node metadata
 ```
 
-The canonical equivalent is:
+`config resolve` keeps the MP02 raw `workflows` lists for compatibility and adds
+`workflow_graphs` with the normalized DAG representation.
 
-```toml
-[project]
-runner = "python"
-platform = "server"
+Executed command/result metadata includes:
 
-[targets.api]
-runner = "python"
-platform = "server"
-root = "services/api"
+```text
+workflow_target
+workflow_name
+workflow_node_key
+workflow_node_id
+workflow_depends_on
+workflow_runner
+workflow_action
+workflow_execution_environment
+workflow_inputs
+workflow_outputs
+workflow_node_state
 ```
 
-Both currently produce `config.kind == "python"` for compatibility. New code
-should prefer `config.runner`; `config.kind` remains synchronized until the
-legacy API can be retired in a future major compatibility window.
+This metadata is available to machine summaries and later UI Core work without
+requiring log scraping.
 
-## Boundary of this overlay
+## Compatibility
 
-MP01 + MP02 deliver the complete **configuration and identity** layer. They do
-not execute target workflows yet. That is intentional rather than partial
-implementation:
+Repositories without a workflow declaration keep their existing runner behavior
+unchanged. A workflow only overrides the lifecycle action with the same name.
+For example, a target that declares only `build` still uses its primary runner's
+normal `test`, `run`, and `package` behavior.
 
-- MP03: generic dependency graph and ordering
-- MP04: workflow-node runner composition
-- MP05: cross-target dependency execution and deduplication
-- MP08: aggregate toolchain preflight from the resolved graph
-- MP09: input/output-aware safe scheduling
+Runner capabilities also treat an explicitly declared target workflow as
+support for that lifecycle action, even if the target's primary runner alone
+would not advertise it.
 
-This sequencing keeps runner behavior backward-compatible while the graph
-runtime is introduced behind a fully normalized configuration contract.
+## Roadmap boundary after MP04
+
+MP01–MP04 now deliver the complete target identity, reusable-job, generic-DAG,
+and cross-runner execution foundation.
+
+Still intentionally later:
+
+- **MP05:** cross-target dependency expansion and deduplication
+- **MP06:** workspace target groups
+- **MP07:** affected-target analysis
+- **MP08:** aggregate toolchain doctor/preflight for the resolved graph
+- **MP09:** input/output-aware safe parallel scheduling and reservations
+- **MP10:** richer graph planning/inspection UX
+
+The important architectural boundary is already in place: runners plan their own
+commands, Workflow Core composes them, and execution environments remain
+independent from runner identity.
