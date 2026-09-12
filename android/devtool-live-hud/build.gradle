@@ -5,10 +5,21 @@ plugins {
 final String expectedGradleVersion = '9.7.1'
 final String expectedGradleSha256 = 'acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a'
 final List<String> prereleaseMarkers = ['alpha', 'beta', 'rc', 'eap', 'preview', 'canary', 'snapshot', 'nightly', 'milestone']
+def stableBaselineStamp = layout.buildDirectory.file('devtool/verification/stable-toolchain-baseline.txt')
 
 tasks.register('verifyStableToolchainBaseline') {
     group = 'verification'
     description = 'Verify the pinned stable Android/Gradle/Java toolchain used by Devtool Live HUD.'
+    inputs.files(
+            layout.projectDirectory.file('build.gradle'),
+            layout.projectDirectory.file('app/build.gradle'),
+            layout.projectDirectory.file('gradlew'),
+            layout.projectDirectory.file('gradlew.bat'),
+            layout.projectDirectory.file('build.sh'))
+    inputs.property('expectedGradleVersion', expectedGradleVersion)
+    inputs.property('expectedGradleSha256', expectedGradleSha256)
+    inputs.property('javaVersion', providers.provider { JavaVersion.current().toString() })
+    outputs.file(stableBaselineStamp)
 
     doLast {
         if (gradle.gradleVersion != expectedGradleVersion) {
@@ -58,5 +69,17 @@ tasks.register('verifyStableToolchainBaseline') {
                 }
             }
         }
+
+        def stamp = stableBaselineStamp.get().asFile
+        stamp.parentFile.mkdirs()
+        stamp.text = "gradle=${gradle.gradleVersion}\njava=${System.getProperty('java.version')}\n"
     }
+}
+
+// One task is useful for local/CI smoke validation and lets Gradle share the
+// common task graph rather than paying for separate assemble/test/lint starts.
+tasks.register('devtoolDebugValidation') {
+    group = 'verification'
+    description = 'Run Devtool Live HUD debug package, unit tests, and lint in one Gradle invocation.'
+    dependsOn ':app:assembleDebug', ':app:testDebugUnitTest', ':app:lintDebug'
 }

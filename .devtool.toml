@@ -62,7 +62,10 @@ external_verification = "auto"
 
 [targets.android_hud.validation]
 android_safe = false
-split_gradle = true
+# This app is small enough to coalesce build/test/lint into one Gradle invocation.
+# Durable validation still keeps resumable semantic phases, but explicitly skips
+# compile/resources/dependencies because assemble/test/lint already cover them.
+split_gradle = false
 max_workers = 2
 cpu_limit = 2
 parallel = true
@@ -154,12 +157,9 @@ low_priority = false
 preflight = [
   "verifyStableToolchainBaseline",
 ]
-compile = [
-  ":app:compileDebugJavaWithJavac",
-]
-resources = [
-  ":app:processDebugResources",
-]
+dependencies = []
+compile = []
+resources = []
 unit-test = [
   ":app:testDebugUnitTest",
 ]

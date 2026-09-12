@@ -16,6 +16,8 @@ from devtool.android.tasks import (
 from devtool.models import ProjectConfig
 from devtool.android_integration import android_builder_arguments_for_tasks
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def _config(root: Path) -> ProjectConfig:
     return ProjectConfig(
@@ -37,6 +39,8 @@ def test_gradle_task_classifier_is_shared_for_android_task_policy() -> None:
     assert classify_gradle_task(":app:connectedDebugAndroidTest") == "connected_test"
     assert classify_gradle_task(":app:installDebug") == "install"
     assert classify_gradle_task(":app:publishReleaseBundle") == "publish"
+    assert classify_gradle_task(":app:check") == "aggregate_check"
+    assert classify_gradle_task(":app:connectedCheck") == "connected_aggregate"
     assert classify_gradle_task(":app:customVerification") == "unknown"
 
 
@@ -188,3 +192,31 @@ def test_standalone_source_keeps_planner_available_for_build_apk() -> None:
     assert "def plan_gradle_task_list" in source
     assert "connected_device_probe_needed" in source
     assert "disable_transitive_connected_tests" in source
+
+
+def test_plain_check_does_not_probe_but_connected_check_does() -> None:
+    assert gradle_tasks_need_connected_device_probe([":app:check"]) is False
+    assert gradle_tasks_need_connected_device_probe([":app:connectedCheck"]) is True
+
+
+def test_android_hud_target_coalesces_normal_validation_and_disables_redundant_resumable_phases() -> None:
+    config = (ROOT / ".devtool.toml").read_text(encoding="utf-8")
+    assert "[targets.android_hud.validation]" in config
+    block = config.split("[targets.android_hud.validation]", 1)[1].split("[targets.devtool.validation]", 1)[0]
+    assert "split_gradle = false" in block
+    phases = config.split("[targets.android_hud.validation.phases]", 1)[1]
+    assert "dependencies = []" in phases
+    assert "compile = []" in phases
+    assert "resources = []" in phases
+
+
+def test_android_hud_gradle_verification_tasks_are_incremental_and_aggregated() -> None:
+    root_build = (ROOT / "android/devtool-live-hud/build.gradle").read_text(encoding="utf-8")
+    app_build = (ROOT / "android/devtool-live-hud/app/build.gradle").read_text(encoding="utf-8")
+    assert "stableBaselineStamp" in root_build
+    assert "outputs.file(stableBaselineStamp)" in root_build
+    assert "devtoolDebugValidation" in root_build
+    assert "dependsOn ':app:assembleDebug', ':app:testDebugUnitTest', ':app:lintDebug'" in root_build
+    assert "releaseSigningStamp" in app_build
+    assert "releaseApkVerificationReport" in app_build
+    assert "devtoolReleaseValidation" in app_build

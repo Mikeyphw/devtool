@@ -11,6 +11,8 @@ def releaseKeyAlias = releaseValue('DEVTOOL_RELEASE_KEY_ALIAS')
 def releaseKeyPassword = releaseValue('DEVTOOL_RELEASE_KEY_PASSWORD')
 def releaseSigningReady = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
         .every { it != null && !it.trim().isEmpty() }
+def releaseSigningStamp = layout.buildDirectory.file('devtool/verification/release-signing.txt')
+def releaseApkVerificationReport = layout.buildDirectory.file('reports/devtool/release-apk-verification.txt')
 
 android {
     namespace 'io.github.mikeceead.devtoolhud'
@@ -87,6 +89,14 @@ android {
 tasks.register('verifyReleaseSigning') {
     group = 'verification'
     description = 'Reject release builds unless all Devtool signing values are supplied.'
+    if (releaseSigningReady) {
+        inputs.file(file(releaseStoreFile)).withPropertyName('releaseStoreFile')
+        inputs.property('releaseKeyAlias', releaseKeyAlias)
+    }
+    outputs.file(releaseSigningStamp)
+    outputs.upToDateWhen {
+        releaseSigningReady && file(releaseStoreFile).isFile()
+    }
     doLast {
         if (!releaseSigningReady) {
             throw new GradleException('Release signing is required. Set DEVTOOL_RELEASE_STORE_FILE, DEVTOOL_RELEASE_STORE_PASSWORD, DEVTOOL_RELEASE_KEY_ALIAS, and DEVTOOL_RELEASE_KEY_PASSWORD.')
@@ -94,6 +104,9 @@ tasks.register('verifyReleaseSigning') {
         if (!file(releaseStoreFile).isFile()) {
             throw new GradleException("Release keystore does not exist: ${releaseStoreFile}")
         }
+        def stamp = releaseSigningStamp.get().asFile
+        stamp.parentFile.mkdirs()
+        stamp.text = "store=${file(releaseStoreFile).canonicalPath}\nalias=${releaseKeyAlias}\n"
     }
 }
 
@@ -109,8 +122,11 @@ tasks.register('verifyReleaseApk') {
     group = 'verification'
     description = 'Build and verify the signed release APK with apksigner.'
     dependsOn 'assembleRelease'
+    def releaseApk = layout.buildDirectory.file('outputs/apk/release/app-release.apk')
+    inputs.file(releaseApk).withPropertyName('releaseApk')
+    outputs.file(releaseApkVerificationReport)
     doLast {
-        def apk = file("${layout.buildDirectory.get()}/outputs/apk/release/app-release.apk")
+        def apk = releaseApk.get().asFile
         if (!apk.isFile() || apk.length() == 0L) {
             throw new GradleException("Release APK was not produced: ${apk}")
         }
@@ -125,7 +141,18 @@ tasks.register('verifyReleaseApk') {
         exec {
             commandLine apksigner.absolutePath, 'verify', '--verbose', '--print-certs', apk.absolutePath
         }
+        def report = releaseApkVerificationReport.get().asFile
+        report.parentFile.mkdirs()
+        report.text = "verified=${apk.canonicalPath}\nsize=${apk.length()}\n"
     }
+}
+
+// Full signed-release gate. The assemble dependency is shared with
+// verifyReleaseApk, so Gradle only schedules it once in this invocation.
+tasks.register('devtoolReleaseValidation') {
+    group = 'verification'
+    description = 'Run signed release verification, unit tests, and release lint as one task graph.'
+    dependsOn 'verifyReleaseApk', 'testDebugUnitTest', 'lintRelease'
 }
 
 dependencies {

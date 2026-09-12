@@ -1659,7 +1659,9 @@ def classify_gradle_task(task: str) -> str:
         return "android_component"
     if any(token in lower for token in ("releasequal", "releasequalification", "releaseseal", "androidreleaseseal", "devicequalification", "devicesmoke")):
         return "release_gate"
-    if lower.endswith("check") or lower in {"check", "connectedcheck"}:
+    if lower == "connectedcheck" or lower.endswith("connectedcheck"):
+        return "connected_aggregate"
+    if lower.endswith("check") or lower == "check":
         return "aggregate_check"
     return "unknown"
 
@@ -1800,7 +1802,7 @@ def gradle_tasks_need_connected_device_probe(tasks: Sequence[str]) -> bool:
 
     for task in tasks:
         kind = classify_gradle_task(task)
-        if kind in {"connected_test", "release_gate", "aggregate_check"}:
+        if kind in {"connected_test", "connected_aggregate", "release_gate"}:
             return True
     return False
 

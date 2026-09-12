@@ -902,8 +902,29 @@ class AndroidGradleRunner(ProjectRunner):
         }
         allowed_phases = allowed_by_scope.get(change_scope, allowed_by_scope["full"])
 
+        _phase_missing = object()
+
+        def phase_value(name: str) -> object:
+            if name in phase_config:
+                return phase_config[name]
+            alternate = name.replace("-", "_")
+            if alternate in phase_config:
+                return phase_config[alternate]
+            return _phase_missing
+
         def phase_enabled(name: str) -> bool:
-            return name in allowed_phases
+            if name not in allowed_phases:
+                return False
+            configured = phase_value(name)
+            if configured is _phase_missing:
+                return True
+            if configured is False:
+                return False
+            if isinstance(configured, (list, tuple)) and not configured:
+                return False
+            if isinstance(configured, str) and configured.strip().lower() in {"off", "disabled", "none", "skip"}:
+                return False
+            return True
 
         def task_values(value: object) -> list[str]:
             if isinstance(value, str):
@@ -913,8 +934,10 @@ class AndroidGradleRunner(ProjectRunner):
             return []
 
         def phase_tasks(name: str, defaults: list[str]) -> list[str]:
-            configured = task_values(phase_config.get(name) or phase_config.get(name.replace("-", "_")))
-            return configured if configured else defaults
+            configured = phase_value(name)
+            if configured is _phase_missing:
+                return defaults
+            return task_values(configured)
 
         def gradle_phase(
             phase: str,

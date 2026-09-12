@@ -2413,3 +2413,11 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_resumable_android_phase_configuration_can_explicitly_disable_redundant_phases() -> None:
+    source = (Path(__file__).resolve().parents[1] / "devtool/project_runners.py").read_text(encoding="utf-8")
+    assert "_phase_missing = object()" in source
+    assert "if isinstance(configured, (list, tuple)) and not configured:" in source
+    assert "return False" in source
+    assert "return task_values(configured)" in source
