@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 from pathlib import Path
+import sys
 
 from devtool.cli import build_parser
-from tools.generate_complete_feature_guides import AI_PATH, HUMAN_PATH, command_specs, generate
 
 ROOT = Path(__file__).resolve().parents[1]
+GENERATOR_PATH = ROOT / "tools" / "generate_complete_feature_guides.py"
+GENERATOR_SPEC = importlib.util.spec_from_file_location(
+    "devtool_generate_complete_feature_guides",
+    GENERATOR_PATH,
+)
+assert GENERATOR_SPEC is not None and GENERATOR_SPEC.loader is not None
+GENERATOR_MODULE = importlib.util.module_from_spec(GENERATOR_SPEC)
+sys.modules[GENERATOR_SPEC.name] = GENERATOR_MODULE
+GENERATOR_SPEC.loader.exec_module(GENERATOR_MODULE)
+
+AI_PATH = GENERATOR_MODULE.AI_PATH
+HUMAN_PATH = GENERATOR_MODULE.HUMAN_PATH
+command_specs = GENERATOR_MODULE.command_specs
+generate = GENERATOR_MODULE.generate
 
 
 def test_complete_feature_guides_are_generated_from_current_parser() -> None:
