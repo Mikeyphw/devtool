@@ -4,13 +4,14 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 from unittest.mock import patch
 
 from rich.console import Console
+
+from tests._compat import portable_shell_argv
 
 from devtool.cli import _load_or_create_validation_session, build_parser
 from devtool import android_build
@@ -324,7 +325,7 @@ class GradleStartupProgressTests(unittest.TestCase):
             "devtool.runners.subprocess.Popen", side_effect=popen
         ):
             code, output = _run_process_live(
-                [sys.executable, "-c", "print('> Task :app:compileDebugKotlin', flush=True)"],
+                portable_shell_argv("printf '> Task :app:compileDebugKotlin\n'"),
                 cwd=os.getcwd(),
                 env=os.environ.copy(),
                 verbose=False,

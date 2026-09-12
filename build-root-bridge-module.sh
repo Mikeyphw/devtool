@@ -14,7 +14,7 @@ esac
 export SOURCE_DATE_EPOCH
 mkdir -p "$(dirname "$OUT")"
 
-python3 - "$SRC" "$OUT" <<'PY'
+python3 -S - "$SRC" "$OUT" <<'PY'
 from __future__ import annotations
 from datetime import datetime, timezone
 import os

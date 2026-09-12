@@ -67,10 +67,11 @@ class PythonSupportTests(unittest.TestCase):
                     "demo-1.dist-info/WHEEL,,\n"
                     "demo-1.dist-info/RECORD,,\n",
                 )
-            payload, rc = verify_packages(root)
+            payload, rc = verify_packages(root, options=PackageCheckOptions(clean_install=False))
 
         self.assertEqual(rc, 0)
         self.assertEqual(payload["valid"], 1)
+        self.assertFalse(payload["wheel_installs"][0]["attempted"])
 
     def test_package_import_smoke_rejects_invalid_module_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -231,7 +232,7 @@ class PythonSupportTests(unittest.TestCase):
                 repo_root=root,
                 project_root=str(root),
                 kind="python",
-                build_command=f"{sys.executable} -c \"import time; print('python step 1'); time.sleep(0.15); print('python step 2')\"",
+                build_command="sh -c \"printf 'python step 1\\n'; sleep 0.05; printf 'python step 2\\n'\"",
             )
             sink = TaskerProgressSink(
                 directory=root / "hud",
@@ -700,7 +701,21 @@ class PythonSupportTests(unittest.TestCase):
                 "valid": True,
                 "checks": [],
             }
-            result = _verify_wheel_install(item, options=PackageCheckOptions(verify_cli=True))
+            def fake_create(env_root):
+                env_root = Path(env_root)
+                bin_dir = env_root / "bin"
+                bin_dir.mkdir(parents=True, exist_ok=True)
+                python = bin_dir / "python"
+                python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                python.chmod(0o755)
+                wrapper = bin_dir / "demo"
+                wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                wrapper.chmod(0o755)
+
+            completed = mock.Mock(returncode=0, stdout="installed demo\n")
+            with mock.patch("devtool.python_support.venv.EnvBuilder.create", side_effect=fake_create), \
+                 mock.patch("devtool.python_support._run_capture", return_value=completed):
+                result = _verify_wheel_install(item, options=PackageCheckOptions(verify_cli=True))
         self.assertEqual(result["returncode"], 0)
         self.assertTrue(result["console_scripts"]["demo"]["installed"])
         self.assertTrue(result["console_scripts"]["demo"]["executable"])
@@ -789,8 +804,8 @@ class PythonSupportTests(unittest.TestCase):
     def test_service_lifecycle_terminates_before_collecting_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            command = f"{sys.executable} -c \"import time; print('service-ready', flush=True); time.sleep(30)\""
-            payload, rc = check_service_lifecycle(root, start_command=command, timeout=5)
+            command = "sh -c \"printf 'service-ready\\n'; sleep 30\""
+            payload, rc = check_service_lifecycle(root, start_command=command, timeout=5, startup_grace_seconds=0.05)
         self.assertEqual(rc, 0)
         self.assertTrue(payload["ready"])
         self.assertIn("service-ready", payload["output"])

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from devtool.release_qualification import GateResult, QualificationReport, write_report
@@ -38,23 +39,51 @@ def test_ov15_installer_state_stamps_are_atomic_private_and_fsynced() -> None:
 
 
 def test_ov16_build_release_manifest_is_hash_checked_and_deterministic(tmp_path: Path) -> None:
-    # Pre-seed two real distributable classes so the final release manifest is
+    # This contract exercises manifest inventory/hashing/provenance against a
+    # minimal but version-consistent source root. The dedicated source-release
+    # smoke covers full-repository archive reproducibility; archiving the entire
+    # repository again here made this unit contract needlessly expensive.
+    fixture_root = tmp_path / "repo"
+    output = tmp_path / "release"
+    required = [
+        "release/versions.json",
+        "pyproject.toml",
+        "devtool/__init__.py",
+        "desktop/gtk-control-center/packaging/debian/control",
+        "android/devtool-live-hud/app/build.gradle",
+    ]
+    for relative in required:
+        source = ROOT / relative
+        destination = fixture_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source.read_bytes())
+    (fixture_root / "README.md").write_text("release fixture\n", encoding="utf-8")
+    output.mkdir(parents=True)
+
+    # Pre-seed two valid distributable classes so the final release manifest is
     # proven to be an authoritative multi-asset inventory, not source-only.
-    subprocess.run([str(ROOT / "build-root-bridge-module.sh"), str(tmp_path / "devtool-root-bridge-module.zip")], check=True, capture_output=True, text=True)
     import zipfile
-    wheel = tmp_path / "devtool_demo-1.0-py3-none-any.whl"
+    module = output / "devtool-root-bridge-module.zip"
+    with zipfile.ZipFile(module, "w") as archive:
+        archive.writestr("module.prop", b"id=devtool_bridge\n")
+        archive.writestr("customize.sh", b"#!/system/bin/sh\n")
+        archive.writestr("bin/devtool-root-bridge", b"#!/system/bin/sh\n")
+    wheel = output / "devtool_demo-1.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("devtool_demo/__init__.py", b"")
 
-    command = ["python3", str(ROOT / "tools" / "build-release.py"), "--root", str(ROOT), "--out-dir", str(tmp_path), "--verify-reproducible"]
+    command = [
+        "python3", "-S", str(ROOT / "tools" / "build-release.py"),
+        "--root", str(fixture_root), "--out-dir", str(output),
+    ]
     subprocess.run(command, check=True, capture_output=True, text=True)
-    manifest = json.loads((tmp_path / "release-artifacts.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output / "release-artifacts.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 2
     assert manifest["hash_algorithm"] == "sha256"
     assert len(manifest["source_tree_sha256"]) == 64
     assert isinstance(manifest["artifacts"], list) and len(manifest["artifacts"]) >= 3
     artifact = manifest["artifacts"][0]
-    archive = tmp_path / artifact["path"]
+    archive = output / artifact["path"]
     assert archive.is_file() and archive.stat().st_size > 0
     names = {item["path"] for item in manifest["artifacts"]}
     assert "devtool-root-bridge-module.zip" in names
@@ -66,8 +95,8 @@ def test_ov16_build_release_manifest_is_hash_checked_and_deterministic(tmp_path:
         assert item["provenance"]["source_date_epoch"] == manifest["source_date_epoch"]
     root_module = next(item for item in manifest["artifacts"] if item["path"] == "devtool-root-bridge-module.zip")
     assert root_module["provenance"]["producer"] == "build-root-bridge-module.sh"
-    assert artifact["sha256"] in (tmp_path / "SHA256SUMS").read_text(encoding="utf-8")
-    assert (tmp_path / "SHA256SUMS.all").read_text(encoding="utf-8") == (tmp_path / "SHA256SUMS").read_text(encoding="utf-8")
+    assert artifact["sha256"] in (output / "SHA256SUMS").read_text(encoding="utf-8")
+    assert (output / "SHA256SUMS.all").read_text(encoding="utf-8") == (output / "SHA256SUMS").read_text(encoding="utf-8")
     builder = read("tools/build-release.py")
     assert "verify_release_manifest(out_dir, manifest)" in builder
     assert "atomic_write_text(manifest_path" in builder

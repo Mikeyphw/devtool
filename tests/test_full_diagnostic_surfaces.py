@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import sys
+import shlex
+import shutil
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -56,27 +57,18 @@ def test_run_log_contains_every_android_lint_report_diagnostic(
     log_path = tmp_path / "run.log"
     xml = _lint_xml(18)
 
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(xml, encoding="utf-8")
+    shell = shutil.which("sh") or "sh"
     script = (
-        "from pathlib import Path; "
-        f"p=Path({str(report)!r}); "
-        "p.parent.mkdir("
-        "parents=True, exist_ok=True); "
-        f"p.write_text({xml!r}, "
-        "encoding='utf-8'); "
-        "print("
-        "'Lint found 3 errors and 15 warnings. "
-        "First failure: Diagnostic 5'"
-        "); "
-        "raise SystemExit(1)"
+        f"touch {shlex.quote(str(report))}; "
+        "printf '%s\n' 'Lint found 3 errors and 15 warnings. First failure: Diagnostic 5'; "
+        "exit 1"
     )
 
     spec = CommandSpec(
         "lint",
-        [
-            sys.executable,
-            "-c",
-            script,
-        ],
+        [shell, "-c", script],
         cwd=str(project),
         metadata={
             "report_parsers": [

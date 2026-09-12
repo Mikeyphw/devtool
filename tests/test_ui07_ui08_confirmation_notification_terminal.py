@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 from rich.console import Console
 
+from devtool.cli import main as devtool_main
 from devtool.hud import HudState, TerminalHud
 from devtool.tui import render_page
 from devtool.ui_core.actions import ActionContext, actions_for_context
@@ -124,12 +123,10 @@ def test_tui_build_page_uses_semantic_live_panels(monkeypatch, tmp_path: Path) -
     assert "Cancel" in text
 
 
-def test_ui_contract_cli_exposes_confirmation_notification_contracts() -> None:
-    completed = subprocess.run(
-        [sys.executable, "-m", "devtool", "ui-contract", "--surface", "tui", "--json"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
-    )
-    payload = json.loads(completed.stdout)
+def test_ui_contract_cli_exposes_confirmation_notification_contracts(capsys) -> None:
+    rc = devtool_main(["ui-contract", "--surface", "tui", "--json"])
+    assert rc in {None, 0}
+    payload = json.loads(capsys.readouterr().out)
     payload = payload.get("data", payload)
     assert payload["confirmation_schema_version"] == 1
     assert payload["notification_schema_version"] == 1

@@ -74,6 +74,7 @@ def test_staged_builder_inspects_project_without_python_package_context() -> Non
         completed = subprocess.run(
             [
                 sys.executable,
+                "-S",
                 "-c",
                 probe,
                 str(staged),

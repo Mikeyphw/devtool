@@ -276,10 +276,10 @@ def test_required_device_wait_rejects_unauthorized_immediately() -> None:
         ops.wait_for_device(serial="serial-1", policy="serial", timeout=5, poll_interval=0.01)
 
 
+@pytest.mark.requires_tool("keytool")
+@pytest.mark.slow_external
 def test_real_keytool_create_inspect_export_when_available(tmp_path: Path) -> None:
     import shutil
-    if not shutil.which("keytool"):
-        pytest.skip("keytool unavailable")
     runtime = RuntimeIdentity("linux", "host", "x86_64", "glibc")
     context = AndroidExecutionContext(runtime, ".", "app", "release", "", "", {
         "java": AndroidToolResolution("java", "system", True, path=shutil.which("java") or "/usr/bin/java", compatible=True),

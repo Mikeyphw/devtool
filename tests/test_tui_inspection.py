@@ -335,7 +335,7 @@ def test_runner_binds_existing_interrupt_path_to_tui_tracker(tmp_path: Path) -> 
 
     with patch("devtool.runners.console", console), patch.object(GenericProgressTracker, "set_stop_callback", capture):
         code, output = _run_process_live(
-            ["python3", "-c", "print('runner-binding-ok')"],
+            ["python3", "-S", "-c", "print('runner-binding-ok')"],
             cwd=str(tmp_path),
             env=os.environ.copy(),
             verbose=False,

@@ -64,38 +64,29 @@ def test_phase4_network_and_destructive_safety_contract() -> None:
     assert "Force push is never used" in detail
 
 
-def test_phase4_branch_and_stash_parsers_consume_real_git_nul_output(tmp_path: Path) -> None:
-    git = shutil.which("git")
+@pytest.mark.requires_tool("javac")
+@pytest.mark.requires_tool("java")
+@pytest.mark.slow_external
+def test_phase4_branch_and_stash_parsers_consume_git_nul_contract(tmp_path: Path) -> None:
     javac = shutil.which("javac")
     java = shutil.which("java")
-    if not git or not javac or not java:
-        pytest.skip("Git or JDK unavailable")
+    if not javac or not java:
+        pytest.skip("JDK unavailable")
 
-    repo = tmp_path / "repo"
-    remote = tmp_path / "remote.git"
-    subprocess.run([git, "init", "-b", "main", str(repo)], check=True, capture_output=True)
-    subprocess.run([git, "-C", str(repo), "config", "user.name", "Phase Four"], check=True)
-    subprocess.run([git, "-C", str(repo), "config", "user.email", "phase4@example.invalid"], check=True)
-    (repo / "tracked.txt").write_text("one\n", encoding="utf-8")
-    subprocess.run([git, "-C", str(repo), "add", "tracked.txt"], check=True)
-    subprocess.run([git, "-C", str(repo), "commit", "-m", "initial"], check=True, capture_output=True)
-    subprocess.run([git, "-C", str(repo), "branch", "feature/mobile logs".replace(" ", "-")], check=True)
-    subprocess.run([git, "init", "--bare", str(remote)], check=True, capture_output=True)
-    subprocess.run([git, "-C", str(repo), "remote", "add", "origin", str(remote)], check=True)
-    subprocess.run([git, "-C", str(repo), "push", "-u", "origin", "main"], check=True, capture_output=True)
-    subprocess.run([git, "-C", str(repo), "push", "origin", "feature/mobile-logs"], check=True, capture_output=True)
-    (repo / "tracked.txt").write_text("two\n", encoding="utf-8")
-    (repo / "untracked file.txt").write_text("loose\n", encoding="utf-8")
-    subprocess.run([git, "-C", str(repo), "stash", "push", "--include-untracked", "-m", "mobile stash"],
-                   check=True, capture_output=True)
-
-    fmt = "%(refname)%00%(refname:short)%00%(objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(HEAD)%00"
-    branches = subprocess.check_output([git, "-C", str(repo), "for-each-ref", "--sort=refname",
-                                        f"--format={fmt}local%00", "refs/heads"])
-    branches += subprocess.check_output([git, "-C", str(repo), "for-each-ref", "--sort=refname",
-                                         f"--format={fmt}remote%00", "refs/remotes"])
-    stashes = subprocess.check_output([git, "-C", str(repo), "stash", "list",
-                                       "--format=%gd%x00%H%x00%aI%x00%gs%x00"])
+    # The parser contract is about the NUL-delimited bytes emitted by Git, not
+    # Git repository setup. Representative records avoid ten real Git processes
+    # per test and remain portable on native Termux. Real Git integration is
+    # covered by the repository/transaction suites.
+    branches = b"\0".join([
+        b"refs/heads/main", b"main", b"a" * 40, b"origin/main",
+        b"ahead 1, behind 2", b"*", b"local",
+        b"refs/remotes/origin/feature/mobile-logs", b"origin/feature/mobile-logs",
+        b"b" * 40, b"", b"", b"", b"remote",
+    ]) + b"\0"
+    stashes = b"\0".join([
+        b"stash@{0}", b"c" * 40, b"2026-09-11T18:00:00+00:00",
+        b"On main: mobile stash",
+    ]) + b"\0"
     (tmp_path / "branches.bin").write_bytes(branches)
     (tmp_path / "stashes.bin").write_bytes(stashes)
 
@@ -114,7 +105,8 @@ def test_phase4_branch_and_stash_parsers_consume_real_git_nul_output(tmp_path: P
                 boolean current = false;
                 boolean remote = false;
                 for (GitBranchRecord branch : branches) {
-                    if (branch.current && branch.name.equals("main") && branch.upstream.equals("origin/main")) current = true;
+                    if (branch.current && branch.name.equals("main") && branch.upstream.equals("origin/main")
+                            && branch.ahead == 1 && branch.behind == 2) current = true;
                     if (branch.remote && branch.name.equals("origin/feature/mobile-logs")) remote = true;
                 }
                 if (!current || !remote) throw new AssertionError("branch parse failed: " + branches.size());

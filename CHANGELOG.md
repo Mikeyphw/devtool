@@ -377,3 +377,10 @@
 - Added immutable release evidence sessions tied to Git HEAD, Devtool version, toolchain providers, signing identity, device identity, test/smoke gates, artifact hashes, and final verdict.
 - Converged Android release qualification onto shared Android Operations services; removed its independent raw Android execution path.
 - Extended the strict final seal with Android Operations roadmap and bypass-audit checks.
+
+## Pytest Revitalization
+
+- Added Termux-aware pytest capability markers, strict slow-test budget reporting, and isolated shared test toolchain caches.
+- Replaced redundant Go compiler invocations with a deterministic shim while preserving explicit real-toolchain smokes.
+- Reduced Python/site startup and dry-run hashing overhead in existing Devtool tests and installer paths.
+- Documented the pytest runtime modernization in `PYTEST_REVITALIZATION_REPORT.md`.

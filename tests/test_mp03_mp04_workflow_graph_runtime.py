@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import shlex
+import shutil
 import os
 from pathlib import Path
 import sys
@@ -409,9 +411,17 @@ class MP03ExecutionStateTests(unittest.TestCase):
 
     @staticmethod
     def _spec(name: str, code: str, key: str, deps=()):
+        if code.startswith("raise SystemExit("):
+            exit_code = code.removeprefix("raise SystemExit(").removesuffix(")")
+            shell_code = f"exit {int(exit_code)}"
+        elif code.startswith("print('") and code.endswith("')"):
+            text = code[len("print('"):-2]
+            shell_code = f"printf '%s\\n' {shlex.quote(text)}"
+        else:
+            shell_code = ":"
         return CommandSpec(
             name,
-            [sys.executable, "-c", code],
+            [shutil.which("sh") or "sh", "-c", shell_code],
             metadata={
                 "workflow_graph": True,
                 "workflow_target": "x",
@@ -526,7 +536,7 @@ build = ["job:a"]
 
     def test_matrix_expansion_isolates_workflow_node_and_validation_identity_per_lane(self):
         spec = CommandSpec(
-            "test", [sys.executable, "-c", "pass"],
+            "test", [shutil.which("sh") or "sh", "-c", ":"],
             metadata={
                 "workflow_graph": True,
                 "workflow_node_key": "api.test.unit",
@@ -585,11 +595,11 @@ build = ["job:a"]
             )
             specs = [
                 CommandSpec(
-                    "one", [sys.executable, "-c", "pass"], cwd=str(root),
+                    "one", [shutil.which("sh") or "sh", "-c", ":"], cwd=str(root),
                     metadata={"workflow_graph": True, "workflow_execution_environment": "native-termux", "workflow_runner_options": {}},
                 ),
                 CommandSpec(
-                    "two", [sys.executable, "-c", "pass"], cwd=str(root),
+                    "two", [shutil.which("sh") or "sh", "-c", ":"], cwd=str(root),
                     metadata={"workflow_graph": True, "workflow_execution_environment": "desktop-linux", "workflow_runner_options": {}},
                 ),
             ]

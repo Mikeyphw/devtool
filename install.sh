@@ -553,7 +553,14 @@ android_needs_build() {
 
 build_android_app() {
   local fingerprint chroot_name
-  fingerprint=$(android_source_fingerprint)
+  if "$DRY_RUN"; then
+    # A forced dry-run never consumes the fingerprint: it only prints the
+    # build/install plan and write_stamp is non-mutating. Avoid hashing the
+    # Android source tree, which is especially expensive on Termux storage.
+    fingerprint="dry-run"
+  else
+    fingerprint=$(android_source_fingerprint)
+  fi
   chroot_name="${DEVTOOL_ANDROID_CHROOT_NAME:-androidos}"
 
   printf 'Building Android companion through Devtool chroot target android_hud (%s).\n' "$chroot_name"
@@ -696,7 +703,12 @@ install_root_module() {
     local module_zip fingerprint
     ensure_stage_dir
     module_zip="$INSTALL_STAGE_DIR/devtool_root_bridge_module.zip"
-    fingerprint=$(root_module_source_fingerprint)
+    if "$DRY_RUN"; then
+      # As above, forced dry-run output does not need a content fingerprint.
+      fingerprint="dry-run"
+    else
+      fingerprint=$(root_module_source_fingerprint)
+    fi
     printf 'Creating the KernelSU module directly under TMPDIR.\n'
     run "$ROOT/build-root-bridge-module.sh" "$module_zip"
     [[ -s "$module_zip" || "$DRY_RUN" == true ]] || {

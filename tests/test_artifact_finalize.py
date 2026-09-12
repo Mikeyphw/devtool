@@ -58,7 +58,7 @@ def test_finalize_receives_json_v1_on_stdin_and_payload_file(tmp_path: Path) -> 
     repo.mkdir()
     script = br'''set -eu
 cat > "$DEVTOOL_REPO_ROOT/hook-payload.json"
-python3 - "$DEVTOOL_REPO_ROOT/hook-payload.json" "$DEVTOOL_HOOK_PAYLOAD_PATH" <<'PY2'
+python3 -S - "$DEVTOOL_REPO_ROOT/hook-payload.json" "$DEVTOOL_HOOK_PAYLOAD_PATH" <<'PY2'
 import json, pathlib, sys
 stdin_payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 file_payload = json.loads(pathlib.Path(sys.argv[2]).read_text())

@@ -899,3 +899,7 @@ FS03 closes the MP01–MP10, UI01–UI12, and FS01–FS02 roadmap with a reprodu
 ### Android release pipeline (AOPS04)
 
 Android targets now have one release entry point: `devtool --target <target> release`. It reuses the canonical Android capability/device/signing/instrumentation services, runs configured release gates, verifies APK/AAB identity, and writes an immutable SHA-256-sealed evidence session into the existing artifact registry. See `docs/ANDROID_OPERATIONS.md`.
+
+## Pytest runtime hygiene
+
+Devtool's own pytest suite supports capability-aware skips and timing budgets for constrained hosts such as native Termux. Use `--devtool-slow-threshold <seconds>` to report slow call phases and `--devtool-strict-slow` to fail unmarked slow tests. Tests that genuinely depend on external tools should declare `requires_tool(...)` and intentional slow integration smokes should use `slow_external`; ordinary unit contracts should prefer deterministic fakes and the shared private toolchain caches. See `PYTEST_REVITALIZATION_REPORT.md` for the full implementation report.

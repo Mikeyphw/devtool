@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
+from devtool.cli import main as devtool_main
 from devtool.hud import AndroidAppHud, HudState
 from devtool.models import Issue, OperationResult
 from devtool.tasker import TaskerProgressSink
@@ -227,20 +226,17 @@ def test_android_payload_publishes_ui05_ui06_contracts() -> None:
     assert json.loads(payload["ui_diagnostic_summary_json"])["warnings"] == 1
 
 
-def test_ui_contract_cli_exposes_capabilities_responsive_and_schema_models() -> None:
-    repo = Path(__file__).resolve().parents[1]
-    completed = subprocess.run(
-        [
-            sys.executable, "-m", "devtool", "ui-contract",
-            "--surface", "tui", "--width", "55",
-            "--require-capability", "dialogs",
-            "--require-capability", "notifications",
-            "--json",
-        ],
-        cwd=repo, capture_output=True, text=True, check=False,
-    )
-    assert completed.returncode == 0, completed.stderr
-    envelope = json.loads(completed.stdout)
+def test_ui_contract_cli_exposes_capabilities_responsive_and_schema_models(capsys) -> None:
+    rc = devtool_main([
+        "ui-contract",
+        "--surface", "tui", "--width", "55",
+        "--require-capability", "dialogs",
+        "--require-capability", "notifications",
+        "--json",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    envelope = json.loads(captured.out)
     data = envelope.get("data", envelope)
     assert data["capability_schema_version"] == 1
     assert data["responsive_schema_version"] == 1

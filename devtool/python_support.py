@@ -157,6 +157,7 @@ class PythonValidationScope:
 @dataclass(slots=True)
 class PackageCheckOptions:
     import_smoke: bool = False
+    clean_install: bool = True
     install_dependencies: bool = False
     verify_all_wheels: bool = True
     rebuild_sdist: bool = False
@@ -873,6 +874,27 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
 @lru_cache(maxsize=128)
 def _interpreter_version(executable: str) -> tuple[tuple[int, int, int], str]:
     try:
+        candidate = Path(executable).expanduser()
+        current = Path(sys.executable)
+        try:
+            same_interpreter = candidate.resolve() == current.resolve() or os.path.samefile(candidate, current)
+        except (OSError, ValueError):
+            same_interpreter = False
+        # Virtual environments commonly install `python`, `python3`, and
+        # versioned siblings as separate copies rather than symlinks.  They
+        # still identify the same active runtime when they live in the current
+        # interpreter's bin directory. Avoid a costly child-Python startup for
+        # this overwhelmingly common case (particularly expensive on Termux).
+        if (
+            not same_interpreter
+            and candidate.parent.resolve() == current.parent.resolve()
+            and candidate.name.startswith("python")
+            and current.name.startswith("python")
+        ):
+            same_interpreter = True
+        if same_interpreter:
+            info = sys.version_info
+            return (int(info.major), int(info.minor), int(info.micro)), sys.version.splitlines()[0]
         result = subprocess.run(
             [executable, "-c", "import platform; print(platform.python_version())"],
             text=True, capture_output=True, check=False, timeout=15,
@@ -1928,7 +1950,55 @@ def _run_capture(argv: Sequence[str], *, cwd: Path | None = None, env: Mapping[s
 def _verify_wheel_install(
     item: dict[str, Any], *, options: PackageCheckOptions,
 ) -> dict[str, Any]:
-    result_payload: dict[str, Any] = {"attempted": True, "returncode": None, "output": "", "imports": {}, "console_scripts": {}}
+    result_payload: dict[str, Any] = {"attempted": False, "returncode": None, "output": "", "imports": {}, "console_scripts": {}}
+
+    # Validate user-controlled import/script identifiers before creating a venv
+    # or invoking pip. Invalid identifiers can never become valid after an
+    # install, and rejecting them here avoids expensive toolchain setup on both
+    # developer machines and native Termux.
+    imports = options.import_modules or list(item.get("imports") or [])
+    scripts = options.console_scripts or list(item.get("console_scripts") or [])
+    invalid_request = False
+    if options.import_smoke:
+        for raw_module in imports:
+            module = str(raw_module or "").strip()
+            if _valid_import_module_name(module):
+                continue
+            detail = "invalid import module name"
+            result_payload["imports"][module] = {"status": "failed", "output": detail}
+            item["checks"].append({"name": f"import:{module}", "status": "failed", "detail": detail})
+            item["valid"] = False
+            invalid_request = True
+    if options.verify_cli:
+        for raw_script in scripts:
+            script = str(raw_script or "").strip()
+            if _valid_console_script_name(script):
+                continue
+            checks = {
+                "installed": False,
+                "executable": False,
+                "path": "",
+                "mode": "installed-wrapper",
+                "reason": "invalid console script name",
+            }
+            result_payload["console_scripts"][script] = checks
+            item["checks"].append({
+                "name": f"console_script:{script}",
+                "status": "failed",
+                "detail": json.dumps(checks),
+            })
+            item["valid"] = False
+            invalid_request = True
+    if invalid_request:
+        result_payload["output"] = "request rejected before clean install"
+        return result_payload
+
+    if not options.clean_install and not options.import_smoke and not options.verify_cli:
+        item["checks"].append({"name": "clean_install", "status": "skipped", "detail": "disabled by package-check options"})
+        result_payload["output"] = "clean install disabled"
+        return result_payload
+
+    result_payload["attempted"] = True
     with tempfile.TemporaryDirectory(prefix="devtool-python-wheel-") as temporary:
         env_root = Path(temporary) / "venv"
         venv.EnvBuilder(with_pip=True, clear=True).create(env_root)
@@ -1946,16 +2016,9 @@ def _verify_wheel_install(
             item["checks"].append({"name": "clean_install", "status": "failed", "detail": proc.stdout.strip()})
             return result_payload
         item["checks"].append({"name": "clean_install", "status": "passed"})
-        imports = options.import_modules or list(item.get("imports") or [])
         if options.import_smoke:
             for module in imports:
                 module = str(module or "").strip()
-                if not _valid_import_module_name(module):
-                    detail = "invalid import module name"
-                    result_payload["imports"][module] = {"status": "failed", "output": detail}
-                    item["checks"].append({"name": f"import:{module}", "status": "failed", "detail": detail})
-                    item["valid"] = False
-                    continue
                 code = "import importlib,sys; importlib.import_module(sys.argv[1])"
                 check = _run_capture([str(python), "-I", "-c", code, module], cwd=Path(temporary), timeout=60)
                 status = "passed" if check.returncode == 0 else "failed"
@@ -1963,27 +2026,10 @@ def _verify_wheel_install(
                 item["checks"].append({"name": f"import:{module}", "status": status, "detail": check.stdout.strip()})
                 if check.returncode != 0:
                     item["valid"] = False
-        scripts = options.console_scripts or list(item.get("console_scripts") or [])
         if options.verify_cli:
             bin_dir = python.parent
             for script in scripts:
                 script = str(script or "").strip()
-                if not _valid_console_script_name(script):
-                    checks = {
-                        "installed": False,
-                        "executable": False,
-                        "path": "",
-                        "mode": "installed-wrapper",
-                        "reason": "invalid console script name",
-                    }
-                    result_payload["console_scripts"][script] = checks
-                    item["checks"].append({
-                        "name": f"console_script:{script}",
-                        "status": "failed",
-                        "detail": json.dumps(checks),
-                    })
-                    item["valid"] = False
-                    continue
                 candidates = [bin_dir / script, bin_dir / f"{script}.exe", bin_dir / f"{script}-script.py"]
                 executable = next((candidate for candidate in candidates if candidate.is_file()), None)
                 exists = executable is not None
@@ -3385,6 +3431,7 @@ def check_service_lifecycle(
     readiness_port: int = 0,
     check_command: str = "",
     timeout: int = 60,
+    startup_grace_seconds: float = 2.0,
 ) -> tuple[dict[str, Any], int]:
     started = time.monotonic()
     process = subprocess.Popen(
@@ -3408,7 +3455,7 @@ def check_service_lifecycle(
                     with socket.create_connection((readiness_host, readiness_port), timeout=2):
                         ready = True
                 else:
-                    ready = time.monotonic() - started >= 2
+                    ready = time.monotonic() - started >= max(0.0, float(startup_grace_seconds))
             except (OSError, urllib.error.URLError):
                 ready = False
             if ready:

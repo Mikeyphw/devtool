@@ -142,7 +142,7 @@ def test_ov14_desktop_run_buffers_are_bounded_and_log_lines_trimmed(tmp_path: Pa
         f"print('phase: ' + 'x' * {MAX_LOG_LINE_CHARS + 500})",
     ])
     callback_lines: list[str] = []
-    handle = launcher.start([sys.executable, "-c", script], cwd=tmp_path, on_output=lambda _channel, line: callback_lines.append(line))
+    handle = launcher.start([sys.executable, "-S", "-c", script], cwd=tmp_path, on_output=lambda _channel, line: callback_lines.append(line))
     deadline = time.monotonic() + 10
     while handle.returncode is None and time.monotonic() < deadline:
         time.sleep(0.05)

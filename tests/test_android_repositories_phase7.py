@@ -54,6 +54,9 @@ def test_phase7_support_bundle_covers_field_diagnostics_without_raw_logs() -> No
     assert "launchLog" not in bundle
 
 
+@pytest.mark.requires_tool("javac")
+@pytest.mark.requires_tool("java")
+@pytest.mark.slow_external
 def test_phase7_redactor_removes_tokens_credentials_and_private_keys(tmp_path: Path) -> None:
     javac = shutil.which("javac")
     java = shutil.which("java")

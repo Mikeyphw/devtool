@@ -84,6 +84,8 @@ def test_phase5_repository_log_filter_is_saved_and_navigable() -> None:
     assert 'String[] labels = {"Overview", "Changes", "Commits", "Branches", "Sync", "Activity", "Runs", "Metadata"}' in detail
 
 
+@pytest.mark.requires_tool("javac")
+@pytest.mark.requires_tool("java")
 def test_git_sync_commit_parser_handles_nul_records(tmp_path: Path) -> None:
     javac = shutil.which("javac")
     java = shutil.which("java")

@@ -92,7 +92,7 @@ def test_preflight_json_v1_preserves_legacy_env_and_common_payload(tmp_path: Pat
         'pathlib.Path(sys.argv[2]).write_text(json.dumps({"legacy":os.environ["DEVTOOL_PREFLIGHT_PHASE"],"protocol":os.environ["DEVTOOL_HOOK_PROTOCOL"]}))'
     )
     script = f'''set -eu
-python3 -c '{code}' "$DEVTOOL_HOOK_PAYLOAD_PATH" "$DEVTOOL_REPO_ROOT/preflight.json"
+python3 -S -c '{code}' "$DEVTOOL_HOOK_PAYLOAD_PATH" "$DEVTOOL_REPO_ROOT/preflight.json"
 '''.encode()
     archive, manifest = archive_with_hooks(tmp_path / "p.zip", preflight=script, preflight_protocol="json-v1")
     result = run_artifact_preflight_script(repo, archive, phase="before_extract", manifest=manifest)
@@ -127,7 +127,7 @@ def test_validator_json_result_surfaces_warnings_evidence_and_annotations(tmp_pa
         '"evidence":{"answer":42}}))'
     )
     script = f'''set -eu
-python3 -c '{code}' "$DEVTOOL_HOOK_RESULT_PATH"
+python3 -S -c '{code}' "$DEVTOOL_HOOK_RESULT_PATH"
 '''.encode()
     archive, manifest = archive_with_hooks(tmp_path / "v.zip", validator=script, validation_protocol="json-v1")
     result = run_artifact_validation_script(repo, archive, manifest=manifest)

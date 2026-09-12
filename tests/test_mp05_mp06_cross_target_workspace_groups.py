@@ -341,7 +341,7 @@ default_target = "parent"
 [targets.child]
 runner = "command"
 root = "child"
-build_command = "python3 -c pass"
+build_command = "python3 -S -c pass"
 execution_environment = "desktop-linux"
 [targets.child.env]
 CHILD_ONLY = "yes"
@@ -377,10 +377,10 @@ runner = "command"
 release = ["a", "b"]
 [targets.a]
 runner = "command"
-build_command = "python3 -c pass"
+build_command = "python3 -S -c pass"
 [targets.b]
 runner = "command"
-build_command = "python3 -c pass"
+build_command = "python3 -S -c pass"
 ''',
                 encoding="utf-8",
             )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -204,9 +205,9 @@ class TermuxFinalDiagnosticsTests(unittest.TestCase):
 
     def test_proot_guest_probe_script_is_valid_posix_shell(self) -> None:
         script = _proot_guest_probe_script(("python3", "java"))
-        result = subprocess.run(["/bin/sh", "-n", "-c", script], text=True, capture_output=True, check=False)
+        result = subprocess.run([shutil.which("sh") or "sh", "-n", "-c", script], text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        executed = subprocess.run(["/bin/sh", "-c", script], text=True, capture_output=True, check=False)
+        executed = subprocess.run([shutil.which("sh") or "sh", "-c", script], text=True, capture_output=True, check=False)
         self.assertEqual(executed.returncode, 0, executed.stderr)
         self.assertIn("os=", executed.stdout)
         self.assertIn("python3=", executed.stdout)

@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._compat import portable_shell_argv
+
 from devtool.cli import build_parser, main
 from devtool.models import CommandSpec, OperationResult, ProjectConfig
 from devtool.runners import run_specs
@@ -198,7 +200,7 @@ def test_runner_supervisor_terminates_child_and_emits_heartbeat(tmp_path: Path) 
     started = time.monotonic()
     results, raw = run_specs(
         config,
-        [CommandSpec("sleep", [sys.executable, "-c", "import time; print('started', flush=True); time.sleep(30)"])],
+        [CommandSpec("sleep", portable_shell_argv("printf 'started\n'; sleep 30"))],
         verbose=False,
         supervisor_probe=supervisor,
         heartbeat_callback=heartbeat,

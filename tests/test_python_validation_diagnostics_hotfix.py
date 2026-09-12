@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import sys
 from pathlib import Path
 
 from devtool.diagnostics import parse_issues
@@ -103,7 +104,7 @@ def test_run_specs_deduplicates_console_failures_against_pytest_junit() -> None:
         config = ProjectConfig(repo_root=root, project_root=str(root), kind="python")
         spec = CommandSpec(
             "test",
-            ["python3", str(script)],
+            [sys.executable, "-S", str(script)],
             cwd=str(root),
             metadata={
                 "project_root": str(root),

@@ -11,8 +11,8 @@ from devtool.artifact_pipeline import collect_and_process_artifacts
 from devtool.config import load_project_config
 from devtool.models import ProjectConfig
 from devtool.project_runners import GoRunner
+from tests.fake_toolchains import install_fake_go
 
-pytestmark = pytest.mark.skipif(shutil.which("go") is None, reason="Go toolchain is unavailable")
 
 
 def _run(spec) -> subprocess.CompletedProcess[str]:
@@ -20,7 +20,16 @@ def _run(spec) -> subprocess.CompletedProcess[str]:
 
 
 def _module(root: Path, module: str = "example.com/demo") -> None:
-    subprocess.run(["go", "mod", "init", module], cwd=root, check=True, stdout=subprocess.DEVNULL)
+    (root / "go.mod").write_text(f"module {module}\n\ngo 1.23\n", encoding="utf-8")
+
+
+def _workspace(root: Path, *modules: str) -> None:
+    (root / "go.work").write_text("".join(f"use {module}\n" for module in modules), encoding="utf-8")
+
+
+@pytest.fixture
+def fake_go(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    return install_fake_go(tmp_path, monkeypatch)
 
 
 def _main(root: Path, relative: str) -> None:
@@ -44,7 +53,7 @@ def _config(root: Path, **go_options: object) -> ProjectConfig:
     )
 
 
-def test_go_build_discovers_main_packages_and_writes_real_executables(tmp_path: Path) -> None:
+def test_go_build_discovers_main_packages_and_writes_real_executables(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _main(tmp_path, "cmd/foo")
     _main(tmp_path, "cmd/bar")
@@ -64,7 +73,9 @@ def test_go_build_discovers_main_packages_and_writes_real_executables(tmp_path: 
     assert "DEVTOOL_GO_BUILDINFO" not in completed.stdout
 
 
-def test_go_build_registers_verified_binary_and_embedded_build_metadata(tmp_path: Path) -> None:
+@pytest.mark.requires_tool("go")
+@pytest.mark.slow_external
+def test_go_build_registers_verified_binary_and_embedded_build_metadata(tmp_path: Path, shared_tool_cache: dict[str, str]) -> None:
     _module(tmp_path)
     _main(tmp_path, "cmd/demo")
     config = _config(tmp_path)
@@ -99,7 +110,7 @@ def test_go_build_registers_verified_binary_and_embedded_build_metadata(tmp_path
     assert any(check["name"] == "go_build_info" and check["status"] == "passed" for check in item["checks"])
 
 
-def test_go_library_only_build_falls_back_to_compile_check(tmp_path: Path) -> None:
+def test_go_library_only_build_falls_back_to_compile_check(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _library(tmp_path, "pkg/lib")
     spec = GoRunner().build_specs(_config(tmp_path), "build")[0]
@@ -110,7 +121,7 @@ def test_go_library_only_build_falls_back_to_compile_check(tmp_path: Path) -> No
     assert not output_dir.exists() or list(output_dir.iterdir()) == []
 
 
-def test_go_library_only_package_fails_with_actionable_error(tmp_path: Path) -> None:
+def test_go_library_only_package_fails_with_actionable_error(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _library(tmp_path, "pkg/lib")
     spec = GoRunner().build_specs(_config(tmp_path), "package")[0]
@@ -120,7 +131,7 @@ def test_go_library_only_package_fails_with_actionable_error(tmp_path: Path) -> 
     assert "build_targets" in completed.stderr
 
 
-def test_go_duplicate_main_basenames_fail_instead_of_overwriting(tmp_path: Path) -> None:
+def test_go_duplicate_main_basenames_fail_instead_of_overwriting(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _main(tmp_path, "a/server")
     _main(tmp_path, "b/server")
@@ -132,7 +143,7 @@ def test_go_duplicate_main_basenames_fail_instead_of_overwriting(tmp_path: Path)
     assert not (tmp_path / ".devtool" / "build" / "go").exists()
 
 
-def test_go_output_overrides_disambiguate_colliding_main_packages(tmp_path: Path) -> None:
+def test_go_output_overrides_disambiguate_colliding_main_packages(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _main(tmp_path, "a/server")
     _main(tmp_path, "b/server")
@@ -147,7 +158,7 @@ def test_go_output_overrides_disambiguate_colliding_main_packages(tmp_path: Path
     assert {path.name for path in output_dir.iterdir()} == {"server-a", "server-b"}
 
 
-def test_go_work_build_discovers_main_packages_across_workspace_modules(tmp_path: Path) -> None:
+def test_go_work_build_discovers_main_packages_across_workspace_modules(tmp_path: Path, fake_go: Path) -> None:
     module_a = tmp_path / "module-a"
     module_b = tmp_path / "module-b"
     module_a.mkdir()
@@ -156,7 +167,7 @@ def test_go_work_build_discovers_main_packages_across_workspace_modules(tmp_path
     _module(module_b, "example.com/b")
     _main(module_a, "cmd/a")
     _main(module_b, "cmd/b")
-    subprocess.run(["go", "work", "init", "./module-a", "./module-b"], cwd=tmp_path, check=True)
+    _workspace(tmp_path, "./module-a", "./module-b")
 
     completed = _run(GoRunner().build_specs(_config(tmp_path), "build")[0])
     assert completed.returncode == 0, completed.stderr
@@ -164,7 +175,7 @@ def test_go_work_build_discovers_main_packages_across_workspace_modules(tmp_path
     assert {path.name for path in output_dir.iterdir()} == {"a", "b"}
 
 
-def test_go_root_main_uses_module_basename_for_default_binary_name(tmp_path: Path) -> None:
+def test_go_root_main_uses_module_basename_for_default_binary_name(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path, "example.com/acme/root-tool")
     (tmp_path / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
 
@@ -173,7 +184,7 @@ def test_go_root_main_uses_module_basename_for_default_binary_name(tmp_path: Pat
     assert (tmp_path / ".devtool" / "build" / "go" / "root-tool").is_file()
 
 
-def test_go_single_build_target_alias_limits_executable_discovery(tmp_path: Path) -> None:
+def test_go_single_build_target_alias_limits_executable_discovery(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _main(tmp_path, "cmd/one")
     _main(tmp_path, "cmd/two")
@@ -185,7 +196,7 @@ def test_go_single_build_target_alias_limits_executable_discovery(tmp_path: Path
     assert {path.name for path in output_dir.iterdir()} == {"two"}
 
 
-def test_go_packages_scope_does_not_limit_executable_discovery_when_build_targets_are_set(tmp_path: Path) -> None:
+def test_go_packages_scope_does_not_limit_executable_discovery_when_build_targets_are_set(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _main(tmp_path, "cmd/app")
     _library(tmp_path, "pkg/lib")
@@ -200,7 +211,7 @@ def test_go_packages_scope_does_not_limit_executable_discovery_when_build_target
     assert test.argv[-1] == "./pkg/..."
 
 
-def test_go_outputs_table_is_loaded_from_devtool_toml(tmp_path: Path) -> None:
+def test_go_outputs_table_is_loaded_from_devtool_toml(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _main(tmp_path, "a/server")
     _main(tmp_path, "b/server")
@@ -230,7 +241,7 @@ build_directory = ".devtool/custom-go-build"
     assert {path.name for path in output_dir.iterdir()} == {"server-a", "server-b"}
 
 
-def test_go_work_library_only_build_falls_back_to_workspace_compile_check(tmp_path: Path) -> None:
+def test_go_work_library_only_build_falls_back_to_workspace_compile_check(tmp_path: Path, fake_go: Path) -> None:
     module_a = tmp_path / "module-a"
     module_b = tmp_path / "module-b"
     module_a.mkdir()
@@ -239,14 +250,14 @@ def test_go_work_library_only_build_falls_back_to_workspace_compile_check(tmp_pa
     _module(module_b, "example.com/b")
     _library(module_a, "pkg/a")
     _library(module_b, "pkg/b")
-    subprocess.run(["go", "work", "init", "./module-a", "./module-b"], cwd=tmp_path, check=True)
+    _workspace(tmp_path, "./module-a", "./module-b")
 
     completed = _run(GoRunner().build_specs(_config(tmp_path), "build")[0])
     assert completed.returncode == 0, completed.stderr
     assert "DEVTOOL_GO_ARTIFACT" not in completed.stdout
 
 
-def test_go_windows_cross_build_adds_exe_suffix_and_verifies_build_info(tmp_path: Path) -> None:
+def test_go_windows_cross_build_adds_exe_suffix_and_verifies_build_info(tmp_path: Path, fake_go: Path) -> None:
     _module(tmp_path)
     _main(tmp_path, "cmd/demo")
     config = ProjectConfig(
@@ -279,8 +290,8 @@ def test_go_windows_cross_build_adds_exe_suffix_and_verifies_build_info(tmp_path
     assert item["metadata"]["go_build_info"]["goos"] == "windows"
     assert item["metadata"]["go_build_info"]["goarch"] == "amd64"
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="Git is unavailable")
-def test_go_artifact_metadata_records_vcs_provenance_when_embedded(tmp_path: Path) -> None:
+@pytest.mark.requires_tool("git")
+def test_go_artifact_metadata_records_vcs_provenance_when_embedded(tmp_path: Path, fake_go: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "devtool@example.invalid"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "Devtool Test"], cwd=tmp_path, check=True)

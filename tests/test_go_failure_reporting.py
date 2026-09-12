@@ -16,6 +16,7 @@ from devtool.diagnostics import classify_failure, parse_issues
 from devtool.go_test import GoTestJSONStream, parse_go_test_report
 from devtool.models import Issue, OperationResult, ProjectConfig
 from devtool.summary import render_summary, summarize_failure_output
+from tests.fake_toolchains import install_fake_go
 
 
 PLAIN_FAILURE = """==> go-test package chrootctl/internal/contracts
@@ -169,15 +170,13 @@ def test_clipboard_uses_go_failure_reason_and_rerun_without_unknown_failure() ->
     assert "Recovery: rollback succeeded" in text
 
 
-def test_runner_converts_go_json_to_human_log_and_structured_metadata(tmp_path: Path) -> None:
-    if shutil.which("go") is None:
-        pytest.skip("go executable is required for the real Go JSON runner smoke test")
-    import subprocess
+def test_runner_converts_go_json_to_human_log_and_structured_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_go(tmp_path, monkeypatch)
     from devtool.models import ProjectConfig
     from devtool.project_runners import GoRunner
     from devtool.runners import run_specs
 
-    subprocess.run(["go", "mod", "init", "example.com/reportdemo"], cwd=tmp_path, check=True, stdout=subprocess.DEVNULL)
+    (tmp_path / "go.mod").write_text("module example.com/reportdemo\n\ngo 1.23\n", encoding="utf-8")
     (tmp_path / "contracts_test.go").write_text(
         """package reportdemo\nimport \"testing\"\nfunc TestContract(t *testing.T) { t.Fatalf(\"schema drift: expected 1, got 2\") }\n""",
         encoding="utf-8",

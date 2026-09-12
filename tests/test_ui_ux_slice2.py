@@ -122,6 +122,8 @@ def test_android_run_and_history_workflows_cover_slice_two() -> None:
     assert "JSON_ID" in catalog and "TESTISH" in catalog
 
 
+@pytest.mark.requires_tool("javac")
+@pytest.mark.requires_tool("java")
 def test_android_test_catalog_parses_and_filters_framework_ids(tmp_path: Path) -> None:
     if shutil.which("javac") is None or shutil.which("java") is None:
         pytest.skip("JDK is not installed")

@@ -11,6 +11,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from tests._compat import portable_shell_argv
+
 from devtool.android_build import (
     BuildError,
     JavaRequirement,
@@ -254,16 +256,10 @@ class AndroidProjectInspectionTests(unittest.TestCase):
         self.assertIn("/s", rendered)
 
     def test_sdkmanager_carriage_return_progress_is_flushed_as_lines(self) -> None:
-        script = (
-            "import sys; "
-            "sys.stdout.write('[== 5% Downloading package]\\r'); sys.stdout.flush(); "
-            "sys.stdout.write('[========== 55% Installing package]\\r'); sys.stdout.flush(); "
-            "sys.stdout.write('[================ 100% Done]\\r'); sys.stdout.flush()"
-        )
         output = io.StringIO()
         with redirect_stdout(output):
             result = run_sdkmanager_with_progress(
-                [sys.executable, "-c", script],
+                portable_shell_argv("printf '[== 5%% Downloading package]\r[========== 55%% Installing package]\r[================ 100%% Done]\r'"),
                 env=os.environ,
                 input_text=None,
                 dry_run=False,
@@ -2029,7 +2025,7 @@ class AndroidConfigAndRunnerTests(unittest.TestCase):
             "devtool.android_build.time.sleep", return_value=None
         ):
             result = android_build_run(
-                [sys.executable, "-c", "import time; time.sleep(30)"],
+                portable_shell_argv("sleep 30"),
                 check=False,
                 quiet=True,
                 memory_guard_mb=512,

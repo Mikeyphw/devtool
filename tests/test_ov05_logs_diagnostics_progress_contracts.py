@@ -11,6 +11,8 @@ from rich.cells import cell_len
 from rich.console import Console
 
 from devtool import log_commands, logstore, watch
+from tests._compat import portable_shell_argv
+
 from devtool.diagnostics import classify_failure, parse_issues
 from devtool.dotnet_progress import DotnetProgressTracker, _first_dotnet_target, _looks_like_test_project, dotnet_progress_plan
 from devtool.generic_progress import GenericProgressTracker
@@ -218,7 +220,7 @@ def test_ruff_formats_and_unittest_identity_are_typed(tmp_path: Path) -> None:
 
 def test_successful_generic_error_text_does_not_override_exit_zero(tmp_path: Path, capsys) -> None:
     config = ProjectConfig(repo_root=tmp_path, kind="python")
-    spec = CommandSpec("build", [sys.executable, "-c", "print('error: cache probe miss but recovered')"], cwd=str(tmp_path))
+    spec = CommandSpec("build", portable_shell_argv("printf 'error: cache probe miss but recovered\n'"), cwd=str(tmp_path))
     results, _ = run_specs(config, [spec], verbose=False)
     assert results[0].returncode == 0
     assert not [issue for issue in results[0].issues if issue.severity in {"warning", "error"}]
@@ -231,7 +233,7 @@ def test_postprocess_failure_and_partial_success_publish_authoritative_final_pro
     events: list[dict] = []
     bad = CommandSpec(
         "build",
-        [sys.executable, "-c", "print('x.py:1:1: F821 undefined name')"],
+        portable_shell_argv("printf 'x.py:1:1: F821 undefined name\n'"),
         cwd=str(tmp_path),
         metadata={"trust_stdout_diagnostics": True},
     )
@@ -240,7 +242,7 @@ def test_postprocess_failure_and_partial_success_publish_authoritative_final_pro
     assert events[-1]["final"] is True and events[-1]["returncode"] == 1 and events[-1]["errors"] >= 1
 
     events.clear()
-    good = CommandSpec("build", [sys.executable, "-c", "print('1/4')"], cwd=str(tmp_path))
+    good = CommandSpec("build", portable_shell_argv("printf '1/4\n'"), cwd=str(tmp_path))
     results, _ = run_specs(config, [good], verbose=False, progress_callback=events.append)
     assert results[0].returncode == 0
     assert events[-1]["completed"] == 4 and events[-1]["total"] == 4 and events[-1]["percent"] == 100.0
@@ -251,7 +253,7 @@ def test_quiet_command_emits_repeated_devtool_heartbeat(tmp_path: Path, capsys) 
     config = ProjectConfig(repo_root=tmp_path, kind="python")
     spec = CommandSpec(
         "build",
-        [sys.executable, "-c", "import time; time.sleep(0.35)"],
+        portable_shell_argv("sleep 0.35"),
         cwd=str(tmp_path),
         env={"DEVTOOL_COMMAND_HEARTBEAT_SECONDS": "0.1"},
     )
@@ -265,7 +267,7 @@ def test_final_progress_publishes_typed_warning_and_error_counts(tmp_path: Path)
     events: list[dict] = []
     spec = CommandSpec(
         "build",
-        [sys.executable, "-c", "print('src/a.py:2:1: warning: fallback used [warn-code]'); print('src/a.py:1:1: error: boom')"],
+        portable_shell_argv("printf 'src/a.py:2:1: warning: fallback used [warn-code]\nsrc/a.py:1:1: error: boom\n'"),
         cwd=str(tmp_path),
         metadata={"trust_stdout_diagnostics": True},
     )
@@ -426,7 +428,7 @@ def test_gradle_test_diagnostics_keep_module_identity(tmp_path: Path) -> None:
 def test_partial_success_declares_process_exit_progress_finalization(tmp_path: Path) -> None:
     config = ProjectConfig(repo_root=tmp_path, kind="python")
     events: list[dict] = []
-    spec = CommandSpec("build", [sys.executable, "-c", "print('1/4')"], cwd=str(tmp_path))
+    spec = CommandSpec("build", portable_shell_argv("printf '1/4\n'"), cwd=str(tmp_path))
     results, _ = run_specs(config, [spec], verbose=False, progress_callback=events.append)
     assert results[0].returncode == 0
     final = events[-1]

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import sys
 import time
 from pathlib import Path
+
+from tests._compat import portable_shell_argv
 
 from devtool.desktop.gtk_smoke import (
     SHORT_WORKAREA_GEOMETRY,
@@ -30,7 +31,7 @@ def test_gap_run_launcher_keeps_stdout_and_stderr_distinct(tmp_path: Path) -> No
     launcher = DesktopRunLauncher(state_dir=tmp_path / "runs")
     seen: list[tuple[str, str]] = []
     handle = launcher.start(
-        [sys.executable, "-c", "import sys; print('phase: compile'); print('boom error', file=sys.stderr)"],
+        portable_shell_argv("printf 'phase: compile\n'; printf 'boom error\n' >&2"),
         cwd=tmp_path,
         on_output=lambda channel, line: seen.append((channel, line)),
     )

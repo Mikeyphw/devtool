@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from devtool.release_qualification import desktop_available, gtk4_available, qt_available, shell_entry_points, validate_version_consistency
 
@@ -78,9 +79,11 @@ def test_release_qualification_uses_gtk4_desktop_gates_with_compatibility_aliase
     assert "gtk-control-center" in source and "package-deb.sh" in source
     assert "def desktop_available" in source
     assert "qt_available" in source  # compatibility API alias for old callers
-    assert isinstance(gtk4_available(), bool)
-    assert isinstance(desktop_available(), bool)
-    assert isinstance(qt_available(), bool)
+    with patch("devtool.desktop.gtk_smoke.gtk_runtime_import_probe", return_value=(True, "ok")), \
+         patch("devtool.desktop.gtk_smoke.has_display", return_value=True):
+        assert gtk4_available() is True
+        assert desktop_available() is True
+        assert qt_available() is True
     assert all(path.is_file() for path in shell_entry_points(ROOT))
 
 

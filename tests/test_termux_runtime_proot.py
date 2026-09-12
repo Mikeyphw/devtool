@@ -15,6 +15,8 @@ from devtool.execution_environments import DESKTOP_LINUX, NATIVE_TERMUX, PROOT_D
 from devtool.models import CommandSpec, Issue, ProjectConfig
 from devtool.runners import _looks_like_chrootctl_exec, _run_process_live, _termux_chroot_stall_hint_seconds, _termux_chroot_stall_message, run_specs
 from devtool.proot_distro_runner import ProotRunnerConfig, cleanup_proot_staging, resolve_proot_config, validate_proot_config, wrap_specs_for_proot_distro
+from tests._compat import portable_shell_argv
+
 from devtool.termux_runtime import (
     adapt_termux_script_argv,
     apply_termux_resource_defaults,
@@ -189,7 +191,7 @@ class TermuxRuntimeTests(unittest.TestCase):
         env = os.environ.copy()
         env["DEVTOOL_GRADLE_STALL_WARNING_SECONDS"] = "0.05"
         code, output = _run_process_live(
-            [sys.executable, "-c", "import time; time.sleep(0.18)"],
+            portable_shell_argv("sleep 0.18"),
             cwd=os.getcwd(),
             env=env,
             verbose=True,
@@ -204,7 +206,7 @@ class TermuxRuntimeTests(unittest.TestCase):
             root = Path(td)
             chrootctl = root / "chrootctl"
             chrootctl.write_text(
-                "#!/usr/bin/env python3\nimport time\ntime.sleep(0.18)\n",
+                f"#!{shutil.which('sh') or '/bin/sh'}\nsleep 0.18\n",
                 encoding="utf-8",
             )
             chrootctl.chmod(0o755)
@@ -261,7 +263,7 @@ class TermuxRuntimeTests(unittest.TestCase):
             )
             spec = CommandSpec(
                 "package",
-                [sys.executable, "-c", "print('ok')"],
+                portable_shell_argv("printf 'ok\n'"),
                 cwd=str(root),
                 metadata={"collect_artifacts": True, "project_root": str(root)},
             )
@@ -303,7 +305,7 @@ class TermuxRuntimeTests(unittest.TestCase):
                 runner_options={"termux": {"artifacts": {"export_dir": str(export_dir)}}},
             )
             spec = CommandSpec(
-                "package", [sys.executable, "-c", "print('ok')"], cwd=str(root),
+                "package", portable_shell_argv("printf 'ok\n'"), cwd=str(root),
                 metadata={"collect_artifacts": True, "project_root": str(root)},
             )
             metadata = {"valid": 0, "invalid": 1, "count": 1, "items": [{"path": str(apk), "valid": False}]}
@@ -320,7 +322,7 @@ class TermuxRuntimeTests(unittest.TestCase):
             config = ProjectConfig(repo_root=root, project_root=str(root), kind="python")
             spec = CommandSpec(
                 "guest-test",
-                [sys.executable, "-c", "import sys; print('CANNOT LINK EXECUTABLE: glibc'); sys.exit(1)"],
+                portable_shell_argv("printf 'CANNOT LINK EXECUTABLE: glibc\n'; exit 1"),
                 cwd=str(root), metadata={"execution_mode": "proot-distro"},
             )
             with patch("devtool.execution_environments.detect_current_environment", return_value=NATIVE_TERMUX):

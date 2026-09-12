@@ -78,6 +78,9 @@ def test_logs_searches_structured_entries_and_deep_links_exact_runs() -> None:
     assert 'android:host="logs"' in manifest
 
 
+@pytest.mark.requires_tool("javac")
+@pytest.mark.requires_tool("java")
+@pytest.mark.slow_external
 def test_environment_aware_repository_identity_jvm(tmp_path: Path) -> None:
     javac = shutil.which("javac")
     java = shutil.which("java")

@@ -58,6 +58,9 @@ def test_commit_correlation_uses_repository_and_prefix_safe_hash_matching() -> N
     assert "Copy artifact path" in commit
 
 
+@pytest.mark.requires_tool("javac")
+@pytest.mark.requires_tool("java")
+@pytest.mark.slow_external
 def test_porcelain_v2_parser_handles_spaces_renames_conflicts_and_empty_subjects(tmp_path: Path) -> None:
     javac = shutil.which("javac")
     java = shutil.which("java")

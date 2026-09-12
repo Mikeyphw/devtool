@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from devtool.cli import main as devtool_main
 from devtool.desktop.control_center_model import DesktopControlCenterModel
 from devtool.hud import AndroidAppHud, parse_hud_state, snapshot_from_directory
 from devtool.tasker import TaskerProgressSink
@@ -216,17 +217,11 @@ def test_android_hud_bridge_payload_carries_ui_contract(tmp_path: Path) -> None:
     assert [item["route"] for item in navigation] == ["overview", "repos", "run", "logs", "settings"]
 
 
-def test_ui_contract_cli_exposes_versioned_surface_contract() -> None:
-    import subprocess
-    import sys
-
-    result = subprocess.run(
-        [sys.executable, "-m", "devtool", "ui-contract", "--surface", "desktop", "--json"],
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-    payload = json.loads(result.stdout)
+def test_ui_contract_cli_exposes_versioned_surface_contract(capsys) -> None:
+    rc = devtool_main(["ui-contract", "--surface", "desktop", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    payload = json.loads(captured.out)
     assert payload["exit_code"] == 0
     data = payload["data"]
     assert data["schema_version"] == 1

@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import textwrap
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -70,7 +72,7 @@ def test_release_qualification_matrix_covers_every_native_and_package_gate() -> 
     assert not gates["android-release"]["required"]
 
 
-def test_release_qualifier_has_explicit_toolchain_skip_and_require_semantics() -> None:
+def test_release_qualifier_has_explicit_toolchain_skip_and_require_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
     source = read(ROOT / "devtool" / "release_qualification.py")
     for token in (
         "require_qt", "require_android", "run_device_tests",
@@ -81,9 +83,19 @@ def test_release_qualifier_has_explicit_toolchain_skip_and_require_semantics() -
     ):
         assert token in source
     assert all(path.is_file() for path in shell_entry_points(ROOT))
-    assert isinstance(gtk4_available(), bool)
-    assert isinstance(desktop_available(), bool)
-    assert isinstance(qt_available(), bool)  # compatibility API alias, no Qt probing
+
+    # This is a release-policy contract, not a GTK/SDK integration benchmark.
+    # Real runtime probes are covered by the dedicated GTK and Android provider
+    # suites. Keep this test deterministic and cheap on native Termux.
+    monkeypatch.setattr("devtool.desktop.gtk_smoke.gtk_runtime_import_probe", lambda _python: (True, "ok"))
+    monkeypatch.setattr("devtool.desktop.gtk_smoke.has_display", lambda: True)
+    monkeypatch.setattr(
+        "devtool.release_qualification.resolve_android_execution_context",
+        lambda *_args, **_kwargs: SimpleNamespace(sdk_root=""),
+    )
+    assert gtk4_available() is True
+    assert desktop_available() is True
+    assert qt_available() is True  # compatibility API alias, no Qt probing
     assert not android_sdk_available({})
 
 
@@ -140,9 +152,10 @@ def test_android_release_fails_closed_and_has_local_and_device_tests() -> None:
     assert "io.github.mikeceead.devtoolhud.debug" in bridge
 
 
+@pytest.mark.requires_tool("javac")
+@pytest.mark.requires_tool("java")
+@pytest.mark.slow_external
 def test_android_release_models_compile_and_execute_without_android_framework(tmp_path: Path) -> None:
-    if shutil.which("javac") is None or shutil.which("java") is None:
-        pytest.skip("JDK is not installed")
     package = tmp_path / "io" / "github" / "mikeceead" / "devtoolhud"
     package.mkdir(parents=True)
     for name in ("DevtoolCommandBuilder.java", "DevtoolCommandImporter.java", "DevtoolRunConfig.java", "TermuxPaths.java", "RunIdentity.java"):
@@ -203,16 +216,23 @@ def test_ci_matrix_builds_gtk_desktop_signed_android_emulator_and_source_release
         assert token in workflow
 
 
+@pytest.mark.slow_external
 def test_source_release_archive_is_deterministic_and_well_formed(tmp_path: Path) -> None:
-    first = tmp_path / "first"
-    second = tmp_path / "second"
-    command = ["python3", str(ROOT / "tools" / "build-release.py"), "--root", str(ROOT), "--verify-reproducible"]
-    subprocess.run([*command, "--out-dir", str(first)], check=True, capture_output=True, text=True)
-    subprocess.run([*command, "--out-dir", str(second)], check=True, capture_output=True, text=True)
+    output = tmp_path / "release"
+    command = [
+        sys.executable, "-S", str(ROOT / "tools" / "build-release.py"),
+        "--root", str(ROOT),
+        "--verify-reproducible",
+        "--out-dir", str(output),
+    ]
+    # --verify-reproducible already creates a second archive internally and
+    # byte-compares it. Running the entire release builder twice duplicated the
+    # most expensive work without adding coverage.
+    subprocess.run(command, check=True, capture_output=True, text=True)
     archive_name = "devtool-1.1.0-source.zip"
-    assert (first / "SHA256SUMS").read_bytes() == (second / "SHA256SUMS").read_bytes()
-    assert (first / archive_name).read_bytes() == (second / archive_name).read_bytes()
-    with zipfile.ZipFile(first / archive_name) as archive:
+    sums = (output / "SHA256SUMS").read_text(encoding="utf-8")
+    assert archive_name in sums
+    with zipfile.ZipFile(output / archive_name) as archive:
         assert archive.testzip() is None
         names = archive.namelist()
         assert names == sorted(names)

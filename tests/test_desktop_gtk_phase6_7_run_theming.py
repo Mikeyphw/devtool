@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
-import sys
 import time
 from pathlib import Path
 from unittest.mock import patch
+
+from tests._compat import portable_shell_argv
 
 from devtool.desktop.preferences import DesktopPreferences, preferences_path
 from devtool.desktop.run_process import DesktopRunLauncher
@@ -23,7 +24,7 @@ def test_phase6_run_launcher_executes_direct_argv_and_streams_redacted_output(tm
     launcher = DesktopRunLauncher(state_dir=tmp_path / "runs")
     seen: list[str] = []
     handle = launcher.start(
-        [sys.executable, "-c", "import os; print(os.environ['DEVTOOL_DESKTOP_RUN_ID']); print('token=SECRET123')"],
+        portable_shell_argv("printf '%s\\n' \"$DEVTOOL_DESKTOP_RUN_ID\"; printf 'token=SECRET123\\n'"),
         cwd=tmp_path,
         environment={"EXTRA_VALUE": "ok"},
         on_output=seen.append,
@@ -35,13 +36,13 @@ def test_phase6_run_launcher_executes_direct_argv_and_streams_redacted_output(tm
     assert handle.returncode == 0
     assert handle.run_id in "\n".join(seen)
     assert "token=<redacted>" in handle.log_path.read_text(encoding="utf-8")
-    assert handle.argv[0] == sys.executable
+    assert handle.argv[0] == portable_shell_argv(":")[0]
     assert handle.environment == {"EXTRA_VALUE": "ok"}
 
 
 def test_phase6_cancel_uses_process_group_and_force_cancel_path(tmp_path: Path) -> None:
     launcher = DesktopRunLauncher(state_dir=tmp_path / "runs")
-    handle = launcher.start([sys.executable, "-c", "import time; time.sleep(20)"], cwd=tmp_path)
+    handle = launcher.start(portable_shell_argv("sleep 20"), cwd=tmp_path)
     try:
         assert launcher.cancel(handle, force=True) is True
         deadline = time.monotonic() + 5

@@ -151,6 +151,8 @@ def test_import_accepts_terminal_prompt_prefixes(importer_classpath: Path, tmp_p
     assert values["notice"] == "Command imported into the visual builder"
 
 
+@pytest.mark.requires_tool("javac")
+@pytest.mark.requires_tool("java")
 def test_termux_workdir_normalizes_shell_home_forms(tmp_path: Path) -> None:
     if shutil.which("javac") is None or shutil.which("java") is None:
         pytest.skip("JDK is not installed")

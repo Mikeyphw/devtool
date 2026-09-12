@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import signal
+import shlex
+import shutil
 import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -14,6 +15,7 @@ from devtool.models import CommandSpec, ProjectConfig
 from devtool.runners import _wait_process_returncode, git_commit, run_specs
 from devtool.transactions import create_apply_transaction, record_transaction_git_commit, rollback_transaction
 from devtool.watch import watch_loop
+from tests._compat import portable_shell_argv
 
 
 def _git(root: Path, *args: str, text: bool = True):
@@ -47,14 +49,8 @@ def _index_bytes(root: Path) -> bytes:
 
 
 def test_mr001_wait_timeout_records_authoritative_failure_before_term(tmp_path: Path) -> None:
-    script = (
-        "import signal,time\n"
-        "def stop(*_): raise SystemExit(0)\n"
-        "signal.signal(signal.SIGTERM, stop)\n"
-        "print('ready', flush=True)\n"
-        "while True: time.sleep(1)\n"
-    )
-    proc = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True, start_new_session=True)
+    script = "trap 'exit 0' TERM; printf 'ready\n'; while :; do sleep 1; done"
+    proc = subprocess.Popen(portable_shell_argv(script), stdout=subprocess.PIPE, text=True, start_new_session=True)
     assert proc.stdout is not None
     assert proc.stdout.readline().strip() == "ready"
     assert _wait_process_returncode(proc, timeout=0.05) == 124
@@ -62,14 +58,8 @@ def test_mr001_wait_timeout_records_authoritative_failure_before_term(tmp_path: 
 
 
 def test_mr001_assumed_supervisory_status_wins_when_term_trapping_child_exits_zero(tmp_path: Path) -> None:
-    script = (
-        "import signal,time\n"
-        "def stop(*_): raise SystemExit(0)\n"
-        "signal.signal(signal.SIGTERM, stop)\n"
-        "print('ready', flush=True)\n"
-        "while True: time.sleep(1)\n"
-    )
-    proc = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True, start_new_session=True)
+    script = "trap 'exit 0' TERM; printf 'ready\n'; while :; do sleep 1; done"
+    proc = subprocess.Popen(portable_shell_argv(script), stdout=subprocess.PIPE, text=True, start_new_session=True)
     assert proc.stdout is not None
     assert proc.stdout.readline().strip() == "ready"
     setattr(proc, "_devtool_assumed_returncode", 124)
@@ -82,16 +72,10 @@ def test_mr001_supervisor_stop_reason_survives_term_trapping_zero_exit(
     tmp_path: Path, kind: str, expected: int
 ) -> None:
     config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="python")
-    script = (
-        "import signal,time\n"
-        "def stop(*_): raise SystemExit(0)\n"
-        "signal.signal(signal.SIGTERM, stop)\n"
-        "print('ready', flush=True)\n"
-        "while True: time.sleep(1)\n"
-    )
+    script = "trap 'exit 0' TERM; printf 'ready\n'; while :; do sleep 1; done"
     results, _raw = run_specs(
         config,
-        [CommandSpec("supervised", [sys.executable, "-c", script])],
+        [CommandSpec("supervised", portable_shell_argv(script))],
         verbose=False,
         supervisor_probe=lambda: (kind, "OV-01 forced stop"),
     )
@@ -100,17 +84,11 @@ def test_mr001_supervisor_stop_reason_survives_term_trapping_zero_exit(
 
 def test_mr001_idle_timeout_assigns_failure_before_term(tmp_path: Path) -> None:
     config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="python")
-    script = (
-        "import signal,time\n"
-        "def stop(*_): raise SystemExit(0)\n"
-        "signal.signal(signal.SIGTERM, stop)\n"
-        "print('ready', flush=True)\n"
-        "while True: time.sleep(1)\n"
-    )
+    script = "trap 'exit 0' TERM; printf 'ready\n'; while :; do sleep 1; done"
     with patch("devtool.runners._idle_timeout_for", return_value=0.2):
         results, _raw = run_specs(
             config,
-            [CommandSpec("idle", [sys.executable, "-c", script])],
+            [CommandSpec("idle", portable_shell_argv(script))],
             verbose=False,
         )
     assert results[0].returncode == 124
@@ -122,8 +100,8 @@ def test_mr064_interruption_is_terminal_even_with_continue_on_error(tmp_path: Pa
     results, _raw = run_specs(
         config,
         [
-            CommandSpec("interrupt", [sys.executable, "-c", "raise SystemExit(130)"]),
-            CommandSpec("later", [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).write_text('ran')"]),
+            CommandSpec("interrupt", portable_shell_argv("exit 130")),
+            CommandSpec("later", portable_shell_argv(f"printf ran > {shlex.quote(str(marker))}")),
         ],
         verbose=False,
         continue_on_error=True,
@@ -162,18 +140,12 @@ def test_mr064_control_center_cancel_is_terminal_even_if_child_exits_zero(tmp_pa
     marker = tmp_path / "later-ran.txt"
     config = ProjectConfig(repo_root=tmp_path, project_root=str(tmp_path), kind="python")
     progress = CancelProgress()
-    script = (
-        "import signal,time\n"
-        "def stop(*_): raise SystemExit(0)\n"
-        "signal.signal(signal.SIGINT, stop)\n"
-        "print('ready', flush=True)\n"
-        "while True: time.sleep(1)\n"
-    )
+    script = "trap 'exit 0' INT; printf 'ready\n'; while :; do sleep 1; done"
     results, _raw = run_specs(
         config,
         [
-            CommandSpec("cancelled", [sys.executable, "-c", script]),
-            CommandSpec("later", [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).write_text('ran')"]),
+            CommandSpec("cancelled", portable_shell_argv(script)),
+            CommandSpec("later", portable_shell_argv(f"printf ran > {shlex.quote(str(marker))}")),
         ],
         verbose=False,
         continue_on_error=True,

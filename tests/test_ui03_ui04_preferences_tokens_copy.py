@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
+from devtool.cli import main as devtool_main
 from devtool.config import load_project_config, minimal_global_config_template, resolve_config_dict
 from devtool.desktop.preferences import DesktopPreferences
 from devtool.hud import event_icon
@@ -219,24 +218,16 @@ def test_global_config_template_documents_ui03_profiles_and_surface_overrides() 
     assert "[ui.profiles.focused]" in text
 
 
-def test_ui_contract_cli_reports_preferences_profiles_tokens_icons_and_copy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    global_path = _empty_global(monkeypatch, tmp_path)
-    env = dict(os.environ)
-    env["DEVTOOL_GLOBAL_CONFIG"] = str(global_path)
-    result = subprocess.run(
-        [
-            sys.executable, "-m", "devtool",
-            "--ui-profile", "debug",
-            "--ui-icons", "ascii",
-            "ui-contract", "--surface", "desktop", "--json",
-        ],
-        check=True,
-        text=True,
-        capture_output=True,
-        cwd=Path(__file__).resolve().parents[1],
-        env=env,
-    )
-    envelope = json.loads(result.stdout)
+def test_ui_contract_cli_reports_preferences_profiles_tokens_icons_and_copy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+    _empty_global(monkeypatch, tmp_path)
+    rc = devtool_main([
+        "--ui-profile", "debug",
+        "--ui-icons", "ascii",
+        "ui-contract", "--surface", "desktop", "--json",
+    ])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    envelope = json.loads(captured.out)
     data = envelope["data"]
     assert data["schema_version"] == 1
     assert data["preferences"]["profile"] == "debug"

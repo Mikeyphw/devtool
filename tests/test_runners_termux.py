@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests._compat import portable_shell_argv
+
 from devtool.models import CommandSpec, ProjectConfig
 from devtool.tasker import TaskerProgressSink
 from devtool.runners import run_specs
@@ -220,7 +222,7 @@ class RunnersQuietModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
             config = ProjectConfig(repo_root=repo_root, kind="unknown")
-            spec = CommandSpec("build", [sys.executable, "-c", "print('Determining projects to restore...')"])
+            spec = CommandSpec("build", portable_shell_argv("printf 'Determining projects to restore...\n'"))
 
             stream = io.StringIO()
             with redirect_stdout(stream):

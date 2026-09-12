@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -140,7 +141,7 @@ class GradleReportTests(unittest.TestCase):
             config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
             spec = CommandSpec(
                 "test",
-                ["python3", str(script)],
+                [sys.executable, "-S", str(script)],
                 cwd=str(root),
                 metadata={
                     "project_root": str(root),
@@ -171,7 +172,7 @@ class GradleReportTests(unittest.TestCase):
                 encoding="utf-8",
             )
             config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
-            spec = CommandSpec("android-validation-build", ["python3", str(script)], cwd=str(root))
+            spec = CommandSpec("android-validation-build", [sys.executable, "-S", str(script)], cwd=str(root))
             results, _ = run_specs(config, [spec], verbose=False, shutdown_dotnet=False)
 
         self.assertEqual(results[0].returncode, 75)
@@ -188,7 +189,7 @@ class GradleReportTests(unittest.TestCase):
                 encoding="utf-8",
             )
             config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
-            spec = CommandSpec("android-validation-build", ["python3", str(script)], cwd=str(root))
+            spec = CommandSpec("android-validation-build", [sys.executable, "-S", str(script)], cwd=str(root))
             results, _ = run_specs(config, [spec], verbose=False, shutdown_dotnet=False)
 
         self.assertEqual(results[0].returncode, 1)
@@ -208,7 +209,7 @@ class GradleReportTests(unittest.TestCase):
             config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
             spec = CommandSpec(
                 "build",
-                ["python3", str(script)],
+                [sys.executable, "-S", str(script)],
                 cwd=str(root),
                 metadata={
                     "project_root": str(root),
@@ -244,7 +245,7 @@ class GradleReportTests(unittest.TestCase):
             )
             spec = CommandSpec(
                 "build",
-                ["python3", str(script)],
+                [sys.executable, "-S", str(script)],
                 cwd=str(root),
                 metadata={
                     "project_root": str(root),
@@ -271,7 +272,7 @@ class GradleReportTests(unittest.TestCase):
             config = ProjectConfig(repo_root=root, project_root=str(root), kind="android")
             spec = CommandSpec(
                 "build",
-                ["python3", str(script)],
+                [sys.executable, "-S", str(script)],
                 cwd=str(root),
                 metadata={
                     "project_root": str(root),

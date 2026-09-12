@@ -4,6 +4,8 @@ import argparse
 import io
 from pathlib import Path
 
+import pytest
+
 from rich.console import Console
 
 from devtool import cli
@@ -494,6 +496,8 @@ def test_safe_retry_uses_supported_recommended_profile(tmp_path: Path) -> None:
     assert "revision guard: `9`" in preview
 
 
+@pytest.mark.requires_posix
+@pytest.mark.slow_external
 def test_fallback_dashboard_is_navigable_in_a_pseudo_tty(tmp_path: Path) -> None:
     import os
     import sys
@@ -601,6 +605,8 @@ def test_dashboard_ctrl_r_calls_real_catalog_refresh(monkeypatch, tmp_path: Path
     assert refreshed[0]["repo"] == str(tmp_path)
 
 
+@pytest.mark.requires_posix
+@pytest.mark.slow_external
 def test_numbered_fallback_completes_full_guided_wizard(tmp_path: Path) -> None:
     import os
     import sys
