@@ -135,6 +135,48 @@ _GRADLE_BENIGN_TERMUX_WARNING_PREFIXES = (
 _GRADLE_INFRA_WARNING_PREFIXES = (
     "WARNING: The option setting 'android.aapt2FromMavenOverride=",
 )
+_GRADLE_ENVIRONMENT_WARNING = re.compile(
+    r"(?:"
+    r"native[- ]platform is not available|"
+    r"native integration is not available|"
+    r"not supported on this operating system|"
+    r"(?:gradle|native[- ]platform).{0,80}(?:unsupported|not supported).{0,40}(?:platform|operating system)|"
+    r"(?:platform|operating system).{0,80}(?:unsupported|not supported).{0,40}gradle"
+    r")",
+    re.IGNORECASE,
+)
+
+# Warnings in these categories describe Devtool's host/execution environment,
+# not diagnostics produced by the selected target. They stay visible in logs,
+# summaries and UI surfaces, but do not consume an artifact's target warning
+# budget or turn expected target outcome "pass" into "warning".
+NON_TARGET_WARNING_CODES = frozenset({
+    "ADB_PROBE",
+    "GRADLE_ENVIRONMENT",
+    "GRADLE_INFRA",
+    "GRADLE_METASPACE_PRESSURE",
+    "LOW_STORAGE",
+})
+
+
+def issue_counts_toward_target_warning_budget(issue: Issue) -> bool:
+    """Return whether a warning belongs to the selected target's warning budget."""
+
+    return (
+        str(issue.severity or "").strip().lower() == "warning"
+        and str(issue.code or "").strip().upper() not in NON_TARGET_WARNING_CODES
+    )
+
+
+def target_warning_count(results) -> int:
+    """Count target-authored warnings across OperationResult-like objects."""
+
+    return sum(
+        1
+        for result in results
+        for issue in getattr(result, "issues", ()) or ()
+        if issue_counts_toward_target_warning_budget(issue)
+    )
 _DOTNET_TEST_RESULT_LINE = re.compile(
     r"\b(?P<status>Passed|Failed)!\s+-\s+Failed:\s*(?P<failed>\d+),\s*Passed:\s*(?P<passed>\d+),\s*Skipped:\s*(?P<skipped>\d+),\s*Total:\s*(?P<total>\d+)",
     re.IGNORECASE,
@@ -722,6 +764,23 @@ def parse_issues(repo_root: Path, command_name: str, output: str) -> list[Issue]
         if match and cargo_pending is not None:
             cargo_pending.file = relative_path(match.group("file"))
             cargo_pending.line = int(match.group("line"))
+            index += 1
+            continue
+
+        generic_warning_match = _GENERIC_WARN_ERR.search(stripped)
+        if (
+            generic_warning_match
+            and generic_warning_match.group("severity").lower() == "warning"
+            and command_name in {"build", "test", "restore", "package", "lint"}
+            and _GRADLE_ENVIRONMENT_WARNING.search(generic_warning_match.group("message"))
+        ):
+            issues.append(Issue(
+                "warning",
+                command_name,
+                "-",
+                "GRADLE_ENVIRONMENT",
+                generic_warning_match.group("message").strip(),
+            ))
             index += 1
             continue
 

@@ -2,6 +2,13 @@
 
 Devtool applies project overlays, validates builds and tests, records transactions, produces handoff summaries, and can publish one live run to the desktop HUD or the Android Devtool Frontend.
 
+## Complete usage guides
+
+- [`docs/DEVTOOL_HUMAN_GUIDE.md`](docs/DEVTOOL_HUMAN_GUIDE.md) is the exhaustive operator guide, including a parser-derived reference for every public command and option.
+- [`docs/DEVTOOL_AI_AGENT_GUIDE.md`](docs/DEVTOOL_AI_AGENT_GUIDE.md) is the exhaustive automation/AI operating contract, with the same complete command surface plus deterministic mutation, validation, recovery, Android, and artifact rules.
+
+Regenerate both from the live parser with `python3 tools/generate_complete_feature_guides.py`; `--check` fails when either generated guide has drifted.
+
 
 ## Android Operations — AOPS03 signing, instrumentation, and device lifecycle
 

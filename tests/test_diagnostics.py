@@ -296,3 +296,18 @@ Failed!  - Failed:     1, Passed:   113, Skipped:     0, Total:   114, Duration:
             output = "Passed! - Failed: 0, Passed: 11, Skipped: 0, Total: 11, Duration: 1 s - App.Tests.dll (net8.0)\n"
             issues = parse_issues(root, "test", output)
             self.assertEqual(issues, [])
+
+
+def test_gradle_native_platform_warning_is_classified_as_environment_warning(tmp_path: Path) -> None:
+    output = "warning: Native integration is not available for Android aarch64.\n"
+    issues = parse_issues(tmp_path, "build", output)
+    assert len(issues) == 1
+    assert issues[0].severity == "warning"
+    assert issues[0].code == "GRADLE_ENVIRONMENT"
+
+
+def test_gradle_operating_system_support_warning_is_environment_warning(tmp_path: Path) -> None:
+    output = "WARNING: NativePlatform is not supported on this operating system.\n"
+    issues = parse_issues(tmp_path, "build", output)
+    assert len(issues) == 1
+    assert issues[0].code == "GRADLE_ENVIRONMENT"

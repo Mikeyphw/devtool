@@ -79,6 +79,7 @@ from .plugins import discover_plugins, doctor_plugin
 from .doctor import collect_doctor_checks, doctor_payload
 from .validation_profiles import apply_profile as apply_validation_workflow_profile, available_profiles as available_validation_profiles
 from .detect import detect_repo, render_detect_text
+from .diagnostics import issue_counts_toward_target_warning_budget, target_warning_count
 from .execution import apply_matrix
 from .execution_environments import (
     AUTO as EXECUTION_AUTO,
@@ -8835,7 +8836,12 @@ def _validation_expectation_result(manifest: dict, results: list[OperationResult
             return "skipped"
         if any(item.returncode != 0 for item in items):
             return "failed"
-        warnings = sum(1 for item in items for issue in item.issues if str(issue.severity).lower() == "warning")
+        warnings = sum(
+            1
+            for item in items
+            for issue in item.issues
+            if issue_counts_toward_target_warning_budget(issue)
+        )
         return "warning" if warnings else "passed"
 
     aliases = {
@@ -8859,12 +8865,21 @@ def _validation_expectation_result(manifest: dict, results: list[OperationResult
         if actual != wanted_normalized:
             mismatches.append(f"{key}: expected {wanted_normalized}, got {actual}")
 
-    warning_count = sum(
-        1 for item in results for issue in item.issues
+    warning_count = target_warning_count(results)
+    infrastructure_warning_count = sum(
+        1
+        for item in results
+        for issue in item.issues
         if str(issue.severity).lower() == "warning"
+        and not issue_counts_toward_target_warning_budget(issue)
     )
     if has_warning_limit:
-        evidence["warnings"] = {"maximum": int(maximum_warnings), "actual": warning_count}
+        evidence["warnings"] = {
+            "maximum": int(maximum_warnings),
+            "actual": warning_count,
+            "scope": "target",
+            "infrastructure_ignored": infrastructure_warning_count,
+        }
         if warning_count > int(maximum_warnings):
             mismatches.append(f"warnings: maximum {maximum_warnings}, got {warning_count}")
 
@@ -8889,6 +8904,8 @@ def _validation_expectation_result(manifest: dict, results: list[OperationResult
             "validation_contract_satisfied": not mismatches,
             "validation_contract_evidence": evidence,
             "validation_warning_count": warning_count,
+            "validation_target_warning_count": warning_count,
+            "validation_infrastructure_warning_count": infrastructure_warning_count,
             **{key: value for key, value in plan_meta.items() if key.startswith("validation_plan_") or key.startswith("validation_tasks_") or key == "validation_declared_tasks"},
         },
     )

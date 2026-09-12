@@ -91,8 +91,12 @@ Schema versions are positive integers. A declared-but-malformed manifest, ambigu
 `validation.expected.tests` accept common outcome names: `pass`, `passed`,
 `success`, `succeeded`, `skip`, `skipped`, `warn`, `warning`, `warnings`,
 `fail`, `failed`, `error`, and `errors`. `validation.maximum_warnings` is a
-non-negative integer and is enforced against the warnings emitted by the
-resolved validation plan.
+non-negative integer and is enforced against **target warnings** emitted by the
+resolved validation plan. Host/execution-environment notices such as low-storage,
+ADB-probe, Gradle native-platform/environment, Gradle infrastructure, and
+metaspace-pressure warnings remain visible in diagnostics but do not consume the
+target warning budget. Errors always fail, and compiler/lint/test/project warnings
+continue to count normally.
 
 Use `--ignore-checksum` only for deliberate recovery or locally modified artifacts. It skips SHA-256 presence, format, and mismatch checks for payloads, source files, and embedded validation scripts, while retaining repository identity, path safety, inventory completeness, payload size, conflict, and validation-policy checks. Unlike `--no-manifest-check`, it does not disable the rest of artifact validation. Devtool prints a warning whenever the option is active.
 

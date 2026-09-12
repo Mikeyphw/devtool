@@ -18,6 +18,23 @@ Python JUnit failures are never labelled `GRADLE_TEST`. When a current pytest JU
 
 HUD, JSON, Rich summaries, and clipboard summaries consume the same structured `OperationResult.issues` collection. Pytest warning-summary lines are promoted into `PYTEST_WARNING` issues, while JUnit testcases are canonical error identities. This keeps counts consistent across output surfaces.
 
+## Target-warning versus infrastructure-warning scope
+
+Validation expectation contracts deliberately distinguish warnings emitted by the
+target from warnings emitted by the host/execution environment. Target warnings
+(for example Python/pytest, Kotlin/Java compiler, lint, test, and project Gradle
+warnings) count toward `validation.maximum_warnings` and can turn an expected
+`pass` into `warning`. Infrastructure warnings remain structured and visible but
+are excluded from that target budget. Current infrastructure categories include
+`LOW_STORAGE`, `ADB_PROBE`, `GRADLE_ENVIRONMENT`, `GRADLE_INFRA`, and
+`GRADLE_METASPACE_PRESSURE`.
+
+The expectation result exposes both `validation_target_warning_count` and
+`validation_infrastructure_warning_count`; the compatibility field
+`validation_warning_count` remains the target-warning count. This prevents host
+capacity/platform notices from being mistaken for regressions in otherwise-clean
+target code while preserving their diagnostic value.
+
 ## Python source/dependency preflight
 
 `python-source-audit` inventories:

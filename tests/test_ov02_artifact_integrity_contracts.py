@@ -329,6 +329,38 @@ def test_validation_expected_and_warning_limit_are_executable_contracts() -> Non
     assert contract.metadata["validation_contract_satisfied"] is False
 
 
+def test_validation_contract_ignores_infrastructure_warnings_but_preserves_target_warnings() -> None:
+    infrastructure = OperationResult(
+        "android-validation-build", ["gradle"], 0, 0.1, "",
+        [
+            Issue("warning", "build", "-", "LOW_STORAGE", "2.7 GiB free"),
+            Issue("warning", "build", "-", "GRADLE_ENVIRONMENT", "Native integration is not available for Android aarch64."),
+            Issue("warning", "build", "-", "GRADLE_INFRA", "Unsupported AAPT2 project option is suppressed by Devtool."),
+        ],
+        metadata={"validation_phase_name": "build", "validation_pipeline": True},
+    )
+    contract = _validation_expectation_result(
+        {"validation": {"expected": {"build": "pass"}, "maximum_warnings": 0}},
+        [infrastructure],
+    )
+    assert contract is not None and contract.returncode == 0
+    assert contract.metadata["validation_target_warning_count"] == 0
+    assert contract.metadata["validation_infrastructure_warning_count"] == 3
+    assert contract.metadata["validation_contract_evidence"]["warnings"]["infrastructure_ignored"] == 3
+
+    target_warning = OperationResult(
+        "android-validation-build", ["gradle"], 0, 0.1, "",
+        [Issue("warning", "build", "app/src/main/Foo.kt", "KOTLIN", "real project warning")],
+        metadata={"validation_phase_name": "build", "validation_pipeline": True},
+    )
+    contract = _validation_expectation_result(
+        {"validation": {"expected": {"build": "pass"}, "maximum_warnings": 0}},
+        [target_warning],
+    )
+    assert contract is not None and contract.returncode == 1
+    assert contract.metadata["validation_target_warning_count"] == 1
+
+
 def test_validation_boolean_fields_reject_truthy_strings(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
