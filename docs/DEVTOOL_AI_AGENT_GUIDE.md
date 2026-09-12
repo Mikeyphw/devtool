@@ -103,9 +103,13 @@ On source-state mismatch, stop and inspect/rebase. Do not silently remove `sourc
 
 ## 8. Overlay application, commits, rollback, and history
 
-Use `apply-overlay`, `apply-overlays`, `apply-snapshot`, or the unified `apply` surface. `--copy` is useful when the source artifact is on transient/shared storage. Apply transactions journal mutations. Validation can be deferred with explicit policy when the workflow calls for it; do not describe a deferred apply as validated.
+Use `apply-overlay`, `apply-overlays`, `apply-snapshot`, or the unified `apply` surface. `--copy` copies the selected run summary/prompt output to the clipboard; it does not move the source artifact. Apply transactions journal mutations. Validation can be deferred with explicit policy when the workflow calls for it; do not describe a deferred apply as validated.
 
 Use Devtool `commit`/artifact commit policy when the repository workflow expects Devtool-generated commit evidence. `history` and `rollback` are the canonical recovery path for prior Devtool operations. `cleanup` manages backup retention; do not manually delete transaction data while an operation may need recovery.
+
+## 8.1 Terminal and clipboard output verification
+
+Global `--copy` means copy the selected Devtool run summary or prompt output to the clipboard; it is not an artifact-staging flag. When diagnosing output correctness, use `--output-debug` or `DEVTOOL_OUTPUT_DEBUG=1`. The same switch captures the final terminal summary and any clipboard payload produced by `--copy`. Devtool persists/hash-correlates both with `DEVTOOL_RUN_ID`, stores an `output-debug/timeline.jsonl`, and records `matches_terminal_summary` for clipboard captures when a terminal summary exists. `--no-output-debug` overrides the environment variable. Compare the recorded hashes/content instead of guessing from terminal interleaving or clipboard behavior.
 
 ## 9. Artifact and build-output evidence
 
@@ -264,6 +268,8 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `-p, --copy` | Copy the selected run summary or prompt output to the clipboard |
 | `--no-clipboard` | Disable clipboard prompts and copy behavior |
 | `--copy-via COPY_VIA` | Prefer a clipboard backend family Choices: auto, socket, fifo, termux, x11, wayland |
+| `--output-debug` | Show and persist the rendered terminal summary and any --copy clipboard payload (also DEVTOOL_OUTPUT_DEBUG=1) |
+| `--no-output-debug` | Disable terminal/clipboard output debugging even when DEVTOOL_OUTPUT_DEBUG is enabled |
 | `--theme THEME` | Summary theme Choices: auto, plain |
 | `--log-dir LOG_DIR` | Override the directory used for command logs (also DEVTOOL_LOG_DIR) |
 | `--ui-profile UI_PROFILE` | UI profile: auto, minimal, standard, developer, debug, or a configured [ui.profiles.*] name |

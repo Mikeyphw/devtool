@@ -333,7 +333,7 @@ devtool inspect-artifact artifact.tar.gz
 devtool bundle ...
 ```
 
-Use `--copy` when the input artifact should first be copied to Devtool-controlled storage. Apply transactions validate paths and source-state expectations before mutation, journal changes, and can roll back on validation failure according to policy. Embedded preflight/validation/finalization hooks have explicit capability boundaries; they are not arbitrary implicit shell execution.
+`--copy` does **not** stage or relocate an input artifact. It copies the selected Devtool run summary or prompt output to the system clipboard. Apply transactions validate artifact paths and source-state expectations before mutation, journal changes, and can roll back on validation failure according to policy. Embedded preflight/validation/finalization hooks have explicit capability boundaries; they are not arbitrary implicit shell execution.
 
 For exact manifest fields, bundle semantics, hooks, history, and deferred validation see [`ARTIFACTS.md`](ARTIFACTS.md) and [`OVERLAY_VALIDATION.md`](OVERLAY_VALIDATION.md).
 
@@ -461,9 +461,11 @@ This separation prevents a clean target from failing an artifact contract merely
 
 See [`BACKWARD_COMPATIBILITY.md`](BACKWARD_COMPATIBILITY.md), [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md), [`RELEASE_QUALIFICATION.md`](RELEASE_QUALIFICATION.md), and [`FINAL_RELEASE_SEAL.md`](FINAL_RELEASE_SEAL.md).
 
-## 19. Machine output, automation, and IPC
+## 19. Machine output, automation, IPC, and output verification
 
 Use JSON/machine output whenever another program consumes Devtool. Durable validation control uses a versioned response envelope and revision guards. IPC/HUD consumers should poll/subscribe to canonical state rather than scrape terminal rendering. The Android and desktop frontends use the same principle.
+
+`--output-debug` (or `DEVTOOL_OUTPUT_DEBUG=1`) turns on one correlated debug stream for Devtool's final human output. It saves a plain rendered equivalent of the terminal summary with byte count and SHA-256 under `evidence/<run-id>/output-debug/`. If `--copy` or an interactive copy action also runs, Devtool saves the exact **sanitized** clipboard payload passed to the backend, its backend/result, size and SHA-256, and records whether those bytes match the terminal-summary payload. `--no-output-debug` explicitly overrides the environment variable. Debug evidence is private (`0700` directory / `0600` files), correlated with the run log, and never bypasses Devtool secret redaction.
 
 For scripted mutation, pair machine-readable inspection with explicit target selection, `--dry-run` where supported, and transaction-safe Devtool operations. Avoid relying on colors, line positions, or incidental warning text.
 
@@ -631,9 +633,13 @@ On source-state mismatch, stop and inspect/rebase. Do not silently remove `sourc
 
 ## 8. Overlay application, commits, rollback, and history
 
-Use `apply-overlay`, `apply-overlays`, `apply-snapshot`, or the unified `apply` surface. `--copy` is useful when the source artifact is on transient/shared storage. Apply transactions journal mutations. Validation can be deferred with explicit policy when the workflow calls for it; do not describe a deferred apply as validated.
+Use `apply-overlay`, `apply-overlays`, `apply-snapshot`, or the unified `apply` surface. `--copy` copies the selected run summary/prompt output to the clipboard; it does not move the source artifact. Apply transactions journal mutations. Validation can be deferred with explicit policy when the workflow calls for it; do not describe a deferred apply as validated.
 
 Use Devtool `commit`/artifact commit policy when the repository workflow expects Devtool-generated commit evidence. `history` and `rollback` are the canonical recovery path for prior Devtool operations. `cleanup` manages backup retention; do not manually delete transaction data while an operation may need recovery.
+
+## 8.1 Terminal and clipboard output verification
+
+Global `--copy` means copy the selected Devtool run summary or prompt output to the clipboard; it is not an artifact-staging flag. When diagnosing output correctness, use `--output-debug` or `DEVTOOL_OUTPUT_DEBUG=1`. The same switch captures the final terminal summary and any clipboard payload produced by `--copy`. Devtool persists/hash-correlates both with `DEVTOOL_RUN_ID`, stores an `output-debug/timeline.jsonl`, and records `matches_terminal_summary` for clipboard captures when a terminal summary exists. `--no-output-debug` overrides the environment variable. Compare the recorded hashes/content instead of guessing from terminal interleaving or clipboard behavior.
 
 ## 9. Artifact and build-output evidence
 

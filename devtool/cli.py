@@ -21,6 +21,7 @@ import io
 from datetime import datetime, timezone
 from pathlib import Path
 
+from rich.console import Console
 from rich.prompt import Confirm
 
 from .ai_prompt import render_ai_prompt, resolve_ai_prompt_options
@@ -96,7 +97,7 @@ from .execution_environments import (
 )
 from .handoff import render_handoff
 from .watch import watch_loop
-from .clipboard import copy_text
+from .clipboard import copy_text, prepare_clipboard_text
 from .console_utils import create_console, resolve_cli_path
 from .completion import ZSH_COMPLETION
 from .completion_state import build_completion_state, completion_values
@@ -116,7 +117,7 @@ from .config import (
     resolve_config_dict,
 )
 from .log_commands import choose_active_log, format_log_entries, list_log_entries, open_log, resolve_log_path, tail_log
-from .logstore import latest_log, new_log_path, redact_sensitive_text, set_log_dir_override, write_log
+from .logstore import latest_log, new_log_path, redact_sensitive_text, set_log_dir_override, state_dir as log_state_dir, write_log
 from .models import CommandSpec, Issue, OperationResult, ProjectConfig
 from .project_runners import resolve_validation_plan
 from .repair_apply import apply_auto_source_repairs, restore_source_backups
@@ -470,6 +471,20 @@ def build_parser() -> argparse.ArgumentParser:
     output.add_argument("-p", "--copy", action="store_true", help="Copy the selected run summary or prompt output to the clipboard")
     output.add_argument("--no-clipboard", action="store_true", help="Disable clipboard prompts and copy behavior")
     output.add_argument("--copy-via", choices=["auto", "socket", "fifo", "termux", "x11", "wayland"], default="auto", help="Prefer a clipboard backend family")
+    output_debug = output.add_mutually_exclusive_group()
+    output_debug.add_argument(
+        "--output-debug",
+        dest="output_debug",
+        action="store_true",
+        default=None,
+        help="Show and persist the rendered terminal summary and any --copy clipboard payload (also DEVTOOL_OUTPUT_DEBUG=1)",
+    )
+    output_debug.add_argument(
+        "--no-output-debug",
+        dest="output_debug",
+        action="store_false",
+        help="Disable terminal/clipboard output debugging even when DEVTOOL_OUTPUT_DEBUG is enabled",
+    )
     output.add_argument("--theme", choices=["auto", "plain"], default="auto", help="Summary theme")
     output.add_argument("--log-dir", default="", help="Override the directory used for command logs (also DEVTOOL_LOG_DIR)")
 
@@ -1459,6 +1474,270 @@ def _write_json_payload(path_text: str, json_payload: str) -> None:
     path.write_text(json_payload + ("" if json_payload.endswith("\n") else "\n"), encoding="utf-8")
     console.print(f"[green]Wrote JSON payload[/green] {path}")
 
+_OUTPUT_DEBUG_TRUE = {"1", "true", "yes", "on"}
+_OUTPUT_DEBUG_FALSE = {"", "0", "false", "no", "off"}
+
+
+def _output_debug_setting(args: argparse.Namespace) -> tuple[bool, str]:
+    explicit = getattr(args, "output_debug", None)
+    if explicit is not None:
+        return bool(explicit), "--output-debug" if bool(explicit) else "--no-output-debug"
+    raw = os.environ.get("DEVTOOL_OUTPUT_DEBUG", "").strip().lower()
+    if raw in _OUTPUT_DEBUG_TRUE:
+        return True, "DEVTOOL_OUTPUT_DEBUG"
+    if raw in _OUTPUT_DEBUG_FALSE:
+        return False, "default" if not raw else "DEVTOOL_OUTPUT_DEBUG"
+    # Unknown values fail closed because output debugging persists summaries and
+    # clipboard payloads as private evidence.
+    return False, "DEVTOOL_OUTPUT_DEBUG-invalid"
+
+
+def _write_private_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    path.write_text(text, encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _append_private_jsonl(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _record_output_debug_payload(
+    *,
+    args: argparse.Namespace,
+    kind: str,
+    label: str,
+    payload: str,
+    log_path: Path | str | None,
+    source: str,
+    extra: dict[str, object] | None = None,
+    display_payload: bool = True,
+) -> dict[str, object] | None:
+    enabled, enabled_by = _output_debug_setting(args)
+    if not enabled:
+        return None
+
+    encoded = payload.encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    run_id = _ensure_run_id(args)
+    sequence = int(getattr(args, "_devtool_output_debug_sequence", 0) or 0) + 1
+    args._devtool_output_debug_sequence = sequence
+    safe_kind = kind.replace("_", "-")
+    output_id = f"{safe_kind}-{sequence:04d}"
+    root = log_state_dir() / "evidence" / run_id / "output-debug"
+    payload_path = root / f"{output_id}.txt"
+    metadata_path = root / f"{output_id}.json"
+    timestamp = datetime.now(timezone.utc).isoformat()
+    metadata: dict[str, object] = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "output_id": output_id,
+        "sequence": sequence,
+        "timestamp": timestamp,
+        "command": str(getattr(args, "command", "") or "devtool"),
+        "kind": kind,
+        "label": label,
+        "source": source,
+        "enabled_by": enabled_by,
+        "payload_bytes": len(encoded),
+        "payload_sha256": digest,
+        "payload_file": str(payload_path),
+        "metadata_file": str(metadata_path),
+        "log_file": str(log_path or ""),
+        "sanitized": True,
+    }
+    if extra:
+        metadata.update(extra)
+
+    terminal_metadata = getattr(args, "_devtool_output_debug_terminal_summary", None)
+    if kind == "clipboard" and isinstance(terminal_metadata, dict):
+        terminal_hash = str(terminal_metadata.get("payload_sha256") or "")
+        metadata["terminal_summary_sha256"] = terminal_hash
+        metadata["matches_terminal_summary"] = bool(terminal_hash and terminal_hash == digest)
+        metadata["terminal_summary_output_id"] = str(terminal_metadata.get("output_id") or "")
+
+    try:
+        _write_private_text(payload_path, payload)
+        _write_private_text(metadata_path, json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
+        _append_private_jsonl(root / "timeline.jsonl", {
+            "timestamp": timestamp,
+            "run_id": run_id,
+            "output_id": output_id,
+            "kind": kind,
+            "source": source,
+            "payload_bytes": len(encoded),
+            "payload_sha256": digest,
+            "matches_terminal_summary": metadata.get("matches_terminal_summary"),
+        })
+    except OSError as exc:
+        if not bool(getattr(args, "quiet", False)):
+            console.print(f"[yellow]Output debug evidence could not be saved: {exc}[/yellow]")
+        _append_run_log(log_path, f"Output debug capture failed: run={run_id} kind={kind} error={exc}")
+        return None
+
+    if kind == "terminal-summary":
+        args._devtool_output_debug_terminal_summary = metadata
+
+    marker_lines = [
+        "Output debug capture:",
+        f"  run_id: {run_id}",
+        f"  output_id: {output_id}",
+        f"  kind: {kind}",
+        f"  label: {label}",
+        f"  source: {source}",
+        f"  enabled_by: {enabled_by}",
+        f"  payload_bytes: {len(encoded)}",
+        f"  payload_sha256: {digest}",
+        f"  payload_file: {payload_path}",
+        f"  metadata_file: {metadata_path}",
+    ]
+    if "matches_terminal_summary" in metadata:
+        marker_lines.append(
+            f"  matches_terminal_summary: {'yes' if metadata['matches_terminal_summary'] else 'no'}"
+        )
+    _append_run_log(log_path, "\n".join(marker_lines))
+
+    if not bool(getattr(args, "quiet", False)):
+        title = "Terminal summary output debug" if kind == "terminal-summary" else "Clipboard output debug"
+        console.print(f"[cyan]{title}[/cyan]")
+        console.print(f"  Run: {run_id}  Output: {output_id}  Source: {source}")
+        console.print(f"  Bytes: {len(encoded)}  SHA-256: {digest}")
+        console.print(f"  Saved payload: {payload_path}")
+        if "matches_terminal_summary" in metadata:
+            console.print(
+                "  Matches terminal summary bytes: "
+                + ("yes" if metadata["matches_terminal_summary"] else "no")
+            )
+        if display_payload:
+            console.print(f"--- {kind} payload begin ---", markup=False)
+            console.print(payload, markup=False, end="" if payload.endswith("\n") else "\n")
+            console.print(f"--- {kind} payload end ---", markup=False)
+    return metadata
+
+
+def _render_summary_debug_text(results: list[OperationResult], *, stderr: bool = False) -> str:
+    # Render a plain-text equivalent using the same detected terminal width. This
+    # preserves the human summary layout while intentionally excluding ANSI style
+    # bytes from durable evidence.
+    target = create_console(stderr=stderr)
+    stream = io.StringIO()
+    capture = Console(file=stream, force_terminal=False, color_system=None, width=target.width)
+    render_summary(results, console_obj=capture)
+    return redact_sensitive_text(stream.getvalue())
+
+
+def _record_terminal_summary_debug(
+    *,
+    args: argparse.Namespace | None,
+    results: list[OperationResult],
+    as_json: bool,
+    json_text: str,
+    payload_mode: str,
+    log_path: Path | str | None,
+) -> dict[str, object] | None:
+    if args is None or not _output_debug_setting(args)[0]:
+        return None
+    if payload_mode == "auto" and as_json:
+        payload = redact_sensitive_text(json_text) + ("" if json_text.endswith("\n") else "\n")
+        source = "terminal-json-summary"
+        stream = "stdout"
+        rendering = "json"
+    else:
+        stderr = payload_mode != "auto"
+        payload = _render_summary_debug_text(results, stderr=stderr)
+        source = "terminal-render-summary"
+        stream = "stderr" if stderr else "stdout"
+        rendering = "rich-plain-equivalent"
+    return _record_output_debug_payload(
+        args=args,
+        kind="terminal-summary",
+        label="Final terminal summary",
+        payload=payload,
+        log_path=log_path,
+        source=source,
+        extra={"stream": stream, "rendering": rendering},
+    )
+
+
+def _record_clipboard_output_debug(
+    *,
+    args: argparse.Namespace,
+    label: str,
+    payload: str,
+    result,
+    log_path: Path | str | None,
+    source: str,
+) -> dict[str, object] | None:
+    if not _output_debug_setting(args)[0]:
+        return None
+    return _record_output_debug_payload(
+        args=args,
+        kind="clipboard",
+        label=label,
+        payload=payload,
+        log_path=log_path,
+        source=source,
+        extra={
+            "copy_via_requested": str(getattr(args, "copy_via", "auto") or "auto"),
+            "backend": str(getattr(result, "backend", "") or ""),
+            "success": bool(getattr(result, "success", False)),
+            "reason": str(getattr(result, "reason", "") or ""),
+        },
+    )
+
+
+def _perform_clipboard_copy(
+    to_copy: str,
+    label: str,
+    args: argparse.Namespace,
+    *,
+    log_path: Path | str | None,
+    source: str,
+):
+    # Prepare once so debug evidence and the clipboard transport receive exactly
+    # the same sanitized string. copy_text() sanitizes again defensively.
+    prepared = prepare_clipboard_text(to_copy)
+    result = (
+        copy_text(prepared)
+        if args.copy_via == "auto"
+        else copy_text(prepared, preferred=args.copy_via)
+    )
+    _record_clipboard_output_debug(
+        args=args,
+        label=label,
+        payload=prepared,
+        result=result,
+        log_path=log_path,
+        source=source,
+    )
+    if result.success:
+        console.print(f"[green]{label} copied to clipboard via {result.backend}.[/green]")
+    else:
+        console.print(
+            f"[yellow]{label} was not copied to clipboard"
+            f"{f' via {result.backend}' if result.backend else ''}: "
+            f"{result.reason or 'Clipboard copy failed.'}[/yellow]"
+        )
+    return result
+
+
 def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argparse.Namespace, *, log_path: Path | str | None = None):
     if args.no_clipboard:
         return None
@@ -2397,22 +2676,13 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
 
     # Explicit clipboard modes retain their override behavior.
     if args.copy:
-        result = (
-            copy_text(to_copy)
-            if args.copy_via == "auto"
-            else copy_text(to_copy, preferred=args.copy_via)
+        return _perform_clipboard_copy(
+            to_copy,
+            label,
+            args,
+            log_path=log_path,
+            source="--copy",
         )
-        if result.success:
-            console.print(
-                f"[green]{label} copied to clipboard via {result.backend}.[/green]"
-            )
-        else:
-            console.print(
-                f"[yellow]{label} was not copied to clipboard"
-                f"{f' via {result.backend}' if result.backend else ''}: "
-                f"{result.reason or 'Clipboard copy failed.'}[/yellow]"
-            )
-        return result
 
     if args.command not in INTERACTIVE_COPY_COMMANDS:
         return None
@@ -2425,22 +2695,13 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
         console=console,
     )
     if copy_now:
-        result = (
-            copy_text(to_copy)
-            if args.copy_via == "auto"
-            else copy_text(to_copy, preferred=args.copy_via)
+        return _perform_clipboard_copy(
+            to_copy,
+            label,
+            args,
+            log_path=log_path,
+            source="interactive-prompt",
         )
-        if result.success:
-            console.print(
-                f"[green]{label} copied to clipboard via {result.backend}.[/green]"
-            )
-        else:
-            console.print(
-                f"[yellow]{label} was not copied to clipboard"
-                f"{f' via {result.backend}' if result.backend else ''}: "
-                f"{result.reason or 'Clipboard copy failed.'}[/yellow]"
-            )
-        return result
     return None
 
 def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[str, str]:
@@ -2663,6 +2924,8 @@ def _emit_summary(
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
     machine_format: str = "pretty",
+    output_debug_args: argparse.Namespace | None = None,
+    output_debug_log_path: Path | str | None = None,
 ) -> tuple[dict[str, int], str, str, str]:
     repo_root = str(config.repo_root if config else Path.cwd())
     summary_text = _summary_text(results)
@@ -2684,6 +2947,14 @@ def _emit_summary(
             print(json_text)
         else:
             render_summary(results)
+        _record_terminal_summary_debug(
+            args=output_debug_args,
+            results=results,
+            as_json=as_json,
+            json_text=json_text,
+            payload_mode=payload_mode,
+            log_path=output_debug_log_path,
+        )
         return {
             "warnings": json_data["warnings"],
             "errors": json_data["errors"],
@@ -2700,6 +2971,14 @@ def _emit_summary(
         machine_json_text=machine_json_text,
     )
     print(payload_text)
+    _record_terminal_summary_debug(
+        args=output_debug_args,
+        results=results,
+        as_json=as_json,
+        json_text=json_text,
+        payload_mode=payload_mode,
+        log_path=output_debug_log_path,
+    )
     return {
         "warnings": json_data["warnings"],
         "errors": json_data["errors"],
@@ -10695,12 +10974,13 @@ def _main_after_parse(
         else:
             print(prompt_text, end="" if prompt_text.endswith("\n") else "\n")
         if args.copy:
-            result = copy_text(prompt_text)
-            if result.success:
-                console.print(f"[green]AI prompt copied to clipboard via {result.backend}.[/green]")
-            else:
-                reason = result.reason or "Clipboard copy failed."
-                console.print(f"[yellow]{reason}[/yellow]")
+            _perform_clipboard_copy(
+                prompt_text,
+                "AI prompt",
+                args,
+                log_path=None,
+                source="--copy",
+            )
         return 0
 
     if args.command in {"completion"}:
@@ -11494,6 +11774,8 @@ def _main_after_parse(
                     started_at=started_at,
                     finished_at=finished_at,
                     machine_format="pretty",
+                    output_debug_args=args,
+                    output_debug_log_path=log_path,
                 )
                 failed = totals["failed"]
                 _write_json_payload(args.machine_file, _machine_json_text)
@@ -11539,6 +11821,8 @@ def _main_after_parse(
                     started_at=started_at,
                     finished_at=finished_at,
                     machine_format="pretty",
+                    output_debug_args=args,
+                    output_debug_log_path=log_path,
                 )
                 _write_json_payload(args.machine_file, _machine_json_text)
                 _maybe_copy(raw_output, summary_text, json_text, args, log_path=log_path)
@@ -11620,6 +11904,7 @@ def _main_after_parse(
                 [pending_result], config, as_json=False, payload_mode=effective_payload,
                 raw_output=pending_result.output, command=args.command, started_at=started_at,
                 finished_at=finished_at, machine_format="pretty",
+                output_debug_args=args, output_debug_log_path=log_path,
             )
             _write_json_payload(args.machine_file, machine_text)
             _finish_live_progress(tasker_progress, totals=totals, results=[pending_result])
@@ -11664,6 +11949,8 @@ def _main_after_parse(
                 started_at=started_at,
                 finished_at=finished_at,
                 machine_format="pretty",
+                output_debug_args=args,
+                output_debug_log_path=log_path,
             )
             duration_seconds = sum(r.duration_seconds for r in results)
             _write_json_payload(args.machine_file, _machine_json_text)
@@ -11690,6 +11977,7 @@ def _main_after_parse(
                 [rollback_result], config, as_json=False, payload_mode=effective_payload,
                 raw_output=recovery_output, command=args.command, started_at=started_at,
                 finished_at=finished_at, machine_format="pretty",
+                output_debug_args=args, output_debug_log_path=log_path,
             )
             _write_json_payload(args.machine_file, machine_text)
             _finish_live_progress(tasker_progress, totals=totals, results=[rollback_result])
@@ -12012,6 +12300,8 @@ def _main_after_parse(
                     started_at=run_started,
                     finished_at=run_finished,
                     machine_format="pretty",
+                    output_debug_args=args,
+                    output_debug_log_path=run_log_path,
                 )
                 _write_json_payload(args.machine_file, run_machine)
                 _maybe_copy(run_raw, run_summary, run_json, args, log_path=run_log_path)
@@ -12168,6 +12458,8 @@ def _main_after_parse(
         started_at=started_at,
         finished_at=finished_at,
         machine_format="pretty",
+        output_debug_args=args,
+        output_debug_log_path=log_path,
     )
     duration_seconds = sum(r.duration_seconds for r in results)
     _write_json_payload(args.machine_file, _machine_json_text)

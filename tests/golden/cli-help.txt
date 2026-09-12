@@ -9,8 +9,9 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET] [--group GROUP]
                [--stdout-payload {auto,summary,raw}]
                [--machine-file MACHINE_FILE] [-p] [--no-clipboard]
                [--copy-via {auto,socket,fifo,termux,x11,wayland}]
-               [--theme {auto,plain}] [--log-dir LOG_DIR]
-               [--ui-profile UI_PROFILE] [--ui-theme {auto,light,dark}]
+               [--output-debug | --no-output-debug] [--theme {auto,plain}]
+               [--log-dir LOG_DIR] [--ui-profile UI_PROFILE]
+               [--ui-theme {auto,light,dark}]
                [--ui-density {dense,compact,comfortable,detailed}]
                [--ui-icons {auto,nerd,unicode,ascii,native}]
                [--ui-motion {auto,full,reduced}]
@@ -189,6 +190,10 @@ Output and clipboard:
   --no-clipboard        Disable clipboard prompts and copy behavior
   --copy-via {auto,socket,fifo,termux,x11,wayland}
                         Prefer a clipboard backend family
+  --output-debug        Show and persist the rendered terminal summary and any
+                        --copy clipboard payload (also DEVTOOL_OUTPUT_DEBUG=1)
+  --no-output-debug     Disable terminal/clipboard output debugging even when
+                        DEVTOOL_OUTPUT_DEBUG is enabled
   --theme {auto,plain}  Summary theme
   --log-dir LOG_DIR     Override the directory used for command logs (also
                         DEVTOOL_LOG_DIR)

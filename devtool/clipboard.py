@@ -242,17 +242,27 @@ def _candidate_backends(preferred: str = "auto") -> list[tuple[list[str], str]]:
     return candidates
 
 
-def copy_text(text: str, preferred: str = "auto") -> ClipboardResult:
-    # Clipboard data is often pasted into chats, issue trackers and logs.  Keep
-    # it on the same redaction boundary as durable logs even when callers pass
-    # raw in-memory command output.  Import lazily to avoid a module cycle during
-    # early CLI startup.
+def prepare_clipboard_text(text: str) -> str:
+    """Return the exact sanitized text that Devtool is allowed to send to a clipboard backend.
+
+    Keeping preparation separate lets debug/evidence code hash and persist the same
+    payload that is passed to Termux/X11/Wayland/socket/FIFO clipboard transports.
+    """
+
+    # Clipboard data is often pasted into chats, issue trackers and logs. Keep it
+    # on the same redaction boundary as durable logs even when callers pass raw
+    # in-memory command output. Import lazily to avoid a module cycle during early
+    # CLI startup.
     try:
         from .logstore import redact_sensitive_text
 
-        text = redact_sensitive_text(str(text))
+        return redact_sensitive_text(str(text))
     except Exception:
-        text = str(text)
+        return str(text)
+
+
+def copy_text(text: str, preferred: str = "auto") -> ClipboardResult:
+    text = prepare_clipboard_text(text)
 
     last_failure: ClipboardResult | None = None
 
