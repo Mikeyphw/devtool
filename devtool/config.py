@@ -336,6 +336,17 @@ def minimal_global_config_template() -> str:
         "# expected_cert_sha256 = \"...\"",
         "# Never store password values in TOML; use env/fd/stdin/prompt/external secret sources.",
         "",
+        "[android.release]",
+        "variant = \"release\"",
+        "unit_tests = true",
+        "lint = true",
+        "device_tests = \"required\" # disabled | when-device-present | required",
+        "install_smoke = true",
+        "upgrade_smoke = true",
+        "verify_signature = true",
+        "verify_certificate_identity = true",
+        "# previous_apk = \"path/to/previous-release.apk\"",
+        "",
         "[gradle]",
         "provider = \"auto\" # auto | wrapper | termux | system | download",
         "",
@@ -1727,6 +1738,17 @@ policy = "optional" # optional | release-required | external
 # key_password_env = "MYAPP_RELEASE_KEY_PASSWORD"
 # expected_cert_sha256 = "..."
 # Never store password values in TOML; use env/fd/stdin/prompt/external secret sources.
+
+[android.release]
+variant = "release"
+unit_tests = true
+lint = true
+device_tests = "required" # disabled | when-device-present | required
+install_smoke = true
+upgrade_smoke = true
+verify_signature = true
+verify_certificate_identity = true
+# previous_apk = "path/to/previous-release.apk"
 
 [gradle]
 provider = "auto" # auto | wrapper | termux | system | download

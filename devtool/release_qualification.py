@@ -15,6 +15,7 @@ from typing import Iterable, Mapping, Sequence
 
 from .android.capabilities import resolve_android_execution_context
 from .android.devices import AndroidDeviceManager
+from .models import ProjectConfig
 
 
 @dataclass(slots=True)
@@ -391,24 +392,85 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
 
     android_root = root / "android" / "devtool-live-hud"
     if include_android and android_sdk_available():
-        gradle = str(android_root / "gradlew")
-        report.results.append(_run("android-lint", [gradle, "--no-daemon", "lintRelease"], android_root, logs, required=require_android))
-        report.results.append(_run("android-unit", [gradle, "--no-daemon", "testReleaseUnitTest"], android_root, logs, required=require_android))
+        # AOPS04: Android release qualification is a compatibility consumer of
+        # the canonical AndroidReleaseOrchestrator.  It no longer owns raw
+        # Gradle, signing, ADB discovery, or instrumentation execution paths.
+        from .android.release import AndroidReleaseOrchestrator
+
         signing_ready = all(os.environ.get(name) for name in (
             "DEVTOOL_RELEASE_STORE_FILE", "DEVTOOL_RELEASE_STORE_PASSWORD",
             "DEVTOOL_RELEASE_KEY_ALIAS", "DEVTOOL_RELEASE_KEY_PASSWORD",
         ))
-        if signing_ready:
-            report.results.append(_run("android-release", [gradle, "--no-daemon", "assembleRelease", "verifyReleaseApk"], android_root, logs, required=require_android))
-        else:
-            report.results.append(_skip("android-release", "release signing environment is incomplete", required=require_android))
-        if run_device_tests:
-            android_context = resolve_android_execution_context(None, project_root=android_root)
-            device_report = AndroidDeviceManager(android_context.adb).doctor()
-            if device_report.status == "ok":
-                report.results.append(_run("android-instrumentation", [gradle, "--no-daemon", "connectedDebugAndroidTest"], android_root, logs, required=require_android))
+        release_config = ProjectConfig(
+            repo_root=root, kind="android", runner="android", project_root=str(android_root), variant="release",
+            runner_options={
+                "android": {
+                    "variant": "release",
+                    "instrumentation": {"policy": "required" if run_device_tests else "disabled"},
+                    "signing": {"release": {"mode": "project", "policy": "external"}},
+                    "release": {
+                        "unit_tests": True, "lint": True,
+                        "device_tests": "required" if run_device_tests else "disabled",
+                        "install_smoke": False, "upgrade_smoke": False,
+                        "verify_signature": bool(signing_ready),
+                        "verify_certificate_identity": False,
+                    },
+                },
+                "tasks": {
+                    "build": ["assembleRelease", "verifyReleaseApk"],
+                    "test": ["testReleaseUnitTest"],
+                    "lint": ["lintRelease"],
+                },
+                "artifacts": {"required": bool(signing_ready), "verify": bool(signing_ready)},
+            },
+        )
+        overrides = {
+            "build_artifacts": bool(signing_ready),
+            "device_tests": "required" if run_device_tests else "disabled",
+            "install_smoke": False,
+            "upgrade_smoke": False,
+            "verify_signature": bool(signing_ready),
+            "verify_certificate_identity": False,
+        }
+        try:
+            outcome = AndroidReleaseOrchestrator(release_config).run(
+                overrides=overrides, verbose=False, continue_on_error=True,
+                log_path=logs / "android-release-orchestrator.log",
+                output=logs / "android-release-evidence.final.json",
+            )
+            gate_map = {
+                "lint": "android-lint",
+                "unit-tests": "android-unit",
+                "package": "android-release",
+                "instrumentation": "android-instrumentation",
+            }
+            evidence_gates = {str(item.get("name") or ""): item for item in outcome.evidence.get("gates", []) if isinstance(item, dict)}
+            for source_name, target_name in gate_map.items():
+                if source_name == "package" and not signing_ready:
+                    report.results.append(_skip(target_name, "release signing environment is incomplete", required=require_android))
+                    continue
+                if source_name == "instrumentation" and not run_device_tests:
+                    continue
+                item = evidence_gates.get(source_name)
+                if not item:
+                    report.results.append(_skip(target_name, f"canonical Android release gate {source_name} did not run", required=require_android))
+                    continue
+                status = str(item.get("status") or "failed")
+                report.results.append(GateResult(
+                    gate=target_name, status=status, required=require_android,
+                    duration_seconds=float(item.get("duration_seconds") or 0.0),
+                    detail=str(item.get("detail") or status),
+                    log_path=str(logs / "android-release-orchestrator.log"),
+                ))
+        except Exception as exc:
+            for gate in ("android-lint", "android-unit"):
+                report.results.append(_skip(gate, f"canonical Android release orchestration failed: {exc}", required=require_android))
+            if signing_ready:
+                report.results.append(_skip("android-release", f"canonical Android release orchestration failed: {exc}", required=require_android))
             else:
-                report.results.append(_skip("android-instrumentation", f"{device_report.code}: {device_report.detail}", required=require_android))
+                report.results.append(_skip("android-release", "release signing environment is incomplete", required=require_android))
+            if run_device_tests:
+                report.results.append(_skip("android-instrumentation", f"canonical Android release orchestration failed: {exc}", required=require_android))
     elif include_android:
         detail = "Android SDK platform 36 and build-tools 36.0.0 were not detected"
         for gate in ("android-lint", "android-unit", "android-release"):

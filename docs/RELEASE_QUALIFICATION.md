@@ -132,3 +132,17 @@ evidence report. The report includes the release gate matrix, final verdict,
 release evidence SHA-256, and Git HEAD/tracked worktree invariants.
 
 - The complete Python regression inventory runs in four deterministic balanced pytest groups to isolate hangs while preserving complete coverage.
+
+## Canonical Android release pipeline (AOPS04)
+
+Android release qualification now delegates to the same `AndroidReleaseOrchestrator` used by `devtool --target <target> release` and `devtool android release --target <target>`. It no longer owns a separate raw-Gradle, ADB, signing, or device-selection implementation.
+
+A release session produces immutable evidence under `.devtool/reports/android-release/` and registers it with the normal artifact registry. The evidence ties together Git HEAD/dirty state, target and variant, resolved SDK/build-tools/AAPT2/NDK/ADB providers, signing certificate SHA-256, APK/AAB hashes, selected device, unit/lint/instrumentation/smoke gates, and the final verdict. The JSON payload is sealed with its own SHA-256 digest.
+
+For target-driven releases prefer:
+
+```bash
+devtool --target app release
+```
+
+`tools/release-qualify.py` remains the portable compatibility entry point. Its Android branch consumes the canonical orchestrator and preserves historical skip/fail semantics for hosts without release signing credentials or Android requirements.

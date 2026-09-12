@@ -563,6 +563,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("wine-validate", ["wv"]),
         ("run", ["rn"]),
         ("package", ["pkg"]),
+        ("release", ["rel"]),
         ("clean", ["cl"]),
         ("inspect", ["info"]),
         ("status", ["st"]),
@@ -570,7 +571,7 @@ def build_parser() -> argparse.ArgumentParser:
     ]:
         cmd = subparsers.add_parser(name, aliases=aliases)
         _add_workspace_scope_flags(cmd)
-        if name in {"restore", "build", "test", "lint", "package", "validate", "validate-all", "wine-validate"}:
+        if name in {"restore", "build", "test", "lint", "package", "release", "validate", "validate-all", "wine-validate"}:
             _add_workflow_scheduler_flags(cmd)
         if name in {"build", "package"}:
             cmd.add_argument(
@@ -610,6 +611,19 @@ def build_parser() -> argparse.ArgumentParser:
                 default=None,
                 help="Collect artifacts without content verification",
             )
+        if name == "release":
+            cmd.add_argument("--device-tests", choices=("disabled", "when-device-present", "required"), default="", help="Release device/instrumentation policy")
+            cmd.add_argument("--previous-apk", default="", help="Previous APK used by upgrade-smoke")
+            cmd.add_argument("--package", dest="release_package", default="", help="Application package override for smoke gates")
+            cmd.add_argument("--activity", dest="release_activity", default="", help="Launch activity override for smoke gates")
+            cmd.add_argument("--evidence-output", default="", help="Explicit immutable release-evidence JSON path")
+            cmd.add_argument("--no-unit-tests", action="store_true")
+            cmd.add_argument("--no-lint", action="store_true")
+            cmd.add_argument("--no-install-smoke", action="store_true")
+            cmd.add_argument("--no-upgrade-smoke", action="store_true")
+            cmd.add_argument("--no-verify-signature", action="store_true")
+            cmd.add_argument("--no-verify-certificate-identity", action="store_true")
+            cmd.add_argument("--format", choices=("text", "json"), default="text")
         if name == "doctor":
             cmd.add_argument("--fix", action="store_true", help="Create safe devtool state/cache directories")
             cmd.add_argument("--explain", action="store_true", help="Explain Termux provider selection and rejection reasons")
@@ -1052,6 +1066,20 @@ def build_parser() -> argparse.ArgumentParser:
         _sub.add_argument("package")
         _sub.add_argument("permission")
         add_android_device_selection_flags(_sub)
+
+    android_release = android_sub.add_parser("release", help="Run the canonical Android release pipeline and seal evidence")
+    android_release.add_argument("--device-tests", choices=("disabled", "when-device-present", "required"), default="")
+    android_release.add_argument("--previous-apk", default="")
+    android_release.add_argument("--package", dest="release_package", default="")
+    android_release.add_argument("--activity", dest="release_activity", default="")
+    android_release.add_argument("--evidence-output", default="")
+    android_release.add_argument("--no-unit-tests", action="store_true")
+    android_release.add_argument("--no-lint", action="store_true")
+    android_release.add_argument("--no-install-smoke", action="store_true")
+    android_release.add_argument("--no-upgrade-smoke", action="store_true")
+    android_release.add_argument("--no-verify-signature", action="store_true")
+    android_release.add_argument("--no-verify-certificate-identity", action="store_true")
+    android_release.add_argument("--format", choices=("text", "json"), default="text")
 
     android_instrumentation_cmd = android_sub.add_parser("instrumentation", help="Run Android instrumentation through the canonical device orchestrator")
     android_instrumentation_cmd.add_argument("--class", dest="instrumentation_classes", action="append", default=[])
@@ -10927,6 +10955,30 @@ def _main_after_parse(
                 render_status_table(rows)
             results = payload.get("results") or ([payload.get("result")] if payload.get("result") else [])
             return 0 if all(bool(item.get("ok", item.get("status") == "passed")) for item in results) else 1
+        if action == "release":
+            from .android.release import AndroidReleaseOrchestrator
+            overrides = {}
+            if str(getattr(args, "device_tests", "") or ""): overrides["device_tests"] = str(args.device_tests)
+            if str(getattr(args, "previous_apk", "") or ""): overrides["previous_apk"] = str(args.previous_apk)
+            if str(getattr(args, "release_package", "") or ""): overrides["package"] = str(args.release_package)
+            if str(getattr(args, "release_activity", "") or ""): overrides["activity"] = str(args.release_activity)
+            if bool(getattr(args, "no_unit_tests", False)): overrides["unit_tests"] = False
+            if bool(getattr(args, "no_lint", False)): overrides["lint"] = False
+            if bool(getattr(args, "no_install_smoke", False)): overrides["install_smoke"] = False
+            if bool(getattr(args, "no_upgrade_smoke", False)): overrides["upgrade_smoke"] = False
+            if bool(getattr(args, "no_verify_signature", False)): overrides["verify_signature"] = False
+            if bool(getattr(args, "no_verify_certificate_identity", False)): overrides["verify_certificate_identity"] = False
+            try:
+                outcome = AndroidReleaseOrchestrator(config).run(overrides=overrides, verbose=bool(getattr(args, "verbose", False)), dry_run=bool(getattr(args, "dry_run", False)), continue_on_error=bool(getattr(args, "continue_on_error", False)), output=(Path(args.evidence_output).expanduser() if str(getattr(args, "evidence_output", "") or "") else None))
+            except Exception as exc:
+                if output_format == "json": print(json.dumps({"schema_version": 1, "ok": False, "error": str(exc)}, indent=2))
+                else: print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            if output_format == "json":
+                print(json.dumps({"ok": outcome.passed, "session_id": outcome.session_id, "evidence_path": outcome.evidence_path, "evidence": outcome.evidence}, indent=2, ensure_ascii=False))
+            else:
+                render_status_table([("session", outcome.session_id), ("verdict", outcome.evidence.get("verdict", "unknown")), ("evidence", outcome.evidence_path)])
+            return 0 if outcome.passed else 1
         if action == "instrumentation":
             from .android.cli import android_instrumentation_payload
             try:
@@ -11858,6 +11910,31 @@ def _main_after_parse(
                 "validation-finalize", ["devtool", "validation-finalize"], 2, 0.0, str(exc), [],
                 failure_kind="validation_session_error",
             )]
+            raw_output = str(exc)
+    elif args.command in {"release", "rel"}:
+        from .android.release import AndroidReleaseOrchestrator
+        overrides = {}
+        if str(getattr(args, "device_tests", "") or ""): overrides["device_tests"] = str(args.device_tests)
+        if str(getattr(args, "previous_apk", "") or ""): overrides["previous_apk"] = str(args.previous_apk)
+        if str(getattr(args, "release_package", "") or ""): overrides["package"] = str(args.release_package)
+        if str(getattr(args, "release_activity", "") or ""): overrides["activity"] = str(args.release_activity)
+        if bool(getattr(args, "no_unit_tests", False)): overrides["unit_tests"] = False
+        if bool(getattr(args, "no_lint", False)): overrides["lint"] = False
+        if bool(getattr(args, "no_install_smoke", False)): overrides["install_smoke"] = False
+        if bool(getattr(args, "no_upgrade_smoke", False)): overrides["upgrade_smoke"] = False
+        if bool(getattr(args, "no_verify_signature", False)): overrides["verify_signature"] = False
+        if bool(getattr(args, "no_verify_certificate_identity", False)): overrides["verify_certificate_identity"] = False
+        try:
+            outcome = AndroidReleaseOrchestrator(config).run(
+                overrides=overrides, verbose=bool(getattr(args, "verbose", False)), dry_run=bool(getattr(args, "dry_run", False)),
+                continue_on_error=continue_on_error, log_path=log_path,
+                output=(Path(args.evidence_output).expanduser() if str(getattr(args, "evidence_output", "") or "") else None),
+            )
+            results = outcome.results
+            raw_output = "\n\n".join(result.output for result in results if result.output)
+            args._devtool_release_payload = outcome.evidence
+        except Exception as exc:
+            results = [OperationResult("android-release", ["devtool", "release"], 1, 0.0, str(exc), [], failure_kind="android_release")]
             raw_output = str(exc)
     elif args.command in {"clean", "cl"}:
         specs = build_specs(config, args.command)

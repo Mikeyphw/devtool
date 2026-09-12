@@ -339,3 +339,22 @@ expected_cert_sha256 = "..."
 
 Persist only secret source names (or FD/provider configuration), never password values. Project `[env]` is deliberately rejected as storage for signing passwords because validation plans and execution wrappers may serialize project configuration. Devtool-managed signing is task-scoped, so debug/lint/unit tasks do not require release credentials.
 
+
+## Android release policy (AOPS04)
+
+```toml
+[targets.app.android.release]
+variant = "release"
+unit_tests = true
+lint = true
+device_tests = "required"
+install_smoke = true
+upgrade_smoke = true
+verify_signature = true
+verify_certificate_identity = true
+# previous_apk = "path/to/previous-release.apk"
+# package = "com.example.app"
+# activity = ".MainActivity"
+```
+
+`device_tests` accepts `disabled`, `when-device-present`, or `required`. Release defaults are intentionally strict; development targets can explicitly relax device gates. `previous_apk` is required when upgrade smoke is enabled and no other previous-artifact resolver is configured.

@@ -46,6 +46,10 @@ _REQUIRED_REPORTS = (
     "UI09_UI10_DESKTOP_ANDROID_UI_CORE_MIGRATION_REPORT.md",
     "UI11_UI12_MACHINE_IPC_COMPLETION_CONFIG_REPORT.md",
     "FS01_FS02_COMPATIBILITY_DOCUMENTATION_REPORT.md",
+    "HROPS01_COMPLETE_EMBEDDED_HOOK_RUNTIME_REPORT.md",
+    "AOPS02_ANDROID_EXECUTION_DEVICE_FABRIC_REPORT.md",
+    "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
+    "AOPS04_ANDROID_RELEASE_EVIDENCE_FINAL_SEAL_REPORT.md",
 )
 
 _REQUIRED_DOCS = (
@@ -84,6 +88,10 @@ _REQUIRED_TESTS = (
     "tests/test_fs01_fs02_compatibility_docs.py",
     "tests/test_fs03_final_release_seal.py",
     "tests/test_ts00_pytest_selection_parity.py",
+    "tests/test_hrops01_hook_runtime.py",
+    "tests/test_aops02_android_execution_device_fabric.py",
+    "tests/test_aops03_android_signing_instrumentation_operations.py",
+    "tests/test_aops04_android_release_evidence_final_seal.py",
 )
 
 _ALLOWED_BACKUP_PATTERNS = (
@@ -208,7 +216,7 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
     checks.append(_check(
         "roadmap.reports",
         not missing_reports,
-        "all MP01-MP10, UI01-UI12, and FS01-FS02 implementation reports are present",
+        "all roadmap implementation reports, including HROPS01 and AOPS02-AOPS04, are present",
         missing_reports,
     ))
 
@@ -250,6 +258,18 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         '"final-seal"' in profile_text,
         "final-seal validation workflow profile is available",
     ))
+
+    try:
+        from .android.release import audit_android_release_convergence
+        android_audit = audit_android_release_convergence(repo_root)
+        checks.append(_check(
+            "android.operations-roadmap",
+            android_audit.get("status") == "pass",
+            "HROPS01 and AOPS02-AOPS04 Android/hook execution paths are converged",
+            list(android_audit.get("failed") or []),
+        ))
+    except Exception as exc:
+        checks.append(_check("android.operations-roadmap", False, "Android Operations convergence audit failed to execute", [str(exc)]))
 
     backups = _tracked_backup_paths(repo_root)
     checks.append(_check("repository.backup-hygiene", not backups, "no transient backup/reject files are tracked", backups))

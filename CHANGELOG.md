@@ -370,3 +370,10 @@
 - Added semantic notification attention/delivery/bell policy and propagated it through Tasker/IPC/apply notifications.
 - Migrated TUI live operation/progress/diagnostic/action rendering and terminal HUD rendering onto shared `UISnapshot` semantics.
 - Added shared IPC graceful-cancel helper used by terminal and desktop surfaces, config templates, `ui-contract` inspection, docs, and regression contracts.
+
+## AOPS04 — Android release pipeline, evidence, and final seal
+
+- Added the canonical Android release orchestrator and `devtool release` / `devtool android release` commands.
+- Added immutable release evidence sessions tied to Git HEAD, Devtool version, toolchain providers, signing identity, device identity, test/smoke gates, artifact hashes, and final verdict.
+- Converged Android release qualification onto shared Android Operations services; removed its independent raw Android execution path.
+- Extended the strict final seal with Android Operations roadmap and bypass-audit checks.

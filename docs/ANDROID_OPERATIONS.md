@@ -184,3 +184,24 @@ Selectors cover class, method, annotation, excluded annotation, size, and runner
 ## AOPS03 lifecycle operations and smoke gates
 
 The Android Operations CLI provides install/replace/uninstall, launch/stop/restart/clear-data, permissions, shell, push/pull, logcat, and screenshot operations. `devtool android smoke` adds install, upgrade, cold-start, restart, restore-restart, process-death, and signed-artifact gates. All device-facing operations consume the AOPS02 device manager and provider selection instead of resolving ADB independently.
+
+## AOPS04 canonical release pipeline and evidence
+
+`devtool --target app release` is the canonical Android release entry point. It resolves the AOPS02 execution context, applies AOPS03 signing policy, plans unit/lint/package/instrumentation work through `AndroidGradleRunner`, verifies produced artifacts, runs configured lifecycle smoke gates through `AndroidDeviceOperations`, and seals one immutable evidence session.
+
+```toml
+[targets.app.android.release]
+variant = "release"
+unit_tests = true
+lint = true
+device_tests = "required" # disabled | when-device-present | required
+install_smoke = true
+upgrade_smoke = true
+verify_signature = true
+verify_certificate_identity = true
+# previous_apk = "path/to/previous-release.apk"
+```
+
+Evidence is written below `.devtool/reports/android-release/` and registered in the normal artifact registry. The evidence includes Git/Devtool identity, Android capability providers, signing policy/certificate expectation, device identity, gate results, artifact SHA-256 values, and the final verdict. Sealed evidence is append-only/immutable by path.
+
+`release_qualification.py` uses the same release orchestrator for Android gates; it is no longer a separate Android build/signing/ADB implementation.

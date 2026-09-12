@@ -79,3 +79,12 @@ automated matrix is green.
 - The complete Python regression inventory runs in four deterministic balanced pytest groups to isolate hangs while preserving complete coverage.
 
 Sealed final reports use a content hash and a write-once `.final.json` path; later report requests cannot overwrite the final evidence.
+
+## AOPS04 Android release evidence
+
+- [ ] `devtool --target <android-target> release` completes with the configured release gates.
+- [ ] The final `.devtool/reports/android-release/*.final.json` evidence file is present and its `evidence_sha256` verifies.
+- [ ] Release evidence records Git HEAD, target/variant, Android tool/ADB providers, signing certificate SHA-256, artifact hashes, device identity, gate results, and final verdict.
+- [ ] The evidence file is registered in Devtool's artifact registry.
+- [ ] No Android release path bypasses the shared `AndroidGradleRunner`, `AndroidDeviceOperations`, signing manager, or execution-context resolver.
+- [ ] `devtool final-seal --strict` passes the `android.operations-roadmap` convergence audit.

@@ -157,6 +157,7 @@ _devtool_steps() {
     'wine-validate:validate with Wine environment settings'
     'run:run project'
     'package:package project'
+    'release:run Android release pipeline and seal evidence'
     'clean:clean generated outputs'
     'apply-overlay=:apply one overlay artifact'
     'apply-overlays=:apply an overlay bundle or ordered overlays'
@@ -215,6 +216,8 @@ _devtool_commands() {
     'rn:alias for run'
     'package:package the selected project'
     'pkg:alias for package'
+    'release:run the canonical Android release pipeline'
+    'rel:alias for release'
     'clean:clean generated project output'
     'cl:alias for clean'
     'inspect:inspect project type, runner, toolchain, tasks, and artifacts'
@@ -800,7 +803,7 @@ _devtool() {
           ;;
         android)
           if (( ${#line} < 2 )); then
-            _values 'android action' capabilities devices doctor signing install uninstall launch stop restart clear-data shell push pull logcat screenshot permission instrumentation smoke
+            _values 'android action' capabilities devices doctor signing install uninstall launch stop restart clear-data shell push pull logcat screenshot permission instrumentation smoke release
           else
             case ${line[2]} in
               capabilities|doctor)
@@ -877,6 +880,9 @@ _devtool() {
               permission)
                 _arguments '1:permission action:(grant revoke)' '2:package:package:' '3:permission:permission:' '--serial[device serial]:serial:' '--policy[device policy]:policy:(exactly-one serial preferred first-physical first-emulator)'
                 ;;
+              release)
+                _arguments '--device-tests[release device-test policy]:policy:(disabled when-device-present required)' '--previous-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[launch activity]:activity:' '--evidence-output[immutable release-evidence JSON]:file:_files' '--no-unit-tests[skip unit-test gate]' '--no-lint[skip lint gate]' '--no-install-smoke[skip install smoke]' '--no-upgrade-smoke[skip upgrade smoke]' '--no-verify-signature[skip signature verification]' '--no-verify-certificate-identity[skip expected signer comparison]' '--format[output format]:format:(text json)'
+                ;;
               instrumentation)
                 _arguments '--class[test class]:class:' '--method[test method]:method:' '--annotation[required annotation]:annotation:' '--not-annotation[excluded annotation]:annotation:' '--size[test size]:size:(small medium large)' '--runner-arg[instrumentation runner KEY=VALUE]:argument:' '--skip-build[reuse existing app/test APKs]' '--format[output format]:format:(text json)'
                 ;;
@@ -902,6 +908,9 @@ _devtool() {
                 ;;
             esac
           fi
+          ;;
+        release|rel)
+          _arguments '--device-tests[release device-test policy]:policy:(disabled when-device-present required)' '--previous-apk[previous APK for upgrade smoke]:file:_files' '--package[application package]:package:' '--activity[launch activity]:activity:' '--evidence-output[immutable release-evidence JSON]:file:_files' '--no-unit-tests[skip unit-test gate]' '--no-lint[skip lint gate]' '--no-install-smoke[skip install smoke]' '--no-upgrade-smoke[skip upgrade smoke]' '--no-verify-signature[skip signature verification]' '--no-verify-certificate-identity[skip expected signer comparison]' '--format[output format]:format:(text json)'
           ;;
         clean|cl)
           _arguments \

@@ -1368,6 +1368,23 @@ bundle operations, Control Center commands, and configuration-derived target/pro
 The generated zsh completion queries
 .B devtool completion-state
 first so targets, groups, profiles, variants and pytest node IDs use Devtool's resolved configuration semantics; simple TOML parsing remains as a bootstrap fallback.
+
+.SS Android release pipeline and evidence
+AOPS04 makes Android release qualification a first-class Devtool operation. Run
+.PP
+.nf
+devtool --target app release
+devtool android release --target app
+.fi
+.PP
+The release pipeline resolves the normal Android execution context, applies task-scoped signing policy, runs configured unit-test and lint gates through the shared Android Gradle runner, builds and verifies release artifacts, runs instrumentation and device smoke gates according to policy, and writes an immutable evidence session under
+.I .devtool/reports/android-release/.
+Evidence records the source Git state, Devtool/target/variant identity, resolved Android tool providers, signing certificate fingerprint, artifact hashes, selected device and ADB transport, gate results, and the final verdict. The evidence payload is SHA-256 sealed and registered through Devtool's existing artifact registry.
+.PP
+Release configuration is read from
+.B [android.release]
+and supports device-test policy, install/upgrade smoke gates, signature verification, certificate-identity verification, and an optional previous APK for upgrade qualification. Android release qualification uses this same orchestrator rather than a private Gradle, ADB, or signing implementation.
+
 .SH RELEASE QUALIFICATION
 The source repository includes portable and native release gates. Run:
 .PP

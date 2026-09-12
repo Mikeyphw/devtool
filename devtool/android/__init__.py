@@ -28,3 +28,6 @@ __all__ = [
     "AndroidInstrumentationOrchestrator", "InstrumentationRequest", "InstrumentationResult", "resolve_instrumentation_policy",
     "standalone_main",
 ]
+
+from .release import AndroidReleaseOptions, AndroidReleaseOrchestrator, AndroidReleaseResult, release_options
+from .evidence import AndroidReleaseEvidenceSession
