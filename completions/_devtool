@@ -280,6 +280,7 @@ _devtool_commands() {
     'ap:alias for ai-prompt'
     'completion:print shell completion'
     'completion-state:emit config-aware completion values for shells and editors'
+    'pytest:profile Devtool pytest runtime and slow-test budget behavior'
     'compatibility:audit retained legacy interfaces and migration paths'
     'compat:alias for compatibility'
     'final-seal:run the FS03 repository-wide final release audit'
@@ -1073,8 +1074,19 @@ _devtool() {
         completion-state)
           _arguments '--kind[completion value category]:kind:(targets groups ui-profiles test-profiles variants jobs workflows pytest-tests all)' '--format[output format]:format:(lines json)'
           ;;
+        pytest)
+          if (( ${#line} < 2 )); then
+            _values 'pytest action' profile
+          else
+            case $line[2] in
+              profile)
+                _arguments '--threshold[slow-test threshold in seconds]:seconds:' '--top[number of slow entries to show]:count:' '--strict[fail unmarked slow tests]' '--json[emit structured pytest profile JSON]' '*:pytest arg:_devtool_pytest_tests'
+                ;;
+            esac
+          fi
+          ;;
         compatibility|compat)
-          _arguments '--json[emit versioned compatibility report]' '--active-only[show only compatibility entries active in selected config]' '--category[filter compatibility category]:category:(config cli environment python-api machine ipc tasker android artifact validation state workflow)' '--strict[fail when selected config still needs migration]' '--global[audit user global config]'
+          _arguments '--json[emit versioned compatibility report]' '--active-only[show only compatibility entries active in selected config]' '--category[filter compatibility category]:category:(config cli environment python-api machine ipc tasker android artifact validation state workflow)' '--strict[fail selected config still needs migration]' '--global[audit user global config]'
           ;;
         final-seal|seal)
           _arguments '--json[emit versioned FS03 final seal report]' '--strict[fail when any final-seal check fails]'

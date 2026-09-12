@@ -50,6 +50,9 @@ _REQUIRED_REPORTS = (
     "AOPS02_ANDROID_EXECUTION_DEVICE_FABRIC_REPORT.md",
     "AOPS03_ANDROID_SIGNING_INSTRUMENTATION_OPERATIONS_REPORT.md",
     "AOPS04_ANDROID_RELEASE_EVIDENCE_FINAL_SEAL_REPORT.md",
+    "PYTEST_REVITALIZATION_REPORT.md",
+    "GRADLE_ANDROID_TASK_OPTIMIZATION_REPORT.md",
+    "ROADMAP_DELIVERY_AUDIT_REPORT.md",
 )
 
 _REQUIRED_DOCS = (
@@ -92,6 +95,9 @@ _REQUIRED_TESTS = (
     "tests/test_aops02_android_execution_device_fabric.py",
     "tests/test_aops03_android_signing_instrumentation_operations.py",
     "tests/test_aops04_android_release_evidence_final_seal.py",
+    "tests/test_pytest_revitalization.py",
+    "tests/test_gradle_android_task_optimization.py",
+    "tests/test_roadmap_delivery_audit.py",
 )
 
 _ALLOWED_BACKUP_PATTERNS = (
@@ -216,7 +222,7 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
     checks.append(_check(
         "roadmap.reports",
         not missing_reports,
-        "all roadmap implementation reports, including HROPS01 and AOPS02-AOPS04, are present",
+        "all roadmap implementation reports, including HROPS01, AOPS02-AOPS04, pytest revitalization, Gradle optimization, and delivery audit, are present",
         missing_reports,
     ))
 
@@ -244,7 +250,7 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
     checks.append(_check(
         "tests.roadmap-contracts",
         not missing_tests,
-        "roadmap and TS00 contract suites are present for every completed program slice",
+        "roadmap, TS00, Android Operations, pytest revitalization, Gradle optimization, and delivery-audit contract suites are present",
         missing_tests,
     ))
 
@@ -270,6 +276,21 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         ))
     except Exception as exc:
         checks.append(_check("android.operations-roadmap", False, "Android Operations convergence audit failed to execute", [str(exc)]))
+
+    try:
+        from .artifacts import SUPPORTED_ARCHIVE_SUFFIXES
+        required_suffixes = {".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst"}
+        missing_suffixes = sorted(required_suffixes - set(SUPPORTED_ARCHIVE_SUFFIXES))
+        completion_text = (repo_root / "completions" / "_devtool").read_text(encoding="utf-8") if (repo_root / "completions" / "_devtool").is_file() else ""
+        completion_missing = [suffix for suffix in sorted(required_suffixes) if suffix not in completion_text]
+        checks.append(_check(
+            "artifacts.archive-formats",
+            not missing_suffixes and not completion_missing,
+            "ZIP and tar overlay/bundle artifact suffixes are supported and discoverable",
+            ([f"missing_supported:{suffix}" for suffix in missing_suffixes] + [f"missing_completion:{suffix}" for suffix in completion_missing]),
+        ))
+    except Exception as exc:
+        checks.append(_check("artifacts.archive-formats", False, "archive-format audit failed to execute", [str(exc)]))
 
     backups = _tracked_backup_paths(repo_root)
     checks.append(_check("repository.backup-hygiene", not backups, "no transient backup/reject files are tracked", backups))

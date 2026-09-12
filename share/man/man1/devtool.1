@@ -364,6 +364,17 @@ with targets, groups, ui-profiles, test-profiles, variants, jobs, workflows, pyt
 .B --format json
 for the complete versioned completion-state object.
 .TP
+.B pytest profile
+Run pytest with Devtool slow-test reporting enabled. Use
+.B --threshold
+to set the slow-test duration,
+.B --top
+to limit reported entries,
+.B --strict
+to enable the strict slow-test budget, and
+.B --json
+for structured profiling output.
+.TP
 .B compatibility " | " compat
 Audit the versioned backward-compatibility registry. Use
 .B --active-only
@@ -378,7 +389,7 @@ for the machine contract. Use
 to audit the user config.
 .TP
 .B final-seal " | " seal
-Run the FS03 repository-wide final release audit. The versioned report checks canonical repository configuration, compatibility and schema contracts, roadmap reports/tests, examples/documentation, completion synchronization, target roots, backup hygiene, and release discoverability. Use
+Run the FS03 repository-wide final release audit. The versioned report checks canonical repository configuration, compatibility and schema contracts, roadmap reports/tests, examples/documentation, completion synchronization, target roots, Android Operations convergence, archive-format support, backup hygiene, and release discoverability. Use
 .B --strict
 to exit non-zero on any failed seal check and
 .B --json

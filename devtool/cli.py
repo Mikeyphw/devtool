@@ -888,6 +888,15 @@ def build_parser() -> argparse.ArgumentParser:
     final_seal_cmd.add_argument("--json", action="store_true", help="Emit the versioned FS03 seal report as JSON")
     final_seal_cmd.add_argument("--strict", action="store_true", help="Exit non-zero when any final-seal check fails")
 
+    pytest_cmd = subparsers.add_parser("pytest", help="Inspect and profile Devtool's pytest suite")
+    pytest_sub = pytest_cmd.add_subparsers(dest="pytest_command", required=True)
+    pytest_profile = pytest_sub.add_parser("profile", help="Run pytest with Devtool slow-test reporting enabled")
+    pytest_profile.add_argument("pytest_args", nargs="*", help="Optional pytest files, node IDs, or arguments; defaults to tests")
+    pytest_profile.add_argument("--threshold", type=float, default=2.0, help="Slow-test threshold in seconds")
+    pytest_profile.add_argument("--top", type=int, default=30, help="Maximum number of slow entries to show")
+    pytest_profile.add_argument("--strict", action="store_true", help="Fail when unmarked tests exceed the slow threshold")
+    pytest_profile.add_argument("--json", action="store_true", help="Emit a structured pytest-profile report")
+
     config_cmd = subparsers.add_parser("config")
     cfg_sub = config_cmd.add_subparsers(dest="config_command", required=True)
     cfg_path = cfg_sub.add_parser("path", help="Print the repo or global config path")
@@ -10703,6 +10712,22 @@ def _main_after_parse(
         if bool(getattr(args, "strict", False)) and payload.get("status") != "pass":
             return 1
         return 0
+
+    if args.command == "pytest":
+        if str(getattr(args, "pytest_command", "") or "") == "profile":
+            from .pytest_profile import render_pytest_profile_json, render_pytest_profile_text, run_pytest_profile
+
+            repo_root = resolve_repository_root(getattr(args, "repo", None), getattr(args, "config", None))
+            result = run_pytest_profile(
+                repo_root,
+                getattr(args, "pytest_args", None),
+                threshold_seconds=float(getattr(args, "threshold", 2.0) or 2.0),
+                top=int(getattr(args, "top", 30) or 30),
+                strict_slow=bool(getattr(args, "strict", False)),
+            )
+            print(render_pytest_profile_json(result) if bool(getattr(args, "json", False)) else render_pytest_profile_text(result))
+            return result.returncode
+        return 1
 
     if args.command in {"compatibility", "compat"}:
         if bool(getattr(args, "global_config", False)):

@@ -55,3 +55,7 @@ Covered suites:
 ## Expected effect
 
 Android validation and app builds should perform fewer unnecessary ADB probes, avoid repeated connected-device checks within one process, and pass fewer redundant component tasks to Gradle when assemble tasks already imply them. This is especially useful on native Termux, where every subprocess and ADB probe is more expensive.
+
+## Delivery audit hotfix linkage
+
+The roadmap delivery audit now treats this report and `tests/test_gradle_android_task_optimization.py` as final-seal requirements. That keeps the Gradle/Android task optimizer from becoming an untracked follow-up after the Android Operations final seal.

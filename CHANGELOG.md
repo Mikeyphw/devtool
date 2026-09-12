@@ -389,3 +389,10 @@
 
 - Added conservative Android Gradle task planning, connected-device probe caching, ordinary-task no-probe behavior, and shared host/standalone optimization for Android app task execution.
 
+
+## Roadmap delivery audit hotfix
+
+- Add `devtool pytest profile` to close the pytest revitalization profiling CLI promise.
+- Expand `final-seal` coverage for the pytest revitalization, Gradle/Android task optimization, and roadmap delivery audit reports/tests.
+- Add an archive-format final-seal check for ZIP and tar-family overlay/bundle artifacts.
+- Document the roadmap delivery audit and the new pytest profiling surface.

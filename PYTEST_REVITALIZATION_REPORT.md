@@ -64,3 +64,7 @@ Focused strict-slow gate:
 ## Result
 
 The pytest suite is faster, more deterministic, and more honest on native Termux. Expensive external-tool tests are now explicit integration smokes, while ordinary contract tests avoid unnecessary compiler, site-package, venv, cache, or shell startup cost.
+
+## Delivery audit hotfix
+
+The follow-up roadmap audit identified one missing user-facing surface: the earlier revitalization plan mentioned `devtool pytest profile`, while the first overlay delivered the pytest runtime flags and terminal summary only. The hotfix adds the command, structured JSON output, completion, manpage/README documentation, and contract tests while preserving the existing pytest options.

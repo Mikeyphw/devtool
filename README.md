@@ -908,3 +908,19 @@ Devtool's own pytest suite supports capability-aware skips and timing budgets fo
 
 Devtool now plans Android Gradle task sets before execution: duplicate tasks and assemble-implied component tasks are removed conservatively, ordinary app tasks avoid ADB probing, connected-device probes are cached per run, and the staged `build-apk` compatibility launcher uses the same planner as host Devtool.
 
+
+### Pytest profiling
+
+Devtool includes a lightweight pytest profiling surface for its own repository tests:
+
+```bash
+devtool pytest profile
+devtool pytest profile tests/test_cli.py --threshold 1.0 --top 20
+devtool pytest profile tests/test_go_executable_builds.py --strict --json
+```
+
+The command runs pytest with Devtool slow-test reporting enabled, preserves the `--devtool-strict-slow` contract, and can emit a structured JSON report for comparing slow tests across Termux, Linux, CI, and staged environments.
+
+### Roadmap delivery audit
+
+`devtool final-seal --strict` now also checks the post-AOPS modernization promises: pytest revitalization, Gradle/Android task optimization, roadmap-delivery audit coverage, and ZIP/tar artifact-format discoverability.
