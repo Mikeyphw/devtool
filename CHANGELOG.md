@@ -384,3 +384,8 @@
 - Replaced redundant Go compiler invocations with a deterministic shim while preserving explicit real-toolchain smokes.
 - Reduced Python/site startup and dry-run hashing overhead in existing Devtool tests and installer paths.
 - Documented the pytest runtime modernization in `PYTEST_REVITALIZATION_REPORT.md`.
+
+## Gradle Android task optimization
+
+- Added conservative Android Gradle task planning, connected-device probe caching, ordinary-task no-probe behavior, and shared host/standalone optimization for Android app task execution.
+

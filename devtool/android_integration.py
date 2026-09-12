@@ -677,12 +677,9 @@ def android_builder_arguments_for_tasks(
             project_info = None
 
     argv = [str(root), "--no-chroot"]
-    seen_tasks: set[str] = set()
-    for raw_task in tasks:
-        task = str(raw_task or "").strip()
-        if not task or task in seen_tasks:
-            continue
-        seen_tasks.add(task)
+    task_plan = android_build.plan_gradle_task_list(list(tasks))
+    seen_tasks: set[str] = set(task_plan.optimized)
+    for task in task_plan.optimized:
         argv.extend(["--task", task])
 
     _append_option(argv, "--java-home", android.get("java_home") or java_options.get("home") or gradle.get("java_home"))

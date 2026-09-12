@@ -903,3 +903,8 @@ Android targets now have one release entry point: `devtool --target <target> rel
 ## Pytest runtime hygiene
 
 Devtool's own pytest suite supports capability-aware skips and timing budgets for constrained hosts such as native Termux. Use `--devtool-slow-threshold <seconds>` to report slow call phases and `--devtool-strict-slow` to fail unmarked slow tests. Tests that genuinely depend on external tools should declare `requires_tool(...)` and intentional slow integration smokes should use `slow_external`; ordinary unit contracts should prefer deterministic fakes and the shared private toolchain caches. See `PYTEST_REVITALIZATION_REPORT.md` for the full implementation report.
+
+### Gradle and Android task optimization
+
+Devtool now plans Android Gradle task sets before execution: duplicate tasks and assemble-implied component tasks are removed conservatively, ordinary app tasks avoid ADB probing, connected-device probes are cached per run, and the staged `build-apk` compatibility launcher uses the same planner as host Devtool.
+

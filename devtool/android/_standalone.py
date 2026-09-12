@@ -1565,6 +1565,254 @@ def is_connected_android_test_task(task: str) -> bool:
     )
 
 
+
+
+@dataclass(frozen=True)
+class GradleTaskInfo:
+    """Normalized Gradle task metadata used by Android task planning."""
+
+    original: str
+    normalized: str
+    leaf: str
+    project_path: str
+    kind: str
+    implied_by: str = ""
+
+
+@dataclass(frozen=True)
+class GradleTaskPlan:
+    """A conservative optimized Gradle task plan.
+
+    ``requested`` is the cleaned user/artifact input, ``optimized`` is the
+    execution list after exact de-duplication and safe Android component
+    pruning, and ``probe_connected_devices`` states whether this task set can
+    require ADB device state before Gradle is started.
+    """
+
+    requested: tuple[str, ...]
+    optimized: tuple[str, ...]
+    entries: tuple[GradleTaskInfo, ...]
+    removed: tuple[GradleTaskInfo, ...]
+    probe_connected_devices: bool
+
+    @property
+    def classifications(self) -> tuple[str, ...]:
+        return tuple(entry.kind for entry in self.entries if entry.normalized in self.optimized)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "requested": list(self.requested),
+            "optimized": list(self.optimized),
+            "probe_connected_devices": self.probe_connected_devices,
+            "removed": [entry.__dict__ for entry in self.removed],
+            "classifications": {entry.normalized: entry.kind for entry in self.entries},
+        }
+
+
+def gradle_task_leaf(task: str) -> str:
+    """Return the leaf Gradle task name without a project path."""
+
+    return str(task or "").strip().rsplit(":", 1)[-1]
+
+
+def gradle_task_project_path(task: str) -> str:
+    """Return the Gradle project-path prefix for a task, including trailing colon."""
+
+    text = str(task or "").strip()
+    if ":" not in text:
+        return ""
+    return text.rsplit(":", 1)[0] + ":"
+
+
+def classify_gradle_task(task: str) -> str:
+    """Classify a Gradle task for Android planning and fast policy decisions.
+
+    This classifier is intentionally conservative.  It is used to avoid costly
+    Gradle/ADB probes for ordinary app tasks and to group validation evidence;
+    unknown tasks remain ``unknown`` rather than being guessed into a faster but
+    unsafe path.
+    """
+
+    leaf = gradle_task_leaf(task)
+    lower = leaf.lower()
+    if is_connected_android_test_task(task):
+        return "connected_test"
+    if lower.startswith("assemble") and lower.endswith("androidtest"):
+        return "instrumentation_assemble"
+    if lower.startswith("test") and lower.endswith("unittest"):
+        return "unit_test"
+    if lower.startswith("lint"):
+        return "lint"
+    if lower.startswith("bundlerelease") or (lower.startswith("bundle") and "release" in lower):
+        return "bundle_release"
+    if lower.startswith("assemblerelease") or (lower.startswith("assemble") and "release" in lower):
+        return "assemble_release"
+    if lower.startswith("assemble"):
+        return "assemble_debug" if "debug" in lower else "assemble"
+    if lower.startswith("install"):
+        return "install"
+    if lower.startswith(("publish", "upload", "deploy")):
+        return "publish"
+    if lower in {"clean", "help", "tasks", "dependencies"}:
+        return lower
+    if lower.startswith(("compile", "process", "package", "merge", "generate")):
+        return "android_component"
+    if any(token in lower for token in ("releasequal", "releasequalification", "releaseseal", "androidreleaseseal", "devicequalification", "devicesmoke")):
+        return "release_gate"
+    if lower.endswith("check") or lower in {"check", "connectedcheck"}:
+        return "aggregate_check"
+    return "unknown"
+
+
+def _variant_from_android_leaf(leaf: str, prefix: str, suffixes: Sequence[str] = ()) -> str:
+    if not leaf.lower().startswith(prefix.lower()):
+        return ""
+    middle = leaf[len(prefix):]
+    for suffix in suffixes:
+        if not suffix:
+            continue
+        if middle.lower().endswith(suffix.lower()):
+            middle = middle[:-len(suffix)]
+            break
+    return middle
+
+
+def _implied_by_assemble_key(task: str) -> tuple[str, str] | None:
+    """Return ``(project_path, Variant)`` when task is implied by assembleVariant.
+
+    Keep this deliberately narrow.  It removes redundant component tasks that
+    Android Gradle Plugin always wires underneath assembleVariant, but it does
+    not remove unit tests, lint, connected tests, or custom verification tasks.
+    """
+
+    leaf = gradle_task_leaf(task)
+    lower = leaf.lower()
+    candidates: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("compile", ("sources", "kotlin", "javawithjavac")),
+        ("process", ("resources", "manifest")),
+        ("merge", ("resources", "assets", "jnilibfolders", "nativelibs")),
+        ("generate", ("sources", "resvalues")),
+        ("package", ()),
+    )
+    for prefix, suffixes in candidates:
+        if not lower.startswith(prefix):
+            continue
+        variant = _variant_from_android_leaf(leaf, prefix, suffixes)
+        if variant:
+            return (gradle_task_project_path(task), variant.lower())
+    return None
+
+
+def plan_gradle_task_list(tasks: Sequence[str]) -> GradleTaskPlan:
+    """Plan Android/Gradle tasks once for execution, policy, and evidence.
+
+    This is intentionally side-effect free: it does not call Gradle or ADB.
+    Host Devtool and the staged ``build-apk`` runtime both use it so task
+    de-duplication, connected-device probe decisions, and release/task
+    classification do not drift apart.
+    """
+
+    requested: list[str] = []
+    seen: set[str] = set()
+    raw_entries: list[GradleTaskInfo] = []
+    for raw in tasks:
+        task = str(raw or "").strip()
+        if not task:
+            continue
+        key = task.lstrip(":")
+        leaf = gradle_task_leaf(task)
+        entry = GradleTaskInfo(
+            original=str(raw),
+            normalized=task,
+            leaf=leaf,
+            project_path=gradle_task_project_path(task),
+            kind=classify_gradle_task(task),
+        )
+        raw_entries.append(entry)
+        if key in seen:
+            continue
+        seen.add(key)
+        requested.append(task)
+
+    assemble_keys: set[tuple[str, str]] = set()
+    assemble_task_names: dict[tuple[str, str], str] = {}
+    for task in requested:
+        leaf = gradle_task_leaf(task)
+        lower = leaf.lower()
+        if lower.startswith("assemble") and not lower.endswith("androidtest"):
+            variant = _variant_from_android_leaf(leaf, "assemble")
+            if variant:
+                key = (gradle_task_project_path(task), variant.lower())
+                assemble_keys.add(key)
+                assemble_task_names[key] = task
+
+    optimized: list[str] = []
+    entries: list[GradleTaskInfo] = []
+    removed: list[GradleTaskInfo] = []
+    for task in requested:
+        leaf = gradle_task_leaf(task)
+        base_entry = GradleTaskInfo(
+            original=task,
+            normalized=task,
+            leaf=leaf,
+            project_path=gradle_task_project_path(task),
+            kind=classify_gradle_task(task),
+        )
+        implied_key = _implied_by_assemble_key(task)
+        if implied_key is not None and implied_key in assemble_keys:
+            removed.append(GradleTaskInfo(
+                original=task,
+                normalized=task,
+                leaf=leaf,
+                project_path=gradle_task_project_path(task),
+                kind=base_entry.kind,
+                implied_by=assemble_task_names.get(implied_key, "assemble"),
+            ))
+            continue
+        optimized.append(task)
+        entries.append(base_entry)
+
+    probe = gradle_tasks_need_connected_device_probe(optimized)
+    return GradleTaskPlan(
+        requested=tuple(requested),
+        optimized=tuple(optimized),
+        entries=tuple(entries),
+        removed=tuple(removed),
+        probe_connected_devices=probe,
+    )
+
+
+def optimize_gradle_task_list(tasks: Sequence[str]) -> list[str]:
+    """Return a stable, conservative optimized task list.
+
+    The optimizer performs exact de-duplication and removes Android component
+    tasks that are already guaranteed by an explicitly requested
+    assembleVariant task in the same Gradle project path.  It never removes
+    tests, lint, signing/release gates, connected tests, publication tasks, or
+    unknown custom tasks.
+    """
+
+    return list(plan_gradle_task_list(tasks).optimized)
+
+
+def gradle_tasks_need_connected_device_probe(tasks: Sequence[str]) -> bool:
+    """Return whether an ADB device probe is needed for this Gradle task set."""
+
+    for task in tasks:
+        kind = classify_gradle_task(task)
+        if kind in {"connected_test", "release_gate", "aggregate_check"}:
+            return True
+    return False
+
+
+_CONNECTED_ANDROID_DEVICE_PROBE_CACHE: dict[tuple[str, str, str, str, str], tuple[list[str], str, dict[str, str]]] = {}
+
+
+def clear_connected_android_device_probe_cache() -> None:
+    """Clear the in-process connected-device probe cache."""
+
+    _CONNECTED_ANDROID_DEVICE_PROBE_CACHE.clear()
+
 def _parse_adb_device_states(output: str) -> dict[str, str]:
     """Parse ``adb devices`` output into serial -> state."""
 
@@ -1638,6 +1886,17 @@ def connected_android_devices(
     """
 
     env = dict(env or os.environ)
+    cache_enabled = str(env.get("DEVTOOL_ANDROID_DEVICE_PROBE_CACHE", "1")).strip().lower() not in {"0", "false", "no", "off"}
+    cache_key = (
+        str(Path(sdk_root).resolve(strict=False) if sdk_root else ""),
+        str(adb_provider or "auto"),
+        str(adb_path or ""),
+        str(env.get("PATH", "")),
+        str(timeout),
+    )
+    if cache_enabled and cache_key in _CONNECTED_ANDROID_DEVICE_PROBE_CACHE:
+        devices, adb, states = _CONNECTED_ANDROID_DEVICE_PROBE_CACHE[cache_key]
+        return list(devices), adb, dict(states)
     last_adb = ""
     last_states: dict[str, str] = {}
 
@@ -1682,9 +1941,15 @@ def connected_android_devices(
 
         # A successful adb invocation is authoritative. Don't fall through
         # to another adb binary just because there are zero devices.
-        return usable, str(adb), states
+        value = (usable, str(adb), states)
+        if cache_enabled:
+            _CONNECTED_ANDROID_DEVICE_PROBE_CACHE[cache_key] = (list(value[0]), value[1], dict(value[2]))
+        return value
 
-    return [], last_adb, last_states
+    value = ([], last_adb, last_states)
+    if cache_enabled:
+        _CONNECTED_ANDROID_DEVICE_PROBE_CACHE[cache_key] = (list(value[0]), value[1], dict(value[2]))
+    return value
 
 
 
@@ -1804,11 +2069,11 @@ def filter_unavailable_connected_android_tests(
     ``disabled`` suppresses explicit and transitive connected Android tests.
     """
 
-    requested = [
+    requested = optimize_gradle_task_list([
         str(task)
         for task in tasks
         if str(task).strip()
-    ]
+    ])
 
     connected = [
         task
@@ -1826,9 +2091,12 @@ def filter_unavailable_connected_android_tests(
         retained = [task for task in requested if task not in skipped_set]
         return retained, connected, "", {}
 
-    # Probe even when no connected*AndroidTest task was requested directly.
-    # A release/qualification/seal task may depend on a connected test
-    # transitively, so explicit-task filtering alone is insufficient.
+    needs_probe = bool(connected) or gradle_tasks_need_connected_device_probe(requested)
+    if not needs_probe:
+        return requested, [], "", {}
+
+    # Probe when explicitly connected tasks were requested or when a known
+    # release/qualification aggregate can pull connected tests transitively.
     devices, adb, states = connected_android_devices(
         sdk_root,
         env,
@@ -8567,7 +8835,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     need_java = java_home is None
     need_certificates = not certificate_store_available()
     requested_tasks = list(args.tasks or default_tasks(project))
-    node_required = gradle_tasks_require_node(requested_tasks)
+    requested_task_plan = plan_gradle_task_list(requested_tasks)
+    node_required = gradle_tasks_require_node(requested_task_plan.optimized)
     need_node = node_required and node_runtime_path() is None
 
     cmake_required = bool(
@@ -9003,7 +9272,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         info("Toolchain provisioning and verification completed; no Gradle tasks were executed")
         return 0
 
-    tasks = list(requested_tasks)
+    tasks = list(requested_task_plan.optimized)
+    connected_device_probe_needed = requested_task_plan.probe_connected_devices
 
     (
         tasks,
@@ -9067,17 +9337,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     # connectedDebugAndroidTest without that connected task appearing in
     # requested_tasks. Determine device policy independently of the explicit
     # task list so those transitive dependencies are handled too.
+    policy = normalize_android_device_test_policy(args.device_test_policy)
+    transitive_connected_policy_needed = (
+        not args.dry_run
+        and gradle_tasks_need_connected_device_probe(tasks)
+        and policy == "disabled"
+    )
     no_usable_connected_device = (
         not args.dry_run
+        and connected_device_probe_needed
+        and policy == "when-device-present"
         and not any(
             state == "device"
             for state in connected_test_states.values()
         )
     )
+    disable_transitive_connected_tests = no_usable_connected_device or transitive_connected_policy_needed
 
     connected_test_skip_init_script: Path | None = None
 
-    if no_usable_connected_device:
+    if disable_transitive_connected_tests:
         connected_test_skip_init_script = (
             _write_no_device_connected_test_init_script(
                 cache_root
