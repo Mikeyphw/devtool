@@ -172,6 +172,8 @@ devtool --target app android devices doctor --provider termux-adb
 
 Resource flags cover worker count, CPU budget, Gradle heap/metaspace, memory guard, parallel/build-cache/daemon behavior, and resource profiles. Task planning deduplicates Gradle tasks, recognizes connected-device tasks, and avoids an ADB probe when no requested task actually needs a device.
 
+Gradle task execution telemetry distinguishes a task execution from Gradle's repeated `--console=plain` context headers during parallel output. In the default non-verbose human stream, a repeated bare `> Task :path` header for an already-started task is collapsed as resumed output; outcome-bearing headers such as `FAILED`, `UP-TO-DATE`, `FROM-CACHE`, `SKIPPED`, and `NO-SOURCE` remain visible. The raw captured/evidence stream is preserved, and `--verbose` deliberately shows the uncollapsed child stream. Progress/HUD state records requested-task duplicates, unique task executions/completions, per-task resume-header counts, terminal outcomes, and structured duplicate-start anomalies. The terminal summary line reports `requested`, `duplicates`, `executions`, `completed`, `resumed_headers`, and `duplicate_execution_starts`, so repeated headers are no longer evidence of repeated execution by themselves.
+
 See [`ANDROID_PROJECTS.md`](ANDROID_PROJECTS.md) and [`ANDROID_OPERATIONS.md`](ANDROID_OPERATIONS.md).
 
 ## 12. Android devices, ADB, instrumentation, and app lifecycle

@@ -1595,6 +1595,11 @@ def _run_process_live(
                             "tests_skipped", "tests_total", "test_assemblies",
                             "current_task", "current_test",
                             "requested_tasks", "requested_task_count", "dependency_task_count",
+                            "requested_duplicate_count", "requested_duplicate_tasks",
+                            "task_execution_count", "task_completed_count", "task_resume_count",
+                            "task_resume_counts", "task_header_count", "task_header_counts",
+                            "task_outcomes", "duplicate_execution_start_count",
+                            "duplicate_terminal_header_count",
                         )
                         if snapshot.get(key) is not None
                     },
@@ -1719,19 +1724,27 @@ def _run_process_live(
                     continue
                 output_parts.append(line)
                 _append_live_log(line)
-                # Non-verbose mode intentionally keeps command stdout/stderr captured only.
-                # Dotnet commands get a parsed Rich progress display instead of raw output.
-                # Use --verbose when the full restore/build/test stream is needed live.
+                surface_decision = tracker.update_from_line(line)
+                # Existing progress trackers return None. Only the Gradle tracker
+                # opts into line collapsing by returning an explicit boolean.
+                surface_line = True if surface_decision is None else bool(surface_decision)
+                # Non-verbose mode intentionally keeps the complete child stream
+                # in captured output/evidence, but collapses Gradle's repeated
+                # bare task headers in the human-facing stream. With --verbose,
+                # users explicitly requested the raw stream, so nothing is hidden.
                 visible_heartbeat = line.lstrip().startswith("Devtool heartbeat:")
-                if verbose or not tracker.enabled or visible_heartbeat:
+                if verbose or ((not tracker.enabled or visible_heartbeat) and surface_line):
                     # Non-interactive/CI output must remain observable even
                     # when a parser is active; Rich progress is a TTY-only
                     # presentation layer, never a replacement for stdout.
-                    # Heartbeats are Devtool's own progress signal, so always
-                    # surface them to avoid a silent TUI during quiet children.
                     print(line, end="", flush=True)
-                tracker.update_from_line(line)
             returncode = _wait_process_returncode(proc)
+            has_task_telemetry = getattr(tracker, "has_task_telemetry", None)
+            task_telemetry_line = getattr(tracker, "task_telemetry_line", None)
+            if callable(has_task_telemetry) and callable(task_telemetry_line) and has_task_telemetry():
+                telemetry_line = task_telemetry_line() + "\n"
+                _append_live_log(telemetry_line)
+                print(telemetry_line, end="", flush=True)
             if tasker_progress is not None and tasker_progress.cancel_requested():
                 returncode = 130
                 output_parts.append("\nCancelled from Devtool Control Center. Child process was terminated.\n")
@@ -1769,7 +1782,11 @@ def _requested_gradle_tasks_for_spec(spec: CommandSpec, progress_argv: list[str]
         if isinstance(raw, (list, tuple)):
             tasks = [str(item).strip() for item in raw if str(item).strip()]
             if tasks:
-                return list(dict.fromkeys(tasks))
+                # Preserve request multiplicity for telemetry. The Gradle command
+                # planner is responsible for execution de-duplication; the tracker
+                # needs the original list so it can report accidental duplicate
+                # requests instead of silently erasing the evidence.
+                return tasks
 
     tasks: list[str] = []
     index = 0
@@ -1786,7 +1803,7 @@ def _requested_gradle_tasks_for_spec(spec: CommandSpec, progress_argv: list[str]
             if task:
                 tasks.append(task)
         index += 1
-    return list(dict.fromkeys(tasks))
+    return tasks
 
 
 def _shutdown_gradle_daemons(

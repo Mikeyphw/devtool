@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 import json
 import os
@@ -97,6 +98,16 @@ class GradleProgressTracker:
     observed_tasks: set[str] = field(init=False, default_factory=set)
     requested_task_count: int = field(init=False, default=0)
     dependency_task_count: int = field(init=False, default=0)
+    requested_duplicate_count: int = field(init=False, default=0)
+    requested_duplicate_tasks: dict[str, int] = field(init=False, default_factory=dict)
+    task_header_counts: dict[str, int] = field(init=False, default_factory=dict)
+    task_resume_counts: dict[str, int] = field(init=False, default_factory=dict)
+    task_outcomes: dict[str, str] = field(init=False, default_factory=dict)
+    started_tasks: set[str] = field(init=False, default_factory=set)
+    completed_tasks: set[str] = field(init=False, default_factory=set)
+    structured_task_start_counts: dict[str, int] = field(init=False, default_factory=dict)
+    duplicate_execution_start_count: int = field(init=False, default=0)
+    duplicate_terminal_header_count: int = field(init=False, default=0)
     _completion_printed: bool = field(init=False, default=False)
     _started_at: float = field(init=False, default_factory=time.monotonic)
     _process_started_at: float | None = field(init=False, default=None)
@@ -107,7 +118,11 @@ class GradleProgressTracker:
         self.enabled = bool(self.console.is_terminal or self.console.is_interactive)
         self.inspection = TuiInspectionController(self.console)
         self.expected_run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip()
-        self.requested_tasks = tuple(dict.fromkeys(str(task).strip() for task in self.requested_tasks if str(task).strip()))
+        raw_requested = tuple(str(task).strip() for task in self.requested_tasks if str(task).strip())
+        requested_counts = Counter(raw_requested)
+        self.requested_duplicate_tasks = {task: count for task, count in requested_counts.items() if count > 1}
+        self.requested_duplicate_count = sum(count - 1 for count in self.requested_duplicate_tasks.values())
+        self.requested_tasks = tuple(dict.fromkeys(raw_requested))
 
     def __enter__(self) -> "GradleProgressTracker":
         if not self.enabled or self.live is not None:
@@ -217,26 +232,25 @@ class GradleProgressTracker:
     def set_stop_callback(self, callback: Callable[[], None] | None) -> None:
         self.inspection.set_stop_callback(callback)
 
-    def update_from_line(self, line: str) -> None:
+    def update_from_line(self, line: str) -> bool:
         self.inspection.append_line(line)
         prefixed = line.strip().startswith(_EVENT_PREFIX)
         event = self.parse_event(line)
         if event is None:
             if prefixed:
                 self.rejected_events += 1
-                return
-            self._update_from_plain_gradle_line(line)
-            return
+                return True
+            return self._update_from_plain_gradle_line(line)
         event_run_id = str(event.get("run_id") or "").strip()
         if self.expected_run_id and event_run_id != self.expected_run_id:
             self.rejected_events += 1
-            return
+            return False
         self.structured_events_seen = True
         self.real_progress_seen = True
         self._synthetic_stop.set()
         sequence = int(event.get("sequence") or 0)
         if sequence and sequence <= self.last_sequence:
-            return
+            return False
         if sequence:
             self.last_sequence = sequence
 
@@ -250,6 +264,7 @@ class GradleProgressTracker:
             self.detail = f"Gradle task graph ready: {self.total or 0} tasks"
         elif kind == "task-start":
             self.current_task = str(event.get("task") or "")
+            self._record_structured_task_start(self.current_task)
             self._merge_completed(event.get("completed"))
             self._merge_total(event.get("total"))
             self._update_requested_dependency_counts()
@@ -262,10 +277,15 @@ class GradleProgressTracker:
                 self.detail = f"Running {self.current_task or 'Gradle task'}"
         elif kind == "task-finish":
             self.current_task = str(event.get("task") or self.current_task)
+            if self.current_task:
+                self.started_tasks.add(self.current_task)
+                self.completed_tasks.add(self.current_task)
             self._merge_completed(event.get("completed"))
             self._merge_total(event.get("total"))
             self._update_requested_dependency_counts()
             outcome = str(event.get("outcome") or "complete")
+            if self.current_task:
+                self.task_outcomes[self.current_task] = outcome
             self.detail = f"{self.current_task or 'Gradle task'}: {outcome}"
             if outcome == "failed":
                 self.errors += 1
@@ -296,19 +316,65 @@ class GradleProgressTracker:
             if not event.get("success"):
                 self.errors = max(1, self.errors)
         self._publish(force=kind in {"task-graph", "build-finish"})
+        # Structured DEVTOOL_EVENT lines are machine telemetry. Keep them in the
+        # raw evidence log, but they do not need to be echoed as human console
+        # output when the tracker is active.
+        return False
 
-    def _update_from_plain_gradle_line(self, line: str) -> None:
-        if self.structured_events_seen:
+    def _record_structured_task_start(self, task: str) -> None:
+        if not task:
             return
+        count = self.structured_task_start_counts.get(task, 0) + 1
+        self.structured_task_start_counts[task] = count
+        if count > 1:
+            self.duplicate_execution_start_count += 1
+        self.started_tasks.add(task)
+
+    def _record_plain_task_header(self, task: str, outcome: str) -> bool:
+        """Track a Gradle plain-console task header and decide if it is novel.
+
+        Gradle's ``--console=plain`` repeats a bare ``> Task :path`` header when
+        output from a still-running task resumes after interleaved parallel task
+        output. Those headers are *not* additional task executions. We count
+        them as resume markers and suppress only the duplicate bare header from
+        the default human-facing stream. Outcome-bearing headers remain visible.
+        """
+
+        if not task:
+            return True
+        count = self.task_header_counts.get(task, 0) + 1
+        self.task_header_counts[task] = count
+        first_header = count == 1
+        if first_header:
+            self.started_tasks.add(task)
+        elif not outcome:
+            self.task_resume_counts[task] = self.task_resume_counts.get(task, 0) + 1
+            return False
+
+        if outcome:
+            previous = self.task_outcomes.get(task)
+            if previous == outcome:
+                self.duplicate_terminal_header_count += 1
+                return False
+            self.task_outcomes[task] = outcome
+            self.completed_tasks.add(task)
+        return True
+
+    def _update_from_plain_gradle_line(self, line: str) -> bool:
         text = _ANSI_RE.sub("", line).strip()
         if not text:
-            return
+            return True
+        if self.structured_events_seen:
+            # Structured events are authoritative. Hide Gradle's redundant plain
+            # task headers from the human stream while preserving all other text.
+            return not bool(_TASK_LINE_RE.match(text))
         match = _TASK_LINE_RE.match(text)
         if match:
             self.real_progress_seen = True
             self._synthetic_stop.set()
             task = match.group("task") or ""
             outcome = (match.group("outcome") or "").lower().replace("_", "-")
+            surface_line = self._record_plain_task_header(task, outcome)
             self.current_task = task
             first_observation = bool(task) and task not in self.observed_tasks
             if task:
@@ -327,7 +393,7 @@ class GradleProgressTracker:
             self.detail = detail
             self.fallback_lines += 1
             self._publish()
-            return
+            return surface_line
 
         summary = _ACTIONABLE_TASKS_RE.match(text)
         if summary:
@@ -339,7 +405,7 @@ class GradleProgressTracker:
             self.detail = text
             self.fallback_lines += 1
             self._publish(force=True)
-            return
+            return True
 
         heading = _HEADING_RE.match(text)
         if heading:
@@ -358,7 +424,7 @@ class GradleProgressTracker:
                 self.detail = heading_text
             self.fallback_lines += 1
             self._publish()
-            return
+            return True
 
         if any(text.startswith(prefix) for prefix in _LIFECYCLE_PREFIXES):
             self.real_progress_seen = True
@@ -368,7 +434,9 @@ class GradleProgressTracker:
                 self.errors = max(1, self.errors)
             self.fallback_lines += 1
             self._publish()
-            return
+            return True
+
+        return True
 
     def _update_tests(self, event: dict[str, Any]) -> None:
         self.tests_passed = int(event.get("passed") or 0)
@@ -428,12 +496,43 @@ class GradleProgressTracker:
             "requested_tasks": list(self.requested_tasks),
             "requested_task_count": self.requested_task_count,
             "dependency_task_count": self.dependency_task_count,
+            "requested_duplicate_count": self.requested_duplicate_count,
+            "requested_duplicate_tasks": dict(self.requested_duplicate_tasks),
+            "task_execution_count": len(self.started_tasks),
+            "task_completed_count": len(self.completed_tasks),
+            "task_resume_count": sum(self.task_resume_counts.values()),
+            "task_resume_counts": dict(self.task_resume_counts),
+            "task_header_count": sum(self.task_header_counts.values()),
+            "task_header_counts": dict(self.task_header_counts),
+            "task_outcomes": dict(self.task_outcomes),
+            "duplicate_execution_start_count": self.duplicate_execution_start_count,
+            "duplicate_terminal_header_count": self.duplicate_terminal_header_count,
             "structured_events_seen": self.structured_events_seen,
             "real_progress_seen": self.real_progress_seen,
             "startup_state": "real" if self.real_progress_seen else self.detail,
             "fallback_lines": self.fallback_lines,
             "observed_tasks": sorted(self.observed_tasks),
         }
+
+    def task_telemetry_line(self) -> str:
+        snapshot = self.snapshot()
+        return (
+            "Devtool Gradle task telemetry: "
+            f"requested={len(self.requested_tasks)} unique"
+            f" duplicates={snapshot['requested_duplicate_count']}; "
+            f"executions={snapshot['task_execution_count']} unique; "
+            f"completed={snapshot['task_completed_count']}; "
+            f"resumed_headers={snapshot['task_resume_count']}; "
+            f"duplicate_execution_starts={snapshot['duplicate_execution_start_count']}"
+        )
+
+    def has_task_telemetry(self) -> bool:
+        return bool(
+            self.requested_tasks
+            or self.started_tasks
+            or self.task_header_counts
+            or self.structured_task_start_counts
+        )
 
     def _publish(self, *, force: bool = False) -> None:
         if self.live is not None:

@@ -127,6 +127,8 @@ Resource controls are part of execution policy. Preserve explicitly requested wo
 
 The Gradle task planner recognizes ordinary checks, connected/instrumented checks, release gates, and artifact-producing tasks. Only device-requiring task classes should trigger device probes.
 
+Do not infer duplicate Gradle execution from repeated plain-console `> Task :path` headers. Parallel Gradle output can re-emit a bare task header when that task resumes producing output after another task. Prefer Devtool's Gradle execution telemetry: `task_execution_count`, `task_completed_count`, `task_resume_count`, `task_resume_counts`, `requested_duplicate_count`, `requested_duplicate_tasks`, `task_outcomes`, and `duplicate_execution_start_count`. A nonzero `task_resume_count` is presentation/interleaving telemetry; a nonzero `duplicate_execution_start_count` is the execution anomaly signal. Default human output collapses resumed bare headers, while raw evidence and `--verbose` retain the complete stream.
+
 ## 12. Android ADB/device contract
 
 Before a device-required operation, resolve the provider and device policy. Distinguish:

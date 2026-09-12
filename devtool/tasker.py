@@ -1102,6 +1102,17 @@ class TaskerProgressSink:
                 "requested_tasks",
                 "requested_task_count",
                 "dependency_task_count",
+                "requested_duplicate_count",
+                "requested_duplicate_tasks",
+                "task_execution_count",
+                "task_completed_count",
+                "task_resume_count",
+                "task_resume_counts",
+                "task_header_count",
+                "task_header_counts",
+                "task_outcomes",
+                "duplicate_execution_start_count",
+                "duplicate_terminal_header_count",
             ):
                 value = metrics.get(metric_key)
                 if value is None:
@@ -1109,6 +1120,10 @@ class TaskerProgressSink:
                 if metric_key == "requested_tasks":
                     if isinstance(value, list):
                         current[metric_key] = [str(item) for item in value if str(item)]
+                    continue
+                if metric_key in {"requested_duplicate_tasks", "task_resume_counts", "task_header_counts", "task_outcomes"}:
+                    if isinstance(value, dict):
+                        current[metric_key] = {str(k): v for k, v in value.items()}
                     continue
                 if metric_key in {
                     "tests_passed",
@@ -1118,6 +1133,13 @@ class TaskerProgressSink:
                     "test_assemblies",
                     "requested_task_count",
                     "dependency_task_count",
+                    "requested_duplicate_count",
+                    "task_execution_count",
+                    "task_completed_count",
+                    "task_resume_count",
+                    "task_header_count",
+                    "duplicate_execution_start_count",
+                    "duplicate_terminal_header_count",
                 }:
                     current[metric_key] = max(0, int(value))
                 else:

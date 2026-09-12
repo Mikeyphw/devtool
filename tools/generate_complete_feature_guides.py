@@ -380,6 +380,8 @@ devtool --target app android devices doctor --provider termux-adb
 
 Resource flags cover worker count, CPU budget, Gradle heap/metaspace, memory guard, parallel/build-cache/daemon behavior, and resource profiles. Task planning deduplicates Gradle tasks, recognizes connected-device tasks, and avoids an ADB probe when no requested task actually needs a device.
 
+Gradle task execution telemetry distinguishes a task execution from Gradle's repeated `--console=plain` context headers during parallel output. In the default non-verbose human stream, a repeated bare `> Task :path` header for an already-started task is collapsed as resumed output; outcome-bearing headers such as `FAILED`, `UP-TO-DATE`, `FROM-CACHE`, `SKIPPED`, and `NO-SOURCE` remain visible. The raw captured/evidence stream is preserved, and `--verbose` deliberately shows the uncollapsed child stream. Progress/HUD state records requested-task duplicates, unique task executions/completions, per-task resume-header counts, terminal outcomes, and structured duplicate-start anomalies. The terminal summary line reports `requested`, `duplicates`, `executions`, `completed`, `resumed_headers`, and `duplicate_execution_starts`, so repeated headers are no longer evidence of repeated execution by themselves.
+
 See [`ANDROID_PROJECTS.md`](ANDROID_PROJECTS.md) and [`ANDROID_OPERATIONS.md`](ANDROID_OPERATIONS.md).
 
 ## 12. Android devices, ADB, instrumentation, and app lifecycle
@@ -652,6 +654,8 @@ Use `android capabilities` to resolve Java/Gradle/SDK/platform/build-tools/AAPT2
 Resource controls are part of execution policy. Preserve explicitly requested worker/CPU/heap/metaspace/memory-guard/parallel/cache/daemon values. Avoid starting parallel Gradle invocations that defeat Devtool's planner or exceed the declared resource budget.
 
 The Gradle task planner recognizes ordinary checks, connected/instrumented checks, release gates, and artifact-producing tasks. Only device-requiring task classes should trigger device probes.
+
+Do not infer duplicate Gradle execution from repeated plain-console `> Task :path` headers. Parallel Gradle output can re-emit a bare task header when that task resumes producing output after another task. Prefer Devtool's Gradle execution telemetry: `task_execution_count`, `task_completed_count`, `task_resume_count`, `task_resume_counts`, `requested_duplicate_count`, `requested_duplicate_tasks`, `task_outcomes`, and `duplicate_execution_start_count`. A nonzero `task_resume_count` is presentation/interleaving telemetry; a nonzero `duplicate_execution_start_count` is the execution anomaly signal. Default human output collapses resumed bare headers, while raw evidence and `--verbose` retain the complete stream.
 
 ## 12. Android ADB/device contract
 
