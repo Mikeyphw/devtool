@@ -108,7 +108,8 @@ def test_output_debug_persists_rendered_terminal_summary(tmp_path: Path, capsys)
 
     rendered = capsys.readouterr().out
     assert "Terminal summary output debug" in rendered
-    assert "--- terminal-summary payload begin ---" in rendered
+    assert "--- terminal-summary payload begin ---" not in rendered
+    assert "--- terminal-summary payload end ---" not in rendered
 
 
 def test_output_debug_captures_exact_clipboard_payload_and_correlates_terminal_hash(tmp_path: Path) -> None:
@@ -179,6 +180,35 @@ def test_output_debug_records_clipboard_attempt_even_when_backend_fails(tmp_path
     assert metadata["success"] is False
     assert metadata["reason"] == "API unavailable"
     assert (root / "clipboard-0001.txt").read_text(encoding="utf-8") == "failure payload"
+
+
+def test_output_debug_never_echoes_clipboard_payload_body(tmp_path: Path, capsys) -> None:
+    args = _args(output_debug=True, quiet=False)
+    log_path = tmp_path / "run.log"
+    log_path.write_text("header\n", encoding="utf-8")
+    secret_marker = "COPY_PAYLOAD_MUST_NOT_BE_ECHOED_7f31"
+    result = ClipboardResult(True, backend="termux-clipboard-set")
+
+    with (
+        patch("devtool.cli.log_state_dir", return_value=tmp_path / "state"),
+        patch("devtool.cli.copy_text", return_value=result),
+        patch.dict(os.environ, {"DEVTOOL_RUN_ID": "output-debug-run"}, clear=False),
+    ):
+        _perform_clipboard_copy(
+            secret_marker,
+            "Debug clipboard payload",
+            args,
+            log_path=log_path,
+            source="--copy",
+        )
+
+    rendered = capsys.readouterr().out
+    assert "Clipboard output debug" in rendered
+    assert "Saved payload:" in rendered
+    assert secret_marker not in rendered
+    assert "payload begin" not in rendered
+    root = tmp_path / "state" / "evidence" / "output-debug-run" / "output-debug"
+    assert (root / "clipboard-0001.txt").read_text(encoding="utf-8") == secret_marker
 
 
 def test_output_debug_disabled_does_not_create_evidence(tmp_path: Path) -> None:

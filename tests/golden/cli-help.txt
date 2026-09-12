@@ -190,8 +190,9 @@ Output and clipboard:
   --no-clipboard        Disable clipboard prompts and copy behavior
   --copy-via {auto,socket,fifo,termux,x11,wayland}
                         Prefer a clipboard backend family
-  --output-debug        Show and persist the rendered terminal summary and any
-                        --copy clipboard payload (also DEVTOOL_OUTPUT_DEBUG=1)
+  --output-debug        Persist the rendered terminal summary and any --copy
+                        clipboard payload for debugging without echoing
+                        captured payload bodies (also DEVTOOL_OUTPUT_DEBUG=1)
   --no-output-debug     Disable terminal/clipboard output debugging even when
                         DEVTOOL_OUTPUT_DEBUG is enabled
   --theme {auto,plain}  Summary theme

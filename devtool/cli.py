@@ -477,7 +477,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="output_debug",
         action="store_true",
         default=None,
-        help="Show and persist the rendered terminal summary and any --copy clipboard payload (also DEVTOOL_OUTPUT_DEBUG=1)",
+        help="Persist the rendered terminal summary and any --copy clipboard payload for debugging without echoing captured payload bodies (also DEVTOOL_OUTPUT_DEBUG=1)",
     )
     output_debug.add_argument(
         "--no-output-debug",
@@ -1528,7 +1528,6 @@ def _record_output_debug_payload(
     log_path: Path | str | None,
     source: str,
     extra: dict[str, object] | None = None,
-    display_payload: bool = True,
 ) -> dict[str, object] | None:
     enabled, enabled_by = _output_debug_setting(args)
     if not enabled:
@@ -1625,10 +1624,6 @@ def _record_output_debug_payload(
                 "  Matches terminal summary bytes: "
                 + ("yes" if metadata["matches_terminal_summary"] else "no")
             )
-        if display_payload:
-            console.print(f"--- {kind} payload begin ---", markup=False)
-            console.print(payload, markup=False, end="" if payload.endswith("\n") else "\n")
-            console.print(f"--- {kind} payload end ---", markup=False)
     return metadata
 
 

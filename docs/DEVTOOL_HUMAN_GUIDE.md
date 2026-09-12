@@ -257,7 +257,7 @@ See [`BACKWARD_COMPATIBILITY.md`](BACKWARD_COMPATIBILITY.md), [`RELEASE_CHECKLIS
 
 Use JSON/machine output whenever another program consumes Devtool. Durable validation control uses a versioned response envelope and revision guards. IPC/HUD consumers should poll/subscribe to canonical state rather than scrape terminal rendering. The Android and desktop frontends use the same principle.
 
-`--output-debug` (or `DEVTOOL_OUTPUT_DEBUG=1`) turns on one correlated debug stream for Devtool's final human output. It saves a plain rendered equivalent of the terminal summary with byte count and SHA-256 under `evidence/<run-id>/output-debug/`. If `--copy` or an interactive copy action also runs, Devtool saves the exact **sanitized** clipboard payload passed to the backend, its backend/result, size and SHA-256, and records whether those bytes match the terminal-summary payload. `--no-output-debug` explicitly overrides the environment variable. Debug evidence is private (`0700` directory / `0600` files), correlated with the run log, and never bypasses Devtool secret redaction.
+`--output-debug` (or `DEVTOOL_OUTPUT_DEBUG=1`) turns on one correlated debug stream for Devtool's final human output. It saves a plain rendered equivalent of the terminal summary with byte count and SHA-256 under `evidence/<run-id>/output-debug/`. If `--copy` or an interactive copy action also runs, Devtool saves the exact **sanitized** clipboard payload passed to the backend, its backend/result, size and SHA-256, and records whether those bytes match the terminal-summary payload. `--no-output-debug` explicitly overrides the environment variable. Debug evidence is private (`0700` directory / `0600` files), correlated with the run log, and never bypasses Devtool secret redaction. Output-debug prints only correlation metadata (IDs, size, SHA-256, saved path, and match result); it never echoes the captured terminal or clipboard payload body back to the terminal.
 
 For scripted mutation, pair machine-readable inspection with explicit target selection, `--dry-run` where supported, and transaction-safe Devtool operations. Avoid relying on colors, line positions, or incidental warning text.
 
@@ -358,7 +358,7 @@ These options are accepted at the root `devtool` invocation and shape selection,
 | `-p, --copy` | Copy the selected run summary or prompt output to the clipboard |
 | `--no-clipboard` | Disable clipboard prompts and copy behavior |
 | `--copy-via COPY_VIA` | Prefer a clipboard backend family Choices: auto, socket, fifo, termux, x11, wayland |
-| `--output-debug` | Show and persist the rendered terminal summary and any --copy clipboard payload (also DEVTOOL_OUTPUT_DEBUG=1) |
+| `--output-debug` | Persist the rendered terminal summary and any --copy clipboard payload for debugging without echoing captured payload bodies (also DEVTOOL_OUTPUT_DEBUG=1) |
 | `--no-output-debug` | Disable terminal/clipboard output debugging even when DEVTOOL_OUTPUT_DEBUG is enabled |
 | `--theme THEME` | Summary theme Choices: auto, plain |
 | `--log-dir LOG_DIR` | Override the directory used for command logs (also DEVTOOL_LOG_DIR) |
