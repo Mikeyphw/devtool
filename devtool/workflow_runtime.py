@@ -335,7 +335,7 @@ def _target_scoped_config(config: ProjectConfig, target_name: str) -> ProjectCon
             test_command=target.test_command,
             package_command=target.package_command,
             run_command=target.run_command,
-            env=dict(target.env or config.env),
+            env=dict(target.env) if "env" in target.declared_fields or target.env else dict(config.env),
             execution_environment=target.execution_environment or config.execution_environment,
             chroot_name=target.chroot_name or config.chroot_name,
             device_serial=target.device_serial or config.device_serial,
@@ -383,7 +383,7 @@ def _structured_job_metadata(job: JobConfig) -> dict[str, object]:
 
 def _job_specs(config: ProjectConfig, job: JobConfig) -> list[CommandSpec]:
     root = job.root or str(config.repo_root)
-    effective_env = dict(config.env)
+    effective_env = {} if "env" in job.declared_fields else dict(config.env)
     effective_env.update(job.env)
     job_config = _runner_config(
         config,

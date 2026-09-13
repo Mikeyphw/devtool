@@ -175,9 +175,20 @@ def _slug(value: str) -> str:
     return "".join(chars).strip("-") or "step"
 
 
+def _key_component(value: str) -> str:
+    """Escape a node-key component without changing ordinary slugs.
+
+    Target, workflow, and step ids may legally contain dots.  Joining raw
+    components with dots made target ``a.b`` + workflow ``c`` collide with
+    target ``a`` + workflow ``b.c``.  Backslash-escaping keeps existing keys
+    stable for common names while making dotted components unambiguous.
+    """
+    return str(value or "").replace("\\", "\\\\").replace(".", "\\.")
+
+
 def _node_key(target: str, workflow: str, index: int, ref: WorkflowStepRef) -> str:
     identity = ref.step_id or f"{index:02d}-{_slug(ref.raw)}"
-    return f"{target}.{workflow}.{identity}"
+    return f"{_key_component(target)}.{_key_component(workflow)}.{_key_component(identity)}"
 
 
 def graph_from_workflow(target: str, workflow: WorkflowConfig) -> ExecutionGraph:

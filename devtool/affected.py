@@ -96,6 +96,35 @@ def _zpaths(payload: bytes) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _git_name_status_paths(payload: bytes) -> tuple[str, ...]:
+    fields = [part.decode("utf-8", errors="surrogateescape").strip() for part in payload.split(b"\0") if part]
+    values: list[str] = []
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        index += 1
+        if not status:
+            continue
+        code = status[0].upper()
+        if code in {"R", "C"}:
+            if index + 1 > len(fields):
+                break
+            old_path = fields[index] if index < len(fields) else ""
+            new_path = fields[index + 1] if index + 1 < len(fields) else ""
+            index += 2
+            for text in (old_path, new_path):
+                if text:
+                    values.append(PurePosixPath(text.replace("\\", "/")).as_posix())
+            continue
+        if index >= len(fields) + 1:
+            break
+        text = fields[index] if index < len(fields) else ""
+        index += 1
+        if text:
+            values.append(PurePosixPath(text.replace("\\", "/")).as_posix())
+    return tuple(values)
+
+
 def git_changed_paths(
     repo_root: Path,
     *,
@@ -118,24 +147,25 @@ def git_changed_paths(
     ordered: list[str] = []
     seen: set[str] = set()
 
-    def add(payload: bytes) -> None:
-        for value in _zpaths(payload):
+    def add(payload: bytes, *, name_status: bool = False) -> None:
+        parser = _git_name_status_paths if name_status else _zpaths
+        for value in parser(payload):
             if value not in seen:
                 seen.add(value)
                 ordered.append(value)
 
     if base:
         endpoint = head or "HEAD"
-        add(_git(repo, "diff", "--name-only", "-z", f"{base}...{endpoint}"))
+        add(_git(repo, "diff", "--name-status", "-z", "-M", f"{base}...{endpoint}"), name_status=True)
         return tuple(ordered)
     if head:
         # A head without a base compares the selected revision to its first
         # parent. This is explicit rather than guessing a branch name.
-        add(_git(repo, "diff", "--name-only", "-z", f"{head}^", head))
+        add(_git(repo, "diff", "--name-status", "-z", "-M", f"{head}^", head), name_status=True)
         return tuple(ordered)
 
-    add(_git(repo, "diff", "--name-only", "-z"))
-    add(_git(repo, "diff", "--cached", "--name-only", "-z"))
+    add(_git(repo, "diff", "--name-status", "-z", "-M"), name_status=True)
+    add(_git(repo, "diff", "--cached", "--name-status", "-z", "-M"), name_status=True)
     add(_git(repo, "ls-files", "--others", "--exclude-standard", "-z"))
     return tuple(ordered)
 
@@ -176,7 +206,7 @@ def _pattern_from_base(repo_root: Path, base: str | None, pattern: str) -> str |
     if normalized == ".." or normalized.startswith("../"):
         # Lexical normalization escaped the repository boundary.
         return None
-    return normalized.lstrip("./")
+    return normalized[2:] if normalized.startswith("./") else normalized
 
 
 def _matches_pattern(path: str, pattern: str) -> bool:

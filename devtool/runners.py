@@ -1611,7 +1611,10 @@ def _run_process_live(
                 except Exception:
                     pass
         tracker.update_callback = _progress_update
+    interrupted_by_devtool = threading.Event()
+
     def _interrupt_process() -> None:
+        interrupted_by_devtool.set()
         try:
             if os.name == "posix":
                 os.killpg(proc.pid, 2)
@@ -1700,7 +1703,7 @@ def _run_process_live(
                 _append_live_log(line)
                 print(line, end="", flush=True)
             code = _wait_process_returncode(proc)
-            if tasker_progress is not None and tasker_progress.cancel_requested():
+            if interrupted_by_devtool.is_set() or (tasker_progress is not None and tasker_progress.cancel_requested()):
                 code = 130
             _finalize_structured_state()
             return code, "".join(output_parts)
@@ -1745,7 +1748,7 @@ def _run_process_live(
                 telemetry_line = task_telemetry_line() + "\n"
                 _append_live_log(telemetry_line)
                 print(telemetry_line, end="", flush=True)
-            if tasker_progress is not None and tasker_progress.cancel_requested():
+            if interrupted_by_devtool.is_set() or (tasker_progress is not None and tasker_progress.cancel_requested()):
                 returncode = 130
                 output_parts.append("\nCancelled from Devtool Control Center. Child process was terminated.\n")
             # Do not render a terminal success here. Report parsing and
@@ -2038,6 +2041,21 @@ def run_specs(
     workflow_fail_fast = bool(workflow_initial_fail_fast)
     workflow_cancelled = bool(workflow_initial_cancelled)
 
+    def _metadata_int(value: object, default: int) -> int:
+        try:
+            if value in (None, ""):
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _metadata_sequence(value: object) -> tuple[object, ...]:
+        if value in (None, ""):
+            return ()
+        if isinstance(value, (list, tuple, set)):
+            return tuple(value)
+        return ()
+
     if tasker_progress is not None and not dry_run:
         tasker_progress.plan_phases([
             {
@@ -2049,7 +2067,7 @@ def run_specs(
                 "node_id": str(spec.metadata.get("workflow_node_key") or ""),
                 "runner": str(spec.metadata.get("workflow_runner") or spec.metadata.get("runner") or ""),
                 "execution_environment": str(spec.metadata.get("execution_environment") or spec.metadata.get("effective_execution_environment") or ""),
-                "depends_on": [str(value) for value in spec.metadata.get("workflow_depends_on", []) or [] if str(value).strip()],
+                "depends_on": [str(value) for value in _metadata_sequence(spec.metadata.get("workflow_depends_on", [])) if str(value).strip()],
             }
             for spec in specs
         ])
@@ -2059,8 +2077,8 @@ def run_specs(
         workflow_dependencies = [
             str(value) for value in (spec.metadata.get("workflow_depends_on") or []) if str(value).strip()
         ]
-        workflow_part_index = int(spec.metadata.get("workflow_node_spec_index") or 1)
-        workflow_part_total = int(spec.metadata.get("workflow_node_spec_total") or 1)
+        workflow_part_index = _metadata_int(spec.metadata.get("workflow_node_spec_index"), 1)
+        workflow_part_total = _metadata_int(spec.metadata.get("workflow_node_spec_total"), 1)
         if workflow_node_key:
             blocked_dependencies = [
                 key for key in workflow_dependencies
@@ -2177,17 +2195,17 @@ def run_specs(
             progress_parser = str(spec.metadata.get("progress_parser") or "")
             requested_gradle_tasks = _requested_gradle_tasks_for_spec(spec, progress_argv)
             try:
-                overall_phase_index = int(spec.metadata.get("validation_phase_index") or spec_index)
+                overall_phase_index = _metadata_int(spec.metadata.get("validation_phase_index"), spec_index)
             except (TypeError, ValueError):
                 overall_phase_index = spec_index
             try:
-                overall_phase_total = int(spec.metadata.get("validation_phase_total") or len(specs))
+                overall_phase_total = _metadata_int(spec.metadata.get("validation_phase_total"), len(specs))
             except (TypeError, ValueError):
                 overall_phase_total = len(specs)
-            memory_guard_mb = int(
+            memory_guard_mb = _metadata_int(
                 spec.metadata.get("validation_memory_guard_mb")
-                or spec.metadata.get("memory_guard_mb")
-                or 0
+                or spec.metadata.get("memory_guard_mb"),
+                0,
             )
             if memory_guard_mb > 0 and _command_delegates_memory_guard(effective_argv):
                 # The Android builder monitors the actual Gradle child itself.

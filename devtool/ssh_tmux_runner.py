@@ -45,7 +45,7 @@ _GLOBAL_VALUE_FLAGS = {
     "--gradle-user-home", "-o", "--output", "--target", "--variant",
     "--runner", "--project-type", "--performance-file", "--copy-via", "--theme",
     "--stdout-payload", "--hud-mode", "--chroot", "--execution-environment",
-    "--matrix", "--matrix-mode", "--toolchain-profile",
+    "--matrix", "--matrix-mode", "--toolchain-profile", "--group",
 }
 _ARTIFACT_COMMAND_VALUE_FLAGS = _GLOBAL_VALUE_FLAGS | _SSH_VALUE_FLAGS | {
     "--test-profile", "--select", "--id", "--tag", "--exclude-tag", "--path",
@@ -57,9 +57,29 @@ _ARTIFACT_COMMAND_VALUE_FLAGS = _GLOBAL_VALUE_FLAGS | _SSH_VALUE_FLAGS | {
     "--max-infrastructure-retries", "--max-resource-retries", "--failure-action",
     "--session", "--scope", "--if-revision", "--after-event", "--event-limit",
     "--limit", "--max-workers", "--cpu-limit", "--gradle-heap-mb",
-    "--memory-guard-mb", "--commit",
+    "--memory-guard-mb", "--commit", "--group",
 }
 _TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off", ""}
+
+def _bool_value(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in _TRUE:
+        return True
+    if text in _FALSE:
+        return False
+    return default
+
+def _transport_timeout() -> float:
+    raw = str(os.environ.get("DEVTOOL_SSH_TRANSPORT_TIMEOUT", "30") or "30").strip()
+    try:
+        return max(1.0, min(float(raw), 3600.0))
+    except ValueError:
+        return 30.0
 
 
 @dataclass(slots=True)
@@ -263,10 +283,16 @@ def resolve_ssh_config(
     if mode not in {"devtool", "commands"}:
         raise ValueError(f"SSH mode must be devtool or commands, got {mode!r}")
     stage_dir = cli_stage_dir or str(env.get("DEVTOOL_SSH_STAGE_DIR", "") or "").strip() or str(file_options.get("stage_dir", "") or "").strip() or "~/.cache/devtool/ssh-stage"
-    copy_artifacts = not ("--ssh-no-artifact-copy" in argv or _truthy(env.get("DEVTOOL_SSH_NO_ARTIFACT_COPY")))
-    if "copy_artifacts" in file_options and not _truthy(file_options.get("copy_artifacts")):
+    copy_artifacts = _bool_value(file_options.get("copy_artifacts"), True) if "copy_artifacts" in file_options else True
+    if "DEVTOOL_SSH_NO_ARTIFACT_COPY" in env:
+        copy_artifacts = not _truthy(env.get("DEVTOOL_SSH_NO_ARTIFACT_COPY"))
+    if "--ssh-no-artifact-copy" in argv:
         copy_artifacts = False
-    detached = "--ssh-detached" in argv or _truthy(env.get("DEVTOOL_SSH_DETACHED")) or _truthy(file_options.get("detached"))
+    detached = _bool_value(file_options.get("detached"), False) if "detached" in file_options else False
+    if "DEVTOOL_SSH_DETACHED" in env:
+        detached = _truthy(env.get("DEVTOOL_SSH_DETACHED"))
+    if "--ssh-detached" in argv:
+        detached = True
 
     if not host:
         source = f" in {config_path}" if config_path else ""
@@ -479,13 +505,13 @@ def _preflight_local_transport(config: SSHRunnerConfig) -> None:
 
 def _remote_tmux_preflight(config: SSHRunnerConfig) -> None:
     command = _build_ssh_remote_sh_argv(config, "command -v tmux >/dev/null 2>&1", tty=False)
-    if subprocess.run(command, check=False).returncode != 0:
+    if subprocess.run(command, check=False, timeout=_transport_timeout()).returncode != 0:
         raise ValueError("SSH preflight failed: tmux is unavailable on the remote host")
 
 
 def _session_status(config: SSHRunnerConfig, session: str) -> str:
     command = _build_ssh_remote_sh_argv(config, f"tmux has-session -t {shlex.quote(session)} >/dev/null 2>&1", tty=False)
-    rc = int(subprocess.run(command, check=False).returncode)
+    rc = int(subprocess.run(command, check=False, timeout=_transport_timeout()).returncode)
     if rc == 0:
         return "active"
     if rc == 1:
@@ -508,7 +534,7 @@ def _assert_session_inactive(config: SSHRunnerConfig, session: str) -> None:
 
 def _remove_remote_tree(config: SSHRunnerConfig, remote_dir: str) -> None:
     command = _build_ssh_remote_sh_argv(config, f"rm -rf -- {_remote_shell_path(remote_dir)}", tty=False)
-    subprocess.run(command, check=False)
+    subprocess.run(command, check=False, timeout=_transport_timeout())
 
 
 def _artifact_operand_indices(forwarded: list[str]) -> set[int]:
@@ -619,7 +645,7 @@ def _build_ssh_remote_sh_argv(
 def _ensure_remote_dir(config: SSHRunnerConfig, remote_dir: str) -> None:
     script = f"mkdir -p -- {_remote_shell_path(remote_dir)}"
     command = _build_ssh_remote_sh_argv(config, script, tty=False)
-    completed = subprocess.run(command, check=False)
+    completed = subprocess.run(command, check=False, timeout=_transport_timeout())
     if completed.returncode != 0:
         raise ValueError(f"could not create remote SSH staging directory: {remote_dir}")
 
@@ -627,7 +653,7 @@ def _ensure_remote_dir(config: SSHRunnerConfig, remote_dir: str) -> None:
 def _copy_local_file_to_remote(config: SSHRunnerConfig, source: Path, remote_path: str) -> None:
     destination = f"{config.destination}:{_remote_scp_path(remote_path)}"
     command = [*build_scp_base_argv(config), str(source), destination]
-    completed = subprocess.run(command, check=False)
+    completed = subprocess.run(command, check=False, timeout=_transport_timeout())
     if completed.returncode != 0:
         raise ValueError(f"could not copy {source} to {config.destination}:{remote_path}")
 
@@ -636,7 +662,7 @@ def _copy_remote_tree_to_local(config: SSHRunnerConfig, remote_dir: str, local_d
     local_dir.mkdir(parents=True, exist_ok=True)
     source = f"{config.destination}:{_remote_scp_path(remote_dir).rstrip('/')}/."
     command = [*build_scp_base_argv(config), "-r", source, str(local_dir)]
-    return int(subprocess.run(command, check=False).returncode)
+    return int(subprocess.run(command, check=False, timeout=_transport_timeout()).returncode)
 
 
 def _ensure_session(config: SSHRunnerConfig, forwarded: list[str]) -> str:
@@ -1026,7 +1052,13 @@ def wrap_specs_for_ssh_commands(
         remote_script = _build_remote_phase_script(config, session=session, command=command)
         ssh_command = _build_ssh_remote_sh_argv(config, remote_script, tty=True)
 
-        local_script = shlex.join(ssh_command) + "; rc=$?"
+        kill_command = _build_ssh_remote_sh_argv(
+            config, f"tmux kill-session -t {shlex.quote(session)} >/dev/null 2>&1 || true", tty=False
+        )
+        local_script = (
+            "trap " + shlex.quote(shlex.join(kill_command) + "; exit 130") + " INT TERM; "
+            + shlex.join(ssh_command) + "; rc=$?; trap - INT TERM"
+        )
         if bool(metadata.get("collect_artifacts") or metadata.get("verify_artifacts")) and config.copy_artifacts:
             # Pull before local verification and clear the destination first so
             # a previous invocation cannot contaminate current artifact truth.

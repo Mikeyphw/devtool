@@ -9,7 +9,7 @@ from .models import CommandSpec
 from .execution_environments import chroot_environment_assignments
 
 
-def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | None = None) -> list[str]:
+def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | None = None, env: dict[str, str] | None = None) -> list[str]:
     """Build the Termux chrootctl command used to execute a shell command.
 
     The runner intentionally uses the Android chroot workflow:
@@ -27,8 +27,9 @@ def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | N
     if not name:
         raise ValueError("chroot_name must not be empty")
 
-    chrootctl = os.environ.get("DEVTOOL_CHROOTCTL", "chrootctl").strip() or "chrootctl"
-    sudo = os.environ.get("DEVTOOL_CHROOT_SUDO", "sudo")
+    env_map = os.environ if env is None else env
+    chrootctl = str(env_map.get("DEVTOOL_CHROOTCTL", "chrootctl")).strip() or "chrootctl"
+    sudo = str(env_map.get("DEVTOOL_CHROOT_SUDO", "sudo"))
     if use_sudo is False:
         sudo = ""
     elif use_sudo is True and not sudo.strip():
@@ -45,7 +46,7 @@ def build_chroot_exec_argv(command: str, chroot_name: str, *, use_sudo: bool | N
     #
     # Disable with:
     #   DEVTOOL_CHROOT_PATH_PREFIX=
-    path_prefix = os.environ.get("DEVTOOL_CHROOT_PATH_PREFIX", "/home/linuxbrew/.linuxbrew/bin")
+    path_prefix = str(env_map.get("DEVTOOL_CHROOT_PATH_PREFIX", "/home/linuxbrew/.linuxbrew/bin"))
     path_prefix = path_prefix.strip()
     if path_prefix:
         # Quote only the static prefix. Keep "$PATH" expandable inside chroot.

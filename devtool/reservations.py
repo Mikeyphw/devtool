@@ -147,7 +147,10 @@ def _run_reservations(repo_root: Path) -> list[Reservation]:
         data = _read_json(path)
         if not data:
             continue
-        pid = int(data.get("pid") or 0)
+        try:
+            pid = int(data.get("pid") or 0)
+        except (TypeError, ValueError):
+            pid = 0
         held = _lock_is_held(path)
         if held is False or (held is None and not _pid_is_alive(pid)):
             continue

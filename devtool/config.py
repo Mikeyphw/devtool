@@ -1395,10 +1395,10 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
         test_command = str(raw_value.get("test_command", "")).strip()
         package_command = str(raw_value.get("package_command", "")).strip()
         run_command = str(raw_value.get("run_command", "")).strip()
-        target_env = dict(base_env)
         raw_env = raw_value.get("env", {})
         if raw_env is not None and not isinstance(raw_env, dict):
             raise SystemExit(f"[targets.{name}.env] must be a TOML table")
+        target_env = {} if "env" in raw_value and isinstance(raw_env, dict) and not raw_env else dict(base_env)
         for key, value in raw_env.items() if isinstance(raw_env, dict) else []:
             target_env[str(key)] = str(value)
         canonical_runner = normalize_runner_name(raw_value.get("runner", ""))

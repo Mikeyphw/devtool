@@ -128,7 +128,7 @@ build = [
             self.assertEqual(len(plan.waves[1].nodes), 1)
             self.assertTrue(plan.parallel_effective)
             self.assertTrue(plan.reservation_paths_known)
-            self.assertEqual(set(plan.reservation_paths), {"a/out", "b/out", "join/out"})
+            self.assertEqual(set(plan.reservation_paths), {"a/input.txt", "a/out", "b/input.txt", "b/out", "join/out"})
 
     def test_unknown_write_node_serializes(self):
         with tempfile.TemporaryDirectory() as td:
@@ -399,7 +399,7 @@ build_command = "true"
             target, paths, known, _ = _single_run_reservation(cfg, args)
             self.assertEqual(target, "api")
             self.assertTrue(known)
-            self.assertEqual(paths, ("api/dist",))
+            self.assertEqual(paths, ("api/src", "api/dist"))
 
     def test_unknown_output_keeps_exclusive_reservation(self):
         with tempfile.TemporaryDirectory() as td:

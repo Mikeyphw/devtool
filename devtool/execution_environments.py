@@ -311,8 +311,11 @@ def preflight_execution(
     for raw in expected_paths:
         if not raw:
             continue
-        path = Path(raw)
-        identity = str(path.expanduser().absolute())
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = repo / path
+        path = path.resolve(strict=False)
+        identity = str(path)
         if identity in seen_targets:
             continue
         seen_targets.add(identity)

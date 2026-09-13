@@ -208,9 +208,41 @@ def _dedupe(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(value) for value in values if str(value)))
 
 
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "y"}:
+        return True
+    if text in {"0", "false", "no", "off", "n", ""}:
+        return False
+    return default
+
+
+def _object_sequence(value: object) -> tuple[object, ...]:
+    if value in (None, ""):
+        return ()
+    if isinstance(value, (list, tuple, set)):
+        return tuple(value)
+    return ()
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        if value in (None, ""):
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _resource_class(runner: str, metadata: Mapping[str, object]) -> str:
     override = str(metadata.get("resource_class") or "").strip().lower()
-    if override:
+    if override in {"normal", "gradle", "dotnet"}:
         return override
     name = str(runner or "").strip().lower()
     if name in {"android", "gradle", "maven"}:
@@ -262,9 +294,12 @@ def scope_for_graph_node(config: ProjectConfig, node: WorkflowNode) -> WorkflowN
         else:
             unsafe_writes.append(value)
 
-    read_only = bool(metadata.get("read_only", False))
+    read_only = _coerce_bool(metadata.get("read_only", False), False)
+    if unsafe_reads or unsafe_writes:
+        read_only = False
     writes_known = read_only or (bool(declared_outputs) and not unsafe_writes)
     if unsafe_writes:
+        writes_known = False
         reason = "declared output escapes repository: " + ", ".join(unsafe_writes)
     elif read_only:
         reason = "node explicitly declares read_only=true"
@@ -345,7 +380,7 @@ def _nodes_from_specs(specs: Sequence[CommandSpec]) -> tuple[WorkflowScheduleNod
     for index, spec in enumerate(specs):
         key = str(spec.metadata.get("workflow_node_key") or "").strip()
         if not key:
-            continue
+            return ()
         if key not in grouped:
             grouped[key] = []
             order.append(key)
@@ -361,14 +396,14 @@ def _nodes_from_specs(specs: Sequence[CommandSpec]) -> tuple[WorkflowScheduleNod
             workflow=str(metadata.get("workflow_name") or ""),
             runner=str(metadata.get("workflow_runner") or metadata.get("runner") or ""),
             action=str(metadata.get("workflow_action") or ""),
-            depends_on=tuple(str(item) for item in metadata.get("workflow_depends_on", []) or [] if str(item)),
+            depends_on=tuple(str(item) for item in _object_sequence(metadata.get("workflow_depends_on", [])) if str(item)),
             spec_indexes=tuple(index for index, _ in parts),
             spec_names=tuple(spec.name for _, spec in parts),
-            reads=tuple(str(item) for item in metadata.get("workflow_read_scopes", []) or [] if str(item)),
-            writes=tuple(str(item) for item in metadata.get("workflow_write_scopes", []) or [] if str(item)),
-            writes_known=bool(metadata.get("workflow_write_scope_known", False)),
-            read_only=bool(metadata.get("workflow_read_only", False)),
-            resource_class=str(metadata.get("workflow_resource_class") or "normal"),
+            reads=tuple(str(item) for item in _object_sequence(metadata.get("workflow_read_scopes", [])) if str(item)),
+            writes=tuple(str(item) for item in _object_sequence(metadata.get("workflow_write_scopes", [])) if str(item)),
+            writes_known=_coerce_bool(metadata.get("workflow_write_scope_known", False), False),
+            read_only=_coerce_bool(metadata.get("workflow_read_only", False), False),
+            resource_class=_resource_class(str(metadata.get("workflow_runner") or metadata.get("runner") or ""), {**metadata, "resource_class": metadata.get("workflow_resource_class") or metadata.get("resource_class")}),
             scope_reason=str(metadata.get("workflow_scope_reason") or ""),
         ))
     return tuple(nodes)
@@ -403,11 +438,11 @@ def build_execution_plan_from_specs(
             raise WorkflowScheduleError(f"Workflow scheduling node {node.key!r} depends on unknown nodes: {', '.join(missing)}")
 
     policy = config.workspace.scheduler
-    requested = policy.parallel if parallel_requested is None else bool(parallel_requested)
+    requested = policy.parallel if parallel_requested is None else _coerce_bool(parallel_requested, False)
     max_nodes = int(max_parallel_nodes or policy.max_parallel_nodes or 2)
     max_nodes = max(1, max_nodes)
-    gradle_limit = policy.max_gradle_nodes if max_gradle_nodes is None else int(max_gradle_nodes)
-    dotnet_limit = policy.max_dotnet_nodes if max_dotnet_nodes is None else int(max_dotnet_nodes)
+    gradle_limit = policy.max_gradle_nodes if max_gradle_nodes is None else _safe_int(max_gradle_nodes, 0)
+    dotnet_limit = policy.max_dotnet_nodes if max_dotnet_nodes is None else _safe_int(max_dotnet_nodes, 0)
     gradle_limit = max(0, gradle_limit)
     dotnet_limit = max(0, dotnet_limit)
 
@@ -465,13 +500,13 @@ def build_execution_plan_from_specs(
         notes.append("Nodes without explicit outputs remain serialized because their write set is unknown.")
 
     reservation_known = all(node.parallel_eligible for node in nodes)
-    reservation_paths = _dedupe(path for node in nodes for path in node.writes) if reservation_known else ()
+    reservation_paths = _dedupe(path for node in nodes for path in (*node.reads, *node.writes)) if reservation_known else ()
     first = nodes[0]
     workspace_targets = tuple(dict.fromkeys(str(spec.metadata.get("workflow_target") or "") for spec in specs if str(spec.metadata.get("workflow_target") or "")))
     return WorkflowExecutionPlan(
         target=workspace_targets[0] if len(workspace_targets) == 1 else "workspace",
         targets=workspace_targets,
-        workflow=first.workflow,
+        workflow=str(getattr(config.workspace, "action", "") or first.workflow),
         nodes=nodes,
         waves=tuple(waves),
         parallel_requested=requested,
@@ -528,7 +563,10 @@ class _NodeProgressProxy:
         return bool(self._sink.cancel_requested())
 
     def clear_cancel(self) -> None:
-        self._sink.clear_cancel()
+        # Worker-local run_specs calls must not clear the shared cancellation
+        # token while sibling workflow nodes are still running.  The outer
+        # scheduler owns the lifecycle of the real sink cancellation state.
+        return None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._sink, name)
@@ -539,6 +577,8 @@ def _node_terminal_state(results: Sequence[OperationResult]) -> str:
     for state in ("cancelled", "failed", "blocked", "skipped"):
         if state in states:
             return state
+    if any(getattr(result, "skipped", False) for result in results):
+        return "skipped"
     if any(int(result.returncode or 0) != 0 for result in results):
         return "failed"
     return "passed"
@@ -633,23 +673,40 @@ def run_workflow_specs(
             with progress_lock:
                 return heartbeat_callback(*args, **kwargs)
 
-        local_results, local_raw = run_specs(
-            config,
-            local_specs,
-            verbose=False,
-            dry_run=dry_run,
-            continue_on_error=continue_on_error,
-            log_path=None,
-            tasker_progress=sink,
-            shutdown_dotnet=False,
-            supervisor_probe=supervisor_probe,
-            heartbeat_callback=locked_heartbeat if heartbeat_callback is not None else None,
-            progress_callback=locked_progress if progress_callback is not None else None,
-            workflow_initial_statuses=dict(statuses),
-            workflow_initial_fail_fast=fail_fast,
-            workflow_initial_cancelled=cancelled,
-        )
-        return key, local_results, local_raw
+        try:
+            local_results, local_raw = run_specs(
+                config,
+                local_specs,
+                verbose=False,
+                dry_run=dry_run,
+                continue_on_error=continue_on_error,
+                log_path=None,
+                tasker_progress=sink,
+                shutdown_dotnet=False,
+                supervisor_probe=supervisor_probe,
+                heartbeat_callback=locked_heartbeat if heartbeat_callback is not None else None,
+                progress_callback=locked_progress if progress_callback is not None else None,
+                workflow_initial_statuses=dict(statuses),
+                workflow_initial_fail_fast=fail_fast,
+                workflow_initial_cancelled=cancelled,
+            )
+            return key, local_results, local_raw
+        except BaseException as exc:
+            metadata = dict(local_specs[0].metadata) if local_specs else {}
+            metadata["workflow_node_state"] = "failed"
+            metadata["workflow_worker_exception"] = type(exc).__name__
+            message = f"Workflow worker failed: {type(exc).__name__}: {exc}"
+            result = OperationResult(
+                name=f"workflow:{key}",
+                argv=[],
+                returncode=1,
+                duration_seconds=0.0,
+                output=message,
+                issues=[],
+                failure_kind="workflow_worker_exception",
+                metadata=metadata,
+            )
+            return key, [result], message
 
     for wave in plan.waves:
         keys = list(wave.nodes)

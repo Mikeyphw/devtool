@@ -95,12 +95,17 @@ def load_jobs(
         raise SystemExit("[jobs] must be a TOML table")
 
     jobs: dict[str, JobConfig] = {}
+    seen_names: set[str] = set()
     for raw_name, raw_value in section.items():
         if not isinstance(raw_name, str) or not isinstance(raw_value, dict):
             raise SystemExit(f"Job {raw_name!r} must be a TOML table")
         name = raw_name.strip()
         if not name:
             raise SystemExit("Job names cannot be empty")
+        normalized_name = name.casefold()
+        if normalized_name in seen_names:
+            raise SystemExit(f"Duplicate job name after normalization: {name!r}")
+        seen_names.add(normalized_name)
 
         runner = normalize_runner_name(raw_value.get("runner", raw_value.get("type", raw_value.get("kind", ""))))
         if not runner:
@@ -130,10 +135,10 @@ def load_jobs(
         except ValueError as exc:
             raise SystemExit(f"Invalid execution environment for job '{name}': {exc}") from exc
 
-        env = {str(k): str(v) for k, v in base_env.items()}
         raw_env = raw_value.get("env", {})
         if raw_env is not None and not isinstance(raw_env, dict):
             raise SystemExit(f"[jobs.{name}.env] must be a TOML table")
+        env = {} if "env" in raw_value and isinstance(raw_env, dict) and not raw_env else {str(k): str(v) for k, v in base_env.items()}
         if isinstance(raw_env, dict):
             env.update({str(k): str(v) for k, v in raw_env.items()})
 
@@ -328,10 +333,15 @@ def load_target_workflows(
         if not isinstance(raw_workflows, dict):
             raise SystemExit(f"[targets.{name}.workflows] must be a TOML table")
         workflows: dict[str, WorkflowConfig] = {}
+        seen_actions: set[str] = set()
         for raw_action, raw_steps in raw_workflows.items():
             action = str(raw_action or "").strip()
             if not action or not _WORKFLOW_ACTION_RE.fullmatch(action):
                 raise SystemExit(f"Target '{name}' has invalid workflow name {raw_action!r}.")
+            normalized_action = action.casefold()
+            if normalized_action in seen_actions:
+                raise SystemExit(f"Target '{name}' declares duplicate workflow after normalization: {action!r}")
+            seen_actions.add(normalized_action)
             if not isinstance(raw_steps, list):
                 raise SystemExit(
                     f"targets.{name}.workflows.{action} must be a TOML array of step references or inline step tables"

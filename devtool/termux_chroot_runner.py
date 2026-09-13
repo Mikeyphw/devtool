@@ -53,7 +53,7 @@ _FLAGS_WITH_VALUES = _PATH_VALUE_FLAGS | {
     "--build-target", "--run-target", "--target-name", "--solution-target",
     "--delivery-mode", "--artifact-type", "--port", "--poll-interval",
     "--recent-events", "--from-ref", "--to-ref", "-m",
-    "--toolchain-profile",
+    "--toolchain-profile", "--group",
 }
 
 _APPLY_COMMANDS = {"apply-overlay", "ao", "apply-overlays", "aos", "apply-snapshot", "as"}
@@ -465,30 +465,19 @@ def build_inner_command(
 
 
 def build_runner_command(config: RunnerConfig, forwarded: list[str]) -> list[str]:
-    old_chrootctl = os.environ.get("DEVTOOL_CHROOTCTL")
-    old_sudo = os.environ.get("DEVTOOL_CHROOT_SUDO")
-    try:
-        os.environ["DEVTOOL_CHROOTCTL"] = config.chrootctl
-        os.environ["DEVTOOL_CHROOT_SUDO"] = config.sudo
-        identity_env = dict(os.environ)
-        if config.linux_user:
-            identity_env["DEVTOOL_TERMUX_CHROOT_USER"] = config.linux_user
-        if config.linux_home:
-            identity_env["DEVTOOL_TERMUX_CHROOT_HOME"] = config.linux_home
-        identity = resolve_chroot_identity(config.chroot_name, config.path_map, env=identity_env)
-        return build_chroot_exec_argv(
-            build_inner_command(config, forwarded, identity=identity),
-            config.chroot_name,
-        )
-    finally:
-        if old_chrootctl is None:
-            os.environ.pop("DEVTOOL_CHROOTCTL", None)
-        else:
-            os.environ["DEVTOOL_CHROOTCTL"] = old_chrootctl
-        if old_sudo is None:
-            os.environ.pop("DEVTOOL_CHROOT_SUDO", None)
-        else:
-            os.environ["DEVTOOL_CHROOT_SUDO"] = old_sudo
+    identity_env = dict(os.environ)
+    identity_env["DEVTOOL_CHROOTCTL"] = config.chrootctl
+    identity_env["DEVTOOL_CHROOT_SUDO"] = config.sudo
+    if config.linux_user:
+        identity_env["DEVTOOL_TERMUX_CHROOT_USER"] = config.linux_user
+    if config.linux_home:
+        identity_env["DEVTOOL_TERMUX_CHROOT_HOME"] = config.linux_home
+    identity = resolve_chroot_identity(config.chroot_name, config.path_map, env=identity_env)
+    return build_chroot_exec_argv(
+        build_inner_command(config, forwarded, identity=identity),
+        config.chroot_name,
+        env=identity_env,
+    )
 
 
 
@@ -531,34 +520,22 @@ def chroot_directory_exists(path: str, chroot_name: str, *, env: Mapping[str, st
     """Check a directory in the chroot namespace without relying on host visibility."""
     if not path or not chroot_name.strip():
         return False
-    env = env or os.environ
-    old_chrootctl = os.environ.get("DEVTOOL_CHROOTCTL")
-    old_sudo = os.environ.get("DEVTOOL_CHROOT_SUDO")
+    env_map = dict(os.environ)
+    if env is not None:
+        env_map.update({str(k): str(v) for k, v in env.items()})
     try:
-        if "DEVTOOL_CHROOTCTL" in env:
-            os.environ["DEVTOOL_CHROOTCTL"] = str(env["DEVTOOL_CHROOTCTL"])
-        if "DEVTOOL_CHROOT_SUDO" in env:
-            os.environ["DEVTOOL_CHROOT_SUDO"] = str(env["DEVTOOL_CHROOT_SUDO"])
         command = "test -d " + shlex.quote(path)
         completed = subprocess.run(
-            build_chroot_exec_argv(command, chroot_name),
+            build_chroot_exec_argv(command, chroot_name, env=env_map),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=8,
             check=False,
+            env=env_map,
         )
         return completed.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
-    finally:
-        if old_chrootctl is None:
-            os.environ.pop("DEVTOOL_CHROOTCTL", None)
-        else:
-            os.environ["DEVTOOL_CHROOTCTL"] = old_chrootctl
-        if old_sudo is None:
-            os.environ.pop("DEVTOOL_CHROOT_SUDO", None)
-        else:
-            os.environ["DEVTOOL_CHROOT_SUDO"] = old_sudo
 
 
 def _mapped_chroot_home(
@@ -614,32 +591,20 @@ def resolve_chroot_identity(
         "[ -n \"$line\" ] || { printf '%s\\n' 'requested chroot identity is absent from /etc/passwd' >&2; exit 69; }; "
         "printf '%s\\n' \"$line\""
     )
-    old_chrootctl = os.environ.get("DEVTOOL_CHROOTCTL")
-    old_sudo = os.environ.get("DEVTOOL_CHROOT_SUDO")
+    env_map = dict(os.environ)
+    env_map.update({str(k): str(v) for k, v in env.items()})
     try:
-        if "DEVTOOL_CHROOTCTL" in env:
-            os.environ["DEVTOOL_CHROOTCTL"] = str(env["DEVTOOL_CHROOTCTL"])
-        if "DEVTOOL_CHROOT_SUDO" in env:
-            os.environ["DEVTOOL_CHROOT_SUDO"] = str(env["DEVTOOL_CHROOT_SUDO"])
         completed = subprocess.run(
-            build_chroot_exec_argv(command, chroot_name),
+            build_chroot_exec_argv(command, chroot_name, env=env_map),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=8,
             check=False,
+            env=env_map,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError(f"Unable to query chroot user/home identity: {exc}") from exc
-    finally:
-        if old_chrootctl is None:
-            os.environ.pop("DEVTOOL_CHROOTCTL", None)
-        else:
-            os.environ["DEVTOOL_CHROOTCTL"] = old_chrootctl
-        if old_sudo is None:
-            os.environ.pop("DEVTOOL_CHROOT_SUDO", None)
-        else:
-            os.environ["DEVTOOL_CHROOT_SUDO"] = old_sudo
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
         raise ValueError(f"Unable to prove requested chroot identity: {detail}")
@@ -682,20 +647,22 @@ def discover_chroot_home_for_termux_path(
     )
     try:
         completed = subprocess.run(
-            build_chroot_exec_argv(command, chroot_name),
+            build_chroot_exec_argv(command, chroot_name, env=dict(os.environ, **{str(k): str(v) for k, v in env.items()})),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
             timeout=8,
             check=False,
-            env=dict(os.environ),
+            env=dict(os.environ, **{str(k): str(v) for k, v in env.items()}),
         )
     except (OSError, subprocess.SubprocessError):
         return ""
     if completed.returncode != 0:
         return ""
     candidates = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    return candidates[0] if candidates else ""
+    # Multiple users containing the same Termux-relative checkout is ambiguous;
+    # do not silently pick the first /home entry and run as the wrong user.
+    return candidates[0] if len(candidates) == 1 else ""
 
 
 def repair_termux_home_mapping(
@@ -798,6 +765,7 @@ _CHROOT_PATH_LIST_ENV_KEYS = {
     "CPLUS_INCLUDE_PATH",
     "PKG_CONFIG_PATH",
     "PYTHONPATH",
+    "CLASSPATH",
 }
 _CHROOT_DROP_TERMUX_PATH_KEYS = {
     "PREFIX",
@@ -810,6 +778,30 @@ _CHROOT_DROP_TERMUX_PATH_KEYS = {
     "TMPDIR",
 }
 _TERMUX_PREFIX_BIN = "/data/data/com.termux/files/usr/bin/"
+
+
+def _replace_mapped_path_substrings(text: str, mappings: Iterable[tuple[str, str]]) -> str:
+    result = str(text)
+    for host, guest in sorted(((str(h).rstrip("/"), str(g).rstrip("/") or "/") for h, g in mappings if str(h).strip()), key=lambda item: len(item[0]), reverse=True):
+        start = 0
+        pieces: list[str] = []
+        while True:
+            index = result.find(host, start)
+            if index < 0:
+                pieces.append(result[start:])
+                break
+            before = result[index - 1] if index > 0 else ""
+            after_index = index + len(host)
+            after = result[after_index] if after_index < len(result) else ""
+            if (before and before not in {":", "=", " ", "'", '"', "("}) or (after and after not in {"/", ":", " ", "'", '"', ")", ""}):
+                pieces.append(result[start:after_index])
+                start = after_index
+                continue
+            pieces.append(result[start:index])
+            pieces.append(guest)
+            start = after_index
+        result = "".join(pieces)
+    return result
 
 
 def _translate_env_value_for_chroot(
@@ -847,10 +839,7 @@ def _translate_env_value_for_chroot(
     if key in _CHROOT_DROP_TERMUX_PATH_KEYS and text.startswith("/data/data/com.termux/"):
         return ""
 
-    translated = text
-    for host, guest in mappings:
-        if host and host in translated:
-            translated = translated.replace(host.rstrip("/"), guest.rstrip("/") or "/")
+    translated = _replace_mapped_path_substrings(text, mappings)
     if translated.startswith(("/", "~/")):
         translated = _translate_path(translated, mappings, cwd=cwd)
     if key == "DEVTOOL_BUILD_CACHE_ROOT":
@@ -904,10 +893,7 @@ def _translate_token_for_chroot(
         if re.fullmatch(r"python(?:3(?:\.\d+)?)?", name):
             return "python3"
         return name
-    translated = text
-    for host, guest in mappings:
-        if host and host in translated:
-            translated = translated.replace(host.rstrip("/"), guest.rstrip("/") or "/")
+    translated = _replace_mapped_path_substrings(text, mappings)
     if _looks_like_path(translated) and translated.startswith(("/", "~/")):
         translated = _translate_path(translated, mappings, cwd=cwd)
     return translated
@@ -1026,7 +1012,7 @@ def wrap_specs_for_termux_host_chroot(
         # inspect the real solution/project path and estimate project totals.
         metadata.setdefault("progress_argv", list(spec.argv))
         metadata.setdefault("progress_cwd", host_cwd)
-        wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, chroot_name), cwd=None, env={}, metadata=metadata))
+        wrapped.append(replace(spec, argv=build_chroot_exec_argv(command, chroot_name, env=dict(env)), cwd=None, env={}, metadata=metadata))
     return wrapped
 
 
@@ -1371,6 +1357,7 @@ def _run_live_pty(argv: list[str], raw_logfile: Path, env: dict[str, str]) -> in
         proc = subprocess.Popen(argv, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, env=env, close_fds=True, start_new_session=True)
         os.close(slave_fd)
         slave_fd = None
+        stdin_fd = sys.stdin.fileno() if hasattr(sys.stdin, "fileno") and sys.stdin.isatty() else None
         while True:
             if proc.poll() is not None:
                 while True:
@@ -1390,14 +1377,19 @@ def _run_live_pty(argv: list[str], raw_logfile: Path, env: dict[str, str]) -> in
                         raise
                 return int(proc.returncode or 0)
             try:
-                ready, _, _ = select.select([master_fd], [], [], 0.2)
-                if ready:
+                watched = [master_fd] + ([stdin_fd] if stdin_fd is not None else [])
+                ready, _, _ = select.select(watched, [], [], 0.2)
+                if master_fd in ready:
                     data = os.read(master_fd, 8192)
                     if data:
                         sys.stdout.buffer.write(data)
                         sys.stdout.buffer.flush()
                         _append_bytes(raw_logfile, data)
                         last_output = time.monotonic()
+                if stdin_fd is not None and stdin_fd in ready:
+                    data = os.read(stdin_fd, 8192)
+                    if data:
+                        os.write(master_fd, data)
                 elif hint_after:
                     now = time.monotonic()
                     if now - last_output >= hint_after and now - last_hint >= hint_after:
@@ -1413,7 +1405,8 @@ def _run_live_pty(argv: list[str], raw_logfile: Path, env: dict[str, str]) -> in
             with contextlib.suppress(Exception):
                 os.killpg(proc.pid, signal.SIGINT)
             try:
-                return int(proc.wait(timeout=8) or 130)
+                proc.wait(timeout=8)
+                return 130
             except subprocess.TimeoutExpired:
                 with contextlib.suppress(Exception):
                     os.killpg(proc.pid, signal.SIGKILL)
