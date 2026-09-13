@@ -190,6 +190,30 @@ class IpcBroker:
             if peer.subscribed and not peer.send(payload):
                 self._drop(peer)
 
+    def _peer_owns_run(self, peer: _Peer, run_id: str) -> bool:
+        """Return True only for the currently registered producer of ``run_id``.
+
+        A peer's historical ``role``/``run_id`` fields are not authority: a later
+        registration can supersede that connection.  The producer registry is the
+        single ownership source used by every mutating IPC message.
+        """
+        return bool(
+            run_id
+            and peer.role == "producer"
+            and peer.run_id == run_id
+            and self.producers.get(run_id) is peer
+        )
+
+    @staticmethod
+    def _reject_peer_mutation(peer: _Peer, *, kind: str, run_id: str) -> None:
+        peer.send({
+            "type": "error",
+            "code": "producer_ownership_required",
+            "message": f"{kind} requires ownership of run {run_id!r}",
+            "run_id": run_id,
+            **_ipc_meta(),
+        })
+
     def _snapshot(self) -> list[dict[str, Any]]:
         return sorted(self.runs.values(), key=lambda value: str(value.get("updated_at") or ""), reverse=True)
 
@@ -205,6 +229,9 @@ class IpcBroker:
             if not run_id:
                 peer.send({"type": "error", "message": "register requires run_id"})
                 return
+            previous = self.producers.get(run_id)
+            if previous is not None and previous is not peer:
+                previous.role = "superseded"
             peer.role = "producer"
             peer.run_id = run_id
             self.producers[run_id] = peer
@@ -220,8 +247,11 @@ class IpcBroker:
             state = message.get("state") or message.get("run")
             if not isinstance(state, dict):
                 return
-            run_id = str(state.get("run_id") or peer.run_id or "").strip()
+            run_id = str(state.get("run_id") or message.get("run_id") or peer.run_id or "").strip()
             if not run_id:
+                return
+            if not self._peer_owns_run(peer, run_id):
+                self._reject_peer_mutation(peer, kind=kind, run_id=run_id)
                 return
             state["run_id"] = run_id
             state = _with_machine_state(state)
@@ -259,8 +289,12 @@ class IpcBroker:
             return
         if kind == "remove_run":
             run_id = str(message.get("run_id") or "").strip()
-            self.runs.pop(run_id, None)
-            self._broadcast({"type": "run_removed", "run_id": run_id})
+            if not self._peer_owns_run(peer, run_id):
+                self._reject_peer_mutation(peer, kind=kind, run_id=run_id)
+                return
+            removed = self.runs.pop(run_id, None) is not None
+            if removed:
+                self._broadcast({"type": "run_removed", "run_id": run_id, **_ipc_meta()})
             return
         if kind == "ping":
             peer.send({"type": "pong", "time": time.time(), **_ipc_meta()})

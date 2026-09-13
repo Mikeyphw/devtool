@@ -8464,6 +8464,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             preview=preview,
             source_artifacts=source_artifacts or None,
             ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+            skip_artifact_validation=bool(getattr(args, "no_manifest_check", False)),
         )
     elif name.startswith("apply-overlay") or name == "ao":
         result = apply_overlay(
@@ -8475,6 +8476,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             log_path=log_path,
             preview=preview,
             ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
+            skip_artifact_validation=bool(getattr(args, "no_manifest_check", False)),
         )
     else:
         result = apply_snapshot(

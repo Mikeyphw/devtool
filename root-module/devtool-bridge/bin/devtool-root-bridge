@@ -62,6 +62,19 @@ require_token() {
 
 validate_command() {
   compact=$(printf '%s' "$1" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ *//')
+
+  # The bridge executes the accepted string through a shell.  Command
+  # substitution therefore remains active even inside double quotes and inside
+  # environment-assignment values.  The root bridge is intentionally narrower
+  # than a general shell: reject expansion/control syntax rather than trying to
+  # prove arbitrary shell text safe.
+  case "$compact" in
+    *'$('*|*'`'*|*';'*|*'|'*|*'&'*|*'<'*|*'>'*)
+      echo "Root bridge rejects shell expansion/control syntax" >&2
+      return 64
+      ;;
+  esac
+
   rest=$compact
   while :; do
     first=${rest%% *}
@@ -77,6 +90,18 @@ validate_command() {
     devtool|devtool\ *|devtool-androidos|devtool-androidos\ *) return 0 ;;
     *) echo "Root bridge only accepts devtool or devtool-androidos commands" >&2; return 64 ;;
   esac
+}
+
+validate_run_id() {
+  run_id=${1:-}
+  [ -n "$run_id" ] && [ ${#run_id} -le 128 ] || { echo "Invalid run id" >&2; return 64; }
+  case "$run_id" in
+    '.'|'..'|*[!A-Za-z0-9._-]*)
+      echo "Invalid run id" >&2
+      return 64
+      ;;
+  esac
+  return 0
 }
 
 run_as_termux() {
@@ -145,6 +170,7 @@ cmd_cancel() {
   require_token "${1:-}"
   run_id=${2:-}
   [ -n "$run_id" ] || { echo "Missing run id" >&2; exit 64; }
+  validate_run_id "$run_id" || exit $?
   pid_file="$RUNS_DIR/$run_id.pid"
   [ -s "$pid_file" ] || { echo "Run is not active" >&2; exit 3; }
   pid=$(cat "$pid_file")
@@ -160,7 +186,7 @@ cmd_run() {
   token=${1:-}; run_id=${2:-}; overlay=${3:-0}; workdir64=${4:-}; command64=${5:-}
   require_token "$token"
   [ -n "$run_id" ] && [ -n "$command64" ] || { echo "Missing run arguments" >&2; exit 64; }
-  case "$run_id" in *[!A-Za-z0-9._-]*|'') echo "Invalid run id" >&2; exit 64;; esac
+  validate_run_id "$run_id" || exit $?
   workdir=$(b64decode "$workdir64") || exit 65
   command=$(b64decode "$command64") || exit 65
   validate_command "$command" || exit $?

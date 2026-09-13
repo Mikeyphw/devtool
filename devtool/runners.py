@@ -2802,11 +2802,90 @@ def _bundle_config_declarations(bundle: Path) -> list[dict[str, str]]:
     return declarations
 
 
-def apply_overlay(repo_root: Path, artifact: str, *, force: bool = False, yes: bool = False, dry_run: bool = False, log_path: Path | str | None = None, preview: dict | None = None, ignore_checksum: bool = False) -> OperationResult:
+def _direct_artifact_validation_failure(
+    repo_root: Path,
+    artifact_path: Path,
+    *,
+    artifact_type: str,
+    operation: str,
+    argv: list[str],
+    log_path: Path | str | None,
+    ignore_checksum: bool,
+) -> OperationResult | None:
+    """Fail closed when a low-level apply caller bypasses the CLI validation gate.
+
+    The CLI validates artifacts before dispatch, but ``apply_overlay`` and
+    ``apply_overlay_bundle`` are also public runner entry points used by tests,
+    integrations, and plugins.  They must not turn a validation rejection into
+    a successful repository mutation merely because the caller skipped the CLI.
+    """
+    validation = validate_artifact(
+        repo_root,
+        artifact_path,
+        artifact_type=artifact_type,
+        check_source_state=True,
+        ignore_checksum=ignore_checksum,
+    )
+    if validation.ok:
+        return None
+    detail = "\n".join(validation.messages) or "Artifact validation rejected the artifact."
+    output = "Artifact validation failed before direct apply:\n" + detail
+    path = str(write_log(output, log_path, append=log_path is not None))
+    return OperationResult(
+        operation,
+        argv,
+        1,
+        0.0,
+        output,
+        [],
+        log_path=path,
+        failure_kind="artifact_failure",
+        metadata={
+            "artifact_path": str(artifact_path),
+            "artifact_validation_enforced": True,
+            "artifact_validation_messages": list(validation.messages),
+        },
+    )
+
+
+def apply_overlay(
+    repo_root: Path,
+    artifact: str,
+    *,
+    force: bool = False,
+    yes: bool = False,
+    dry_run: bool = False,
+    log_path: Path | str | None = None,
+    preview: dict | None = None,
+    ignore_checksum: bool = False,
+    skip_artifact_validation: bool = False,
+) -> OperationResult:
     artifact_path = resolve_artifact_path(artifact)
     if is_overlay_bundle(artifact_path):
-        return apply_overlay_bundle(repo_root, artifact, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
+        return apply_overlay_bundle(
+            repo_root,
+            artifact,
+            force=force,
+            yes=yes,
+            dry_run=dry_run,
+            log_path=log_path,
+            preview=preview,
+            ignore_checksum=ignore_checksum,
+            skip_artifact_validation=skip_artifact_validation,
+        )
     argv = ["devtool", "extract-overlay", str(artifact_path), "-C", str(repo_root)]
+    if not dry_run and not skip_artifact_validation:
+        rejected = _direct_artifact_validation_failure(
+            repo_root,
+            artifact_path,
+            artifact_type="overlay",
+            operation="apply-overlay",
+            argv=argv,
+            log_path=log_path,
+            ignore_checksum=ignore_checksum,
+        )
+        if rejected is not None:
+            return rejected
     return _apply_archive(repo_root, artifact_path, argv, delete_artifact=True, snapshot=False, force=force, yes=yes, dry_run=dry_run, log_path=log_path, preview=preview, ignore_checksum=ignore_checksum)
 
 
@@ -2821,6 +2900,7 @@ def apply_overlay_bundle(
     preview: dict | None = None,
     source_artifacts: Sequence[str | Path] | None = None,
     ignore_checksum: bool = False,
+    skip_artifact_validation: bool = False,
 ) -> OperationResult:
     raw_artifacts = [artifact] if isinstance(artifact, (str, Path)) else list(artifact)
     if not raw_artifacts:
@@ -2839,6 +2919,18 @@ def apply_overlay_bundle(
             artifact_path = create_overlay_bundle(Path(temp_dir.name) / "adhoc_overlay_bundle.zip", original_paths, name="adhoc_overlay_bundle")
         argv = ["devtool", "apply-overlays", *(str(item) for item in original_paths), "-C", str(repo_root)]
         start = time.perf_counter()
+        if not dry_run and not skip_artifact_validation:
+            rejected = _direct_artifact_validation_failure(
+                repo_root,
+                artifact_path,
+                artifact_type="overlay_bundle",
+                operation="apply-overlays",
+                argv=argv,
+                log_path=log_path,
+                ignore_checksum=ignore_checksum,
+            )
+            if rejected is not None:
+                return rejected
         if dry_run:
             text = "$ " + " ".join(argv)
             path = str(write_log(text, log_path, append=log_path is not None))
@@ -2896,7 +2988,7 @@ def apply_overlay_bundle(
                         check_source_state=True,
                         ignore_checksum=ignore_checksum,
                     )
-                    if not validation.ok:
+                    if not skip_artifact_validation and not validation.ok:
                         label = entry.label or Path(entry.bundle_path).name
                         raise RuntimeError(f"Nested overlay validation failed for {label}: " + "; ".join(validation.messages))
                     nested_before = _run_required_preflight(

@@ -366,12 +366,17 @@ final class RootBridgeManager {
                 doubleQuoted = !doubleQuoted;
                 continue;
             }
-            if (singleQuoted || doubleQuoted) continue;
-            if (c == '\n' || c == '\r' || c == ';' || c == '`'
-                    || c == '<' || c == '>' || c == '|' || c == '&') {
+            // Single quotes suppress shell expansion. Double quotes do not:
+            // command substitution via $(...) and backticks still executes inside
+            // them, so detect those before skipping other quoted characters.
+            if (singleQuoted) continue;
+            if (c == '`') return true;
+            if (c == '$' && i + 1 < command.length() && command.charAt(i + 1) == '(') {
                 return true;
             }
-            if (c == '$' && i + 1 < command.length() && command.charAt(i + 1) == '(') {
+            if (doubleQuoted) continue;
+            if (c == '\n' || c == '\r' || c == ';'
+                    || c == '<' || c == '>' || c == '|' || c == '&') {
                 return true;
             }
         }
