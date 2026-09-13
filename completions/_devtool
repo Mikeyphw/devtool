@@ -564,6 +564,8 @@ _devtool() {
     '(-p --copy)'{-p,--copy}'[copy summary on success or verbose output on failure]' \
     '--no-clipboard[disable clipboard prompts and copy behavior]' \
     '--copy-via[preferred clipboard backend]:backend:(auto socket fifo termux x11 wayland)' \
+    '(--output-debug --no-output-debug)--output-debug[show and persist the terminal summary and any clipboard payload]' \
+    '(--output-debug --no-output-debug)--no-output-debug[disable terminal and clipboard output debugging even when DEVTOOL_OUTPUT_DEBUG is enabled]' \
     '--theme[summary theme]:theme:(auto plain)' \
     '--ui-profile[shared UI profile]:profile:_devtool_ui_profiles' \
     '--ui-theme[shared UI theme]:theme:(auto light dark)' \

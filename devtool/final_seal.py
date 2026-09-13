@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 import fnmatch
+import ast
 import tomllib
 
 from .compatibility import COMPATIBILITY_ENTRIES, compatibility_report
@@ -105,6 +106,51 @@ _ALLOWED_BACKUP_PATTERNS = (
     "**/.devtool/**",
 )
 
+
+
+def _read_text_file(repo_root: Path, rel: str) -> str:
+    return (repo_root / rel).read_text(encoding="utf-8", errors="replace")
+
+
+def _markdown_content_errors(repo_root: Path, paths: tuple[str, ...], *, min_bytes: int = 80) -> list[str]:
+    errors: list[str] = []
+    for rel in paths:
+        path = repo_root / rel
+        if not path.is_file():
+            errors.append(f"missing:{rel}")
+            continue
+        text = _read_text_file(repo_root, rel).strip()
+        if len(text.encode("utf-8")) < min_bytes:
+            errors.append(f"too-small:{rel}")
+        if "#" not in text[:2048] and not rel.endswith("README.md"):
+            errors.append(f"no-heading:{rel}")
+        if any(marker in text.lower() for marker in ("todo: fill", "placeholder report", "tbd release evidence")):
+            errors.append(f"placeholder:{rel}")
+    return errors
+
+
+def _python_test_content_errors(repo_root: Path, paths: tuple[str, ...]) -> list[str]:
+    errors: list[str] = []
+    for rel in paths:
+        path = repo_root / rel
+        if not path.is_file():
+            errors.append(f"missing:{rel}")
+            continue
+        text = _read_text_file(repo_root, rel)
+        try:
+            tree = ast.parse(text, filename=rel)
+        except SyntaxError as exc:
+            errors.append(f"syntax:{rel}:{exc.lineno}:{exc.msg}")
+            continue
+        has_test = any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_") for node in ast.walk(tree))
+        has_assertion = "assert " in text or "self.assert" in text
+        if not has_test or not has_assertion:
+            errors.append(f"no-test-contract:{rel}")
+    return errors
+
+
+def _doc_content_errors(repo_root: Path, paths: tuple[str, ...]) -> list[str]:
+    return _markdown_content_errors(repo_root, paths, min_bytes=120)
 
 def _check(id: str, ok: bool, summary: str, details: list[str] | tuple[str, ...] = ()) -> SealCheck:
     return SealCheck(id=id, status="pass" if ok else "fail", summary=summary, details=tuple(details))
@@ -218,16 +264,16 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
         schema_details,
     ))
 
-    _, missing_reports = _existing(repo_root, _REQUIRED_REPORTS)
+    report_errors = _markdown_content_errors(repo_root, _REQUIRED_REPORTS, min_bytes=160)
     checks.append(_check(
         "roadmap.reports",
-        not missing_reports,
-        "all roadmap implementation reports, including HROPS01, AOPS02-AOPS04, pytest revitalization, Gradle optimization, and delivery audit, are present",
-        missing_reports,
+        not report_errors,
+        "all roadmap implementation reports, including HROPS01, AOPS02-AOPS04, pytest revitalization, Gradle optimization, and delivery audit, are present and content-validated",
+        report_errors,
     ))
 
-    _, missing_docs = _existing(repo_root, _REQUIRED_DOCS)
-    checks.append(_check("docs.required", not missing_docs, "canonical release documentation is present", missing_docs))
+    doc_errors = _doc_content_errors(repo_root, _REQUIRED_DOCS)
+    checks.append(_check("docs.required", not doc_errors, "canonical release documentation is present and content-validated", doc_errors))
 
     example_errors: list[str] = []
     for rel in _REQUIRED_EXAMPLES:
@@ -246,12 +292,12 @@ def final_seal_report(repo_root: Path) -> dict[str, Any]:
                 example_errors.append(f"noncanonical:{rel}")
     checks.append(_check("examples.canonical", not example_errors, "canonical TOML examples parse and use modern identity fields", example_errors))
 
-    _, missing_tests = _existing(repo_root, _REQUIRED_TESTS)
+    test_errors = _python_test_content_errors(repo_root, _REQUIRED_TESTS)
     checks.append(_check(
         "tests.roadmap-contracts",
-        not missing_tests,
-        "roadmap, TS00, Android Operations, pytest revitalization, Gradle optimization, and delivery-audit contract suites are present",
-        missing_tests,
+        not test_errors,
+        "roadmap, TS00, Android Operations, pytest revitalization, Gradle optimization, and delivery-audit contract suites are present and syntactically valid",
+        test_errors,
     ))
 
     completion_path = repo_root / "completions" / "_devtool"

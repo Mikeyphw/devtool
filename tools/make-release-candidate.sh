@@ -40,6 +40,19 @@ while (($#)); do
 done
 
 mkdir -p "$out_dir"
+release_before_snapshot="$out_dir/.devtool-release-before.json"
+current_artifacts_manifest="$out_dir/.devtool-current-release-artifacts.json"
+python3 - "$out_dir" "$release_before_snapshot" <<'PY'
+from pathlib import Path
+import hashlib, json, sys
+out=Path(sys.argv[1])
+snapshot=Path(sys.argv[2])
+files={}
+for path in sorted(out.iterdir(), key=lambda p: p.name):
+    if path.is_file():
+        files[path.name]=hashlib.sha256(path.read_bytes()).hexdigest()
+snapshot.write_text(json.dumps({"schema_version": 1, "files": files}, sort_keys=True) + "\n", encoding="utf-8")
+PY
 if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
   SOURCE_DATE_EPOCH=$(git -C "$root" log -1 --format=%ct HEAD 2>/dev/null || true)
   SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-315532800}
@@ -68,8 +81,31 @@ if $build_android; then
     --skip-system-deps --skip-sdk-install
 fi
 
-# Seal all produced release assets into one authoritative manifest/checksum set.
-release_manifest=(python3 "$root/tools/build-release.py" --root "$root" --out-dir "$out_dir" --verify-reproducible)
+python3 - "$out_dir" "$release_before_snapshot" "$current_artifacts_manifest" <<'PY'
+from pathlib import Path
+import hashlib, json, sys
+out=Path(sys.argv[1])
+before_path=Path(sys.argv[2])
+manifest=Path(sys.argv[3])
+before_raw=json.loads(before_path.read_text(encoding="utf-8")).get("files", {}) if before_path.is_file() else {}
+before=before_raw if isinstance(before_raw, dict) else {name: "" for name in before_raw}
+suffixes=(".whl", ".tar.gz", ".tgz", ".deb", ".rpm", ".apk", ".aab", ".aar", ".nupkg", ".snupkg", ".crate", ".jar", ".war", ".zip")
+entries=[]
+for path in sorted(out.iterdir(), key=lambda p: p.name):
+    if not path.is_file() or path.name.startswith("."):
+        continue
+    lower=path.name.lower()
+    if not any(lower.endswith(suffix) for suffix in suffixes):
+        continue
+    digest=hashlib.sha256(path.read_bytes()).hexdigest()
+    if before.get(path.name) == digest:
+        continue
+    entries.append({"path": path.name, "sha256": digest})
+manifest.write_text(json.dumps({"schema_version": 1, "artifacts": entries}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+# Seal only artifacts produced by this candidate build into one authoritative manifest/checksum set.
+release_manifest=(python3 "$root/tools/build-release.py" --root "$root" --out-dir "$out_dir" --verify-reproducible --current-artifacts-manifest "$current_artifacts_manifest")
 $build_android && release_manifest+=(--require-apk-signature)
 "${release_manifest[@]}"
 printf 'Release candidate ready: %s\n' "$out_dir"

@@ -65,16 +65,26 @@ def test_ov16_build_release_manifest_is_hash_checked_and_deterministic(tmp_path:
     import zipfile
     module = output / "devtool-root-bridge-module.zip"
     with zipfile.ZipFile(module, "w") as archive:
-        archive.writestr("module.prop", b"id=devtool_bridge\n")
+        archive.writestr("module.prop", b"id=devtool_bridge\nname=Devtool Bridge\nversion=1\nversionCode=1\n")
         archive.writestr("customize.sh", b"#!/system/bin/sh\n")
-        archive.writestr("bin/devtool-root-bridge", b"#!/system/bin/sh\n")
+        archive.writestr("bin/devtool-root-bridge", b"#!/system/bin/sh\nexec devtool \"$@\"\n")
     wheel = output / "devtool_demo-1.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("devtool_demo/__init__.py", b"")
+        archive.writestr("devtool_demo-1.0.dist-info/WHEEL", "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+        archive.writestr("devtool_demo-1.0.dist-info/METADATA", "Metadata-Version: 2.1\nName: devtool-demo\nVersion: 1.0\n")
+        archive.writestr("devtool_demo-1.0.dist-info/RECORD", "devtool_demo/__init__.py,,\ndevtool_demo-1.0.dist-info/WHEEL,,\ndevtool_demo-1.0.dist-info/METADATA,,\ndevtool_demo-1.0.dist-info/RECORD,,\n")
+    manifest_input = output / ".devtool-current-release-artifacts.json"
+    import hashlib
+    manifest_input.write_text(json.dumps({"schema_version": 1, "artifacts": [
+        {"path": module.name, "sha256": hashlib.sha256(module.read_bytes()).hexdigest()},
+        {"path": wheel.name, "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()},
+    ]}) + "\n", encoding="utf-8")
 
     command = [
         "python3", "-S", str(ROOT / "tools" / "build-release.py"),
         "--root", str(fixture_root), "--out-dir", str(output),
+        "--current-artifacts-manifest", str(output / ".devtool-current-release-artifacts.json"),
     ]
     subprocess.run(command, check=True, capture_output=True, text=True)
     manifest = json.loads((output / "release-artifacts.json").read_text(encoding="utf-8"))
@@ -124,9 +134,11 @@ def test_ov16_release_qualification_final_report_is_hash_sealed(tmp_path: Path) 
     assert len(payload["release_evidence_hash"]) == 64
 
     report.results.append(GateResult(gate="must-not-overwrite", status="failed", required=True))
-    second = write_report(report, tmp_path / "qualification.json", final=True)
-    assert second == first
-    assert second.read_bytes() == original
+    report.release_evidence_hash = ""
+    import pytest
+    with pytest.raises(RuntimeError, match="stale"):
+        write_report(report, tmp_path / "qualification.json", final=True)
+    assert first.read_bytes() == original
 
 
 def test_ov16_release_qualification_tracks_git_invariants_and_final_cli() -> None:

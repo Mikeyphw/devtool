@@ -507,15 +507,42 @@ def qualify(root: Path, *, include_qt: bool = True, include_android: bool = True
     return report
 
 
+
+def _expected_report_hash_from_payload(payload: Mapping[str, object]) -> str:
+    clone = dict(payload)
+    clone.pop("release_evidence_hash", None)
+    return hashlib.sha256(json.dumps(clone, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _validated_existing_final_hash(output: Path) -> str:
+    try:
+        payload = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Existing final qualification report is not valid JSON: {output}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Existing final qualification report is not an object: {output}")
+    if payload.get("schema_version") != 2 or payload.get("report_kind") != "devtool-release-qualification":
+        raise RuntimeError(f"Existing final qualification report has an invalid schema: {output}")
+    embedded = str(payload.get("release_evidence_hash") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", embedded):
+        raise RuntimeError(f"Existing final qualification report has no valid evidence hash: {output}")
+    expected = _expected_report_hash_from_payload(payload)
+    if embedded != expected:
+        raise RuntimeError(f"Existing final qualification report hash does not match its content: {output}")
+    return embedded
+
 def write_report(report: QualificationReport, output: Path, *, final: bool = False) -> Path:
     if final and output.suffix != ".json":
         output = output.with_suffix(output.suffix + ".final.json")
     elif final and not output.name.endswith(".final.json"):
         output = output.with_name(output.stem + ".final.json")
-    if final and output.exists():
-        return output
     if not report.release_evidence_hash:
         report.release_evidence_hash = hashlib.sha256(_canonical_report_bytes(report)).hexdigest()
+    if final and output.exists():
+        existing_hash = _validated_existing_final_hash(output)
+        if existing_hash == report.release_evidence_hash:
+            return output
+        raise RuntimeError(f"Existing final qualification report is stale for current evidence: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=str(output.parent))
     temporary = Path(temporary_name)

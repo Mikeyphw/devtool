@@ -5,8 +5,9 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import tempfile
@@ -182,6 +183,132 @@ def artifact_kind(path: Path) -> str:
     return path.suffix.lower().lstrip(".") or "file"
 
 
+CURRENT_RELEASE_ARTIFACTS = ".devtool-current-release-artifacts.json"
+GENERATED_RELEASE_FILES = {"release-artifacts.json", "SHA256SUMS", "SHA256SUMS.all", CURRENT_RELEASE_ARTIFACTS}
+
+
+def _safe_archive_member_name(name: str, *, archive: str) -> str:
+    normalized = name.replace("\\", "/")
+    if (
+        not normalized
+        or normalized.startswith("/")
+        or "//" in normalized
+        or "\\" in name
+        or "\x00" in normalized
+        or re.match(r"^[A-Za-z]:", normalized)
+    ):
+        raise RuntimeError(f"unsafe {archive} member path: {name!r}")
+    parts = PurePosixPath(normalized).parts
+    if any(part in {"", ".", ".."} for part in parts):
+        raise RuntimeError(f"unsafe {archive} member path: {name!r}")
+    return normalized
+
+
+def _safe_tar_link_target(target: str, *, member: str) -> None:
+    if not target:
+        raise RuntimeError(f"unsafe empty tar link target for {member!r}")
+    _safe_archive_member_name(target, archive="tar link")
+
+
+def _zip_member_names(archive: zipfile.ZipFile) -> tuple[set[str], dict[str, zipfile.ZipInfo]]:
+    names: set[str] = set()
+    infos: dict[str, zipfile.ZipInfo] = {}
+    for info in archive.infolist():
+        normalized = _safe_archive_member_name(info.filename, archive="zip")
+        names.add(normalized)
+        infos[normalized] = info
+    return names, infos
+
+
+def _read_zip_text(archive: zipfile.ZipFile, name: str, *, limit: int = 1024 * 1024) -> str:
+    with archive.open(name, "r") as handle:
+        payload = handle.read(limit + 1)
+    if len(payload) > limit:
+        raise RuntimeError(f"ZIP member is too large to verify safely: {name}")
+    return payload.decode("utf-8", errors="replace")
+
+
+def _require_wheel_metadata(archive: zipfile.ZipFile, names: set[str], checks: list[dict[str, object]]) -> None:
+    dist_info_prefixes = sorted({name.split(".dist-info/", 1)[0] + ".dist-info/" for name in names if ".dist-info/" in name})
+    if len(dist_info_prefixes) != 1:
+        _verification_check(checks, "wheel.dist-info", "failed", "wheel must contain exactly one .dist-info directory")
+        return
+    prefix = dist_info_prefixes[0]
+    required = ("WHEEL", "METADATA", "RECORD")
+    missing = [prefix + member for member in required if prefix + member not in names]
+    if missing:
+        _verification_check(checks, "wheel.metadata", "failed", "missing " + ", ".join(missing))
+        return
+    wheel_text = _read_zip_text(archive, prefix + "WHEEL")
+    metadata_text = _read_zip_text(archive, prefix + "METADATA")
+    record_text = _read_zip_text(archive, prefix + "RECORD")
+    wheel_ok = "Wheel-Version:" in wheel_text and "Generator:" in wheel_text
+    metadata_ok = "Name:" in metadata_text and "Version:" in metadata_text
+    record_paths = {line.split(",", 1)[0] for line in record_text.splitlines() if line.strip()}
+    record_ok = all(prefix + member in record_paths for member in required)
+    _verification_check(checks, "wheel.metadata", "passed" if wheel_ok and metadata_ok and record_ok else "failed", "validated" if wheel_ok and metadata_ok and record_ok else "invalid WHEEL/METADATA/RECORD content")
+
+
+def _root_module_required_by_name(lower_name: str) -> bool:
+    return any(token in lower_name for token in ("root-bridge", "root_module", "root-module", "magisk-module", "module.zip"))
+
+
+def _require_root_module_metadata(path: Path, archive: zipfile.ZipFile, names: set[str], infos: dict[str, zipfile.ZipInfo], checks: list[dict[str, object]]) -> None:
+    required_members = ("module.prop", "customize.sh", "bin/devtool-root-bridge")
+    for member in required_members:
+        present = member in names
+        _verification_check(checks, f"member:{member}", "passed" if present else "failed", "present" if present else "missing")
+    if not all(member in names for member in required_members):
+        return
+    module_prop = _read_zip_text(archive, "module.prop", limit=64 * 1024)
+    customize = _read_zip_text(archive, "customize.sh", limit=64 * 1024)
+    bridge = _read_zip_text(archive, "bin/devtool-root-bridge", limit=512 * 1024)
+    prop_ok = all(re.search(rf"^{key}=\S+", module_prop, re.MULTILINE) for key in ("id", "name", "version", "versionCode"))
+    script_ok = customize.startswith("#!/") and "devtool" in bridge.lower()
+    _verification_check(
+        checks,
+        "root_module.content",
+        "passed" if prop_ok and script_ok else "failed",
+        "validated" if prop_ok and script_ok else "invalid module.prop/customize/root bridge content",
+    )
+
+
+def _tar_archive_integrity(path: Path) -> None:
+    with tarfile.open(path, "r:*") as archive:
+        for member in archive.getmembers():
+            _safe_archive_member_name(member.name, archive="tar")
+            if member.issym() or member.islnk():
+                _safe_tar_link_target(member.linkname, member=member.name)
+
+
+def _current_artifact_names(out_dir: Path, manifest_path: Path | None) -> set[str]:
+    path = manifest_path or (out_dir / CURRENT_RELEASE_ARTIFACTS)
+    if not path.is_file():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Current release artifact manifest is invalid: {path}: {exc}") from exc
+    entries = payload.get("artifacts") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        raise RuntimeError("Current release artifact manifest must contain an artifacts list")
+    names: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise RuntimeError("Current release artifact manifest entries must be objects")
+        name = str(entry.get("path") or "")
+        if not name or "/" in name or "\\" in name or name.startswith(".") or name in {".", ".."}:
+            raise RuntimeError(f"Unsafe current release artifact name: {name!r}")
+        file_path = out_dir / name
+        if not file_path.is_file():
+            raise RuntimeError(f"Current release artifact is missing: {name}")
+        expected = str(entry.get("sha256") or "")
+        if expected and sha256_file(file_path) != expected:
+            raise RuntimeError(f"Current release artifact checksum mismatch: {name}")
+        names.add(name)
+    return names
+
+
 def _apksigner() -> str:
     direct = shutil.which("apksigner")
     if direct:
@@ -222,24 +349,27 @@ def verify_release_artifact(path: Path, *, require_apk_signature: bool = False) 
                 bad = archive.testzip()
                 if bad:
                     raise RuntimeError(f"corrupt ZIP member: {bad}")
-                names = set(archive.namelist())
-            _verification_check(checks, "archive_integrity", "passed")
-            required_members: tuple[str, ...] = ()
-            if kind == "apk":
-                required_members = ("AndroidManifest.xml",)
-            elif kind == "aab":
-                required_members = ("BundleConfig.pb", "base/manifest/AndroidManifest.xml")
-            elif kind == "aar":
-                required_members = ("AndroidManifest.xml", "classes.jar")
-            elif "root-bridge" in lower:
-                required_members = ("module.prop", "customize.sh", "bin/devtool-root-bridge")
-            for member in required_members:
-                present = member in names or any(name.endswith("/" + member) for name in names)
-                _verification_check(checks, f"member:{member}", "passed" if present else "failed", "present" if present else "missing")
+                names, infos = _zip_member_names(archive)
+                _verification_check(checks, "archive_members_safe", "passed")
+                _verification_check(checks, "archive_integrity", "passed")
+                if kind == "wheel":
+                    _require_wheel_metadata(archive, names, checks)
+                required_members: tuple[str, ...] = ()
+                if kind == "apk":
+                    required_members = ("AndroidManifest.xml",)
+                elif kind == "aab":
+                    required_members = ("BundleConfig.pb", "base/manifest/AndroidManifest.xml")
+                elif kind == "aar":
+                    required_members = ("AndroidManifest.xml", "classes.jar")
+                for member in required_members:
+                    present = member in names or any(name.endswith("/" + member) for name in names)
+                    _verification_check(checks, f"member:{member}", "passed" if present else "failed", "present" if present else "missing")
+                root_module = _root_module_required_by_name(lower) or "module.prop" in names
+                if root_module:
+                    _require_root_module_metadata(path, archive, names, infos, checks)
         elif lower.endswith((".tar.gz", ".tgz", ".crate")):
-            with tarfile.open(path, "r:*") as archive:
-                for _ in archive:
-                    pass
+            _tar_archive_integrity(path)
+            _verification_check(checks, "archive_members_safe", "passed")
             _verification_check(checks, "archive_integrity", "passed")
         elif lower.endswith(".deb"):
             if path.read_bytes()[:8] != b"!<arch>\n":
@@ -303,15 +433,20 @@ def discover_release_artifacts(
     *,
     exclude: set[str] | None = None,
     require_apk_signature: bool = False,
+    current_artifacts_manifest: Path | None = None,
 ) -> list[dict[str, object]]:
-    excluded = set(exclude or set()) | {"release-artifacts.json", "SHA256SUMS", "SHA256SUMS.all"}
+    excluded = set(exclude or set()) | GENERATED_RELEASE_FILES
+    current_names = _current_artifact_names(out_dir, current_artifacts_manifest)
     records: list[dict[str, object]] = []
-    for path in sorted(out_dir.iterdir(), key=lambda item: item.name):
-        if not path.is_file() or path.name in excluded or path.name.startswith("."):
+    for name in sorted(current_names):
+        if name in excluded or name.startswith("."):
             continue
+        path = out_dir / name
+        if not path.is_file():
+            raise RuntimeError(f"Current release artifact disappeared during discovery: {name}")
         lower = path.name.lower()
         if not any(lower.endswith(suffix) for suffix in RELEASE_ARTIFACT_SUFFIXES):
-            continue
+            raise RuntimeError(f"Current release artifact has unsupported suffix: {name}")
         records.append(artifact_record(path, require_apk_signature=require_apk_signature))
     return records
 
@@ -343,6 +478,7 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=Path("dist/release"))
     parser.add_argument("--verify-reproducible", action="store_true")
     parser.add_argument("--require-apk-signature", action="store_true", help="Fail if an APK cannot be verified with apksigner")
+    parser.add_argument("--current-artifacts-manifest", type=Path, help="JSON manifest naming release artifacts produced by the current candidate build")
     args = parser.parse_args()
 
     root = (args.root or repository_root()).resolve()
@@ -372,7 +508,8 @@ def main() -> int:
     artifacts = [
         artifact,
         *discover_release_artifacts(
-            out_dir, exclude={archive.name}, require_apk_signature=args.require_apk_signature
+            out_dir, exclude={archive.name}, require_apk_signature=args.require_apk_signature,
+            current_artifacts_manifest=(args.current_artifacts_manifest.resolve() if args.current_artifacts_manifest else None),
         ),
     ]
     for item in artifacts:
