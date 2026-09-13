@@ -8130,9 +8130,15 @@ def artifact_variant(source: Path) -> str:
         if marker in parts:
             index = parts.index(marker)
             if index + 1 < len(parts) - 1:
-                candidate = parts[index + 1]
-                if candidate not in {"outputs", "intermediates"}:
-                    classifier = slugify_name(candidate)
+                components: list[str] = []
+                for component in parts[index + 1:-1]:
+                    if component in {"outputs", "intermediates"}:
+                        continue
+                    if component.lower() in {"apk", "bundle", "aar"}:
+                        continue
+                    components.append(component)
+                if components:
+                    classifier = slugify_name("-".join(components))
                     if "unsigned" in stem_lower and "unsigned" not in classifier:
                         classifier += "-unsigned"
                     return classifier

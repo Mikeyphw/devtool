@@ -563,6 +563,27 @@ def _safe_rel(name: str) -> Path:
     return Path(*parts)
 
 
+def _archive_member_is_root_directory(name: str, *, is_dir: bool) -> bool:
+    """Return True for harmless archive root-directory marker entries.
+
+    Some tar creators include a directory member named ``.`` or ``./`` when an
+    archive is created from a directory root.  That member does not map to a
+    repository payload path and should be ignored, while empty or root-named
+    non-directory members must still fail closed.
+    """
+    if not is_dir:
+        return False
+    raw = str(name or "").strip()
+    if "\x00" in raw or "\\" in raw:
+        return False
+    if not raw:
+        return True
+    rel = PurePosixPath(raw)
+    if rel.is_absolute():
+        return False
+    return all(part in {"", "."} for part in rel.parts)
+
+
 def _canonical_archive_path(name: str) -> str:
     return _safe_rel(name).as_posix()
 
@@ -1374,11 +1395,14 @@ def list_archive_members(artifact: str | Path, *, include_data: bool = False) ->
     if suffix == ".zip":
         with zipfile.ZipFile(path) as zf:
             for info in zf.infolist():
-                normalized = _canonical_archive_path(info.filename.rstrip("/"))
+                is_dir = info.is_dir()
+                raw_name = info.filename.rstrip("/")
+                if _archive_member_is_root_directory(raw_name, is_dir=is_dir):
+                    continue
+                normalized = _canonical_archive_path(raw_name)
                 mode_type = (info.external_attr >> 16) & 0o170000
                 if mode_type == 0o120000:
                     raise RuntimeError(f"Unsafe zip symlink member: {info.filename}")
-                is_dir = info.is_dir()
                 _member_collision_guard(seen, normalized, is_dir=is_dir)
                 data = None if is_dir or not include_data else zf.read(info.filename)
                 mode = (info.external_attr >> 16) & 0o7777
@@ -1387,10 +1411,13 @@ def list_archive_members(artifact: str | Path, *, include_data: bool = False) ->
     if suffix and suffix != ".zip":
         with open_tar_archive(path) as tf:
             for member in tf.getmembers():
-                normalized = _canonical_archive_path(member.name.rstrip("/"))
+                is_dir = member.isdir()
+                raw_name = member.name.rstrip("/")
+                if _archive_member_is_root_directory(raw_name, is_dir=is_dir):
+                    continue
+                normalized = _canonical_archive_path(raw_name)
                 if member.islnk() or member.issym() or member.isdev():
                     raise RuntimeError(f"Unsafe tar member: {member.name}")
-                is_dir = member.isdir()
                 if not is_dir and not member.isfile():
                     raise RuntimeError(f"Unsupported tar member type: {member.name}")
                 _member_collision_guard(seen, normalized, is_dir=is_dir)

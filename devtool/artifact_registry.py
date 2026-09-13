@@ -19,6 +19,77 @@ from .core.events import ArtifactCreated, publish_event
 
 REGISTRY_SCHEMA = 2
 
+_ARCHIVE_SUFFIXES = (
+    ".tar.zst", ".tar.gz", ".tar.xz", ".tar.bz2", ".tgz", ".txz", ".tbz2",
+    ".whl", ".nupkg", ".snupkg", ".apk", ".aab", ".aar", ".jar", ".war",
+    ".ear", ".crate", ".deb", ".rpm", ".zip", ".tar",
+)
+_TRUE_STRINGS = {"1", "true", "yes", "y", "on"}
+_FALSE_STRINGS = {"0", "false", "no", "n", "off", ""}
+_BOOLEAN_METADATA_KEYS = {
+    "valid", "verification_requested", "verified", "signed", "copied", "required",
+    "used_cached_outputs", "external_tools", "external_required", "debuggable",
+    "release", "instrumented", "exported", "didWork", "did_work",
+}
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUE_STRINGS:
+            return True
+        if lowered in _FALSE_STRINGS:
+            return False
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
+def _artifact_type(path: Path) -> str:
+    name = path.name.lower()
+    for suffix in _ARCHIVE_SUFFIXES:
+        if name.endswith(suffix):
+            return suffix.lstrip(".")
+    return path.suffix.lower().lstrip(".") or "file"
+
+
+def _normalize_metadata_booleans(value: Any, *, key: str = "") -> Any:
+    if isinstance(value, dict):
+        return {str(k): _normalize_metadata_booleans(v, key=str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalize_metadata_booleans(item) for item in value]
+    if key in _BOOLEAN_METADATA_KEYS:
+        return _coerce_bool(value, False)
+    return value
+
+
+def _parse_registry_schema(value: Any) -> int | None:
+    if value in (None, ""):
+        return 1
+    if isinstance(value, bool):
+        return None
+    try:
+        schema = int(value)
+    except (TypeError, ValueError):
+        return None
+    return schema if schema > 0 else None
+
+
+def _parse_timestamp(value: Any) -> datetime:
+    raw = str(value or "")
+    try:
+        stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.now(timezone.utc)
+    if stamp.tzinfo is None:
+        return stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone.utc)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -81,7 +152,11 @@ def _load_registry_unlocked(repo_root: Path, *, preserve_corrupt: bool = True) -
         warning = _backup_corrupt_registry(path, "expected object with items list") if preserve_corrupt else "invalid registry structure"
         return _empty_registry(warning=warning)
     # Schema 1 records remain readable. New writes are always schema 2.
-    data["schema_version"] = int(data.get("schema_version") or 1)
+    schema = _parse_registry_schema(data.get("schema_version"))
+    if schema is None:
+        warning = _backup_corrupt_registry(path, "invalid schema_version") if preserve_corrupt else "invalid schema_version"
+        return _empty_registry(warning=warning)
+    data["schema_version"] = schema
     if not isinstance(data.get("verifications"), list):
         data["verifications"] = []
     return data
@@ -255,6 +330,7 @@ def register_paths(
                 specific = dict(item_metadata.get(str(path)) or item_metadata.get(display) or {})
             combined_metadata = dict(shared)
             combined_metadata.update(specific)
+            combined_metadata = _normalize_metadata_booleans(combined_metadata)
             sha256 = _sha256(path)
             registered_at = _now()
             source_path = str(combined_metadata.get("source_path") or display)
@@ -265,7 +341,7 @@ def register_paths(
                 "canonical_path": display,
                 "source_path": source_path,
                 "exported_path": display if source_path != display else "",
-                "type": str(combined_metadata.get("type") or path.suffix.lower().lstrip(".") or "file"),
+                "type": str(combined_metadata.get("type") or _artifact_type(path)),
                 "size": path.stat().st_size,
                 "sha256": sha256,
                 "commit": commit,
@@ -276,11 +352,11 @@ def register_paths(
                 "variant": str(combined_metadata.get("variant") or ""),
                 "state": str(combined_metadata.get("state") or "discovered"),
                 "producer_task": str(combined_metadata.get("producer_task") or ""),
-                "verification_requested": bool(combined_metadata.get("verification_requested", False)),
+                "verification_requested": _coerce_bool(combined_metadata.get("verification_requested", False), False),
                 "verification_status": str(combined_metadata.get("verification_status") or ""),
                 "created_at": registered_at,
                 "registered_at": registered_at,
-                "valid": bool(combined_metadata.get("valid", True)),
+                "valid": _coerce_bool(combined_metadata.get("valid", True), True),
                 "metadata": combined_metadata,
             }
             # Stable event identity is useful for cross-process reconciliation
@@ -385,20 +461,21 @@ def prune_registry(repo_root: Path, *, older_than_days: float, delete_files: boo
     managed = (repo_root / ".devtool" / "build-artifacts").resolve()
     with _registry_lock(repo_root):
         data = _load_registry_unlocked(repo_root)
+        original_items = [item for item in data.get("items", []) if isinstance(item, dict)]
         kept: list[dict[str, Any]] = []
         removed: list[dict[str, Any]] = []
-        for item in data.get("items", []):
-            if not isinstance(item, dict):
-                continue
-            raw = str(item.get("registered_at") or item.get("created_at") or "")
-            try:
-                stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            except ValueError:
-                stamp = datetime.now(timezone.utc)
+        retained_paths_all: set[str] = set()
+        for item in original_items:
+            stamp = _parse_timestamp(item.get("registered_at") or item.get("created_at"))
             if stamp >= cutoff:
                 kept.append(item)
+                retained_paths_all.add(str(item.get("path") or ""))
+
+        for item in original_items:
+            if item in kept:
                 continue
-            path = resolve_artifact_path(repo_root, str(item.get("path") or ""))
+            path_value = str(item.get("path") or "")
+            path = resolve_artifact_path(repo_root, path_value)
             deleted = False
             if delete_files and path.is_file():
                 try:
@@ -406,14 +483,11 @@ def prune_registry(repo_root: Path, *, older_than_days: float, delete_files: boo
                 except ValueError:
                     pass
                 else:
-                    # A historical record may share its path with a newer
-                    # record. Never delete a managed file still referenced by a
-                    # retained event.
-                    retained_paths = {
-                        str(value.get("path") or "") for value in kept
-                        if isinstance(value, dict)
-                    }
-                    if str(item.get("path") or "") not in retained_paths:
+                    # A historical record may share its path with a retained
+                    # newer record that appears later in the registry. Compute
+                    # all retained paths before deleting anything so registry
+                    # order cannot make pruning destructive.
+                    if path_value not in retained_paths_all:
                         path.unlink()
                         deleted = True
             copy = dict(item)

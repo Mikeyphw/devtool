@@ -51,6 +51,27 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+_TRUE_STRINGS = {"1", "true", "yes", "y", "on"}
+_FALSE_STRINGS = {"0", "false", "no", "n", "off", ""}
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUE_STRINGS:
+            return True
+        if lowered in _FALSE_STRINGS:
+            return False
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
 def _tool_from_sdk(name: str) -> str | None:
     """Compatibility wrapper around the canonical Android capability resolver."""
     return resolved_android_tool(name)
@@ -310,13 +331,10 @@ def _expected_android_variants(tasks: Iterable[object]) -> set[str]:
         if not full:
             continue
         variants.add(full)
-        for build_type in _ANDROID_BUILD_TYPES:
-            marker = build_type.capitalize()
-            if suffix.endswith(marker):
-                flavor = suffix[: -len(marker)]
-                if flavor:
-                    variants.add(slugify_name(flavor))
-                break
+        # Do not add flavor-only aliases for typed build tasks such as
+        # assembleFreeRelease. A fallback scan must not accept an older
+        # build/outputs/apk/free/debug/app.apk just because both artifacts share
+        # the "free" flavor.
     return variants
 
 
@@ -397,7 +415,7 @@ def collect_and_verify_android_artifacts(
     unique = sorted({path.resolve() for path in discovered if path.is_file()})
     artifact_options = config.runner_options.get("artifacts", {})
     required = (
-        bool(artifact_options.get("required", config.kind == "android"))
+        _coerce_bool(artifact_options.get("required", config.kind == "android"), config.kind == "android")
         if isinstance(artifact_options, dict)
         else config.kind == "android"
     )

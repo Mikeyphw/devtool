@@ -2468,10 +2468,11 @@ def run_specs(
 
         artifact_options = config.runner_options.get("artifacts", {})
         artifact_options = dict(artifact_options) if isinstance(artifact_options, dict) else {}
+        from .artifact_pipeline import _coerce_bool as _artifact_bool
         if bool(
-            result_metadata.get("collect_artifacts")
-            or result_metadata.get("verify_artifacts")
-            or artifact_options.get("verify") is True
+            _artifact_bool(result_metadata.get("collect_artifacts"), False)
+            or _artifact_bool(result_metadata.get("verify_artifacts"), False)
+            or _artifact_bool(artifact_options.get("verify"), False)
             or artifact_options.get("paths")
             or artifact_options.get("artifact_paths")
             or artifact_options.get("directories")
@@ -2515,12 +2516,22 @@ def run_specs(
                         else "artifact verification reported errors"
                     )
                 result_metadata["artifacts"] = artifact_metadata
+                if int(artifact_metadata.get("invalid") or 0) > 0 and not artifact_errors:
+                    artifact_issues.append(Issue(
+                        "error", "artifact-verify", relativize(config.repo_root, str(artifact_root)),
+                        "ARTIFACT_INVALID_TOTAL",
+                        "Artifact metadata reports invalid outputs but no detailed verification issue was emitted.",
+                    ))
+                    artifact_errors = [issue for issue in artifact_issues if issue.severity == "error"]
                 issues.extend(artifact_issues)
                 output = (output.rstrip() + "\n" if output else "") + format_artifact_summary(artifact_metadata)
                 if artifact_issues:
                     failures = [issue for issue in artifact_issues if issue.severity == "error"]
                     warnings = [issue for issue in artifact_issues if issue.severity == "warning"]
                     if failures:
+                        result_metadata["artifact_verification_failed"] = True
+                        if returncode == 0:
+                            returncode = 1
                         output += "Devtool artifact verification failures:\n"
                         for issue in failures[:8]:
                             output += f"- {issue.file} [{issue.code}]: {issue.message}\n"

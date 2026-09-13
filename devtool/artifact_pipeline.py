@@ -72,6 +72,28 @@ def _is_recent(path: Path, started_at: float) -> bool:
         return False
 
 
+_TRUE_STRINGS = {"1", "true", "yes", "y", "on"}
+_FALSE_STRINGS = {"0", "false", "no", "n", "off", ""}
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    """Return an explicit boolean without treating arbitrary strings as truthy."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUE_STRINGS:
+            return True
+        if lowered in _FALSE_STRINGS:
+            return False
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
 def _dedupe(candidates: Iterable[ArtifactCandidate]) -> list[ArtifactCandidate]:
     by_path: dict[Path, ArtifactCandidate] = {}
     priority = {"produced": 4, "reused": 3, "preexisting": 2, "discovered": 1}
@@ -100,7 +122,7 @@ def _gradle_event_candidates(output: str, project_root: Path) -> list[ArtifactCa
             continue
         task = str(event.get("task") or "")
         outcome = str(event.get("outcome") or "")
-        did_work = bool(event.get("didWork", False))
+        did_work = _coerce_bool(event.get("didWork", False), False)
         state = "produced" if did_work and outcome == "success" else "reused" if outcome in {"up-to-date", "skipped"} else "discovered"
         paths = event.get("artifactOutputs") or event.get("artifact_outputs") or []
         if not isinstance(paths, list):
@@ -171,7 +193,8 @@ def _node_candidates(project_root: Path, output: str, started_at: float) -> list
         for item in payload if isinstance(payload, list) else []:
             if not isinstance(item, dict) or not item.get("filename"):
                 continue
-            candidates.append(ArtifactCandidate((project_root / str(item["filename"])).resolve(), "produced", metadata={"node_package": item}))
+            path = (project_root / str(item["filename"])).resolve()
+            candidates.append(ArtifactCandidate(path, "produced" if _is_recent(path, started_at) else "reused", metadata={"node_package": item}))
     for line in (output or "").splitlines():
         token = line.strip().strip("'\"")
         if token.endswith(".tgz"):
@@ -380,7 +403,7 @@ def _configured_candidates(config: ProjectConfig, project_root: Path, started_at
     patterns = options.get("patterns") or ["*"]
     if isinstance(patterns, str):
         patterns = [patterns]
-    recursive = bool(options.get("recursive", True))
+    recursive = _coerce_bool(options.get("recursive", True), True)
     for raw in raw_directories if isinstance(raw_directories, (list, tuple)) else []:
         directory = Path(str(raw)).expanduser()
         if not directory.is_absolute():
@@ -419,7 +442,7 @@ def _runner_candidates(
         if isinstance(directories, str):
             directories = [directories]
         candidates: list[ArtifactCandidate] = []
-        allow_cached = bool(result_metadata.get("artifact_allow_cached", False))
+        allow_cached = _coerce_bool(result_metadata.get("artifact_allow_cached", False), False)
         for raw in directories if isinstance(directories, (list, tuple)) else []:
             directory = Path(str(raw)).expanduser()
             if not directory.is_absolute():
@@ -470,6 +493,46 @@ def _runner_candidates(
     return []
 
 
+def _verify_tar_zst(path: Path, checks: list[dict[str, Any]]) -> bool:
+    try:
+        head = path.read_bytes()[:4]
+    except OSError as exc:
+        checks.append({"name": "archive_integrity", "status": "failed", "detail": str(exc)})
+        return False
+    if head != bytes.fromhex("28b52ffd"):
+        checks.append({"name": "archive_integrity", "status": "failed", "detail": "invalid zstd frame magic for tar.zst artifact"})
+        return False
+    zstd = shutil.which("zstd") or shutil.which("unzstd")
+    if not zstd:
+        checks.append({"name": "archive_integrity", "status": "failed", "detail": "tar.zst verification requires zstd support"})
+        return False
+    try:
+        proc = subprocess.run(
+            [zstd, "-dc", str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        checks.append({"name": "archive_integrity", "status": "failed", "detail": str(exc)})
+        return False
+    if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or [f"zstd exited {proc.returncode}"]
+        checks.append({"name": "archive_integrity", "status": "failed", "detail": detail[0]})
+        return False
+    try:
+        import io
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as archive:
+            for _ in archive:
+                pass
+    except (tarfile.TarError, OSError) as exc:
+        checks.append({"name": "archive_integrity", "status": "failed", "detail": f"invalid tar payload after zstd decompression: {exc}"})
+        return False
+    checks.append({"name": "archive_integrity", "status": "passed", "detail": "zstd-compressed tar"})
+    return True
+
+
 def _basic_verify(path: Path) -> tuple[bool, list[dict[str, Any]], list[Issue]]:
     checks: list[dict[str, Any]] = []
     issues: list[Issue] = []
@@ -492,6 +555,9 @@ def _basic_verify(path: Path) -> tuple[bool, list[dict[str, Any]], list[Issue]]:
                 if bad:
                     raise ValueError(f"corrupt ZIP member: {bad}")
             checks.append({"name": "archive_integrity", "status": "passed", "detail": ""})
+        elif suffix in {".tar.zst", ".tzst"}:
+            if not _verify_tar_zst(path, checks):
+                return False, checks, issues
         elif suffix in {".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".crate"}:
             with tarfile.open(path, "r:*") as archive:
                 # Iteration validates headers without extracting untrusted content.
@@ -586,44 +652,67 @@ def _copy_to_managed_output(config: ProjectConfig, candidates: list[ArtifactCand
     output_dir = configured_output_dir(config)
     if output_dir is None or not candidates:
         return candidates
-    # If the producer (notably the Android builder) already wrote artifacts to
-    # the requested output directory, prefer those canonical copies and avoid a
-    # second copy/collision rename.
-    existing_managed: list[ArtifactCandidate] = []
-    for candidate in candidates:
-        try:
-            candidate.path.relative_to(output_dir)
-        except ValueError:
-            continue
-        existing_managed.append(candidate)
-    if existing_managed:
-        hashes = {_sha256(candidate.path) for candidate in existing_managed}
-        for candidate in candidates:
-            if candidate in existing_managed:
-                continue
-            try:
-                digest = _sha256(candidate.path)
-            except OSError:
-                continue
-            if digest not in hashes:
-                existing_managed.append(candidate)
-        return _dedupe(existing_managed)
 
     options = _options(config)
     base_name = str(options.get("output_name") or "").strip()
     policy = str(options.get("collision") or "unique").strip().lower()
     if policy not in {"unique", "replace", "fail"}:
         policy = "unique"
-    copied: list[ArtifactCandidate] = []
+
+    existing_managed: list[ArtifactCandidate] = []
+    outside: list[ArtifactCandidate] = []
+    managed_hashes: set[str] = set()
+    for candidate in candidates:
+        try:
+            candidate.path.relative_to(output_dir)
+        except ValueError:
+            outside.append(candidate)
+            continue
+        existing_managed.append(candidate)
+        try:
+            managed_hashes.add(_sha256(candidate.path))
+        except OSError:
+            pass
+
+    copied: list[ArtifactCandidate] = list(existing_managed)
     total = len(candidates)
-    for index, candidate in enumerate(candidates, 1):
+    used_destinations = {candidate.path.resolve() for candidate in existing_managed}
+
+    def destination_not_used(path: Path) -> Path:
+        resolved = path.resolve(strict=False)
+        if resolved not in used_destinations:
+            used_destinations.add(resolved)
+            return path
+        suffix = _suffix(path)
+        stem = path.name[: -len(suffix)] if suffix else path.stem
+        serial = 2
+        while True:
+            candidate = path.with_name(f"{stem}-{serial}{suffix}")
+            resolved_candidate = candidate.resolve(strict=False)
+            if resolved_candidate not in used_destinations and not candidate.exists():
+                used_destinations.add(resolved_candidate)
+                return candidate
+            serial += 1
+
+    for index, candidate in enumerate(outside, 1):
+        try:
+            digest = _sha256(candidate.path)
+        except OSError:
+            digest = ""
+        if digest and digest in managed_hashes:
+            continue
         destination = output_dir / _safe_output_name(candidate.path, base_name, index, total)
-        copied_path = atomic_copy_artifact(candidate.path, destination, collision=policy)
+        destination = _collision_destination(destination, policy)
+        destination = destination_not_used(destination)
+        copy_policy = "replace" if policy == "replace" else ("fail" if destination.exists() else "unique")
+        copied_path = atomic_copy_artifact(candidate.path, destination, collision=copy_policy)
         metadata = dict(candidate.metadata)
         metadata["source_path"] = str(candidate.path)
         metadata["copied"] = copied_path != candidate.path
         copied.append(ArtifactCandidate(copied_path, candidate.state, candidate.producer_task, metadata))
-    return copied
+        if digest:
+            managed_hashes.add(digest)
+    return _dedupe(copied)
 
 
 def collect_and_process_artifacts(
@@ -640,11 +729,11 @@ def collect_and_process_artifacts(
     """Collect, verify, export-ready copy, and immutably register artifacts."""
     options = _options(config)
     configured_verify = options.get("verify")
-    verify_requested = bool(spec_metadata.get("verify_artifacts", False))
+    verify_requested = _coerce_bool(spec_metadata.get("verify_artifacts", False), False)
     if configured_verify is not None:
-        verify_requested = bool(configured_verify)
+        verify_requested = _coerce_bool(configured_verify, False)
     collect_requested = bool(
-        spec_metadata.get("collect_artifacts", False)
+        _coerce_bool(spec_metadata.get("collect_artifacts", False), False)
         or verify_requested
         or options.get("paths")
         or options.get("artifact_paths")
@@ -684,7 +773,7 @@ def collect_and_process_artifacts(
             state = event.state if event else ("produced" if _is_recent(path, started_at) and not android_metadata.get("used_cached_outputs") else "reused")
             candidates.append(ArtifactCandidate(path, state, event.producer_task if event else "", {"verification": dict(item)}))
         issues.extend(android_issues)
-        required = bool(android_metadata.get("required", False))
+        required = _coerce_bool(android_metadata.get("required", False), False)
         external = android_metadata.get("external_verification", {})
     else:
         candidates = _dedupe([
@@ -697,11 +786,11 @@ def collect_and_process_artifacts(
                 started_at=started_at,
             ),
         ])
-        required = bool(options.get("required", spec_metadata.get("artifact_required", spec_name == "package")))
+        required = _coerce_bool(options.get("required", spec_metadata.get("artifact_required", spec_name == "package")), spec_name == "package")
         external = {}
 
     candidates = _dedupe(candidates)
-    copy_enabled = bool(spec_metadata.get("copy_artifacts", True))
+    copy_enabled = _coerce_bool(spec_metadata.get("copy_artifacts", True), True)
     if returncode == 0 and copy_enabled:
         try:
             candidates = _copy_to_managed_output(config, candidates)
@@ -725,12 +814,12 @@ def collect_and_process_artifacts(
         verification = candidate.metadata.get("verification")
         package_record = python_items.get(str(source_path)) or python_items.get(str(candidate.path))
         if isinstance(verification, dict):
-            valid = bool(verification.get("valid", True))
+            valid = _coerce_bool(verification.get("valid", True), True)
             checks = list(verification.get("checks") or [])
             semantic_type = str(verification.get("type") or _suffix(candidate.path).lstrip("."))
             semantic_metadata = dict(verification)
         elif isinstance(package_record, dict):
-            valid = bool(package_record.get("valid", True))
+            valid = _coerce_bool(package_record.get("valid", True), True)
             checks = list(package_record.get("checks") or [])
             semantic_type = str(package_record.get("type") or _suffix(candidate.path).lstrip("."))
             semantic_metadata = dict(package_record)
@@ -787,7 +876,7 @@ def collect_and_process_artifacts(
 
     registered: list[dict[str, Any]] = []
     registration_warning = ""
-    register_enabled = bool(spec_metadata.get("register_artifacts", True))
+    register_enabled = _coerce_bool(spec_metadata.get("register_artifacts", True), True)
     artifact_errors = [issue for issue in issues if issue.severity == "error"]
     if returncode == 0 and register_enabled and records and not artifact_errors:
         try:

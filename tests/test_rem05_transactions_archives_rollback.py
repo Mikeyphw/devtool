@@ -342,3 +342,31 @@ def test_bundle_dependencies_must_be_string_lists(tmp_path: Path, item: dict) ->
 
     assert not validation.ok
     assert any("must" in message and "list" in message for message in validation.messages)
+
+
+def test_archive_root_directory_marker_is_ignored_but_not_payload(tmp_path: Path) -> None:
+    archive = tmp_path / "root-marker.tar.gz"
+    with tarfile.open(archive, "w:gz") as tf:
+        root = tarfile.TarInfo(".")
+        root.type = tarfile.DIRTYPE
+        tf.addfile(root)
+        payload = b"ok\n"
+        info = tarfile.TarInfo("file.txt")
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+
+    members = list_archive_members(archive, include_data=True)
+
+    assert [member.name for member in members] == ["file.txt"]
+    assert members[0].data == b"ok\n"
+
+
+def test_archive_empty_non_directory_member_still_fails_closed(tmp_path: Path) -> None:
+    archive = tmp_path / "empty-name.tar.gz"
+    with tarfile.open(archive, "w:gz") as tf:
+        info = tarfile.TarInfo("")
+        info.size = 0
+        tf.addfile(info, io.BytesIO(b""))
+
+    with pytest.raises(RuntimeError, match="Unsafe archive path: empty path"):
+        list_archive_members(archive)
