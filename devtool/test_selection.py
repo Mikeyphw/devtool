@@ -101,6 +101,22 @@ class TestSelection:
         return asdict(self)
 
 
+
+
+def _strict_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disabled", "none", "null", ""}:
+        return False
+    return default
+
 def _list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [item.strip() for item in value.split(",") if item.strip()]
@@ -130,15 +146,15 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
         native_filter=str(raw.get("filter") or "").strip(),
         task="",
         tasks=_list(raw.get("tasks") or raw.get("task")),
-        failed=bool(raw.get("failed", False)),
-        changed=bool(raw.get("changed", False)),
+        failed=_strict_bool(raw.get("failed", False), False),
+        changed=_strict_bool(raw.get("changed", False), False),
         changed_from=str(raw.get("changed_from") or "HEAD").strip() or "HEAD",
-        instrumented=bool(raw.get("instrumented", False)),
+        instrumented=_strict_bool(raw.get("instrumented", False), False),
         pytest_tests=_list(pytest_defaults.get("tests")),
         pytest_markers=_list(pytest_defaults.get("markers") or pytest_defaults.get("marker")),
         pytest_k=str(pytest_defaults.get("k") or "").strip(),
         pytest_args=_list(pytest_defaults.get("args")),
-        pytest_include_defaults=bool(pytest_defaults.get("include_defaults", False)),
+        pytest_include_defaults=_strict_bool(pytest_defaults.get("include_defaults", False), False),
         pytest_source="project-config" if _list(pytest_defaults.get("tests")) else "",
     )
 
@@ -161,10 +177,10 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
         selection.native_filter = selection.native_filter or str(profile.get("filter") or "").strip()
         profile_tasks = _list(profile.get("tasks") or profile.get("task"))
         selection.tasks = profile_tasks + selection.tasks
-        selection.failed = selection.failed or bool(profile.get("failed", False))
-        selection.changed = selection.changed or str(profile.get("selection") or "").strip().lower() == "changed"
+        selection.failed = selection.failed or _strict_bool(profile.get("failed", False), False)
+        selection.changed = selection.changed or str(profile.get("selection") or "").strip().lower() == "changed" or _strict_bool(profile.get("changed", False), False)
         selection.changed_from = str(profile.get("base") or selection.changed_from).strip() or "HEAD"
-        selection.instrumented = selection.instrumented or bool(profile.get("instrumented", False))
+        selection.instrumented = selection.instrumented or _strict_bool(profile.get("instrumented", False), False)
         if "pytest_tests" in profile:
             selection.pytest_tests = _list(profile.get("pytest_tests"))
             selection.pytest_source = f"profile:{selection.profile}" if selection.pytest_tests else ""
@@ -175,7 +191,7 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
         if "pytest_args" in profile:
             selection.pytest_args = _list(profile.get("pytest_args"))
         if "pytest_include_defaults" in profile:
-            selection.pytest_include_defaults = bool(profile.get("pytest_include_defaults"))
+            selection.pytest_include_defaults = _strict_bool(profile.get("pytest_include_defaults"), False)
 
     # Invocation/artifact selection is deliberately applied after profiles and
     # project defaults. This gives explicit requests the same precedence model
@@ -190,7 +206,7 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
     if "pytest_args" in raw:
         selection.pytest_args = _list(raw.get("pytest_args"))
     if "pytest_include_defaults" in raw:
-        selection.pytest_include_defaults = bool(raw.get("pytest_include_defaults"))
+        selection.pytest_include_defaults = _strict_bool(raw.get("pytest_include_defaults"), False)
 
     if selection.failed:
         failed_ids = load_failed_test_ids(config.repo_root)
@@ -198,7 +214,7 @@ def resolve_test_selection(config: ProjectConfig) -> TestSelection:
             raise SystemExit("No failed tests are recorded for this repository.")
         selection.ids.extend(failed_ids)
     if selection.changed:
-        changed = changed_paths(config.repo_root, selection.changed_from)
+        changed = changed_paths(config.repo_root, selection.changed_from, project_root=Path(config.project_root or config.repo_root))
         if not changed:
             raise SystemExit(f"No changed files were found relative to {selection.changed_from}.")
         selection.paths.extend(changed)
@@ -792,8 +808,13 @@ def apply_test_selection(config: ProjectConfig, spec: CommandSpec) -> CommandSpe
     )
 
 
-def changed_paths(repo_root: Path, base: str) -> list[str]:
+def changed_paths(repo_root: Path, base: str, *, project_root: Path | None = None) -> list[str]:
     root = repo_root.expanduser().resolve()
+    project = (project_root or root).expanduser().resolve()
+    try:
+        project_prefix = project.relative_to(root).as_posix()
+    except ValueError:
+        project_prefix = ""
     commands = (
         ["git", "-C", str(root), "diff", "--name-only", base, "--"],
         ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
@@ -807,7 +828,20 @@ def changed_paths(repo_root: Path, base: str) -> list[str]:
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "git command failed").strip()
             raise SystemExit(f"Changed-test selection could not query Git: {detail}")
-        values.extend(line.strip() for line in result.stdout.splitlines() if line.strip())
+        for line in result.stdout.splitlines():
+            rel = line.strip().replace("\\", "/").lstrip("./")
+            if not rel:
+                continue
+            if project_prefix:
+                prefix = project_prefix.rstrip("/") + "/"
+                if rel == project_prefix:
+                    values.append(".")
+                elif rel.startswith(prefix):
+                    values.append(rel[len(prefix):])
+                else:
+                    continue
+            else:
+                values.append(rel)
     return list(dict.fromkeys(values))
 
 

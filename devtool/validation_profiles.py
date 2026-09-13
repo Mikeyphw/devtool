@@ -74,6 +74,22 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
+
+
+def _strict_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disabled", "none", "null", ""}:
+        return False
+    return default
+
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(base)
     for key, value in override.items():
@@ -120,8 +136,8 @@ def apply_profile(config: ProjectConfig, args: Any) -> str:
         raise SystemExit(f"Unknown validation workflow profile {name!r}. Available: {choices}")
     profile = profiles[name]
     for attr in ("skip_restore", "skip_build", "skip_test"):
-        if attr in profile and not bool(getattr(args, attr, False)):
-            setattr(args, attr, bool(profile[attr]))
+        if attr in profile and not _strict_bool(getattr(args, attr, False), False):
+            setattr(args, attr, _strict_bool(profile[attr], False))
     resource = str(profile.get("resource_profile") or "").strip()
     if resource and str(getattr(args, "validation_resource_profile", "automatic") or "automatic") == "automatic":
         args.validation_resource_profile = resource

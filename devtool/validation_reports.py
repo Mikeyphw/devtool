@@ -193,10 +193,7 @@ def build_validation_report(
             "plan_fingerprint": session.plan_fingerprint,
             "required_checkpoint_name": session.required_checkpoint_name,
             "required_checkpoint_keys": list(session.required_checkpoint_keys),
-            "required_checkpoint_satisfied": all(
-                phase.key not in session.required_checkpoint_keys or phase.status in _TERMINAL_PHASE_STATES
-                for phase in session.phases
-            ),
+            "required_checkpoint_satisfied": __import__("devtool.validation_sessions", fromlist=["required_checkpoint_satisfied"]).required_checkpoint_satisfied(session),
             "phase_total": len(session.phases),
             "completed_phases": sum(phase.status in _TERMINAL_PHASE_STATES for phase in session.phases),
             "phases": phases,
@@ -233,9 +230,22 @@ def write_validation_report(
     sealed: bool = False,
 ) -> Path:
     path = report_path(Path(session.repo_root), session.session_id, sealed=sealed)
-    if sealed and path.is_file():
-        return path
     path.parent.mkdir(parents=True, exist_ok=True)
+    if sealed and path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing = None
+        if isinstance(existing, dict) and existing.get("session_id") == session.session_id and existing.get("sealed") is True:
+            expected_hash = str(existing.get("report_sha256") or "")
+            candidate = dict(existing)
+            candidate.pop("report_sha256", None)
+            try:
+                canonical = json.dumps(candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str, allow_nan=False).encode("utf-8")
+            except (TypeError, ValueError):
+                canonical = b""
+            if len(expected_hash) == 64 and hashlib.sha256(canonical).hexdigest() == expected_hash:
+                return path
     payload = build_validation_report(
         session,
         commit_status=commit_status,
@@ -244,13 +254,16 @@ def write_validation_report(
     )
     payload["sealed"] = sealed
     if sealed:
-        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        # Sealed reports remain immutable once their content hash is valid for
+        # this session.  Interrupted or hand-written stale files without a valid
+        # embedded hash are regenerated instead of being trusted by existence.
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str, allow_nan=False).encode("utf-8")
         payload["report_sha256"] = hashlib.sha256(canonical).hexdigest()
     fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
     temporary = Path(temporary_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            json.dump(payload, handle, ensure_ascii=False, indent=2, default=str, allow_nan=False)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())

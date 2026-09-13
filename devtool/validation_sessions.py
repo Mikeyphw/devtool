@@ -15,6 +15,7 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -330,9 +331,9 @@ def append_event(
         "session_id": session.session_id,
         "revision": int(session.revision or 0),
         "state": session.status,
-        "data": dict(data or {}),
+        "data": _json_safe(dict(data or {})),
     }
-    line = json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
+    line = json.dumps(_json_safe(event), ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n"
     with path.open("a", encoding="utf-8") as handle:
         handle.write(line)
         handle.flush()
@@ -370,7 +371,7 @@ def read_events(
                 found_cursor = True
             continue
         events.append(item)
-    bounded_limit = max(1, min(int(limit or 100), 1000))
+    bounded_limit = max(1, min(_coerce_int(limit, 100), 1000))
     # Polling clients must never skip events after a cursor. Initial reads are
     # intentionally tail-oriented so a newly attached app does not have to
     # replay an unbounded historical log before rendering current state.
@@ -389,21 +390,21 @@ def write_control_request(
         raise ValidationSessionError(f"Unsupported validation control action: {action}")
     with _validation_control_lock(session):
         latest = load_session(Path(session.repo_root), session.session_id)
-        current_revision = int(latest.revision)
+        current_revision = _coerce_int(latest.revision, 0)
         existing = read_control_request(latest)
         if existing:
             if (
                 str(existing.get("action") or "") == normalized
                 and (
                     expected_revision is None
-                    or int(existing.get("expected_revision", -1) or -1) == int(expected_revision)
+                    or _coerce_int(existing.get("expected_revision"), -1) == _coerce_int(expected_revision, -2)
                 )
             ):
                 duplicate = dict(existing)
                 duplicate["reused"] = True
                 session.revision = current_revision
                 return duplicate
-            if expected_revision is not None and int(expected_revision) != current_revision:
+            if expected_revision is not None and _coerce_int(expected_revision, -1) != current_revision:
                 raise ValidationControlRequestError(
                     "stale_revision",
                     f"Validation session revision is stale: expected {expected_revision}, current {current_revision}.",
@@ -412,7 +413,7 @@ def write_control_request(
                 "control_unavailable",
                 "Another validation control request is already pending and must be consumed first.",
             )
-        if expected_revision is not None and int(expected_revision) != current_revision:
+        if expected_revision is not None and _coerce_int(expected_revision, -1) != current_revision:
             raise ValidationControlRequestError(
                 "stale_revision",
                 f"Validation session revision is stale: expected {expected_revision}, current {current_revision}.",
@@ -424,7 +425,7 @@ def write_control_request(
             "request_id": uuid.uuid4().hex,
             "session_id": latest.session_id,
             "expected_revision": previous_revision,
-            "accepted_revision": int(latest.revision),
+            "accepted_revision": _coerce_int(latest.revision, current_revision),
             "action": normalized,
             "requested_at": _utc_now(),
             "requested_by": requested_by,
@@ -434,7 +435,7 @@ def write_control_request(
         request["active_phase_key"] = active_phase.key if active_phase is not None else ""
         request["active_attempt_id"] = active_phase.current_attempt_id if active_phase is not None else ""
         _atomic_write_json(validation_control_path(Path(latest.repo_root), latest.session_id), request)
-        session.revision = int(latest.revision)
+        session.revision = _coerce_int(latest.revision, current_revision)
         session.updated_at = latest.updated_at
         append_event(
             latest,
@@ -477,43 +478,114 @@ def normalize_phase_name(value: str | None) -> str:
     return "finalize" if normalized == "final" else normalized
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _strict_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, float) and not math.isfinite(value):
+            return default
+        return value != 0
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disabled", "none", "null", ""}:
+        return False
+    return default
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    safe_payload = _json_safe(payload)
     with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        json.dump(safe_payload, handle, ensure_ascii=False, indent=2, allow_nan=False)
         handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
 
 
-def _attempt_from_dict(payload: dict[str, Any]) -> AttemptRecord:
-    allowed = {name for name in AttemptRecord.__dataclass_fields__}
-    return AttemptRecord(**{key: value for key, value in payload.items() if key in allowed})
-
-
-def _phase_from_dict(payload: dict[str, Any]) -> PhaseRecord:
-    allowed = {name for name in PhaseRecord.__dataclass_fields__}
-    values = {key: value for key, value in payload.items() if key in allowed}
-    values["attempt_history"] = [
-        _attempt_from_dict(item)
-        for item in payload.get("attempt_history", [])
-        if isinstance(item, dict)
-    ]
-    return PhaseRecord(**values)
-
-
 def _json_safe(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, bool)):
         return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, Issue):
+        return _json_safe({
+            "severity": value.severity,
+            "command": value.command,
+            "file": value.file,
+            "code": value.code,
+            "message": value.message,
+            "line": value.line,
+        })
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_json_safe(item) for item in value]
     return str(value)
+
+
+def _attempt_from_dict(payload: dict[str, Any]) -> AttemptRecord:
+    allowed = {name for name in AttemptRecord.__dataclass_fields__}
+    values = {key: _json_safe(value) for key, value in payload.items() if key in allowed}
+    values["attempt_id"] = str(values.get("attempt_id") or f"legacy-{uuid.uuid4().hex[:12]}")
+    values["started_at"] = str(values.get("started_at") or _utc_now())
+    values["verdict"] = str(values.get("verdict") or "unknown")
+    values["returncode"] = None if values.get("returncode") is None else _coerce_int(values.get("returncode"), 0)
+    values["signal"] = None if values.get("signal") is None else _coerce_int(values.get("signal"), 0)
+    values["duration_seconds"] = _finite_float(values.get("duration_seconds")) or 0.0
+    values["owner_pid"] = _coerce_int(values.get("owner_pid"), 0)
+    values["session_revision"] = _coerce_int(values.get("session_revision"), 0)
+    return AttemptRecord(**values)
+
+
+def _phase_from_dict(payload: dict[str, Any]) -> PhaseRecord:
+    allowed = {name for name in PhaseRecord.__dataclass_fields__}
+    values = {key: _json_safe(value) for key, value in payload.items() if key in allowed}
+    values["key"] = str(values.get("key") or values.get("name") or f"legacy:{uuid.uuid4().hex[:12]}")
+    values["name"] = str(values.get("name") or values["key"])
+    values["label"] = str(values.get("label") or values["name"])
+    values["spec_name"] = str(values.get("spec_name") or values["name"])
+    values["index"] = max(1, _coerce_int(values.get("index"), 1))
+    values["total"] = max(values["index"], _coerce_int(values.get("total"), values["index"]))
+    values["attempts"] = max(0, _coerce_int(values.get("attempts"), 0))
+    values["returncode"] = None if values.get("returncode") is None else _coerce_int(values.get("returncode"), 0)
+    values["duration_seconds"] = _finite_float(values.get("duration_seconds")) or 0.0
+    values["required"] = _strict_bool(values.get("required"), True)
+    values["supports_progress"] = _strict_bool(values.get("supports_progress"), False)
+    values["progress_percent"] = max(0, min(100, _coerce_int(values.get("progress_percent"), 0)))
+    for key in ("depends_on", "input_domains", "issues"):
+        value = values.get(key)
+        values[key] = value if isinstance(value, list) else []
+    history_value = payload.get("attempt_history", []) if isinstance(payload, dict) else []
+    values["attempt_history"] = [
+        _attempt_from_dict(item)
+        for item in history_value
+        if isinstance(item, dict)
+    ]
+    return PhaseRecord(**values)
 
 
 def serialize_spec(spec: CommandSpec) -> dict[str, Any]:
@@ -555,13 +627,35 @@ def stored_specs(session: ValidationSession) -> list[CommandSpec]:
 
 
 def _session_from_dict(payload: dict[str, Any]) -> ValidationSession:
+    if not isinstance(payload, dict):
+        raise ValidationSessionError("Invalid validation session state: expected JSON object.")
     allowed = {name for name in ValidationSession.__dataclass_fields__}
-    values = {key: value for key, value in payload.items() if key in allowed}
-    values["phases"] = [_phase_from_dict(item) for item in payload.get("phases", []) if isinstance(item, dict)]
+    values = {key: _json_safe(value) for key, value in payload.items() if key in allowed}
+    phases = [_phase_from_dict(item) for item in payload.get("phases", []) if isinstance(item, dict)]
+    values["phases"] = phases
+    values["session_id"] = str(values.get("session_id") or "")
+    values["repo_root"] = str(values.get("repo_root") or "")
+    values["project_root"] = str(values.get("project_root") or values.get("repo_root") or "")
+    values["project_type"] = str(values.get("project_type") or "")
+    values["target"] = str(values.get("target") or "")
+    values["variant"] = str(values.get("variant") or "")
+    values["status"] = str(values.get("status") or "ready")
+    values["created_at"] = str(values.get("created_at") or _utc_now())
+    values["updated_at"] = str(values.get("updated_at") or values["created_at"])
+    values["fingerprints"] = dict(values.get("fingerprints") or {})
+    values["revision"] = max(0, _coerce_int(values.get("revision"), 0))
+    for key in ("plan_specs", "required_checkpoint_keys", "plan_drift_details"):
+        if not isinstance(values.get(key), list):
+            values[key] = []
+    for key in ("apply_context", "options"):
+        if not isinstance(values.get(key), dict):
+            values[key] = {}
     return ValidationSession(**values)
 
 
 def _session_payload_for_repo(payload: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValidationSessionError("Invalid validation session state: expected JSON object.")
     current_repo = str(repo_root.expanduser().resolve())
     stored_repo = str(payload.get("repo_root") or "").strip()
     if not stored_repo or stored_repo == current_repo:
@@ -588,7 +682,7 @@ def _legacy_attempt_verdict(phase: dict[str, Any]) -> str:
     status = str(phase.get("status") or "").strip().lower()
     if status in {"succeeded", "passed", "skipped", "not-applicable"}:
         return "passed"
-    if status in {"pending", "running", "interrupted"} and int(phase.get("interruption_count", 0) or 0) > 0:
+    if status in {"pending", "running", "interrupted"} and _coerce_int(phase.get("interruption_count", 0), 0) > 0:
         return "interrupted"
     if status == "failed":
         return "code-failed"
@@ -598,7 +692,9 @@ def _legacy_attempt_verdict(phase: dict[str, Any]) -> str:
 def _migrate_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Upgrade durable validation sessions without discarding evidence."""
 
-    version = int(payload.get("schema_version", 0) or 0)
+    if not isinstance(payload, dict):
+        raise ValidationSessionError("Invalid validation session state: expected JSON object.")
+    version = _coerce_int(payload.get("schema_version", 0), 0)
     if version == SESSION_SCHEMA_VERSION:
         return payload
     if version not in {1, 2, 3, 4, 5}:
@@ -623,13 +719,13 @@ def _migrate_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
         failure_action = str(options.get("failure_action") or context.get("failure_action") or "").strip().lower()
         if not failure_action:
             if "rollback_on_failure" in context:
-                legacy_rollback = bool(context.get("rollback_on_failure"))
+                legacy_rollback = _strict_bool(context.get("rollback_on_failure"), False)
             else:
-                legacy_rollback = bool(options.get("rollback_on_failure", False))
+                legacy_rollback = _strict_bool(options.get("rollback_on_failure", False), False)
             failure_action = "rollback" if legacy_rollback else "pause"
         migrated["failure_action"] = failure_action
 
-    migrated["revision"] = max(1, int(migrated.get("revision", 0) or 0))
+    migrated["revision"] = max(1, _coerce_int(migrated.get("revision", 0), 0))
     phase_status_map = {
         "succeeded": "passed",
         "skipped": "not-applicable",
@@ -657,7 +753,7 @@ def _migrate_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
             or phase.get("finished_at")
             or phase.get("returncode") is not None
             or phase.get("output_tail")
-            or int(phase.get("interruption_count", 0) or 0)
+            or _coerce_int(phase.get("interruption_count", 0), 0)
         )
         if not history and has_evidence:
             history.append({
@@ -666,9 +762,9 @@ def _migrate_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "finished_at": str(phase.get("finished_at") or migrated.get("updated_at") or ""),
                 "verdict": _legacy_attempt_verdict(phase),
                 "returncode": phase.get("returncode"),
-                "duration_seconds": float(phase.get("duration_seconds", 0.0) or 0.0),
+                "duration_seconds": _finite_float(phase.get("duration_seconds")) or 0.0,
                 "output_tail": str(phase.get("output_tail") or ""),
-                "issues": list(phase.get("issues") or []),
+                "issues": list(phase.get("issues") or []) if isinstance(phase.get("issues"), list) else [],
                 "log_path": str(phase.get("log_path") or ""),
                 "interruption_reason": str(phase.get("last_interrupted_reason") or ""),
                 "input_domains": list(phase.get("input_domains") or []),
@@ -811,8 +907,15 @@ def load_session(repo_root: Path, session_id: str) -> ValidationSession:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationSessionError(f"Invalid validation session state: {path}: {exc}") from exc
-    migrated = _session_payload_for_repo(_migrate_session_payload(payload), repo_root)
-    return _session_from_dict(migrated)
+    if not isinstance(payload, dict):
+        raise ValidationSessionError(f"Invalid validation session state: {path}: expected JSON object.")
+    try:
+        migrated = _session_payload_for_repo(_migrate_session_payload(payload), repo_root)
+        return _session_from_dict(migrated)
+    except ValidationSessionError:
+        raise
+    except Exception as exc:
+        raise ValidationSessionError(f"Invalid validation session state: {path}: {exc}") from exc
 
 
 def load_active_session(repo_root: Path, *, required: bool = False) -> ValidationSession | None:
@@ -823,7 +926,11 @@ def load_active_session(repo_root: Path, *, required: bool = False) -> Validatio
         return None
     try:
         payload = json.loads(marker.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValidationSessionError(f"Invalid active validation marker: {marker}: expected JSON object.")
         session_id = str(payload.get("session_id") or "").strip()
+    except ValidationSessionError:
+        raise
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationSessionError(f"Invalid active validation marker: {marker}: {exc}") from exc
     if not session_id:
@@ -1070,7 +1177,7 @@ def input_fingerprints(repo_root: Path) -> dict[str, str]:
                 with path.open("rb") as stream:
                     for block in iter(lambda: stream.read(1024 * 1024), b""):
                         digest.update(block)
-            except OSError:
+            except (OSError, ValueError):
                 continue
     return {name: digest.hexdigest() for name, digest in digests.items()}
 
@@ -1198,10 +1305,10 @@ def annotate_specs(specs: Sequence[CommandSpec], *, session_id: str = "") -> lis
                 "validation_phase_total": total,
                 "validation_scope": scope,
                 "validation_input_domains": _phase_input_domains(spec, phase_name),
-                "validation_required": bool(metadata.get("validation_required", True)),
-                "validation_supports_progress": bool(
-                    metadata.get("validation_supports_progress", False)
-                    or metadata.get("progress_parser")
+                "validation_required": _strict_bool(metadata.get("validation_required", True), True),
+                "validation_supports_progress": (
+                    _strict_bool(metadata.get("validation_supports_progress", False), False)
+                    or bool(metadata.get("progress_parser"))
                 ),
             }
         )
@@ -1316,15 +1423,26 @@ def phase_records(specs: Sequence[CommandSpec]) -> list[PhaseRecord]:
             total=total,
             spec_fingerprint=spec_fingerprint(spec),
             input_domains=_phase_input_domains(spec, phase_name),
-            required=bool(spec.metadata.get("validation_required", True)),
+            required=_strict_bool(spec.metadata.get("validation_required", True), True),
             scope=scope,
-            supports_progress=bool(
-                spec.metadata.get("validation_supports_progress", False)
-                or spec.metadata.get("progress_parser")
+            supports_progress=(
+                _strict_bool(spec.metadata.get("validation_supports_progress", False), False)
+                or bool(spec.metadata.get("progress_parser"))
             ),
         )
         records.append(record)
         declared_dependencies[key] = _string_list(spec.metadata.get("validation_depends_on"))
+
+    seen_keys: dict[str, str] = {}
+    duplicates: list[str] = []
+    for record in records:
+        previous = seen_keys.get(record.key)
+        if previous is not None:
+            duplicates.append(f"{record.key} ({previous}, {record.spec_name})")
+        else:
+            seen_keys[record.key] = record.spec_name
+    if duplicates:
+        raise ValidationSessionError("Duplicate validation phase key(s): " + "; ".join(duplicates))
 
     for record in records:
         tokens = declared_dependencies.get(record.key) or _default_dependency_tokens(record, records)
@@ -1367,7 +1485,8 @@ def required_checkpoint_satisfied(session: ValidationSession) -> bool:
     if not keys:
         return True
     by_key = {item.key: item for item in session.phases if hasattr(item, "key")}
-    return all(key in by_key and by_key[key].status in _TERMINAL_PHASE_STATES for key in keys)
+    success_states = {"passed", "not-applicable", "succeeded"}
+    return all(key in by_key and by_key[key].status in success_states for key in keys)
 
 def create_session(
     config: ProjectConfig,
@@ -1401,8 +1520,8 @@ def create_session(
         or session_context.get("failure_action")
         or (
             "rollback"
-            if bool(session_context.get("legacy_rollback_on_failure_explicit"))
-            and bool(session_context.get("rollback_on_failure"))
+            if _strict_bool(session_context.get("legacy_rollback_on_failure_explicit"), False)
+            and _strict_bool(session_context.get("rollback_on_failure"), False)
             else "pause"
         )
     ).strip().lower()
@@ -1872,7 +1991,7 @@ def retry_failed(session: ValidationSession) -> str:
     failed = next((item for item in session.phases if item.status == "failed"), None)
     if failed is None:
         return ""
-    invalidate_from(session, failed.name, "explicit retry of cached validation failure")
+    _invalidate_keys(session, [failed.key], "explicit retry of cached validation failure")
     session.last_error = ""
     save_session(session, active=True)
     return failed.name
@@ -2084,28 +2203,41 @@ def update_phase_progress(session: ValidationSession, key: str, snapshot: dict[s
     completed = snapshot.get("completed")
     total = snapshot.get("total")
     percent = phase.progress_percent
-    try:
-        if raw_percent is not None:
-            percent = max(0, min(100, int(round(float(raw_percent)))))
-        elif completed is not None and total not in (None, 0, "0"):
-            percent = max(0, min(100, int(round(float(completed) * 100.0 / float(total)))))
-    except (TypeError, ValueError, ZeroDivisionError):
-        percent = phase.progress_percent
+    next_completed = phase.progress_completed
+    next_total = phase.progress_total
+    if raw_percent is not None:
+        value = _finite_float(raw_percent)
+        if value is not None:
+            percent = max(0, min(100, int(round(value))))
+    elif completed is not None and total not in (None, 0, "0"):
+        completed_value = _finite_float(completed)
+        total_value = _finite_float(total)
+        if completed_value is not None and total_value not in (None, 0.0):
+            percent = max(0, min(100, int(round(completed_value * 100.0 / total_value))))
+            if isinstance(completed, int) and not isinstance(completed, bool):
+                next_completed = completed
+            if isinstance(total, int) and not isinstance(total, bool):
+                next_total = total
+    else:
+        if isinstance(completed, int) and not isinstance(completed, bool):
+            next_completed = completed
+        if isinstance(total, int) and not isinstance(total, bool):
+            next_total = total
     detail = str(snapshot.get("detail") or snapshot.get("current_task") or snapshot.get("current_test") or "").strip()
     unit = str(snapshot.get("unit_label") or "").strip()
     changed = (
         percent != phase.progress_percent
         or detail != phase.progress_detail
-        or completed != phase.progress_completed
-        or total != phase.progress_total
+        or next_completed != phase.progress_completed
+        or next_total != phase.progress_total
         or unit != phase.progress_unit
     )
     if not changed:
         return False
     phase.progress_percent = percent
     phase.progress_detail = detail
-    phase.progress_completed = completed if isinstance(completed, int) else None
-    phase.progress_total = total if isinstance(total, int) else None
+    phase.progress_completed = next_completed
+    phase.progress_total = next_total
     phase.progress_unit = unit
     phase.progress_updated_at = _utc_now()
     save_session(session, active=True, bump_revision=False)
@@ -2198,6 +2330,16 @@ def record_phase_result(session: ValidationSession, key: str, result: OperationR
         for issue in result.issues
     ]
     classification = classification_for_result(result)
+    error_issues = [
+        issue for issue in phase.issues
+        if str(issue.get("severity") or issue.get("level") or "").strip().lower() in {"error", "fatal"}
+    ]
+    if int(result.returncode) == 0 and error_issues:
+        classification = FailureClassification(
+            verdict="diagnostic-failed",
+            category="diagnostic",
+            evidence=[f"{len(error_issues)} error diagnostic(s) emitted with exit 0"],
+        )
     verdict = classification.verdict
     attempt = next(
         (item for item in reversed(phase.attempt_history) if item.attempt_id == phase.current_attempt_id),
@@ -2282,9 +2424,20 @@ def record_phase_result(session: ValidationSession, key: str, result: OperationR
         session.last_error = ""
         if classification.recommended_profile:
             session.options["recommended_retry_profile"] = classification.recommended_profile
+    elif verdict == "diagnostic-failed":
+        phase.status = "failed"
+        session.status = "blocked"
+        phase.returncode = 1
+        attempt.returncode = 1
+        session.last_error = phase.output_tail or f"{phase.label} emitted error diagnostics despite exit 0"
+        session.paused_reason = "validation phase emitted error diagnostics; applied changes were retained"
     elif result.returncode == 0:
         phase.status = "not-applicable" if result.skipped else "passed"
-        session.fingerprints = attempt.input_snapshot_after
+        updated_fingerprints = dict(session.fingerprints or {})
+        for domain in relevant_domains:
+            if domain in attempt.input_snapshot_after:
+                updated_fingerprints[domain] = attempt.input_snapshot_after[domain]
+        session.fingerprints = updated_fingerprints
         session.status = "validated" if session.complete and required_checkpoint_satisfied(session) else "paused"
         if session.status == "validated":
             session.validated_at = session.validated_at or phase.finished_at
@@ -2537,7 +2690,7 @@ def status_payload(session: ValidationSession) -> dict[str, Any]:
         "linux_user": linux_user,
         "canonical_path": session.repo_root,
     }
-    identity_text = "\x1f".join(str(repository_identity[key]) for key in ("environment", "chroot_name", "linux_user", "canonical_path"))
+    identity_text = "\x1f".join(str(repository_identity[key]) for key in ("canonical_path",))
     repository_identity["repository_id"] = hashlib.sha256(identity_text.encode("utf-8")).hexdigest()
     payload["repository_identity"] = repository_identity
     payload["repository_id"] = repository_identity["repository_id"]

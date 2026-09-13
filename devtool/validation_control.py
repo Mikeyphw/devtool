@@ -41,17 +41,26 @@ class ValidationControlError(ValidationSessionError):
         return self.message
 
 
+def _safe_revision(value: Any, *, default: int | None = None) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def require_revision(session: ValidationSession, expected: int | None) -> int:
-    if expected is None or int(expected) < 0:
-        return int(session.revision)
-    if int(expected) != int(session.revision):
+    current = _safe_revision(session.revision, default=0) or 0
+    expected_value = _safe_revision(expected, default=None)
+    if expected is None or expected_value is None or expected_value < 0:
+        return current
+    if expected_value != current:
         raise ValidationControlError(
             "stale_revision",
             f"Validation session revision is stale: expected {expected}, current {session.revision}.",
             EXIT_STALE_REVISION,
-            {"expected_revision": int(expected), "current_revision": int(session.revision)},
+            {"expected_revision": expected_value, "current_revision": current},
         )
-    return int(session.revision)
+    return current
 
 
 def response(
@@ -73,7 +82,7 @@ def response(
         "message": str(message or ""),
         "session_id": session.session_id if session is not None else "",
         "previous_revision": previous_revision,
-        "revision": int(session.revision) if session is not None else None,
+        "revision": _safe_revision(session.revision, default=0) if session is not None else None,
         "state": session.status if session is not None else "",
         "effective_state": session.status if session is not None else "",
         "data": dict(data or {}),
@@ -119,7 +128,7 @@ def plan_payload(session: ValidationSession) -> dict[str, Any]:
         })
     return {
         "session_id": session.session_id,
-        "revision": int(session.revision),
+        "revision": _safe_revision(session.revision, default=0) or 0,
         "state": session.status,
         "required_checkpoint_name": session.required_checkpoint_name,
         "required_checkpoint_keys": list(session.required_checkpoint_keys),
